@@ -87,7 +87,10 @@ describe("Singleflight", () => {
     const sf = new Singleflight<number>();
     let resolveOp!: (v: number) => void;
 
-    const promise = sf.do("key", () => new Promise<number>((r) => { resolveOp = r; }));
+    const promise = sf.do("key", () =>
+      new Promise<number>((r) => {
+        resolveOp = r;
+      }));
 
     assertEquals(sf.has("key"), true);
     assertEquals(sf.size, 1);

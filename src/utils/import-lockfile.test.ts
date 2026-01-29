@@ -84,11 +84,17 @@ describe("import-lockfile", () => {
 
   describe("resolveImportUrl", () => {
     it("should return http URLs as-is", () => {
-      assertEquals(resolveImportUrl("http://example.com/mod.ts", "https://base.com/"), "http://example.com/mod.ts");
+      assertEquals(
+        resolveImportUrl("http://example.com/mod.ts", "https://base.com/"),
+        "http://example.com/mod.ts",
+      );
     });
 
     it("should return https URLs as-is", () => {
-      assertEquals(resolveImportUrl("https://cdn.com/mod.ts", "https://base.com/"), "https://cdn.com/mod.ts");
+      assertEquals(
+        resolveImportUrl("https://cdn.com/mod.ts", "https://base.com/"),
+        "https://cdn.com/mod.ts",
+      );
     });
 
     it("should resolve relative paths against base URL", () => {
@@ -137,7 +143,12 @@ describe("import-lockfile", () => {
     });
 
     it("should read existing lockfile", async () => {
-      const data = { version: 1, imports: { "https://cdn.com/mod.ts": { resolved: "https://cdn.com/mod.ts", integrity: "sha256-abc" } } };
+      const data = {
+        version: 1,
+        imports: {
+          "https://cdn.com/mod.ts": { resolved: "https://cdn.com/mod.ts", integrity: "sha256-abc" },
+        },
+      };
       const fs = createMockFS({ "/project/veryfront.lock": JSON.stringify(data) });
       const mgr = createLockfileManager("/project", fs);
       const result = await mgr.read();
@@ -147,7 +158,10 @@ describe("import-lockfile", () => {
 
     it("should set and get entries", async () => {
       const mgr = createLockfileManager("/project", createMockFS());
-      await mgr.set("https://cdn.com/mod.ts", { resolved: "https://cdn.com/mod.ts", integrity: "sha256-abc" });
+      await mgr.set("https://cdn.com/mod.ts", {
+        resolved: "https://cdn.com/mod.ts",
+        integrity: "sha256-abc",
+      });
 
       const entry = await mgr.get("https://cdn.com/mod.ts");
       assertEquals(entry?.resolved, "https://cdn.com/mod.ts");
@@ -158,13 +172,19 @@ describe("import-lockfile", () => {
       const mgr = createLockfileManager("/project", createMockFS());
       assertEquals(await mgr.has("https://cdn.com/mod.ts"), false);
 
-      await mgr.set("https://cdn.com/mod.ts", { resolved: "https://cdn.com/mod.ts", integrity: "sha256-abc" });
+      await mgr.set("https://cdn.com/mod.ts", {
+        resolved: "https://cdn.com/mod.ts",
+        integrity: "sha256-abc",
+      });
       assertEquals(await mgr.has("https://cdn.com/mod.ts"), true);
     });
 
     it("should clear lockfile data", async () => {
       const mgr = createLockfileManager("/project", createMockFS());
-      await mgr.set("https://cdn.com/mod.ts", { resolved: "https://cdn.com/mod.ts", integrity: "sha256-abc" });
+      await mgr.set("https://cdn.com/mod.ts", {
+        resolved: "https://cdn.com/mod.ts",
+        integrity: "sha256-abc",
+      });
       await mgr.clear();
       assertEquals(await mgr.has("https://cdn.com/mod.ts"), false);
     });
@@ -172,7 +192,10 @@ describe("import-lockfile", () => {
     it("should flush dirty data to disk", async () => {
       const fs = createMockFS();
       const mgr = createLockfileManager("/project", fs);
-      await mgr.set("https://cdn.com/mod.ts", { resolved: "https://cdn.com/mod.ts", integrity: "sha256-abc" });
+      await mgr.set("https://cdn.com/mod.ts", {
+        resolved: "https://cdn.com/mod.ts",
+        integrity: "sha256-abc",
+      });
       await mgr.flush();
 
       // Verify file was written

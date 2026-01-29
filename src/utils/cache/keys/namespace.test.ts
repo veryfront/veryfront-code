@@ -1,5 +1,5 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it, afterEach } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getCacheNamespace, setCacheNamespace } from "./namespace.ts";
 
 describe("cache namespace", () => {

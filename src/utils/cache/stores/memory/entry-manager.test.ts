@@ -15,7 +15,15 @@ describe("EntryManager", () => {
       const list = new LRUListManager<unknown>();
       const store = new Map<string, LRUNode<unknown>>();
 
-      const [node, size] = em.createNewEntry("key1", "value1", undefined, undefined, undefined, list, store);
+      const [node, size] = em.createNewEntry(
+        "key1",
+        "value1",
+        undefined,
+        undefined,
+        undefined,
+        list,
+        store,
+      );
 
       assertEquals(node.key, "key1");
       assertEquals(node.entry.value, "value1");
@@ -53,7 +61,15 @@ describe("EntryManager", () => {
       const list = new LRUListManager<unknown>();
       const store = new Map<string, LRUNode<unknown>>();
 
-      const [node] = em.createNewEntry("key1", "value1", undefined, undefined, undefined, list, store);
+      const [node] = em.createNewEntry(
+        "key1",
+        "value1",
+        undefined,
+        undefined,
+        undefined,
+        list,
+        store,
+      );
 
       assertEquals(node.entry.expiry, undefined);
     });
@@ -63,7 +79,15 @@ describe("EntryManager", () => {
       const list = new LRUListManager<unknown>();
       const store = new Map<string, LRUNode<unknown>>();
 
-      const [node] = em.createNewEntry("key1", "value1", undefined, ["tag-a", "tag-b"], undefined, list, store);
+      const [node] = em.createNewEntry(
+        "key1",
+        "value1",
+        undefined,
+        ["tag-a", "tag-b"],
+        undefined,
+        list,
+        store,
+      );
 
       assertEquals(node.entry.tags, ["tag-a", "tag-b"]);
     });
@@ -129,9 +153,26 @@ describe("EntryManager", () => {
       const store = new Map<string, LRUNode<unknown>>();
       const tagIndex = new Map<string, Set<string>>();
 
-      const [node] = em.createNewEntry("key1", "old-value", undefined, undefined, undefined, list, store);
+      const [node] = em.createNewEntry(
+        "key1",
+        "old-value",
+        undefined,
+        undefined,
+        undefined,
+        list,
+        store,
+      );
       // Node size is 100 (fixed estimator), new value also 100 → delta = 0
-      const delta = em.updateExistingEntry(node, "new-value", undefined, undefined, undefined, list, tagIndex, "key1");
+      const delta = em.updateExistingEntry(
+        node,
+        "new-value",
+        undefined,
+        undefined,
+        undefined,
+        list,
+        tagIndex,
+        "key1",
+      );
 
       assertEquals(node.entry.value, "new-value");
       assertEquals(delta, 0);
@@ -143,10 +184,27 @@ describe("EntryManager", () => {
       const store = new Map<string, LRUNode<unknown>>();
       const tagIndex = new Map<string, Set<string>>();
 
-      const [node] = em.createNewEntry("key1", "val", undefined, ["old-tag"], undefined, list, store);
+      const [node] = em.createNewEntry(
+        "key1",
+        "val",
+        undefined,
+        ["old-tag"],
+        undefined,
+        list,
+        store,
+      );
       em.updateTagIndex(["old-tag"], "key1", tagIndex);
 
-      em.updateExistingEntry(node, "new-val", undefined, ["new-tag"], undefined, list, tagIndex, "key1");
+      em.updateExistingEntry(
+        node,
+        "new-val",
+        undefined,
+        ["new-tag"],
+        undefined,
+        list,
+        tagIndex,
+        "key1",
+      );
 
       assertEquals(tagIndex.has("old-tag"), false);
       assertEquals(node.entry.tags, ["new-tag"]);

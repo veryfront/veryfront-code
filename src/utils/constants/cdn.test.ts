@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getDenoStdNodeBase, getTailwindCSSUrl, ESM_CDN_BASE, DENO_STD_BASE } from "./cdn.ts";
+import { DENO_STD_BASE, ESM_CDN_BASE, getDenoStdNodeBase, getTailwindCSSUrl } from "./cdn.ts";
 
 describe("constants/cdn", () => {
   describe("getDenoStdNodeBase", () => {

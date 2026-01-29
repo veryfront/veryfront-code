@@ -69,7 +69,9 @@ describe("EvictionManager", () => {
     it("should call onEvict callback", () => {
       let evictedKey = "";
       const em = new EvictionManager({
-        onEvict: (key) => { evictedKey = key; },
+        onEvict: (key) => {
+          evictedKey = key;
+        },
       });
       const cache = new Map([["a", { size: 5, value: "val" }]]);
       const tracker = createMockTracker(["a"]);

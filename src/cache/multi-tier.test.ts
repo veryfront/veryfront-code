@@ -8,8 +8,14 @@ function createMockTier(name: string): CacheTier<string> & { store: Map<string, 
     name,
     store,
     get: (key: string) => Promise.resolve(store.get(key) ?? null),
-    set: (key: string, value: string) => { store.set(key, value); return Promise.resolve(); },
-    delete: (key: string) => { store.delete(key); return Promise.resolve(); },
+    set: (key: string, value: string) => {
+      store.set(key, value);
+      return Promise.resolve();
+    },
+    delete: (key: string) => {
+      store.delete(key);
+      return Promise.resolve();
+    },
   };
 }
 
@@ -54,7 +60,13 @@ describe("MultiTierCache", () => {
       const l1 = createMockTier("l1");
       const l2 = createMockTier("l2");
       l2.store.set("key", "value");
-      const cache = new MultiTierCache({ name: "test", l1, l2, asyncBackfill: false, backfillOnHit: true });
+      const cache = new MultiTierCache({
+        name: "test",
+        l1,
+        l2,
+        asyncBackfill: false,
+        backfillOnHit: true,
+      });
 
       await cache.get("key");
       assertEquals(l1.store.get("key"), "value");
@@ -65,7 +77,14 @@ describe("MultiTierCache", () => {
       const l2 = createMockTier("l2");
       const l3 = createMockTier("l3");
       l3.store.set("key", "value");
-      const cache = new MultiTierCache({ name: "test", l1, l2, l3, asyncBackfill: false, backfillOnHit: true });
+      const cache = new MultiTierCache({
+        name: "test",
+        l1,
+        l2,
+        l3,
+        asyncBackfill: false,
+        backfillOnHit: true,
+      });
 
       await cache.get("key");
       assertEquals(l1.store.get("key"), "value");
@@ -76,7 +95,13 @@ describe("MultiTierCache", () => {
       const l1 = createMockTier("l1");
       const l3 = createMockTier("l3");
       l3.store.set("key", "value");
-      const cache = new MultiTierCache({ name: "test", l1, l3, asyncBackfill: false, backfillOnHit: false });
+      const cache = new MultiTierCache({
+        name: "test",
+        l1,
+        l3,
+        asyncBackfill: false,
+        backfillOnHit: false,
+      });
 
       await cache.get("key");
       assertEquals(l1.store.has("key"), false);
@@ -95,7 +120,11 @@ describe("MultiTierCache", () => {
     });
 
     it("should increment set stats", async () => {
-      const cache = new MultiTierCache({ name: "test", l1: createMockTier("l1"), asyncBackfill: false });
+      const cache = new MultiTierCache({
+        name: "test",
+        l1: createMockTier("l1"),
+        asyncBackfill: false,
+      });
       await cache.set("a", "1");
       await cache.set("b", "2");
       assertEquals(cache.getStats().sets, 2);
@@ -183,7 +212,13 @@ describe("MultiTierCache", () => {
       const l3 = createMockTier("l3");
       l1.store.set("a", "l1-a");
       l3.store.set("b", "l3-b");
-      const cache = new MultiTierCache({ name: "test", l1, l3, asyncBackfill: false, backfillOnHit: true });
+      const cache = new MultiTierCache({
+        name: "test",
+        l1,
+        l3,
+        asyncBackfill: false,
+        backfillOnHit: true,
+      });
 
       const result = await cache.getBatch(["a", "b", "c"]);
       assertEquals(result.get("a"), "l1-a");

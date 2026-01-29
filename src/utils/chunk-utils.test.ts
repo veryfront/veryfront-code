@@ -33,7 +33,10 @@ describe("chunk-utils", () => {
     });
 
     it("should prepend / to _veryfront/ paths", () => {
-      assertEquals(normalizeChunkPath("_veryfront/chunks/abc.js", "/base"), "/_veryfront/chunks/abc.js");
+      assertEquals(
+        normalizeChunkPath("_veryfront/chunks/abc.js", "/base"),
+        "/_veryfront/chunks/abc.js",
+      );
     });
 
     it("should prepend /_veryfront/ to chunks/ paths", () => {

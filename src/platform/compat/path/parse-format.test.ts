@@ -30,7 +30,13 @@ describe("platform/compat/path/parse-format", () => {
 
   describe("format", () => {
     it("should format from dir and base", () => {
-      const result = format({ root: "/", dir: "/home/user", base: "file.ts", ext: ".ts", name: "file" });
+      const result = format({
+        root: "/",
+        dir: "/home/user",
+        base: "file.ts",
+        ext: ".ts",
+        name: "file",
+      });
       assertEquals(result, "/home/user/file.ts");
     });
 

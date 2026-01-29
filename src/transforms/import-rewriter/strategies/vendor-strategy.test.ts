@@ -48,7 +48,10 @@ describe("VendorStrategy", () => {
     });
 
     it("should not match without vendor hash", () => {
-      assertEquals(vendorStrategy.matches("react", makeCtx({ vendorBundleHash: undefined })), false);
+      assertEquals(
+        vendorStrategy.matches("react", makeCtx({ vendorBundleHash: undefined })),
+        false,
+      );
     });
 
     it("should not match non-react packages", () => {

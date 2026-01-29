@@ -42,9 +42,13 @@ describe("cache/registry", () => {
       const map = new Map<string, unknown>();
       return {
         keys: () => map.keys(),
-        get size() { return map.size; },
+        get size() {
+          return map.size;
+        },
         delete: (key: string) => map.delete(key),
-        set: (key: string, value: unknown) => { map.set(key, value); },
+        set: (key: string, value: unknown) => {
+          map.set(key, value);
+        },
         _map: map,
       };
     }
@@ -97,31 +101,52 @@ describe("cache/registry", () => {
 
   describe("isKeyForProjectEnvironment", () => {
     it("should match production environment in render cache keys", () => {
-      assertEquals(isKeyForProjectEnvironment("proj1:production:release-1:v1", "proj1", "production"), true);
+      assertEquals(
+        isKeyForProjectEnvironment("proj1:production:release-1:v1", "proj1", "production"),
+        true,
+      );
     });
 
     it("should match preview environment in render cache keys", () => {
-      assertEquals(isKeyForProjectEnvironment("proj1:preview:branch-main:v1", "proj1", "preview"), true);
+      assertEquals(
+        isKeyForProjectEnvironment("proj1:preview:branch-main:v1", "proj1", "preview"),
+        true,
+      );
     });
 
     it("should return false for wrong environment", () => {
-      assertEquals(isKeyForProjectEnvironment("proj1:production:release-1:v1", "proj1", "preview"), false);
+      assertEquals(
+        isKeyForProjectEnvironment("proj1:production:release-1:v1", "proj1", "preview"),
+        false,
+      );
     });
 
     it("should match preview via SSR module key with preview prefix", () => {
-      assertEquals(isKeyForProjectEnvironment("v19:proj1:preview-draft:hash", "proj1", "preview"), true);
+      assertEquals(
+        isKeyForProjectEnvironment("v19:proj1:preview-draft:hash", "proj1", "preview"),
+        true,
+      );
     });
 
     it("should match production via SSR module key with release prefix", () => {
-      assertEquals(isKeyForProjectEnvironment("v19:proj1:release-abc:hash", "proj1", "production"), true);
+      assertEquals(
+        isKeyForProjectEnvironment("v19:proj1:release-abc:hash", "proj1", "production"),
+        true,
+      );
     });
 
     it("should match file cache branch as preview", () => {
-      assertEquals(isKeyForProjectEnvironment("file:branch:proj1:main:path", "proj1", "preview"), true);
+      assertEquals(
+        isKeyForProjectEnvironment("file:branch:proj1:main:path", "proj1", "preview"),
+        true,
+      );
     });
 
     it("should match file cache release as production", () => {
-      assertEquals(isKeyForProjectEnvironment("file:release:proj1:v1:path", "proj1", "production"), true);
+      assertEquals(
+        isKeyForProjectEnvironment("file:release:proj1:v1:path", "proj1", "production"),
+        true,
+      );
     });
   });
 

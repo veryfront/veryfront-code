@@ -1,4 +1,5 @@
 # Test coverage
+.coverage/
 coverage/
 tests/render/cov_profile/
 

@@ -1,6 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isAnyDebugEnabled, isDebugEnabled, isDeepInspectEnabled, isTruthyEnvValue } from "./env.ts";
+import {
+  isAnyDebugEnabled,
+  isDebugEnabled,
+  isDeepInspectEnabled,
+  isTruthyEnvValue,
+} from "./env.ts";
 
 describe("constants/env", () => {
   describe("isTruthyEnvValue", () => {

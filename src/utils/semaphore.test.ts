@@ -51,7 +51,11 @@ describe("Semaphore", () => {
     assertEquals(sem.active, 0);
 
     let resolveOp!: () => void;
-    const promise = sem.acquire(() => new Promise<void>((r) => { resolveOp = r; }));
+    const promise = sem.acquire(() =>
+      new Promise<void>((r) => {
+        resolveOp = r;
+      })
+    );
 
     // Give microtask a tick
     await new Promise((r) => setTimeout(r, 0));
@@ -66,7 +70,11 @@ describe("Semaphore", () => {
     const sem = new Semaphore(1);
     let resolveFirst!: () => void;
 
-    const first = sem.acquire(() => new Promise<void>((r) => { resolveFirst = r; }));
+    const first = sem.acquire(() =>
+      new Promise<void>((r) => {
+        resolveFirst = r;
+      })
+    );
 
     // Start a second acquire that will wait
     const second = sem.acquire(() => Promise.resolve());
@@ -84,7 +92,11 @@ describe("Semaphore", () => {
 
     // Fill the semaphore
     let resolveBlock!: () => void;
-    const blocking = sem.acquire(() => new Promise<void>((r) => { resolveBlock = r; }));
+    const blocking = sem.acquire(() =>
+      new Promise<void>((r) => {
+        resolveBlock = r;
+      })
+    );
 
     await assertRejects(
       () => sem.acquire(() => Promise.resolve()),
