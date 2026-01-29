@@ -7,6 +7,7 @@
  * @module transforms/esm/http-cache
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
@@ -100,8 +101,8 @@ const lastDistributedRefresh = new LRUCache<string, number>({
 });
 const DISTRIBUTED_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
-/** Module-level accumulator for bundle metadata during cacheHttpImportsToLocal. */
-let bundleMetadataAccumulator: BundleEntry[] | null = null;
+/** Per-request accumulator for bundle metadata during cacheHttpImportsToLocal. */
+const bundleAccumulatorStorage = new AsyncLocalStorage<BundleEntry[]>();
 
 function ensureAbsoluteDir(path: string): string {
   return isAbsolute(path) ? path : join(cwd(), path);
@@ -234,7 +235,10 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   const cacheKey = `${cacheDir}:${normalizedUrl}`;
 
   const existing = cachedPaths.get(cacheKey);
-  if (existing) return existing;
+  if (existing) {
+    if (await exists(existing)) return existing;
+    cachedPaths.delete(cacheKey);
+  }
 
   const cachePath = join(cacheDir, `http-${simpleHash(normalizedUrl)}.mjs`);
   const fs = createFileSystem();
@@ -284,9 +288,10 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
     }
 
     // Record bundle metadata for manifest creation
-    if (bundleMetadataAccumulator) {
+    const accumulatorAfterHit = bundleAccumulatorStorage.getStore();
+    if (accumulatorAfterHit) {
       const stat = await createFileSystem().stat(cachePath);
-      bundleMetadataAccumulator.push({
+      accumulatorAfterHit.push({
         hash: String(simpleHash(normalizedUrl)),
         url: normalizedUrl,
         sizeBytes: stat?.size ?? 0,
@@ -415,8 +420,9 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   cachedPaths.set(cacheKey, cachePath);
 
   // Record bundle metadata for manifest creation
-  if (bundleMetadataAccumulator) {
-    bundleMetadataAccumulator.push({
+  const accumulatorAfterWrite = bundleAccumulatorStorage.getStore();
+  if (accumulatorAfterWrite) {
+    accumulatorAfterWrite.push({
       hash: String(hash),
       url: normalizedUrl,
       sizeBytes: code.length,
@@ -518,14 +524,12 @@ export interface CacheHttpImportsResult {
  * Rewrite HTTP imports in the provided code to cached local file:// paths.
  * Returns the rewritten code and an optional bundle manifest ID for atomic validation.
  */
-export async function cacheHttpImportsToLocal(
+export function cacheHttpImportsToLocal(
   code: string,
   options: CacheOptions,
 ): Promise<CacheHttpImportsResult> {
-  // Activate accumulator to collect bundle metadata during cacheHttpModule calls
-  bundleMetadataAccumulator = [];
-
-  try {
+  // Run inside AsyncLocalStorage so each concurrent call gets its own accumulator
+  return bundleAccumulatorStorage.run([], async () => {
     const replacements = await buildReplacements(code, undefined, options);
     if (replacements.size === 0) {
       return { code };
@@ -539,7 +543,7 @@ export async function cacheHttpImportsToLocal(
     );
 
     // Create and store bundle manifest if bundles were cached
-    const bundles = bundleMetadataAccumulator;
+    const bundles = bundleAccumulatorStorage.getStore();
     if (bundles && bundles.length > 0) {
       try {
         const manifest = await createBundleManifest(bundles);
@@ -555,9 +559,7 @@ export async function cacheHttpImportsToLocal(
     }
 
     return { code: rewrittenCode };
-  } finally {
-    bundleMetadataAccumulator = null;
-  }
+  });
 }
 
 /**

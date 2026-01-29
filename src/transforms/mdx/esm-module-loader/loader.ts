@@ -590,53 +590,61 @@ async function doLoadModuleESM(
     // Ensure bare specifiers (e.g. 'react') resolve from cache dir on Node.js
     await ensureCacheNodeModules();
 
-    // Proactively ensure all HTTP bundles exist before import
-    // This is more reliable than fail-then-recover: check first, don't wait for import to fail
-    const bundlePaths = extractHttpBundlePaths(rewritten);
-    if (bundlePaths.length > 0) {
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} Checking HTTP bundles`, {
-        count: bundlePaths.length,
-        projectSlug,
-      });
-      const cacheDir = getHttpBundleCacheDir();
-      const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-      if (failed.length > 0) {
-        // Recovery: re-run HTTP caching to re-fetch expired bundles from esm.sh.
-        // This happens when distributed cache entries expire (24h TTL) and the local
-        // disk files are missing (pod restart / new deployment).
-        logger.warn(
-          `${LOG_PREFIX_MDX_LOADER} ${failed.length} HTTP bundle(s) missing, re-fetching from network`,
-          {
-            failed,
-            projectSlug,
-          },
-        );
-        const refreshResult = await cacheHttpImportsToLocal(rewritten, {
-          cacheDir,
-          importMap,
+    // Proactively ensure all HTTP bundles exist before import.
+    // Deno handles HTTP imports natively, so this is only needed for Node.js/Bun.
+    if (!isDeno) {
+      const bundlePaths = extractHttpBundlePaths(rewritten);
+      if (bundlePaths.length > 0) {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Checking HTTP bundles`, {
+          count: bundlePaths.length,
+          projectSlug,
         });
-        rewritten = refreshResult.code;
+        const cacheDir = getHttpBundleCacheDir();
+        const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+        if (failed.length > 0) {
+          // Recovery: re-run HTTP caching to re-fetch expired bundles from esm.sh.
+          // This happens when distributed cache entries expire (24h TTL) and the local
+          // disk files are missing (pod restart / new deployment).
+          logger.warn(
+            `${LOG_PREFIX_MDX_LOADER} ${failed.length} HTTP bundle(s) missing, re-fetching from network`,
+            {
+              failed,
+              projectSlug,
+            },
+          );
+          const originalFilePath = filePath;
+          const refreshResult = await cacheHttpImportsToLocal(rewritten, {
+            cacheDir,
+            importMap,
+          });
+          rewritten = refreshResult.code;
 
-        // Re-write the module file with refreshed HTTP bundle paths
-        const refreshedHash = hashString(rewritten);
-        const refreshedPath = join(nsDir, `${refreshedHash}.mjs`);
-        await mdxWriteFlight.do(refreshedPath, async () => {
-          await getLocalFs().writeTextFile(refreshedPath, rewritten);
-        });
-        filePath = refreshedPath;
-        codeHash = refreshedHash;
-        compositeKey = `${namespaceKey}:${codeHash}`;
+          // Re-write the module file with refreshed HTTP bundle paths
+          const refreshedHash = hashString(rewritten);
+          const refreshedPath = join(nsDir, `${refreshedHash}.mjs`);
+          await mdxWriteFlight.do(refreshedPath, async () => {
+            await getLocalFs().writeTextFile(refreshedPath, rewritten);
+          });
+          filePath = refreshedPath;
+          codeHash = refreshedHash;
+          compositeKey = `${namespaceKey}:${codeHash}`;
 
-        // Verify bundles exist after re-fetch
-        const refreshedBundles = extractHttpBundlePaths(rewritten);
-        if (refreshedBundles.length > 0) {
-          const stillFailed = await ensureHttpBundlesExist(refreshedBundles, cacheDir);
-          if (stillFailed.length > 0) {
-            throw new Error(
-              `Failed to recover ${stillFailed.length} HTTP bundle(s) after re-fetch: ${
-                stillFailed.join(", ")
-              }`,
-            );
+          // Clean up orphaned module file if path changed
+          if (refreshedPath !== originalFilePath) {
+            getLocalFs().remove(originalFilePath).catch(() => {});
+          }
+
+          // Verify bundles exist after re-fetch
+          const refreshedBundles = extractHttpBundlePaths(rewritten);
+          if (refreshedBundles.length > 0) {
+            const stillFailed = await ensureHttpBundlesExist(refreshedBundles, cacheDir);
+            if (stillFailed.length > 0) {
+              throw new Error(
+                `Failed to recover ${stillFailed.length} HTTP bundle(s) after re-fetch: ${
+                  stillFailed.join(", ")
+                }`,
+              );
+            }
           }
         }
       }

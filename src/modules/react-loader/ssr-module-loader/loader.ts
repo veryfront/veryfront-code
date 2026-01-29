@@ -854,8 +854,9 @@ export class SSRModuleLoader {
         // This ensures Deno's module cache is invalidated when dependencies change
         const transformedHash = await this.hashContentAsync(transformed);
 
-        const tempPath = await this.getTempPath(filePath, transformedHash);
+        let tempPath: string;
         try {
+          tempPath = await this.getTempPath(filePath, transformedHash);
           await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), {
             recursive: true,
           });
@@ -863,13 +864,16 @@ export class SSRModuleLoader {
         } catch (writeError) {
           // Cache directory may have been removed during test cleanup or pod shutdown.
           // Log and continue - the module will be re-transformed on next request.
+          // Catches ENOENT (directory not found) and EINVAL (os error 22, parent deleted
+          // mid-mkdir on macOS/Deno).
           if (
             (writeError as { code?: string })?.code === "ENOENT" ||
-            (writeError instanceof Deno.errors.NotFound)
+            (writeError instanceof Deno.errors.NotFound) ||
+            (writeError instanceof TypeError &&
+              String(writeError.message).includes("os error 22"))
           ) {
             logger.debug("[SSR-MODULE-LOADER] Cache write skipped (directory removed)", {
               filePath,
-              tempPath,
             });
             return;
           }
