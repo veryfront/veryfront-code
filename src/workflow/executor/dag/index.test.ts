@@ -14,47 +14,71 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { DAGExecutor } from "./index.ts";
-import type { WorkflowContext, WorkflowNode, WorkflowRun } from "../../types.ts";
-import type { StepExecutor } from "../step-executor.ts";
-import type { CheckpointManager } from "../checkpoint-manager.ts";
+import type { Checkpoint, WorkflowContext, WorkflowNode, WorkflowRun } from "../../types.ts";
+import { StepExecutor, type StepResult } from "../step-executor.ts";
+import { CheckpointManager } from "../checkpoint-manager.ts";
+import type { WorkflowBackend } from "../../backends/types.ts";
 
 // ---------------------------------------------------------------------------
 // Mock Step Executor
 // ---------------------------------------------------------------------------
 
+class MockStepExecutor extends StepExecutor {
+  constructor(
+    private results: Map<string, { success: boolean; output?: unknown; error?: string }> =
+      new Map(),
+    private onExecute?: (
+      node: WorkflowNode,
+      context: WorkflowContext,
+    ) => StepResult | Promise<StepResult>,
+  ) {
+    super();
+  }
+
+  override async execute(node: WorkflowNode, context: WorkflowContext): Promise<StepResult> {
+    if (this.onExecute) return await this.onExecute(node, context);
+
+    const result = this.results.get(node.id) ?? { success: true, output: { result: node.id } };
+    return {
+      success: result.success,
+      output: result.output,
+      error: result.error,
+      executionTime: 10,
+    };
+  }
+}
+
 function createMockStepExecutor(
   results: Map<string, { success: boolean; output?: unknown; error?: string }> = new Map(),
 ): StepExecutor {
-  return {
-    execute: (_node: WorkflowNode, _context: WorkflowContext) => {
-      const result = results.get(_node.id) ?? { success: true, output: { result: _node.id } };
-      return Promise.resolve({
-        success: result.success,
-        output: result.output,
-        error: result.error,
-        executionTime: 10,
-      });
-    },
-    createSkippedState: (nodeId: string) => ({
-      nodeId,
-      status: "skipped",
-      attempt: 0,
-      completedAt: new Date(),
-    }),
-  } as StepExecutor;
+  return new MockStepExecutor(results);
 }
 
 function createMockCheckpointManager(): CheckpointManager & {
   saved: Array<{ runId: string; nodeId: string }>;
 } {
   const saved: Array<{ runId: string; nodeId: string }> = [];
-  return {
-    saved,
-    save: (runId: string, checkpoint: { nodeId: string }) => {
+  const backend: WorkflowBackend = {
+    createRun: () => Promise.resolve(),
+    getRun: () => Promise.resolve(null),
+    updateRun: () => Promise.resolve(),
+    listRuns: () => Promise.resolve([]),
+    saveCheckpoint: () => Promise.resolve(),
+    getLatestCheckpoint: () => Promise.resolve(null),
+    savePendingApproval: () => Promise.resolve(),
+    getPendingApprovals: () => Promise.resolve([]),
+    updateApproval: () => Promise.resolve(),
+    destroy: () => Promise.resolve(),
+  };
+
+  const manager = new (class extends CheckpointManager {
+    override save(runId: string, checkpoint: Checkpoint): Promise<void> {
       saved.push({ runId, nodeId: checkpoint.nodeId });
       return Promise.resolve();
-    },
-  } as CheckpointManager & { saved: Array<{ runId: string; nodeId: string }> };
+    }
+  })({ backend });
+
+  return Object.assign(manager, { saved });
 }
 
 function createTestRun(overrides?: Partial<WorkflowRun>): WorkflowRun {
@@ -101,15 +125,12 @@ describe("DAGExecutor", () => {
 
     it("should execute sequential nodes in order", async () => {
       const order: string[] = [];
-      const trackingExecutor = {
-        ...stepExecutor,
-        execute: (node: WorkflowNode, _context: WorkflowContext) => {
-          order.push(node.id);
-          return Promise.resolve({ success: true, output: node.id, executionTime: 1 });
-        },
-      };
+      const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
+        order.push(node.id);
+        return { success: true, output: node.id, executionTime: 1 };
+      });
 
-      const exec = new DAGExecutor({ stepExecutor: trackingExecutor as StepExecutor });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
       const nodes: WorkflowNode[] = [
         { id: "a", config: { type: "step" } as any },
         { id: "b", config: { type: "step" } as any },
@@ -158,14 +179,11 @@ describe("DAGExecutor", () => {
     });
 
     it("should handle step execution rejection", async () => {
-      const rejectExecutor = {
-        ...stepExecutor,
-        execute: () => {
-          return Promise.reject(new Error("Unexpected crash"));
-        },
-      };
+      const rejectExecutor = new MockStepExecutor(new Map(), () => {
+        return Promise.reject(new Error("Unexpected crash"));
+      });
 
-      const exec = new DAGExecutor({ stepExecutor: rejectExecutor as StepExecutor });
+      const exec = new DAGExecutor({ stepExecutor: rejectExecutor });
       const nodes: WorkflowNode[] = [
         { id: "crasher", dependsOn: [], config: { type: "step" } as any },
       ];
@@ -212,15 +230,12 @@ describe("DAGExecutor", () => {
   describe("already completed nodes", () => {
     it("should skip already-completed nodes when resuming", async () => {
       const order: string[] = [];
-      const trackingExecutor = {
-        ...stepExecutor,
-        execute: (node: WorkflowNode) => {
-          order.push(node.id);
-          return Promise.resolve({ success: true, output: node.id, executionTime: 1 });
-        },
-      };
+      const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
+        order.push(node.id);
+        return { success: true, output: node.id, executionTime: 1 };
+      });
 
-      const exec = new DAGExecutor({ stepExecutor: trackingExecutor as StepExecutor });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
       const nodes: WorkflowNode[] = [
         { id: "done", dependsOn: [], config: { type: "step" } as any },
         { id: "next", config: { type: "step" } as any },
@@ -563,15 +578,12 @@ describe("DAGExecutor", () => {
   describe("startFromNode", () => {
     it("should start execution from a specific node", async () => {
       const order: string[] = [];
-      const trackingExecutor = {
-        ...stepExecutor,
-        execute: (node: WorkflowNode) => {
-          order.push(node.id);
-          return Promise.resolve({ success: true, output: node.id, executionTime: 1 });
-        },
-      };
+      const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
+        order.push(node.id);
+        return { success: true, output: node.id, executionTime: 1 };
+      });
 
-      const exec = new DAGExecutor({ stepExecutor: trackingExecutor as StepExecutor });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
       // Use dependencies so "a" waits on "b", then startFromNode="b"
       // After "b" completes, "a" becomes ready
       const nodes: WorkflowNode[] = [

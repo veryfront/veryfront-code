@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getBundleManifestTTL } from "./bundle-manifest-init.ts";
 import { BUNDLE_MANIFEST_DEV_TTL_MS, BUNDLE_MANIFEST_PROD_TTL_MS } from "./constants/cache.ts";
@@ -44,6 +44,8 @@ describe("getBundleManifestTTL", () => {
     const config = {} as Parameters<typeof getBundleManifestTTL>[0];
     const prodTTL = getBundleManifestTTL(config, "production");
     const devTTL = getBundleManifestTTL(config, "development");
+    assertExists(prodTTL);
+    assertExists(devTTL);
     assertEquals(prodTTL > devTTL, true);
   });
 });

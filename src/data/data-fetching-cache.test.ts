@@ -34,7 +34,7 @@ function createEntry<TProps extends Record<string, unknown>>(
   };
 }
 
-function getEntryProps<T>(entry: CacheEntry<T>): T {
+function getEntryProps<T>(entry: CacheEntry): T {
   assertExists(entry.data.props);
   return entry.data.props as T;
 }

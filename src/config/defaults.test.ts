@@ -67,8 +67,12 @@ describe("config/defaults", () => {
   describe("DURATION_HISTOGRAM_BOUNDARIES_MS", () => {
     it("should be sorted in ascending order", () => {
       for (let i = 1; i < DURATION_HISTOGRAM_BOUNDARIES_MS.length; i++) {
+        const current = DURATION_HISTOGRAM_BOUNDARIES_MS[i];
+        const previous = DURATION_HISTOGRAM_BOUNDARIES_MS[i - 1];
+        assertExists(current);
+        assertExists(previous);
         assertEquals(
-          DURATION_HISTOGRAM_BOUNDARIES_MS[i] > DURATION_HISTOGRAM_BOUNDARIES_MS[i - 1],
+          current > previous,
           true,
         );
       }
@@ -93,8 +97,12 @@ describe("config/defaults", () => {
   describe("SIZE_HISTOGRAM_BOUNDARIES_KB", () => {
     it("should be sorted in ascending order", () => {
       for (let i = 1; i < SIZE_HISTOGRAM_BOUNDARIES_KB.length; i++) {
+        const current = SIZE_HISTOGRAM_BOUNDARIES_KB[i];
+        const previous = SIZE_HISTOGRAM_BOUNDARIES_KB[i - 1];
+        assertExists(current);
+        assertExists(previous);
         assertEquals(
-          SIZE_HISTOGRAM_BOUNDARIES_KB[i] > SIZE_HISTOGRAM_BOUNDARIES_KB[i - 1],
+          current > previous,
           true,
         );
       }

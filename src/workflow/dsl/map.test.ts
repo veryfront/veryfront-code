@@ -1,6 +1,7 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { map } from "./map.ts";
+import type { WorkflowNode } from "../types.ts";
 
 describe("workflow/dsl/map", () => {
   describe("map", () => {
@@ -44,7 +45,7 @@ describe("workflow/dsl/map", () => {
         () =>
           map("test", {
             items: [1],
-            processor: undefined as unknown as { id: string; config: { type: string } },
+            processor: undefined as unknown as WorkflowNode,
           }),
         Error,
         "processor",

@@ -85,13 +85,13 @@ function setupMocks(): {
         tagName,
         attributes,
         get rel() {
-          return attributes.rel;
+          return attributes.rel ?? "";
         },
         set rel(value: string) {
           attributes.rel = value;
         },
         get href() {
-          return attributes.href;
+          return attributes.href ?? "";
         },
         set href(value: string) {
           attributes.href = value;

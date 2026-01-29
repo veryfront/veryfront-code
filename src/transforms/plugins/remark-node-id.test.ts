@@ -30,6 +30,12 @@ function getHProperties(node: any): any {
   return node?.data?.hProperties;
 }
 
+type TestFile = { data: { nodeMap?: Map<number, unknown>; nodeCount?: number } };
+
+function createFile(): TestFile {
+  return { data: {} };
+}
+
 describe("remark-node-id", () => {
   it("adds node IDs to all nodes", () => {
     const tree = createTree(
@@ -37,7 +43,7 @@ describe("remark-node-id", () => {
       createParagraph("Second"),
       createParagraph("Third"),
     );
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file);
 
@@ -52,7 +58,7 @@ describe("remark-node-id", () => {
       createParagraph("Second"),
       createParagraph("Third"),
     );
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file);
 
@@ -64,7 +70,7 @@ describe("remark-node-id", () => {
 
   it("uses custom prefix", () => {
     const tree = createTree(createParagraph("Test"));
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file, { prefix: "custom" });
 
@@ -79,7 +85,7 @@ describe("remark-node-id", () => {
       end: { line: 1, column: 5, offset: 4 },
     };
     const tree = createTree(para);
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file);
 
@@ -96,7 +102,7 @@ describe("remark-node-id", () => {
       end: { line: 1, column: 5, offset: 4 },
     };
     const tree = createTree(para);
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file, { includePosition: false });
 
@@ -108,7 +114,7 @@ describe("remark-node-id", () => {
 
   it("stores node map in file data", () => {
     const tree = createTree(createParagraph("Test"));
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file);
 
@@ -121,7 +127,7 @@ describe("remark-node-id", () => {
       createParagraph("First"),
       createParagraph("Second"),
     );
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file);
 
@@ -136,7 +142,7 @@ describe("remark-node-id", () => {
       value: "title: test",
     };
     const tree = createTree(yamlNode as any, createParagraph("Test"));
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file);
 
@@ -150,7 +156,7 @@ describe("remark-node-id", () => {
       value: 'title = "test"',
     };
     const tree = createTree(tomlNode as any, createParagraph("Test"));
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file);
 
@@ -164,7 +170,7 @@ describe("remark-node-id", () => {
       value: "export const x = 1",
     };
     const tree = createTree(mdxNode as any, createParagraph("Test"));
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file);
 
@@ -178,7 +184,7 @@ describe("remark-node-id", () => {
       value: "const x = 1",
     };
     const tree = createTree(mdxFlow as any, createParagraph("Test"));
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file);
 
@@ -188,7 +194,7 @@ describe("remark-node-id", () => {
 
   it("handles nodes without position", () => {
     const tree = createTree(createParagraph("Test"));
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file);
 
@@ -204,7 +210,7 @@ describe("remark-node-id", () => {
       end: { line: 5, column: 10, offset: 109 },
     };
     const tree = createTree(para);
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file);
 
@@ -218,7 +224,7 @@ describe("remark-node-id", () => {
     const para = createParagraph("Test");
     (para as any).data = { customProp: "value" };
     const tree = createTree(para);
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file);
 
@@ -233,7 +239,7 @@ describe("remark-node-id", () => {
       hProperties: { className: "existing" },
     };
     const tree = createTree(para);
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file);
 
@@ -247,10 +253,12 @@ describe("remark-node-id", () => {
       type: "root",
       children: [],
     };
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file);
 
+    assertExists(file.data.nodeCount);
+    assertExists(file.data.nodeMap);
     assertEquals(file.data.nodeCount, 1);
     assertEquals(file.data.nodeMap.size, 1);
   });
@@ -268,10 +276,11 @@ describe("remark-node-id", () => {
 
   it("stores node type in map", () => {
     const tree = createTree(createParagraph("Test"));
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file);
 
+    assertExists(file.data.nodeMap);
     const nodeInfo: any = Array.from(file.data.nodeMap.values())[1];
     assertEquals(nodeInfo.type, "paragraph");
   });
@@ -283,10 +292,11 @@ describe("remark-node-id", () => {
       value: 'console.log("test")',
     };
     const tree = createTree(codeNode as any);
-    const file = { data: {} };
+    const file = createFile();
 
     runPlugin(tree, file);
 
+    assertExists(file.data.nodeMap);
     const nodeInfo: any = Array.from(file.data.nodeMap.values())[1];
     assertEquals(nodeInfo.value, 'console.log("test")');
   });

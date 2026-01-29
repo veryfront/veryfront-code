@@ -42,9 +42,7 @@ describe("perf-timer", () => {
 
   describe("timeAsync", () => {
     it("should execute and return the result of the async function", async () => {
-      const result = await timeAsync("test", () => {
-        return 42;
-      });
+      const result = await timeAsync("test", () => Promise.resolve(42));
       assertEquals(result, 42);
     });
 
@@ -62,7 +60,7 @@ describe("perf-timer", () => {
     });
 
     it("should accept optional parent parameter", async () => {
-      const result = await timeAsync("child", () => "ok", "parent");
+      const result = await timeAsync("child", () => Promise.resolve("ok"), "parent");
       assertEquals(result, "ok");
     });
 

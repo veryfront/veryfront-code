@@ -11,6 +11,7 @@ describe("server/handlers/monitoring/client-log", () => {
 
     it("should match POST to /_veryfront/log", () => {
       const handler = new ClientLogHandler();
+      assertExists(handler.metadata.patterns);
       assertEquals(handler.metadata.patterns.length, 1);
       const pattern = handler.metadata.patterns[0];
       assertExists(pattern);

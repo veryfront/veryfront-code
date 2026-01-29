@@ -1,6 +1,6 @@
 /** @module transforms/mdx/esm-module-loader/loader.test */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 // ──────────────────────────────────────────────────────────────
@@ -257,14 +257,18 @@ describe("esm-module-loader/loader", { sanitizeResources: false, sanitizeOps: fa
       const code = `import Foo from "/_vf_modules/components/Foo.js";`;
       const imports = findVfModuleImports(code);
       assertEquals(imports.length, 1);
-      assertEquals(imports[0].path, "_vf_modules/components/Foo.js");
+      const first = imports[0];
+      assertExists(first);
+      assertEquals(first.path, "_vf_modules/components/Foo.js");
     });
 
     it("finds _vf_modules/ imports without leading slash", () => {
       const code = `import Bar from "_vf_modules/pages/Bar.js";`;
       const imports = findVfModuleImports(code);
       assertEquals(imports.length, 1);
-      assertEquals(imports[0].path, "_vf_modules/pages/Bar.js");
+      const first = imports[0];
+      assertExists(first);
+      assertEquals(first.path, "_vf_modules/pages/Bar.js");
     });
 
     it("finds multiple imports", () => {
@@ -293,7 +297,9 @@ describe("esm-module-loader/loader", { sanitizeResources: false, sanitizeOps: fa
       const code = `import { useState } from "/_vf_modules/react/hooks.js";`;
       const imports = findVfModuleImports(code);
       assertEquals(imports.length, 1);
-      assertEquals(imports[0].original.includes("_vf_modules/react/hooks.js"), true);
+      const first = imports[0];
+      assertExists(first);
+      assertEquals(first.original.includes("_vf_modules/react/hooks.js"), true);
     });
   });
 

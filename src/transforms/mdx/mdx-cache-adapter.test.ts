@@ -3,6 +3,7 @@ import { expect } from "#std/expect.ts";
 import { delay } from "#std/async.ts";
 import { MDXCacheAdapter } from "./mdx-cache-adapter.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { MDXCompilationResult } from "./mdx-cache-adapter.ts";
 import {
   type BundleManifestStore,
   InMemoryBundleManifestStore,
@@ -23,22 +24,12 @@ describe("MDXCacheAdapter", () => {
     },
   };
 
-  function createBundle(overrides: Partial<{
-    compiledCode: string;
-    frontmatter: Record<string, unknown>;
-    headings: unknown[];
-    nodeMap: Map<unknown, unknown>;
-  }> = {}): {
-    compiledCode: string;
-    frontmatter: Record<string, unknown>;
-    headings: unknown[];
-    nodeMap: Map<unknown, unknown>;
-  } {
+  function createBundle(overrides: Partial<MDXCompilationResult> = {}): MDXCompilationResult {
     return {
       compiledCode: "export default function() {}",
       frontmatter: {},
       headings: [],
-      nodeMap: new Map(),
+      nodeMap: new Map<number, unknown>(),
       ...overrides,
     };
   }

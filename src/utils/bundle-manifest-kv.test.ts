@@ -58,7 +58,7 @@ describe("KVBundleManifestStore", () => {
 
     it("setBundleCode should reject with not implemented error", async () => {
       await assertRejects(
-        () => store.setBundleCode("hash", { code: "", map: undefined }),
+        () => store.setBundleCode("hash", { code: "", sourceMap: undefined }),
         Error,
         "KV bundle manifest store not implemented",
       );

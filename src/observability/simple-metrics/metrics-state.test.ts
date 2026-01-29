@@ -19,7 +19,11 @@ describe("observability/simple-metrics/metrics-state", () => {
     it("should be sorted ascending", () => {
       const boundaries = getSSRBoundaries();
       for (let i = 1; i < boundaries.length; i++) {
-        assertEquals(boundaries[i] > boundaries[i - 1], true);
+        const current = boundaries[i];
+        const previous = boundaries[i - 1];
+        assertExists(current);
+        assertExists(previous);
+        assertEquals(current > previous, true);
       }
     });
 

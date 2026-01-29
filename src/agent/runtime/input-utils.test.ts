@@ -75,6 +75,7 @@ describe("input-utils", () => {
       const result = normalizeInput(messages as Parameters<typeof normalizeInput>[0]);
       const message = result[0];
       assertExists(message);
+      assertExists(message.timestamp);
       assertEquals(typeof message.timestamp, "number");
       assertEquals(message.timestamp > 0, true);
     });

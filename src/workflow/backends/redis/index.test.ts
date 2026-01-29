@@ -44,6 +44,17 @@ class MockRedisAdapter implements RedisAdapter {
     return Promise.resolve(Object.fromEntries(map));
   }
 
+  hdel(key: string, ...fields: string[]): Promise<number> {
+    const map = this.hashes.get(key);
+    if (!map) return Promise.resolve(0);
+    let removed = 0;
+    for (const field of fields) {
+      if (map.delete(field)) removed++;
+    }
+    if (map.size === 0) this.hashes.delete(key);
+    return Promise.resolve(removed);
+  }
+
   sadd(key: string, ...members: string[]): Promise<number> {
     if (!this.sets.has(key)) this.sets.set(key, new Set());
     const set = this.sets.get(key)!;
@@ -132,6 +143,11 @@ class MockRedisAdapter implements RedisAdapter {
     return Promise.resolve("OK");
   }
 
+  llen(key: string): Promise<number> {
+    const list = this.lists.get(key);
+    return Promise.resolve(list?.length ?? 0);
+  }
+
   keys(pattern: string): Promise<string[]> {
     const prefix = pattern.replace("*", "");
     const all: string[] = [];
@@ -167,12 +183,12 @@ class MockRedisAdapter implements RedisAdapter {
       count?: number;
     },
   ): Promise<
-    Array<{ key: string; messages: Array<{ id: string; data: Record<string, string> }> }> | null
+    Array<{ key: string; messages: Array<{ id: string; data: Record<string, string> }> }>
   > {
     const streamKey = _streams[0]?.key;
-    if (!streamKey) return Promise.resolve(null);
+    if (!streamKey) return Promise.resolve([]);
     const streamData = this.streams.get(streamKey);
-    if (!streamData || streamData.length === 0) return Promise.resolve(null);
+    if (!streamData || streamData.length === 0) return Promise.resolve([]);
     const msg = streamData.shift()!;
     return Promise.resolve([{ key: streamKey, messages: [{ id: msg.id, data: msg.data }] }]);
   }
@@ -186,6 +202,10 @@ class MockRedisAdapter implements RedisAdapter {
     return Promise.resolve("OK");
   }
 
+  xack(_key: string, _group: string, ...ids: string[]): Promise<number> {
+    return Promise.resolve(ids.length);
+  }
+
   scan(
     _cursor: number,
     _options?: { MATCH?: string; COUNT?: number },
@@ -193,8 +213,13 @@ class MockRedisAdapter implements RedisAdapter {
     return Promise.resolve({ cursor: 0, keys: [] });
   }
 
-  quit(): void {}
-  disconnect(): void {}
+  quit(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  disconnect(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -293,14 +318,14 @@ describe("RedisBackend", () => {
     it("should serialize output and error as JSON", async () => {
       const run = createTestRun("run-output", {
         output: { result: "hello" },
-        error: { message: "boom", code: "ERR" },
+        error: { message: "boom" },
       });
       await backend.createRun(run);
 
       const retrieved = await backend.getRun("run-output");
       assertExists(retrieved);
       assertEquals(retrieved.output, { result: "hello" });
-      assertEquals(retrieved.error, { message: "boom", code: "ERR" });
+      assertEquals(retrieved.error, { message: "boom" });
     });
   });
 
@@ -432,9 +457,9 @@ describe("RedisBackend", () => {
     const makeApproval = (id: string): PendingApproval => ({
       id,
       nodeId: "wait-node",
-      type: "human",
       status: "pending",
       message: "Approve this?",
+      payload: { reason: "test" },
       requestedAt: new Date("2025-01-01T00:00:00Z"),
     });
 
@@ -480,7 +505,7 @@ describe("RedisBackend", () => {
     it("should throw when updating non-existent approval", async () => {
       await backend.createRun(createTestRun("run-ap5"));
       await assertRejects(
-        () => backend.updateApproval("run-ap5", "no-such", { approved: false }),
+        () => backend.updateApproval("run-ap5", "no-such", { approved: false, approver: "admin" }),
         Error,
         "Approval not found",
       );
@@ -661,9 +686,9 @@ describe("RedisBackend", () => {
       await backend.savePendingApproval("run-lpa1", {
         id: "ap-x",
         nodeId: "n",
-        type: "human",
         status: "pending",
         message: "yes?",
+        payload: { reason: "test" },
         requestedAt: new Date(),
       });
 

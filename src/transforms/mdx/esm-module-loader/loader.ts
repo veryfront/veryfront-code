@@ -13,7 +13,11 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { getErrorCollector } from "#veryfront/cli/mcp/error-collector.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import {
+  ensureCacheNodeModules,
+  getHttpBundleCacheDir,
+  getMdxEsmCacheDir,
+} from "#veryfront/utils/cache-dir.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
@@ -582,6 +586,9 @@ async function doLoadModuleESM(
     });
 
     setupSSRGlobals();
+
+    // Ensure bare specifiers (e.g. 'react') resolve from cache dir on Node.js
+    await ensureCacheNodeModules();
 
     // Proactively ensure all HTTP bundles exist before import
     // This is more reliable than fail-then-recover: check first, don't wait for import to fail

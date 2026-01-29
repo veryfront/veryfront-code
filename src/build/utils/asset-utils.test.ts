@@ -1,5 +1,6 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { OptimizedImageMetadata } from "../asset-pipeline/image-optimizer/types.ts";
 import {
   calculateAspectRatio,
   generateSrcSet,
@@ -63,7 +64,7 @@ describe("build/utils/asset-utils", () => {
 
   describe("generateSrcSet", () => {
     it("should generate srcset string from variants", () => {
-      const metadata = {
+      const metadata: OptimizedImageMetadata = {
         original: "hero.jpg",
         defaultFormat: "webp",
         aspectRatio: 4 / 3,
@@ -100,7 +101,7 @@ describe("build/utils/asset-utils", () => {
     });
 
     it("should filter by specified format", () => {
-      const metadata = {
+      const metadata: OptimizedImageMetadata = {
         original: "img.jpg",
         defaultFormat: "webp",
         aspectRatio: 4 / 3,
@@ -131,7 +132,7 @@ describe("build/utils/asset-utils", () => {
 
   describe("getImageDimensions", () => {
     it("should return dimensions of default format variant", () => {
-      const metadata = {
+      const metadata: OptimizedImageMetadata = {
         original: "img.jpg",
         defaultFormat: "webp",
         aspectRatio: 4 / 3,
@@ -160,7 +161,7 @@ describe("build/utils/asset-utils", () => {
     });
 
     it("should fallback to first variant", () => {
-      const metadata = {
+      const metadata: OptimizedImageMetadata = {
         original: "img.jpg",
         defaultFormat: "png",
         aspectRatio: 4 / 3,
@@ -181,7 +182,7 @@ describe("build/utils/asset-utils", () => {
     });
 
     it("should throw if no variants", () => {
-      const metadata = {
+      const metadata: OptimizedImageMetadata = {
         original: "img.jpg",
         defaultFormat: "webp",
         aspectRatio: 1,

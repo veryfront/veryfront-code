@@ -63,12 +63,13 @@ describe("watcher-queue", () => {
       const promise = iterator.next();
 
       // The resolver should have been set
-      if (!resolver) {
-        throw new Error("Expected resolver to be set");
-      }
+      const resolve = resolver ??
+        ((_value: IteratorResult<FileChangeEvent>) => {
+          throw new Error("Expected resolver to be set");
+        });
 
       // Resolve it manually
-      resolver({ done: false, value: makeEvent("modify", ["/c.ts"]) });
+      resolve({ done: false, value: makeEvent("modify", ["/c.ts"]) });
 
       const result = await promise;
       assertEquals(result.done, false);

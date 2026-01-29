@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   computeIntegrity,
@@ -50,25 +50,33 @@ describe("import-lockfile", () => {
       const code = `import { foo } from "react";\nimport bar from "./bar.ts";`;
       const imports = extractImports(code);
       assertEquals(imports.length, 2);
-      assertEquals(imports[0].specifier, "react");
-      assertEquals(imports[0].type, "static");
-      assertEquals(imports[1].specifier, "./bar.ts");
+      const first = imports[0];
+      const second = imports[1];
+      assertExists(first);
+      assertExists(second);
+      assertEquals(first.specifier, "react");
+      assertEquals(first.type, "static");
+      assertEquals(second.specifier, "./bar.ts");
     });
 
     it("should extract dynamic imports", () => {
       const code = `const mod = await import("./dynamic.ts");`;
       const imports = extractImports(code);
       assertEquals(imports.length, 1);
-      assertEquals(imports[0].specifier, "./dynamic.ts");
-      assertEquals(imports[0].type, "dynamic");
+      const first = imports[0];
+      assertExists(first);
+      assertEquals(first.specifier, "./dynamic.ts");
+      assertEquals(first.type, "dynamic");
     });
 
     it("should extract export-from statements", () => {
       const code = `export { foo } from "./foo.ts";`;
       const imports = extractImports(code);
       assertEquals(imports.length, 1);
-      assertEquals(imports[0].specifier, "./foo.ts");
-      assertEquals(imports[0].type, "static");
+      const first = imports[0];
+      assertExists(first);
+      assertEquals(first.specifier, "./foo.ts");
+      assertEquals(first.type, "static");
     });
 
     it("should deduplicate specifiers", () => {

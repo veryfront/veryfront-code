@@ -1,11 +1,25 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { VeryfrontRenderer } from "#veryfront/rendering/index.ts";
 import type { BuildExecutorOptions, BuildResult } from "./build-executor.ts";
+
+const baseConfig: VeryfrontConfig = {};
+
+function createRenderer(): VeryfrontRenderer {
+  return new VeryfrontRenderer({
+    projectDir: "/path/to/project",
+    mode: "development",
+    adapter: createMockAdapter(),
+    config: baseConfig,
+  });
+}
 
 describe("BuildExecutor", () => {
   describe("BuildExecutorOptions", () => {
     it("should require adapter", () => {
-      const options: Partial<BuildExecutorOptions> = { adapter: {} };
+      const options: Partial<BuildExecutorOptions> = { adapter: createMockAdapter() };
       assertExists(options.adapter);
     });
 
@@ -24,12 +38,12 @@ describe("BuildExecutor", () => {
     });
 
     it("should require renderer", () => {
-      const options: Partial<BuildExecutorOptions> = { renderer: {} };
+      const options: Partial<BuildExecutorOptions> = { renderer: createRenderer() };
       assertExists(options.renderer);
     });
 
     it("should require config", () => {
-      const options: Partial<BuildExecutorOptions> = { config: {} };
+      const options: Partial<BuildExecutorOptions> = { config: baseConfig };
       assertExists(options.config);
     });
 

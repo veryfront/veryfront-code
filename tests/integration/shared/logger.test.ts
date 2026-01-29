@@ -464,12 +464,14 @@ describe("Logger", () => {
 
     it("includes logger prefix in output", async () => {
       const prevLV = getEnv("LOG_LEVEL");
+      const prevFmt = getEnv("LOG_FORMAT");
       const orig = { log: console.log };
       const messages: string[] = [];
       console.log = (msg: string) => messages.push(msg);
 
       try {
         setEnv("LOG_LEVEL", "INFO");
+        setEnv("LOG_FORMAT", "text");
         const mod = await importSharedLogger(`ts=${Date.now()}-prefix`);
 
         messages.length = 0;
@@ -482,6 +484,8 @@ describe("Logger", () => {
       } finally {
         if (prevLV === undefined) deleteEnv("LOG_LEVEL");
         else setEnv("LOG_LEVEL", prevLV);
+        if (prevFmt === undefined) deleteEnv("LOG_FORMAT");
+        else setEnv("LOG_FORMAT", prevFmt);
         console.log = orig.log;
       }
     });

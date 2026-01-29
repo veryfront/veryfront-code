@@ -1,11 +1,12 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { subWorkflow } from "./sub-workflow.ts";
+import type { WorkflowDefinition } from "../types.ts";
 
 describe("workflow/dsl/sub-workflow", () => {
   describe("subWorkflow", () => {
     it("should create a sub-workflow node", () => {
-      const dummyWorkflow = { name: "child", steps: [] };
+      const dummyWorkflow = { id: "child", steps: [] };
       const node = subWorkflow("nested", {
         workflow: dummyWorkflow,
       });
@@ -15,7 +16,7 @@ describe("workflow/dsl/sub-workflow", () => {
 
     it("should throw for empty id", () => {
       assertThrows(
-        () => subWorkflow("", { workflow: { name: "w", steps: [] } }),
+        () => subWorkflow("", { workflow: { id: "w", steps: [] } }),
         Error,
         "non-empty",
       );
@@ -25,7 +26,7 @@ describe("workflow/dsl/sub-workflow", () => {
       assertThrows(
         () =>
           subWorkflow("test", {
-            workflow: undefined as unknown as { name: string; steps: [] },
+            workflow: undefined as unknown as WorkflowDefinition,
           }),
         Error,
         "workflow",
@@ -34,7 +35,7 @@ describe("workflow/dsl/sub-workflow", () => {
 
     it("should pass through optional config", () => {
       const node = subWorkflow("nested", {
-        workflow: { name: "w", steps: [] },
+        workflow: { id: "w", steps: [] },
         checkpoint: true,
         timeout: "30s",
       });

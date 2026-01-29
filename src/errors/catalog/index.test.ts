@@ -39,6 +39,7 @@ describe("errors/catalog/index", () => {
         const first = entries[0];
         assertExists(first);
         const word = first.title.split(" ")[0];
+        assertExists(word);
         const results = searchErrors(word);
         assertEquals(results.length > 0, true);
       }
@@ -50,6 +51,7 @@ describe("errors/catalog/index", () => {
         const first = entries[0];
         assertExists(first);
         const word = first.title.split(" ")[0];
+        assertExists(word);
         const lower = searchErrors(word.toLowerCase());
         const upper = searchErrors(word.toUpperCase());
         assertEquals(lower.length, upper.length);
@@ -66,6 +68,7 @@ describe("errors/catalog/index", () => {
         const firstStep = entry.steps?.[0];
         assertExists(firstStep);
         const stepWord = firstStep.split(" ")[0];
+        assertExists(stepWord);
         const results = searchErrors(stepWord);
         assertEquals(results.length > 0, true);
       }

@@ -101,7 +101,7 @@ describe("stream-handler", () => {
       const { controller } = createMockController();
 
       handleStreamEvent(
-        { type: "tool_call_start", toolCall: { id: "tc1", name: "search", index: 0 } },
+        { type: "tool_call_start", toolCall: { id: "tc1", name: "search" } },
         state,
         controller,
         encoder,
@@ -123,14 +123,14 @@ describe("stream-handler", () => {
       state.toolCalls.set("tc1", { id: "tc1", name: "search", arguments: "" });
 
       handleStreamEvent(
-        { type: "tool_call_delta", id: "tc1", index: 0, arguments: '{"q":' },
+        { type: "tool_call_delta", id: "tc1", arguments: '{"q":' },
         state,
         controller,
         encoder,
         undefined,
       );
       handleStreamEvent(
-        { type: "tool_call_delta", id: "tc1", index: 0, arguments: '"hello"}' },
+        { type: "tool_call_delta", id: "tc1", arguments: '"hello"}' },
         state,
         controller,
         encoder,
@@ -149,7 +149,7 @@ describe("stream-handler", () => {
       handleStreamEvent(
         {
           type: "tool_call_complete",
-          toolCall: { id: "tc2", name: "calc", index: 0, arguments: '{"x":1}' },
+          toolCall: { id: "tc2", name: "calc", arguments: '{"x":1}' },
         },
         state,
         controller,
@@ -198,8 +198,8 @@ describe("stream-handler", () => {
         },
       );
 
-      assertEquals(receivedUsage !== null, true);
-      assertEquals(receivedUsage?.promptTokens, 10);
+      const usage = receivedUsage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      assertEquals(usage.promptTokens, 10);
     });
 
     it("ignores tool_call_start with no id", () => {
@@ -207,7 +207,7 @@ describe("stream-handler", () => {
       const { controller, chunks: _chunks } = createMockController();
 
       handleStreamEvent(
-        { type: "tool_call_start", toolCall: { id: "", name: "x", index: 0 } } as Parameters<
+        { type: "tool_call_start", toolCall: { id: "", name: "x" } } as Parameters<
           typeof handleStreamEvent
         >[0],
         state,
@@ -225,7 +225,7 @@ describe("stream-handler", () => {
       const { controller, chunks } = createMockController();
 
       handleStreamEvent(
-        { type: "tool_call_delta", id: "unknown", index: 0, arguments: "data" },
+        { type: "tool_call_delta", id: "unknown", arguments: "data" },
         state,
         controller,
         encoder,

@@ -46,6 +46,8 @@ describe("Proxy-Renderer Mode Parity", () => {
           isVeryfrontDomain: true,
           environment: "preview",
           branch: null,
+          isDraft: true,
+          allowIframeEmbed: true,
         },
         isLocalProject: false,
       };
@@ -78,6 +80,8 @@ describe("Proxy-Renderer Mode Parity", () => {
           isVeryfrontDomain: false,
           environment: null,
           branch: null,
+          isDraft: false,
+          allowIframeEmbed: false,
         },
         isLocalProject: false,
       };
@@ -108,6 +112,8 @@ describe("Proxy-Renderer Mode Parity", () => {
           isVeryfrontDomain: true,
           environment: "preview",
           branch: null,
+          isDraft: true,
+          allowIframeEmbed: true,
         },
         isLocalProject: true,
       };
@@ -131,6 +137,8 @@ describe("Proxy-Renderer Mode Parity", () => {
           isVeryfrontDomain: true,
           environment: null,
           branch: null,
+          isDraft: false,
+          allowIframeEmbed: true,
         },
         isLocalProject: false,
       };
@@ -153,6 +161,8 @@ describe("Proxy-Renderer Mode Parity", () => {
           isVeryfrontDomain: true,
           environment: "preview",
           branch: null,
+          isDraft: true,
+          allowIframeEmbed: true,
         },
         isLocalProject: false,
       };

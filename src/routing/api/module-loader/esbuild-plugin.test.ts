@@ -1,6 +1,35 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
+import * as esbuild from "esbuild";
+import type { OnResolveArgs, PluginBuild, ResolveResult } from "esbuild";
+
+function createMockBuild(
+  onResolve: PluginBuild["onResolve"],
+  onLoad: PluginBuild["onLoad"],
+): PluginBuild {
+  const resolveResult: ResolveResult = {
+    errors: [],
+    warnings: [],
+    path: "",
+    external: false,
+    sideEffects: false,
+    namespace: "",
+    suffix: "",
+    pluginData: null,
+  };
+
+  return {
+    initialOptions: {},
+    resolve: () => Promise.resolve(resolveResult),
+    onStart: () => {},
+    onEnd: () => {},
+    onResolve,
+    onLoad,
+    onDispose: () => {},
+    esbuild,
+  };
+}
 
 describe("routing/api/module-loader/esbuild-plugin", () => {
   describe("createHTTPPlugin()", () => {
@@ -33,16 +62,16 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       const resolveHandlers: Array<{ filter: RegExp }> = [];
       const loadHandlers: Array<{ filter: RegExp; namespace?: string }> = [];
 
-      const mockBuild = {
-        onResolve: (opts: { filter: RegExp }, _fn: unknown) => {
+      const mockBuild = createMockBuild(
+        (opts, _fn) => {
           resolveHandlers.push(opts);
         },
-        onLoad: (opts: { filter: RegExp; namespace?: string }, _fn: unknown) => {
+        (opts, _fn) => {
           loadHandlers.push(opts);
         },
-      };
+      );
 
-      plugin.setup(mockBuild as unknown as Parameters<typeof plugin.setup>[0]);
+      plugin.setup(mockBuild);
 
       // Should register multiple onResolve handlers
       assertEquals(resolveHandlers.length >= 3, true);
@@ -54,14 +83,14 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       const plugin = createHTTPPlugin([]);
 
       const resolveFilters: RegExp[] = [];
-      const mockBuild = {
-        onResolve: (opts: { filter: RegExp }, _fn: unknown) => {
+      const mockBuild = createMockBuild(
+        (opts, _fn) => {
           resolveFilters.push(opts.filter);
         },
-        onLoad: () => {},
-      };
+        () => {},
+      );
 
-      plugin.setup(mockBuild as Parameters<typeof plugin.setup>[0]);
+      plugin.setup(mockBuild);
 
       // First resolver should match http/https URLs
       const httpFilter = resolveFilters[0];
@@ -74,14 +103,14 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       const plugin = createHTTPPlugin([]);
 
       const resolveFilters: RegExp[] = [];
-      const mockBuild = {
-        onResolve: (opts: { filter: RegExp }, _fn: unknown) => {
+      const mockBuild = createMockBuild(
+        (opts, _fn) => {
           resolveFilters.push(opts.filter);
         },
-        onLoad: () => {},
-      };
+        () => {},
+      );
 
-      plugin.setup(mockBuild as unknown as Parameters<typeof plugin.setup>[0]);
+      plugin.setup(mockBuild);
 
       // Second resolver should match react/jsx-runtime
       const reactFilter = resolveFilters[1];
@@ -94,14 +123,14 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       const plugin = createHTTPPlugin([]);
 
       const resolveFilters: RegExp[] = [];
-      const mockBuild = {
-        onResolve: (opts: { filter: RegExp }, _fn: unknown) => {
+      const mockBuild = createMockBuild(
+        (opts, _fn) => {
           resolveFilters.push(opts.filter);
         },
-        onLoad: () => {},
-      };
+        () => {},
+      );
 
-      plugin.setup(mockBuild as unknown as Parameters<typeof plugin.setup>[0]);
+      plugin.setup(mockBuild);
 
       // Third resolver should match node: builtins and bare specifiers
       const nodeFilter = resolveFilters[2];
@@ -118,25 +147,29 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
 
       const resolvers: Array<{
         filter: RegExp;
-        fn: (args: { path: string; namespace?: string; importer?: string }) => unknown;
+        fn: (args: OnResolveArgs) => unknown;
       }> = [];
-      const mockBuild = {
-        onResolve: (
-          opts: { filter: RegExp },
-          fn: (args: { path: string; namespace?: string; importer?: string }) => unknown,
-        ) => {
+      const mockBuild = createMockBuild(
+        (opts, fn) => {
           resolvers.push({ filter: opts.filter, fn });
         },
-        onLoad: () => {},
-      };
+        () => {},
+      );
 
-      plugin.setup(mockBuild as unknown as Parameters<typeof plugin.setup>[0]);
+      plugin.setup(mockBuild);
 
       // Find the HTTP URL resolver (first one, matching http/https)
       const httpResolver = resolvers.find((r) => r.filter.test("https://esm.sh/react"));
       assertExists(httpResolver);
 
-      const result = httpResolver.fn({ path: "https://esm.sh/react" });
+      const result = httpResolver.fn({
+        path: "https://esm.sh/react",
+        importer: "",
+        namespace: "",
+        resolveDir: "",
+        kind: "import-statement",
+        pluginData: undefined,
+      });
       assertEquals((result as { path: string }).path, "https://esm.sh/react");
       assertEquals((result as { namespace: string }).namespace, "http-url");
     });

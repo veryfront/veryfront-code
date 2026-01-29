@@ -175,38 +175,33 @@ describe("LayoutCollector", () => {
   });
 
   describe("layout frontmatter handling", () => {
+    const isLayoutDisabled = (value: string | boolean | undefined) =>
+      value === false || value === "false";
+    const hasExplicitLayout = (value: string | boolean | undefined) =>
+      typeof value === "string" && value.length > 0;
+
     it("should treat layout:false as disabled", () => {
-      const layoutValue: string | boolean | undefined = false;
-      assertEquals(layoutValue === false || layoutValue === "false", true);
+      assertEquals(isLayoutDisabled(false), true);
     });
 
     it("should treat layout:'false' string as disabled", () => {
-      const layoutValue: string | boolean | undefined = "false";
-      assertEquals(layoutValue === false || layoutValue === "false", true);
+      assertEquals(isLayoutDisabled("false"), true);
     });
 
     it("should detect explicit frontmatter layout", () => {
-      const layoutValue: string | boolean | undefined = "main";
-      const hasExplicit = typeof layoutValue === "string" ? layoutValue.length > 0 : false;
-      assertEquals(hasExplicit, true);
+      assertEquals(hasExplicitLayout("main"), true);
     });
 
     it("should not detect empty string as explicit layout", () => {
-      const layoutValue: string | boolean | undefined = "";
-      const hasExplicit = typeof layoutValue === "string" ? layoutValue.length > 0 : false;
-      assertEquals(hasExplicit, false);
+      assertEquals(hasExplicitLayout(""), false);
     });
 
     it("should not detect undefined as explicit layout", () => {
-      const layoutValue: string | boolean | undefined = undefined;
-      const hasExplicit = typeof layoutValue === "string" ? layoutValue.length > 0 : false;
-      assertEquals(hasExplicit, false);
+      assertEquals(hasExplicitLayout(undefined), false);
     });
 
     it("should not detect true as explicit layout", () => {
-      const layoutValue: string | boolean | undefined = true;
-      const hasExplicit = typeof layoutValue === "string" ? layoutValue.length > 0 : false;
-      assertEquals(hasExplicit, false);
+      assertEquals(hasExplicitLayout(true), false);
     });
   });
 
