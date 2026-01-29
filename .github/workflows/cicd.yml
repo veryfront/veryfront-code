@@ -228,11 +228,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ env.GITHUB_PAT }}
 
-      - name: Create GitHub Release (source repo)
+      - name: Create GitHub Pre-release (source repo)
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: v${{ steps.version.outputs.version }}
+          prerelease: true
           body: |
             ```bash
             npx veryfront@${{ steps.version.outputs.version }}
