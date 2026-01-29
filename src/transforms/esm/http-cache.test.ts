@@ -203,6 +203,40 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       }
     });
 
+    it("detects missing transitive deps in locally-present bundles (plucky-bohr repro)", async () => {
+      // Reproduces the production bug: http-725215427.mjs exists locally but
+      // imports http-57259823.mjs which does NOT exist. ensureHttpBundlesExist
+      // was skipping transitive scanning for already-present bundles, so the
+      // missing dep was never discovered until import() failed at runtime.
+      const bundleDir = await makeTempDir({ prefix: "vf-veryfront-http-bundle-" });
+      try {
+        // Bundle A exists locally and imports Bundle B via file:// path
+        // The regex requires "veryfront-http-bundle/" in the path
+        await writeTextFile(
+          join(bundleDir, "http-725215427.mjs"),
+          `import { jsx } from "file://${bundleDir}/veryfront-http-bundle/http-57259823.mjs";\nexport default function() { return jsx("div"); }`,
+        );
+        // Bundle B does NOT exist locally (never created on this pod)
+
+        const failed = await ensureHttpBundlesExist([
+          { path: join(bundleDir, "http-725215427.mjs"), hash: "725215427" },
+        ], bundleDir);
+
+        // Before fix: failed = [] because 725215427 exists locally, transitive
+        // dep 57259823 was never checked, and import() would crash at runtime.
+        // After fix: failed = ["57259823"] because the locally-present bundle
+        // is scanned for transitive deps, discovering the missing 57259823.
+        assert(
+          failed.includes("57259823"),
+          `Should detect missing transitive dep 57259823, got: [${failed.join(", ")}]`,
+        );
+      } finally {
+        try {
+          await remove(bundleDir, { recursive: true });
+        } catch { /* ignore */ }
+      }
+    });
+
     it("handles mix of existing and missing bundles", async () => {
       await setupTempDir();
       try {

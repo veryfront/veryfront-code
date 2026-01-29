@@ -734,7 +734,22 @@ export async function ensureHttpBundlesExist(
       })),
     );
 
+    const presentLocally = existenceChecks.filter((b) => b.exists);
     const missing = existenceChecks.filter((b) => !b.exists);
+
+    // Scan locally-present bundles for transitive deps that may be missing.
+    // A bundle can exist on this pod while its transitive dependency does not
+    // (e.g., Pod A created bundle X which imports bundle Y; Pod B has X from
+    // a previous transform but never created Y).
+    for (const { canonicalPath } of presentLocally) {
+      try {
+        const code = await fs.readTextFile(canonicalPath);
+        for (const ref of extractBundleRefs(code)) {
+          if (!seen.has(ref.hash)) pending.push(ref);
+        }
+      } catch { /* ignore read errors for dep scanning */ }
+    }
+
     if (missing.length === 0) continue;
 
     logger.info("[HTTP-CACHE] Fetching missing bundles from distributed cache", {
