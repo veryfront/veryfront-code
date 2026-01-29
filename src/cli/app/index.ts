@@ -960,13 +960,32 @@ export function createApp(config: AppConfig): App {
       update(navigateTo("resources"));
       return;
     }
+    // Tab: cycle through main tabs (forward)
+    if (key === "\t") {
+      const tabs = ["dashboard", "new-project", "code", "resources"] as const;
+      const currentIndex = tabs.indexOf(state.view as typeof tabs[number]);
+      const nextIndex = (currentIndex + 1) % tabs.length;
+      const nextTab = tabs[nextIndex];
+      if (nextTab) {
+        if (nextTab === "new-project") {
+          state = { ...state, newProjectIndex: 0 };
+        }
+        update(navigateTo(nextTab));
+      }
+      return;
+    }
     // Shift+Tab: cycle backwards through main tabs
     if (key === "\x1b[Z") {
       const tabs = ["dashboard", "new-project", "code", "resources"] as const;
       const currentIndex = tabs.indexOf(state.view as typeof tabs[number]);
       const prevIndex = currentIndex <= 0 ? tabs.length - 1 : currentIndex - 1;
       const prevTab = tabs[prevIndex];
-      if (prevTab) update(navigateTo(prevTab));
+      if (prevTab) {
+        if (prevTab === "new-project") {
+          state = { ...state, newProjectIndex: 0 };
+        }
+        update(navigateTo(prevTab));
+      }
       return;
     }
 
@@ -1138,7 +1157,8 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
-    if (key === "\t") {
+    // Ctrl+N: cycle through dashboard sections (Local/Remote/Templates/Examples)
+    if (key === "\x0e") {
       const hasProjects = state.projects.items.length > 0;
       const hasTemplates = state.templates.items.length > 0;
       const hasExamples = state.examples.items.length > 0;
