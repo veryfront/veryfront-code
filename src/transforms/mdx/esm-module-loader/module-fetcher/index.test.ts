@@ -2,7 +2,12 @@
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createModuleFetcherContext, endRenderSession, rewriteDntImports, startRenderSession } from "./index.ts";
+import {
+  createModuleFetcherContext,
+  endRenderSession,
+  rewriteDntImports,
+  startRenderSession,
+} from "./index.ts";
 import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
 import { HASH_SEED_FNV1A } from "../constants.ts";
 

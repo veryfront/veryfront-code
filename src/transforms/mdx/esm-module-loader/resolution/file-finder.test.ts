@@ -43,7 +43,7 @@ describe("resolveModuleFile", () => {
       ...mockAdapter,
       fs: {
         ...mockAdapter.fs,
-        resolveFile: async (_path: string) => {
+        resolveFile: (_path: string) => {
           resolveFileCalled = true;
           return null;
         },
@@ -51,9 +51,17 @@ describe("resolveModuleFile", () => {
     };
 
     // Framework paths should skip the API adapter entirely
-    const result = await resolveModuleFile("_vf_modules/react/router/index.js", trackingAdapter as any, "/project");
+    const result = await resolveModuleFile(
+      "_vf_modules/react/router/index.js",
+      trackingAdapter as any,
+      "/project",
+    );
     assertExists(result, "Should resolve framework path locally");
-    assertEquals(resolveFileCalled, false, "Should NOT call adapter.fs.resolveFile for framework paths");
+    assertEquals(
+      resolveFileCalled,
+      false,
+      "Should NOT call adapter.fs.resolveFile for framework paths",
+    );
   });
 
   it("calls adapter.fs.resolveFile for project paths", async () => {
@@ -62,7 +70,7 @@ describe("resolveModuleFile", () => {
       ...mockAdapter,
       fs: {
         ...mockAdapter.fs,
-        resolveFile: async (_path: string) => {
+        resolveFile: (_path: string) => {
           resolveFileCalled = true;
           return null;
         },

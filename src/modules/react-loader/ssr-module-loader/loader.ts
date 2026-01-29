@@ -160,7 +160,11 @@ export class SSRModuleLoader {
                   `file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}&retry=1`
                 ) as Record<string, unknown>;
               } else {
-                logger.error("[SSR-MODULE-LOADER] HTTP bundle recovery failed", {
+                // Recovery failed — invalidate cache so the next request triggers
+                // a fresh transform instead of hitting the same broken entry.
+                const cacheKey = this.getCacheKey(filePath);
+                globalModuleCache.delete(cacheKey);
+                logger.error("[SSR-MODULE-LOADER] HTTP bundle recovery failed, cache invalidated", {
                   hash,
                   file: filePath.slice(-40),
                   cacheDir,
@@ -824,13 +828,25 @@ export class SSRModuleLoader {
           const cacheDir = getHttpBundleCacheDir();
           const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
           if (failed.length > 0) {
-            logger.warn("[SSR-MODULE-LOADER] Unrecoverable HTTP bundles", {
+            logger.error("[SSR-MODULE-LOADER] Unrecoverable HTTP bundles", {
               file: filePath.slice(-40),
               failed,
               totalBundles: bundlePaths.length,
               cacheDir,
               source: "fresh-transform",
             });
+            throw toError(
+              createError({
+                type: "build",
+                message: `Missing HTTP bundles after transform (${failed.length}).`,
+                context: {
+                  file: filePath,
+                  phase: "http-bundle-validation",
+                  failed,
+                  cacheDir,
+                },
+              }),
+            );
           }
         }
 

@@ -22,6 +22,7 @@ import {
   ssrHttpCachePlugin,
   ssrHttpStubPlugin,
 } from "./stages/index.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
 const SSR_PIPELINE: TransformPlugin[] = [
   parsePlugin,
@@ -162,7 +163,7 @@ export async function transformToESM(
   // Extract readFile from adapter for dependency tracking
   const enrichedOptions = options.readFile ? options : {
     ...options,
-    readFile: extractReadFile(adapter),
+    readFile: buildReadFile(adapter, projectDir),
   };
 
   const { code } = await runPipeline(source, filePath, projectDir, enrichedOptions);
@@ -173,6 +174,44 @@ export async function transformToESM(
 function extractReadFile(adapter: unknown): ((path: string) => Promise<string>) | undefined {
   const a = adapter as { fs?: { readFile?: (path: string) => Promise<string> } } | null;
   return typeof a?.fs?.readFile === "function" ? (p: string) => a.fs!.readFile!(p) : undefined;
+}
+
+/**
+ * Build a readFile helper that avoids routing local framework paths
+ * through the remote adapter.
+ *
+ * This prevents API fetches for file:// or absolute paths outside projectDir
+ * (e.g. framework files under /usr/local/lib/node_modules/veryfront).
+ */
+function buildReadFile(
+  adapter: unknown,
+  projectDir: string,
+): (path: string) => Promise<string> {
+  const adapterRead = extractReadFile(adapter);
+  const fs = createFileSystem();
+  const normalizedProjectDir = projectDir.replace(/\/+$/, "");
+
+  return async (path: string): Promise<string> => {
+    let normalizedPath = path;
+    if (normalizedPath.startsWith("file://")) {
+      normalizedPath = normalizedPath.slice("file://".length);
+    }
+
+    const isAbsolute = normalizedPath.startsWith("/");
+    const isOutsideProject = isAbsolute &&
+      normalizedProjectDir.length > 0 &&
+      !normalizedPath.startsWith(normalizedProjectDir);
+
+    if (isOutsideProject) {
+      return await fs.readTextFile(normalizedPath);
+    }
+
+    if (adapterRead) {
+      return await adapterRead(normalizedPath);
+    }
+
+    return await fs.readTextFile(normalizedPath);
+  };
 }
 
 export function getDefaultPlugins(ssr: boolean): TransformPlugin[] {

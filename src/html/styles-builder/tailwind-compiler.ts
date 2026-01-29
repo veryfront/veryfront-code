@@ -803,6 +803,16 @@ export async function generateTailwindCSS(
 export function formatCSSError(error: Error | string): CSSErrorInfo {
   const msg = typeof error === "string" ? error : error.message;
 
+  if (msg.includes("does not accept options")) {
+    const pluginMatch = msg.match(/"([^"]+)"/);
+    const pluginName = pluginMatch?.[1] ?? "unknown plugin";
+    return {
+      title: "Plugin Options Not Supported",
+      message: `${pluginName} does not accept options in Tailwind CSS v4`,
+      suggestion: `Remove the options block from @plugin. Use: @plugin "${pluginName}";`,
+    };
+  }
+
   if (msg.includes("Could not resolve") || msg.includes("Failed to load plugin")) {
     const pluginMatch = msg.match(/plugin\s*["']([^"']+)["']/i) || msg.match(/"([^"]+)"/);
     const pluginName = pluginMatch?.[1] ?? "unknown";
