@@ -33,7 +33,7 @@ describe("security/path-validation/canonical", () => {
           stat: (_path: string) =>
             Promise.resolve({ isSymlink: true, isDirectory: false, isFile: true, size: 0 }),
         },
-      } as Parameters<typeof getCanonicalPath>[1];
+      } as unknown as Parameters<typeof getCanonicalPath>[1];
 
       const result = await getCanonicalPath("/some/path", mockAdapter, true);
       assertEquals(result.isSymlink, true);
@@ -44,7 +44,7 @@ describe("security/path-validation/canonical", () => {
         fs: {
           stat: () => Promise.reject(new Error("not found")),
         },
-      } as Parameters<typeof getCanonicalPath>[1];
+      } as unknown as Parameters<typeof getCanonicalPath>[1];
 
       const result = await getCanonicalPath("/some/path", mockAdapter, true);
       assertEquals(result.path, "/some/path");

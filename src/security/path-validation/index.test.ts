@@ -86,7 +86,7 @@ describe("security/path-validation/index", () => {
         fs: {
           stat: () => Promise.reject(new Error("ENOENT")),
         },
-      } as Parameters<typeof validatePath>[1]["adapter"];
+      } as unknown as Parameters<typeof validatePath>[1]["adapter"];
 
       const result = await validatePath("src/missing.ts", {
         baseDir: "/project",

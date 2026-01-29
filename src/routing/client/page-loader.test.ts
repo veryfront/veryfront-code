@@ -12,9 +12,17 @@ function makeRouteData(overrides: Partial<RouteData> = {}): RouteData {
 
 function makeSpaPageData(overrides: Partial<SpaPageData> = {}): SpaPageData {
   return {
-    page: "index",
+    slug: "index",
+    pagePath: "/pages/index.tsx",
+    pageType: "tsx",
+    layouts: [],
+    providers: [],
+    frontmatter: {},
+    props: {},
+    params: {},
+    layoutProps: {},
     ...overrides,
-  } as SpaPageData;
+  };
 }
 
 describe("routing/client/page-loader", () => {
@@ -102,10 +110,10 @@ describe("routing/client/page-loader", () => {
       const loader = new PageLoader();
 
       for (let i = 0; i < 50; i++) {
-        loader.setSpaCache(`/spa-${i}`, makeSpaPageData({ page: `page-${i}` }));
+        loader.setSpaCache(`/spa-${i}`, makeSpaPageData({ slug: `page-${i}` }));
       }
 
-      loader.setSpaCache("/spa-new", makeSpaPageData({ page: "new" }));
+      loader.setSpaCache("/spa-new", makeSpaPageData({ slug: "new" }));
 
       assertEquals(loader.isSpaDataCached("/spa-0"), false);
       assertEquals(loader.isSpaDataCached("/spa-new"), true);
@@ -127,7 +135,7 @@ describe("routing/client/page-loader", () => {
   describe("loadSpaPageData()", () => {
     it("should return cached SPA data immediately", async () => {
       const loader = new PageLoader();
-      const data = makeSpaPageData({ page: "cached-spa" });
+      const data = makeSpaPageData({ slug: "cached-spa" });
       loader.setSpaCache("/spa-cached", data);
 
       const result = await loader.loadSpaPageData("/spa-cached");

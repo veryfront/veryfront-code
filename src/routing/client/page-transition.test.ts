@@ -16,6 +16,7 @@ interface MockElement {
   querySelectorAll?: (selector: string) => MockElement[];
   querySelector?: (selector: string) => MockElement | null;
   appendChild?: (child: MockElement) => void;
+  append?: (...nodes: MockElement[]) => void;
   setAttribute?: (name: string, value: string) => void;
   getAttribute?: (name: string) => string | null;
   textContent?: string;

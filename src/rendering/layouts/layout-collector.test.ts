@@ -187,25 +187,25 @@ describe("LayoutCollector", () => {
 
     it("should detect explicit frontmatter layout", () => {
       const layoutValue: string | boolean | undefined = "main";
-      const hasExplicit = typeof layoutValue === "string" && layoutValue.length > 0;
+      const hasExplicit = typeof layoutValue === "string" ? layoutValue.length > 0 : false;
       assertEquals(hasExplicit, true);
     });
 
     it("should not detect empty string as explicit layout", () => {
       const layoutValue: string | boolean | undefined = "";
-      const hasExplicit = typeof layoutValue === "string" && layoutValue.length > 0;
+      const hasExplicit = typeof layoutValue === "string" ? layoutValue.length > 0 : false;
       assertEquals(hasExplicit, false);
     });
 
     it("should not detect undefined as explicit layout", () => {
       const layoutValue: string | boolean | undefined = undefined;
-      const hasExplicit = typeof layoutValue === "string" && layoutValue.length > 0;
+      const hasExplicit = typeof layoutValue === "string" ? layoutValue.length > 0 : false;
       assertEquals(hasExplicit, false);
     });
 
     it("should not detect true as explicit layout", () => {
       const layoutValue: string | boolean | undefined = true;
-      const hasExplicit = typeof layoutValue === "string" && layoutValue.length > 0;
+      const hasExplicit = typeof layoutValue === "string" ? layoutValue.length > 0 : false;
       assertEquals(hasExplicit, false);
     });
   });
