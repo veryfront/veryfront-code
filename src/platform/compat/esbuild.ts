@@ -2,13 +2,20 @@
  * esbuild compatibility layer with deno compile support.
  *
  * In deno compile, esbuild's native binary is embedded in VFS but cannot be
- * executed from there. This module extracts it to /tmp on first use.
+ * executed from there. This module extracts it to the system temp dir on first use.
  */
 
 export type { BuildOptions, BuildResult, TransformOptions, TransformResult } from "esbuild";
 
-const ESBUILD_CACHE_DIR = "/tmp/veryfront-esbuild";
 const ESBUILD_VERSION = "0.20.2";
+
+function getTempDir(): string {
+  return Deno.env.get("TMPDIR") ?? Deno.env.get("TEMP") ?? Deno.env.get("TMP") ?? "/tmp";
+}
+
+function getEsbuildCacheDir(): string {
+  return `${getTempDir()}/veryfront-esbuild`;
+}
 
 let esbuildModule: typeof import("esbuild") | null = null;
 let setupComplete = false;
@@ -16,8 +23,9 @@ let setupPromise: Promise<void> | null = null;
 
 function isDenoCompiled(): boolean {
   try {
-    const denoExecPath = Deno.execPath();
-    return !denoExecPath.includes("/deno") || denoExecPath.includes("veryfront");
+    const denoExecPath = Deno.execPath().toLowerCase();
+    const hasDenoInPath = denoExecPath.includes("/deno") || denoExecPath.includes("\\deno");
+    return !hasDenoInPath || denoExecPath.includes("veryfront");
   } catch {
     return false;
   }
@@ -46,7 +54,7 @@ function getVFSBasePath(): string {
     return parts.slice(0, srcIndex).join("/");
   }
 
-  return "/tmp/deno-compile-veryfront";
+  return `${getTempDir()}/deno-compile-veryfront`;
 }
 
 async function findEsbuildInVFS(): Promise<string | null> {
@@ -92,7 +100,8 @@ async function findEsbuildInVFS(): Promise<string | null> {
 }
 
 async function extractEsbuildBinary(): Promise<string> {
-  const targetPath = `${ESBUILD_CACHE_DIR}/esbuild-${ESBUILD_VERSION}`;
+  const cacheDir = getEsbuildCacheDir();
+  const targetPath = `${cacheDir}/esbuild-${ESBUILD_VERSION}`;
 
   try {
     const stat = await Deno.stat(targetPath);
@@ -114,7 +123,7 @@ async function extractEsbuildBinary(): Promise<string> {
     );
   }
 
-  await Deno.mkdir(ESBUILD_CACHE_DIR, { recursive: true });
+  await Deno.mkdir(cacheDir, { recursive: true });
 
   const binary = await Deno.readFile(vfsPath);
   await Deno.writeFile(targetPath, binary, { mode: 0o755 });
