@@ -173,10 +173,12 @@ export const HTTP_MODULE_DISTRIBUTED_TTL_SEC = getEnvNumber(
 );
 
 // Transform cache for module compilation
-// Same TTL as HTTP module cache since transforms are tied to content hashes
+// MUST be shorter than HTTP_MODULE_DISTRIBUTED_TTL_SEC (24h) so that
+// HTTP bundles always outlive the transforms that reference them.
+// 6h matches DISTRIBUTED_TRANSFORM_TTL_PRODUCTION_SEC used by the SSR loader.
 export const TRANSFORM_DISTRIBUTED_TTL_SEC = getEnvNumber(
   "TRANSFORM_DISTRIBUTED_TTL_SEC",
-  HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE, // 24 hours (86400)
+  6 * MINUTES_PER_HOUR * SECONDS_PER_MINUTE, // 6 hours (21600)
 );
 
 // Pod-level module cache (shared across all RenderPipeline instances)

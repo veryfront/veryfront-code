@@ -39,7 +39,7 @@ import {
 import { getLocalFs } from "./cache/index.ts";
 import { hashString } from "./utils/hash.ts";
 import { createStubModule } from "./utils/stub-module.ts";
-import { createModuleFetcherContext, fetchAndCacheModule } from "./module-fetcher/index.ts";
+import { createModuleFetcherContext, fetchAndCacheModule, rewriteDntImports } from "./module-fetcher/index.ts";
 
 /** Singleflight for MDX module file writes to prevent race conditions */
 const mdxWriteFlight = new Singleflight<void>();
@@ -352,6 +352,11 @@ async function transformJsxImports(
         if (!REACT_IMPORT_PATTERN.test(transformed)) {
           transformed = `import React from 'react';\n${transformed}`;
         }
+
+        // Rewrite _dnt.polyfills.js / _dnt.shims.js relative imports to absolute file:// paths.
+        // Framework files from the npm package contain relative dnt imports that resolve
+        // incorrectly when cached to a different directory.
+        transformed = rewriteDntImports(transformed, filePath);
 
         await getLocalFs().writeTextFile(transformedPath, transformed);
 

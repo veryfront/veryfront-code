@@ -34,6 +34,13 @@ function stripTrailingSlashes(path: string): string {
   return path.replace(/\/+$/, "");
 }
 
+/** Prefixes that indicate a framework-internal module (resolved locally, not via API) */
+const FRAMEWORK_PREFIXES = ["lib/", "src/exports/", "exports/", "react/"];
+
+function isFrameworkPath(filePathWithoutJs: string): boolean {
+  return FRAMEWORK_PREFIXES.some((prefix) => filePathWithoutJs.startsWith(prefix));
+}
+
 export async function resolveModuleFile(
   normalizedPath: string,
   adapter: RuntimeAdapter,
@@ -46,7 +53,11 @@ export async function resolveModuleFile(
     ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
     : filePathWithoutJs;
 
-  if (adapter.fs.resolveFile) {
+  // Framework modules (react/, lib/, exports/) are local files — skip the API adapter
+  // to avoid unnecessary 404 errors from the remote API.
+  const isFramework = isFrameworkPath(filePathWithoutJs);
+
+  if (adapter.fs.resolveFile && !isFramework) {
     for (const prefix of DIRECTORY_PREFIXES) {
       const basePath = prefix + filePathWithoutExt;
       const resolvedPath = await adapter.fs.resolveFile(basePath);
@@ -73,7 +84,7 @@ export async function resolveModuleFile(
       normalizedPath,
       filePathWithoutExt,
     });
-  } else if (projectDir) {
+  } else if (projectDir && !isFramework) {
     const localFs = getLocalFs();
     const normalizedProjectDir = stripTrailingSlashes(projectDir);
 

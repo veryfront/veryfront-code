@@ -2,7 +2,7 @@
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createModuleFetcherContext, endRenderSession, startRenderSession } from "./index.ts";
+import { createModuleFetcherContext, endRenderSession, rewriteDntImports, startRenderSession } from "./index.ts";
 import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
 import { HASH_SEED_FNV1A } from "../constants.ts";
 
@@ -329,6 +329,69 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       const ctx = createModuleFetcherContext("/cache", mockAdapter, "/project", "proj-123");
       assertEquals(ctx.inFlightModules instanceof Map, true);
       assertEquals(ctx.inFlightModules!.size, 0);
+    });
+  });
+
+  // ── rewriteDntImports ──
+  describe("rewriteDntImports", () => {
+    const frameworkPath = "/usr/local/lib/node_modules/veryfront/src/react/router/index.ts";
+    const projectPath = "/app/project/components/Button.tsx";
+
+    it("rewrites relative _dnt.polyfills.js import for framework files", () => {
+      const code = `import "../../../_dnt.polyfills.js";\nexport const foo = 1;`;
+      const result = rewriteDntImports(code, frameworkPath);
+      assertEquals(result.includes("file://"), true);
+      assertEquals(result.includes("_dnt.polyfills.js"), true);
+      assertEquals(result.includes("../../../_dnt.polyfills.js"), false);
+    });
+
+    it("rewrites relative _dnt.shims.js import for framework files", () => {
+      const code = `import * as dntShim from "../../_dnt.shims.js";\nexport const foo = 1;`;
+      const result = rewriteDntImports(code, frameworkPath);
+      assertEquals(result.includes("file://"), true);
+      assertEquals(result.includes("_dnt.shims.js"), true);
+      assertEquals(result.includes("../../_dnt.shims.js"), false);
+    });
+
+    it("rewrites side-effect _dnt.polyfills.js import (no from)", () => {
+      const code = `import "../../../_dnt.polyfills.js";\nimport "../../../_dnt.polyfills.js";`;
+      const result = rewriteDntImports(code, frameworkPath);
+      // Both side-effect imports should be rewritten
+      const matches = result.match(/file:\/\//g);
+      assertEquals(matches?.length, 2);
+    });
+
+    it("does not rewrite dnt imports for project files", () => {
+      const code = `import "../../../_dnt.polyfills.js";\nexport const foo = 1;`;
+      const result = rewriteDntImports(code, projectPath);
+      assertEquals(result, code);
+    });
+
+    it("does not modify code without dnt imports", () => {
+      const code = `import React from "react";\nexport const foo = 1;`;
+      const result = rewriteDntImports(code, frameworkPath);
+      assertEquals(result, code);
+    });
+
+    it("handles mixed dnt and non-dnt imports", () => {
+      const code = [
+        `import "../../../_dnt.polyfills.js";`,
+        `import React from "react";`,
+        `import * as dntShim from "../../_dnt.shims.js";`,
+        `export default function App() {}`,
+      ].join("\n");
+      const result = rewriteDntImports(code, frameworkPath);
+      assertEquals(result.includes(`from "react"`), true);
+      assertEquals(result.includes("../../../_dnt.polyfills.js"), false);
+      assertEquals(result.includes("../../_dnt.shims.js"), false);
+      assertEquals((result.match(/file:\/\//g) || []).length, 2);
+    });
+
+    it("rewrites node_modules paths even if not under FRAMEWORK_ROOT", () => {
+      const nodeModulesPath = "/app/node_modules/veryfront/esm/src/react/router/index.js";
+      const code = `import "../../_dnt.polyfills.js";`;
+      const result = rewriteDntImports(code, nodeModulesPath);
+      assertEquals(result.includes("file://"), true);
     });
   });
 

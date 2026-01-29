@@ -86,6 +86,43 @@ function rewriteVeryfrontImports(code: string): string {
   });
 }
 
+/**
+ * Rewrite _dnt.polyfills.js and _dnt.shims.js relative imports to absolute file:// paths.
+ *
+ * The dnt (Deno-to-Node) build tool generates relative imports like:
+ *   import "../../../_dnt.polyfills.js"
+ *   import * as dntShim from "../../_dnt.shims.js"
+ *
+ * These resolve correctly when loaded from the npm package directory, but break when
+ * the transformed code is cached to a different directory (e.g., /app/.cache/veryfront-mdx-esm/...).
+ * The relative path would resolve to /app/.cache/_dnt.polyfills.js which doesn't exist.
+ *
+ * Fix: Replace relative _dnt imports with absolute file:// paths to the npm package.
+ */
+export function rewriteDntImports(code: string, sourceFilePath: string): string {
+  // Only needed for framework files that come from the npm package
+  if (!sourceFilePath.includes("/node_modules/") && !sourceFilePath.startsWith(FRAMEWORK_ROOT)) {
+    return code;
+  }
+
+  // Resolve the npm package's esm directory where _dnt files live
+  // FRAMEWORK_ROOT points to the package root (e.g., /usr/local/lib/node_modules/veryfront)
+  // _dnt.polyfills.js and _dnt.shims.js are in the esm/ subdirectory
+  const esmDir = join(FRAMEWORK_ROOT, "esm");
+
+  return code.replace(
+    /from\s+["'](\.\.?\/(?:\.\.\/)*_dnt\.(polyfills|shims)\.js)["']/g,
+    (_match, _relativePath: string, dntFile: string) => {
+      return `from "file://${join(esmDir, `_dnt.${dntFile}.js`)}"`;
+    },
+  ).replace(
+    /import\s+["'](\.\.?\/(?:\.\.\/)*_dnt\.(polyfills|shims)\.js)["']/g,
+    (_match, _relativePath: string, dntFile: string) => {
+      return `import "file://${join(esmDir, `_dnt.${dntFile}.js`)}"`;
+    },
+  );
+}
+
 function getVersionedPathCacheKey(normalizedPath: string): string {
   return `v${TRANSFORM_CACHE_VERSION}:${normalizedPath}`;
 }
@@ -712,6 +749,10 @@ async function doFetchAndCacheModule(
 
       // Cached .mjs files don't have access to deno.json import maps
       moduleCode = rewriteVeryfrontImports(moduleCode);
+
+      // Rewrite _dnt.polyfills.js / _dnt.shims.js relative imports to absolute file:// paths.
+      // Without this, cached modules in /app/.cache/ would have broken relative paths.
+      moduleCode = rewriteDntImports(moduleCode, actualFilePath);
 
       if (distributedCache) {
         // Store transformed code in distributed cache
