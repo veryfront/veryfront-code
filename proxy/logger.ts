@@ -9,10 +9,11 @@ function getEnv(key: string): string | undefined {
   return nodeProcess?.env?.[key];
 }
 
-import denoConfig from "./deno.json" with { type: "json" };
+// Import version from root deno.json (the source of truth)
+import denoConfig from "../deno.json" with { type: "json" };
 import { getTraceContext } from "./tracing.ts";
 
-// Get version from environment variable or deno.json
+// Get version from environment variable or root deno.json
 const VERYFRONT_VERSION: string = getEnv("VERYFRONT_VERSION") ??
   (typeof denoConfig.version === "string" ? denoConfig.version : "0.0.0");
 
