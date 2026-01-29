@@ -8,7 +8,13 @@ function getEnv(key: string): string | undefined {
   const nodeProcess = (globalThis as { process?: { env?: Record<string, string> } }).process;
   return nodeProcess?.env?.[key];
 }
+
+import denoConfig from "./deno.json" with { type: "json" };
 import { getTraceContext } from "./tracing.ts";
+
+// Get version from environment variable or deno.json
+const VERYFRONT_VERSION: string = getEnv("VERYFRONT_VERSION") ??
+  (typeof denoConfig.version === "string" ? denoConfig.version : "0.0.0");
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -156,6 +162,7 @@ interface LogEntry {
   timestamp: string;
   level: LogLevel;
   service: string;
+  veryfrontVersion: string;
   message: string;
   traceId?: string;
   spanId?: string;
@@ -213,6 +220,7 @@ class ProxyLogger {
         timestamp: new Date().toISOString(),
         level,
         service: "proxy",
+        veryfrontVersion: VERYFRONT_VERSION,
         message,
         ...(traceCtx.traceId && { traceId: traceCtx.traceId, spanId: traceCtx.spanId }),
       };

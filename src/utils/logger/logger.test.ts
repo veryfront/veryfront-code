@@ -96,7 +96,7 @@ describe("logger", () => {
         const entry = JSON.parse(capturedOutput) as LogEntry;
         assertEquals(entry.requestId, "test-req-123");
         assertEquals(entry.project_slug, "test-project");
-        assertEquals(entry.version, VERSION);
+        assertEquals(entry.veryfrontVersion, VERSION);
       } finally {
         console.log = originalLog;
         Deno.env.delete("LOG_FORMAT");
@@ -121,7 +121,7 @@ describe("logger", () => {
         const entry = JSON.parse(capturedOutput) as LogEntry;
         assertEquals(entry.requestId, undefined);
         assertEquals(entry.project_slug, undefined);
-        assertEquals(entry.version, VERSION);
+        assertEquals(entry.veryfrontVersion, VERSION);
       } finally {
         console.log = originalLog;
         Deno.env.delete("LOG_FORMAT");
@@ -148,9 +148,9 @@ describe("logger", () => {
 
         // Parse and verify
         const entry = JSON.parse(capturedOutput) as LogEntry;
-        assertEquals(entry.version, VERSION);
-        assertEquals(typeof entry.version, "string");
-        assertEquals(entry.version.length > 0, true);
+        assertEquals(entry.veryfrontVersion, VERSION);
+        assertEquals(typeof entry.veryfrontVersion, "string");
+        assertEquals(entry.veryfrontVersion.length > 0, true);
       } finally {
         console.log = originalLog;
         Deno.env.delete("LOG_FORMAT");
@@ -177,7 +177,7 @@ describe("logger", () => {
         assertEquals(typeof entry.timestamp, "string");
         assertEquals(entry.level, "info");
         assertEquals(typeof entry.service, "string");
-        assertEquals(entry.version, VERSION);
+        assertEquals(entry.veryfrontVersion, VERSION);
         assertEquals(entry.message, "Test message");
         assertEquals(entry.context?.extra, "data");
       } finally {

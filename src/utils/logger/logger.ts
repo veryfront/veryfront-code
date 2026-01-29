@@ -19,7 +19,7 @@ export interface LogEntry {
   timestamp: string;
   level: "debug" | "info" | "warn" | "error";
   service: string;
-  version: string;
+  veryfrontVersion: string;
   message: string;
   // Optional structured context
   context?: Record<string, unknown>;
@@ -326,7 +326,7 @@ class ConsoleLogger implements Logger {
       timestamp: new Date().toISOString(),
       level,
       service: this.prefix.toLowerCase(),
-      version: VERSION,
+      veryfrontVersion: VERSION,
       message,
     };
 
