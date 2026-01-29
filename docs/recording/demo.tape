@@ -1,7 +1,7 @@
 # Veryfront Code TUI Demo
 # Run with: vhs demo.tape
 
-Output docs/demo.gif
+Output docs/recording/demo.gif
 
 Set FontSize 28
 Set Width 1920
