@@ -127,8 +127,29 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: lts
+      - name: Calculate and bake version into deno.json
+        id: version
+        shell: bash
+        run: |
+          BASE_VERSION=$(cat deno.json | grep '"version"' | head -1 | sed 's/.*: "\(.*\)".*/\1/')
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # For tag pushes, use the tag version
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          else
+            # For main branch, use rc version
+            VERSION="${BASE_VERSION}-rc.${{ github.run_number }}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+          # Update deno.json with the version (baked into compiled binary)
+          jq ".version = \"$VERSION\"" deno.json > deno.json.tmp
+          mv deno.json.tmp deno.json
+          cat deno.json | grep version
       - run: deno run -A scripts/generate-templates-manifest.ts
-      - run: deno compile --allow-all --unstable-net --target ${{ matrix.target }} --output ${{ matrix.name }} src/cli/main.ts
+      - name: Compile binary with version
+        run: deno compile --allow-all --unstable-net --target ${{ matrix.target }} --output ${{ matrix.name }} src/cli/main.ts
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
