@@ -467,6 +467,7 @@ describe("Blast Radius Protection", {
           const { createRenderer } = await import("../../../src/rendering/index.ts");
           const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
 
+          let corruptRenderer: any = null;
           try {
             // First, verify clean project works
             const cleanRenderer = await createRenderer({
@@ -496,7 +497,7 @@ describe("Blast Radius Protection", {
 
             // Try to render corrupt project (may or may not fail depending on JSX handling)
             try {
-              const corruptRenderer = await createRenderer({
+              corruptRenderer = await createRenderer({
                 projectDir: corruptContext.projectDir,
                 mode: "development",
               });
@@ -526,6 +527,9 @@ describe("Blast Radius Protection", {
 
             if (cleanRenderer && typeof cleanRenderer.clearAllState === "function") {
               await cleanRenderer.clearAllState();
+            }
+            if (corruptRenderer && typeof corruptRenderer.clearAllState === "function") {
+              await corruptRenderer.clearAllState();
             }
           } finally {
             await cleanupBundler();
