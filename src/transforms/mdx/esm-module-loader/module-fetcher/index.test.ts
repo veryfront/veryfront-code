@@ -10,7 +10,7 @@ import {
   rewriteDntImports,
   startRenderSession,
 } from "./index.ts";
-import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 import { HASH_SEED_FNV1A } from "../constants.ts";
 
 // ──────────────────────────────────────────────────────────────
@@ -23,11 +23,11 @@ function getTransformCacheKey(
   normalizedPath: string,
   contentHash: string,
 ): string {
-  return `v${TRANSFORM_CACHE_VERSION}:${projectId}:${normalizedPath}:${contentHash}`;
+  return `v${VERSION}:${projectId}:${normalizedPath}:${contentHash}`;
 }
 
 function getVersionedPathCacheKey(normalizedPath: string): string {
-  return `v${TRANSFORM_CACHE_VERSION}:${normalizedPath}`;
+  return `v${VERSION}:${normalizedPath}`;
 }
 
 const VERYFRONT_IMPORT_MAP: Record<string, string> = {
@@ -114,7 +114,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
   describe("getTransformCacheKey", () => {
     it("includes version, project, path, and hash", () => {
       const key = getTransformCacheKey("proj1", "_vf_modules/pages/index.js", "abc123");
-      assertEquals(key, `v${TRANSFORM_CACHE_VERSION}:proj1:_vf_modules/pages/index.js:abc123`);
+      assertEquals(key, `v${VERSION}:proj1:_vf_modules/pages/index.js:abc123`);
     });
 
     it("produces different keys for different content hashes", () => {
@@ -134,7 +134,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
   describe("getVersionedPathCacheKey", () => {
     it("prefixes with version", () => {
       const key = getVersionedPathCacheKey("_vf_modules/pages/index.js");
-      assertEquals(key, `v${TRANSFORM_CACHE_VERSION}:_vf_modules/pages/index.js`);
+      assertEquals(key, `v${VERSION}:_vf_modules/pages/index.js`);
     });
   });
 
@@ -222,7 +222,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       const code = `import Foo from "/_vf_modules/components/Foo.js";`;
       const { vfModules, relative } = findNestedImports(code);
       assertEquals(vfModules.length, 1);
-      assertEquals(vfModules[0].path, "_vf_modules/components/Foo.js");
+      assertEquals(vfModules[0]!.path, "_vf_modules/components/Foo.js");
       assertEquals(relative.length, 0);
     });
 
@@ -231,7 +231,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       const { vfModules, relative } = findNestedImports(code);
       assertEquals(vfModules.length, 0);
       assertEquals(relative.length, 1);
-      assertEquals(relative[0].path, "./utils.js");
+      assertEquals(relative[0]!.path, "./utils.js");
     });
 
     it("finds both types in mixed code", () => {
@@ -249,7 +249,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       const code = `import Foo from "/_vf_modules/components/Foo.js?v=123";`;
       const { vfModules } = findNestedImports(code);
       assertEquals(vfModules.length, 1);
-      assertEquals(vfModules[0].path, "_vf_modules/components/Foo.js");
+      assertEquals(vfModules[0]!.path, "_vf_modules/components/Foo.js");
     });
 
     it("returns empty arrays for code with no imports", () => {

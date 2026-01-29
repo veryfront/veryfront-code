@@ -1,5 +1,6 @@
 import { getEnvironmentVariable } from "./env.ts";
 import { hasDenoRuntime, hasNodeProcess } from "../runtime-guards.ts";
+import { VERSION } from "../version.ts";
 
 export enum LogLevel {
   DEBUG = 0,
@@ -18,6 +19,7 @@ export interface LogEntry {
   timestamp: string;
   level: "debug" | "info" | "warn" | "error";
   service: string;
+  version: string;
   message: string;
   // Optional structured context
   context?: Record<string, unknown>;
@@ -324,6 +326,7 @@ class ConsoleLogger implements Logger {
       timestamp: new Date().toISOString(),
       level,
       service: this.prefix.toLowerCase(),
+      version: VERSION,
       message,
     };
 

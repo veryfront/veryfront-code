@@ -19,7 +19,7 @@ import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/impor
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../esm/http-cache.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
-import { TRANSFORM_CACHE_VERSION } from "../../esm/package-registry.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { replaceSpecifiers } from "../../esm/lexer.ts";
 import { setupSSRGlobals } from "../../../rendering/ssr-globals.ts";
@@ -329,7 +329,7 @@ async function transformJsxImports(
   const transformResults = await Promise.all(
     importsToProcess.map(async ({ fullMatch, importClause, filePath, ext }) => {
       try {
-        const transformedFileName = `jsx-v${TRANSFORM_CACHE_VERSION}-${hashString(filePath)}.mjs`;
+        const transformedFileName = `jsx-v${VERSION}-${hashString(filePath)}.mjs`;
         const transformedPath = join(esmCacheDir, transformedFileName);
 
         try {

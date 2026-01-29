@@ -187,6 +187,22 @@ await build({
 		);
 		await Deno.writeTextFile(polyfillPath, polyfillContent);
 
+		// Bake version into embedded deno.js so VERSION constant works without env var.
+		// The npm package reads version from this embedded config, and without this fix
+		// it would use the stale version from the original deno.json at build time.
+		const denoJsPath = "./npm/esm/deno.js";
+		try {
+			let denoJsContent = await Deno.readTextFile(denoJsPath);
+			denoJsContent = denoJsContent.replace(
+				/"version":\s*"[^"]*"/,
+				`"version": "${version}"`,
+			);
+			await Deno.writeTextFile(denoJsPath, denoJsContent);
+			console.log(`📝 Updated embedded deno.js version to ${version}`);
+		} catch (error) {
+			console.warn(`⚠️ Could not update embedded deno.js version: ${error}`);
+		}
+
 		// Copy postinstall script
 		await Deno.mkdir("./npm/scripts", { recursive: true });
 		await Deno.copyFile("./scripts/postinstall.js", "./npm/scripts/postinstall.js");

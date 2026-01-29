@@ -1,6 +1,13 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getDefaultLevel, LogLevel } from "./logger.ts";
+import {
+  __resetLoggerConfigForTesting,
+  getDefaultLevel,
+  type LogEntry,
+  LogLevel,
+  serverLogger,
+} from "./logger.ts";
+import { VERSION } from "../version.ts";
 
 describe("logger", () => {
   describe("getDefaultLevel", () => {
@@ -51,6 +58,64 @@ describe("logger", () => {
       assertEquals(LogLevel.DEBUG < LogLevel.INFO, true);
       assertEquals(LogLevel.INFO < LogLevel.WARN, true);
       assertEquals(LogLevel.WARN < LogLevel.ERROR, true);
+    });
+  });
+
+  describe("JSON output format", () => {
+    it("should include version field in LogEntry", () => {
+      // Capture console output
+      const originalLog = console.log;
+      let capturedOutput = "";
+      console.log = (msg: string) => {
+        capturedOutput = msg;
+      };
+
+      try {
+        // Reset config and force JSON format
+        __resetLoggerConfigForTesting();
+        Deno.env.set("LOG_FORMAT", "json");
+
+        serverLogger.info("Test message");
+
+        // Parse and verify
+        const entry = JSON.parse(capturedOutput) as LogEntry;
+        assertEquals(entry.version, VERSION);
+        assertEquals(typeof entry.version, "string");
+        assertEquals(entry.version.length > 0, true);
+      } finally {
+        console.log = originalLog;
+        Deno.env.delete("LOG_FORMAT");
+        __resetLoggerConfigForTesting();
+      }
+    });
+
+    it("should include all required fields in JSON output", () => {
+      const originalLog = console.log;
+      let capturedOutput = "";
+      console.log = (msg: string) => {
+        capturedOutput = msg;
+      };
+
+      try {
+        __resetLoggerConfigForTesting();
+        Deno.env.set("LOG_FORMAT", "json");
+
+        serverLogger.info("Test message", { extra: "data" });
+
+        const entry = JSON.parse(capturedOutput) as LogEntry;
+
+        // Verify all required fields
+        assertEquals(typeof entry.timestamp, "string");
+        assertEquals(entry.level, "info");
+        assertEquals(typeof entry.service, "string");
+        assertEquals(entry.version, VERSION);
+        assertEquals(entry.message, "Test message");
+        assertEquals(entry.context?.extra, "data");
+      } finally {
+        console.log = originalLog;
+        Deno.env.delete("LOG_FORMAT");
+        __resetLoggerConfigForTesting();
+      }
     });
   });
 });

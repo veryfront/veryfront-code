@@ -6,7 +6,7 @@ import { clearSSRModuleCache, SSRModuleLoader } from "./index.ts";
 import { globalModuleCache } from "./cache/memory.ts";
 import { verifiedHttpBundlePaths } from "./http-bundle-helpers.ts";
 import { buildSSRModuleCacheKey } from "../../../cache/keys.ts";
-import { TRANSFORM_CACHE_VERSION } from "#veryfront/transforms/esm/package-registry.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 import { computeConfigHashSync } from "../../../cache/config-hash.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
@@ -71,12 +71,12 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
 
       // Build the cache keys the loader would use
       const filePathCacheKey = buildSSRModuleCacheKey(
-        TRANSFORM_CACHE_VERSION,
+        VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
       );
       const contentCacheKey = buildSSRModuleCacheKey(
-        TRANSFORM_CACHE_VERSION,
+        VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );

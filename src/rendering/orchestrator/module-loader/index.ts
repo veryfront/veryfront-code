@@ -24,7 +24,7 @@ import { validateBundleGroup } from "#veryfront/transforms/esm/bundle-manifest.t
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import { TRANSFORM_CACHE_VERSION } from "#veryfront/transforms/esm/package-registry.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 import {
   getModulePathCache,
   lookupMdxEsmCache,
@@ -301,7 +301,7 @@ export async function transformModuleWithDeps(
   // Register in MDX-ESM cache index so other loaders can find this module
   if (contentSourceId) {
     const normalizedPath = `_vf_modules/${relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js")}`;
-    const mdxCacheKey = `v${TRANSFORM_CACHE_VERSION}:${normalizedPath}`;
+    const mdxCacheKey = `v${VERSION}:${normalizedPath}`;
     const cache = await getModulePathCache(tmpDir);
     cache.set(mdxCacheKey, tempFilePath);
     // Persist to disk so MDX loader can find it

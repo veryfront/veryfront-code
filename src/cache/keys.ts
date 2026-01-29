@@ -11,7 +11,6 @@
  ********************************************************************************/
 
 import { VERSION } from "#veryfront/utils/version.ts";
-import { TRANSFORM_CACHE_VERSION } from "#veryfront/transforms/esm/package-registry.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { Span } from "@opentelemetry/api";
@@ -294,7 +293,7 @@ export function buildTransformCacheKey(
   const configKey = options?.configHash ? `:cfg=${options.configHash.slice(0, 8)}` : "";
   const projectKey = options?.projectId ? `${options.projectId}:` : "";
 
-  return `v${TRANSFORM_CACHE_VERSION}:${projectKey}${filePath}:${contentHash}:${target}${studioKey}${depsKey}${configKey}`;
+  return `v${VERSION}:${projectKey}${filePath}:${contentHash}:${target}${studioKey}${depsKey}${configKey}`;
 }
 
 export function buildContentHashCacheKey(

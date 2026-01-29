@@ -46,13 +46,15 @@ export function getReactVersion(): string {
   return DEFAULT_REACT_VERSION;
 }
 
+import { VERSION } from "#veryfront/utils/version.ts";
+
 /**
- * Transform cache version - bump when transform logic changes.
+ * Transform cache version - now uses the application VERSION for consistent
+ * cache invalidation on deployments.
  *
- * v18: Invalidate transforms with local dev machine paths in file:// URLs
- * v19: Unified import rewriter (single source of truth for all import transforms)
+ * @deprecated Use VERSION from #veryfront/utils/version.ts directly
  */
-export const TRANSFORM_CACHE_VERSION = 19;
+export const TRANSFORM_CACHE_VERSION = VERSION;
 
 /**
  * Build esm.sh URL with deps=csstype for React packages.

@@ -10,7 +10,7 @@ import { join } from "#veryfront/platform/compat/path/index.ts";
 import type * as React from "react";
 import { transformToESM } from "#veryfront/transforms/esm/index.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
-import { TRANSFORM_CACHE_VERSION } from "#veryfront/transforms/esm/package-registry.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 import { buildSSRModuleCacheKey } from "../../../cache/keys.ts";
 import { computeConfigHashSync } from "../../../cache/config-hash.ts";
 import {
@@ -282,7 +282,7 @@ export class SSRModuleLoader {
     const reactVersion = this.options.reactVersion ?? "default";
     const configHash = this.getConfigHash();
     return buildSSRModuleCacheKey(
-      TRANSFORM_CACHE_VERSION,
+      VERSION,
       this.options.projectId,
       `${this.options.contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
     );

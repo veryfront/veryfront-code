@@ -14,7 +14,7 @@ import {
   type FileSystem,
   isNotFoundError,
 } from "#veryfront/platform/compat/fs.ts";
-import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
@@ -216,7 +216,7 @@ function toMdxEsmCacheKey(filePath: string, projectDir?: string): string {
   const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
 
   // Build the versioned key in MDX-ESM format
-  return `v${TRANSFORM_CACHE_VERSION}:_vf_modules/${jsPath}`;
+  return `v${VERSION}:_vf_modules/${jsPath}`;
 }
 
 /**

@@ -19,7 +19,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "../../../esm-transform.ts";
-import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 import { ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import {
@@ -62,7 +62,7 @@ function getTransformCacheKey(
   normalizedPath: string,
   contentHash: string,
 ): string {
-  return `v${TRANSFORM_CACHE_VERSION}:${projectId}:${normalizedPath}:${contentHash}`;
+  return `v${VERSION}:${projectId}:${normalizedPath}:${contentHash}`;
 }
 
 /**
@@ -124,7 +124,7 @@ export function rewriteDntImports(code: string, sourceFilePath: string): string 
 }
 
 function getVersionedPathCacheKey(normalizedPath: string): string {
-  return `v${TRANSFORM_CACHE_VERSION}:${normalizedPath}`;
+  return `v${VERSION}:${normalizedPath}`;
 }
 
 /**
@@ -412,7 +412,7 @@ async function cacheModule(
   }
 
   const contentHash = hashString(normalizedPath + moduleCode);
-  const cachePath = join(esmCacheDir, `vfmod-v${TRANSFORM_CACHE_VERSION}-${contentHash}.mjs`);
+  const cachePath = join(esmCacheDir, `vfmod-v${VERSION}-${contentHash}.mjs`);
 
   const localFs = getLocalFs();
   try {

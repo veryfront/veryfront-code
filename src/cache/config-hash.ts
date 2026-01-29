@@ -6,7 +6,7 @@
  */
 
 import { computeHash } from "#veryfront/utils";
-import { TRANSFORM_CACHE_VERSION } from "../transforms/esm/package-registry.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 import {
   CSSTYPE_VERSION,
   DEFAULT_REACT_VERSION,
@@ -35,7 +35,7 @@ export interface TransformConfig {
 export function computeConfigHash(config: TransformConfig): Promise<string> {
   const normalized = {
     // Core transform settings
-    transformVersion: TRANSFORM_CACHE_VERSION,
+    transformVersion: VERSION,
     reactVersion: config.reactVersion ?? DEFAULT_REACT_VERSION,
     jsxImportSource: config.jsxImportSource ?? "react",
 
@@ -59,7 +59,7 @@ export function computeConfigHash(config: TransformConfig): Promise<string> {
 export function computeConfigHashSync(config: TransformConfig): string {
   // Simple string concatenation for sync hash
   const parts = [
-    `v${TRANSFORM_CACHE_VERSION}`,
+    `v${VERSION}`,
     config.reactVersion ?? DEFAULT_REACT_VERSION,
     config.jsxImportSource ?? "react",
     config.studioEmbed ? "studio" : "",
