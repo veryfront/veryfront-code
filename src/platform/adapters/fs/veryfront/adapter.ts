@@ -572,7 +572,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   setContentContext(context: ResolvedContentContext): void {
     const oldContext = this.contentContext;
-    const contextChanged = JSON.stringify(oldContext) !== JSON.stringify(context);
+    const contextChanged = !oldContext ||
+      oldContext.sourceType !== context.sourceType ||
+      oldContext.projectSlug !== context.projectSlug ||
+      oldContext.branch !== context.branch ||
+      oldContext.environmentName !== context.environmentName ||
+      oldContext.releaseId !== context.releaseId;
 
     logger.debug("[VeryfrontFSAdapter] setContentContext called", {
       newSourceType: context.sourceType,
