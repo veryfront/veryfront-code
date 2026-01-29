@@ -138,6 +138,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: [format, lint, typecheck, unit-tests, integration-tests]
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
       id-token: write
