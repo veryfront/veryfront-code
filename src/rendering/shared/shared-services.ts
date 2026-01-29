@@ -12,7 +12,7 @@
  */
 
 import { rendererLogger as logger } from "#veryfront/utils";
-import * as esbuildWasm from "npm:esbuild-wasm@0.20.2";
+import { initializeTransform, isUsingEsbuild } from "#veryfront/platform/compat/transform.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { ElementValidator, type ValidationOptions } from "../element-validator/index.ts";
@@ -26,7 +26,6 @@ export interface SharedServicesOptions {
 export interface SharedServices {
   elementValidator: ElementValidator;
   compilerService: CompilerService;
-  esbuildInitialized: boolean;
 }
 
 let sharedServices: SharedServices | null = null;
@@ -47,21 +46,11 @@ export async function initializeSharedServices(
       logger.debug("[SharedServices] Initializing shared renderer services");
       const startTime = performance.now();
 
-      let esbuildInitialized = false;
-      try {
-        // esbuild-wasm needs wasmURL - resolve from npm package
-        const wasmURL = new URL(
-          "npm:esbuild-wasm@0.20.2/esbuild.wasm",
-          import.meta.url,
-        ).href;
-        await esbuildWasm.initialize({ wasmURL, worker: false });
-        esbuildInitialized = true;
-        logger.debug("[SharedServices] esbuild-wasm initialized");
-      } catch (err) {
-        // Already initialized or fallback
-        logger.debug("[SharedServices] esbuild-wasm init:", err);
-        esbuildInitialized = true;
-      }
+      // Initialize JSX transform (esbuild in dev, sucrase in deno compile)
+      await initializeTransform();
+      logger.debug("[SharedServices] Transform initialized", {
+        backend: isUsingEsbuild() ? "esbuild" : "sucrase",
+      });
 
       const validatorOptions: ValidationOptions = {
         maxDepth: maxValidationDepth,
@@ -71,7 +60,6 @@ export async function initializeSharedServices(
       sharedServices = {
         elementValidator: new ElementValidator(validatorOptions),
         compilerService: new CompilerService(),
-        esbuildInitialized,
       };
 
       const duration = performance.now() - startTime;
