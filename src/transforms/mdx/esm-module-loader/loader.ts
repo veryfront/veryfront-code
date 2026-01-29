@@ -516,7 +516,7 @@ async function doLoadModuleESM(
     rewritten = await transformReactToLocalPaths(rewritten);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformReactToLocalPaths DONE`, { projectSlug });
 
-    const codeHash = hashString(rewritten);
+    let codeHash = hashString(rewritten);
     if (!context.projectId) {
       throw new Error(
         `Missing projectId for MDX module cache (projectSlug: ${context.projectSlug})`,
@@ -557,7 +557,7 @@ async function doLoadModuleESM(
       );
     }
 
-    const filePath = join(nsDir, `${codeHash}.mjs`);
+    let filePath = join(nsDir, `${codeHash}.mjs`);
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: mdxWriteFlight START`, { projectSlug, filePath });
     await mdxWriteFlight.do(filePath, async () => {
@@ -601,11 +601,41 @@ async function doLoadModuleESM(
       const cacheDir = getHttpBundleCacheDir();
       const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
       if (failed.length > 0) {
-        throw new Error(
-          `Failed to recover ${failed.length} HTTP bundle(s) from distributed cache: ${
-            failed.join(", ")
-          }`,
+        // Recovery: re-run HTTP caching to re-fetch expired bundles from esm.sh.
+        // This happens when distributed cache entries expire (24h TTL) and the local
+        // disk files are missing (pod restart / new deployment).
+        logger.warn(
+          `${LOG_PREFIX_MDX_LOADER} ${failed.length} HTTP bundle(s) missing, re-fetching from network`,
+          {
+            failed,
+            projectSlug,
+          },
         );
+        const refreshResult = await cacheHttpImportsToLocal(rewritten, {
+          cacheDir,
+          importMap,
+        });
+        rewritten = refreshResult.code;
+
+        // Re-write the module file with refreshed HTTP bundle paths
+        const refreshedHash = hashString(rewritten);
+        const refreshedPath = join(nsDir, `${refreshedHash}.mjs`);
+        await getLocalFs().writeTextFile(refreshedPath, rewritten);
+        filePath = refreshedPath;
+        codeHash = refreshedHash;
+
+        // Verify bundles exist after re-fetch
+        const refreshedBundles = extractHttpBundlePaths(rewritten);
+        if (refreshedBundles.length > 0) {
+          const stillFailed = await ensureHttpBundlesExist(refreshedBundles, cacheDir);
+          if (stillFailed.length > 0) {
+            throw new Error(
+              `Failed to recover ${stillFailed.length} HTTP bundle(s) after re-fetch: ${
+                stillFailed.join(", ")
+              }`,
+            );
+          }
+        }
       }
     }
 
