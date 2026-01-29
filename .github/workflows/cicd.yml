@@ -144,9 +144,9 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: [build-binaries]
     runs-on: ubuntu-latest
-    environment: production
     permissions:
       contents: write
+      deployments: write
       id-token: write
     steps:
       - uses: actions/checkout@v4
@@ -182,6 +182,15 @@ jobs:
           npm publish --access public --tag rc
         env:
           NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+
+      - name: Create deployment
+        uses: chrnorm/deployment-action@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          environment: production
+          environment-url: https://www.npmjs.com/package/veryfront/v/${{ steps.version.outputs.version }}
+          description: veryfront@${{ steps.version.outputs.version }}
+          initial-status: success
 
       - name: Trigger cloud-renderer deploy
         uses: peter-evans/repository-dispatch@v3
