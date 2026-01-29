@@ -26,6 +26,7 @@ import { parseUpArgs, upCommand } from "../commands/up.ts";
 import { newCommand, parseNewArgs } from "../commands/new.ts";
 import { promptProjectName } from "../commands/main.ts";
 import { issuesCommand } from "../commands/issues.ts";
+import { codeCommand, parseCodeArgs } from "../commands/code.ts";
 import { login, logout, whoami } from "../auth/index.ts";
 import { COMMANDS } from "../help/command-definitions.ts";
 import { showCommandHelp, showMainHelp } from "../help/index.ts";
@@ -410,6 +411,17 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           return;
         }
         await newCommand(name, result.data);
+        break;
+      }
+
+      case "code": {
+        const result = parseCodeArgs(args);
+        if (!result.success) {
+          handleValidationError(result.error, "code");
+          exitProcess(1);
+          return;
+        }
+        await codeCommand(result.data);
         break;
       }
 

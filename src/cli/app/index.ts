@@ -37,17 +37,29 @@ import type { InitTemplate } from "../commands/init/types.ts";
 import {
   addLog,
   type AppState,
+  closeAgentPicker,
   createInitialState,
   endInput,
+  enterCodeView,
   getActiveSelection,
   goBack,
   type LogMeta,
+  moveAgentPicker,
   navigateTo,
+  openAgentPicker,
   type ProjectInfo,
+  resetKeyChord,
   scrollLogs,
-  setActiveList,
+  selectAgent,
+  setActiveSection,
+  setAgents,
+  setCodeRunning,
+  setCommandPaletteOpen,
   setExamples,
+  setKeyChord,
+  setModel,
   setProjects,
+  setResourceTab,
   setTemplates,
   startInput,
   type StateUpdater,
@@ -59,6 +71,16 @@ import {
   updateRemote,
   updateServer,
 } from "./state.ts";
+import { applyNavToIndex, CTRL_KEYS, handleVimKey } from "./core/keybindings.ts";
+import {
+  createAgentRegistry,
+  detectInstalledAgents,
+  getCLIAgents,
+  getIDEAgents,
+} from "./core/agents.ts";
+import { spawnAgent, waitForExit } from "./core/pty.ts";
+import type { CodingAgentDef } from "./core/types.ts";
+import { listTools } from "../mcp/tools.ts";
 import { handleInputKey, renderInput, renderLogs } from "./components/inline-input.ts";
 import { login, logout, validateToken } from "../auth/login.ts";
 import { readToken } from "../auth/token-store.ts";
@@ -339,6 +361,17 @@ export function createApp(config: AppConfig): App {
     httpPort: config.mcpPort,
   })(state);
 
+  // Initialize agent registry and detect installed agents
+  const agentRegistry = createAgentRegistry();
+  state = setAgents(agentRegistry.agents, [])(state);
+
+  // Detect installed agents in background
+  void (async () => {
+    const installed = await detectInstalledAgents(agentRegistry);
+    state = setAgents(agentRegistry.agents, installed)(state);
+    if (isInteractiveMode) render();
+  })();
+
   // Check for existing auth (async, updates state when ready)
   void (async () => {
     try {
@@ -409,6 +442,209 @@ export function createApp(config: AppConfig): App {
         dim("to go back")
       }`,
     );
+    lines.push("");
+
+    return lines.join("\n");
+  }
+
+  function renderCodeView(st: AppState): string {
+    // If agent picker is open, show it instead
+    if (st.agents.pickerOpen) {
+      return renderAgentPicker(st);
+    }
+
+    const lines: string[] = [];
+    const agent = st.code.agent;
+    const projectPath = st.code.projectPath;
+
+    lines.push("");
+    lines.push(`  ${brand("Code")} ${dim("- Coding Agent")}`);
+    lines.push("");
+
+    if (agent) {
+      lines.push(`  ${dim("Agent")}  ${brand(agent.name)} ${dim(`(${agent.provider})`)}`);
+      const modelDisplay = st.code.model ?? agent.defaultModel ?? "default";
+      lines.push(`  ${dim("Model")}  ${brand(modelDisplay)}`);
+
+      // Show available models if agent has multiple
+      if (agent.models && agent.models.length > 1) {
+        lines.push("");
+        lines.push(`  ${dim("Available models")} ${dim("(press m + number)")}`);
+        agent.models.forEach((m, i) => {
+          const isCurrent = m === st.code.model;
+          const num = dim(`[${i + 1}]`);
+          const name = isCurrent ? brand(`${m} ✓`) : m;
+          lines.push(`    ${num} ${name}`);
+        });
+      }
+    } else {
+      lines.push(`  ${dim("No agent selected. Press")} ${brand("Ctrl+A")} ${dim("to pick one.")}`);
+    }
+
+    lines.push("");
+    lines.push(
+      `  ${dim("Scope")}  ${projectPath ? brand(projectPath) : brand("root")} ${
+        dim(projectPath ? "(single project)" : "(multi-project)")
+      }`,
+    );
+    lines.push("");
+
+    if (st.code.running) {
+      lines.push(`  ${dim("Agent is running... Press")} ${brand("Ctrl+C")} ${dim("to stop.")}`);
+    } else {
+      const modelHint = agent?.models && agent.models.length > 1
+        ? `${brand("m")} ${dim("model  •")} `
+        : "";
+      lines.push(
+        `  ${dim("Press")} ${brand("Enter")} ${dim("start  •")} ${modelHint}${brand("Ctrl+A")} ${
+          dim("agent  •")
+        } ${brand("Esc")} ${dim("back")}`,
+      );
+    }
+
+    lines.push("");
+    return lines.join("\n");
+  }
+
+  function renderAgentPicker(st: AppState): string {
+    const lines: string[] = [];
+    const cliAgents = getCLIAgents({ agents: st.agents.agents, byId: new Map() });
+    const ideAgents = getIDEAgents({ agents: st.agents.agents, byId: new Map() });
+
+    lines.push("");
+    lines.push(`  ${brand("Select Coding Agent")}`);
+    lines.push("");
+
+    lines.push(`  ${dim("CLI Agents")} ${dim("(embedded in TUI)")}`);
+    let idx = 0;
+    for (const agent of cliAgents) {
+      const isFocused = idx === st.agents.pickerIndex;
+      const isInstalled = st.agents.installedAgents.includes(agent.id);
+      const cursor = isFocused ? brand("›") : " ";
+      const num = isFocused ? brand(`[${idx + 1}]`) : dim(`[${idx + 1}]`);
+      const name = isFocused ? brand(agent.name) : agent.name;
+      const provider = dim(agent.provider);
+      const status = isInstalled ? dim("[✓]") : dim("[✗]");
+      lines.push(`  ${cursor} ${num} ${name}  ${provider}  ${status}`);
+      idx++;
+    }
+
+    lines.push("");
+    lines.push(`  ${dim("IDE Agents")} ${dim("(opens external)")}`);
+    for (const agent of ideAgents) {
+      const isFocused = idx === st.agents.pickerIndex;
+      const isInstalled = st.agents.installedAgents.includes(agent.id);
+      const cursor = isFocused ? brand("›") : " ";
+      const num = isFocused ? brand(`[${idx + 1}]`) : dim(`[${idx + 1}]`);
+      const name = isFocused ? brand(agent.name) : agent.name;
+      const provider = dim(agent.provider);
+      const status = isInstalled ? dim("[✓]") : dim("[✗]");
+      lines.push(`  ${cursor} ${num} ${name}  ${provider}  ${status}`);
+      idx++;
+    }
+
+    lines.push("");
+    lines.push(`  ${dim("1-9 quick select  ↑↓ nav  Enter choose  Esc cancel")}`);
+    lines.push("");
+
+    return lines.join("\n");
+  }
+
+  function renderResourcesView(st: AppState): string {
+    const lines: string[] = [];
+    const tabs: Array<{ id: string; label: string }> = [
+      { id: "files", label: "Files" },
+      { id: "routes", label: "Routes" },
+      { id: "agents", label: "Agents" },
+      { id: "tools", label: "Tools" },
+      { id: "mcp", label: "MCP" },
+    ];
+
+    lines.push("");
+    lines.push(`  ${brand("Resources")}`);
+    lines.push("");
+
+    // Tab bar
+    const tabLine = tabs.map((t) => {
+      const active = st.resourceTab === t.id;
+      return active ? brand(`[${t.label}]`) : dim(`[${t.label}]`);
+    }).join(" ");
+    lines.push(`  ${tabLine}`);
+    lines.push("");
+
+    // Content based on active tab
+    switch (st.resourceTab) {
+      case "files":
+        lines.push(`  ${dim("Project Files")}`);
+        lines.push("");
+        if (st.projects.items.length > 0) {
+          st.projects.items.slice(0, 8).forEach((p, i) => {
+            lines.push(`    ${dim(`[${i + 1}]`)} ${p.label}  ${dim(p.meta || "")}`);
+          });
+        } else {
+          lines.push(`    ${dim("No projects discovered")}`);
+        }
+        break;
+
+      case "routes":
+        lines.push(`  ${dim("API Routes & Pages")}`);
+        lines.push("");
+        lines.push(
+          `    ${dim("Run")} ${brand("vf_list_routes")} ${dim("via MCP to see all routes")}`,
+        );
+        lines.push(`    ${dim("or use CLI:")} ${brand("veryfront routes")}`);
+        break;
+
+      case "agents": {
+        lines.push(`  ${dim("Coding Agents")}`);
+        lines.push("");
+        const cliAgents = st.agents.agents.filter((a) => a.type === "cli");
+        cliAgents.forEach((agent, i) => {
+          const installed = st.agents.installedAgents.includes(agent.id);
+          const status = installed ? dim("[✓]") : dim("[✗]");
+          const active = st.code.agent?.id === agent.id ? brand(" (active)") : "";
+          lines.push(
+            `    ${dim(`[${i + 1}]`)} ${agent.name}  ${dim(agent.provider)}  ${status}${active}`,
+          );
+        });
+        break;
+      }
+
+      case "tools": {
+        lines.push(`  ${dim("MCP Tools")}`);
+        lines.push("");
+        const tools = listTools();
+        tools.slice(0, 10).forEach((tool) => {
+          lines.push(`    ${brand(tool.name)}`);
+          lines.push(`      ${dim(tool.description.slice(0, 60))}...`);
+        });
+        if (tools.length > 10) {
+          lines.push(`    ${dim(`... and ${tools.length - 10} more`)}`);
+        }
+        break;
+      }
+
+      case "mcp":
+        lines.push(`  ${dim("MCP Server")}`);
+        lines.push("");
+        if (st.mcp.enabled) {
+          lines.push(`    ${dim("Status")}  ${brand("Running")}`);
+          lines.push(`    ${dim("Transport")}  ${brand(st.mcp.transport || "stdio")}`);
+          if (st.mcp.httpPort) {
+            lines.push(`    ${dim("URL")}  ${brand(`http://veryfront.me:${st.mcp.httpPort}/mcp`)}`);
+          }
+          lines.push("");
+          lines.push(`    ${dim("Add to")} ${brand("~/.claude/settings.json")}${dim(":")}`);
+          lines.push(`    ${dim('"veryfront": { "type": "url", "url": "...')}`);
+        } else {
+          lines.push(`    ${dim("MCP server not enabled")}`);
+          lines.push(`    ${dim("Start with:")} ${brand("veryfront --mcp")}`);
+        }
+        break;
+    }
+
+    lines.push("");
+    lines.push(`  ${dim("Tab switch  •  Esc back")}`);
     lines.push("");
 
     return lines.join("\n");
@@ -531,9 +767,16 @@ export function createApp(config: AppConfig): App {
 
     switch (state.view) {
       case "dashboard":
-        content = state.projects.items.length > 0 || state.examples.items.length > 0
+        content = state.projects.items.length > 0 || state.templates.items.length > 0 ||
+            state.examples.items.length > 0
           ? renderDashboard(state)
           : renderEmptyState();
+        break;
+      case "code":
+        content = renderCodeView(state);
+        break;
+      case "resources":
+        content = renderResourcesView(state);
         break;
       case "new-project":
         content = renderNewProjectView();
@@ -675,8 +918,89 @@ export function createApp(config: AppConfig): App {
     // Handle Escape key (but not escape sequences like arrow keys)
     // Escape alone is \x1b, arrow keys are \x1b[A, \x1b[B, etc.
     if (key === "\x1b") {
+      // Close command palette if open
+      if (state.commandPalette.open) {
+        update(setCommandPaletteOpen(false));
+        return;
+      }
       if (state.view !== "dashboard") update(goBack());
+      update(resetKeyChord());
       return;
+    }
+
+    // Command palette: : key opens it
+    if (key === ":" && state.mode === "NORMAL" && state.view === "dashboard") {
+      update(setCommandPaletteOpen(true));
+      return;
+    }
+
+    // Ctrl+P for fuzzy search (placeholder)
+    if (key === CTRL_KEYS.P) {
+      update(addLog("info", "Search coming soon (Ctrl+P)"));
+      return;
+    }
+
+    // Handle vim keybindings (gg, G, Ctrl+D, Ctrl+U, number prefixes)
+    if (state.view === "dashboard" && state.mode === "NORMAL") {
+      const vimResult = handleVimKey(key, state.keyChord);
+
+      // Update chord state
+      if (vimResult.chord !== state.keyChord) {
+        state = setKeyChord(vimResult.chord)(state);
+      }
+
+      // Handle go-to shortcuts (gd, gs, gr, gh)
+      if (vimResult.stringAction) {
+        const action = vimResult.stringAction;
+        if (action === "go:d") {
+          update(navigateTo("dashboard"));
+          return;
+        }
+        if (action === "go:s") {
+          update(navigateTo("help")); // Settings not implemented, show help
+          return;
+        }
+        if (action === "go:h") {
+          update(navigateTo("help"));
+          return;
+        }
+        return;
+      }
+
+      // Handle navigation actions (gg, G, Ctrl+D, Ctrl+U)
+      if (vimResult.navAction) {
+        const { direction: _direction, count: _count } = vimResult.navAction;
+        if (state.activeSection === "remote") {
+          const total = state.remote.projects.length;
+          const newIndex = applyNavToIndex(
+            vimResult.navAction,
+            state.remote.focusedIndex,
+            total,
+            5,
+          );
+          const visibleCount = 5;
+          let scrollOffset = state.remote.scrollOffset;
+          if (newIndex < scrollOffset) scrollOffset = newIndex;
+          else if (newIndex >= scrollOffset + visibleCount) {
+            scrollOffset = newIndex - visibleCount + 1;
+          }
+          update(updateRemote({ focusedIndex: newIndex, scrollOffset }));
+        } else {
+          const list = state[state.activeSection];
+          const total = list.items.length;
+          if (total > 0) {
+            const newIndex = applyNavToIndex(vimResult.navAction, list.selectedIndex, total, 5);
+            update(updateActiveList((l) => ({ ...l, selectedIndex: newIndex })));
+          }
+        }
+        return;
+      }
+
+      // If chord is pending but not consumed, don't process other keys
+      if (vimResult.consumed && !vimResult.navAction && !vimResult.stringAction) {
+        render();
+        return;
+      }
     }
 
     if (state.view === "templates") {
@@ -696,6 +1020,16 @@ export function createApp(config: AppConfig): App {
 
     if (state.view === "auth") {
       handleAuthKey(key);
+      return;
+    }
+
+    if (state.view === "code") {
+      handleCodeKey(key);
+      return;
+    }
+
+    if (state.view === "resources") {
+      handleResourcesKey(key);
       return;
     }
 
@@ -723,7 +1057,7 @@ export function createApp(config: AppConfig): App {
     }
 
     if (key === "\x1b[A" || key === "k") {
-      if (state.activeList === "remoteProjects") {
+      if (state.activeSection === "remote") {
         const total = state.remote.projects.length;
         const visibleCount = 5;
         const newIndex = state.remote.focusedIndex > 0 ? state.remote.focusedIndex - 1 : total - 1;
@@ -743,7 +1077,7 @@ export function createApp(config: AppConfig): App {
     }
 
     if (key === "\x1b[B" || key === "j") {
-      if (state.activeList === "remoteProjects") {
+      if (state.activeSection === "remote") {
         const total = state.remote.projects.length;
         const visibleCount = 5;
         const newIndex = state.remote.focusedIndex < total - 1 ? state.remote.focusedIndex + 1 : 0;
@@ -764,26 +1098,28 @@ export function createApp(config: AppConfig): App {
 
     if (key === "\t") {
       const hasProjects = state.projects.items.length > 0;
+      const hasTemplates = state.templates.items.length > 0;
       const hasExamples = state.examples.items.length > 0;
-      const hasRemoteProjects = state.remote.user && state.remote.projects.length > 0;
+      const hasRemote = state.remote.user && state.remote.projects.length > 0;
 
       // Build list of available sections in display order
-      const sections: Array<"projects" | "remoteProjects" | "examples"> = [];
+      const sections: Array<"projects" | "remote" | "templates" | "examples"> = [];
       if (hasProjects) sections.push("projects");
-      if (hasRemoteProjects) sections.push("remoteProjects");
+      if (hasRemote) sections.push("remote");
+      if (hasTemplates) sections.push("templates");
       if (hasExamples) sections.push("examples");
 
       if (sections.length > 1) {
-        const currentIndex = sections.indexOf(state.activeList as typeof sections[number]);
+        const currentIndex = sections.indexOf(state.activeSection);
         const nextIndex = (currentIndex + 1) % sections.length;
         const nextSection = sections[nextIndex];
-        if (nextSection) update(setActiveList(nextSection));
+        if (nextSection) update(setActiveSection(nextSection));
       }
       return;
     }
 
     // Number keys for remote project - update focusedIndex (Enter triggers pull)
-    if (key >= "1" && key <= "9" && state.activeList === "remoteProjects") {
+    if (key >= "1" && key <= "9" && state.activeSection === "remote") {
       const num = parseInt(key, 10);
       const total = state.remote.projects.length;
       if (num <= total) {
@@ -801,11 +1137,11 @@ export function createApp(config: AppConfig): App {
     }
 
     // Letter keys for remote project items 10+ (a=10, b=11, etc.)
-    // Exclude p (pull), u (push), j/k (vim nav), o/s/i (open actions) shortcuts
+    // Exclude c/r (views), p/u (pull/push), j/k (vim nav), o/s/i (open actions) shortcuts
     if (
       key >= "a" && key <= "z" && key !== "j" && key !== "k" && key !== "p" && key !== "u" &&
-      key !== "o" && key !== "s" && key !== "i" &&
-      state.activeList === "remoteProjects"
+      key !== "o" && key !== "s" && key !== "i" && key !== "c" && key !== "r" &&
+      state.activeSection === "remote"
     ) {
       const num = key.charCodeAt(0) - 96 + 9; // a=10, b=11, etc.
       const total = state.remote.projects.length;
@@ -837,12 +1173,12 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
-    // Number keys select from active list (1-9) - skip for remoteProjects (handled above)
-    if (key >= "1" && key <= "9" && state.activeList !== "remoteProjects") {
+    // Number keys select from active list (1-9) - skip for remote (handled above)
+    if (key >= "1" && key <= "9" && state.activeSection !== "remote") {
       const num = parseInt(key, 10);
-      const activeList = state[state.activeList];
+      const activeList = state[state.activeSection];
       if (num <= activeList.items.length) {
-        state = { ...state, [state.activeList]: selectByNumber(activeList, num) };
+        state = { ...state, [state.activeSection]: selectByNumber(activeList, num) };
         render();
         const selected = activeList.items[num - 1];
         if (selected?.data) await openInBrowser(selected.data, state.server.port);
@@ -851,10 +1187,11 @@ export function createApp(config: AppConfig): App {
     }
 
     // Letter keys only work when examples focused (a=1, b=2, etc.)
-    // Exclude j/k (vim nav), p/u (pull/push) shortcuts
+    // Exclude c/r (views), p/u (pull/push), j/k (vim nav), o/s/i (open actions) shortcuts
     if (
       key >= "a" && key <= "z" && key !== "j" && key !== "k" && key !== "p" && key !== "u" &&
-      state.activeList === "examples"
+      key !== "o" && key !== "s" && key !== "i" && key !== "c" && key !== "r" &&
+      state.activeSection === "examples"
     ) {
       const num = key.charCodeAt(0) - 96; // a=1, b=2, ...
       if (num <= state.examples.items.length) {
@@ -868,7 +1205,7 @@ export function createApp(config: AppConfig): App {
 
     if (key === "\r" || key === "\n") {
       // Enter on remote projects: pull
-      if (state.activeList === "remoteProjects") {
+      if (state.activeSection === "remote") {
         const focused = state.remote.projects[state.remote.focusedIndex];
         if (focused) {
           const projectDir = join(cwd(), "projects", focused.slug);
@@ -899,7 +1236,7 @@ export function createApp(config: AppConfig): App {
 
     if (key === "o") {
       // Open focused remote project in local dev server
-      if (state.activeList === "remoteProjects") {
+      if (state.activeSection === "remote") {
         const focused = state.remote.projects[state.remote.focusedIndex];
         if (focused) {
           const url = `http://${focused.slug}.veryfront.me:${state.server.port}`;
@@ -915,7 +1252,7 @@ export function createApp(config: AppConfig): App {
 
     if (key === "s") {
       // Open focused remote project in Studio
-      if (state.activeList === "remoteProjects") {
+      if (state.activeSection === "remote") {
         const focused = state.remote.projects[state.remote.focusedIndex];
         if (focused) {
           const url = `https://veryfront.com/projects/${focused.slug}`;
@@ -931,7 +1268,7 @@ export function createApp(config: AppConfig): App {
 
     if (key === "i") {
       // Open focused remote project's local directory in IDE
-      if (state.activeList === "remoteProjects") {
+      if (state.activeSection === "remote") {
         const focused = state.remote.projects[state.remote.focusedIndex];
         if (focused) {
           const projectDir = join(cwd(), "projects", focused.slug);
@@ -942,6 +1279,30 @@ export function createApp(config: AppConfig): App {
       // Otherwise open local project in IDE
       const selected = getActiveSelection(state);
       if (selected?.data) await openInIDE(selected.data);
+      return;
+    }
+
+    // Code view - use selected project path if available
+    if (key === "c") {
+      let projectPath: string | null = null;
+      if (state.activeSection === "projects") {
+        const selected = getActiveSelection(state);
+        if (selected?.data?.path) {
+          projectPath = selected.data.path;
+        }
+      } else if (state.activeSection === "remote") {
+        const focused = state.remote.projects[state.remote.focusedIndex];
+        if (focused) {
+          projectPath = join(cwd(), "projects", focused.slug);
+        }
+      }
+      update(enterCodeView(projectPath));
+      return;
+    }
+
+    // Resources view
+    if (key === "r") {
+      update(navigateTo("resources"));
       return;
     }
 
@@ -969,7 +1330,7 @@ export function createApp(config: AppConfig): App {
     }
 
     // Pull focused remote project
-    if (key === "p" && state.activeList === "remoteProjects") {
+    if (key === "p" && state.activeSection === "remote") {
       const focused = state.remote.projects[state.remote.focusedIndex];
       if (focused) {
         const projectDir = join(cwd(), "projects", focused.slug);
@@ -994,7 +1355,7 @@ export function createApp(config: AppConfig): App {
     }
 
     // Pull local project from remote (sync)
-    if (key === "p" && state.activeList === "projects") {
+    if (key === "p" && state.activeSection === "projects") {
       const selected = state.projects.items[state.projects.selectedIndex];
       if (selected?.data) {
         const { slug, path: projectDir } = selected.data;
@@ -1014,7 +1375,7 @@ export function createApp(config: AppConfig): App {
     }
 
     // Push local project
-    if (key === "u" && state.activeList === "projects") {
+    if (key === "u" && state.activeSection === "projects") {
       const selected = state.projects.items[state.projects.selectedIndex];
       if (selected?.data) {
         const { slug, path: projectDir } = selected.data;
@@ -1329,6 +1690,189 @@ export function createApp(config: AppConfig): App {
         }
         render();
       })();
+    }
+  }
+
+  function handleCodeKey(key: string): void {
+    // If agent picker is open, handle picker keys
+    if (state.agents.pickerOpen) {
+      handleAgentPickerKey(key);
+      return;
+    }
+
+    // Esc to go back
+    if (key === "\x1b") {
+      update(goBack());
+      return;
+    }
+
+    // Ctrl+A to open agent picker
+    if (key === "\x01") {
+      update(openAgentPicker());
+      return;
+    }
+
+    // 'm' followed by number to select model
+    if (key === "m") {
+      if (!state.code.agent?.models || state.code.agent.models.length <= 1) {
+        update(addLog("info", "This agent only has one model"));
+        return;
+      }
+      update(addLog("info", "Press 1-9 to select model"));
+      return;
+    }
+
+    // Number keys for model selection when agent has models
+    if (key >= "1" && key <= "9" && state.code.agent?.models) {
+      const idx = parseInt(key, 10) - 1;
+      const models = state.code.agent.models;
+      if (idx < models.length) {
+        const selectedModel = models[idx];
+        if (selectedModel) {
+          update(setModel(selectedModel));
+          update(addLog("info", `Model: ${selectedModel}`));
+        }
+      }
+      return;
+    }
+
+    // Enter to start agent
+    if (key === "\r" || key === "\n") {
+      if (!state.code.agent) {
+        update(addLog("info", "Select an agent first (Ctrl+A)"));
+        return;
+      }
+
+      const agent = state.code.agent;
+      const isInstalled = state.agents.installedAgents.includes(agent.id);
+
+      if (!isInstalled) {
+        update(addLog("error", `${agent.name} is not installed. Install it first.`));
+        return;
+      }
+
+      // Launch the agent
+      launchAgent(agent);
+    }
+  }
+
+  function handleAgentPickerKey(key: string): void {
+    // Esc to close picker
+    if (key === "\x1b") {
+      update(closeAgentPicker());
+      return;
+    }
+
+    // Up arrow or k
+    if (key === "\x1b[A" || key === "k") {
+      update(moveAgentPicker(-1));
+      return;
+    }
+
+    // Down arrow or j
+    if (key === "\x1b[B" || key === "j") {
+      update(moveAgentPicker(1));
+      return;
+    }
+
+    // Number keys for quick selection (1-9)
+    if (key >= "1" && key <= "9") {
+      const idx = parseInt(key, 10) - 1;
+      if (idx < state.agents.agents.length) {
+        const selectedAgent = state.agents.agents[idx];
+        if (selectedAgent) {
+          update(selectAgent(selectedAgent));
+          update(addLog("info", `Selected ${selectedAgent.name}`));
+        }
+      }
+      return;
+    }
+
+    // Enter to select
+    if (key === "\r" || key === "\n") {
+      const selectedAgent = state.agents.agents[state.agents.pickerIndex];
+      if (selectedAgent) {
+        update(selectAgent(selectedAgent));
+        update(addLog("info", `Selected ${selectedAgent.name}`));
+      }
+      return;
+    }
+  }
+
+  function launchAgent(agent: CodingAgentDef): void {
+    update(addLog("info", `Launching ${agent.name}...`));
+
+    // For IDE agents, just open them
+    if (agent.type === "ide") {
+      const projectPath = state.code.projectPath ?? cwd();
+      update(addLog("info", `Opening ${agent.name} in ${projectPath}`));
+      // Build command and execute
+      const parts = agent.command.split(" ");
+      const cmd = parts[0]!;
+      const args = parts.slice(1).map((a) => (a === "." ? projectPath : a));
+
+      try {
+        new Deno.Command(cmd, {
+          args,
+          cwd: projectPath,
+          stdin: "null",
+          stdout: "null",
+          stderr: "null",
+        }).spawn();
+        update(addLog("info", `Opened ${agent.name}`));
+      } catch (err) {
+        update(addLog("error", `Failed to open ${agent.name}: ${err}`));
+      }
+      return;
+    }
+
+    // For CLI agents, spawn with PTY passthrough
+    const projectPath = state.code.projectPath ?? cwd();
+    update(setCodeRunning(true));
+
+    // Exit TUI mode, spawn agent, then return to TUI
+    stop();
+
+    const result = spawnAgent(agent, { cwd: projectPath });
+    if (!result.success) {
+      update(addLog("error", `Failed to start ${agent.name}: ${result.error}`));
+      update(setCodeRunning(false));
+      start();
+      return;
+    }
+
+    // Wait for the agent to exit
+    void (async () => {
+      if (result.process) {
+        await waitForExit(result.process, result.session);
+      }
+      update(setCodeRunning(false));
+      update(addLog("info", `${agent.name} exited`));
+      start();
+    })();
+  }
+
+  function handleResourcesKey(key: string): void {
+    // Esc to go back
+    if (key === "\x1b") {
+      update(goBack());
+      return;
+    }
+
+    // Tab to switch between resource tabs
+    if (key === "\t") {
+      const tabs: Array<"files" | "routes" | "agents" | "tools" | "mcp"> = [
+        "files",
+        "routes",
+        "agents",
+        "tools",
+        "mcp",
+      ];
+      const currentIndex = tabs.indexOf(state.resourceTab);
+      const nextIndex = (currentIndex + 1) % tabs.length;
+      const nextTab = tabs[nextIndex] ?? "files";
+      update(setResourceTab(nextTab));
+      return;
     }
   }
 

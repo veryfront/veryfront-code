@@ -14,5 +14,6 @@ export * from "../commands/doctor/index.ts";
 export * from "../commands/generate.ts";
 export * from "../commands/init/index.ts";
 export * from "../commands/routes.ts";
+export * from "../commands/code.ts";
 
 export * from "../utils/index.ts";

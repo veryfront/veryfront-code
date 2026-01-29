@@ -1,16 +1,41 @@
+// TUI Application State
+// Simple, focused state management for Veryfront Code
+
 import type { ListItem, ListSelectState } from "./components/list-select.ts";
 import { createListState } from "./components/list-select.ts";
 import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
+import {
+  type CodingAgentDef,
+  type CodingAgentState,
+  type CommandPaletteState,
+  createCodingAgentState,
+  createCommandPaletteState,
+  createKeyChordState,
+  type KeyChordState,
+  type Mode,
+} from "./core/types.ts";
+
+// ============================================================================
+// Views
+// ============================================================================
 
 export type AppView =
-  | "dashboard"
-  | "project-detail"
-  | "new-project"
-  | "templates"
-  | "examples"
-  | "auth"
-  | "help";
+  | "dashboard" // Local/Remote/Templates/Examples
+  | "code" // Coding agent (PTY passthrough)
+  | "resources" // k9s-style browser (Files/Routes/Agents/Tools/MCP)
+  | "new-project" // Create from selected template/example
+  | "templates" // Template selection (sub-view of new-project)
+  | "examples" // Example selection (sub-view of new-project)
+  | "auth" // Login providers
+  | "help"; // Keybindings + MCP config
+
+export type DashboardSection = "projects" | "remote" | "templates" | "examples";
+export type ResourceTab = "files" | "routes" | "agents" | "tools" | "mcp";
+
+// ============================================================================
+// Data Types
+// ============================================================================
 
 export interface ProjectInfo {
   slug: string;
@@ -37,9 +62,7 @@ export interface MCPStatus {
 export interface RemoteState {
   user: { email: string; name?: string } | null;
   projects: Array<{ id: string; name: string; slug: string }>;
-  /** Currently focused index in remote projects list */
   focusedIndex: number;
-  /** Scroll offset for remote projects list */
   scrollOffset: number;
 }
 
@@ -69,48 +92,73 @@ export interface LogEntry {
   meta?: LogMeta;
 }
 
+export interface CodeViewState {
+  agent: CodingAgentDef | null;
+  model: string | null;
+  projectPath: string | null; // null = root (multi-project)
+  running: boolean;
+}
+
+// ============================================================================
+// App State
+// ============================================================================
+
 export interface AppState {
+  // Navigation
   view: AppView;
   previousView: AppView | null;
 
+  // Mode system
+  mode: Mode;
+  keyChord: KeyChordState;
+  commandPalette: CommandPaletteState;
+
+  // Server
   server: ServerStatus;
   mcp: MCPStatus;
+
+  // Dashboard sections
+  activeSection: DashboardSection;
+  projects: ListSelectState<ProjectInfo>;
+  templates: ListSelectState<ProjectInfo>;
+  examples: ListSelectState<ProjectInfo>;
   remote: RemoteState;
 
-  projects: ListSelectState<ProjectInfo>;
-  examples: ListSelectState<ProjectInfo>;
-  templates: ListSelectState<ProjectInfo>;
+  // Code view
+  code: CodeViewState;
 
-  activeList: "projects" | "examples" | "templates" | "remoteProjects";
-  selectedProject: ProjectInfo | null;
+  // Agent state (picker, installed agents)
+  agents: CodingAgentState;
 
-  wizard: {
-    step: number;
-    startType: "scratch" | "template" | "example" | null;
-    selectedTemplate: string | null;
-    integrations: string[];
-    projectName: string;
-  };
+  // Resources view
+  resourceTab: ResourceTab;
 
+  // Input
   input: InputState;
 
+  // Logs
   logs: LogEntry[];
   maxLogs: number;
   logsExpanded: boolean;
   logScroll: number;
 
-  /** Auth provider selection index (0=Google, 1=GitHub, 2=Microsoft) */
+  // UI state
   authProviderIndex: number;
-  /** New project option index (0=template, 1=example, 2=scratch) */
   newProjectIndex: number;
-  /** Show expanded help */
   showHelp: boolean;
 }
+
+// ============================================================================
+// Initial State
+// ============================================================================
 
 export function createInitialState(): AppState {
   return {
     view: "dashboard",
     previousView: null,
+    mode: "NORMAL",
+    keyChord: createKeyChordState(),
+    commandPalette: createCommandPaletteState(),
     server: {
       running: false,
       url: "http://veryfront.me:8080",
@@ -123,24 +171,24 @@ export function createInitialState(): AppState {
       transport: null,
       connected: false,
     },
+    activeSection: "projects",
+    projects: createListState([]),
+    templates: createListState([]),
+    examples: createListState([]),
     remote: {
       user: null,
       projects: [],
       focusedIndex: 0,
       scrollOffset: 0,
     },
-    projects: createListState([]),
-    examples: createListState([]),
-    templates: createListState([]),
-    activeList: "projects",
-    selectedProject: null,
-    wizard: {
-      step: 0,
-      startType: null,
-      selectedTemplate: null,
-      integrations: [],
-      projectName: "",
+    code: {
+      agent: null,
+      model: null,
+      projectPath: null,
+      running: false,
     },
+    agents: createCodingAgentState(),
+    resourceTab: "files",
     input: {
       active: false,
       prompt: "",
@@ -159,11 +207,40 @@ export function createInitialState(): AppState {
   };
 }
 
+// ============================================================================
+// State Updaters
+// ============================================================================
+
 export type StateUpdater = (state: AppState) => AppState;
 
-export function setProjects(
-  projects: Array<{ slug: string; path: string }>,
-): StateUpdater {
+// Navigation
+export function navigateTo(view: AppView): StateUpdater {
+  return (state) => ({ ...state, view, previousView: state.view });
+}
+
+export function goBack(): StateUpdater {
+  return (state) => ({
+    ...state,
+    view: state.previousView ?? "dashboard",
+    previousView: null,
+  });
+}
+
+// Server
+export function updateServer(update: Partial<ServerStatus>): StateUpdater {
+  return (state) => ({ ...state, server: { ...state.server, ...update } });
+}
+
+export function updateMCP(update: Partial<MCPStatus>): StateUpdater {
+  return (state) => ({ ...state, mcp: { ...state.mcp, ...update } });
+}
+
+// Dashboard
+export function setActiveSection(section: DashboardSection): StateUpdater {
+  return (state) => ({ ...state, activeSection: section });
+}
+
+export function setProjects(projects: Array<{ slug: string; path: string }>): StateUpdater {
   return (state) => ({
     ...state,
     projects: createListState(
@@ -171,23 +248,7 @@ export function setProjects(
         id: p.slug,
         label: p.slug,
         meta: shortenPath(p.path),
-        data: { slug: p.slug, path: p.path, type: "local" },
-      })),
-    ),
-  });
-}
-
-export function setExamples(
-  examples: Array<{ slug: string; path: string; description?: string }>,
-): StateUpdater {
-  return (state) => ({
-    ...state,
-    examples: createListState(
-      examples.map((e) => ({
-        id: e.slug,
-        label: e.slug,
-        description: e.description,
-        data: { slug: e.slug, path: e.path, type: "example" },
+        data: { slug: p.slug, path: p.path, type: "local" as const },
       })),
     ),
   });
@@ -203,85 +264,126 @@ export function setTemplates(
         id: t.id,
         label: t.name,
         description: t.description,
-        data: { slug: t.id, path: "", type: "template" },
+        data: { slug: t.id, path: "", type: "template" as const },
       })),
     ),
   });
 }
 
-export function updateServer(update: Partial<ServerStatus>): StateUpdater {
-  return (state) => ({ ...state, server: { ...state.server, ...update } });
-}
-
-export function updateMCP(update: Partial<MCPStatus>): StateUpdater {
-  return (state) => ({ ...state, mcp: { ...state.mcp, ...update } });
+export function setExamples(
+  examples: Array<{ slug: string; path: string; description?: string }>,
+): StateUpdater {
+  return (state) => ({
+    ...state,
+    examples: createListState(
+      examples.map((e) => ({
+        id: e.slug,
+        label: e.slug,
+        description: e.description,
+        data: { slug: e.slug, path: e.path, type: "example" as const },
+      })),
+    ),
+  });
 }
 
 export function updateRemote(update: Partial<RemoteState>): StateUpdater {
   return (state) => ({ ...state, remote: { ...state.remote, ...update } });
 }
 
-export function navigateTo(view: AppView): StateUpdater {
-  return (state) => ({ ...state, view, previousView: state.view });
-}
-
-export function goBack(): StateUpdater {
-  return (state) => ({
-    ...state,
-    view: state.previousView ?? "dashboard",
-    previousView: null,
-  });
-}
-
-export function setActiveList(
-  list: "projects" | "examples" | "templates" | "remoteProjects",
-): StateUpdater {
-  return (state) => ({ ...state, activeList: list });
-}
-
 export function updateActiveList(
   updater: (list: ListSelectState<ProjectInfo>) => ListSelectState<ProjectInfo>,
 ): StateUpdater {
   return (state) => {
-    const key = state.activeList;
-    // remoteProjects is not a ListSelectState, skip update
-    if (key === "remoteProjects") return state;
-    return { ...state, [key]: updater(state[key]) };
+    const section = state.activeSection;
+    if (section === "remote") return state;
+    return { ...state, [section]: updater(state[section]) };
   };
 }
 
-export function selectProject(project: ProjectInfo | null): StateUpdater {
-  return (state) => {
-    if (!project) return { ...state, selectedProject: null };
-
-    return {
-      ...state,
-      selectedProject: project,
-      view: "project-detail",
-      previousView: state.view,
-    };
-  };
-}
-
-export function updateWizard(
-  update: Partial<AppState["wizard"]>,
-): StateUpdater {
-  return (state) => ({ ...state, wizard: { ...state.wizard, ...update } });
-}
-
-export function resetWizard(): StateUpdater {
+// Code view
+export function enterCodeView(projectPath: string | null): StateUpdater {
   return (state) => ({
     ...state,
-    wizard: {
-      step: 0,
-      startType: null,
-      selectedTemplate: null,
-      integrations: [],
-      projectName: "",
+    view: "code",
+    previousView: state.view,
+    code: { ...state.code, projectPath },
+  });
+}
+
+export function setCodeAgent(agent: CodingAgentDef | null, model?: string): StateUpdater {
+  return (state) => ({
+    ...state,
+    code: { ...state.code, agent, model: model ?? agent?.defaultModel ?? null },
+  });
+}
+
+export function setCodeRunning(running: boolean): StateUpdater {
+  return (state) => ({ ...state, code: { ...state.code, running } });
+}
+
+// Agent picker
+export function openAgentPicker(): StateUpdater {
+  return (state) => ({
+    ...state,
+    agents: { ...state.agents, pickerOpen: true, pickerIndex: 0 },
+  });
+}
+
+export function closeAgentPicker(): StateUpdater {
+  return (state) => ({
+    ...state,
+    agents: { ...state.agents, pickerOpen: false },
+  });
+}
+
+export function moveAgentPicker(delta: number): StateUpdater {
+  return (state) => {
+    const maxIndex = state.agents.agents.length - 1;
+    let newIndex = state.agents.pickerIndex + delta;
+    if (newIndex < 0) newIndex = maxIndex;
+    if (newIndex > maxIndex) newIndex = 0;
+    return { ...state, agents: { ...state.agents, pickerIndex: newIndex } };
+  };
+}
+
+export function selectAgent(agent: CodingAgentDef | null): StateUpdater {
+  return (state) => ({
+    ...state,
+    agents: {
+      ...state.agents,
+      activeAgent: agent,
+      activeModel: agent?.defaultModel ?? null,
+      pickerOpen: false,
+    },
+    code: {
+      ...state.code,
+      agent,
+      model: agent?.defaultModel ?? null,
     },
   });
 }
 
+export function setModel(model: string | null): StateUpdater {
+  return (state) => ({
+    ...state,
+    agents: { ...state.agents, activeModel: model },
+    code: { ...state.code, model },
+  });
+}
+
+export function setAgents(agents: CodingAgentDef[], installed: string[]): StateUpdater {
+  return (state) => ({
+    ...state,
+    agents: { ...state.agents, agents, installedAgents: installed },
+  });
+}
+
+// Resources view
+export function setResourceTab(tab: ResourceTab): StateUpdater {
+  return (state) => ({ ...state, resourceTab: tab });
+}
+
+// Input
 export function startInput(
   prompt: string,
   onSubmit: (value: string) => void,
@@ -322,6 +424,7 @@ export function endInput(): StateUpdater {
   });
 }
 
+// Logs
 export function addLog(level: LogEntry["level"], message: string, meta?: LogMeta): StateUpdater {
   return (state) => {
     const logs = [...state.logs, { time: new Date(), level, message, meta }];
@@ -335,58 +438,67 @@ export function clearLogs(): StateUpdater {
 }
 
 export function toggleLogsExpanded(): StateUpdater {
-  return (state) => ({
-    ...state,
-    logsExpanded: !state.logsExpanded,
-    logScroll: 0,
-  });
-}
-
-export function toggleHelp(): StateUpdater {
-  return (state) => ({ ...state, showHelp: !state.showHelp });
+  return (state) => ({ ...state, logsExpanded: !state.logsExpanded, logScroll: 0 });
 }
 
 export function scrollLogs(direction: "up" | "down"): StateUpdater {
   return (state) => {
     if (!state.logsExpanded) return state;
-
     const maxScroll = Math.max(0, state.logs.length - 5);
-    let newScroll = state.logScroll;
-
-    if (direction === "up") {
-      newScroll = Math.min(maxScroll, state.logScroll + 1);
-    } else {
-      newScroll = Math.max(0, state.logScroll - 1);
-    }
-
+    const delta = direction === "up" ? 1 : -1;
+    const newScroll = Math.max(0, Math.min(maxScroll, state.logScroll + delta));
     return { ...state, logScroll: newScroll };
   };
 }
 
+// Mode
+export function setMode(mode: Mode): StateUpdater {
+  return (state) => ({ ...state, mode });
+}
+
+export function setKeyChord(keyChord: KeyChordState): StateUpdater {
+  return (state) => ({ ...state, keyChord });
+}
+
+export function resetKeyChord(): StateUpdater {
+  return (state) => ({ ...state, keyChord: createKeyChordState() });
+}
+
+export function setCommandPaletteOpen(open: boolean): StateUpdater {
+  return (state) => ({
+    ...state,
+    commandPalette: { ...state.commandPalette, open, query: "", selectedIndex: 0 },
+    mode: open ? "COMMAND" : "NORMAL",
+  });
+}
+
+export function updateCommandPalette(update: Partial<CommandPaletteState>): StateUpdater {
+  return (state) => ({
+    ...state,
+    commandPalette: { ...state.commandPalette, ...update },
+  });
+}
+
+// UI
+export function toggleHelp(): StateUpdater {
+  return (state) => ({ ...state, showHelp: !state.showHelp });
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
 function shortenPath(path: string, env: RuntimeEnv = getRuntimeEnv()): string {
-  // Prefer relative path to cwd
   const currentDir = cwd();
-  if (path.startsWith(currentDir + "/")) {
-    return "./" + path.slice(currentDir.length + 1);
-  }
-  if (path === currentDir) {
-    return "./";
-  }
-
-  // Fall back to ~ for home
+  if (path.startsWith(currentDir + "/")) return "./" + path.slice(currentDir.length + 1);
+  if (path === currentDir) return "./";
   const home = env.homeDir ?? "";
-  if (home && path.startsWith(home)) {
-    return `~${path.slice(home.length)}`;
-  }
-
+  if (home && path.startsWith(home)) return `~${path.slice(home.length)}`;
   return path;
 }
 
-export function getActiveSelection(
-  state: AppState,
-): ListItem<ProjectInfo> | undefined {
-  // remoteProjects is not a ListSelectState
-  if (state.activeList === "remoteProjects") return undefined;
-  const list = state[state.activeList];
+export function getActiveSelection(state: AppState): ListItem<ProjectInfo> | undefined {
+  if (state.activeSection === "remote") return undefined;
+  const list = state[state.activeSection];
   return list.items[list.selectedIndex];
 }
