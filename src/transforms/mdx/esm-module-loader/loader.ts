@@ -524,7 +524,7 @@ async function doLoadModuleESM(
     }
     const namespace = context.projectId;
     const namespaceKey = encodeURIComponent(namespace);
-    const compositeKey = `${namespaceKey}:${codeHash}`;
+    let compositeKey = `${namespaceKey}:${codeHash}`;
 
     const cached = context.moduleCache.get(compositeKey);
     if (cached) {
@@ -620,9 +620,12 @@ async function doLoadModuleESM(
         // Re-write the module file with refreshed HTTP bundle paths
         const refreshedHash = hashString(rewritten);
         const refreshedPath = join(nsDir, `${refreshedHash}.mjs`);
-        await getLocalFs().writeTextFile(refreshedPath, rewritten);
+        await mdxWriteFlight.do(refreshedPath, async () => {
+          await getLocalFs().writeTextFile(refreshedPath, rewritten);
+        });
         filePath = refreshedPath;
         codeHash = refreshedHash;
+        compositeKey = `${namespaceKey}:${codeHash}`;
 
         // Verify bundles exist after re-fetch
         const refreshedBundles = extractHttpBundlePaths(rewritten);
