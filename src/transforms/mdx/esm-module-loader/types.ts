@@ -68,6 +68,12 @@ export interface ModuleFetcherContext {
    * Defaults to true when not specified.
    */
   strictMissingModules?: boolean;
+  /**
+   * Deadline timestamp (Date.now() + timeout) for the entire transform tree.
+   * If not set, defaults to TRANSFORM_TREE_TIMEOUT_MS from the first fetchAndCacheModule call.
+   * Prevents infinite recursion from causing pod hangs.
+   */
+  transformDeadline?: number;
 }
 
 export interface JSXTransform {

@@ -48,6 +48,26 @@ import { buildMissingModuleError } from "../missing-module.ts";
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
 
+/**
+ * Maximum time allowed for the entire transform tree (recursive module resolution).
+ * If the cumulative time exceeds this, we fail fast instead of hanging indefinitely.
+ * This prevents pods from getting stuck on deeply nested or slow transforms.
+ */
+const TRANSFORM_TREE_TIMEOUT_MS = 30_000;
+
+/**
+ * Error thrown when transform tree exceeds the timeout.
+ */
+export class TransformTreeTimeoutError extends Error {
+  constructor(normalizedPath: string, elapsedMs: number) {
+    super(
+      `Transform tree timeout: Module resolution for "${normalizedPath}" exceeded ${TRANSFORM_TREE_TIMEOUT_MS}ms (elapsed: ${elapsedMs}ms). ` +
+        `This may indicate deeply nested dependencies or slow network fetches.`,
+    );
+    this.name = "TransformTreeTimeoutError";
+  }
+}
+
 /** Resolve the logger from context, falling back to global logger */
 function getLog(context?: { logger?: Logger }): Logger {
   return context?.logger ?? globalLogger;
@@ -523,6 +543,25 @@ export async function fetchAndCacheModule(
   const log = getLog(context);
   const normalizedPath = normalizePath(modulePath, parentModulePath);
   const projectSlug = context.projectSlug || "unknown";
+
+  // Initialize deadline on first call, then propagate through recursive calls
+  const now = Date.now();
+  if (!context.transformDeadline) {
+    context.transformDeadline = now + TRANSFORM_TREE_TIMEOUT_MS;
+  }
+
+  // Check if we've exceeded the deadline
+  if (now > context.transformDeadline) {
+    const elapsedMs = TRANSFORM_TREE_TIMEOUT_MS + (now - context.transformDeadline);
+    log.error(`${LOG_PREFIX_MDX_LOADER} Transform tree timeout exceeded`, {
+      projectSlug,
+      normalizedPath,
+      parentModulePath,
+      elapsedMs,
+      timeoutMs: TRANSFORM_TREE_TIMEOUT_MS,
+    });
+    throw new TransformTreeTimeoutError(normalizedPath, elapsedMs);
+  }
 
   const inFlight = context.inFlightModules;
   const existingPromise = inFlight?.get(normalizedPath);

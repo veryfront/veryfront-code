@@ -127,21 +127,80 @@ const renderSemaphore = new Semaphore(RENDER_MAX_CONCURRENT);
  */
 const projectRenderCounts = new Map<string, number>();
 
-function acquireProjectSlot(projectId: string): boolean {
-  if (RENDER_PER_PROJECT_LIMIT <= 0) return true;
-  const current = projectRenderCounts.get(projectId) ?? 0;
-  if (current >= RENDER_PER_PROJECT_LIMIT) return false;
-  projectRenderCounts.set(projectId, current + 1);
-  return true;
+/**
+ * Lock map to prevent race conditions in acquireProjectSlot/releaseProjectSlot.
+ * Each project has its own lock to allow concurrent access across different projects
+ * while serializing access within the same project.
+ *
+ * The race condition: Without locking, concurrent requests can read the same count,
+ * both pass the limit check, and both increment - allowing 2*limit concurrent renders.
+ */
+const projectSlotLocks = new Map<string, Promise<void>>();
+
+/**
+ * Acquire a lock for a specific project. Returns a release function.
+ * Uses a promise chain to serialize access per-project.
+ */
+async function acquireProjectLock(projectId: string): Promise<() => void> {
+  // Wait for any existing lock on this project
+  const existingLock = projectSlotLocks.get(projectId);
+  if (existingLock) {
+    await existingLock;
+  }
+
+  // Create a new lock with a resolver
+  let releaseLock: () => void;
+  const lockPromise = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+  projectSlotLocks.set(projectId, lockPromise);
+
+  // Return release function that also cleans up the lock
+  return () => {
+    releaseLock!();
+    // Only delete if this is still our lock (prevents race with next lock)
+    if (projectSlotLocks.get(projectId) === lockPromise) {
+      projectSlotLocks.delete(projectId);
+    }
+  };
 }
 
-function releaseProjectSlot(projectId: string): void {
+/**
+ * Attempt to acquire a project render slot with proper locking.
+ * Returns true if acquired, false if limit reached.
+ */
+async function acquireProjectSlot(projectId: string): Promise<boolean> {
+  if (RENDER_PER_PROJECT_LIMIT <= 0) return true;
+
+  const release = await acquireProjectLock(projectId);
+  try {
+    const current = projectRenderCounts.get(projectId) ?? 0;
+    if (current >= RENDER_PER_PROJECT_LIMIT) {
+      return false;
+    }
+    projectRenderCounts.set(projectId, current + 1);
+    return true;
+  } finally {
+    release();
+  }
+}
+
+/**
+ * Release a project render slot with proper locking.
+ */
+async function releaseProjectSlot(projectId: string): Promise<void> {
   if (RENDER_PER_PROJECT_LIMIT <= 0) return;
-  const current = projectRenderCounts.get(projectId) ?? 0;
-  if (current <= 1) {
-    projectRenderCounts.delete(projectId);
-  } else {
-    projectRenderCounts.set(projectId, current - 1);
+
+  const release = await acquireProjectLock(projectId);
+  try {
+    const current = projectRenderCounts.get(projectId) ?? 0;
+    if (current <= 1) {
+      projectRenderCounts.delete(projectId);
+    } else {
+      projectRenderCounts.set(projectId, current - 1);
+    }
+  } finally {
+    release();
   }
 }
 
@@ -236,7 +295,7 @@ export class Renderer {
 
         // Per-project cap: reject immediately if this project has too many concurrent renders.
         // This prevents a single noisy tenant from monopolizing the global semaphore.
-        if (!acquireProjectSlot(ctx.projectId)) {
+        if (!(await acquireProjectSlot(ctx.projectId))) {
           const activeCount = projectRenderCounts.get(ctx.projectId) ?? 0;
           logger.error("[Renderer] Per-project render limit reached", {
             slug,
@@ -258,7 +317,7 @@ export class Renderer {
 
         const acquired = await renderSemaphore.tryAcquire(RENDER_ACQUIRE_TIMEOUT_MS);
         if (!acquired) {
-          releaseProjectSlot(ctx.projectId);
+          await releaseProjectSlot(ctx.projectId);
           logger.error("[Renderer] Render capacity exceeded - service overloaded", {
             slug,
             projectId: ctx.projectId,
@@ -276,7 +335,7 @@ export class Renderer {
           return await this.doRenderPage(slug, ctx, options, startTime);
         } finally {
           renderSemaphore.release();
-          releaseProjectSlot(ctx.projectId);
+          await releaseProjectSlot(ctx.projectId);
         }
       },
       {
