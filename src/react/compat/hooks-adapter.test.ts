@@ -15,9 +15,13 @@ import { getReactVersionInfo, hasFeature } from "./version-detector/index.ts";
 // React 19 SSR doesn't allow optimistic state updates - these tests only work in client context.
 // Use a runtime check to avoid SSR stub leakage across test files.
 function isSSREnvironment(): boolean {
+  const globalAny = globalThis as unknown as {
+    window?: Window & { __veryfrontSSRStub?: boolean };
+    document?: Document & { __veryfrontSSRStub?: boolean };
+  };
   return typeof window === "undefined" ||
-    globalThis.window?.__veryfrontSSRStub === true ||
-    globalThis.document?.__veryfrontSSRStub === true;
+    globalAny.window?.__veryfrontSSRStub === true ||
+    globalAny.document?.__veryfrontSSRStub === true;
 }
 
 function clientOnlyIt(name: string, fn: () => void | Promise<void>): void {

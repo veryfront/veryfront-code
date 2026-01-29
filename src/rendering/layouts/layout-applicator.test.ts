@@ -188,22 +188,26 @@ describe("LayoutApplicator helpers", () => {
 
   describe("ESM vs function-body layout mode detection", () => {
     it("should detect ESM mode from config", () => {
-      const config = { experimental: { esmLayouts: true } };
+      const config: { experimental?: { esmLayouts?: boolean } } = {
+        experimental: { esmLayouts: true },
+      };
       assertEquals(Boolean(config?.experimental?.esmLayouts), true);
     });
 
     it("should default to function-body mode when not set", () => {
-      const config = {};
+      const config: { experimental?: { esmLayouts?: boolean } } = {};
       assertEquals(Boolean((config as any)?.experimental?.esmLayouts), false);
     });
 
     it("should default to function-body mode when experimental is undefined", () => {
-      const config = { experimental: undefined };
+      const config: { experimental?: { esmLayouts?: boolean } } = { experimental: undefined };
       assertEquals(Boolean(config?.experimental?.esmLayouts), false);
     });
 
     it("should default to function-body mode when esmLayouts is false", () => {
-      const config = { experimental: { esmLayouts: false } };
+      const config: { experimental?: { esmLayouts?: boolean } } = {
+        experimental: { esmLayouts: false },
+      };
       assertEquals(Boolean(config?.experimental?.esmLayouts), false);
     });
   });

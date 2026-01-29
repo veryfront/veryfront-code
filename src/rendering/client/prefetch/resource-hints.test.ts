@@ -84,7 +84,7 @@ function setupMocks(): {
       rel: "",
       href: "",
       setAttribute(name: string, value: string) {
-        this[name] = value;
+        (this as Record<string, string>)[name] = value;
       },
     }),
     querySelector: (_selector: string) => null,

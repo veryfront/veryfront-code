@@ -51,7 +51,7 @@ describe("MockAdapter", () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set("/test.txt", "hello");
 
-      const bytes = await adapter.fs.readFileBytes?.("/test.txt");
+      const bytes = await adapter.fs.readFileBytes("/test.txt");
       assertEquals(new TextDecoder().decode(bytes), "hello");
     });
 
@@ -59,7 +59,7 @@ describe("MockAdapter", () => {
       const adapter = createMockAdapter();
 
       await assertRejects(
-        () => adapter.fs.readFileBytes?.("/missing.txt"),
+        () => adapter.fs.readFileBytes("/missing.txt"),
         Error,
         "File not found: /missing.txt",
       );

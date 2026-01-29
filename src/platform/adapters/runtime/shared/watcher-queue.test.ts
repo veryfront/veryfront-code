@@ -3,7 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileWatcher, createWatcherIterator, enqueueWatchEvent } from "./watcher-queue.ts";
 import type { FileChangeEvent } from "../../base.ts";
 
-function makeEvent(kind: "create" | "modify" | "remove", paths: string[]): FileChangeEvent {
+function makeEvent(kind: FileChangeEvent["kind"], paths: string[]): FileChangeEvent {
   return { kind, paths };
 }
 
@@ -63,10 +63,11 @@ describe("watcher-queue", () => {
       const promise = iterator.next();
 
       // The resolver should have been set
-      assertExists(resolver);
+      const ready = resolver;
+      assertExists(ready);
 
       // Resolve it manually
-      resolver!({ done: false, value: makeEvent("modify", ["/c.ts"]) });
+      ready({ done: false, value: makeEvent("modify", ["/c.ts"]) });
 
       const result = await promise;
       assertEquals(result.done, false);

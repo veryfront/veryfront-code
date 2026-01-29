@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { collectAncestorDirs, RESERVED_COMPONENTS } from "./app-reserved.ts";
 
@@ -27,8 +27,12 @@ describe("rendering/app-reserved", () => {
     it("should handle deeply nested paths", () => {
       const dirs = collectAncestorDirs("/project/app/a/b/c", "/project/app");
       assertEquals(dirs.length, 4);
-      assertEquals(dirs[0], "/project/app/a/b/c");
-      assertEquals(dirs[dirs.length - 1], "/project/app");
+      const first = dirs[0];
+      const last = dirs[dirs.length - 1];
+      assertExists(first);
+      assertExists(last);
+      assertEquals(first, "/project/app/a/b/c");
+      assertEquals(last, "/project/app");
     });
 
     it("should stop at app root boundary", () => {
@@ -40,7 +44,9 @@ describe("rendering/app-reserved", () => {
 
     it("should normalize trailing slashes", () => {
       const dirs = collectAncestorDirs("/app/blog/", "/app");
-      assertEquals(dirs[0].endsWith("/"), false);
+      const first = dirs[0];
+      assertExists(first);
+      assertEquals(first.endsWith("/"), false);
     });
   });
 });
