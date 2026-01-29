@@ -360,7 +360,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
         });
 
         await assertRejects(
-          () => fetchAndCacheModule("/_vf_modules/lib/utils.js", ctx),
+          () => fetchAndCacheModule("/_vf_modules/components/Missing.js", ctx),
           Error,
           "Missing module",
         );

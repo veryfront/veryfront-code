@@ -903,6 +903,10 @@ async function doFetchAndCacheModule(
     return finalCachedPath;
   } catch (error) {
     log.warn(`${LOG_PREFIX_MDX_LOADER} Failed to process ${normalizedPath}`, error);
+    // Rethrow MissingModuleError when strictMissingModules is enabled
+    if (error instanceof Error && error.name === "MissingModuleError") {
+      throw error;
+    }
     return null;
   }
 }
