@@ -95,13 +95,54 @@ jobs:
           command: VF_DISABLE_LRU_INTERVAL=1 deno task test:integration --no-lock
 
   # ============================================
+  # CD: Build Binaries (main + tags)
+  # ============================================
+
+  build-binaries:
+    if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || startsWith(github.ref, 'refs/tags/v')
+    needs: [format, lint, typecheck, unit-tests, integration-tests]
+    # For tags, CI jobs are skipped so we need to handle that
+    # The 'if' on CI jobs returns false for tags, making needs pass
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: veryfront-macos-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            name: veryfront-macos-x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: veryfront-linux-x64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            name: veryfront-linux-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: veryfront-windows-x64.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: lts
+      - run: deno run -A scripts/generate-templates-manifest.ts
+      - run: deno compile --allow-all --unstable-net --target ${{ matrix.target }} --output ${{ matrix.name }} src/cli/main.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}
+          retention-days: 7
+
+  # ============================================
   # CD: Pre-release (main only)
   # Publishes veryfront@{version}-rc.{run_number}
   # ============================================
 
   prerelease:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [format, lint, typecheck, unit-tests, integration-tests]
+    needs: [build-binaries]
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -152,42 +193,7 @@ jobs:
 
   # ============================================
   # CD: Stable Release (tags only)
-  # Publishes veryfront@{version} + binaries
   # ============================================
-
-  build-binaries:
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            name: veryfront-macos-arm64
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            name: veryfront-macos-x64
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            name: veryfront-linux-x64
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            name: veryfront-linux-arm64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            name: veryfront-windows-x64.exe
-    steps:
-      - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: lts
-      - run: deno run -A scripts/generate-templates-manifest.ts
-      - run: deno compile --allow-all --unstable-net --target ${{ matrix.target }} --output ${{ matrix.name }} src/cli/main.ts
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.name }}
-          path: ${{ matrix.name }}
-          retention-days: 1
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
