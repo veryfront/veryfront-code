@@ -1,0 +1,46 @@
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { wrapErrorHandler } from "./error-wrapper.ts";
+
+describe("wrapErrorHandler", () => {
+  it("should return result on success", async () => {
+    const fn = (x: number) => x * 2;
+    const wrapped = wrapErrorHandler(fn);
+    const result = await wrapped(5);
+    assertEquals(result, 10);
+  });
+
+  it("should preserve function arguments", async () => {
+    const fn = (a: string, b: string) => `${a}-${b}`;
+    const wrapped = wrapErrorHandler(fn);
+    const result = await wrapped("hello", "world");
+    assertEquals(result, "hello-world");
+  });
+
+  it("should re-throw errors after logging", async () => {
+    const fn = () => {
+      throw new Error("test failure");
+    };
+    const wrapped = wrapErrorHandler(fn);
+
+    await assertRejects(
+      () => wrapped(),
+      Error,
+      "test failure",
+    );
+  });
+
+  it("should re-throw non-Error values", async () => {
+    const fn = () => {
+      throw "string error";
+    };
+    const wrapped = wrapErrorHandler(fn);
+
+    try {
+      await wrapped();
+      throw new Error("Should have thrown");
+    } catch (error) {
+      assertEquals(error, "string error");
+    }
+  });
+});
