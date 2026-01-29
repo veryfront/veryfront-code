@@ -18,7 +18,7 @@ Zero-config React meta-framework with AI-native capabilities. Contains both the 
 - **Test Framework**: Deno test
 - **Build**: esbuild
 
-## Architecture
+## Directory Structure
 
 ```
 veryfront-renderer/
@@ -122,6 +122,7 @@ PROXY_MODE=0                              # 0=direct, 1=proxy
 VERYFRONT_API_TOKEN=vf_...               # API token (direct mode)
 VERYFRONT_PROJECT_SLUG=my-project        # Project slug (direct mode)
 PRODUCTION_MODE=1                         # Use releases (not draft)
+RENDER_PER_PROJECT_LIMIT=10              # Max concurrent renders per project (0=disable)
 ```
 
 **Proxy:**
