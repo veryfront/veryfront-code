@@ -1,4 +1,4 @@
-import { initialize, transform } from "npm:esbuild-wasm@0.20.2";
+import * as esbuildWasm from "npm:esbuild-wasm@0.20.2";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "../errors/veryfront-error.ts";
 import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
@@ -45,13 +45,19 @@ export class VirtualModuleSystem {
       source.includes("useState<") ||
       source.includes("useRef<");
 
+    // esbuild-wasm should be initialized by SharedServices at server start
+    // If not initialized, try to initialize with wasmURL
     try {
-      await initialize({ worker: false });
+      const wasmURL = new URL(
+        "npm:esbuild-wasm@0.20.2/esbuild.wasm",
+        import.meta.url,
+      ).href;
+      await esbuildWasm.initialize({ wasmURL, worker: false });
     } catch {
       // Already initialized
     }
 
-    const result = await transform(source, {
+    const result = await esbuildWasm.transform(source, {
       loader: hasTypeScript ? "tsx" : "jsx",
       jsx: "automatic",
       jsxImportSource: "react",

@@ -12,7 +12,7 @@
  */
 
 import { rendererLogger as logger } from "#veryfront/utils";
-import { initialize as initializeEsbuild } from "npm:esbuild-wasm@0.20.2";
+import * as esbuildWasm from "npm:esbuild-wasm@0.20.2";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { ElementValidator, type ValidationOptions } from "../element-validator/index.ts";
@@ -49,11 +49,17 @@ export async function initializeSharedServices(
 
       let esbuildInitialized = false;
       try {
-        await initializeEsbuild({ worker: false });
+        // esbuild-wasm needs wasmURL - resolve from npm package
+        const wasmURL = new URL(
+          "npm:esbuild-wasm@0.20.2/esbuild.wasm",
+          import.meta.url,
+        ).href;
+        await esbuildWasm.initialize({ wasmURL, worker: false });
         esbuildInitialized = true;
-        logger.debug("[SharedServices] esbuild initialized");
-      } catch {
-        // Already initialized
+        logger.debug("[SharedServices] esbuild-wasm initialized");
+      } catch (err) {
+        // Already initialized or fallback
+        logger.debug("[SharedServices] esbuild-wasm init:", err);
         esbuildInitialized = true;
       }
 
