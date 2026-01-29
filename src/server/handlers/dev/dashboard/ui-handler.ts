@@ -1,4 +1,4 @@
-import * as esbuild from "esbuild";
+import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { logger } from "#veryfront/utils";
@@ -31,6 +31,7 @@ function transformModule(filePath: string, source: string, relativePath: string)
   return withSpan(
     "server.dev.dashboardUI.transformModule",
     async () => {
+      const esbuild = await getEsbuild();
       const result = await esbuild.transform(source, {
         loader: filePath.endsWith(".tsx") ? "tsx" : "ts",
         format: "esm",
