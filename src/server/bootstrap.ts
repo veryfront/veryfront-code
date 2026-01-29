@@ -7,6 +7,7 @@ import { logger } from "#veryfront/utils";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { loadEnv, supportsEnvFiles } from "#veryfront/utils/env-loader.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { initializeEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 
 export interface BootstrapResult {
   /** Enhanced runtime adapter (with FSAdapter if configured) */
@@ -30,6 +31,10 @@ export async function bootstrap(
     projectDir,
     runtime: adapter.id,
   });
+
+  // Initialize esbuild early - extracts binary from VFS if running as deno compile
+  // This must happen before any module imports esbuild
+  await initializeEsbuild();
 
   if (supportsEnvFiles()) {
     try {
