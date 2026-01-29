@@ -44,6 +44,7 @@ import {
   fetchAndCacheModule,
   rewriteDntImports,
 } from "./module-fetcher/index.ts";
+import { ensureCachedJsxModulePatched } from "./jsx-cache.ts";
 
 /** Singleflight for MDX module file writes to prevent race conditions */
 const mdxWriteFlight = new Singleflight<void>();
@@ -321,23 +322,7 @@ async function transformJsxImports(
         try {
           const stat = await getLocalFs().stat(transformedPath);
           if (stat?.isFile) {
-            let useCached = true;
-            // Ensure cached JSX modules don't retain relative _dnt.* imports.
-            // These break when cached to /app/.cache and resolved at runtime.
-            try {
-              const cachedCode = await getLocalFs().readTextFile(transformedPath);
-              const rewritten = rewriteDntImports(cachedCode, filePath);
-              if (rewritten !== cachedCode) {
-                await getLocalFs().writeTextFile(transformedPath, rewritten);
-                logger.debug(`${LOG_PREFIX_MDX_LOADER} Rewrote cached JSX dnt imports`, {
-                  filePath,
-                  transformedPath,
-                });
-              }
-            } catch {
-              // If we can't read/patch cached file, re-transform to ensure correctness.
-              useCached = false;
-            }
+            const useCached = await ensureCachedJsxModulePatched(transformedPath, filePath);
             if (useCached) {
               return {
                 original: fullMatch,

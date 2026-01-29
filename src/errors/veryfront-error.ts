@@ -9,11 +9,16 @@ export interface BuildContext {
     | "bundle"
     | "optimize"
     | "dependency-resolution"
-    | "circuit-breaker";
+    | "circuit-breaker"
+    | "http-bundle-validation";
   /** Number of failures (for circuit breaker) */
   failures?: number;
   /** Missing dependencies list */
   missing?: Array<{ specifier: string; fromFile: string; reason: string }>;
+  /** Failed HTTP bundle specifiers */
+  failed?: string[];
+  /** Cache directory path */
+  cacheDir?: string;
 }
 
 export interface APIContext {
