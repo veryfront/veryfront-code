@@ -2,9 +2,9 @@ import { serverLogger as logger } from "../../utils/index.js";
 import { clearModulePathCache, invalidateModulePaths, } from "../../transforms/mdx/esm-module-loader/index.js";
 import { clearModuleCacheForProject } from "../../cache/module-cache.js";
 import { clearSSRModuleCache, clearSSRModuleCacheForProject, } from "../../modules/react-loader/ssr-module-loader/index.js";
-import { clearRendererCacheForProject, clearRendererCaches } from "../../rendering/renderer.js";
+import { clearRendererCacheForProject } from "../../rendering/renderer.js";
 import { clearRouterDetectionCache } from "../../rendering/router-detection.js";
-import { clearSnippetCache, clearSnippetCacheForProject, } from "../../rendering/snippet-renderer.js";
+import { clearSnippetCacheForProject } from "../../rendering/snippet-renderer.js";
 import { cacheRegistry } from "../../cache/index.js";
 /**
  * Invalidate project caches with optional environment scoping.
@@ -49,16 +49,15 @@ export async function invalidateProjectCaches(projectSlug, changedPaths, options
     logger.debug("[CacheInvalidation] Clearing router detection cache", { projectSlug });
     clearRouterDetectionCache();
     if (!hasRealProjectSlug) {
-        logger.warn("[CacheInvalidation] Using GLOBAL cache clearing (no project slug)", {
+        logger.error("[CacheInvalidation] Skipping cache invalidation — no project identity available", {
             projectSlug,
-            reason: "projectSlug is 'preview' or undefined",
+            reason: "projectSlug is 'preview' and no projectId provided",
+            action: "skipped_global_wipe",
         });
-        await clearRendererCaches();
-        clearSnippetCache();
-        logger.debug("[CacheInvalidation] ✓ Global cache invalidation complete", {
-            projectSlug,
-            durationMs: Date.now() - startTime,
-        });
+        // Previously called clearRendererCaches() which wiped ALL projects' caches on this pod.
+        // This was a multi-tenant blast radius risk: one preview deployment could nuke every tenant's cache.
+        // Now we skip the invalidation entirely. The stale cache will be naturally evicted by TTL
+        // or the next scoped invalidation that includes a projectId.
         return;
     }
     const rendererProjectKey = projectId ?? projectSlug;

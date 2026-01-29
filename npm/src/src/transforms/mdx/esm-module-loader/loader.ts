@@ -10,6 +10,7 @@
 import { join } from "../../../../deps/deno.land/std@0.220.0/path/mod.js";
 import React from "react";
 import { rendererLogger as logger } from "../../../utils/index.js";
+import { getErrorCollector } from "../../../cli/mcp/error-collector.js";
 import { withSpan } from "../../../observability/tracing/otlp-setup.js";
 import { SpanNames } from "../../../observability/tracing/span-names.js";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "../../../utils/cache-dir.js";
@@ -203,7 +204,14 @@ async function processVfModuleImports(
     adapter,
     projectDir,
     context.projectId,
-    { reactVersion: context.reactVersion },
+    {
+      reactVersion: context.reactVersion,
+      projectSlug: context.projectSlug,
+      logger: logger.child({
+        project_id: context.projectId,
+        project_slug: context.projectSlug,
+      }),
+    },
   );
 
   const fetchStart = performance.now();
@@ -615,6 +623,11 @@ async function doLoadModuleESM(
     return result;
   } catch (error) {
     logger.error(`${LOG_PREFIX_MDX_RENDERER} MDX ESM load failed:`, error);
+
+    // Capture compile error for MCP flywheel
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    getErrorCollector().addCompileError(errorMsg, context.projectSlug || "mdx");
+
     throw error;
   }
 }

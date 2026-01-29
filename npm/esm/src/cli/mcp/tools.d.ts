@@ -37,14 +37,14 @@ declare const getLogsInput: z.ZodObject<{
     limit: number;
     level?: "debug" | "info" | "warn" | "error" | undefined;
     pattern?: string | undefined;
-    source?: string | undefined;
     since?: number | undefined;
+    source?: string | undefined;
 }, {
     level?: "debug" | "info" | "warn" | "error" | undefined;
     limit?: number | undefined;
     pattern?: string | undefined;
-    source?: string | undefined;
     since?: number | undefined;
+    source?: string | undefined;
 }>;
 type GetLogsInput = z.infer<typeof getLogsInput>;
 export declare const vfGetLogs: MCPTool<GetLogsInput, LogEntry[]>;

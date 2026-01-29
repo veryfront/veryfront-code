@@ -15,14 +15,15 @@ import * as dntShim from "../../../../../_dnt.shims.js";
 
 
 import { join, posix } from "../../../../../deps/deno.land/std@0.220.0/path/mod.js";
-import { rendererLogger as logger } from "../../../../utils/index.js";
+import { rendererLogger as globalLogger } from "../../../../utils/index.js";
+import type { Logger } from "../../../../utils/logger/logger.js";
 import { withSpan } from "../../../../observability/tracing/otlp-setup.js";
 import { SpanNames } from "../../../../observability/tracing/span-names.js";
 import type { RuntimeAdapter } from "../../../../platform/adapters/base.js";
 import { transformToESM } from "../../../esm-transform.js";
 import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.js";
 import { ensureHttpBundlesExist } from "../../../esm/http-cache.js";
-import { getHttpBundleCacheDir } from "../../../../utils/cache-dir.js";
+import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "../../../../utils/cache-dir.js";
 import {
   LOG_PREFIX_MDX_LOADER,
   RELATIVE_IMPORT_PATTERN,
@@ -37,9 +38,15 @@ import { resolveModuleFile } from "../resolution/file-finder.js";
 import { recordSSRModules } from "../../../../modules/manifest/route-module-manifest.js";
 import { getDistributedTransformBackend } from "../../../esm/transform-cache.js";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "../../../../utils/constants/cache.js";
+import { FRAMEWORK_ROOT } from "../constants.js";
 
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
+
+/** Resolve the logger from context, falling back to global logger */
+function getLog(context?: { logger?: Logger }): Logger {
+  return context?.logger ?? globalLogger;
+}
 
 /**
  * Build cache key for transformed module.
@@ -81,6 +88,87 @@ function getVersionedPathCacheKey(normalizedPath: string): string {
 
 /** Pattern to extract HTTP bundle paths from code (file:// paths to veryfront-http-bundle) */
 const HTTP_BUNDLE_PATTERN = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+
+/**
+ * Check if cached code has file:// paths that are incompatible with this environment.
+ * Returns true if the cached code should be invalidated (has paths from a different environment).
+ *
+ * Checks for:
+ * 1. Framework source paths (file:///app/src/...) that don't match FRAMEWORK_ROOT
+ * 2. HTTP bundle cache paths (file:///app/.cache/veryfront-http-bundle/...) that don't match local cache dir
+ * 3. MDX ESM cache paths (file:///app/.cache/veryfront-mdx-esm/...) that don't match local cache dir
+ *
+ * IMPORTANT: This function creates a new RegExp on each call to avoid race conditions
+ * when multiple modules are processed concurrently. Using a shared global regex with
+ * the 'g' flag would cause interleaved exec() calls to skip paths.
+ */
+async function hasIncompatibleFrameworkPaths(code: string, log: Logger): Promise<boolean> {
+  const localHttpCacheDir = getHttpBundleCacheDir();
+  const localMdxCacheDir = getMdxEsmCacheDir();
+  const localFs = getLocalFs();
+
+  // Create a NEW regex for each call to avoid race conditions with concurrent calls.
+  // Global regexes maintain lastIndex state that can interleave between concurrent calls.
+  const allFilePathsPattern = /file:\/\/([^"'\s]+)/gi;
+
+  // Extract all file:// paths from the code
+  const allPaths: string[] = [];
+  let match;
+  while ((match = allFilePathsPattern.exec(code)) !== null) {
+    allPaths.push(match[1] as string);
+  }
+
+  for (const path of allPaths) {
+    // Check HTTP bundle cache paths
+    if (path.includes("veryfront-http-bundle")) {
+      if (!path.startsWith(localHttpCacheDir)) {
+        log.debug(`${LOG_PREFIX_MDX_LOADER} HTTP bundle path from different environment`, {
+          path,
+          expectedDir: localHttpCacheDir,
+        });
+        return true;
+      }
+      continue;
+    }
+
+    // Check MDX ESM cache paths (vfmod files)
+    if (path.includes("veryfront-mdx-esm")) {
+      if (!path.startsWith(localMdxCacheDir)) {
+        log.debug(`${LOG_PREFIX_MDX_LOADER} MDX cache path from different environment`, {
+          path,
+          expectedDir: localMdxCacheDir,
+        });
+        return true;
+      }
+      continue;
+    }
+
+    // Check framework source paths (paths to /src/ that aren't cache paths)
+    if (path.includes("/src/") && !path.includes(".cache")) {
+      if (!path.startsWith(FRAMEWORK_ROOT)) {
+        log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path from different environment`, {
+          path,
+          expectedRoot: FRAMEWORK_ROOT,
+        });
+        return true;
+      }
+
+      // Also verify the file actually exists
+      try {
+        const stat = await localFs.stat(path);
+        if (!stat?.isFile) {
+          log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path does not exist`, { path });
+          return true;
+        }
+      } catch {
+        log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path not accessible`, { path });
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
 
 /**
  * Extract HTTP bundle paths and hashes from module code.
@@ -131,7 +219,7 @@ export function startRenderSession(
   route?: string,
 ): void {
   renderSessions.set(sessionId, { modules: new Set(), projectSlug, route });
-  logger.debug(`${LOG_PREFIX_MDX_LOADER} Started render session`, {
+  globalLogger.debug(`${LOG_PREFIX_MDX_LOADER} Started render session`, {
     sessionId,
     projectSlug,
     route,
@@ -144,12 +232,14 @@ export function startRenderSession(
 export function endRenderSession(sessionId: string): void {
   const session = renderSessions.get(sessionId);
   if (!session) {
-    logger.warn(`${LOG_PREFIX_MDX_LOADER} End session called but no session found`, { sessionId });
+    globalLogger.warn(`${LOG_PREFIX_MDX_LOADER} End session called but no session found`, {
+      sessionId,
+    });
     return;
   }
 
   const modulePaths = Array.from(session.modules);
-  logger.debug(`${LOG_PREFIX_MDX_LOADER} End render session`, {
+  globalLogger.debug(`${LOG_PREFIX_MDX_LOADER} End render session`, {
     sessionId,
     moduleCount: modulePaths.length,
     projectSlug: session.projectSlug,
@@ -165,7 +255,7 @@ export function endRenderSession(sessionId: string): void {
 
   // This is normal in local dev/tests where projectSlug isn't set
   // The manifest is an optimization for production, not required
-  logger.debug(
+  globalLogger.debug(
     `${LOG_PREFIX_MDX_LOADER} Cannot record to manifest - missing projectSlug or route`,
     {
       projectSlug: session.projectSlug,
@@ -284,10 +374,11 @@ async function cacheModule(
   moduleCode: string,
   esmCacheDir: string,
   pathCache: Map<string, string>,
+  log: Logger,
 ): Promise<string | null> {
   const unresolved = hasUnresolvedImports(moduleCode);
   if (unresolved.count > 0) {
-    logger.warn(
+    log.warn(
       `${LOG_PREFIX_MDX_LOADER} Module has ${unresolved.count} unresolved imports, skipping cache`,
       { path: normalizedPath, unresolved: unresolved.paths },
     );
@@ -302,7 +393,7 @@ async function cacheModule(
     const stat = await localFs.stat(cachePath);
     if (stat?.isFile) {
       pathCache.set(getVersionedPathCacheKey(normalizedPath), cachePath);
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} Content cache hit: ${normalizedPath}`);
+      log.debug(`${LOG_PREFIX_MDX_LOADER} Content cache hit: ${normalizedPath}`);
       recordModuleToSession(normalizedPath);
       return cachePath;
     }
@@ -314,7 +405,7 @@ async function cacheModule(
   await localFs.writeTextFile(cachePath, moduleCode);
   pathCache.set(getVersionedPathCacheKey(normalizedPath), cachePath);
   await saveModulePathCache(esmCacheDir);
-  logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached vf_module: ${normalizedPath} -> ${cachePath}`);
+  log.debug(`${LOG_PREFIX_MDX_LOADER} Cached vf_module: ${normalizedPath} -> ${cachePath}`);
 
   recordModuleToSession(normalizedPath);
   return cachePath;
@@ -327,17 +418,18 @@ async function fetchModuleViaHTTP(
   normalizedPath: string,
   adapter: RuntimeAdapter,
   fetchAndCacheModuleFn: (path: string, parent?: string) => Promise<string | null>,
+  log: Logger,
   projectSlug?: string,
   isLocalDev?: boolean,
 ): Promise<string | null> {
   if (!isLocalDev) {
-    logger.warn(
+    log.warn(
       `${LOG_PREFIX_MDX_LOADER} Direct read failed in production (module must be pre-loaded): ${normalizedPath}`,
     );
     return null;
   }
 
-  logger.debug(
+  log.debug(
     `${LOG_PREFIX_MDX_LOADER} Direct read failed, falling back to HTTP: ${normalizedPath}`,
   );
 
@@ -358,7 +450,7 @@ async function fetchModuleViaHTTP(
   );
 
   if (!response.ok) {
-    logger.warn(
+    log.warn(
       `${LOG_PREFIX_MDX_LOADER} HTTP fetch also failed: ${moduleUrl} (${response.status})`,
     );
     return null;
@@ -397,13 +489,14 @@ export async function fetchAndCacheModule(
   context: ModuleFetcherContext,
   parentModulePath?: string,
 ): Promise<string | null> {
+  const log = getLog(context);
   const normalizedPath = normalizePath(modulePath, parentModulePath);
   const projectSlug = context.projectSlug || "unknown";
 
   const inFlight = context.inFlightModules;
   const existingPromise = inFlight?.get(normalizedPath);
   if (existingPromise) {
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] CIRCULAR IMPORT detected`, {
+    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] CIRCULAR IMPORT detected`, {
       projectSlug,
       normalizedPath,
       parentModulePath,
@@ -411,7 +504,7 @@ export async function fetchAndCacheModule(
     return existingPromise;
   }
 
-  logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] START`, {
+  log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] START`, {
     projectSlug,
     modulePath,
     normalizedPath,
@@ -432,7 +525,7 @@ export async function fetchAndCacheModule(
 
   try {
     const result = await fetchPromise;
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] DONE`, {
+    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] DONE`, {
       projectSlug,
       normalizedPath,
       hasResult: result !== null,
@@ -452,6 +545,7 @@ async function doFetchAndCacheModule(
   fetchAndCacheModuleFn: (path: string, parent?: string) => Promise<string | null>,
   projectSlug: string,
 ): Promise<string | null> {
+  const log = getLog(context);
   const { esmCacheDir, adapter, projectDir, projectId } = context;
 
   const pathCache = await getModulePathCache(esmCacheDir);
@@ -471,7 +565,7 @@ async function doFetchAndCacheModule(
           const cacheDir = getHttpBundleCacheDir();
           const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
           if (failed.length > 0) {
-            logger.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has missing HTTP bundles`, {
+            log.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has missing HTTP bundles`, {
               normalizedPath,
               cachedPath,
               failed,
@@ -479,10 +573,36 @@ async function doFetchAndCacheModule(
             // Invalidate this cache entry - HTTP bundles can't be recovered
             pathCache.delete(versionedKey);
             // Continue to re-transform
+          } else if (await hasIncompatibleFrameworkPaths(cachedCode, log)) {
+            // Framework paths from different environment - invalidate and re-transform
+            log.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible framework paths`, {
+              normalizedPath,
+              cachedPath,
+              frameworkRoot: FRAMEWORK_ROOT,
+            });
+            pathCache.delete(versionedKey);
+            // Delete the stale file so it gets recreated
+            try {
+              await getLocalFs().remove(cachedPath);
+            } catch { /* ignore removal errors */ }
+            // Continue to re-transform
           } else {
             recordModuleToSession(normalizedPath);
             return cachedPath;
           }
+        } else if (await hasIncompatibleFrameworkPaths(cachedCode, log)) {
+          // Framework paths from different environment - invalidate and re-transform
+          log.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible framework paths`, {
+            normalizedPath,
+            cachedPath,
+            frameworkRoot: FRAMEWORK_ROOT,
+          });
+          pathCache.delete(versionedKey);
+          // Delete the stale file so it gets recreated
+          try {
+            await getLocalFs().remove(cachedPath);
+          } catch { /* ignore removal errors */ }
+          // Continue to re-transform
         } else {
           recordModuleToSession(normalizedPath);
           return cachedPath;
@@ -502,11 +622,12 @@ async function doFetchAndCacheModule(
         normalizedPath,
         adapter,
         fetchAndCacheModuleFn,
+        log,
         projectSlug,
         context.isLocalDev,
       );
       return moduleCode
-        ? await cacheModule(normalizedPath, moduleCode, esmCacheDir, pathCache)
+        ? await cacheModule(normalizedPath, moduleCode, esmCacheDir, pathCache, log)
         : null;
     }
 
@@ -523,7 +644,7 @@ async function doFetchAndCacheModule(
         const cached = await distributedCache.get(transformCacheKey);
         if (cached) {
           moduleCode = cached;
-          logger.debug(`${LOG_PREFIX_MDX_LOADER} Distributed transform cache HIT`, {
+          log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed transform cache HIT`, {
             projectSlug,
             normalizedPath,
             cacheKey: transformCacheKey,
@@ -537,7 +658,7 @@ async function doFetchAndCacheModule(
             const cacheDir = getHttpBundleCacheDir();
             const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
             if (failed.length > 0) {
-              logger.warn(`${LOG_PREFIX_MDX_LOADER} Some HTTP bundles could not be recovered`, {
+              log.warn(`${LOG_PREFIX_MDX_LOADER} Some HTTP bundles could not be recovered`, {
                 normalizedPath,
                 failed,
               });
@@ -545,9 +666,22 @@ async function doFetchAndCacheModule(
               moduleCode = null;
             }
           }
+
+          // CRITICAL: Check for framework source paths from a different environment.
+          // Distributed cache may contain transforms with file:// paths to framework
+          // source files that are specific to the environment where the transform ran
+          // (e.g., /app/src/... in production vs /Users/.../veryfront-renderer/src/... locally).
+          // If paths don't match our FRAMEWORK_ROOT, invalidate cache and re-transform.
+          if (moduleCode && await hasIncompatibleFrameworkPaths(cached, log)) {
+            log.warn(`${LOG_PREFIX_MDX_LOADER} Cached code has incompatible framework paths`, {
+              normalizedPath,
+              frameworkRoot: FRAMEWORK_ROOT,
+            });
+            moduleCode = null;
+          }
         }
       } catch (error) {
-        logger.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache get failed`, {
+        log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache get failed`, {
           normalizedPath,
           error,
         });
@@ -555,7 +689,7 @@ async function doFetchAndCacheModule(
     }
 
     if (!moduleCode) {
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM START`, {
+      log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM START`, {
         projectSlug,
         normalizedPath,
         actualFilePath,
@@ -571,7 +705,7 @@ async function doFetchAndCacheModule(
           reactVersion: context.reactVersion,
         });
       } catch (transformError) {
-        logger.error(`${LOG_PREFIX_MDX_LOADER} Transform failed for module`, {
+        log.error(`${LOG_PREFIX_MDX_LOADER} Transform failed for module`, {
           normalizedPath,
           actualFilePath,
           sourceLength: sourceCode.length,
@@ -581,7 +715,7 @@ async function doFetchAndCacheModule(
         throw transformError;
       }
 
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM DONE`, {
+      log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM DONE`, {
         projectSlug,
         normalizedPath,
         transformMs: (performance.now() - transformStart).toFixed(1),
@@ -595,7 +729,7 @@ async function doFetchAndCacheModule(
         distributedCache
           .set(transformCacheKey, moduleCode, TRANSFORM_CACHE_TTL_SECONDS)
           .catch((error) => {
-            logger.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache set failed`, {
+            log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache set failed`, {
               normalizedPath,
               error,
             });
@@ -604,7 +738,7 @@ async function doFetchAndCacheModule(
     }
 
     const { vfModules, relative } = findNestedImports(moduleCode);
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] found nested imports`, {
+    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] found nested imports`, {
       projectSlug,
       normalizedPath,
       vfModulesCount: vfModules.length,
@@ -613,7 +747,7 @@ async function doFetchAndCacheModule(
       relativePaths: relative.map((m) => m.path).slice(0, 5),
     });
 
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules START`, {
+    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules START`, {
       projectSlug,
       normalizedPath,
       count: vfModules.length,
@@ -626,14 +760,14 @@ async function doFetchAndCacheModule(
         nestedPath: path,
       })),
     );
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules DONE`, {
+    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules DONE`, {
       projectSlug,
       normalizedPath,
       vfMs: (performance.now() - vfStart).toFixed(1),
     });
     moduleCode = await processNestedImports(moduleCode, nestedResults, esmCacheDir);
 
-    logger.debug(
+    log.debug(
       `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports START`,
       {
         projectSlug,
@@ -649,7 +783,7 @@ async function doFetchAndCacheModule(
         relativePath: path,
       })),
     );
-    logger.debug(
+    log.debug(
       `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports DONE`,
       {
         projectSlug,
@@ -659,13 +793,19 @@ async function doFetchAndCacheModule(
     );
     moduleCode = await processNestedImports(moduleCode, relativeResults, esmCacheDir);
 
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule START`, {
+    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule START`, {
       projectSlug,
       normalizedPath,
     });
     const cacheStart = performance.now();
-    const finalCachedPath = await cacheModule(normalizedPath, moduleCode, esmCacheDir, pathCache);
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule DONE`, {
+    const finalCachedPath = await cacheModule(
+      normalizedPath,
+      moduleCode,
+      esmCacheDir,
+      pathCache,
+      log,
+    );
+    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule DONE`, {
       projectSlug,
       normalizedPath,
       cacheMs: (performance.now() - cacheStart).toFixed(1),
@@ -673,7 +813,7 @@ async function doFetchAndCacheModule(
 
     return finalCachedPath;
   } catch (error) {
-    logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to process ${normalizedPath}`, error);
+    log.warn(`${LOG_PREFIX_MDX_LOADER} Failed to process ${normalizedPath}`, error);
     return null;
   }
 }
@@ -686,7 +826,7 @@ export function createModuleFetcherContext(
   adapter: RuntimeAdapter,
   projectDir: string,
   projectId: string,
-  options?: { isLocalDev?: boolean; projectSlug?: string; reactVersion?: string },
+  options?: { isLocalDev?: boolean; projectSlug?: string; reactVersion?: string; logger?: Logger },
 ): ModuleFetcherContext {
   return {
     esmCacheDir,

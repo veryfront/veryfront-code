@@ -36,6 +36,7 @@ export declare const ErrorCode: {
     readonly SERVER_START_ERROR: "VF501";
     readonly HMR_ERROR: "VF502";
     readonly CACHE_ERROR: "VF503";
+    readonly CACHE_PATH_MISMATCH: "VF507";
     readonly FILE_WATCH_ERROR: "VF504";
     readonly REQUEST_ERROR: "VF505";
     readonly SERVICE_OVERLOADED: "VF506";

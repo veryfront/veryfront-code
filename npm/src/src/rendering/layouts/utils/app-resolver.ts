@@ -15,12 +15,6 @@ export async function resolveAppComponentPath(
   adapter: RuntimeAdapter,
   config?: VeryfrontConfig,
 ): Promise<string | null> {
-  console.log("[AppResolver] Starting resolution", {
-    projectDir,
-    hasAdapter: !!adapter,
-    hasConfig: !!config,
-    configApp: config?.app,
-  });
   logger.debug("[AppResolver] Starting resolution", {
     projectDir,
     hasAdapter: !!adapter,
@@ -61,17 +55,14 @@ export async function resolveAppComponentPath(
   for (const ext of VALID_EXTENSIONS) {
     const appPath = join(projectDir, `components/app.${ext}`);
     const exists = await adapter.fs.exists(appPath);
-    console.log("[AppResolver] Checking default path", { appPath, exists });
     logger.debug("[AppResolver] Checking default path", { appPath, exists });
 
     if (exists) {
-      console.log("[AppResolver] Found app component via discovery", { path: appPath });
       logger.debug("[AppResolver] Found app component via discovery", { path: appPath });
       return appPath;
     }
   }
 
-  console.log("[AppResolver] No app component found");
   logger.debug("[AppResolver] No app component found");
   return null;
 }

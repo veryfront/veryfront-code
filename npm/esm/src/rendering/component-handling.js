@@ -8,6 +8,13 @@ import { createError, getErrorMessage, toError } from "../errors/veryfront-error
 import { getProjectReact } from "../react/index.js";
 import { injectNodePositions } from "../transforms/plugins/babel-node-positions.js";
 import { buildComponentCacheKey } from "../cache/keys.js";
+/**
+ * Cache for transformed component hydration bundles.
+ * Keys are content-addressed: `component:${projectId}:${filePath}:${sha256(source)}`.
+ * Safe for multi-tenant use (project-scoped + content-hashed).
+ * Evicted when exceeding MAX_COMPONENT_CACHE_SIZE to prevent unbounded memory growth.
+ */
+const MAX_COMPONENT_CACHE_SIZE = 5000;
 const componentHydrationCache = new Map();
 /**
  * Load and render a TSX/JSX component page
@@ -84,6 +91,13 @@ async function bundleComponentForClient(source, filePath, projectDir, adapter, m
             moduleServerUrl,
             reactVersion,
         });
+        if (componentHydrationCache.size >= MAX_COMPONENT_CACHE_SIZE) {
+            logger.debug("[ComponentHandling] Cache size limit reached, clearing", {
+                size: componentHydrationCache.size,
+                limit: MAX_COMPONENT_CACHE_SIZE,
+            });
+            componentHydrationCache.clear();
+        }
         componentHydrationCache.set(cacheKey, transformed);
         return transformed;
     }

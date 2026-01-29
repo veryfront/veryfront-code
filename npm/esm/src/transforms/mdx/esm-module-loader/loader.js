@@ -8,6 +8,7 @@
  */
 import { join } from "../../../../deps/deno.land/std@0.220.0/path/mod.js";
 import { rendererLogger as logger } from "../../../utils/index.js";
+import { getErrorCollector } from "../../../cli/mcp/error-collector.js";
 import { withSpan } from "../../../observability/tracing/otlp-setup.js";
 import { SpanNames } from "../../../observability/tracing/span-names.js";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "../../../utils/cache-dir.js";
@@ -153,7 +154,14 @@ async function processVfModuleImports(code, imports, context, projectDir) {
     if (!context.projectId) {
         throw new Error(`Missing projectId for module fetching (projectSlug: ${context.projectSlug})`);
     }
-    const fetcherContext = createModuleFetcherContext(context.esmCacheDir, adapter, projectDir, context.projectId, { reactVersion: context.reactVersion });
+    const fetcherContext = createModuleFetcherContext(context.esmCacheDir, adapter, projectDir, context.projectId, {
+        reactVersion: context.reactVersion,
+        projectSlug: context.projectSlug,
+        logger: logger.child({
+            project_id: context.projectId,
+            project_slug: context.projectSlug,
+        }),
+    });
     const fetchStart = performance.now();
     const results = await Promise.all(imports.map(async ({ original, path }, index) => {
         return await withSpan(SpanNames.MDX_FETCH_MODULE, async () => {
@@ -456,6 +464,9 @@ async function doLoadModuleESM(compiledProgramCode, context) {
     }
     catch (error) {
         logger.error(`${LOG_PREFIX_MDX_RENDERER} MDX ESM load failed:`, error);
+        // Capture compile error for MCP flywheel
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        getErrorCollector().addCompileError(errorMsg, context.projectSlug || "mdx");
         throw error;
     }
 }

@@ -1,3 +1,4 @@
+import type { Logger } from "../../../../utils/logger/logger.js";
 import type { RuntimeAdapter } from "../../../../platform/adapters/base.js";
 import type { ModuleFetcherContext } from "../types.js";
 /**
@@ -21,5 +22,6 @@ export declare function createModuleFetcherContext(esmCacheDir: string, adapter:
     isLocalDev?: boolean;
     projectSlug?: string;
     reactVersion?: string;
+    logger?: Logger;
 }): ModuleFetcherContext;
 //# sourceMappingURL=index.d.ts.map

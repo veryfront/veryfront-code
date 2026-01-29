@@ -12,6 +12,9 @@ import { ERROR_CATALOG } from "../../../../errors/catalog/index.js";
 import { TransformStage } from "../../../../transforms/pipeline/types.js";
 import { isRSCEnabled } from "../../../../utils/feature-flags.js";
 import { getRuntimeEnv } from "../../../../config/runtime-env.js";
+import { getErrorCollector } from "../../../../cli/mcp/error-collector.js";
+import { getLogBuffer } from "../../../../cli/mcp/log-buffer.js";
+import { ReloadNotifier } from "../../../reload-notifier.js";
 const JSON_HEADERS = {
     "Content-Type": "application/json",
     "Cache-Control": "no-cache",
@@ -76,12 +79,18 @@ export function handleDashboardAPI(req, ctx) {
                 return handleGetErrors();
             case "/_dev/api/config":
                 return handleGetConfig(ctx);
+            case "/_dev/api/live-errors":
+                return handleLiveErrors(req);
+            case "/_dev/api/live-logs":
+                return handleLiveLogs(req);
             default:
                 return null;
         }
     }
     if (req.method === "POST") {
         switch (pathname) {
+            case "/_dev/api/hmr-trigger":
+                return handleHmrTrigger(req);
             case "/_dev/api/execute-tool":
                 return handleExecuteTool(req);
             case "/_dev/api/read-resource":
@@ -488,6 +497,65 @@ function handleGetErrors() {
         count: errors.length,
         timestamp: new Date().toISOString(),
     });
+}
+function handleLiveErrors(req) {
+    const url = new URL(req.url);
+    const type = url.searchParams.get("type") ?? undefined;
+    const collector = getErrorCollector();
+    const filter = type
+        ? { type: type }
+        : undefined;
+    const errors = collector.getAll(filter);
+    return jsonResponse({
+        errors,
+        count: errors.length,
+        countByType: collector.countByType(),
+        timestamp: new Date().toISOString(),
+    });
+}
+function handleLiveLogs(req) {
+    const url = new URL(req.url);
+    const level = url.searchParams.get("level") ?? undefined;
+    const source = url.searchParams.get("source") ?? undefined;
+    const pattern = url.searchParams.get("pattern") ?? undefined;
+    const limit = url.searchParams.get("limit");
+    const since = url.searchParams.get("since");
+    const buffer = getLogBuffer();
+    const entries = buffer.query({
+        level: level,
+        source: source ?? undefined,
+        pattern: pattern ?? undefined,
+        limit: limit ? parseInt(limit, 10) : undefined,
+        since: since ? parseInt(since, 10) : undefined,
+    });
+    return jsonResponse({
+        logs: entries,
+        count: entries.length,
+        countByLevel: buffer.countByLevel(),
+        timestamp: new Date().toISOString(),
+    });
+}
+async function handleHmrTrigger(req) {
+    try {
+        const body = await req.json().catch(() => ({}));
+        const changedPaths = body.path ? [body.path] : undefined;
+        const listenerCount = ReloadNotifier.getListenerCount();
+        if (listenerCount === 0) {
+            return jsonResponse({
+                success: false,
+                error: "No HMR listeners connected. Is a browser open?",
+            });
+        }
+        ReloadNotifier.triggerReload(changedPaths);
+        return jsonResponse({
+            success: true,
+            listeners: listenerCount,
+            metrics: ReloadNotifier.getMetrics(),
+        });
+    }
+    catch (error) {
+        return errorResponse(getErrorMessage(error));
+    }
 }
 function handleGetConfig(ctx) {
     const featureFlags = [

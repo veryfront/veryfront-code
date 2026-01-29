@@ -15,6 +15,8 @@ import type { HMRServer } from "./hmr-server.js";
 import { createResponseBuilder } from "../../security/index.js";
 import { resetApiHandler } from "../handlers/request/api/pages-api-handler.js";
 import { clearLayoutDiscoveryCache } from "../../rendering/layouts/index.js";
+import { getErrorCollector } from "../../cli/mcp/error-collector.js";
+import { getLogBuffer } from "../../cli/mcp/log-buffer.js";
 
 export class RequestHandler {
   private universalHandler?: (req: dntShim.Request) => Promise<dntShim.Response>;
@@ -30,6 +32,7 @@ export class RequestHandler {
 
   async handleRequest(req: dntShim.Request): Promise<dntShim.Response> {
     const url = new URL(req.url);
+    const start = performance.now();
     logger.debug(`Request: ${req.method} ${url.pathname}`);
 
     const healthResponse = this.handleHealthCheck(url.pathname);
@@ -39,12 +42,30 @@ export class RequestHandler {
 
     try {
       const devResponse = this.handleDevEndpoint(req, url.pathname);
-      if (devResponse) return devResponse;
+      if (devResponse) {
+        this.logRequest(req.method, url.pathname, devResponse.status, start);
+        return devResponse;
+      }
 
-      return await this.handleApplicationRequest(req);
+      const response = await this.handleApplicationRequest(req);
+      this.logRequest(req.method, url.pathname, response.status, start);
+      return response;
     } catch (error) {
+      this.logRequest(req.method, url.pathname, HTTP_SERVER_ERROR, start);
       return this.handleServerError(error);
     }
+  }
+
+  private logRequest(method: string, pathname: string, status: number, start: number): void {
+    // Skip internal endpoints to reduce noise
+    if (pathname.startsWith("/_dev/") || pathname.startsWith("/_veryfront/")) return;
+
+    const duration = Math.round(performance.now() - start);
+    getLogBuffer().info(
+      `${method} ${pathname} → ${status} (${duration}ms)`,
+      "http",
+      { method, path: pathname, status, duration },
+    );
   }
 
   private handleHealthCheck(pathname: string): dntShim.Response | null {
@@ -164,10 +185,18 @@ export class RequestHandler {
   private handleServerError(error: unknown): dntShim.Response {
     logger.error("Server error:", error);
 
+    // Capture error for MCP flywheel
+    const err = error as Error;
+    getErrorCollector().addRuntimeError(
+      err.message,
+      err.stack,
+      { source: "request-handler" },
+    );
+
     return new dntShim.Response(
       ErrorOverlay.createHTML({
         type: "runtime",
-        error: error as Error,
+        error: err,
       }),
       {
         status: HTTP_SERVER_ERROR,

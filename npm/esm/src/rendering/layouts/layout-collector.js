@@ -1,6 +1,5 @@
 import { join } from "../../platform/compat/path-helper.js";
 import { rendererLogger as logger } from "../../utils/index.js";
-import { parallelFind } from "../../utils/parallel.js";
 import { isExtendedFSAdapter } from "../../platform/adapters/fs/wrapper.js";
 import { getLayoutEntity } from "../../types/entities/getEntityInfo.js";
 import { discoverNestedLayouts } from "./utils/discovery.js";
@@ -13,6 +12,38 @@ function getLayoutKind(path) {
 }
 function isValidLayoutPath(layout) {
     return /\.(tsx|jsx|ts|js|mdx|md)$/.test(layout);
+}
+/**
+ * Creates a LayoutItem from a path. For tsx/jsx/ts/js files, creates a tsx kind item.
+ * For mdx/md files, creates an mdx kind item with optional bundle.
+ */
+function createLayoutItem(layoutPath, bundle) {
+    const kind = getLayoutKind(layoutPath);
+    if (kind === "mdx") {
+        return { kind: "mdx", bundle, path: layoutPath };
+    }
+    return {
+        kind: "tsx",
+        component: undefined,
+        componentPath: layoutPath,
+        path: layoutPath,
+    };
+}
+/**
+ * Discovers a components/layout.* file in the given project directory.
+ * Returns the full path if found, or null if no layout file exists.
+ *
+ * This is a pure function that can be unit tested without mocking the full adapter.
+ */
+export async function discoverComponentsLayoutPath(projectDir, checker) {
+    for (const ext of LAYOUT_EXTENSIONS) {
+        const layoutPath = join(projectDir, "components", `layout.${ext}`);
+        const exists = await checker.exists(layoutPath);
+        if (exists) {
+            return layoutPath;
+        }
+    }
+    return null;
 }
 export class LayoutCollector {
     projectDir;
@@ -60,19 +91,11 @@ export class LayoutCollector {
     }
     async processLayoutResult(pageInfo, hasExplicitFrontmatterLayout, layoutBundle, layoutPath, layoutName) {
         if (hasExplicitFrontmatterLayout && layoutPath) {
-            const kind = getLayoutKind(layoutPath);
-            const nestedLayouts = [
-                {
-                    kind,
-                    bundle: kind === "mdx" ? layoutBundle : undefined,
-                    componentPath: kind === "tsx" ? layoutPath : undefined,
-                    path: layoutPath,
-                },
-            ];
+            const nestedLayouts = [createLayoutItem(layoutPath, layoutBundle)];
             logger.debug("[LayoutCollector] Using frontmatter layout as nestedLayout", {
                 layoutPath,
                 layoutName,
-                kind,
+                kind: getLayoutKind(layoutPath),
             });
             return { layoutBundle: undefined, nestedLayouts };
         }
@@ -86,15 +109,7 @@ export class LayoutCollector {
                 return { layoutBundle: undefined, nestedLayouts };
             }
             const kind = getLayoutKind(layoutPath);
-            nestedLayouts = [
-                {
-                    kind,
-                    bundle: kind === "mdx" ? layoutBundle : undefined,
-                    componentPath: kind === "tsx" ? layoutPath : undefined,
-                    path: layoutPath,
-                },
-                ...nestedLayouts,
-            ];
+            nestedLayouts = [createLayoutItem(layoutPath, layoutBundle), ...nestedLayouts];
             logger.debug("[LayoutCollector] Added config.layout to nestedLayouts for client hydration", {
                 layoutPath,
                 kind,
@@ -170,18 +185,19 @@ export class LayoutCollector {
         return await this.collectFilesystemLayouts(pageFilePath, useAppRouter);
     }
     async collectAPILayoutConfiguration(wrappedAdapter) {
-        const nestedLayouts = [];
         const configLayout = this.config?.layout;
         if (configLayout === false) {
             logger.debug("[LayoutCollector] Layout disabled via config.layout: false");
-            return nestedLayouts;
+            return [];
         }
-        const existsFn = wrappedAdapter.exists;
+        const checker = {
+            exists: (path) => wrappedAdapter.exists.call(wrappedAdapter, path),
+        };
         if (configLayout && isValidLayoutPath(configLayout)) {
             const layoutPath = configLayout.startsWith("/") || configLayout.startsWith(this.projectDir)
                 ? configLayout
                 : join(this.projectDir, configLayout);
-            const layoutExists = await existsFn.call(wrappedAdapter, layoutPath);
+            const layoutExists = await checker.exists(layoutPath);
             logger.debug("[LayoutCollector] Checking config layout", {
                 configLayout,
                 layoutPath,
@@ -191,46 +207,60 @@ export class LayoutCollector {
                 throw new Error(`Layout file not found: "${configLayout}" (resolved to "${layoutPath}"). ` +
                     `Check your veryfront.config.ts 'layout' setting.`);
             }
-            const kind = getLayoutKind(configLayout);
-            if (kind === "mdx") {
-                const content = await this.adapter.fs.readFile(layoutPath);
-                const bundle = await this.compileMDX(content, { isLayout: true }, layoutPath);
-                nestedLayouts.push({ kind: "mdx", bundle, path: layoutPath });
-            }
-            else {
-                nestedLayouts.push({
-                    kind: "tsx",
-                    component: undefined,
-                    componentPath: layoutPath,
-                    path: layoutPath,
-                });
-            }
-            logger.debug("[LayoutCollector] Added config layout to nestedLayouts", { layoutPath, kind });
-            return nestedLayouts;
+            return [await this.createLayoutItemWithBundle(layoutPath)];
         }
         if (!configLayout) {
-            const foundExt = await parallelFind([...LAYOUT_EXTENSIONS], async (ext) => {
-                const layoutPath = join(this.projectDir, "components", `layout.${ext}`);
-                return await existsFn.call(wrappedAdapter, layoutPath);
-            });
-            if (foundExt) {
-                const defaultLayoutPath = join(this.projectDir, "components", `layout.${foundExt}`);
-                const kind = getLayoutKind(defaultLayoutPath);
-                nestedLayouts.push({
-                    kind,
-                    component: undefined,
-                    componentPath: defaultLayoutPath,
-                    path: defaultLayoutPath,
-                });
-                logger.debug(`[LayoutCollector] Added default components/layout.${foundExt}`, {
-                    layoutPath: defaultLayoutPath,
-                });
+            const layoutPath = await discoverComponentsLayoutPath(this.projectDir, checker);
+            if (layoutPath) {
+                logger.debug("[LayoutCollector] Added default components layout", { layoutPath });
+                return [createLayoutItem(layoutPath)];
             }
         }
-        return nestedLayouts;
+        return [];
     }
     async collectFilesystemLayouts(pageFilePath, useAppRouter) {
         const rootDir = useAppRouter ? join(this.projectDir, "app") : join(this.projectDir, "pages");
-        return await discoverNestedLayouts(pageFilePath, rootDir, this.projectDir, this.adapter);
+        const nestedLayouts = await discoverNestedLayouts(pageFilePath, rootDir, this.projectDir, this.adapter);
+        // If nested layouts found, use them
+        if (nestedLayouts.length > 0) {
+            return nestedLayouts;
+        }
+        // Fallback: check components/layout.* (consistent with API adapter behavior)
+        return await this.checkComponentsLayoutFallback();
+    }
+    /**
+     * Check for components/layout.* as a fallback when no nested layouts are found.
+     * This provides consistent behavior between filesystem and API adapters.
+     */
+    async checkComponentsLayoutFallback() {
+        const checker = {
+            exists: async (path) => {
+                try {
+                    const stat = await this.adapter.fs.stat(path);
+                    return stat.isFile;
+                }
+                catch {
+                    return false;
+                }
+            },
+        };
+        const layoutPath = await discoverComponentsLayoutPath(this.projectDir, checker);
+        if (!layoutPath) {
+            return [];
+        }
+        logger.debug("[LayoutCollector] Added fallback components layout", { layoutPath });
+        return [await this.createLayoutItemWithBundle(layoutPath)];
+    }
+    /**
+     * Creates a LayoutItem, compiling MDX content if needed.
+     */
+    async createLayoutItemWithBundle(layoutPath) {
+        const kind = getLayoutKind(layoutPath);
+        if (kind === "mdx") {
+            const content = await this.adapter.fs.readFile(layoutPath);
+            const bundle = await this.compileMDX(content, { isLayout: true }, layoutPath);
+            return createLayoutItem(layoutPath, bundle);
+        }
+        return createLayoutItem(layoutPath);
     }
 }

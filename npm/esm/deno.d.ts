@@ -284,6 +284,7 @@ declare namespace _default {
         "test:e2e": string;
         "check:circular": string;
         cli: string;
+        mcp: string;
         "batch:estimate": string;
         "batch:prepare": string;
         "batch:submit": string;

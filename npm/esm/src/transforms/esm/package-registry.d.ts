@@ -46,8 +46,10 @@ export declare const REACT_VERSION = "19.1.1";
  * v14: Fix SSR pipeline to use local React paths on Node.js (not esm.sh URLs)
  * v15: Keep React as bare specifiers on Node.js for CJS/ESM interop
  * v16: Invalidate Deno-created transforms with https:// React URLs
+ * v17: Invalidate gzip-polluted distributed cache
+ * v18: Invalidate transforms with local dev machine paths in file:// URLs
  */
-export declare const TRANSFORM_CACHE_VERSION = 16;
+export declare const TRANSFORM_CACHE_VERSION = 18;
 /** csstype version - must match deno.json for type consistency */
 export declare const CSSTYPE_VERSION = "3.2.3";
 /**

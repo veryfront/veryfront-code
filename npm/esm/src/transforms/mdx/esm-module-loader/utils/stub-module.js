@@ -3,6 +3,7 @@ import { rendererLogger as logger } from "../../../../utils/index.js";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.js";
 import { getLocalFs } from "../cache/index.js";
 import { hashString } from "./hash.js";
+import { getErrorCollector } from "../../../../cli/mcp/error-collector.js";
 export function extractNamedImports(code, importStatement) {
     const escapedImport = importStatement.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const importNamePattern = new RegExp(`import\\s+(?:({[^}]+})|([\\w$]+))\\s*${escapedImport}`);
@@ -17,7 +18,12 @@ export function extractNamedImports(code, importStatement) {
 }
 function generateNamedExports(names, modulePath) {
     return names
-        .map((name) => `export const ${name} = () => { console.warn('[Veryfront] Missing export "${name}" from "${modulePath}"'); return null; };`)
+        .map((name) => `export const ${name} = () => {
+  const error = new Error('[Veryfront] Missing export "${name}" from "${modulePath}". This module or file does not exist in your project.');
+  error.name = 'MissingModuleError';
+  console.error(error.message);
+  throw error;
+};`)
         .join("\n");
 }
 export function generateStubCode(modulePath, namedImports = []) {
@@ -30,10 +36,17 @@ const handler = {
     if (prop === 'default' || prop === '__esModule' || typeof prop === 'symbol') {
       return new Proxy({}, handler);
     }
-    console.warn('[Veryfront] Missing module: ${modulePath}. Component "' + prop + '" was not found.');
-    return () => null;
+    const error = new Error('[Veryfront] Missing module: ${modulePath}. Export "' + prop + '" was not found. This module or file does not exist in your project.');
+    error.name = 'MissingModuleError';
+    console.error(error.message);
+    throw error;
   },
-  apply() { return null; }
+  apply() {
+    const error = new Error('[Veryfront] Missing module: ${modulePath}. This module or file does not exist in your project.');
+    error.name = 'MissingModuleError';
+    console.error(error.message);
+    throw error;
+  }
 };
 export default new Proxy(function(){}, handler);
 ${namedExports}
@@ -46,7 +59,17 @@ export async function createStubModule(modulePath, code, importStatement, esmCac
     const stubCode = generateStubCode(modulePath, namedImports);
     try {
         await getLocalFs().writeTextFile(stubPath, stubCode);
-        logger.warn(`${LOG_PREFIX_MDX_LOADER} Created stub for missing module: ${modulePath}`);
+        // Report the missing module error to the error collector
+        const errorMessage = namedImports.length > 0
+            ? `Missing module: ${modulePath} (imports: ${namedImports.join(", ")})`
+            : `Missing module: ${modulePath}`;
+        try {
+            getErrorCollector().addModuleError(errorMessage, modulePath, { namedImports, importStatement });
+        }
+        catch {
+            // Error collector may not be initialized in all contexts
+        }
+        logger.error(`${LOG_PREFIX_MDX_LOADER} Missing module: ${modulePath}`, { namedImports });
         return stubPath;
     }
     catch (error) {

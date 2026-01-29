@@ -5,6 +5,8 @@
  * SSR resolves to esm.sh URLs (then cached to file://), browser uses esm.sh URLs.
  */
 
+import { rendererLogger } from "../../utils/index.js";
+
 /** Default React version - used when not specified in project config */
 export const DEFAULT_REACT_VERSION = "19.1.1";
 export const TAILWIND_VERSION = "4.1.8";
@@ -25,8 +27,8 @@ export function isValidReactVersion(version: string): boolean {
 export function normalizeReactVersion(version: string | undefined): string {
   if (!version) return DEFAULT_REACT_VERSION;
   if (isValidReactVersion(version)) return version;
-  console.warn(
-    `[VERYFRONT] Invalid React version format "${version}" (expected X.Y.Z). Using default: ${DEFAULT_REACT_VERSION}`,
+  rendererLogger.warn(
+    `Invalid React version format "${version}" (expected X.Y.Z). Using default: ${DEFAULT_REACT_VERSION}`,
   );
   return DEFAULT_REACT_VERSION;
 }
@@ -63,8 +65,10 @@ export const REACT_VERSION = DEFAULT_REACT_VERSION;
  * v14: Fix SSR pipeline to use local React paths on Node.js (not esm.sh URLs)
  * v15: Keep React as bare specifiers on Node.js for CJS/ESM interop
  * v16: Invalidate Deno-created transforms with https:// React URLs
+ * v17: Invalidate gzip-polluted distributed cache
+ * v18: Invalidate transforms with local dev machine paths in file:// URLs
  */
-export const TRANSFORM_CACHE_VERSION = 16;
+export const TRANSFORM_CACHE_VERSION = 18;
 
 /** csstype version - must match deno.json for type consistency */
 export const CSSTYPE_VERSION = "3.2.3";

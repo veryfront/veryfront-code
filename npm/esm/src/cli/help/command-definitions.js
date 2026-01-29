@@ -674,6 +674,45 @@ export const COMMANDS = {
             "  • vf_trigger_hmr          - Force browser refresh",
         ],
     },
+    code: {
+        name: "code",
+        description: "Launch and manage coding agents (Claude Code, Codex, Gemini, etc.)",
+        usage: "veryfront code [agent] [options]",
+        options: [
+            {
+                flag: "-l, --list",
+                description: "List all available coding agents",
+            },
+            {
+                flag: "-s, --set",
+                description: "Set the default agent (used with agent name)",
+            },
+            {
+                flag: "-m, --model <name>",
+                description: "Model to use (e.g., claude-3.5-sonnet, gpt-4)",
+            },
+            {
+                flag: "-d, --dir <path>",
+                description: "Project directory (default: current directory)",
+            },
+        ],
+        examples: [
+            "veryfront code                          # Launch default agent, or show list",
+            "veryfront code claude                   # Launch Claude Code",
+            "veryfront code codex --model gpt-4      # Launch Codex with specific model",
+            "veryfront code gemini                   # Launch Gemini CLI",
+            "veryfront code --list                   # List all agents and their status",
+            "veryfront code --set claude             # Set Claude as default agent",
+            "veryfront code --set claude --model claude-3.5-sonnet",
+            "veryfront code cursor                   # Open project in Cursor (IDE agent)",
+        ],
+        notes: [
+            "CLI agents (Claude Code, Codex, Gemini, Aider) run in embedded terminal",
+            "IDE agents (Cursor, Windsurf, VS Code) open the project externally",
+            "Default agent is persisted in ~/.config/veryfront/config.json",
+            "Available agents: claude, codex, gemini, aider, cursor, windsurf, vscode",
+        ],
+    },
     issues: {
         name: "issues",
         description: "File-based issue tracking (SDLC conventions)",

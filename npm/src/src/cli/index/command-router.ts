@@ -26,6 +26,7 @@ import { parseUpArgs, upCommand } from "../commands/up.js";
 import { newCommand, parseNewArgs } from "../commands/new.js";
 import { promptProjectName } from "../commands/main.js";
 import { issuesCommand } from "../commands/issues.js";
+import { codeCommand, parseCodeArgs } from "../commands/code.js";
 import { login, logout, whoami } from "../auth/index.js";
 import { COMMANDS } from "../help/command-definitions.js";
 import { showCommandHelp, showMainHelp } from "../help/index.js";
@@ -413,6 +414,17 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         break;
       }
 
+      case "code": {
+        const result = parseCodeArgs(args);
+        if (!result.success) {
+          handleValidationError(result.error, "code");
+          exitProcess(1);
+          return;
+        }
+        await codeCommand(result.data);
+        break;
+      }
+
       case "login":
         await login(parseLoginMethod(args));
         break;
@@ -454,10 +466,15 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       }
 
       case "mcp": {
-        const { createMCPServer } = await import("../mcp/server.js");
-        const mcpServer = await createMCPServer({ stdio: true });
+        // args.port defaults to DEFAULT_PORT (3000) from the CLI parser.
+        // The standalone MCP targets the dev server at 8080. Only override
+        // if the user explicitly passed --port.
+        const { DEFAULT_PORT } = await import("../../config/defaults.js");
+        const port = args.port !== DEFAULT_PORT ? Number(args.port) : undefined;
+        const { createStandaloneMCPServer } = await import("../mcp/standalone.js");
+        const mcpServer = createStandaloneMCPServer({ port });
         await new Promise(() => {});
-        await mcpServer.stop();
+        mcpServer.stop();
         break;
       }
 

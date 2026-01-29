@@ -10,14 +10,14 @@ export declare const AIToolSchema: z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     file: string;
     description: string;
-    id: "cursor" | "claude-code" | "skill" | "copilot" | "windsurf" | "agents";
     label: string;
+    id: "cursor" | "claude-code" | "skill" | "copilot" | "windsurf" | "agents";
     template: string;
 }, {
     file: string;
     description: string;
-    id: "cursor" | "claude-code" | "skill" | "copilot" | "windsurf" | "agents";
     label: string;
+    id: "cursor" | "claude-code" | "skill" | "copilot" | "windsurf" | "agents";
     template: string;
 }>;
 export type AITool = z.infer<typeof AIToolSchema>;

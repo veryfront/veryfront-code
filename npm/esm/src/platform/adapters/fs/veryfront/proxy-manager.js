@@ -8,7 +8,7 @@ import { clearSSRModuleCache, clearSSRModuleCacheForProject, } from "../../../..
 import { clearRouterDetectionCache, clearRouterDetectionCacheForProject, } from "../../../../rendering/router-detection.js";
 import { clearModulePathCache, invalidateModulePaths, } from "../../../../transforms/mdx/esm-module-loader/cache/index.js";
 import { clearSnippetCache, clearSnippetCacheForProject, } from "../../../../rendering/snippet-renderer.js";
-import { clearRendererCacheForProject, clearRendererCaches, } from "../../../../rendering/renderer.js";
+import { clearRendererCacheForProject } from "../../../../rendering/renderer.js";
 import { clearDomainCache } from "../../../../server/utils/domain-lookup.js";
 const GetAdapterParamsSchema = z.object({
     projectSlug: z.string().min(1, "projectSlug must be non-empty"),
@@ -202,7 +202,6 @@ export class ProxyFSAdapterManager {
                 clearModulePathCache,
                 invalidateModulePaths,
                 clearSnippetCache,
-                clearRendererCache: clearRendererCaches,
                 clearSSRModuleCacheForProject,
                 clearRouterDetectionCacheForProject,
                 clearSnippetCacheForProject,

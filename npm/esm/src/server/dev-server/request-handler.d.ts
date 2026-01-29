@@ -12,6 +12,7 @@ export declare class RequestHandler {
     private universalHandler?;
     constructor(projectDir: string, adapter: RuntimeAdapter, isReady: () => boolean, isDebug: () => boolean, hmrServer?: HMRServer | undefined, config?: VeryfrontConfig | undefined);
     handleRequest(req: dntShim.Request): Promise<dntShim.Response>;
+    private logRequest;
     private handleHealthCheck;
     private incrementRequestMetrics;
     private handleDevEndpoint;

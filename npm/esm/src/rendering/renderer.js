@@ -69,6 +69,13 @@ const RENDER_PIPELINE_TIMEOUT_MS = parseInt(getEnv("RENDER_TIMEOUT_MS") ?? "6000
  */
 const RENDER_MAX_CONCURRENT = parseInt(getEnv("RENDER_MAX_CONCURRENT") ?? "30", 10);
 /**
+ * Maximum concurrent renders per project (noisy-neighbor protection).
+ * Defaults to ceil(RENDER_MAX_CONCURRENT / 3) so no single project can consume
+ * more than ~1/3 of pod capacity. Set to 0 to disable per-project limits.
+ * Configurable via RENDER_PER_PROJECT_LIMIT env var.
+ */
+const RENDER_PER_PROJECT_LIMIT = parseInt(getEnv("RENDER_PER_PROJECT_LIMIT") ?? String(Math.ceil(RENDER_MAX_CONCURRENT / 3)), 10);
+/**
  * Timeout for acquiring render permit (ms).
  * If semaphore cannot be acquired within this time, request fails fast with 503.
  */
@@ -78,6 +85,32 @@ const RENDER_ACQUIRE_TIMEOUT_MS = 5000;
  * This is a last-line defense against resource exhaustion.
  */
 const renderSemaphore = new Semaphore(RENDER_MAX_CONCURRENT);
+/**
+ * Per-project active render counter. Prevents a single noisy tenant from
+ * monopolizing the global semaphore and starving other projects.
+ * Only enforced when RENDER_PER_PROJECT_LIMIT > 0.
+ */
+const projectRenderCounts = new Map();
+function acquireProjectSlot(projectId) {
+    if (RENDER_PER_PROJECT_LIMIT <= 0)
+        return true;
+    const current = projectRenderCounts.get(projectId) ?? 0;
+    if (current >= RENDER_PER_PROJECT_LIMIT)
+        return false;
+    projectRenderCounts.set(projectId, current + 1);
+    return true;
+}
+function releaseProjectSlot(projectId) {
+    if (RENDER_PER_PROJECT_LIMIT <= 0)
+        return;
+    const current = projectRenderCounts.get(projectId) ?? 0;
+    if (current <= 1) {
+        projectRenderCounts.delete(projectId);
+    }
+    else {
+        projectRenderCounts.set(projectId, current - 1);
+    }
+}
 /**
  * Renderer - Shared renderer for all projects
  *
@@ -145,8 +178,26 @@ export class Renderer {
                 });
                 return cacheResult.cachedResult;
             }
+            // Per-project cap: reject immediately if this project has too many concurrent renders.
+            // This prevents a single noisy tenant from monopolizing the global semaphore.
+            if (!acquireProjectSlot(ctx.projectId)) {
+                const activeCount = projectRenderCounts.get(ctx.projectId) ?? 0;
+                logger.error("[Renderer] Per-project render limit reached", {
+                    slug,
+                    projectId: ctx.projectId,
+                    activeRenders: activeCount,
+                    limit: RENDER_PER_PROJECT_LIMIT,
+                });
+                throw new VeryfrontError(`Per-project render limit reached (${activeCount}/${RENDER_PER_PROJECT_LIMIT} active). Try again shortly.`, ErrorCode.SERVICE_OVERLOADED, {
+                    slug,
+                    projectId: ctx.projectId,
+                    activeRenders: activeCount,
+                    limit: RENDER_PER_PROJECT_LIMIT,
+                });
+            }
             const acquired = await renderSemaphore.tryAcquire(RENDER_ACQUIRE_TIMEOUT_MS);
             if (!acquired) {
+                releaseProjectSlot(ctx.projectId);
                 logger.error("[Renderer] Render capacity exceeded - service overloaded", {
                     slug,
                     projectId: ctx.projectId,
@@ -160,6 +211,7 @@ export class Renderer {
             }
             finally {
                 renderSemaphore.release();
+                releaseProjectSlot(ctx.projectId);
             }
         }, {
             "renderer.slug": slug,

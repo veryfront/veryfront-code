@@ -1,6 +1,6 @@
 export default {
   "name": "veryfront",
-  "version": "0.0.105",
+  "version": "0.1.0",
   "nodeModulesDir": "auto",
   "exclude": [
     "npm/",
@@ -302,6 +302,7 @@ export default {
     "test:e2e": "npx playwright test --config=tests/e2e/playwright.config.ts",
     "check:circular": "deno run -A jsr:@cunarist/deno-circular-deps src/index.ts",
     "cli": "deno run --allow-all src/cli/main.ts",
+    "mcp": "deno run --allow-all src/cli/main.ts mcp",
     "batch:estimate": "deno run -A scripts/batch-simplify/batch-simplify.ts estimate",
     "batch:prepare": "deno run -A scripts/batch-simplify/batch-simplify.ts prepare",
     "batch:submit": "deno run -A scripts/batch-simplify/batch-simplify.ts submit",

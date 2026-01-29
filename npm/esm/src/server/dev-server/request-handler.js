@@ -5,6 +5,8 @@ import { ErrorOverlay } from "./error-overlay/index.js";
 import { createResponseBuilder } from "../../security/index.js";
 import { resetApiHandler } from "../handlers/request/api/pages-api-handler.js";
 import { clearLayoutDiscoveryCache } from "../../rendering/layouts/index.js";
+import { getErrorCollector } from "../../cli/mcp/error-collector.js";
+import { getLogBuffer } from "../../cli/mcp/log-buffer.js";
 export class RequestHandler {
     projectDir;
     adapter;
@@ -23,6 +25,7 @@ export class RequestHandler {
     }
     async handleRequest(req) {
         const url = new URL(req.url);
+        const start = performance.now();
         logger.debug(`Request: ${req.method} ${url.pathname}`);
         const healthResponse = this.handleHealthCheck(url.pathname);
         if (healthResponse)
@@ -30,13 +33,25 @@ export class RequestHandler {
         this.incrementRequestMetrics();
         try {
             const devResponse = this.handleDevEndpoint(req, url.pathname);
-            if (devResponse)
+            if (devResponse) {
+                this.logRequest(req.method, url.pathname, devResponse.status, start);
                 return devResponse;
-            return await this.handleApplicationRequest(req);
+            }
+            const response = await this.handleApplicationRequest(req);
+            this.logRequest(req.method, url.pathname, response.status, start);
+            return response;
         }
         catch (error) {
+            this.logRequest(req.method, url.pathname, HTTP_SERVER_ERROR, start);
             return this.handleServerError(error);
         }
+    }
+    logRequest(method, pathname, status, start) {
+        // Skip internal endpoints to reduce noise
+        if (pathname.startsWith("/_dev/") || pathname.startsWith("/_veryfront/"))
+            return;
+        const duration = Math.round(performance.now() - start);
+        getLogBuffer().info(`${method} ${pathname} → ${status} (${duration}ms)`, "http", { method, path: pathname, status, duration });
     }
     handleHealthCheck(pathname) {
         if (pathname === "/healthz") {
@@ -137,9 +152,12 @@ export class RequestHandler {
     }
     handleServerError(error) {
         logger.error("Server error:", error);
+        // Capture error for MCP flywheel
+        const err = error;
+        getErrorCollector().addRuntimeError(err.message, err.stack, { source: "request-handler" });
         return new dntShim.Response(ErrorOverlay.createHTML({
             type: "runtime",
-            error: error,
+            error: err,
         }), {
             status: HTTP_SERVER_ERROR,
             headers: { "content-type": "text/html; charset=utf-8" },

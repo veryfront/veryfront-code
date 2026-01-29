@@ -29,6 +29,7 @@ import { shouldUseNoCacheHeadersFromHandler } from "../../../context/enriched-co
 import { ErrorPages } from "../../../utils/error-html.js";
 import { ErrorOverlay } from "../../../dev-server/error-overlay/index.js";
 import { withSpan } from "../../../../observability/tracing/otlp-setup.js";
+import { getErrorCollector } from "../../../../cli/mcp/error-collector.js";
 /**
  * Determine if request should serve production (released) content.
  * Uses resolvedEnvironment (from domain lookup) with fallback to requestContext.mode.
@@ -312,6 +313,8 @@ export class SSRHandler extends BaseHandler {
                 const errorObj = error instanceof Error ? error : new Error(String(error));
                 if (!isHead &&
                     (ctx.requestContext?.isLocalDev || ctx.requestContext?.mode === "preview")) {
+                    // Capture error for MCP flywheel
+                    getErrorCollector().addRuntimeError(errorObj.message, errorObj.stack, { source: "ssr-handler", url: req.url, slug });
                     const body = ErrorOverlay.createHTML({ error: errorObj, type: "runtime" });
                     return this.respond(builder
                         .withCORS(req, ctx.securityConfig?.cors)

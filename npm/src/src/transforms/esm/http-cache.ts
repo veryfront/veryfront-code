@@ -34,6 +34,50 @@ const getDistributedCache = createDistributedCacheAccessor(
   "HTTP-CACHE",
 );
 
+/**
+ * Generate cache key for HTTP bundles.
+ * Uses simple prefix:hash format. Cache invalidation is handled by:
+ * - hasIncompatibleFilePaths() for path compatibility
+ * - gzip detection for corrupted content
+ */
+const distributedKey = (prefix: string, hash: string | number) => `${prefix}:${hash}`;
+
+/**
+ * Check if cached HTTP bundle code has file:// paths from a different environment.
+ * Returns true if the code should be rejected (has incompatible paths).
+ *
+ * HTTP bundles contain file:// paths to other cached bundles. These paths are
+ * environment-specific (e.g., /app/.cache/... in production vs local paths on dev).
+ * If the paths don't match our local cache directory, the cached code is stale.
+ *
+ * IMPORTANT: This function creates a new RegExp on each call to avoid race conditions
+ * when multiple modules are processed concurrently. Using a shared global regex with
+ * the 'g' flag would cause interleaved exec() calls to skip paths.
+ */
+function hasIncompatibleFilePaths(code: string, localCacheDir: string): boolean {
+  // Create a NEW regex for each call to avoid race conditions with concurrent calls.
+  // Global regexes maintain lastIndex state that can interleave between concurrent calls.
+  const filePathPattern = /file:\/\/([^"'\s]+)/gi;
+
+  // Extract all file:// paths
+  let match;
+  while ((match = filePathPattern.exec(code)) !== null) {
+    const path = match[1] as string;
+    // Check if this path is for an HTTP bundle (veryfront-http-bundle directory)
+    if (path.includes("veryfront-http-bundle")) {
+      // The path should start with our local cache directory
+      if (!path.startsWith(localCacheDir)) {
+        logger.debug("[HTTP-CACHE] Bundle has incompatible file path from different environment", {
+          path,
+          expectedDir: localCacheDir,
+        });
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 type CacheOptions = {
   cacheDir: string;
   importMap: ImportMapConfig;
@@ -203,9 +247,13 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
         try {
           const code = await fs.readTextFile(cachePath);
           await Promise.all([
-            distributed.set(`url:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
-            distributed.set(`code:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
-            distributed.set(`hash:${hash}`, normalizedUrl, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+            distributed.set(distributedKey("url", hash), code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+            distributed.set(distributedKey("code", hash), code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+            distributed.set(
+              distributedKey("hash", hash),
+              normalizedUrl,
+              HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+            ),
           ]);
           lastDistributedRefresh.set(hashStr, now);
           logger.debug("[HTTP-CACHE] Refreshed distributed cache TTL", { hash });
@@ -232,13 +280,34 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
       // Use hash-based key instead of raw URL to comply with API cache key constraints.
       // API cache keys only allow: alphanumeric, underscore, colon, dot, asterisk, hyphen, slash.
       // URLs contain invalid characters like @, ?, =, &, etc.
-      const cachedCode = await distributed.get(`url:${hash}`);
+      const cachedCode = await distributed.get(distributedKey("url", hash));
       if (cachedCode) {
-        logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl, hash });
-        await fs.mkdir(cacheDir, { recursive: true });
-        await fs.writeTextFile(cachePath, cachedCode);
-        cachedPaths.set(cacheKey, cachePath);
-        return cachePath;
+        // Validate that the cached content is valid JavaScript, not compressed/gzipped.
+        // esm.sh sometimes stores gzip-encoded bundles with "gz:" prefix that need
+        // special decoding. If we see such content in the cache, skip and re-fetch.
+        if (cachedCode.startsWith("gz:") || cachedCode.startsWith("gzip:")) {
+          logger.warn("[HTTP-CACHE] Cached code is gzip-encoded, skipping and will re-fetch", {
+            url: normalizedUrl,
+            hash,
+            preview: cachedCode.substring(0, 50),
+          });
+          // Fall through to network fetch
+        } else if (hasIncompatibleFilePaths(cachedCode, cacheDir)) {
+          // Cached bundle has file:// paths from a different environment (e.g., /app/...)
+          // Skip the cached code and re-fetch from network to get correct local paths
+          logger.warn("[HTTP-CACHE] Cached code has incompatible file paths, will re-fetch", {
+            url: normalizedUrl,
+            hash,
+            localCacheDir: cacheDir,
+          });
+          // Fall through to network fetch
+        } else {
+          logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl, hash });
+          await fs.mkdir(cacheDir, { recursive: true });
+          await fs.writeTextFile(cachePath, cachedCode);
+          cachedPaths.set(cacheKey, cachePath);
+          return cachePath;
+        }
       }
     } catch (error) {
       logger.debug("[HTTP-CACHE] Distributed cache get failed", { url: normalizedUrl, error });
@@ -300,9 +369,13 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
     // the bundle code does, causing ensureHttpBundlesExist on another pod to miss.
     try {
       await Promise.all([
-        distributed.set(`url:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
-        distributed.set(`code:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
-        distributed.set(`hash:${hash}`, normalizedUrl, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+        distributed.set(distributedKey("url", hash), code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+        distributed.set(distributedKey("code", hash), code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+        distributed.set(
+          distributedKey("hash", hash),
+          normalizedUrl,
+          HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+        ),
       ]);
     } catch (error) {
       logger.debug("[HTTP-CACHE] Distributed cache set failed", { url: normalizedUrl, error });
@@ -454,7 +527,7 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
 
   try {
     // Strategy 1: Direct code lookup by hash (preferred - no URL needed)
-    const cachedCode = await distributed.get(`code:${hash}`);
+    const cachedCode = await distributed.get(distributedKey("code", hash));
     if (cachedCode) {
       // Validate that the cached content is valid JavaScript, not compressed/gzipped.
       // esm.sh sometimes stores gzip-encoded bundles with "gz:" prefix that need
@@ -463,6 +536,13 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
         logger.warn("[HTTP-CACHE] Cached code is gzip-encoded, skipping and will re-fetch", {
           hash,
           preview: cachedCode.substring(0, 50),
+        });
+        // Fall through to Strategy 2 (URL re-fetch)
+      } else if (hasIncompatibleFilePaths(cachedCode, absoluteCacheDir)) {
+        // Cached bundle has file:// paths from a different environment
+        logger.warn("[HTTP-CACHE] Cached code has incompatible file paths, will re-fetch", {
+          hash,
+          localCacheDir: absoluteCacheDir,
         });
         // Fall through to Strategy 2 (URL re-fetch)
       } else {
@@ -497,7 +577,7 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
     }
 
     // Strategy 2: URL lookup then re-fetch (fallback for bundles cached before code:{hash} was added)
-    const originalUrl = await distributed.get(`hash:${hash}`);
+    const originalUrl = await distributed.get(distributedKey("hash", hash));
     if (originalUrl) {
       logger.info("[HTTP-CACHE] Recovering bundle via URL re-fetch", { hash, originalUrl });
       const importMap = { imports: {}, scopes: {} };
@@ -595,7 +675,7 @@ export async function ensureHttpBundlesExist(
     }
 
     // Batch fetch from distributed cache
-    const codeKeys = missing.map((m) => `code:${m.hash}`);
+    const codeKeys = missing.map((m) => distributedKey("code", m.hash));
     let codes: Map<string, string | null>;
 
     try {
@@ -616,7 +696,7 @@ export async function ensureHttpBundlesExist(
     // Write fetched bundles to disk using canonical paths and scan for transitive deps
     await Promise.all(
       missing.map(async ({ hash, canonicalPath }) => {
-        const code = codes.get(`code:${hash}`);
+        const code = codes.get(distributedKey("code", hash));
         if (!code) {
           // Try single-bundle recovery as last resort
           const recovered = await recoverHttpBundleByHash(hash, absoluteCacheDir);
@@ -630,6 +710,36 @@ export async function ensureHttpBundlesExist(
                 if (!seen.has(ref.hash)) pending.push(ref);
               }
             } catch { /* ignore read errors for dep scanning */ }
+          }
+          return;
+        }
+
+        // Validate that the cached content is valid JavaScript, not compressed/gzipped.
+        // esm.sh sometimes stores gzip-encoded bundles with "gz:" prefix. Skip and fallback.
+        if (code.startsWith("gz:") || code.startsWith("gzip:")) {
+          logger.warn("[HTTP-CACHE] Batch-fetched code is gzip-encoded, trying single recovery", {
+            hash,
+            preview: code.substring(0, 50),
+          });
+          const recovered = await recoverHttpBundleByHash(hash, absoluteCacheDir);
+          if (!recovered) {
+            failed.add(hash);
+          }
+          return;
+        }
+
+        // Check for file:// paths from a different environment
+        if (hasIncompatibleFilePaths(code, absoluteCacheDir)) {
+          logger.warn(
+            "[HTTP-CACHE] Batch-fetched code has incompatible file paths, trying single recovery",
+            {
+              hash,
+              localCacheDir: absoluteCacheDir,
+            },
+          );
+          const recovered = await recoverHttpBundleByHash(hash, absoluteCacheDir);
+          if (!recovered) {
+            failed.add(hash);
           }
           return;
         }

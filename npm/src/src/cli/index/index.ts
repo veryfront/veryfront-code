@@ -14,5 +14,6 @@ export * from "../commands/doctor/index.js";
 export * from "../commands/generate.js";
 export * from "../commands/init/index.js";
 export * from "../commands/routes.js";
+export * from "../commands/code.js";
 
 export * from "../utils/index.js";

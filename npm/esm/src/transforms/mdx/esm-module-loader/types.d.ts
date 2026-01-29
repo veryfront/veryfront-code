@@ -1,5 +1,6 @@
 import type { LRUCache } from "../../../utils/lru-wrapper.js";
 import type { RuntimeAdapter } from "../../../platform/adapters/base.js";
+import type { Logger } from "../../../utils/logger/logger.js";
 import type { MDXModule } from "../types.js";
 export interface ESMLoaderContext {
     esmCacheDir?: string;
@@ -53,6 +54,8 @@ export interface ModuleFetcherContext {
     inFlightModules?: Map<string, Promise<string | null>>;
     /** React version for transforms (from project config) */
     reactVersion?: string;
+    /** Logger with request-scoped context (project_id, project_slug, requestId, etc.) */
+    logger?: Logger;
 }
 export interface JSXTransform {
     original: string;
