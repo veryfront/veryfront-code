@@ -13,8 +13,6 @@ export function renderDashboard(state: AppState): string {
   const maxListWidth = termWidth - 4;
   const lines: string[] = [];
 
-  lines.push(renderBanner(state), "");
-
   const hasProjects = state.projects.items.length > 0;
   const hasRemote = state.remote.user && state.remote.projects.length > 0;
   const hasTemplates = state.templates.items.length > 0;
@@ -103,7 +101,7 @@ export function renderDashboard(state: AppState): string {
   return lines.join("\n");
 }
 
-function renderBanner(state: AppState): string {
+export function renderBanner(state: AppState): string {
   const termWidth = Math.min(getTerminalWidth() - 4, 80);
   const textLines: string[] = [];
 

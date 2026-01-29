@@ -24,7 +24,8 @@ import { cursor, screen, SPINNER_FRAMES } from "../ui/ansi.ts";
 import { brand, dim } from "../ui/colors.ts";
 import { getTerminalWidth } from "../ui/layout.ts";
 import { moveDown, moveUp, selectByNumber } from "./components/list-select.ts";
-import { renderDashboard, renderEmptyState } from "./views/dashboard.ts";
+import { renderBanner, renderDashboard, renderEmptyState } from "./views/dashboard.ts";
+import { MAIN_TABS, renderTabBar } from "./components/tab-bar.ts";
 import {
   createStartupState,
   incrementFrame,
@@ -763,6 +764,13 @@ export function createApp(config: AppConfig): App {
   }
 
   function render(): void {
+    // Always render header (banner + tabs)
+    const header = renderBanner(state);
+    const tabs = renderTabBar({
+      tabs: MAIN_TABS,
+      activeTabId: state.view,
+    });
+
     let content: string;
 
     switch (state.view) {
@@ -797,7 +805,8 @@ export function createApp(config: AppConfig): App {
         content = renderDashboard(state);
     }
 
-    const parts: string[] = [content];
+    // Combine header + tabs + content
+    const parts: string[] = [header, tabs, "", content];
 
     // Divider width matches the box in dashboard
     const dividerWidth = Math.min(getTerminalWidth() - 4, 80);
@@ -925,6 +934,39 @@ export function createApp(config: AppConfig): App {
       }
       if (state.view !== "dashboard") update(goBack());
       update(resetKeyChord());
+      return;
+    }
+
+    // Global tab navigation
+    // These shortcuts work from any view for quick navigation
+    if (key === "\x1b1") {
+      // Alt+1: Dashboard
+      update(navigateTo("dashboard"));
+      return;
+    }
+    if (key === "\x1b2") {
+      // Alt+2: New Project
+      state = { ...state, newProjectIndex: 0 };
+      update(navigateTo("new-project"));
+      return;
+    }
+    if (key === "\x1b3") {
+      // Alt+3: Code
+      update(navigateTo("code"));
+      return;
+    }
+    if (key === "\x1b4") {
+      // Alt+4: Resources
+      update(navigateTo("resources"));
+      return;
+    }
+    // Shift+Tab: cycle backwards through main tabs
+    if (key === "\x1b[Z") {
+      const tabs = ["dashboard", "new-project", "code", "resources"] as const;
+      const currentIndex = tabs.indexOf(state.view as typeof tabs[number]);
+      const prevIndex = currentIndex <= 0 ? tabs.length - 1 : currentIndex - 1;
+      const prevTab = tabs[prevIndex];
+      if (prevTab) update(navigateTo(prevTab));
       return;
     }
 
