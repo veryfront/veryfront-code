@@ -12,6 +12,7 @@ import { joinPath } from "#veryfront/utils/path-utils.ts";
 import {
   extractCandidates,
   generateTailwindCSS,
+  formatCSSError,
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -40,18 +41,23 @@ export class StylesCSSHandler extends BaseHandler {
       const result = await generateTailwindCSS(rawCss, candidates);
 
       if (result.error) {
-        logger.error("[StylesCSSHandler] Tailwind error", { error: result.error });
+        const formatted = formatCSSError(result.error);
+        logger.error("[StylesCSSHandler] Tailwind error", {
+          error: formatted.message,
+          suggestion: formatted.suggestion,
+        });
+        const errorMessage = `${formatted.title}: ${formatted.message}\nSuggestion: ${formatted.suggestion}`;
         // Surface error in CSS so developers can see it
         const errorCSS = `/*
   ╔══════════════════════════════════════════════════════════════╗
   ║  TAILWIND CSS COMPILATION ERROR                               ║
   ╠══════════════════════════════════════════════════════════════╣
-  ║  ${result.error.replace(/\n/g, "\n  ║  ")}
+  ║  ${errorMessage.replace(/\n/g, "\n  ║  ")}
   ╚══════════════════════════════════════════════════════════════╝
 */
 
 body::before {
-  content: "CSS Error: ${result.error.replace(/"/g, '\\"').replace(/\n/g, " ")}";
+  content: "CSS Error: ${errorMessage.replace(/"/g, '\\"').replace(/\n/g, " ")}";
   position: fixed;
   top: 0;
   left: 0;

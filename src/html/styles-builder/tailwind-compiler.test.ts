@@ -1,10 +1,11 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   clearCSSCache,
   extractCandidates,
   extractCandidatesFromFiles,
   formatCSSError,
+  getProjectCSS,
   getCompilerCacheStats,
   getCSSByHash,
   hashCSS,
@@ -216,6 +217,13 @@ describe("styles-builder/tailwind-compiler", () => {
   });
 
   describe("formatCSSError", () => {
+    it("should format plugin options not supported error", () => {
+      const result = formatCSSError('The plugin "@tailwindcss/forms" does not accept options');
+      assertEquals(result.title, "Plugin Options Not Supported");
+      assertEquals(result.message.includes("@tailwindcss/forms"), true);
+      assertEquals(result.suggestion.includes("@plugin"), true);
+    });
+
     it("should format plugin not found error", () => {
       const result = formatCSSError('Could not resolve plugin "tailwindcss-animate"');
       assertEquals(result.title, "Plugin Not Found");
@@ -266,6 +274,18 @@ describe("styles-builder/tailwind-compiler", () => {
     it("should accept string errors", () => {
       const result = formatCSSError("String error");
       assertEquals(result.message, "String error");
+    });
+  });
+
+  describe("getProjectCSS", () => {
+    it("throws formatted error on invalid stylesheet", async () => {
+      clearCSSCache();
+      const badCss = `@theme { --color-primary: #fff`;
+      await assertRejects(
+        () => getProjectCSS("test-project", badCss, new Set(), { minify: false }),
+        Error,
+        "Suggestion:",
+      );
     });
   });
 

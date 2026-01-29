@@ -45,6 +45,7 @@ import {
   rewriteDntImports,
 } from "./module-fetcher/index.ts";
 import { ensureCachedJsxModulePatched } from "./jsx-cache.ts";
+import { buildMissingModuleError } from "./missing-module.ts";
 
 /** Singleflight for MDX module file writes to prevent race conditions */
 const mdxWriteFlight = new Singleflight<void>();
@@ -177,6 +178,7 @@ async function processVfModuleImports(
   imports: Array<{ original: string; path: string }>,
   context: ESMLoaderContext,
   projectDir: string,
+  strictMissingModules: boolean,
 ): Promise<string> {
   const projectSlug = context.projectSlug || "unknown";
   const adapter = context.adapter;
@@ -217,6 +219,7 @@ async function processVfModuleImports(
         project_id: context.projectId,
         project_slug: context.projectSlug,
       }),
+      strictMissingModules,
     },
   );
 
@@ -262,6 +265,16 @@ async function processVfModuleImports(
     if (filePath) {
       result = result.replace(original, `from "file://${filePath}"`);
       continue;
+    }
+
+    if (strictMissingModules) {
+      throw buildMissingModuleError({
+        modulePath: path,
+        importer: projectSlug,
+        importStatement: original,
+        code,
+        projectSlug,
+      });
     }
 
     const stubPath = await createStubModule(path, result, original, context.esmCacheDir!);
@@ -458,9 +471,17 @@ async function doLoadModuleESM(
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports START`, { projectSlug });
     const vfModuleImports = findVfModuleImports(rewritten);
+    const strictMissingModules = context.strictMissingModules ?? true;
     rewritten = await withSpan(
       SpanNames.MDX_PROCESS_VF_MODULES,
-      () => processVfModuleImports(rewritten, vfModuleImports, context, projectDir),
+      () =>
+        processVfModuleImports(
+          rewritten,
+          vfModuleImports,
+          context,
+          projectDir,
+          strictMissingModules,
+        ),
       { "mdx.vf_module_count": vfModuleImports.length },
     );
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports DONE`, { projectSlug });

@@ -1,10 +1,12 @@
 /** @module transforms/mdx/esm-module-loader/module-fetcher/index.test */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import {
   createModuleFetcherContext,
   endRenderSession,
+  fetchAndCacheModule,
   rewriteDntImports,
   startRenderSession,
 } from "./index.ts";
@@ -334,6 +336,38 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       const ctx = createModuleFetcherContext("/cache", mockAdapter, "/project", "proj-123");
       assertEquals(ctx.inFlightModules instanceof Map, true);
       assertEquals(ctx.inFlightModules!.size, 0);
+    });
+  });
+
+  describe("strictMissingModules", () => {
+    it("throws when module cannot be resolved", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-strict-cache-" });
+      const projectDir = await makeTempDir({ prefix: "vf-mdx-strict-proj-" });
+
+      const adapter = {
+        env: { get: (_key: string) => undefined },
+        fs: {
+          resolveFile: async (_path: string) => null,
+          readFile: async (_path: string) => {
+            throw new Error("readFile should not be called for missing module");
+          },
+        },
+      } as any;
+
+      try {
+        const ctx = createModuleFetcherContext(esmCacheDir, adapter, projectDir, "proj-123", {
+          strictMissingModules: true,
+        });
+
+        await assertRejects(
+          () => fetchAndCacheModule("/_vf_modules/lib/utils.js", ctx),
+          Error,
+          "Missing module",
+        );
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+        await remove(projectDir, { recursive: true });
+      }
     });
   });
 

@@ -201,8 +201,15 @@ export async function getProjectCSS(
   const result = await generateTailwindCSS(stylesheet, candidates, options);
 
   if (result.error) {
-    logger.error("[tailwind] Project CSS generation failed", { projectSlug, error: result.error });
-    return { css: result.css, hash: "", fromCache: false };
+    const formatted = formatCSSError(result.error);
+    logger.error("[tailwind] Project CSS generation failed", {
+      projectSlug,
+      error: formatted.message,
+      suggestion: formatted.suggestion,
+    });
+    throw new Error(
+      `[tailwind] ${formatted.title}: ${formatted.message} Suggestion: ${formatted.suggestion}`,
+    );
   }
 
   const hash = hashCSS(result.css);
@@ -619,11 +626,11 @@ async function loadPlugin(
       try {
         mod = await import(id);
       } catch {
-        // Plugin not installed - this is expected for most user projects
-        // Log at debug level since it's not an error, just a missing optional plugin
-        logger.debug("[tailwind] Plugin not installed", { id });
+        const errorMsg = `Failed to load plugin "${id}": plugin not installed`;
+        logger.warn("[tailwind] Plugin not installed", { id });
+        pluginErrors.set(id, errorMsg);
         pluginCache.set(id, null);
-        return null;
+        throw new Error(errorMsg);
       }
     }
 
@@ -701,10 +708,11 @@ async function getCompiler(stylesheet: string): Promise<Awaited<ReturnType<typeo
     },
     loadModule: async (id: string) => {
       const plugin = await loadPlugin(id, pluginCache, pluginErrors);
-      // If plugin is null (not installed in Node.js), return empty module to prevent crash
-      // The stylesheet will compile but plugin-specific features won't work
+      if (!plugin) {
+        throw new Error(`Failed to load plugin "${id}": plugin not installed`);
+      }
       // deno-lint-ignore no-explicit-any
-      return { module: (plugin ?? {}) as any, base: "/", path: "/" };
+      return { module: plugin as any, base: "/", path: "/" };
     },
   });
 

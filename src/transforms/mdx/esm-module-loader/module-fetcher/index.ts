@@ -43,6 +43,7 @@ import { recordSSRModules } from "../../../../modules/manifest/route-module-mani
 import { getDistributedTransformBackend } from "#veryfront/transforms/esm/transform-cache.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { FRAMEWORK_ROOT } from "../constants.ts";
+import { buildMissingModuleError } from "../missing-module.ts";
 
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
@@ -363,6 +364,9 @@ async function processNestedImports(
   moduleCode: string,
   results: NestedImportResult[],
   esmCacheDir: string,
+  strictMissingModules: boolean,
+  parentModulePath?: string,
+  projectSlug?: string,
 ): Promise<string> {
   let result = moduleCode;
 
@@ -373,6 +377,15 @@ async function processNestedImports(
     }
 
     const modulePath = nestedPath || relativePath || "";
+    if (strictMissingModules) {
+      throw buildMissingModuleError({
+        modulePath,
+        importer: parentModulePath,
+        importStatement: original,
+        code: moduleCode,
+        projectSlug,
+      });
+    }
     const stubPath = await createStubModule(modulePath, result, original, esmCacheDir);
     if (stubPath) result = result.replace(original, `from "file://${stubPath}"`);
   }
@@ -533,6 +546,7 @@ export async function fetchAndCacheModule(
     context,
     fetchAndCacheModuleFn,
     projectSlug,
+    parentModulePath,
   );
 
   inFlight?.set(normalizedPath, fetchPromise);
@@ -558,6 +572,7 @@ async function doFetchAndCacheModule(
   context: ModuleFetcherContext,
   fetchAndCacheModuleFn: (path: string, parent?: string) => Promise<string | null>,
   projectSlug: string,
+  parentModulePath?: string,
 ): Promise<string | null> {
   const log = getLog(context);
   const { esmCacheDir, adapter, projectDir, projectId } = context;
@@ -640,9 +655,19 @@ async function doFetchAndCacheModule(
         projectSlug,
         context.isLocalDev,
       );
-      return moduleCode
-        ? await cacheModule(normalizedPath, moduleCode, esmCacheDir, pathCache, log)
-        : null;
+      if (moduleCode) {
+        return await cacheModule(normalizedPath, moduleCode, esmCacheDir, pathCache, log);
+      }
+
+      if (context.strictMissingModules ?? true) {
+        throw buildMissingModuleError({
+          modulePath: normalizedPath,
+          importer: parentModulePath,
+          projectSlug,
+        });
+      }
+
+      return null;
     }
 
     const { sourceCode, actualFilePath } = resolved;
@@ -815,7 +840,14 @@ async function doFetchAndCacheModule(
       normalizedPath,
       vfMs: (performance.now() - vfStart).toFixed(1),
     });
-    moduleCode = await processNestedImports(moduleCode, nestedResults, esmCacheDir);
+    moduleCode = await processNestedImports(
+      moduleCode,
+      nestedResults,
+      esmCacheDir,
+      context.strictMissingModules ?? true,
+      normalizedPath,
+      projectSlug,
+    );
 
     log.debug(
       `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports START`,
@@ -841,7 +873,14 @@ async function doFetchAndCacheModule(
         relMs: (performance.now() - relStart).toFixed(1),
       },
     );
-    moduleCode = await processNestedImports(moduleCode, relativeResults, esmCacheDir);
+    moduleCode = await processNestedImports(
+      moduleCode,
+      relativeResults,
+      esmCacheDir,
+      context.strictMissingModules ?? true,
+      normalizedPath,
+      projectSlug,
+    );
 
     log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule START`, {
       projectSlug,
@@ -876,7 +915,13 @@ export function createModuleFetcherContext(
   adapter: RuntimeAdapter,
   projectDir: string,
   projectId: string,
-  options?: { isLocalDev?: boolean; projectSlug?: string; reactVersion?: string; logger?: Logger },
+  options?: {
+    isLocalDev?: boolean;
+    projectSlug?: string;
+    reactVersion?: string;
+    logger?: Logger;
+    strictMissingModules?: boolean;
+  },
 ): ModuleFetcherContext {
   return {
     esmCacheDir,

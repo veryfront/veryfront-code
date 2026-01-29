@@ -855,8 +855,26 @@ export class SSRModuleLoader {
         const transformedHash = await this.hashContentAsync(transformed);
 
         const tempPath = await this.getTempPath(filePath, transformedHash);
-        await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), { recursive: true });
-        await this.fs.writeTextFile(tempPath, transformed);
+        try {
+          await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), {
+            recursive: true,
+          });
+          await this.fs.writeTextFile(tempPath, transformed);
+        } catch (writeError) {
+          // Cache directory may have been removed during test cleanup or pod shutdown.
+          // Log and continue - the module will be re-transformed on next request.
+          if (
+            (writeError as { code?: string })?.code === "ENOENT" ||
+            (writeError instanceof Deno.errors.NotFound)
+          ) {
+            logger.debug("[SSR-MODULE-LOADER] Cache write skipped (directory removed)", {
+              filePath,
+              tempPath,
+            });
+            return;
+          }
+          throw writeError;
+        }
 
         if (isSSRDistributedCacheEnabled()) {
           setInRedis(contentCacheKey, transformed, {

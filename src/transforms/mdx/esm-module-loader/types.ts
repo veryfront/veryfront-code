@@ -13,6 +13,11 @@ export interface ESMLoaderContext {
   contentSourceId?: string;
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /**
+   * If true, missing modules fail fast instead of being stubbed.
+   * Defaults to true when not specified.
+   */
+  strictMissingModules?: boolean;
 }
 
 export interface FSAdapter {
@@ -58,6 +63,11 @@ export interface ModuleFetcherContext {
   reactVersion?: string;
   /** Logger with request-scoped context (project_id, project_slug, requestId, etc.) */
   logger?: Logger;
+  /**
+   * If true, missing modules fail fast instead of being stubbed.
+   * Defaults to true when not specified.
+   */
+  strictMissingModules?: boolean;
 }
 
 export interface JSXTransform {
