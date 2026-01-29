@@ -1,14 +1,13 @@
 /**
  * JSX/TypeScript Transform Utility
  *
- * Uses esbuild for development (native binaries available).
- * Falls back to sucrase when esbuild fails (deno compile - no native binaries in VFS).
+ * Uses native esbuild for all transforms. In deno compile environments,
+ * the esbuild binary is extracted from VFS to /tmp at startup.
+ * @see ./esbuild.ts for VFS extraction logic
  */
 
-import * as esbuild from "esbuild";
-import { transform as sucraseTransform } from "npm:sucrase@3.35.0";
+import { getEsbuild, initializeEsbuild } from "./esbuild.ts";
 
-let useEsbuild = true;
 let esbuildInitialized = false;
 
 export interface TransformResult {
@@ -20,8 +19,7 @@ export interface TransformOptions {
 }
 
 /**
- * Transform JSX/TSX source to JavaScript.
- * Tries native esbuild first, falls back to sucrase if unavailable.
+ * Transform JSX/TSX source to JavaScript using native esbuild.
  */
 export async function transformJsx(
   source: string,
@@ -29,48 +27,14 @@ export async function transformJsx(
 ): Promise<TransformResult> {
   const loader = options.loader ?? "tsx";
 
-  // Try esbuild first (faster, full feature support)
-  if (useEsbuild) {
-    try {
-      if (!esbuildInitialized) {
-        await esbuild.initialize({ worker: false });
-        esbuildInitialized = true;
-      }
+  const esbuild = await getEsbuild();
 
-      const result = await esbuild.transform(source, {
-        loader,
-        jsx: "automatic",
-        jsxImportSource: "react",
-        format: "esm",
-        target: "es2020",
-      });
-
-      return { code: result.code };
-    } catch (err) {
-      // Check if it's the ENOENT error from deno compile
-      if (err instanceof Error && err.message.includes("ENOENT")) {
-        useEsbuild = false;
-        // Fall through to sucrase
-      } else {
-        throw err;
-      }
-    }
-  }
-
-  // Fallback to sucrase (pure JS, works in deno compile)
-  const transforms: Array<"typescript" | "jsx"> = [];
-  if (loader === "tsx" || loader === "ts") {
-    transforms.push("typescript");
-  }
-  if (loader === "tsx" || loader === "jsx") {
-    transforms.push("jsx");
-  }
-
-  const result = sucraseTransform(source, {
-    transforms,
-    jsxRuntime: "automatic",
+  const result = await esbuild.transform(source, {
+    loader,
+    jsx: "automatic",
     jsxImportSource: "react",
-    production: true,
+    format: "esm",
+    target: "es2020",
   });
 
   return { code: result.code };
@@ -78,26 +42,17 @@ export async function transformJsx(
 
 /**
  * Initialize the transform system.
- * Call at server startup to warm up esbuild or detect fallback early.
+ * Call at server startup to ensure esbuild binary is available.
  */
 export async function initializeTransform(): Promise<void> {
-  try {
-    if (!esbuildInitialized) {
-      await esbuild.initialize({ worker: false });
-      esbuildInitialized = true;
-    }
-  } catch (err) {
-    if (err instanceof Error && err.message.includes("ENOENT")) {
-      useEsbuild = false;
-    } else {
-      throw err;
-    }
-  }
+  if (esbuildInitialized) return;
+  await initializeEsbuild();
+  esbuildInitialized = true;
 }
 
 /**
- * Check if we're using esbuild (native) or sucrase (fallback)
+ * Check if we're using esbuild (always true now - sucrase fallback removed)
  */
 export function isUsingEsbuild(): boolean {
-  return useEsbuild;
+  return true;
 }
