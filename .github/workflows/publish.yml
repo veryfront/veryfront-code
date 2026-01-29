@@ -189,14 +189,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Trigger veryfront-cloud-renderer deployment
-        run: |
-          curl -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ env.VERYFRONT_RELEASE_TOKEN }}" \
-            https://api.github.com/repos/veryfront/veryfront-cloud-renderer/dispatches \
-            -d '{"event_type":"deploy-production","client_payload":{"version":"${{ env.VERSION }}"}}'
-
   update-homebrew:
     needs: publish
     runs-on: ubuntu-latest

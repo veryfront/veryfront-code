@@ -129,27 +129,63 @@ jobs:
         continue-on-error: true  # Tests may not pass yet on all runtimes
 
   # ============================================
-  # TRIGGER STAGING DEPLOYMENT
+  # PUBLISH PRE-RELEASE TO NPM
   # Only runs on push to main after tests pass
+  # Publishes veryfront@{version}-rc.{run_number}
   # ============================================
 
-  trigger-staging:
+  publish-prerelease:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: [format, lint, typecheck, unit-tests, integration-tests]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
+      - uses: actions/checkout@v4
+
       - name: Load secrets from 1Password
         uses: 1password/load-secrets-action@v2
         with:
           export-env: true
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          VERYFRONT_RELEASE_TOKEN: op://VERYFRONT_CI/GITHUB_VERYFRONT_PAT/credential
+          NPM_TOKEN: op://VERYFRONT_CI/NPM_TOKEN_VERYFRONT/password
 
-      - name: Trigger veryfront-cloud-renderer staging deployment
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: lts
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Get base version and compute pre-release version
+        id: version
         run: |
-          curl -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ env.VERYFRONT_RELEASE_TOKEN }}" \
-            https://api.github.com/repos/veryfront/veryfront-cloud-renderer/dispatches \
-            -d '{"event_type":"deploy-staging","client_payload":{"sha":"${{ github.sha }}"}}'
+          BASE_VERSION=$(jq -r '.version' deno.json)
+          PRERELEASE_VERSION="${BASE_VERSION}-rc.${{ github.run_number }}"
+          echo "base_version=$BASE_VERSION" >> $GITHUB_OUTPUT
+          echo "prerelease_version=$PRERELEASE_VERSION" >> $GITHUB_OUTPUT
+          echo "Publishing pre-release: $PRERELEASE_VERSION"
+
+      - name: Build npm package
+        run: |
+          VERYFRONT_VERSION=${{ steps.version.outputs.prerelease_version }} deno task build:npm
+
+      - name: Verify and update package version
+        working-directory: npm
+        run: |
+          # Update package.json with pre-release version
+          jq '.version = "${{ steps.version.outputs.prerelease_version }}"' package.json > package.json.tmp
+          mv package.json.tmp package.json
+          echo "Package version: $(jq -r '.version' package.json)"
+
+      - name: Publish pre-release to npm
+        working-directory: npm
+        run: npm publish --access public --tag rc
+        env:
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
