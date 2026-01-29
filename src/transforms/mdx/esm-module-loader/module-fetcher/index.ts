@@ -106,10 +106,9 @@ export function rewriteDntImports(code: string, sourceFilePath: string): string 
     return code;
   }
 
-  // Resolve the npm package's esm directory where _dnt files live
-  // FRAMEWORK_ROOT points to the package root (e.g., /usr/local/lib/node_modules/veryfront)
-  // _dnt.polyfills.js and _dnt.shims.js are in the esm/ subdirectory
-  const esmDir = join(FRAMEWORK_ROOT, "esm");
+  // FRAMEWORK_ROOT resolves to the esm/ directory (e.g., /usr/local/lib/node_modules/veryfront/esm/)
+  // _dnt.polyfills.js and _dnt.shims.js live directly in that directory
+  const esmDir = FRAMEWORK_ROOT;
 
   return code.replace(
     /from\s+["'](\.\.?\/(?:\.\.\/)*_dnt\.(polyfills|shims)\.js)["']/g,

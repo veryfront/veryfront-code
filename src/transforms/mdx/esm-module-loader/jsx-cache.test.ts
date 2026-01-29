@@ -32,7 +32,7 @@ describe("ensureCachedJsxModulePatched", () => {
       assertEquals(rewritten.includes("../../_dnt.polyfills.js"), false);
       assertEquals(rewritten.includes("../../../_dnt.polyfills.js"), false);
       assertEquals(
-        rewritten.includes(`file://${join(FRAMEWORK_ROOT, "esm", "_dnt.polyfills.js")}`),
+        rewritten.includes(`file://${join(FRAMEWORK_ROOT, "_dnt.polyfills.js")}`),
         true,
       );
     } finally {
