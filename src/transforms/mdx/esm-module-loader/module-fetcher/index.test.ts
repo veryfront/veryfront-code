@@ -11,7 +11,7 @@ import {
   startRenderSession,
 } from "./index.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import { HASH_SEED_FNV1A } from "../constants.ts";
+import { FRAMEWORK_ROOT, HASH_SEED_FNV1A } from "../constants.ts";
 
 // ──────────────────────────────────────────────────────────────
 // Pure-logic duplicates from the source for isolated unit testing
@@ -435,8 +435,8 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
 
     it("does not rewrite project files under FRAMEWORK_ROOT in local dev", () => {
       // In local dev, project source files live under FRAMEWORK_ROOT/projects/
-      // but should NOT be treated as framework files
-      const FRAMEWORK_ROOT = new URL("../../../..", import.meta.url).pathname;
+      // but should NOT be treated as framework files (only FRAMEWORK_ROOT/src/ is rewritten)
+      // Use imported FRAMEWORK_ROOT from constants.ts to match actual function behavior
       const localProjectPath = `${FRAMEWORK_ROOT}projects/codersociety/components/Header.tsx`;
       const code = `import { Logo } from "../elements/Logo.js";\nexport const foo = 1;`;
       const result = rewriteDntImports(code, localProjectPath);
@@ -445,7 +445,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
 
     it("rewrites framework src files under FRAMEWORK_ROOT", () => {
       // Framework source files under FRAMEWORK_ROOT/src/ SHOULD be rewritten
-      const FRAMEWORK_ROOT = new URL("../../../..", import.meta.url).pathname;
+      // Use imported FRAMEWORK_ROOT from constants.ts to match actual function behavior
       const frameworkSrcPath = `${FRAMEWORK_ROOT}src/react/components/Head.tsx`;
       const code = `import "../../../_dnt.polyfills.js";\nexport const foo = 1;`;
       const result = rewriteDntImports(code, frameworkSrcPath);
