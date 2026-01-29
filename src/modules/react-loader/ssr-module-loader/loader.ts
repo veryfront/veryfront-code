@@ -164,6 +164,9 @@ export class SSRModuleLoader {
                 // a fresh transform instead of hitting the same broken entry.
                 const cacheKey = this.getCacheKey(filePath);
                 globalModuleCache.delete(cacheKey);
+                // Also clear the verification cache for this entry
+                const verifyKey = `${cacheEntry.tempPath}:${cacheEntry.contentHash}`;
+                verifiedHttpBundlePaths.delete(verifyKey);
                 logger.error("[SSR-MODULE-LOADER] HTTP bundle recovery failed, cache invalidated", {
                   hash,
                   file: filePath.slice(-40),
@@ -190,6 +193,9 @@ export class SSRModuleLoader {
                 },
               );
               globalModuleCache.delete(cacheKey);
+              // Also clear the verification cache for this entry
+              const verifyKey = `${cacheEntry.tempPath}:${cacheEntry.contentHash}`;
+              verifiedHttpBundlePaths.delete(verifyKey);
               throw importError;
             } else {
               throw importError;
@@ -503,6 +509,8 @@ export class SSRModuleLoader {
               });
               globalModuleCache.delete(contentCacheKey);
               globalModuleCache.delete(filePathCacheKey);
+              // Also clear the verification cache so re-verification happens after re-transform
+              verifiedHttpBundlePaths.delete(verifyKey);
               // Fall through to Redis or fresh transform
             } else {
               verifiedHttpBundlePaths.set(verifyKey, true);
@@ -514,6 +522,8 @@ export class SSRModuleLoader {
           // File doesn't exist or unreadable, invalidate cache
           globalModuleCache.delete(contentCacheKey);
           globalModuleCache.delete(filePathCacheKey);
+          // Also clear the verification cache so re-verification happens after re-transform
+          verifiedHttpBundlePaths.delete(verifyKey);
         }
       }
 

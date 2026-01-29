@@ -13,6 +13,7 @@ import {
 } from "#veryfront/utils/constants/cache.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 
 /** Semaphore to limit concurrent revalidations and prevent resource exhaustion */
 const revalidationSemaphore = getSemaphore("revalidation", MAX_CONCURRENT_REVALIDATIONS, {
@@ -127,13 +128,23 @@ export class StaticDataFetcher {
     cacheKey: string,
   ): Promise<DataResult> {
     const pathname = context.url?.pathname ?? "unknown";
+    const projectId = context.url?.hostname ?? "default";
     const start = performance.now();
 
+    // Circuit breaker per project to prevent cascade failures
+    const circuitBreaker = getCircuitBreaker(`static-data-fetch:${projectId}`, {
+      failureThreshold: 5,
+      resetTimeoutMs: 30_000,
+      successThreshold: 2,
+    });
+
     try {
-      const result = await withTimeoutThrow(
-        Promise.resolve(pageModule.getStaticData!({ params: context.params, url: context.url })),
-        DATA_FETCH_TIMEOUT_MS,
-        `getStaticData for ${pathname}`,
+      const result = await circuitBreaker.execute(() =>
+        withTimeoutThrow(
+          Promise.resolve(pageModule.getStaticData!({ params: context.params, url: context.url })),
+          DATA_FETCH_TIMEOUT_MS,
+          `getStaticData for ${pathname}`,
+        )
       );
 
       await withSpan(
@@ -153,7 +164,14 @@ export class StaticDataFetcher {
     } catch (error) {
       const durationMs = Math.round(performance.now() - start);
 
-      if (error instanceof TimeoutError) {
+      if (error instanceof CircuitBreakerOpen) {
+        serverLogger.warn("DATA_FETCH_CIRCUIT_OPEN circuit breaker open, failing fast", {
+          pathname,
+          projectId,
+          retryAfterMs: error.nextAttemptMs,
+          cacheKey,
+        });
+      } else if (error instanceof TimeoutError) {
         serverLogger.error("DATA_FETCH_TIMEOUT getStaticData timed out", {
           pathname,
           durationMs,

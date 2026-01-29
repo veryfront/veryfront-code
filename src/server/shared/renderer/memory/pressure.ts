@@ -14,11 +14,15 @@ import { getHeapStats } from "#veryfront/utils/memory/index.ts";
 
 export type MemoryPressureLevel = "normal" | "warning" | "high" | "critical";
 
-/** Thresholds for progressive memory management */
+/** Thresholds for progressive memory management
+ * - WARNING (65%): Reduce cache TTL to slow memory growth
+ * - HIGH (75%): Aggressive eviction to reclaim memory
+ * - CRITICAL (80%): Reject requests to prevent OOM (lowered from 90% for safety buffer)
+ */
 const THRESHOLDS = {
-  WARNING: 70,
-  HIGH: 80,
-  CRITICAL: 90,
+  WARNING: 65,
+  HIGH: 75,
+  CRITICAL: 80,
 } as const;
 
 export function getMemoryPressure(): {

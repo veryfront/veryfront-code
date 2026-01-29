@@ -33,6 +33,28 @@ export interface LayoutCollectionResult {
   nestedLayouts: LayoutItem[];
 }
 
+/** Result of a single layout preload operation */
+export interface LayoutPreloadResult {
+  type: "tsx" | "mdx" | "importMap";
+  path?: string;
+  success: boolean;
+  error?: string;
+}
+
+/** Aggregated result of layout preloading with structured error tracking */
+export interface LayoutPreloadSummary {
+  tsxTotal: number;
+  tsxSuccess: number;
+  tsxFailures: Array<{ path: string; error: string }>;
+  mdxTotal: number;
+  mdxSuccess: number;
+  mdxFailures: Array<{ path: string; error: string }>;
+  importMapSuccess: boolean;
+  importMapError?: string;
+  durationMs: number;
+  allSuccess: boolean;
+}
+
 export class LayoutOrchestrator {
   private config: LayoutOrchestratorConfig;
   /** Preloaded import map for MDX layout application */
@@ -66,7 +88,7 @@ export class LayoutOrchestrator {
     );
   }
 
-  preloadLayoutModules(nestedLayouts: LayoutItem[]): Promise<void> {
+  preloadLayoutModules(nestedLayouts: LayoutItem[]): Promise<LayoutPreloadSummary> {
     return withSpan(
       "layout.preloadModules",
       async () => {
@@ -80,20 +102,31 @@ export class LayoutOrchestrator {
         const hasTsxLayouts = tsxLayouts.length > 0;
         const hasMdxLayouts = mdxLayouts.length > 0;
 
+        const preloadStart = performance.now();
+
+        // Return empty summary if no layouts to preload
         if (!hasTsxLayouts && !hasMdxLayouts) {
-          return;
+          return {
+            tsxTotal: 0,
+            tsxSuccess: 0,
+            tsxFailures: [],
+            mdxTotal: 0,
+            mdxSuccess: 0,
+            mdxFailures: [],
+            importMapSuccess: true,
+            durationMs: 0,
+            allSuccess: true,
+          };
         }
 
-        const preloadStart = performance.now();
         logger.debug("[LayoutOrchestrator] Preloading layout modules", {
           tsxCount: tsxLayouts.length,
           mdxCount: mdxLayouts.length,
           tsxPaths: tsxLayouts.map((l) => l.componentPath),
         });
 
-        // Build array of preload promises
-        const preloadPromises: Array<Promise<{ type: string; path?: string; success: boolean }>> =
-          [];
+        // Build array of preload promises with structured error tracking
+        const preloadPromises: Array<Promise<LayoutPreloadResult>> = [];
 
         // 1. Preload import map (needed for MDX layouts)
         if (hasMdxLayouts) {
@@ -101,14 +134,16 @@ export class LayoutOrchestrator {
             preloadImportMap(this.config.projectDir, this.config.adapter)
               .then((importMap) => {
                 this._preloadedImportMap = importMap;
-                return { type: "importMap", success: true };
+                return { type: "importMap" as const, success: true };
               })
               .catch((error) => {
-                logger.warn("[LayoutOrchestrator] Failed to preload import map", {
-                  error: error instanceof Error ? error.message : String(error),
+                const errorMsg = error instanceof Error ? error.message : String(error);
+                logger.error("[LayoutOrchestrator] Failed to preload import map", {
+                  error: errorMsg,
+                  projectDir: this.config.projectDir,
                 });
                 this._preloadedImportMap = null;
-                return { type: "importMap", success: false };
+                return { type: "importMap" as const, success: false, error: errorMsg };
               }),
           );
         }
@@ -126,16 +161,23 @@ export class LayoutOrchestrator {
               this.config.projectSlug,
               this.config.contentSourceId,
             )
-              .then(() => ({ type: "tsx", path: componentPath, success: true }))
+              .then(() => ({ type: "tsx" as const, path: componentPath, success: true }))
               .catch((error) => {
-                logger.warn(
-                  "[LayoutOrchestrator] Failed to preload TSX layout (will retry during apply)",
+                const errorMsg = error instanceof Error ? error.message : String(error);
+                logger.error(
+                  "[LayoutOrchestrator] Failed to preload TSX layout",
                   {
                     path: componentPath,
-                    error: error instanceof Error ? error.message : String(error),
+                    error: errorMsg,
+                    hint: "Layout will be retried during apply phase",
                   },
                 );
-                return { type: "tsx", path: componentPath, success: false };
+                return {
+                  type: "tsx" as const,
+                  path: componentPath,
+                  success: false,
+                  error: errorMsg,
+                };
               }),
           );
         }
@@ -151,16 +193,18 @@ export class LayoutOrchestrator {
               this.config.projectSlug,
               this.config.contentSourceId,
             )
-              .then(() => ({ type: "mdx", path: layout.path, success: true }))
+              .then(() => ({ type: "mdx" as const, path: layout.path, success: true }))
               .catch((error) => {
-                logger.warn(
-                  "[LayoutOrchestrator] Failed to preload MDX layout (will retry during apply)",
+                const errorMsg = error instanceof Error ? error.message : String(error);
+                logger.error(
+                  "[LayoutOrchestrator] Failed to preload MDX layout",
                   {
                     path: layout.path,
-                    error: error instanceof Error ? error.message : String(error),
+                    error: errorMsg,
+                    hint: "Layout will be retried during apply phase",
                   },
                 );
-                return { type: "mdx", path: layout.path, success: false };
+                return { type: "mdx" as const, path: layout.path, success: false, error: errorMsg };
               }),
           );
         }
@@ -168,18 +212,45 @@ export class LayoutOrchestrator {
         // Run all preloads in parallel
         const results = await Promise.all(preloadPromises);
 
-        const tsxResults = results.filter((r) => r.type === "tsx");
-        const mdxResults = results.filter((r) => r.type === "mdx");
-        const importMapResult = results.find((r) => r.type === "importMap");
+        // Build structured summary with failure details
+        const tsxResults = results.filter((r): r is LayoutPreloadResult & { type: "tsx" } =>
+          r.type === "tsx"
+        );
+        const mdxResults = results.filter((r): r is LayoutPreloadResult & { type: "mdx" } =>
+          r.type === "mdx"
+        );
+        const importMapResult = results.find((
+          r,
+        ): r is LayoutPreloadResult & { type: "importMap" } => r.type === "importMap");
 
-        logger.debug("[LayoutOrchestrator] Preload complete", {
+        const tsxFailures = tsxResults
+          .filter((r) => !r.success && r.path && r.error)
+          .map((r) => ({ path: r.path!, error: r.error! }));
+
+        const mdxFailures = mdxResults
+          .filter((r) => !r.success && r.path && r.error)
+          .map((r) => ({ path: r.path!, error: r.error! }));
+
+        const summary: LayoutPreloadSummary = {
           tsxTotal: tsxResults.length,
           tsxSuccess: tsxResults.filter((r) => r.success).length,
+          tsxFailures,
           mdxTotal: mdxResults.length,
           mdxSuccess: mdxResults.filter((r) => r.success).length,
-          importMapSuccess: importMapResult?.success ?? "n/a",
-          duration: `${(performance.now() - preloadStart).toFixed(2)}ms`,
+          mdxFailures,
+          importMapSuccess: importMapResult?.success ?? true,
+          importMapError: importMapResult?.error,
+          durationMs: Math.round(performance.now() - preloadStart),
+          allSuccess: tsxFailures.length === 0 && mdxFailures.length === 0 &&
+            (importMapResult?.success ?? true),
+        };
+
+        logger.debug("[LayoutOrchestrator] Preload complete", {
+          ...summary,
+          duration: `${summary.durationMs}ms`,
         });
+
+        return summary;
       },
       {
         "layout.preloadCount": nestedLayouts.length,

@@ -8,6 +8,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { gunzipSync } from "node:zlib";
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
@@ -34,6 +35,57 @@ import {
   HTTP_MODULE_DISTRIBUTED_TTL_SEC,
 } from "#veryfront/utils/constants/cache.ts";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
+
+/** Maximum number of keys per batch request to distributed cache API */
+const BATCH_FETCH_CHUNK_SIZE = 100;
+
+/**
+ * Decode gzip-compressed cache content.
+ * The cache may store content with a "gz:" or "gzip:" prefix followed by base64-encoded gzip data.
+ * Returns the decompressed string, or null if decompression fails.
+ */
+function decodeGzipContent(content: string): string | null {
+  let base64Data: string;
+  if (content.startsWith("gz:")) {
+    base64Data = content.slice(3);
+  } else if (content.startsWith("gzip:")) {
+    base64Data = content.slice(5);
+  } else {
+    return null;
+  }
+
+  try {
+    // Decode base64 to binary
+    const binaryString = atob(base64Data);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    // Decompress gzip
+    const decompressed = gunzipSync(bytes);
+    return new TextDecoder().decode(decompressed);
+  } catch (error) {
+    logger.debug("[HTTP-CACHE] Failed to decode gzip content", { error });
+    return null;
+  }
+}
+
+/**
+ * Try to decode content if it's gzip-encoded, otherwise return as-is.
+ * Returns [decodedContent, wasGzipped] tuple.
+ */
+function maybeDecodeGzip(content: string): [string, boolean] {
+  if (content.startsWith("gz:") || content.startsWith("gzip:")) {
+    const decoded = decodeGzipContent(content);
+    if (decoded) {
+      return [decoded, true];
+    }
+    // Decoding failed, return original (will be handled as invalid)
+    return [content, false];
+  }
+  return [content, false];
+}
 
 /** Lazy-loaded distributed cache backend for cross-pod sharing */
 const getDistributedCache = createDistributedCacheAccessor(
@@ -315,13 +367,14 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
       // Use hash-based key instead of raw URL to comply with API cache key constraints.
       // API cache keys only allow: alphanumeric, underscore, colon, dot, asterisk, hyphen, slash.
       // URLs contain invalid characters like @, ?, =, &, etc.
-      const cachedCode = await distributed.get(distributedKey("url", hash));
-      if (cachedCode) {
-        // Validate that the cached content is valid JavaScript, not compressed/gzipped.
-        // esm.sh sometimes stores gzip-encoded bundles with "gz:" prefix that need
-        // special decoding. If we see such content in the cache, skip and re-fetch.
+      const rawCachedCode = await distributed.get(distributedKey("url", hash));
+      if (rawCachedCode) {
+        // Try to decode gzip-compressed content if present
+        const [cachedCode, wasGzipped] = maybeDecodeGzip(rawCachedCode);
+
+        // If it was gzip but decoding failed, the content is still gzip-prefixed
         if (cachedCode.startsWith("gz:") || cachedCode.startsWith("gzip:")) {
-          logger.warn("[HTTP-CACHE] Cached code is gzip-encoded, skipping and will re-fetch", {
+          logger.warn("[HTTP-CACHE] Failed to decode gzip content, will re-fetch", {
             url: normalizedUrl,
             hash,
             preview: cachedCode.substring(0, 50),
@@ -337,7 +390,14 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
           });
           // Fall through to network fetch
         } else {
-          logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl, hash });
+          if (wasGzipped) {
+            logger.debug("[HTTP-CACHE] Distributed cache hit (gzip decoded)", {
+              url: normalizedUrl,
+              hash,
+            });
+          } else {
+            logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl, hash });
+          }
           await fs.mkdir(cacheDir, { recursive: true });
           await fs.writeTextFile(cachePath, cachedCode);
           cachedPaths.set(cacheKey, cachePath);
@@ -606,13 +666,14 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
 
   try {
     // Strategy 1: Direct code lookup by hash (preferred - no URL needed)
-    const cachedCode = await distributed.get(distributedKey("code", hash));
-    if (cachedCode) {
-      // Validate that the cached content is valid JavaScript, not compressed/gzipped.
-      // esm.sh sometimes stores gzip-encoded bundles with "gz:" prefix that need
-      // special decoding. If we see such content in the cache, skip it and re-fetch.
+    const rawCachedCode = await distributed.get(distributedKey("code", hash));
+    if (rawCachedCode) {
+      // Try to decode gzip-compressed content if present
+      const [cachedCode, wasGzipped] = maybeDecodeGzip(rawCachedCode);
+
+      // If it was gzip but decoding failed, the content is still gzip-prefixed
       if (cachedCode.startsWith("gz:") || cachedCode.startsWith("gzip:")) {
-        logger.warn("[HTTP-CACHE] Cached code is gzip-encoded, skipping and will re-fetch", {
+        logger.warn("[HTTP-CACHE] Failed to decode gzip content, will re-fetch", {
           hash,
           preview: cachedCode.substring(0, 50),
         });
@@ -625,9 +686,27 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
         });
         // Fall through to Strategy 2 (URL re-fetch)
       } else {
-        logger.info("[HTTP-CACHE] Recovering bundle via direct code lookup", { hash });
+        if (wasGzipped) {
+          logger.info("[HTTP-CACHE] Recovering bundle via direct code lookup (gzip decoded)", {
+            hash,
+          });
+        } else {
+          logger.info("[HTTP-CACHE] Recovering bundle via direct code lookup", { hash });
+        }
         await fs.mkdir(absoluteCacheDir, { recursive: true });
         await fs.writeTextFile(cachePath, cachedCode);
+
+        // Update LRU cache so subsequent lookups find this recovered bundle.
+        // Without this, cachedPaths.get() would miss and trigger redundant recovery attempts.
+        // We need to reconstruct the original URL from the hash to build the cache key.
+        const originalUrl = await distributed.get(distributedKey("hash", hash));
+        if (originalUrl) {
+          const normalizedUrl = normalizeHttpUrl(originalUrl);
+          const cacheKey = `${absoluteCacheDir}:${normalizedUrl}`;
+          cachedPaths.set(cacheKey, cachePath);
+          logger.debug("[HTTP-CACHE] Updated LRU cache after recovery", { hash, cacheKey });
+        }
+
         logger.info("[HTTP-CACHE] Bundle recovery successful (direct)", { hash, path: cachePath });
 
         // Proactively recover transitive deps so the import retry doesn't
@@ -766,18 +845,29 @@ export async function ensureHttpBundlesExist(
       continue;
     }
 
-    // Batch fetch from distributed cache
+    // Batch fetch from distributed cache with chunking to respect API limits
     const codeKeys = missing.map((m) => distributedKey("code", m.hash));
-    let codes: Map<string, string | null>;
+    const codes = new Map<string, string | null>();
 
     try {
-      if (distributed.getBatch) {
-        codes = await distributed.getBatch(codeKeys);
-      } else {
-        const results = await Promise.all(
-          codeKeys.map(async (key) => [key, await distributed.get(key)] as const),
-        );
-        codes = new Map(results);
+      // Chunk the keys to respect API batch size limit (max 100 per request)
+      for (let i = 0; i < codeKeys.length; i += BATCH_FETCH_CHUNK_SIZE) {
+        const chunk = codeKeys.slice(i, i + BATCH_FETCH_CHUNK_SIZE);
+        let chunkResults: Map<string, string | null>;
+
+        if (distributed.getBatch) {
+          chunkResults = await distributed.getBatch(chunk);
+        } else {
+          const results = await Promise.all(
+            chunk.map(async (key) => [key, await distributed.get(key)] as const),
+          );
+          chunkResults = new Map(results);
+        }
+
+        // Merge chunk results into main map
+        for (const [key, value] of chunkResults) {
+          codes.set(key, value);
+        }
       }
     } catch (error) {
       logger.error("[HTTP-CACHE] Batch fetch from distributed cache failed", { error });
@@ -788,8 +878,8 @@ export async function ensureHttpBundlesExist(
     // Write fetched bundles to disk using canonical paths and scan for transitive deps
     await Promise.all(
       missing.map(async ({ hash, canonicalPath }) => {
-        const code = codes.get(distributedKey("code", hash));
-        if (!code) {
+        const rawCode = codes.get(distributedKey("code", hash));
+        if (!rawCode) {
           // Try single-bundle recovery as last resort
           const recovered = await recoverHttpBundleByHash(hash, absoluteCacheDir);
           if (!recovered) {
@@ -806,10 +896,12 @@ export async function ensureHttpBundlesExist(
           return;
         }
 
-        // Validate that the cached content is valid JavaScript, not compressed/gzipped.
-        // esm.sh sometimes stores gzip-encoded bundles with "gz:" prefix. Skip and fallback.
+        // Try to decode gzip-compressed content if present
+        const [code, wasGzipped] = maybeDecodeGzip(rawCode);
+
+        // If it was gzip but decoding failed, the content is still gzip-prefixed
         if (code.startsWith("gz:") || code.startsWith("gzip:")) {
-          logger.warn("[HTTP-CACHE] Batch-fetched code is gzip-encoded, trying single recovery", {
+          logger.warn("[HTTP-CACHE] Failed to decode gzip content, trying single recovery", {
             hash,
             preview: code.substring(0, 50),
           });
@@ -836,10 +928,24 @@ export async function ensureHttpBundlesExist(
           return;
         }
 
+        if (wasGzipped) {
+          logger.debug("[HTTP-CACHE] Batch-fetched bundle decoded from gzip", { hash });
+        }
+
         try {
           await fs.mkdir(absoluteCacheDir, { recursive: true });
           await fs.writeTextFile(canonicalPath, code);
           logger.debug("[HTTP-CACHE] Wrote bundle to disk", { hash, path: canonicalPath });
+
+          // Update LRU cache so subsequent lookups find this recovered bundle.
+          // Without this, cachedPaths.get() would miss and trigger redundant recovery.
+          // Look up the original URL from distributed cache to build the cache key.
+          const originalUrl = await distributed.get(distributedKey("hash", hash));
+          if (originalUrl) {
+            const normalizedUrl = normalizeHttpUrl(originalUrl);
+            const cacheKey = `${absoluteCacheDir}:${normalizedUrl}`;
+            cachedPaths.set(cacheKey, canonicalPath);
+          }
 
           // Scan recovered code for transitive HTTP bundle dependencies.
           // HTTP bundles import other bundles (e.g., esm.sh packages depending

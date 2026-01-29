@@ -241,3 +241,152 @@ export function getTransformCacheStats(): {
     backend: cacheBackend?.type ?? "uninitialized",
   };
 }
+
+export interface WarmupEntry {
+  key: string;
+  code: string;
+  hash: string;
+  bundleManifestId?: string;
+}
+
+export interface WarmupResult {
+  success: number;
+  failed: number;
+  skipped: number;
+  durationMs: number;
+}
+
+/**
+ * Warm up the transform cache with pre-computed entries.
+ *
+ * This function is designed to be called during deployment to pre-populate
+ * the distributed cache, reducing P99 latency for cold starts. Each pod that
+ * starts will have immediate access to cached transforms.
+ *
+ * @param entries - Array of transform entries to warm up
+ * @param ttlSeconds - TTL for the cached entries (default: 1 hour for warmup)
+ * @returns Summary of warmup results
+ */
+export async function warmupTransformCache(
+  entries: WarmupEntry[],
+  ttlSeconds: number = 3600,
+): Promise<WarmupResult> {
+  const start = performance.now();
+  let success = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  // Ensure cache is initialized
+  await initializeTransformCache();
+
+  // Check if distributed cache is available
+  const isDistributed = isDistributedCacheEnabled();
+  if (!isDistributed) {
+    logger.warn("[TransformCache] Warmup skipped - no distributed cache available");
+    return {
+      success: 0,
+      failed: 0,
+      skipped: entries.length,
+      durationMs: Math.round(performance.now() - start),
+    };
+  }
+
+  // Process entries in batches to avoid overwhelming the cache backend
+  const BATCH_SIZE = 50;
+  for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+    const batch = entries.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async (entry) => {
+        // Check if already cached
+        const existing = await getCachedTransformAsync(entry.key);
+        if (existing && existing.hash === entry.hash) {
+          skipped++;
+          return;
+        }
+
+        await setCachedTransformAsync(
+          entry.key,
+          entry.code,
+          entry.hash,
+          ttlSeconds,
+          entry.bundleManifestId,
+        );
+        success++;
+      }),
+    );
+
+    // Count failures
+    for (const result of results) {
+      if (result.status === "rejected") {
+        failed++;
+        logger.debug("[TransformCache] Warmup entry failed", {
+          error: result.reason,
+        });
+      }
+    }
+  }
+
+  const durationMs = Math.round(performance.now() - start);
+  logger.info("[TransformCache] Warmup complete", {
+    success,
+    failed,
+    skipped,
+    total: entries.length,
+    durationMs,
+    backend: cacheBackend?.type,
+  });
+
+  return { success, failed, skipped, durationMs };
+}
+
+/**
+ * Pre-warm the cache for a specific project by fetching known hot paths.
+ *
+ * This is a convenience function that can be called during pod startup
+ * to ensure commonly-accessed transforms are cached locally.
+ *
+ * @param projectId - The project ID to warm up
+ * @param filePaths - Array of file paths to warm up
+ * @returns Number of entries pre-warmed
+ */
+export async function prewarmProjectTransforms(
+  projectId: string,
+  filePaths: string[],
+): Promise<number> {
+  await initializeTransformCache();
+
+  if (!cacheBackend || cacheBackend.type === "memory") {
+    logger.debug("[TransformCache] Prewarm skipped - no distributed cache");
+    return 0;
+  }
+
+  let prewarmed = 0;
+  for (const filePath of filePaths) {
+    // Check distributed cache and copy to local if found
+    // This brings entries into local memory for faster access
+    try {
+      // We don't know the exact cache key without content hash, but we can
+      // use pattern matching if the backend supports it
+      const pattern = `v*:${projectId}:${filePath}:*:ssr`;
+      if (typeof (cacheBackend as any).scan === "function") {
+        const keys = await (cacheBackend as any).scan(pattern, 10);
+        for (const key of keys) {
+          const cached = await getCachedTransformAsync(key);
+          if (cached) {
+            localFallback.set(key, cached);
+            prewarmed++;
+          }
+        }
+      }
+    } catch (error) {
+      logger.debug("[TransformCache] Prewarm failed for path", { projectId, filePath, error });
+    }
+  }
+
+  logger.debug("[TransformCache] Prewarm complete", {
+    projectId,
+    prewarmed,
+    total: filePaths.length,
+  });
+  return prewarmed;
+}

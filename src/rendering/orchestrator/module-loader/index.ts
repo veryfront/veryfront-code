@@ -54,8 +54,17 @@ export interface ModuleLoaderConfig {
   reactVersion?: string;
 }
 
-function getModuleCacheKey(filePath: string, projectId?: string, projectDir?: string): string {
-  return `${projectId ?? projectDir ?? "default"}:${filePath}`;
+function getModuleCacheKey(
+  filePath: string,
+  projectId?: string,
+  projectDir?: string,
+  contentSourceId?: string,
+): string {
+  // Include contentSourceId to isolate cache between branches/releases
+  // This prevents serving wrong code in multi-branch deployments
+  const base = projectId ?? projectDir ?? "default";
+  const source = contentSourceId ?? "default";
+  return `${base}:${source}:${filePath}`;
 }
 
 function decodeFileContent(fileContent: string | Uint8Array): string {
@@ -118,7 +127,7 @@ export async function transformModuleWithDeps(
   useLocalAdapter = false,
 ): Promise<string> {
   const { moduleCache, projectDir, projectId, contentSourceId, adapter, mode } = config;
-  const cacheKey = getModuleCacheKey(filePath, projectId, projectDir);
+  const cacheKey = getModuleCacheKey(filePath, projectId, projectDir, contentSourceId);
 
   const cachedPath = moduleCache.get(cacheKey);
   if (cachedPath) return cachedPath;
