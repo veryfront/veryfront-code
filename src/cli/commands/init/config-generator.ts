@@ -1,4 +1,4 @@
-import { cliLogger as logger } from "#veryfront/utils";
+import { cliLogger as logger, VERSION } from "#veryfront/utils";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
@@ -18,7 +18,7 @@ export async function createPackageJson(
     dependencies: {
       react: "^19.0.0",
       "react-dom": "^19.0.0",
-      veryfront: "^0.1.0",
+      veryfront: `^${VERSION}`,
       zod: "^3.24.0",
     },
   };

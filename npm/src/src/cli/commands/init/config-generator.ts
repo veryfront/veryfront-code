@@ -1,4 +1,4 @@
-import { cliLogger as logger } from "../../../utils/index.js";
+import { cliLogger as logger, VERSION } from "../../../utils/index.js";
 import { join } from "../../../platform/compat/path/index.js";
 import { createFileSystem } from "../../../platform/compat/fs.js";
 
@@ -18,7 +18,7 @@ export async function createPackageJson(
     dependencies: {
       react: "^19.0.0",
       "react-dom": "^19.0.0",
-      veryfront: "^0.1.0",
+      veryfront: `^${VERSION}`,
       zod: "^3.24.0",
     },
   };
