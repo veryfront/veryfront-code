@@ -2,10 +2,17 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { loadConfig } from "./config.ts";
 
+// Mock adapter with empty env to isolate tests from real environment
+const emptyEnvAdapter = {
+  env: {
+    get: () => undefined,
+  },
+} as unknown as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
+
 describe("observability/tracing/config", () => {
   describe("loadConfig", () => {
     it("should return defaults when called with empty config", () => {
-      const result = loadConfig({});
+      const result = loadConfig({}, emptyEnvAdapter);
       assertEquals(result.enabled, false);
       assertEquals(result.exporter, "console");
       assertEquals(result.serviceName, "veryfront");
@@ -14,7 +21,7 @@ describe("observability/tracing/config", () => {
     });
 
     it("should merge user config over defaults", () => {
-      const result = loadConfig({ enabled: true, serviceName: "my-service" });
+      const result = loadConfig({ enabled: true, serviceName: "my-service" }, emptyEnvAdapter);
       assertEquals(result.enabled, true);
       assertEquals(result.serviceName, "my-service");
       assertEquals(result.exporter, "console");
