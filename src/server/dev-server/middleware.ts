@@ -1,4 +1,10 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
+import {
+  type RequestContext,
+  runWithRequestContextAsync,
+} from "#veryfront/utils/logger/request-context.ts";
+
+const logger = getBaseLogger("SERVER");
 import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
 import { cors } from "#veryfront/security";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -44,38 +50,51 @@ export function createRequestLoggerMiddleware(): MiddlewareFunction {
     c.var.requestId = requestId;
     c.var.logger = reqLogger;
 
-    try {
-      await enrichSpanWithRequestInfo(method, pathname, requestId);
-      reqLogger.debug(`${method} ${pathname} started`);
-    } catch {
-      /* dev only */
-    }
+    // Create request context for AsyncLocalStorage propagation
+    const requestContext: RequestContext = {
+      logger: reqLogger,
+      requestId,
+      projectSlug,
+      projectId,
+      domain,
+    };
 
-    let response: Response | undefined;
-    try {
-      response = await next();
-    } catch (error) {
+    // Run the entire request within the AsyncLocalStorage context
+    // This makes the request-scoped logger available to ALL code in the call stack
+    return await runWithRequestContextAsync(requestContext, async () => {
+      try {
+        await enrichSpanWithRequestInfo(method, pathname, requestId);
+        reqLogger.debug(`${method} ${pathname} started`);
+      } catch {
+        /* dev only */
+      }
+
+      let response: Response | undefined;
+      try {
+        response = await next();
+      } catch (error) {
+        const durationMs = Math.round(performance.now() - start);
+        reqLogger.error(`${method} ${pathname} failed`, { durationMs }, error);
+        throw error;
+      }
+
       const durationMs = Math.round(performance.now() - start);
-      reqLogger.error(`${method} ${pathname} failed`, { durationMs }, error);
-      throw error;
-    }
 
-    const durationMs = Math.round(performance.now() - start);
+      if (response && response.status !== 101) {
+        response.headers.set("x-request-id", requestId);
+      }
 
-    if (response && response.status !== 101) {
-      response.headers.set("x-request-id", requestId);
-    }
+      try {
+        reqLogger.debug(`${method} ${pathname} completed`, {
+          status: response?.status ?? 0,
+          durationMs,
+        });
+      } catch {
+        /* dev only */
+      }
 
-    try {
-      reqLogger.debug(`${method} ${pathname} completed`, {
-        status: response?.status ?? 0,
-        durationMs,
-      });
-    } catch {
-      /* dev only */
-    }
-
-    return response;
+      return response;
+    });
   };
 }
 

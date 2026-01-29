@@ -2,11 +2,13 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __resetLoggerConfigForTesting,
+  getBaseLogger,
   getDefaultLevel,
   type LogEntry,
   LogLevel,
   serverLogger,
 } from "./logger.ts";
+import { type RequestContext, runWithRequestContextAsync } from "./request-context.ts";
 import { VERSION } from "../version.ts";
 
 describe("logger", () => {
@@ -58,6 +60,73 @@ describe("logger", () => {
       assertEquals(LogLevel.DEBUG < LogLevel.INFO, true);
       assertEquals(LogLevel.INFO < LogLevel.WARN, true);
       assertEquals(LogLevel.WARN < LogLevel.ERROR, true);
+    });
+  });
+
+  describe("request context propagation", () => {
+    it("should include request context in logs when running within context", async () => {
+      const originalLog = console.log;
+      let capturedOutput = "";
+      console.log = (msg: string) => {
+        capturedOutput = msg;
+      };
+
+      try {
+        __resetLoggerConfigForTesting();
+        Deno.env.set("LOG_FORMAT", "json");
+
+        const baseLogger = getBaseLogger("SERVER");
+        const reqLogger = baseLogger.child({
+          requestId: "test-req-123",
+          project_slug: "test-project",
+        });
+
+        const context: RequestContext = {
+          logger: reqLogger,
+          requestId: "test-req-123",
+          projectSlug: "test-project",
+        };
+
+        await runWithRequestContextAsync(context, () => {
+          // Using the global serverLogger should now pick up request context
+          serverLogger.info("Test message from within context");
+          return Promise.resolve();
+        });
+
+        const entry = JSON.parse(capturedOutput) as LogEntry;
+        assertEquals(entry.requestId, "test-req-123");
+        assertEquals(entry.project_slug, "test-project");
+        assertEquals(entry.version, VERSION);
+      } finally {
+        console.log = originalLog;
+        Deno.env.delete("LOG_FORMAT");
+        __resetLoggerConfigForTesting();
+      }
+    });
+
+    it("should use base logger when not in request context", () => {
+      const originalLog = console.log;
+      let capturedOutput = "";
+      console.log = (msg: string) => {
+        capturedOutput = msg;
+      };
+
+      try {
+        __resetLoggerConfigForTesting();
+        Deno.env.set("LOG_FORMAT", "json");
+
+        // Outside of request context
+        serverLogger.info("Test message outside context");
+
+        const entry = JSON.parse(capturedOutput) as LogEntry;
+        assertEquals(entry.requestId, undefined);
+        assertEquals(entry.project_slug, undefined);
+        assertEquals(entry.version, VERSION);
+      } finally {
+        console.log = originalLog;
+        Deno.env.delete("LOG_FORMAT");
+        __resetLoggerConfigForTesting();
+      }
     });
   });
 
