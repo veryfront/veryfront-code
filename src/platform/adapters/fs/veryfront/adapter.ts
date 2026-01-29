@@ -18,23 +18,10 @@ import { PathNormalizer } from "./path-normalizer.ts";
 import { ReadOperations } from "./read-operations.ts";
 import { DirectoryOperations } from "./directory-operations.ts";
 import { StatOperations } from "./stat-operations.ts";
-import {
-  buildDirCacheKeyPrefix,
-  buildFileCacheKeyPrefix,
-  buildFileListCacheKey,
-  buildStatCacheKeyPrefix,
-} from "./cache-keys.ts";
-import {
-  addPendingInvalidation,
-  getPendingInvalidationsCount,
-  isPrefixBeingInvalidated,
-  removePendingInvalidation,
-} from "./invalidation-state.ts";
-
-const INVALIDATION_DEBOUNCE_MS = 100;
-const WS_RECONNECT_DELAY_MS = 5000;
-const WS_HEARTBEAT_INTERVAL_MS = 60000;
-const WS_HEARTBEAT_TIMEOUT_MS = 300000;
+import { buildFileListCacheKey } from "./cache-keys.ts";
+import { isPrefixBeingInvalidated } from "./invalidation-state.ts";
+import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
+import { WebSocketManager } from "./websocket-manager.ts";
 
 function isSourceFile(path: string): boolean {
   return (
@@ -61,28 +48,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private fileListReadyReject: ((error: Error) => void) | null = null;
 
   private projectData?: Project;
-  private ws: WebSocket | null = null;
-  private wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private wsHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private wsLastPong = Date.now();
-  private invalidationTimer: ReturnType<typeof setTimeout> | null = null;
-  private selectiveInvalidationTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingChangedPaths = new Set<string>();
   private apiBaseUrl: string;
   private apiToken: string;
   private projectSlug: string;
   private invalidationCallbacks: InvalidationCallbacks;
+  private wsManager: WebSocketManager;
 
   /** Per-request branch override (for branch preview URLs) */
   private requestBranch: string | null = null;
-  /** WebSocket connection identity for observability */
-  private wsConnectionId: string | null = null;
-  /** Poke notification metrics for observability */
-  private pokeMetrics = {
-    received: 0,
-    invalidationsTriggered: 0,
-    lastPokeTime: 0,
-  };
 
   /** Content source configuration from config */
   private contentSource: ContentSource;
@@ -187,6 +160,25 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.normalizer,
       contentContextGetter,
     );
+
+    this.wsManager = new WebSocketManager({
+      apiBaseUrl: this.apiBaseUrl,
+      apiToken: this.apiToken,
+      projectSlug: this.projectSlug,
+      cache: this.cache,
+      client: this.client,
+      invalidationCallbacks: this.invalidationCallbacks,
+      getContentContext: () => this.contentContext,
+      getContentSource: () => this.contentSource,
+      getProjectDir: () => this.normalizer.getProjectDir(),
+      clearMemoryCaches: () => {
+        this.readOps.clearFileListIndex();
+        this.statOps.clearIndex();
+        this.dirOps.clearTree();
+      },
+      clearFileListIndex: () => this.readOps.clearFileListIndex(),
+      setFileListCache: (cacheKey, files) => this.cache.setAsync(cacheKey, files),
+    });
 
     logger.debug("[VeryfrontFSAdapter] Created", {
       apiBaseUrl: veryfrontConfig.apiBaseUrl,
@@ -320,7 +312,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
           branch: this.contentContext.branch,
           proxyMode: this.proxyMode,
         });
-        this.connectWebSocket(projectId);
+        this.wsManager.connect(projectId);
         return;
       }
 
@@ -335,7 +327,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       // Keep a WebSocket connection in environment mode to receive deployment pokes.
       // Release mode is immutable, so no need to keep a live connection.
       if (this.contentContext.sourceType === "environment") {
-        this.connectWebSocket(projectId);
+        this.wsManager.connect(projectId);
       }
     } catch (error) {
       this.fileListReadyReject?.(error instanceof Error ? error : new Error(String(error)));
@@ -404,641 +396,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
   }
 
-  private connectWebSocket(projectId: string): void {
-    this.cleanupWebSocketTimers();
-
-    const wsUrl = this.apiBaseUrl
-      .replace(/^http:/, "ws:")
-      .replace(/^https:/, "wss:")
-      .replace(/\/api$/, "");
-    const url = `${wsUrl}/ws/${projectId}/events?token=${this.apiToken}`;
-
-    logger.debug("[VeryfrontFSAdapter] Connecting to WebSocket", {
-      url: url.replace(this.apiToken, "***"),
-    });
-
-    try {
-      this.ws = new WebSocket(url);
-      this.wsConnectionId = crypto.randomUUID().slice(0, 8);
-
-      this.ws.onopen = () => {
-        logger.debug("[VeryfrontFSAdapter] WebSocket connected to events channel", {
-          projectId,
-          connectionId: this.wsConnectionId,
-          contentSource: this.contentSource,
-          branch: this.contentContext?.branch,
-        });
-        this.wsLastPong = Date.now();
-        this.startHeartbeat(projectId);
-      };
-
-      this.ws.onmessage = (event) => {
-        this.wsLastPong = Date.now();
-        logger.debug("[VeryfrontFSAdapter] WebSocket message received:", { data: event.data });
-
-        try {
-          const data = JSON.parse(event.data as string);
-          const changedPaths = data.data?.changedPaths as string[] | undefined;
-          const isPoke = data.type === "poke" || data.type === "entity_updated";
-          if (!isPoke) return;
-
-          // Extract branch scope from poke to determine environment matching
-          // branchName is preferred (matches preview subdomain); branchId is a fallback
-          const pokeBranchId = data.data?.branchId as string | null | undefined;
-          const pokeBranchName = data.data?.branchName as string | null | undefined;
-          const normalizedBranchId = typeof pokeBranchId === "string" && pokeBranchId.length > 0
-            ? pokeBranchId
-            : null;
-          const normalizedBranchName =
-            typeof pokeBranchName === "string" && pokeBranchName.length > 0 ? pokeBranchName : null;
-
-          const timeSinceLastPoke = this.pokeMetrics.lastPokeTime > 0
-            ? Date.now() - this.pokeMetrics.lastPokeTime
-            : null;
-
-          this.pokeMetrics.received++;
-          this.pokeMetrics.lastPokeTime = Date.now();
-
-          // Environment-scoped invalidation: only process pokes relevant to our mode
-          const isProductionMode = this.contentContext?.sourceType !== "branch";
-          const currentBranch = this.contentContext?.branch ?? null;
-          const hasBranchScope = !!normalizedBranchName || !!normalizedBranchId;
-          const isProductionPoke = !hasBranchScope;
-
-          logger.debug("[VeryfrontFSAdapter] POKE RECEIVED - checking environment scope", {
-            type: data.type,
-            pokeBranchId: normalizedBranchId,
-            pokeBranchName: normalizedBranchName,
-            isProductionPoke,
-            isProductionMode,
-            currentBranch,
-            entityId: data.data?.entityId,
-            entityType: data.data?.entityType,
-            action: data.data?.action,
-            connectionId: this.wsConnectionId,
-            totalPokesReceived: this.pokeMetrics.received,
-            timeSinceLastPokeMs: timeSinceLastPoke,
-          });
-
-          // In production mode, we accept branch-scoped pokes too.
-          // Production renders always fetch published content, so clearing caches
-          // on preview edits is safe and avoids stale content after publish.
-          if (isProductionMode && !isProductionPoke) {
-            logger.debug(
-              "[VeryfrontFSAdapter] POKE ACCEPTED - branch-scoped poke in production mode",
-              {
-                pokeBranchId: normalizedBranchId,
-                pokeBranchName: normalizedBranchName,
-                sourceType: this.contentContext?.sourceType,
-              },
-            );
-          }
-
-          if (!isProductionMode) {
-            if (normalizedBranchName) {
-              if (normalizedBranchName !== currentBranch) {
-                logger.debug(
-                  "[VeryfrontFSAdapter] POKE SKIPPED - different branch name in preview mode",
-                  {
-                    pokeBranchName: normalizedBranchName,
-                    currentBranch,
-                  },
-                );
-                return;
-              }
-            } else if (normalizedBranchId) {
-              if (currentBranch === null) {
-                logger.debug(
-                  "[VeryfrontFSAdapter] POKE SKIPPED - branchId-only poke for main preview",
-                  { pokeBranchId: normalizedBranchId },
-                );
-                return;
-              }
-              logger.debug(
-                "[VeryfrontFSAdapter] POKE ACCEPTED - branchId-only fallback in preview mode",
-                { pokeBranchId: normalizedBranchId, currentBranch },
-              );
-            } else if (currentBranch !== null && currentBranch !== "main") {
-              // Unscoped pokes (no branchId/branchName) are for main branch edits.
-              // Skip only if we're on a named branch (not main).
-              // For main preview (currentBranch === "main"), accept unscoped pokes.
-              logger.debug(
-                "[VeryfrontFSAdapter] POKE SKIPPED - unscoped poke for named branch preview",
-                { currentBranch },
-              );
-              return;
-            }
-          }
-
-          // Extract deployment-specific data for targeted cache invalidation
-          const pokeReleaseId = data.data?.releaseId as string | null | undefined;
-          const normalizedPokeReleaseId =
-            typeof pokeReleaseId === "string" && pokeReleaseId.length > 0 ? pokeReleaseId : null;
-          const isDeploymentPoke = data.data?.entityType === "deployment";
-          const isPublishPoke = isDeploymentPoke || (isProductionMode && !changedPaths?.length);
-          const pokeEnvironmentName = data.data?.environmentName as string | null | undefined;
-          const normalizedPokeEnvironment =
-            typeof pokeEnvironmentName === "string" && pokeEnvironmentName.length > 0
-              ? pokeEnvironmentName
-              : this.contentContext?.environmentName ??
-                (isProductionMode ? "production" : undefined);
-
-          logger.info("[VeryfrontFSAdapter] POKE ACCEPTED - triggering cache invalidation", {
-            changedPathsCount: changedPaths?.length || 0,
-            changedPaths: changedPaths || [],
-            projectSlug: this.projectSlug,
-            branch: this.contentContext?.branch,
-            isDeploymentPoke,
-            isPublishPoke,
-            pokeReleaseId: normalizedPokeReleaseId,
-            pokeEnvironmentName: normalizedPokeEnvironment,
-          });
-
-          // Clear in-memory caches immediately (before debounce) for fresh data
-          this.invalidationCallbacks.clearDomainCache?.();
-          this.readOps.clearFileListIndex();
-          this.statOps.clearIndex();
-          this.dirOps.clearTree();
-          logger.debug("[VeryfrontFSAdapter] All in-memory caches cleared immediately on POKE");
-
-          // Clear persistent cache for publish/deployment pokes to prevent stale hits
-          if (isPublishPoke && this.projectSlug) {
-            const deletionPrefixes = new Set<string>();
-            const pendingPrefixes = new Set<string>();
-
-            const addContextPrefixes = (ctx: ResolvedContentContext): void => {
-              const filePrefix = buildFileCacheKeyPrefix(ctx);
-              const statPrefix = buildStatCacheKeyPrefix(ctx);
-              const dirPrefix = buildDirCacheKeyPrefix(ctx);
-              const filesPrefix = buildFileListCacheKey(ctx);
-
-              deletionPrefixes.add(filePrefix);
-              deletionPrefixes.add(statPrefix);
-              deletionPrefixes.add(dirPrefix);
-              deletionPrefixes.add(filesPrefix);
-
-              // Track ALL prefixes as pending to prevent stale reads during async deletion
-              pendingPrefixes.add(filePrefix);
-              pendingPrefixes.add(statPrefix);
-              pendingPrefixes.add(dirPrefix);
-              pendingPrefixes.add(filesPrefix);
-            };
-
-            const addBroadPrefixes = (sourceType: "release" | "environment"): void => {
-              const sourceKey = sourceType === "release" ? "release" : "env";
-              const base = `${sourceKey}:${this.projectSlug}:`;
-
-              deletionPrefixes.add(`file:${base}`);
-              deletionPrefixes.add(`stat:${base}`);
-              deletionPrefixes.add(`dir:${base}`);
-              deletionPrefixes.add(`files:${base}`);
-
-              // Track ALL prefixes as pending to prevent stale reads during async deletion
-              pendingPrefixes.add(`file:${base}`);
-              pendingPrefixes.add(`stat:${base}`);
-              pendingPrefixes.add(`dir:${base}`);
-              pendingPrefixes.add(`files:${base}`);
-            };
-
-            if (normalizedPokeReleaseId) {
-              addContextPrefixes({
-                sourceType: "release",
-                projectSlug: this.projectSlug,
-                releaseId: normalizedPokeReleaseId,
-              });
-
-              if (normalizedPokeEnvironment) {
-                addContextPrefixes({
-                  sourceType: "environment",
-                  projectSlug: this.projectSlug,
-                  environmentName: normalizedPokeEnvironment,
-                  releaseId: normalizedPokeReleaseId,
-                });
-              }
-            } else {
-              // Fallback: clear all env/release caches for this project
-              addBroadPrefixes("release");
-              addBroadPrefixes("environment");
-            }
-
-            for (const prefix of pendingPrefixes) {
-              addPendingInvalidation(prefix);
-            }
-
-            logger.info(
-              "[VeryfrontFSAdapter] PUBLISH POKE - clearing persistent cache",
-              {
-                projectSlug: this.projectSlug,
-                releaseId: normalizedPokeReleaseId,
-                environmentName: normalizedPokeEnvironment,
-                deletionPrefixes: Array.from(deletionPrefixes),
-                pendingPrefixes: Array.from(pendingPrefixes),
-                pendingInvalidations: getPendingInvalidationsCount(),
-              },
-            );
-
-            void (async () => {
-              try {
-                const results = await Promise.all(
-                  Array.from(deletionPrefixes).map((prefix) =>
-                    this.cache.deleteByPrefixAsync(prefix)
-                  ),
-                );
-                const totalDeleted = results.reduce((sum, count) => sum + count, 0);
-                logger.info(
-                  "[VeryfrontFSAdapter] PUBLISH POKE - persistent cache cleared",
-                  {
-                    projectSlug: this.projectSlug,
-                    releaseId: normalizedPokeReleaseId,
-                    environmentName: normalizedPokeEnvironment,
-                    totalDeleted,
-                  },
-                );
-              } catch (error) {
-                logger.warn(
-                  "[VeryfrontFSAdapter] PUBLISH POKE - failed to clear persistent cache",
-                  {
-                    projectSlug: this.projectSlug,
-                    releaseId: normalizedPokeReleaseId,
-                    environmentName: normalizedPokeEnvironment,
-                    error: error instanceof Error ? error.message : String(error),
-                  },
-                );
-              } finally {
-                for (const prefix of pendingPrefixes) {
-                  removePendingInvalidation(prefix);
-                }
-                logger.debug(
-                  "[VeryfrontFSAdapter] PUBLISH POKE - cache invalidation complete",
-                  {
-                    projectSlug: this.projectSlug,
-                    pendingInvalidations: getPendingInvalidationsCount(),
-                  },
-                );
-              }
-            })();
-          }
-
-          if (changedPaths?.length) {
-            this.scheduleSelectiveInvalidation(changedPaths);
-            return;
-          }
-
-          logger.debug("[VeryfrontFSAdapter] No changedPaths provided - using full invalidation");
-          this.scheduleInvalidation();
-        } catch (error) {
-          logger.debug("[VeryfrontFSAdapter] WebSocket message parse error", { error: error });
-        }
-      };
-
-      this.ws.onclose = () => {
-        logger.debug("[VeryfrontFSAdapter] WebSocket closed, reconnecting", {
-          delayMs: WS_RECONNECT_DELAY_MS,
-          connectionId: this.wsConnectionId,
-          totalPokesReceived: this.pokeMetrics.received,
-        });
-        this.wsConnectionId = null;
-        this.cleanupWebSocketTimers();
-        this.wsReconnectTimer = setTimeout(
-          () => this.connectWebSocket(projectId),
-          WS_RECONNECT_DELAY_MS,
-        );
-      };
-
-      this.ws.onerror = (error) => {
-        logger.warn("[VeryfrontFSAdapter] WebSocket error", { error });
-      };
-    } catch (error) {
-      logger.warn("[VeryfrontFSAdapter] Failed to connect WebSocket", { error });
-      this.wsReconnectTimer = setTimeout(
-        () => this.connectWebSocket(projectId),
-        WS_RECONNECT_DELAY_MS,
-      );
-    }
-  }
-
   private isPersistentCacheInvalidated(prefix: string): boolean {
     return isPrefixBeingInvalidated(prefix);
-  }
-
-  private startHeartbeat(projectId: string): void {
-    this.wsHeartbeatTimer = setInterval(() => {
-      const timeSinceLastPong = Date.now() - this.wsLastPong;
-      if (timeSinceLastPong <= WS_HEARTBEAT_TIMEOUT_MS) return;
-
-      logger.warn("[VeryfrontFSAdapter] WebSocket heartbeat timeout, reconnecting", {
-        timeSinceLastPong,
-      });
-
-      if (this.ws) {
-        try {
-          this.ws.close();
-        } catch {
-          // Ignore close errors
-        }
-      }
-      this.cleanupWebSocketTimers();
-      this.connectWebSocket(projectId);
-    }, WS_HEARTBEAT_INTERVAL_MS);
-  }
-
-  private cleanupWebSocketTimers(): void {
-    if (this.wsHeartbeatTimer) {
-      clearInterval(this.wsHeartbeatTimer);
-      this.wsHeartbeatTimer = null;
-    }
-    if (this.wsReconnectTimer) {
-      clearTimeout(this.wsReconnectTimer);
-      this.wsReconnectTimer = null;
-    }
-  }
-
-  private scheduleInvalidation(): void {
-    if (this.invalidationTimer) clearTimeout(this.invalidationTimer);
-
-    logger.debug("[VeryfrontFSAdapter] Scheduling invalidation", {
-      debounceMs: INVALIDATION_DEBOUNCE_MS,
-    });
-
-    this.invalidationTimer = setTimeout(() => {
-      this.invalidationTimer = null;
-      this.performInvalidation();
-    }, INVALIDATION_DEBOUNCE_MS);
-  }
-
-  private scheduleSelectiveInvalidation(changedPaths: string[]): void {
-    for (const path of changedPaths) this.pendingChangedPaths.add(path);
-
-    if (this.selectiveInvalidationTimer) clearTimeout(this.selectiveInvalidationTimer);
-
-    logger.debug("[VeryfrontFSAdapter] Scheduling selective invalidation", {
-      newPaths: changedPaths.length,
-      totalPending: this.pendingChangedPaths.size,
-      debounceMs: INVALIDATION_DEBOUNCE_MS,
-    });
-
-    this.selectiveInvalidationTimer = setTimeout(() => {
-      this.selectiveInvalidationTimer = null;
-      this.performSelectiveInvalidation();
-    }, INVALIDATION_DEBOUNCE_MS);
-  }
-
-  private async performSelectiveInvalidation(): Promise<void> {
-    const startTime = Date.now();
-    const changedPaths = Array.from(this.pendingChangedPaths);
-    this.pendingChangedPaths.clear();
-
-    logger.debug("[VeryfrontFSAdapter] Performing selective invalidation", {
-      changedPaths,
-      count: changedPaths.length,
-    });
-
-    const sourceTypes = ["branch:", "release:", "env:"] as const;
-    const fileTypes = ["file:", "stat:"] as const;
-
-    const parentDirs = new Set<string>();
-    const deletionPromises: Promise<number>[] = [];
-
-    for (const path of changedPaths) {
-      const slashIndex = path.lastIndexOf("/");
-      parentDirs.add(slashIndex > 0 ? path.substring(0, slashIndex) : "");
-
-      for (const fileType of fileTypes) {
-        for (const sourceType of sourceTypes) {
-          deletionPromises.push(
-            this.cache.deleteByPrefixAndSuffixAsync(fileType + sourceType, path),
-          );
-        }
-      }
-    }
-
-    for (const parentDir of parentDirs) {
-      for (const sourceType of sourceTypes) {
-        deletionPromises.push(
-          this.cache.deleteByPrefixAndSuffixAsync("dir:" + sourceType, parentDir),
-        );
-      }
-    }
-
-    await Promise.all(deletionPromises);
-
-    logger.debug("[VeryfrontFSAdapter] Cache entries deleted for changed paths", {
-      changedPaths,
-      parentDirs: Array.from(parentDirs),
-      prefixes: ["file:", "stat:", "dir:"],
-    });
-
-    this.invalidationCallbacks.invalidateModulePaths?.(changedPaths);
-
-    const projectId = this.client.getProjectId();
-    logger.debug("[VeryfrontFSAdapter] Clearing SSR module cache for HMR", {
-      changedPaths,
-      projectId,
-      usePerProject: !!this.invalidationCallbacks.clearSSRModuleCacheForProject,
-    });
-
-    if (this.invalidationCallbacks.clearSSRModuleCacheForProject && projectId) {
-      this.invalidationCallbacks.clearSSRModuleCacheForProject(projectId);
-    } else {
-      this.invalidationCallbacks.clearSSRModuleCache?.();
-    }
-
-    // Await renderer cache clear to prevent race condition with HMR
-    if (this.invalidationCallbacks.clearRendererCacheForProject && projectId) {
-      await this.invalidationCallbacks.clearRendererCacheForProject(projectId);
-    }
-    // No global fallback — clearRendererCache is deprecated due to multi-tenant blast radius.
-
-    // Invalidate project CSS cache when source files change
-    if (this.invalidationCallbacks.clearProjectCSSCache && this.projectSlug) {
-      this.invalidationCallbacks.clearProjectCSSCache(this.projectSlug);
-    }
-
-    if (this.contentContext?.sourceType === "branch") {
-      await this.cache.deleteByPrefixAsync("files:branch:");
-      try {
-        const files = await this.client.listAllFiles();
-        const cacheKey = buildFileListCacheKey(this.contentContext);
-        await this.cache.setAsync(cacheKey, files);
-        // File list index is also cleared immediately on POKE receipt (before debounce).
-        // This call is a redundant safety net after fresh files are cached.
-        this.readOps.clearFileListIndex();
-
-        logger.debug("[VeryfrontFSAdapter] Fresh files cached (memory + Redis)", {
-          cacheKey,
-          fileCount: files.length,
-        });
-      } catch (error) {
-        logger.warn("[VeryfrontFSAdapter] Failed to fetch files during selective invalidation", {
-          error,
-        });
-      }
-    }
-
-    this.pokeMetrics.invalidationsTriggered++;
-
-    logger.info(
-      "[VeryfrontFSAdapter] TRIGGERING HMR RELOAD via invalidationCallbacks.triggerReload",
-      {
-        changedPaths,
-        projectSlug: this.projectSlug,
-        projectId: this.client.getProjectId(),
-        hasTriggerReloadCallback: !!this.invalidationCallbacks.triggerReload,
-      },
-    );
-
-    const environment: "preview" | "production" = this.contentContext?.sourceType === "branch"
-      ? "preview"
-      : "production";
-    const projectContext = {
-      projectSlug: this.projectSlug,
-      projectId: this.client.getProjectId(),
-      environment,
-      branch: this.contentContext?.branch ?? null,
-      releaseId: this.contentContext?.releaseId ?? null,
-    };
-
-    this.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
-
-    logger.info("[VeryfrontFSAdapter] Selective invalidation complete - HMR triggered", {
-      changedPaths,
-      durationMs: Date.now() - startTime,
-      totalInvalidations: this.pokeMetrics.invalidationsTriggered,
-    });
-
-    this.sendPokeAck("selective", changedPaths);
-  }
-
-  private async performInvalidation(): Promise<void> {
-    const startTime = Date.now();
-
-    logger.debug("[VeryfrontFSAdapter] CACHE INVALIDATION STARTED - clearing all caches");
-
-    const [
-      fileBranchCount,
-      fileReleaseCount,
-      fileEnvCount,
-      statBranchCount,
-      statReleaseCount,
-      statEnvCount,
-      dirBranchCount,
-      dirReleaseCount,
-      dirEnvCount,
-      filesBranchCount,
-      filesReleaseCount,
-      filesEnvCount,
-    ] = await Promise.all([
-      this.cache.deleteByPrefixAsync("file:branch:"),
-      this.cache.deleteByPrefixAsync("file:release:"),
-      this.cache.deleteByPrefixAsync("file:env:"),
-      this.cache.deleteByPrefixAsync("stat:branch:"),
-      this.cache.deleteByPrefixAsync("stat:release:"),
-      this.cache.deleteByPrefixAsync("stat:env:"),
-      this.cache.deleteByPrefixAsync("dir:branch:"),
-      this.cache.deleteByPrefixAsync("dir:release:"),
-      this.cache.deleteByPrefixAsync("dir:env:"),
-      this.cache.deleteByPrefixAsync("files:branch:"),
-      this.cache.deleteByPrefixAsync("files:release:"),
-      this.cache.deleteByPrefixAsync("files:env:"),
-    ]);
-
-    // These caches are also cleared immediately on POKE receipt (before debounce).
-    // These calls are redundant safety nets for the full invalidation flow.
-    this.statOps.clearIndex();
-    this.dirOps.clearTree();
-    this.invalidationCallbacks.clearDomainCache?.();
-
-    const projectId = this.client.getProjectId();
-    const projectDir = this.normalizer.getProjectDir();
-
-    if (this.invalidationCallbacks.clearSSRModuleCacheForProject && projectId) {
-      this.invalidationCallbacks.clearSSRModuleCacheForProject(projectId);
-    } else {
-      this.invalidationCallbacks.clearSSRModuleCache?.();
-    }
-
-    if (this.invalidationCallbacks.clearRouterDetectionCacheForProject && projectDir) {
-      this.invalidationCallbacks.clearRouterDetectionCacheForProject(projectDir);
-    } else {
-      this.invalidationCallbacks.clearRouterDetectionCache?.();
-    }
-
-    this.invalidationCallbacks.clearModulePathCache?.();
-
-    if (this.invalidationCallbacks.clearSnippetCacheForProject && this.projectSlug) {
-      this.invalidationCallbacks.clearSnippetCacheForProject(this.projectSlug);
-    } else {
-      this.invalidationCallbacks.clearSnippetCache?.();
-    }
-
-    // Await renderer cache clear to prevent race condition with HMR
-    if (this.invalidationCallbacks.clearRendererCacheForProject && projectId) {
-      await this.invalidationCallbacks.clearRendererCacheForProject(projectId);
-    }
-    // No global fallback — clearRendererCache is deprecated due to multi-tenant blast radius.
-
-    // Invalidate project CSS cache on full cache clear
-    if (this.invalidationCallbacks.clearProjectCSSCache && this.projectSlug) {
-      this.invalidationCallbacks.clearProjectCSSCache(this.projectSlug);
-    }
-
-    const totalFileCount = fileBranchCount + fileReleaseCount + fileEnvCount;
-    const totalStatCount = statBranchCount + statReleaseCount + statEnvCount;
-    const totalDirCount = dirBranchCount + dirReleaseCount + dirEnvCount;
-    const totalFilesListCount = filesBranchCount + filesReleaseCount + filesEnvCount;
-
-    logger.debug("[VeryfrontFSAdapter] CACHES CLEARED (memory + Redis)", {
-      fileCacheCleared: totalFileCount,
-      statCacheCleared: totalStatCount,
-      dirCacheCleared: totalDirCount,
-      filesListCacheCleared: totalFilesListCount,
-    });
-
-    if (this.contentContext?.sourceType === "branch") {
-      try {
-        const files = await this.client.listAllFiles();
-        const cacheKey = buildFileListCacheKey(this.contentContext);
-        await this.cache.setAsync(cacheKey, files);
-        this.readOps.clearFileListIndex();
-
-        logger.debug("[VeryfrontFSAdapter] FRESH FILES FETCHED", {
-          cacheKey,
-          fileCount: files.length,
-        });
-      } catch (error) {
-        logger.warn("[VeryfrontFSAdapter] Failed to fetch files during invalidation", { error });
-      }
-    }
-
-    this.pokeMetrics.invalidationsTriggered++;
-    logger.info("[VeryfrontFSAdapter] TRIGGERING FULL BROWSER RELOAD via ReloadNotifier", {
-      projectSlug: this.projectSlug,
-      projectId: this.client.getProjectId(),
-      hasTriggerReloadCallback: !!this.invalidationCallbacks.triggerReload,
-    });
-    const environment: "preview" | "production" = this.contentContext?.sourceType === "branch"
-      ? "preview"
-      : "production";
-    const projectContext = {
-      projectSlug: this.projectSlug,
-      projectId: this.client.getProjectId(),
-      environment,
-      branch: this.contentContext?.branch ?? null,
-      releaseId: this.contentContext?.releaseId ?? null,
-    };
-
-    this.invalidationCallbacks.triggerReload?.(undefined, projectContext);
-
-    logger.debug("[VeryfrontFSAdapter] CACHE INVALIDATION COMPLETE", {
-      fileCacheCleared: totalFileCount,
-      statCacheCleared: totalStatCount,
-      dirCacheCleared: totalDirCount,
-      filesListCacheCleared: totalFilesListCount,
-      durationMs: Date.now() - startTime,
-      totalInvalidations: this.pokeMetrics.invalidationsTriggered,
-    });
-
-    this.sendPokeAck("full");
   }
 
   getPokeMetrics(): {
@@ -1047,31 +406,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     lastPokeTime: number;
     connectionId: string | null;
   } {
-    return { ...this.pokeMetrics, connectionId: this.wsConnectionId };
-  }
-
-  /** Send acknowledgment back to API after cache invalidation completes */
-  private sendPokeAck(type: "selective" | "full", changedPaths?: string[]): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-
-    try {
-      this.ws.send(JSON.stringify({
-        type: "poke_ack",
-        data: {
-          invalidationType: type,
-          changedPaths: changedPaths ?? [],
-          timestamp: Date.now(),
-          connectionId: this.wsConnectionId,
-          totalInvalidations: this.pokeMetrics.invalidationsTriggered,
-        },
-      }));
-      logger.debug("[VeryfrontFSAdapter] Poke acknowledgment sent", {
-        type,
-        changedPathsCount: changedPaths?.length ?? 0,
-      });
-    } catch (error) {
-      logger.warn("[VeryfrontFSAdapter] Failed to send poke acknowledgment", { error });
-    }
+    return this.wsManager.getPokeMetrics();
   }
 
   async readFile(path: string): Promise<string> {
@@ -1110,22 +445,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   dispose(): void {
-    this.cleanupWebSocketTimers();
-
-    if (this.invalidationTimer) {
-      clearTimeout(this.invalidationTimer);
-      this.invalidationTimer = null;
-    }
-
-    if (this.ws) {
-      try {
-        this.ws.close();
-      } catch (error) {
-        logger.warn("[VeryfrontFSAdapter] Error closing WebSocket", { error: error });
-      }
-      this.ws = null;
-    }
-
+    this.wsManager.dispose();
     this.cache.clear();
     this.statOps.clearIndex();
     this.dirOps.clearTree();
