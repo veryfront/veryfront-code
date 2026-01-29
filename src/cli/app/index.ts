@@ -21,7 +21,7 @@ import {
   setRawMode,
 } from "#veryfront/platform/compat/stdin.ts";
 import { cursor, screen, SPINNER_FRAMES } from "../ui/ansi.ts";
-import { brand, dim } from "../ui/colors.ts";
+import { brand, dim, muted } from "../ui/colors.ts";
 import { getTerminalWidth } from "../ui/layout.ts";
 import { moveDown, moveUp, selectByNumber } from "./components/list-select.ts";
 import { renderBanner, renderDashboard, renderEmptyState } from "./views/dashboard.ts";
@@ -59,7 +59,7 @@ import {
   setCommandPaletteOpen,
   setExamples,
   setKeyChord,
-  setModel,
+  setModel as _setModel,
   setProjects,
   setResourceTab,
   setTemplates,
@@ -457,54 +457,51 @@ export function createApp(config: AppConfig): App {
 
     const lines: string[] = [];
     const agent = st.code.agent;
-    const projectPath = st.code.projectPath;
+    const project = st.activeProject;
 
     lines.push("");
-    lines.push(`  ${brand("Code")} ${dim("- Coding Agent")}`);
+    lines.push(`  ${brand("Code")}`);
     lines.push("");
 
+    // Show active project
+    if (project) {
+      lines.push(`  ${dim("Project")}  ${brand(project.slug)}`);
+    } else {
+      lines.push(`  ${dim("Project")}  ${muted("none")} ${dim("(select from Dashboard)")}`);
+    }
+
+    // Show current agent
     if (agent) {
-      lines.push(`  ${dim("Agent")}  ${brand(agent.name)} ${dim(`(${agent.provider})`)}`);
       const modelDisplay = st.code.model ?? agent.defaultModel ?? "default";
-      lines.push(`  ${dim("Model")}  ${brand(modelDisplay)}`);
-
-      // Show available models if agent has multiple
-      if (agent.models && agent.models.length > 1) {
-        lines.push("");
-        lines.push(`  ${dim("Available models")} ${dim("(press m + number)")}`);
-        agent.models.forEach((m, i) => {
-          const isCurrent = m === st.code.model;
-          const num = dim(`[${i + 1}]`);
-          const name = isCurrent ? brand(`${m} ✓`) : m;
-          lines.push(`    ${num} ${name}`);
-        });
-      }
+      lines.push(`  ${dim("Agent")}  ${brand(agent.name)} ${dim(`(${modelDisplay})`)}`);
     } else {
-      lines.push(`  ${dim("No agent selected. Press")} ${brand("Ctrl+A")} ${dim("to pick one.")}`);
+      lines.push(`  ${dim("Agent")}  ${muted("none")}`);
     }
-
-    lines.push("");
-    lines.push(
-      `  ${dim("Scope")}  ${projectPath ? brand(projectPath) : brand("root")} ${
-        dim(projectPath ? "(single project)" : "(multi-project)")
-      }`,
-    );
     lines.push("");
 
-    if (st.code.running) {
-      lines.push(`  ${dim("Agent is running... Press")} ${brand("Ctrl+C")} ${dim("to stop.")}`);
-    } else {
-      const modelHint = agent?.models && agent.models.length > 1
-        ? `${brand("m")} ${dim("model  •")} `
-        : "";
-      lines.push(
-        `  ${dim("Press")} ${brand("Enter")} ${dim("start  •")} ${modelHint}${brand("Ctrl+A")} ${
-          dim("agent  •")
-        } ${brand("Esc")} ${dim("back")}`,
-      );
-    }
+    // Menu options
+    const agentReady = !!agent && st.agents.installedAgents.includes(agent.id);
+    const menuItems = [
+      { id: "launch", label: "Launch Agent", key: "Enter", enabled: agentReady },
+      { id: "agent", label: "Select Coding Agent", key: "c", enabled: true },
+      { id: "open", label: "Open in Browser", key: "o", enabled: !!project },
+      { id: "ide", label: "Open in IDE", key: "i", enabled: !!project },
+      { id: "studio", label: "Open in Studio", key: "s", enabled: !!project },
+    ];
+
+    menuItems.forEach((item, i) => {
+      const isFocused = i === st.codeMenuIndex;
+      const cursor = isFocused ? brand("›") : " ";
+      const num = isFocused ? brand(`[${item.key}]`) : dim(`[${item.key}]`);
+      const label = !item.enabled ? dim(item.label) : isFocused ? brand(item.label) : item.label;
+      const hint = !item.enabled ? dim(" (select project first)") : "";
+      lines.push(`  ${cursor} ${num} ${label}${hint}`);
+    });
 
     lines.push("");
+    lines.push(`  ${dim("↑↓ navigate  Enter select  Esc back")}`);
+    lines.push("");
+
     return lines.join("\n");
   }
 
@@ -1791,59 +1788,89 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
+    const menuItemCount = 5; // launch, agent, open, ide, studio
+    const project = state.activeProject;
+    const agent = state.code.agent;
+
     // Esc to go back
     if (key === "\x1b") {
       update(goBack());
       return;
     }
 
-    // Ctrl+A to open agent picker
+    // Up arrow or k - navigate menu
+    if (key === "\x1b[A" || key === "k") {
+      state = {
+        ...state,
+        codeMenuIndex: state.codeMenuIndex > 0 ? state.codeMenuIndex - 1 : menuItemCount - 1,
+      };
+      render();
+      return;
+    }
+
+    // Down arrow or j - navigate menu
+    if (key === "\x1b[B" || key === "j") {
+      state = {
+        ...state,
+        codeMenuIndex: state.codeMenuIndex < menuItemCount - 1 ? state.codeMenuIndex + 1 : 0,
+      };
+      render();
+      return;
+    }
+
+    // Direct key shortcuts
+    if (key === "o" && project) {
+      void openInBrowser(project, state.server.port);
+      return;
+    }
+    if (key === "i" && project) {
+      void openInIDE(project);
+      return;
+    }
+    if (key === "s" && project) {
+      void openInStudio(project);
+      return;
+    }
+    if (key === "c") {
+      update(openAgentPicker());
+      return;
+    }
+
+    // Ctrl+A also opens agent picker
     if (key === "\x01") {
       update(openAgentPicker());
       return;
     }
 
-    // 'm' followed by number to select model
-    if (key === "m") {
-      if (!state.code.agent?.models || state.code.agent.models.length <= 1) {
-        update(addLog("info", "This agent only has one model"));
-        return;
-      }
-      update(addLog("info", "Press 1-9 to select model"));
-      return;
-    }
-
-    // Number keys for model selection when agent has models
-    if (key >= "1" && key <= "9" && state.code.agent?.models) {
-      const idx = parseInt(key, 10) - 1;
-      const models = state.code.agent.models;
-      if (idx < models.length) {
-        const selectedModel = models[idx];
-        if (selectedModel) {
-          update(setModel(selectedModel));
-          update(addLog("info", `Model: ${selectedModel}`));
-        }
-      }
-      return;
-    }
-
-    // Enter to start agent
+    // Enter to execute selected menu item
     if (key === "\r" || key === "\n") {
-      if (!state.code.agent) {
-        update(addLog("info", "Select an agent first (Ctrl+A)"));
-        return;
+      switch (state.codeMenuIndex) {
+        case 0: // Launch Agent
+          if (agent && state.agents.installedAgents.includes(agent.id)) {
+            launchAgent(agent);
+          } else if (!agent) {
+            update(addLog("info", "Select an agent first"));
+          } else {
+            update(addLog("error", `${agent.name} is not installed`));
+          }
+          break;
+        case 1: // Select Coding Agent
+          update(openAgentPicker());
+          break;
+        case 2: // Open in Browser
+          if (project) void openInBrowser(project, state.server.port);
+          else update(addLog("info", "Select a project first"));
+          break;
+        case 3: // Open in IDE
+          if (project) void openInIDE(project);
+          else update(addLog("info", "Select a project first"));
+          break;
+        case 4: // Open in Studio
+          if (project) void openInStudio(project);
+          else update(addLog("info", "Select a project first"));
+          break;
       }
-
-      const agent = state.code.agent;
-      const isInstalled = state.agents.installedAgents.includes(agent.id);
-
-      if (!isInstalled) {
-        update(addLog("error", `${agent.name} is not installed. Install it first.`));
-        return;
-      }
-
-      // Launch the agent
-      launchAgent(agent);
+      return;
     }
   }
 

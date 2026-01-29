@@ -146,6 +146,7 @@ export interface AppState {
   // UI state
   authProviderIndex: number;
   newProjectIndex: number;
+  codeMenuIndex: number;
   showHelp: boolean;
 }
 
@@ -205,6 +206,7 @@ export function createInitialState(): AppState {
     logScroll: 0,
     authProviderIndex: 0,
     newProjectIndex: 0,
+    codeMenuIndex: 0,
     showHelp: false,
   };
 }
