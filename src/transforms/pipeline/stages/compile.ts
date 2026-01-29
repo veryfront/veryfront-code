@@ -4,7 +4,7 @@
  * Uses esbuild to transform JSX/TSX to plain JavaScript with ES modules.
  */
 
-import * as esbuild from "esbuild";
+import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getErrorCollector } from "#veryfront/cli/mcp/error-collector.ts";
 import { getLoaderFromPath } from "../../esm/transform-utils.ts";
@@ -19,6 +19,7 @@ export const compilePlugin: TransformPlugin = {
 
   async transform(ctx: TransformContext): Promise<string> {
     const loader = getLoaderFromPath(ctx.filePath);
+    const esbuild = await getEsbuild();
 
     try {
       const result = await esbuild.transform(ctx.code, {

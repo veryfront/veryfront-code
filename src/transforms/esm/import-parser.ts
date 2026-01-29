@@ -1,4 +1,4 @@
-import * as esbuild from "esbuild";
+import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { join } from "#std/path.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -45,6 +45,7 @@ export async function parseLocalImports(
     return { imports: [], crossProjectImports: [], missing: [] };
   }
 
+  const esbuild = await getEsbuild();
   const result = await esbuild.transform(code, {
     loader: getLoaderFromPath(filePath),
     format: "esm",
