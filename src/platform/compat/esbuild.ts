@@ -11,10 +11,9 @@
 
 export type { BuildOptions, BuildResult, TransformOptions, TransformResult } from "esbuild";
 
-// Access Node's process.env for setting esbuild binary path
+// Import process from node:process for proper Node compatibility
 // esbuild uses process.env.ESBUILD_BINARY_PATH, not Deno.env
-const nodeProcess = (globalThis as { process?: { env: Record<string, string | undefined> } })
-  .process;
+import process from "node:process";
 
 const ESBUILD_VERSION = "0.20.2";
 
@@ -165,9 +164,7 @@ async function ensureEsbuildBinary(): Promise<void> {
       // Set in both Deno.env AND process.env to ensure esbuild sees it
       // esbuild is a Node module that reads from process.env.ESBUILD_BINARY_PATH
       Deno.env.set("ESBUILD_BINARY_PATH", binaryPath);
-      if (nodeProcess?.env) {
-        nodeProcess.env.ESBUILD_BINARY_PATH = binaryPath;
-      }
+      process.env.ESBUILD_BINARY_PATH = binaryPath;
 
       console.log(`[esbuild] Set ESBUILD_BINARY_PATH=${binaryPath}`);
     } catch (error) {
