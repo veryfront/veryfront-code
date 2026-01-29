@@ -16,6 +16,25 @@ import {
 } from "#veryfront/platform/compat/fs.ts";
 import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+
+/**
+ * Typed result from lookupMdxEsmCache.
+ * Distinguishes between normal cache miss (cold start) and cache corruption
+ * (a problem to track and alert on).
+ */
+export type CacheLookupResult =
+  | { status: "hit"; path: string }
+  | { status: "miss" }
+  | { status: "corrupted"; reason: string; filePath: string };
+
+/**
+ * LRU cache for verified module dependency paths.
+ * Keyed by `cachedPath:codeSize` to skip re-stat'ing file:// dependencies
+ * on every lookupMdxEsmCache call.
+ * Cleared alongside modulePathCaches via clearModulePathCache().
+ */
+export const verifiedModuleDeps = new LRUCache<string, true>({ maxEntries: 2000 });
 
 /** Pattern to match file:// paths in cached code */
 const FILE_PATH_PATTERN = /file:\/\/([^"'\s]+)/gi;
@@ -113,6 +132,7 @@ export async function saveModulePathCache(cacheDir: string): Promise<void> {
 export function clearModulePathCache(): void {
   modulePathCaches.clear();
   modulePathCacheLoaded.clear();
+  verifiedModuleDeps.clear();
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared module path cache`);
 }
 
@@ -210,20 +230,29 @@ function toMdxEsmCacheKey(filePath: string, projectDir?: string): string {
  * @param cacheDir - The MDX-ESM cache directory for this project/contentSource
  * @param projectDir - Project directory to strip from absolute paths
  * @param contentHash - Optional content hash to validate cached file freshness
- * @returns The cached file path if found and valid, null otherwise
+ * @returns Typed result: hit (with path), miss, or corrupted (with reason)
  */
 export async function lookupMdxEsmCache(
   filePath: string,
   cacheDir: string,
   projectDir?: string,
   _contentHash?: string, // Intentionally unused - kept for API compatibility
-): Promise<string | null> {
+): Promise<CacheLookupResult> {
   const cache = await getModulePathCache(cacheDir);
   const cacheKey = toMdxEsmCacheKey(filePath, projectDir);
 
   const cachedPath = cache.get(cacheKey);
   if (!cachedPath) {
-    return null;
+    return { status: "miss" };
+  }
+
+  // P3b: Skip re-validation if already verified for this path
+  const verifyKey = `${cachedPath}:${cacheKey}`;
+  if (verifiedModuleDeps.get(verifyKey)) {
+    logger.debug(
+      `${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache (verified): ${filePath} -> ${cachedPath}`,
+    );
+    return { status: "hit", path: cachedPath };
   }
 
   // Verify the cached file still exists
@@ -231,7 +260,7 @@ export async function lookupMdxEsmCache(
     const stat = await getLocalFs().stat(cachedPath);
     if (!stat?.isFile) {
       cache.delete(cacheKey);
-      return null;
+      return { status: "corrupted", reason: "Cached file no longer exists on disk", filePath };
     }
 
     // CRITICAL: Check for incompatible HTTP bundle paths from different environments.
@@ -249,7 +278,11 @@ export async function lookupMdxEsmCache(
       try {
         await getLocalFs().remove(cachedPath);
       } catch { /* ignore removal errors */ }
-      return null;
+      return {
+        status: "corrupted",
+        reason: "Incompatible HTTP bundle paths from different environment",
+        filePath,
+      };
     }
 
     // Note: We intentionally skip contentHash validation for MDX-ESM cached files.
@@ -260,14 +293,16 @@ export async function lookupMdxEsmCache(
     // This allows both loaders to share the same module instance, preventing
     // duplicate React contexts which break hooks like useContext.
 
+    // P3b: Mark as verified to skip re-stat on subsequent calls
+    verifiedModuleDeps.set(verifyKey, true);
+
     logger.debug(
       `${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache: ${filePath} -> ${cachedPath}`,
     );
-    return cachedPath;
+    return { status: "hit", path: cachedPath };
   } catch {
     // File no longer exists, remove stale entry
     cache.delete(cacheKey);
+    return { status: "corrupted", reason: "Cached file inaccessible", filePath };
   }
-
-  return null;
 }

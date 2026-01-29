@@ -169,6 +169,24 @@ export class SSRModuleLoader {
                 });
                 throw importError;
               }
+            } else if (
+              errorMsg.includes("Cannot find module") ||
+              errorMsg.includes("Module not found")
+            ) {
+              // Missing non-HTTP-bundle dependency — cache entry is corrupted.
+              // Invalidate so the next request triggers a fresh transform instead
+              // of hitting the same broken cache entry repeatedly.
+              const cacheKey = this.getCacheKey(filePath);
+              logger.error(
+                "[SSR-MODULE-LOADER] Cached module has missing dependency, invalidating cache",
+                {
+                  file: filePath.slice(-40),
+                  tempPath: cacheEntry.tempPath,
+                  error: errorMsg.slice(0, 200),
+                },
+              );
+              globalModuleCache.delete(cacheKey);
+              throw importError;
             } else {
               throw importError;
             }
@@ -587,24 +605,29 @@ export class SSRModuleLoader {
       const sourceKey = this.options.contentSourceId;
       const mdxCacheDir = join(baseCacheDir, projectKey, sourceKey);
 
-      const mdxCachedPath = await lookupMdxEsmCache(
+      const mdxCacheResult = await lookupMdxEsmCache(
         filePath,
         mdxCacheDir,
         this.options.projectDir,
         contentHash,
       );
-      if (mdxCachedPath) {
-        const entry: ModuleCacheEntry = { tempPath: mdxCachedPath, contentHash };
+      if (mdxCacheResult.status === "hit") {
+        const entry: ModuleCacheEntry = { tempPath: mdxCacheResult.path, contentHash };
         globalModuleCache.set(contentCacheKey, entry);
         globalModuleCache.set(filePathCacheKey, entry);
 
         logger.debug("[SSR-MODULE-LOADER] Reusing MDX-ESM cache", {
           file: filePath.slice(-40),
-          cachedPath: mdxCachedPath.slice(-60),
+          cachedPath: mdxCacheResult.path.slice(-60),
         });
 
         await this.ensureDependenciesExist(code, filePath, depth);
         return;
+      } else if (mdxCacheResult.status === "corrupted") {
+        logger.warn("[SSR-MODULE-LOADER] MDX-ESM cache corrupted, re-transforming", {
+          file: filePath.slice(-40),
+          reason: mdxCacheResult.reason,
+        });
       }
     }
 
@@ -640,7 +663,7 @@ export class SSRModuleLoader {
     globalInProgress.set(inProgressKey, transformPromise);
 
     try {
-      const parseResult = await parseLocalImports(
+      let parseResult = await parseLocalImports(
         code,
         filePath,
         this.options.projectDir,
@@ -649,6 +672,52 @@ export class SSRModuleLoader {
 
       if (parseResult.missing.length > 0) {
         this.missingDependencies.push(...parseResult.missing);
+      }
+
+      // P2: Pre-flight validation — check local import paths exist before
+      // starting expensive recursive transforms. Only validates local filesystem
+      // paths (startsWith "/"); remote adapter paths are validated by the adapter.
+      // Files that disappeared between parseLocalImports and now are demoted to
+      // missing deps (not transform rejections) to avoid dangling promises.
+      if (parseResult.imports.length > 0) {
+        const preflightFs = createFileSystem();
+        const preflightMissing: MissingImport[] = [];
+        const validImports = [];
+        for (const imp of parseResult.imports) {
+          if (!imp.absolutePath.startsWith("/")) {
+            validImports.push(imp);
+            continue;
+          }
+          try {
+            const stat = await preflightFs.stat(imp.absolutePath);
+            if (stat?.isFile) {
+              validImports.push(imp);
+            } else {
+              preflightMissing.push({
+                specifier: imp.specifier,
+                fromFile: filePath,
+                reason: `Pre-flight: not a file on disk: ${imp.absolutePath}`,
+              });
+            }
+          } catch {
+            preflightMissing.push({
+              specifier: imp.specifier,
+              fromFile: filePath,
+              reason: `Pre-flight: file not accessible: ${imp.absolutePath}`,
+            });
+          }
+        }
+        if (preflightMissing.length > 0) {
+          logger.warn("[SSR-MODULE-LOADER] Pre-flight: some dependencies missing, skipping them", {
+            file: filePath.slice(-40),
+            missing: preflightMissing.map((m) => m.specifier),
+            depth,
+          });
+          this.missingDependencies.push(...preflightMissing);
+          // Continue with only valid imports — the transform can still proceed
+          // and the missing deps will be reported via throwMissingDependencies
+          parseResult = { ...parseResult, imports: validImports };
+        }
       }
 
       const crossProjectPaths = new Map<string, string>();

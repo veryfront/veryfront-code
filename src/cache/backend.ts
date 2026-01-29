@@ -405,7 +405,13 @@ export class ApiCacheBackend implements CacheBackend {
             },
           );
 
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          if (!response.ok) {
+            let body = "";
+            try {
+              body = await response.text();
+            } catch { /* ignore body read errors */ }
+            throw new Error(`HTTP ${response.status}: ${body.slice(0, 500)}`);
+          }
           return (await response.json()) as T;
         } finally {
           clearTimeout(timeoutId);

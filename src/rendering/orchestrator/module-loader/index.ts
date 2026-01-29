@@ -130,10 +130,15 @@ export async function transformModuleWithDeps(
     const sourceKey = encodeURIComponent(contentSourceId);
     const mdxCacheDir = join(baseCacheDir, projectKey, sourceKey);
 
-    const mdxCachedPath = await lookupMdxEsmCache(filePath, mdxCacheDir, projectDir);
-    if (mdxCachedPath) {
-      moduleCache.set(cacheKey, mdxCachedPath);
-      return mdxCachedPath;
+    const mdxCacheResult = await lookupMdxEsmCache(filePath, mdxCacheDir, projectDir);
+    if (mdxCacheResult.status === "hit") {
+      moduleCache.set(cacheKey, mdxCacheResult.path);
+      return mdxCacheResult.path;
+    } else if (mdxCacheResult.status === "corrupted") {
+      logger.warn("[ModuleLoader] MDX-ESM cache corrupted, will re-transform", {
+        filePath,
+        reason: mdxCacheResult.reason,
+      });
     }
   }
 

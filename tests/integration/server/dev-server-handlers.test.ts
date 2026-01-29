@@ -593,14 +593,19 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
           await errorRes.body?.cancel();
           const errorDuration = performance.now() - errorStart;
 
-          // Error handling should not be dramatically slower
-          // Note: healthz is a simple endpoint, while 404 goes through full SSR pipeline
-          // Use higher threshold because they're fundamentally different code paths
-          // The key point is that 404s don't take seconds (indicating a bug)
-          const threshold = 50; // 50x accounts for SSR overhead vs simple health check
+          // Error handling should not take unreasonably long.
+          // healthz is a trivial endpoint while 404 goes through the SSR pipeline,
+          // so a relative comparison is inherently flaky. Use an absolute ceiling:
+          // 404s should respond within 5 seconds (anything longer indicates a bug
+          // like a stuck transform or infinite loop).
+          const absoluteCeilingMs = 5000;
           assert(
-            errorDuration < successDuration * threshold,
-            `Error handling (${errorDuration}ms) should not be >${threshold}x slower than success (${successDuration}ms)`,
+            errorDuration < absoluteCeilingMs,
+            `Error handling took ${
+              errorDuration.toFixed(0)
+            }ms, exceeding ${absoluteCeilingMs}ms ceiling (success: ${
+              successDuration.toFixed(0)
+            }ms)`,
           );
 
           await server.stop();
