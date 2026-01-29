@@ -52,6 +52,7 @@ import {
   resetKeyChord,
   scrollLogs,
   selectAgent,
+  setActiveProject,
   setActiveSection,
   setAgents,
   setCodeRunning,
@@ -553,6 +554,24 @@ export function createApp(config: AppConfig): App {
 
   function renderResourcesView(st: AppState): string {
     const lines: string[] = [];
+
+    // Check if a project is selected
+    if (!st.activeProject) {
+      lines.push("");
+      lines.push(`  ${brand("Resources")}`);
+      lines.push("");
+      lines.push(`  ${dim("No project selected")}`);
+      lines.push("");
+      lines.push(`  ${dim("Select a project from the Dashboard to view its resources.")}`);
+      lines.push(
+        `  ${dim("Press")} ${brand("Tab")} ${dim("or")} ${brand("⌥1")} ${
+          dim("to go to Dashboard")
+        }`,
+      );
+      lines.push("");
+      return lines.join("\n");
+    }
+
     const tabs: Array<{ id: string; label: string }> = [
       { id: "files", label: "Files" },
       { id: "routes", label: "Routes" },
@@ -562,7 +581,7 @@ export function createApp(config: AppConfig): App {
     ];
 
     lines.push("");
-    lines.push(`  ${brand("Resources")}`);
+    lines.push(`  ${brand("Resources")}  ${dim("Active:")} ${brand(st.activeProject.slug)}`);
     lines.push("");
 
     // Tab bar
@@ -578,13 +597,11 @@ export function createApp(config: AppConfig): App {
       case "files":
         lines.push(`  ${dim("Project Files")}`);
         lines.push("");
-        if (st.projects.items.length > 0) {
-          st.projects.items.slice(0, 8).forEach((p, i) => {
-            lines.push(`    ${dim(`[${i + 1}]`)} ${p.label}  ${dim(p.meta || "")}`);
-          });
-        } else {
-          lines.push(`    ${dim("No projects discovered")}`);
-        }
+        lines.push(`    ${dim("Path:")} ${brand(st.activeProject.path || st.activeProject.slug)}`);
+        lines.push("");
+        lines.push(
+          `    ${dim("Use")} ${brand("vf_list_routes")} ${dim("via MCP to explore files")}`,
+        );
         break;
 
       case "routes":
@@ -1243,7 +1260,10 @@ export function createApp(config: AppConfig): App {
         state = { ...state, [state.activeSection]: selectByNumber(activeList, num) };
         render();
         const selected = activeList.items[num - 1];
-        if (selected?.data) await openInBrowser(selected.data, state.server.port);
+        if (selected?.data) {
+          update(setActiveProject(selected.data));
+          await openInBrowser(selected.data, state.server.port);
+        }
         return;
       }
     }
@@ -1266,7 +1286,7 @@ export function createApp(config: AppConfig): App {
     }
 
     if (key === "\r" || key === "\n") {
-      // Enter on remote projects: pull
+      // Enter on remote projects: pull and set as active
       if (state.activeSection === "remote") {
         const focused = state.remote.projects[state.remote.focusedIndex];
         if (focused) {
@@ -1281,6 +1301,12 @@ export function createApp(config: AppConfig): App {
               quiet: true,
             });
             update(addLog("info", `Pulled to projects/${focused.slug}/`));
+            // Set as active project after successful pull
+            update(setActiveProject({
+              slug: focused.slug,
+              path: projectDir,
+              type: "local",
+            }));
           } catch (err) {
             update(
               addLog("error", `Pull failed: ${err instanceof Error ? err.message : String(err)}`),
@@ -1290,9 +1316,12 @@ export function createApp(config: AppConfig): App {
         }
         return;
       }
-      // Enter on local projects/examples: open in browser
+      // Enter on local projects/examples: set as active project and open in browser
       const selected = getActiveSelection(state);
-      if (selected?.data) await openInBrowser(selected.data, state.server.port);
+      if (selected?.data) {
+        update(setActiveProject(selected.data));
+        await openInBrowser(selected.data, state.server.port);
+      }
       return;
     }
 

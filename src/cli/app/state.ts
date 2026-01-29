@@ -132,6 +132,7 @@ export interface AppState {
 
   // Resources view
   resourceTab: ResourceTab;
+  activeProject: ProjectInfo | null;
 
   // Input
   input: InputState;
@@ -189,6 +190,7 @@ export function createInitialState(): AppState {
     },
     agents: createCodingAgentState(),
     resourceTab: "files",
+    activeProject: null,
     input: {
       active: false,
       prompt: "",
@@ -381,6 +383,10 @@ export function setAgents(agents: CodingAgentDef[], installed: string[]): StateU
 // Resources view
 export function setResourceTab(tab: ResourceTab): StateUpdater {
   return (state) => ({ ...state, resourceTab: tab });
+}
+
+export function setActiveProject(project: ProjectInfo | null): StateUpdater {
+  return (state) => ({ ...state, activeProject: project });
 }
 
 // Input
