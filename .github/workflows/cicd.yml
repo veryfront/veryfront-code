@@ -195,7 +195,7 @@ jobs:
         with:
           path: binaries
 
-      - name: Create GitHub Pre-release
+      - name: Create GitHub Pre-release (public)
         uses: softprops/action-gh-release@v1
         with:
           repository: veryfront/veryfront
@@ -218,6 +218,25 @@ jobs:
             binaries/veryfront-windows-x64.exe/veryfront-windows-x64.exe
         env:
           GITHUB_TOKEN: ${{ env.GITHUB_PAT }}
+
+      - name: Create GitHub Pre-release (source repo)
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          prerelease: true
+          body: |
+            ## Pre-release
+
+            This is a release candidate for testing. Not recommended for production.
+
+            ```bash
+            npx veryfront@${{ steps.version.outputs.version }}
+            ```
+
+            Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${{ steps.version.outputs.version }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ============================================
   # CD: Stable Release (tags only)
@@ -302,9 +321,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ env.GITHUB_PAT }}
 
-      - uses: softprops/action-gh-release@v1
+      - name: Create GitHub Release (source repo)
+        uses: softprops/action-gh-release@v1
         with:
+          tag_name: v${{ env.VERSION }}
+          name: v${{ env.VERSION }}
           generate_release_notes: true
+          body: |
+            Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${{ env.VERSION }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
