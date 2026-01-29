@@ -191,6 +191,33 @@ jobs:
           event-type: npm-published
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
 
+      - uses: actions/download-artifact@v4
+        with:
+          path: binaries
+
+      - name: Create GitHub Pre-release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          prerelease: true
+          body: |
+            ## Pre-release
+
+            This is a release candidate for testing. Not recommended for production.
+
+            ```bash
+            npm install -g veryfront@${{ steps.version.outputs.version }}
+            ```
+          files: |
+            binaries/veryfront-macos-arm64/veryfront-macos-arm64
+            binaries/veryfront-macos-x64/veryfront-macos-x64
+            binaries/veryfront-linux-x64/veryfront-linux-x64
+            binaries/veryfront-linux-arm64/veryfront-linux-arm64
+            binaries/veryfront-windows-x64.exe/veryfront-windows-x64.exe
+        env:
+          GITHUB_TOKEN: ${{ env.GITHUB_PAT }}
+
   # ============================================
   # CD: Stable Release (tags only)
   # ============================================
