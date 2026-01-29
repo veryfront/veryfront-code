@@ -3,9 +3,18 @@
  *
  * In deno compile, esbuild's native binary is embedded in VFS but cannot be
  * executed from there. This module extracts it to the system temp dir on first use.
+ *
+ * IMPORTANT: We must set ESBUILD_BINARY_PATH in BOTH Deno.env AND process.env
+ * because esbuild (a Node module) reads from process.env, and in Deno's Node
+ * compatibility layer these may not always be perfectly synchronized.
  */
 
 export type { BuildOptions, BuildResult, TransformOptions, TransformResult } from "esbuild";
+
+// Access Node's process.env for setting esbuild binary path
+// esbuild uses process.env.ESBUILD_BINARY_PATH, not Deno.env
+const nodeProcess = (globalThis as { process?: { env: Record<string, string | undefined> } })
+  .process;
 
 const ESBUILD_VERSION = "0.20.2";
 
@@ -152,7 +161,14 @@ async function ensureEsbuildBinary(): Promise<void> {
 
     try {
       const binaryPath = await extractEsbuildBinary();
+
+      // Set in both Deno.env AND process.env to ensure esbuild sees it
+      // esbuild is a Node module that reads from process.env.ESBUILD_BINARY_PATH
       Deno.env.set("ESBUILD_BINARY_PATH", binaryPath);
+      if (nodeProcess?.env) {
+        nodeProcess.env.ESBUILD_BINARY_PATH = binaryPath;
+      }
+
       console.log(`[esbuild] Set ESBUILD_BINARY_PATH=${binaryPath}`);
     } catch (error) {
       console.warn(`[esbuild] Binary extraction failed:`, error);
