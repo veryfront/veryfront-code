@@ -151,6 +151,7 @@ jobs:
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           NPM_TOKEN: op://VERYFRONT_CI/NPM_TOKEN_VERYFRONT/password
+          GITHUB_PAT: op://VERYFRONT_CI/GITHUB_VERYFRONT_PAT/credential
 
       - name: Setup Deno
         uses: denoland/setup-deno@v2
@@ -189,3 +190,11 @@ jobs:
         run: npm publish --access public --tag rc
         env:
           NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+
+      - name: Trigger cloud-renderer deploy
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ env.GITHUB_PAT }}
+          repository: veryfront/veryfront-cloud-renderer
+          event-type: npm-published
+          client-payload: '{"version": "${{ steps.version.outputs.prerelease_version }}"}'
