@@ -1,4 +1,4 @@
-import { initialize, transform } from "esbuild";
+import { initialize, transform } from "npm:esbuild-wasm@0.20.2";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "../errors/veryfront-error.ts";
 import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";

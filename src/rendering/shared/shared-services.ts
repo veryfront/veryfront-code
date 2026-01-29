@@ -12,7 +12,7 @@
  */
 
 import { rendererLogger as logger } from "#veryfront/utils";
-import { initialize as initializeEsbuild } from "esbuild";
+import { initialize as initializeEsbuild } from "npm:esbuild-wasm@0.20.2";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { ElementValidator, type ValidationOptions } from "../element-validator/index.ts";
