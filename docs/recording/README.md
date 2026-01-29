@@ -15,7 +15,7 @@ brew install vhs
 rm -rf ~/.npm/_npx && npm cache clean --force
 
 # Record the GIF
-cd docs
+cd docs/recording
 vhs demo.tape
 ```
 
