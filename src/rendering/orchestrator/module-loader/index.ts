@@ -36,8 +36,25 @@ import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-modu
 export { createEsmCache, createModuleCache, generateHash } from "./cache.ts";
 export { fetchEsmModule, rewriteEsmPaths } from "./esm-rewriter.ts";
 
-/** Cache for created directories to avoid repeated mkdir calls */
+/** Maximum number of directories to track to prevent memory leaks */
+const MAX_CREATED_DIRS = 5000;
+
+/** Cache for created directories to avoid repeated mkdir calls (LRU-style) */
 const createdDirs = new Set<string>();
+
+/** Prune oldest entries when cache exceeds limit */
+function pruneCreatedDirs(): void {
+  if (createdDirs.size <= MAX_CREATED_DIRS) return;
+
+  // Set iteration order is insertion order, so delete first entries
+  const toDelete = createdDirs.size - MAX_CREATED_DIRS;
+  let deleted = 0;
+  for (const dir of createdDirs) {
+    if (deleted >= toDelete) break;
+    createdDirs.delete(dir);
+    deleted++;
+  }
+}
 
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
@@ -81,6 +98,7 @@ async function ensureDir(adapter: RuntimeAdapter, dir: string): Promise<void> {
     // Directory might already exist, ignore errors
   } finally {
     createdDirs.add(dir);
+    pruneCreatedDirs();
   }
 }
 

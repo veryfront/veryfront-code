@@ -128,7 +128,9 @@ export class StaticDataFetcher {
     cacheKey: string,
   ): Promise<DataResult> {
     const pathname = context.url?.pathname ?? "unknown";
-    const projectId = context.url?.hostname ?? "default";
+    // Extract projectId from request headers (set by proxy) for proper circuit breaker isolation
+    const projectId = context.request?.headers?.get("x-project-id") ??
+      context.url?.hostname ?? "default";
     const start = performance.now();
 
     // Circuit breaker per project to prevent cascade failures
@@ -198,8 +200,9 @@ export class StaticDataFetcher {
     if (typeof pageModule.getStaticData !== "function") return;
 
     const pathname = context.url?.pathname ?? "unknown";
-    // Use hostname as project identifier for per-project fairness
-    const projectId = context.url?.hostname ?? "unknown";
+    // Use projectId from request headers for proper per-project fairness
+    const projectId = context.request?.headers?.get("x-project-id") ??
+      context.url?.hostname ?? "unknown";
 
     // Check per-project limit before acquiring global semaphore
     if (!acquireRevalidationSlot(projectId)) {

@@ -2,28 +2,42 @@
  * Memory Pressure Management
  *
  * Progressive throttling to prevent OOM conditions:
- * - 70%: Warning, reduce cache TTL
- * - 80%: High pressure, start aggressive eviction
- * - 90%: Critical, reject requests
+ * - WARNING: Reduce cache TTL to slow memory growth
+ * - HIGH: Aggressive eviction to reclaim memory
+ * - CRITICAL: Reject requests to prevent OOM
+ *
+ * Thresholds are configurable via environment variables:
+ * - MEMORY_WARNING_THRESHOLD (default: 65)
+ * - MEMORY_HIGH_THRESHOLD (default: 75)
+ * - MEMORY_CRITICAL_THRESHOLD (default: 80)
  *
  * @module server/shared/renderer/memory/pressure
  */
 
 import { rendererLogger } from "#veryfront/utils";
 import { getHeapStats } from "#veryfront/utils/memory/index.ts";
+import { getEnv } from "#veryfront/compat/process.ts";
 
 export type MemoryPressureLevel = "normal" | "warning" | "high" | "critical";
 
-/** Thresholds for progressive memory management
- * - WARNING (65%): Reduce cache TTL to slow memory growth
- * - HIGH (75%): Aggressive eviction to reclaim memory
- * - CRITICAL (80%): Reject requests to prevent OOM (lowered from 90% for safety buffer)
- */
+/** Parse env var as number with fallback */
+function parseEnvThreshold(name: string, fallback: number): number {
+  const value = getEnv(name);
+  if (!value) return fallback;
+  const parsed = parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed < 0 || parsed > 100) {
+    rendererLogger.warn(`[MemoryPressure] Invalid ${name}=${value}, using default ${fallback}`);
+    return fallback;
+  }
+  return parsed;
+}
+
+/** Thresholds for progressive memory management (configurable via env vars) */
 const THRESHOLDS = {
-  WARNING: 65,
-  HIGH: 75,
-  CRITICAL: 80,
-} as const;
+  WARNING: parseEnvThreshold("MEMORY_WARNING_THRESHOLD", 65),
+  HIGH: parseEnvThreshold("MEMORY_HIGH_THRESHOLD", 75),
+  CRITICAL: parseEnvThreshold("MEMORY_CRITICAL_THRESHOLD", 80),
+};
 
 export function getMemoryPressure(): {
   level: MemoryPressureLevel;

@@ -2,6 +2,7 @@ import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
 import { buildTransformCacheKey } from "../../cache/keys.ts";
 import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "../../cache/backend.ts";
+import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 
 const DEFAULT_TTL_SECONDS = 300; // 5 minutes
 const FALLBACK_MAX_ENTRIES = 500;
@@ -221,8 +222,8 @@ export async function getOrComputeTransform(
   const code = await computeFn();
 
   // Store in cache (fire-and-forget for performance)
-  // Use content length + timestamp as hash for integrity tracking
-  const hash = `${code.length}:${Date.now()}`;
+  // Use proper content hash for integrity verification
+  const hash = hashCodeHex(code).slice(0, 16);
   setCachedTransformAsync(key, code, hash, ttlSeconds).catch((error) => {
     logger.debug("[TransformCache] Failed to cache computed transform", { key, error });
   });
@@ -373,7 +374,8 @@ export async function prewarmProjectTransforms(
         for (const key of keys) {
           const cached = await getCachedTransformAsync(key);
           if (cached) {
-            localFallback.set(key, cached);
+            // Use setLocalFallback to respect size limits and prevent memory leaks
+            setLocalFallback(key, cached);
             prewarmed++;
           }
         }

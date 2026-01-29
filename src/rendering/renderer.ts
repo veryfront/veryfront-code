@@ -138,32 +138,58 @@ const projectRenderCounts = new Map<string, number>();
  */
 const projectSlotLocks = new Map<string, Promise<void>>();
 
+/** Maximum time to wait for a lock before giving up (10 seconds) */
+const LOCK_TIMEOUT_MS = 10_000;
+
 /**
  * Acquire a lock for a specific project. Returns a release function.
- * Uses a promise chain to serialize access per-project.
+ * Uses a retry loop to ensure atomicity - avoids TOCTOU race conditions.
  */
 async function acquireProjectLock(projectId: string): Promise<() => void> {
-  // Wait for any existing lock on this project
-  const existingLock = projectSlotLocks.get(projectId);
-  if (existingLock) {
-    await existingLock;
-  }
+  const startTime = Date.now();
 
-  // Create a new lock with a resolver
-  let releaseLock: () => void;
-  const lockPromise = new Promise<void>((resolve) => {
-    releaseLock = resolve;
-  });
-  projectSlotLocks.set(projectId, lockPromise);
-
-  // Return release function that also cleans up the lock
-  return () => {
-    releaseLock!();
-    // Only delete if this is still our lock (prevents race with next lock)
-    if (projectSlotLocks.get(projectId) === lockPromise) {
-      projectSlotLocks.delete(projectId);
+  // Retry loop to handle race conditions atomically
+  while (true) {
+    // Check for timeout
+    if (Date.now() - startTime > LOCK_TIMEOUT_MS) {
+      throw new Error(`Lock acquisition timeout for project: ${projectId}`);
     }
-  };
+
+    // Get existing lock
+    const existingLock = projectSlotLocks.get(projectId);
+
+    if (existingLock) {
+      // Wait for existing lock to release
+      await existingLock;
+      // After await, another thread might have taken the lock, so retry
+      continue;
+    }
+
+    // No existing lock - try to create one
+    let releaseLock: () => void;
+    const lockPromise = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+
+    // Double-check that no lock was set while we were creating ours
+    // This is the critical section that prevents the race
+    if (projectSlotLocks.has(projectId)) {
+      // Another thread beat us - retry
+      continue;
+    }
+
+    // Successfully acquired lock
+    projectSlotLocks.set(projectId, lockPromise);
+
+    // Return release function that cleans up
+    return () => {
+      releaseLock!();
+      // Only delete if this is still our lock
+      if (projectSlotLocks.get(projectId) === lockPromise) {
+        projectSlotLocks.delete(projectId);
+      }
+    };
+  }
 }
 
 /**
