@@ -1,4 +1,4 @@
-name: Publish to npm
+name: Release
 
 on:
   push:
@@ -113,7 +113,7 @@ jobs:
           fi
           echo "Package version verified: $PKG_VERSION"
 
-      - name: Publish to npm
+      - name: Release
         working-directory: npm
         run: npm publish --access public
         env:
