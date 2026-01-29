@@ -347,8 +347,8 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       const adapter = {
         env: { get: (_key: string) => undefined },
         fs: {
-          resolveFile: async (_path: string) => null,
-          readFile: async (_path: string) => {
+          resolveFile: (_path: string) => Promise.resolve(null),
+          readFile: (_path: string) => {
             throw new Error("readFile should not be called for missing module");
           },
         },

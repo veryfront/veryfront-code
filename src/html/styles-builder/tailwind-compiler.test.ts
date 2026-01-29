@@ -5,9 +5,9 @@ import {
   extractCandidates,
   extractCandidatesFromFiles,
   formatCSSError,
-  getProjectCSS,
   getCompilerCacheStats,
   getCSSByHash,
+  getProjectCSS,
   hashCSS,
 } from "./tailwind-compiler.ts";
 

@@ -207,7 +207,7 @@ jobs:
             This is a release candidate for testing. Not recommended for production.
 
             ```bash
-            npm install -g veryfront@${{ steps.version.outputs.version }}
+            npx veryfront@${{ steps.version.outputs.version }}
             ```
           files: |
             binaries/veryfront-macos-arm64/veryfront-macos-arm64

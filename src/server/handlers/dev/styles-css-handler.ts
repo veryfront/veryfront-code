@@ -11,8 +11,8 @@ import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts"
 import { joinPath } from "#veryfront/utils/path-utils.ts";
 import {
   extractCandidates,
-  generateTailwindCSS,
   formatCSSError,
+  generateTailwindCSS,
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -46,7 +46,8 @@ export class StylesCSSHandler extends BaseHandler {
           error: formatted.message,
           suggestion: formatted.suggestion,
         });
-        const errorMessage = `${formatted.title}: ${formatted.message}\nSuggestion: ${formatted.suggestion}`;
+        const errorMessage =
+          `${formatted.title}: ${formatted.message}\nSuggestion: ${formatted.suggestion}`;
         // Surface error in CSS so developers can see it
         const errorCSS = `/*
   ╔══════════════════════════════════════════════════════════════╗
