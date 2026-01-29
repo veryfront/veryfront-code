@@ -1,27 +1,42 @@
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { StreamHandler } from "./stream-handler.ts";
-import type { RenderHandler } from "./render-handler.ts";
+import { RenderHandler } from "./render-handler.ts";
+
+class MockRenderHandler extends RenderHandler {
+  private handlerImpl: (page: string, params: URLSearchParams) => Promise<Response>;
+
+  constructor(handlerImpl: (page: string, params: URLSearchParams) => Promise<Response>) {
+    super("/project", () => null);
+    this.handlerImpl = handlerImpl;
+  }
+
+  setHandler(handlerImpl: (page: string, params: URLSearchParams) => Promise<Response>): void {
+    this.handlerImpl = handlerImpl;
+  }
+
+  override handle(page: string, params: URLSearchParams): Promise<Response> {
+    return this.handlerImpl(page, params);
+  }
+}
 
 describe("StreamHandler", () => {
   let streamHandler: StreamHandler;
-  let mockRenderHandler: RenderHandler;
+  let mockRenderHandler: MockRenderHandler;
   let handleCalls: Array<[string, URLSearchParams]>;
 
   beforeEach(() => {
     handleCalls = [];
 
-    mockRenderHandler = {
-      handle: (page: string, params: URLSearchParams) => {
-        handleCalls.push([page, params]);
-        return Promise.resolve(
-          new Response(JSON.stringify({ html: "<div>Test Content</div>" }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        );
-      },
-    };
+    mockRenderHandler = new MockRenderHandler((page: string, params: URLSearchParams) => {
+      handleCalls.push([page, params]);
+      return Promise.resolve(
+        new Response(JSON.stringify({ html: "<div>Test Content</div>" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
 
     streamHandler = new StreamHandler(mockRenderHandler);
   });
@@ -71,7 +86,7 @@ describe("StreamHandler", () => {
     });
 
     it("should handle render handler returning non-ok response", async () => {
-      mockRenderHandler.handle = () => Promise.resolve(new Response(null, { status: 500 }));
+      mockRenderHandler.setHandler(() => Promise.resolve(new Response(null, { status: 500 })));
 
       const response = await streamHandler.handle("/", new URLSearchParams());
       const text = await response.text();
@@ -80,7 +95,9 @@ describe("StreamHandler", () => {
     });
 
     it("should handle invalid JSON from render handler", async () => {
-      mockRenderHandler.handle = () => Promise.resolve(new Response("not-json", { status: 200 }));
+      mockRenderHandler.setHandler(() =>
+        Promise.resolve(new Response("not-json", { status: 200 }))
+      );
 
       const response = await streamHandler.handle("/", new URLSearchParams());
       const text = await response.text();
@@ -101,7 +118,7 @@ describe("StreamHandler", () => {
 
   describe("error handling", () => {
     it("should handle render handler errors gracefully", async () => {
-      mockRenderHandler.handle = () => Promise.reject(new Error("Render failed"));
+      mockRenderHandler.setHandler(() => Promise.reject(new Error("Render failed")));
 
       await expect(
         streamHandler.handle("/", new URLSearchParams()),
@@ -109,7 +126,7 @@ describe("StreamHandler", () => {
     });
 
     it("should return valid response even with non-ok render response", async () => {
-      mockRenderHandler.handle = () => Promise.resolve(new Response("Error", { status: 500 }));
+      mockRenderHandler.setHandler(() => Promise.resolve(new Response("Error", { status: 500 })));
 
       const response = await streamHandler.handle("/", new URLSearchParams());
 

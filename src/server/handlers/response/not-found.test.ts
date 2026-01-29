@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NotFoundHandler } from "./not-found.ts";
 
@@ -11,7 +11,9 @@ describe("server/handlers/response/not-found", () => {
 
     it("should have empty patterns array (fallback handler)", () => {
       const handler = new NotFoundHandler();
-      assertEquals(handler.metadata.patterns.length, 0);
+      const patterns = handler.metadata.patterns;
+      assertExists(patterns);
+      assertEquals(patterns.length, 0);
     });
   });
 
