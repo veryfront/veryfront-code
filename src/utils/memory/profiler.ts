@@ -202,8 +202,6 @@ export function clearAllCaches(): void {
  */
 function getMemoryThreshold(envVar: string, fallback: number): number {
   try {
-    const env = getRuntimeEnv();
-    // Access env vars through Deno.env or process.env depending on runtime
     const value = typeof Deno !== "undefined" ? Deno.env.get(envVar) : undefined;
     if (!value) return fallback;
     const parsed = parseInt(value, 10);
