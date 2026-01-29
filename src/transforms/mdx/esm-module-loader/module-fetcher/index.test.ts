@@ -432,6 +432,26 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       const result = rewriteDntImports(code, nodeModulesPath);
       assertEquals(result.includes("file://"), true);
     });
+
+    it("does not rewrite project files under FRAMEWORK_ROOT in local dev", () => {
+      // In local dev, project source files live under FRAMEWORK_ROOT/projects/
+      // but should NOT be treated as framework files
+      const FRAMEWORK_ROOT = new URL("../../../..", import.meta.url).pathname;
+      const localProjectPath = `${FRAMEWORK_ROOT}projects/codersociety/components/Header.tsx`;
+      const code = `import { Logo } from "../elements/Logo.js";\nexport const foo = 1;`;
+      const result = rewriteDntImports(code, localProjectPath);
+      assertEquals(result, code, "Project files under FRAMEWORK_ROOT should not be rewritten");
+    });
+
+    it("rewrites framework src files under FRAMEWORK_ROOT", () => {
+      // Framework source files under FRAMEWORK_ROOT/src/ SHOULD be rewritten
+      const FRAMEWORK_ROOT = new URL("../../../..", import.meta.url).pathname;
+      const frameworkSrcPath = `${FRAMEWORK_ROOT}src/react/components/Head.tsx`;
+      const code = `import "../../../_dnt.polyfills.js";\nexport const foo = 1;`;
+      const result = rewriteDntImports(code, frameworkSrcPath);
+      assertEquals(result.includes("file://"), true);
+      assertEquals(result.includes("../../../_dnt.polyfills.js"), false);
+    });
   });
 
   // ── render sessions ──
