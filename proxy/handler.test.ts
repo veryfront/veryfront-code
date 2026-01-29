@@ -1,17 +1,13 @@
 import { assertEquals } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
-import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
-import { getFreePort } from "../tests/_helpers/utils.ts";
+import { createMockServer } from "../tests/_helpers/utils.ts";
 import { createProxyHandler } from "./handler.ts";
 
 describe("Proxy Handler", () => {
   describe("processRequest with custom domains", () => {
     it("resolves project slug for custom domain via domain lookup", async () => {
-      const adapter = await getLocalAdapter();
-      const port = await getFreePort();
-
       // Mock API server that returns domain lookup and OAuth token
-      const server = await adapter.serve(
+      const { server, port } = createMockServer(
         (req: Request) => {
           const url = new URL(req.url);
 
@@ -39,7 +35,6 @@ describe("Proxy Handler", () => {
 
           return new Response("Not found", { status: 404 });
         },
-        { port, hostname: "127.0.0.1" },
       );
 
       try {
@@ -65,15 +60,12 @@ describe("Proxy Handler", () => {
 
         await handler.close();
       } finally {
-        await server.stop();
+        await server.shutdown();
       }
     });
 
     it("returns 404 error when custom domain not found", async () => {
-      const adapter = await getLocalAdapter();
-      const port = await getFreePort();
-
-      const server = await adapter.serve(
+      const { server, port } = createMockServer(
         (req: Request) => {
           const url = new URL(req.url);
 
@@ -91,7 +83,6 @@ describe("Proxy Handler", () => {
 
           return new Response("Not found", { status: 404 });
         },
-        { port, hostname: "127.0.0.1" },
       );
 
       try {
@@ -117,7 +108,7 @@ describe("Proxy Handler", () => {
 
         await handler.close();
       } finally {
-        await server.stop();
+        await server.shutdown();
       }
     });
 
@@ -175,10 +166,7 @@ describe("Proxy Handler", () => {
 
   describe("protected environments", () => {
     it("redirects to sign-in for protected custom domain without auth token", async () => {
-      const adapter = await getLocalAdapter();
-      const port = await getFreePort();
-
-      const server = await adapter.serve(
+      const { server, port } = createMockServer(
         (req: Request) => {
           const url = new URL(req.url);
 
@@ -207,7 +195,6 @@ describe("Proxy Handler", () => {
 
           return new Response("Not found", { status: 404 });
         },
-        { port, hostname: "127.0.0.1" },
       );
 
       try {
@@ -236,15 +223,12 @@ describe("Proxy Handler", () => {
 
         await handler.close();
       } finally {
-        await server.stop();
+        await server.shutdown();
       }
     });
 
     it("allows access to protected custom domain with auth token", async () => {
-      const adapter = await getLocalAdapter();
-      const port = await getFreePort();
-
-      const server = await adapter.serve(
+      const { server, port } = createMockServer(
         (req: Request) => {
           const url = new URL(req.url);
 
@@ -273,7 +257,6 @@ describe("Proxy Handler", () => {
 
           return new Response("Not found", { status: 404 });
         },
-        { port, hostname: "127.0.0.1" },
       );
 
       try {
@@ -302,15 +285,12 @@ describe("Proxy Handler", () => {
 
         await handler.close();
       } finally {
-        await server.stop();
+        await server.shutdown();
       }
     });
 
     it("redirects to sign-in for protected veryfront domain without auth token", async () => {
-      const adapter = await getLocalAdapter();
-      const port = await getFreePort();
-
-      const server = await adapter.serve(
+      const { server, port } = createMockServer(
         (req: Request) => {
           const url = new URL(req.url);
 
@@ -338,7 +318,6 @@ describe("Proxy Handler", () => {
 
           return new Response("Not found", { status: 404 });
         },
-        { port, hostname: "127.0.0.1" },
       );
 
       try {
@@ -367,15 +346,12 @@ describe("Proxy Handler", () => {
 
         await handler.close();
       } finally {
-        await server.stop();
+        await server.shutdown();
       }
     });
 
     it("allows access to protected veryfront domain with auth token", async () => {
-      const adapter = await getLocalAdapter();
-      const port = await getFreePort();
-
-      const server = await adapter.serve(
+      const { server, port } = createMockServer(
         (req: Request) => {
           const url = new URL(req.url);
 
@@ -403,7 +379,6 @@ describe("Proxy Handler", () => {
 
           return new Response("Not found", { status: 404 });
         },
-        { port, hostname: "127.0.0.1" },
       );
 
       try {
@@ -432,15 +407,12 @@ describe("Proxy Handler", () => {
 
         await handler.close();
       } finally {
-        await server.stop();
+        await server.shutdown();
       }
     });
 
     it("allows access to non-protected environment without auth token", async () => {
-      const adapter = await getLocalAdapter();
-      const port = await getFreePort();
-
-      const server = await adapter.serve(
+      const { server, port } = createMockServer(
         (req: Request) => {
           const url = new URL(req.url);
 
@@ -469,7 +441,6 @@ describe("Proxy Handler", () => {
 
           return new Response("Not found", { status: 404 });
         },
-        { port, hostname: "127.0.0.1" },
       );
 
       try {
@@ -494,7 +465,7 @@ describe("Proxy Handler", () => {
 
         await handler.close();
       } finally {
-        await server.stop();
+        await server.shutdown();
       }
     });
   });

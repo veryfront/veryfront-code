@@ -4,76 +4,82 @@ import { isBun, isDeno } from "../../src/platform/compat/runtime.ts";
 /**
  * Get a free port for testing.
  *
- * Uses a wide default range (10000-60000) to minimize collisions when running
- * tests in parallel across multiple worktrees or repo clones.
+ * Uses OS-assigned port 0 to let the kernel pick a guaranteed-free ephemeral
+ * port. This eliminates random collisions between parallel test workers.
  *
- * Override via environment variables:
- *   TEST_PORT_MIN=15000 TEST_PORT_MAX=20000 deno task test
+ * NOTE: A small TOCTOU window exists between releasing the port and the caller
+ * binding to it. For zero-race port allocation, use {@link createMockServer}
+ * which binds to port 0 and returns the actual assigned port.
  */
-export async function getFreePort(start?: number, end?: number): Promise<number> {
-  // Allow env var override for parallel worktree isolation
-  const minPort = start ?? parseInt(getEnv("TEST_PORT_MIN") || "10000", 10);
-  const maxPort = end ?? parseInt(getEnv("TEST_PORT_MAX") || "60000", 10);
-
-  // Use random port selection to avoid sequential reuse before OS releases ports
-  // This helps when tests run quickly in sequence - previously used ports may still be in TIME_WAIT
-  const maxAttempts = 100;
-  const net = isDeno || isBun ? null : await import("node:net");
-
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    // Random port in range
-    const port = Math.floor(Math.random() * (maxPort - minPort + 1)) + minPort;
-
-    // Try to bind to the port to check availability
-    if (isDeno) {
-      try {
-        // @ts-ignore - Deno global
-        const listener = Deno.listen({ hostname: "127.0.0.1", port });
-        listener.close();
-        return port;
-      } catch {
-        // Port in use; try another random port
-      }
-    } else if (isBun) {
-      try {
-        const bun = (globalThis as {
-          Bun?: { serve: (options: Record<string, unknown>) => { stop: () => void } };
-        }).Bun;
-        if (!bun) {
-          throw new Error("Bun global not available");
-        }
-        const server = bun.serve({
-          port,
-          hostname: "127.0.0.1",
-          fetch() {
-            return new Response("ok");
-          },
-        });
-        server.stop();
-        return port;
-      } catch {
-        // Port in use or server start failed; try another random port
-      }
-    } else {
-      const isAvailable = await new Promise<boolean>((resolve) => {
-        const server = net!.createServer();
-        server.unref?.();
-        server.once("error", () => {
-          resolve(false);
-        });
-        server.listen({ port, host: "127.0.0.1", exclusive: true }, () => {
-          server.close(() => resolve(true));
-        });
-      });
-      if (isAvailable) {
-        return port;
-      }
-    }
+export async function getFreePort(): Promise<number> {
+  if (isDeno) {
+    // @ts-ignore - Deno global
+    const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    // @ts-ignore - Deno.NetAddr
+    const port = (listener.addr as { port: number }).port;
+    listener.close();
+    return port;
   }
 
-  throw new Error(
-    `No free port found in range ${minPort}-${maxPort} after ${maxAttempts} attempts`,
+  if (isBun) {
+    const bun = (globalThis as {
+      Bun?: {
+        serve: (options: Record<string, unknown>) => { stop: () => void; port: number };
+      };
+    }).Bun;
+    if (!bun) throw new Error("Bun global not available");
+    const server = bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response("ok");
+      },
+    });
+    const port = server.port;
+    server.stop();
+    return port;
+  }
+
+  // Node.js fallback
+  const net = await import("node:net");
+  return new Promise<number>((resolve, reject) => {
+    const server = net.createServer();
+    server.unref?.();
+    server.once("error", reject);
+    server.listen({ port: 0, host: "127.0.0.1", exclusive: true }, () => {
+      const addr = server.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+/**
+ * Create a mock HTTP server bound to an OS-assigned port.
+ *
+ * Eliminates the TOCTOU race in {@link getFreePort} by returning a server
+ * that is *already listening*. The caller never needs to re-bind.
+ *
+ * @example
+ * ```ts
+ * const mock = createMockServer((req) => new Response("ok"));
+ * try {
+ *   const res = await fetch(mock.url);
+ * } finally {
+ *   mock.server.shutdown();
+ * }
+ * ```
+ */
+export function createMockServer(
+  handler: (req: Request) => Response | Promise<Response>,
+): { server: Deno.HttpServer; port: number; hostname: string; url: string } {
+  // @ts-ignore - Deno global
+  const server = Deno.serve(
+    { port: 0, hostname: "127.0.0.1", onListen() {} },
+    handler,
   );
+  const { port, hostname } = server.addr as { port: number; hostname: string };
+  return { server, port, hostname, url: `http://${hostname}:${port}` };
 }
 
 export function withEnv(vars: Record<string, string>): () => void {

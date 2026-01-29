@@ -1,7 +1,6 @@
 import { assertEquals, assertRejects } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
-import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
-import { getFreePort } from "../tests/_helpers/utils.ts";
+import { createMockServer } from "../tests/_helpers/utils.ts";
 
 describe("OAuth Client", () => {
   describe("fetchOAuthToken", () => {
@@ -26,11 +25,8 @@ describe("OAuth Client", () => {
       const { fetchOAuthToken } = await import("./oauth-client.ts");
 
       // Mock server that returns 401
-      const adapter = await getLocalAdapter();
-      const port = await getFreePort();
-      const server = await adapter.serve(
+      const { server, port } = createMockServer(
         () => new Response("Unauthorized", { status: 401 }),
-        { port, hostname: "127.0.0.1" },
       );
 
       try {
@@ -45,16 +41,14 @@ describe("OAuth Client", () => {
           "401",
         );
       } finally {
-        await server.stop();
+        await server.shutdown();
       }
     });
 
     it("parses successful response", async () => {
       const { fetchOAuthToken } = await import("./oauth-client.ts");
 
-      const adapter = await getLocalAdapter();
-      const port = await getFreePort();
-      const server = await adapter.serve(
+      const { server, port } = createMockServer(
         () =>
           new Response(
             JSON.stringify({
@@ -64,7 +58,6 @@ describe("OAuth Client", () => {
             }),
             { headers: { "Content-Type": "application/json" } },
           ),
-        { port, hostname: "127.0.0.1" },
       );
 
       try {
@@ -78,7 +71,7 @@ describe("OAuth Client", () => {
         assertEquals(result.token_type, "Bearer");
         assertEquals(result.expires_in, 3600);
       } finally {
-        await server.stop();
+        await server.shutdown();
       }
     });
   });

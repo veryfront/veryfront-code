@@ -72,19 +72,12 @@ function safeSetEnv(key: string, value: string | undefined): void {
 safeSetEnv("VF_DISABLE_LRU_INTERVAL", "1");
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-// Global port allocator to prevent conflicts
+// Global port allocator to prevent conflicts within this process.
+// getFreePort() uses OS-assigned port 0, which guarantees uniqueness
+// across processes. This allocator adds intra-process dedup as a safety net.
 class PortAllocator {
   private static instance: PortAllocator;
   private usedPorts = new Set<number>();
-
-  // Wide default range for parallel worktree safety
-  // Override via TEST_PORT_MIN / TEST_PORT_MAX env vars
-  private get MIN_PORT(): number {
-    return parseInt(getEnv("TEST_PORT_MIN") || "10000", 10);
-  }
-  private get MAX_PORT(): number {
-    return parseInt(getEnv("TEST_PORT_MAX") || "60000", 10);
-  }
 
   static getInstance(): PortAllocator {
     if (!PortAllocator.instance) {
@@ -94,18 +87,16 @@ class PortAllocator {
   }
 
   async allocate(): Promise<number> {
-    // Delegate to shared helper - it also respects TEST_PORT_MIN/MAX
-    const port = await getFreePort();
-    if (this.usedPorts.has(port)) {
-      // Extremely unlikely, but ensure uniqueness within this process
-      for (let p = this.MIN_PORT; p <= this.MAX_PORT; p++) {
-        if (this.usedPorts.has(p)) continue;
-        this.usedPorts.add(p);
-        return Promise.resolve(p);
+    // OS-assigned port 0 is very unlikely to collide within one process,
+    // but retry if it does.
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const port = await getFreePort();
+      if (!this.usedPorts.has(port)) {
+        this.usedPorts.add(port);
+        return port;
       }
     }
-    this.usedPorts.add(port);
-    return Promise.resolve(port);
+    throw new Error("Failed to allocate unique port after 10 attempts");
   }
 
   release(port: number): void {
