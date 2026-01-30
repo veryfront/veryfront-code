@@ -3,6 +3,7 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
+import { join } from "#std/path.ts";
 import {
   createModuleFetcherContext,
   endRenderSession,
@@ -437,7 +438,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       // In local dev, project source files live under FRAMEWORK_ROOT/projects/
       // but should NOT be treated as framework files (only FRAMEWORK_ROOT/src/ is rewritten)
       // Use imported FRAMEWORK_ROOT from constants.ts to match actual function behavior
-      const localProjectPath = `${FRAMEWORK_ROOT}projects/codersociety/components/Header.tsx`;
+      const localProjectPath = join(FRAMEWORK_ROOT, "projects/codersociety/components/Header.tsx");
       const code = `import { Logo } from "../elements/Logo.js";\nexport const foo = 1;`;
       const result = rewriteDntImports(code, localProjectPath);
       assertEquals(result, code, "Project files under FRAMEWORK_ROOT should not be rewritten");
@@ -446,7 +447,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     it("rewrites framework src files under FRAMEWORK_ROOT", () => {
       // Framework source files under FRAMEWORK_ROOT/src/ SHOULD be rewritten
       // Use imported FRAMEWORK_ROOT from constants.ts to match actual function behavior
-      const frameworkSrcPath = `${FRAMEWORK_ROOT}src/react/components/Head.tsx`;
+      const frameworkSrcPath = join(FRAMEWORK_ROOT, "src/react/components/Head.tsx");
       const code = `import "../../../_dnt.polyfills.js";\nexport const foo = 1;`;
       const result = rewriteDntImports(code, frameworkSrcPath);
       assertEquals(result.includes("file://"), true);

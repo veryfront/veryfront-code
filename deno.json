@@ -336,7 +336,8 @@
       "exclude": [
         "no-explicit-any",
         "no-process-global",
-        "no-console"
+        "no-console",
+        "require-await"
       ]
     }
   },

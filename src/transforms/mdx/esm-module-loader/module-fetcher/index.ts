@@ -126,7 +126,7 @@ export function rewriteDntImports(code: string, sourceFilePath: string): string 
   // that live under FRAMEWORK_ROOT (e.g., projects/codersociety/components/...).
   // Without this, project relative imports get rewritten to absolute file:// source
   // paths with .js extensions, which fail because actual files are .tsx/.ts.
-  const frameworkSrcRoot = FRAMEWORK_ROOT + "src/";
+  const frameworkSrcRoot = join(FRAMEWORK_ROOT, "src") + "/";
   if (!sourceFilePath.includes("/node_modules/") && !sourceFilePath.startsWith(frameworkSrcRoot)) {
     return code;
   }
