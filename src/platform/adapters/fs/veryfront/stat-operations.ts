@@ -369,9 +369,12 @@ export class StatOperations {
       return null;
     }
 
-    if (this.contextProvider?.getFileList) {
+    // Only skip pattern search if the original path had an extension.
+    // If no extension was provided (e.g., "lib/utils"), we must do pattern search
+    // to find the file with the correct extension (e.g., "lib/utils.ts").
+    if (hasExtension && this.contextProvider?.getFileList) {
       const totalMs = Math.round(performance.now() - resolveStart);
-      logger.debug("[StatOperations] resolveFile not found (complete index, skipping API search)", {
+      logger.debug("[StatOperations] resolveFile not found (complete index, specific extension)", {
         normalizedPath,
         pathWithoutExt,
         indexSize: fileIdx.size,
