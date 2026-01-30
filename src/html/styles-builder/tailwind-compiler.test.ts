@@ -9,6 +9,7 @@ import {
   getCSSByHash,
   getProjectCSS,
   hashCSS,
+  loadModuleFromEsmSh,
 } from "./tailwind-compiler.ts";
 
 describe("styles-builder/tailwind-compiler", () => {
@@ -318,6 +319,39 @@ describe("styles-builder/tailwind-compiler", () => {
     it("should report size >= 0", () => {
       const stats = getCompilerCacheStats();
       assertEquals(stats.size >= 0, true);
+    });
+  });
+
+  describe("loadModuleFromEsmSh", () => {
+    it("should dynamically load tailwindcss-animate plugin from esm.sh", async () => {
+      // This test proves that the dynamic loading workaround works.
+      // In a compiled binary, normal `import(url)` fails, but our fetch + rewrite + file:// approach works.
+      const mod = await loadModuleFromEsmSh("tailwindcss-animate@1.0.7");
+
+      // The module should have a default export
+      assertEquals(typeof mod, "object");
+      assertEquals("default" in (mod as object), true);
+
+      // The default export should be a tailwind plugin (object with handler property)
+      const plugin = (mod as { default: unknown }).default;
+      assertEquals(typeof plugin, "object");
+      assertEquals(plugin !== null, true);
+
+      // Tailwind v4 plugins have a 'handler' property
+      assertEquals("handler" in (plugin as object), true);
+    });
+
+    it("should dynamically load a simple package without tailwindcss dependency", async () => {
+      // Test with is-odd - a simple package with no tailwindcss dependency
+      const mod = await loadModuleFromEsmSh("is-odd@3.0.1");
+
+      assertEquals(typeof mod, "object");
+      assertEquals("default" in (mod as object), true);
+
+      const isOdd = (mod as { default: (n: number) => boolean }).default;
+      assertEquals(typeof isOdd, "function");
+      assertEquals(isOdd(3), true);
+      assertEquals(isOdd(4), false);
     });
   });
 });

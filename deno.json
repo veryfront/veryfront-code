@@ -231,6 +231,7 @@
     "@ai-sdk/openai": "https://esm.sh/@ai-sdk/openai@2.0.1",
     "@ai-sdk/anthropic": "https://esm.sh/@ai-sdk/anthropic@2.0.1",
     "tailwindcss": "https://esm.sh/tailwindcss@4.1.8",
+    "tailwindcss/plugin": "https://esm.sh/tailwindcss@4.1.8/plugin",
     "redis": "npm:redis",
     "pg": "npm:pg",
     "@opentelemetry/api": "npm:@opentelemetry/api@1",

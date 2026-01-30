@@ -1,4 +1,5 @@
-import { compile } from "tailwindcss";
+import { __unstable__loadDesignSystem, compile } from "tailwindcss";
+import plugin from "tailwindcss/plugin";
 import { serverLogger as logger } from "#veryfront/utils";
 import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
 import {
@@ -11,6 +12,12 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { minifyCSS } from "#veryfront/build/asset-pipeline/tailwind-processor/css-utils.ts";
+
+// Set up global shim for tailwindcss/plugin - used by dynamically loaded plugins
+(globalThis as Record<string, unknown>).__tailwindPluginShim = {
+  default: plugin,
+  __esModule: true,
+};
 
 export interface TailwindResult {
   css: string;
@@ -598,17 +605,66 @@ export function extractCandidatesFromFiles(
 }
 
 /**
- * Known Tailwind plugins with pinned versions.
- * These are bundled into the compiled binary with --include.
- * The version MUST match what's used in .github/workflows/cicd.yml.
+ * Dynamically load a module from esm.sh in a compiled Deno binary.
+ *
+ * This works around the limitation that compiled Deno binaries cannot do
+ * dynamic imports from URLs. Instead, we:
+ * 1. Fetch the bundled code from esm.sh (with ?bundle&external=tailwindcss)
+ * 2. Rewrite the tailwindcss/plugin import to use our global shim
+ * 3. Write to a temp file
+ * 4. Import via file:// URL
+ *
+ * @param packageName - The npm package name (e.g., "tailwindcss-animate" or "tailwindcss-animate@1.0.7")
+ * @returns The loaded module
  */
-const PINNED_PLUGIN_VERSIONS: Record<string, string> = {
-  "tailwindcss-animate": "1.0.7",
-  "@tailwindcss/typography": "0.5.19",
-  "@tailwindcss/forms": "0.5.11",
-  "tailwind-scrollbar-hide": "2.0.0",
-  daisyui: "5.5.14",
-};
+export async function loadModuleFromEsmSh(packageName: string): Promise<unknown> {
+  // Step 1: Fetch the redirect stub to find the actual bundle URL
+  const stubUrl = `https://esm.sh/${packageName}?bundle&external=tailwindcss`;
+  logger.debug("[tailwind] Fetching esm.sh stub", { url: stubUrl });
+
+  const stubResponse = await fetch(stubUrl);
+  if (!stubResponse.ok) {
+    throw new Error(`Failed to fetch stub: ${stubResponse.status}`);
+  }
+  const stubCode = await stubResponse.text();
+
+  // Step 2: Parse stub to find actual bundle path
+  const bundleMatch = stubCode.match(/from\s*["'](\/[^"']+\.bundle\.mjs)["']/);
+  if (!bundleMatch) {
+    throw new Error(`Could not find bundle path in esm.sh response: ${stubCode.substring(0, 200)}`);
+  }
+
+  const bundleUrl = `https://esm.sh${bundleMatch[1]}`;
+  logger.debug("[tailwind] Fetching actual bundle", { url: bundleUrl });
+
+  // Step 3: Fetch the actual bundled code
+  const bundleResponse = await fetch(bundleUrl);
+  if (!bundleResponse.ok) {
+    throw new Error(`Failed to fetch bundle: ${bundleResponse.status}`);
+  }
+  let code = await bundleResponse.text();
+
+  // Step 4: Rewrite tailwindcss/plugin import to use our global shim
+  // The bundle contains: import*as __0$ from"tailwindcss/plugin"
+  const tailwindImport = 'import*as __0$ from"tailwindcss/plugin"';
+  if (code.includes(tailwindImport)) {
+    code = code.replace(tailwindImport, "const __0$ = globalThis.__tailwindPluginShim");
+    logger.debug("[tailwind] Rewrote tailwindcss/plugin import to use global shim");
+  }
+
+  // Step 5: Write to temp file and import
+  const tempPath = `/tmp/tw_plugin_${crypto.randomUUID()}.mjs`;
+  await Deno.writeTextFile(tempPath, code);
+  logger.debug("[tailwind] Wrote plugin to temp file", { path: tempPath });
+
+  try {
+    const mod = await import(`file://${tempPath}`);
+    return mod;
+  } finally {
+    // Clean up temp file
+    await Deno.remove(tempPath).catch(() => {});
+  }
+}
 
 async function loadPlugin(
   id: string,
@@ -628,15 +684,12 @@ async function loadPlugin(
     let mod: unknown;
 
     if (isDeno) {
-      // Deno supports HTTP imports natively
-      // Use pinned versions for known plugins (bundled into compiled binary)
-      const version = PINNED_PLUGIN_VERSIONS[id];
-      const url = version ? `https://esm.sh/${id}@${version}` : `https://esm.sh/${id}`;
-      logger.debug("[tailwind] Loading plugin via esm.sh", { id, url });
-      mod = await import(url);
+      // Use dynamic module loading that works in compiled binaries
+      // This fetches the bundled code, rewrites imports, and loads via temp file
+      logger.debug("[tailwind] Loading plugin via dynamic esm.sh fetch", { id });
+      mod = await loadModuleFromEsmSh(id);
     } else {
       // Node.js: Try to import from node_modules
-      // First try the bare specifier, then fall back to global node_modules
       logger.debug("[tailwind] Loading plugin from node_modules", { id });
       try {
         mod = await import(id);
@@ -649,9 +702,9 @@ async function loadPlugin(
       }
     }
 
-    const plugin = (mod as { default?: unknown }).default ?? mod;
-    pluginCache.set(id, plugin);
-    return plugin;
+    const pluginExport = (mod as { default?: unknown }).default ?? mod;
+    pluginCache.set(id, pluginExport);
+    return pluginExport;
   } catch (error) {
     const errorMsg = `Failed to load plugin "${id}": ${
       error instanceof Error ? error.message : String(error)
