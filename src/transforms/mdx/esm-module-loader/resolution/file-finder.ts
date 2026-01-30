@@ -49,12 +49,14 @@ export async function resolveModuleFile(
   adapter: RuntimeAdapter,
   projectDir?: string,
 ): Promise<FileResolutionResult | null> {
-  // Strip _vf_modules/ and optional _veryfront/ prefix, then .js extension
+  // Strip _vf_modules/ and optional _veryfront/ prefix, query params, then .js extension
   // The _veryfront/ prefix is used in import maps to route through module server,
   // but for file resolution we need the underlying framework path (e.g., react/components/Head)
+  // Query params like ?ssr=true are added by the import rewriter but not needed for file lookup
   const filePathWithoutJs = normalizedPath
     .replace(/^_vf_modules\//, "")
     .replace(/^_veryfront\//, "")
+    .replace(/\?.*$/, "")  // Strip query parameters (e.g., ?ssr=true)
     .replace(/\.js$/, "");
 
   const hasKnownExt = MODULE_EXTENSIONS.some((ext) => filePathWithoutJs.endsWith(ext));
