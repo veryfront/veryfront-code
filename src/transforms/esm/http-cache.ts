@@ -444,6 +444,7 @@ function isRelative(specifier: string): boolean {
 function isInternalBare(specifier: string): boolean {
   return specifier.startsWith("veryfront/") ||
     specifier.startsWith("@veryfront/") ||
+    specifier.startsWith("#veryfront/") ||
     specifier.startsWith("@std/");
 }
 
