@@ -596,8 +596,10 @@ async function doLoadModuleESM(
     await ensureCacheNodeModules();
 
     // Proactively ensure all HTTP bundles exist before import.
-    // Deno handles HTTP imports natively, so this is only needed for Node.js/Bun.
-    if (!isDeno) {
+    // Deno runtime handles HTTP imports natively, but compiled Deno binaries cannot
+    // dynamically import HTTP URLs - they need local file:// paths like Node.js/Bun.
+    const needsHttpBundleCheck = !isDeno || isDenoCompiled;
+    if (needsHttpBundleCheck) {
       const bundlePaths = extractHttpBundlePaths(rewritten);
       if (bundlePaths.length > 0) {
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Checking HTTP bundles`, {
