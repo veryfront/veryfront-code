@@ -30,6 +30,7 @@ import { join } from "#veryfront/platform/compat/path/index.ts";
 import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
 import { buildModuleTransformCacheKey } from "../../cache/keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
 
 /** Slow request threshold in milliseconds */
 const SLOW_REQUEST_THRESHOLD_MS = 500;
@@ -58,8 +59,7 @@ const MAX_BATCH_SIZE = 100;
 /** Cache for transformed modules (path -> code) */
 const transformCache = new Map<string, string>();
 
-/** Framework root for lib/* files */
-const FRAMEWORK_ROOT = new URL("../../..", import.meta.url).pathname;
+const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
 
 /**
  * Handle a batch module request

@@ -1,8 +1,9 @@
 import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
 
 export const IS_TRUE_NODE = (isNode || isBun) && !isDeno;
 
-export const FRAMEWORK_ROOT = new URL("../../../..", import.meta.url).pathname;
+export const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
 
 export const LOG_PREFIX_MDX_LOADER = "[mdx-loader]";
 export const LOG_PREFIX_MDX_RENDERER = "[mdx-renderer]";

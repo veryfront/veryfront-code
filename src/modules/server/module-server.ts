@@ -15,6 +15,7 @@ import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-po
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
 import { addHMRTimestamps } from "#veryfront/transforms/esm/import-rewriter.ts";
+import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
 const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
@@ -350,9 +351,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
   );
 }
 
-// Get the veryfront-private root directory (where this code is running from)
-// From src/module-system/server/module-server.ts, go up 3 levels to reach veryfront-private/
-const FRAMEWORK_ROOT = new URL("../../..", import.meta.url).pathname;
+const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
 
 interface FindSourceFileResult {
   path: string;
