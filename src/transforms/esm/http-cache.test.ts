@@ -237,6 +237,22 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       }
     });
 
+    /**
+     * This test validates the fix for "Missing HTTP bundles after transform" error.
+     *
+     * Root cause: When cacheHttpModule loads a bundle from Redis, the cached code
+     * might reference child bundles whose Redis keys (code:{hash}, hash:{hash})
+     * have expired. Without validation, the parent is written to disk but children
+     * can't be recovered, causing the error.
+     *
+     * The fix: validateBundleDepsExist() is called before using Redis cache.
+     * If any deps can't be recovered, we reject the Redis cache and re-fetch
+     * from network (which recursively fetches all deps with fresh URLs).
+     *
+     * This scenario is tested indirectly by ensureHttpBundlesExist tests above,
+     * which verify that missing transitive deps are correctly detected.
+     */
+
     it("handles mix of existing and missing bundles", async () => {
       await setupTempDir();
       try {

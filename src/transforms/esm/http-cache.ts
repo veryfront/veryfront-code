@@ -137,6 +137,66 @@ function hasIncompatibleFilePaths(code: string, localCacheDir: string): boolean 
   return false;
 }
 
+/**
+ * Check if all bundle dependencies exist locally.
+ * Used to validate Redis-cached bundles before use - if deps are missing and
+ * unrecoverable, we should re-fetch from network instead of using the cache.
+ *
+ * This prevents the "Missing HTTP bundles after transform" error that occurs when:
+ * 1. Parent bundle is cached in Redis with file:// paths to child bundles
+ * 2. Child bundle's Redis keys (code:{hash}, hash:{hash}) have expired
+ * 3. Parent is loaded from Redis, but children can't be recovered
+ *
+ * @param deps - Array of {path, hash} for bundle dependencies to check
+ * @param cacheDir - Local cache directory
+ * @returns true if all deps exist or can be recovered, false otherwise
+ */
+async function validateBundleDepsExist(
+  deps: Array<{ path: string; hash: string }>,
+  cacheDir: string,
+): Promise<boolean> {
+  const absoluteCacheDir = ensureAbsoluteDir(cacheDir);
+
+  // Quick local check first - if all exist locally, we're good
+  const localChecks = await Promise.all(
+    deps.map(({ hash }) => {
+      const canonicalPath = join(absoluteCacheDir, `http-${hash}.mjs`);
+      return exists(canonicalPath);
+    }),
+  );
+
+  const allExistLocally = localChecks.every((exists) => exists);
+  if (allExistLocally) {
+    return true;
+  }
+
+  // Some deps are missing locally, try to recover from distributed cache
+  const missingDeps = deps.filter((_, i) => !localChecks[i]);
+  const distributed = await getDistributedCache();
+  if (!distributed) {
+    // No distributed cache, can't recover missing deps
+    logger.debug("[HTTP-CACHE] Cannot validate deps - no distributed cache", {
+      missing: missingDeps.map((d) => d.hash),
+    });
+    return false;
+  }
+
+  // Check if missing deps can be recovered from distributed cache
+  // We only check if the code exists in Redis, not if we can re-fetch from URL
+  // because URL recovery might fail (expired hash:{hash} keys)
+  for (const { hash } of missingDeps) {
+    const code = await distributed.get(distributedKey("code", hash));
+    if (!code) {
+      // This dep can't be recovered from Redis, reject the parent cache
+      logger.debug("[HTTP-CACHE] Dep cannot be recovered from Redis", { hash });
+      return false;
+    }
+  }
+
+  // All missing deps exist in Redis, they can be recovered later
+  return true;
+}
+
 type CacheOptions = {
   cacheDir: string;
   importMap: ImportMapConfig;
@@ -390,18 +450,55 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
           });
           // Fall through to network fetch
         } else {
-          if (wasGzipped) {
-            logger.debug("[HTTP-CACHE] Distributed cache hit (gzip decoded)", {
-              url: normalizedUrl,
-              hash,
-            });
-          } else {
-            logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl, hash });
+          // Validate that all file:// deps in the cached code exist or can be recovered.
+          // Without this check, a bundle loaded from Redis might reference child bundles
+          // whose TTLs expired, causing "Missing HTTP bundles after transform" errors.
+          const depPattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+          const deps: Array<{ path: string; hash: string }> = [];
+          let depMatch;
+          while ((depMatch = depPattern.exec(cachedCode)) !== null) {
+            deps.push({ path: depMatch[1]!, hash: depMatch[2]! });
           }
-          await fs.mkdir(cacheDir, { recursive: true });
-          await fs.writeTextFile(cachePath, cachedCode);
-          cachedPaths.set(cacheKey, cachePath);
-          return cachePath;
+
+          if (deps.length > 0) {
+            const depsExist = await validateBundleDepsExist(deps, cacheDir);
+            if (!depsExist) {
+              logger.warn("[HTTP-CACHE] Cached code has missing bundle deps, will re-fetch", {
+                url: normalizedUrl,
+                hash,
+                missingDeps: deps.length,
+              });
+              // Fall through to network fetch, which will recursively fetch all deps
+            } else {
+              // All deps exist or were recovered, use the cached code
+              if (wasGzipped) {
+                logger.debug("[HTTP-CACHE] Distributed cache hit (gzip decoded)", {
+                  url: normalizedUrl,
+                  hash,
+                });
+              } else {
+                logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl, hash });
+              }
+              await fs.mkdir(cacheDir, { recursive: true });
+              await fs.writeTextFile(cachePath, cachedCode);
+              cachedPaths.set(cacheKey, cachePath);
+              return cachePath;
+            }
+          } else {
+            // No bundle deps, use the cached code directly
+            if (wasGzipped) {
+              logger.debug("[HTTP-CACHE] Distributed cache hit (gzip decoded, no deps)", {
+                url: normalizedUrl,
+                hash,
+              });
+            } else {
+              logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl, hash });
+            }
+            await fs.mkdir(cacheDir, { recursive: true });
+            await fs.writeTextFile(cachePath, cachedCode);
+            cachedPaths.set(cacheKey, cachePath);
+            return cachePath;
+          }
         }
       }
     } catch (error) {
