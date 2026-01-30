@@ -119,8 +119,9 @@ const getDistributedCache = createDistributedCacheAccessor(
  * v1: Initial version
  * v2: 2026-01-30 - Invalidate stale React bundles causing "useContext is null"
  * v3: 2026-01-30 - Invalidate HTML error pages incorrectly cached as JS (parse errors)
+ * v4: 2026-01-30 - Invalidate cached transforms with /_vf_modules/ esm.sh URLs
  */
-const HTTP_CACHE_VERSION = "v3";
+const HTTP_CACHE_VERSION = "v4";
 
 /**
  * Generate cache key for HTTP bundles.
