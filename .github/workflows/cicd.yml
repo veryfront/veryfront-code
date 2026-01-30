@@ -121,6 +121,7 @@ jobs:
           deno-version: lts
 
       - name: Bake version into binary
+        shell: bash
         run: |
           VERSION="${{ needs.version.outputs.version }}"
           echo "Building version: $VERSION"
