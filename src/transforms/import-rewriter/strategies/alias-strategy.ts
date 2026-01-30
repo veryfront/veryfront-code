@@ -24,8 +24,6 @@ export class AliasStrategy implements ImportRewriteStrategy {
 
     if (!/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(relativePath)) {
       relativePath = `${relativePath}.js`;
-    } else if (ctx.target === "ssr") {
-      relativePath = normalizeExtension(relativePath);
     }
 
     return { specifier: relativePath };

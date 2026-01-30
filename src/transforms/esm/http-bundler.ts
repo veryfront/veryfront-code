@@ -75,6 +75,10 @@ export function createHTTPPlugin(): Plugin {
         }
 
         if (path.startsWith("./") || path.startsWith("../") || path.startsWith("/")) {
+          // Veryfront module paths are served locally, not via esm.sh
+          if (path.startsWith("/_vf_modules/") || path.startsWith("/_veryfront/")) {
+            return { path, external: true };
+          }
           try {
             return { path: new URL(path, args.importer).toString(), namespace: "http-url" };
           } catch {
