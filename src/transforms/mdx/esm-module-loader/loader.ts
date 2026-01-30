@@ -24,7 +24,7 @@ import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../esm/http-cache.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { isDeno, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { replaceSpecifiers } from "../../esm/lexer.ts";
 import { setupSSRGlobals } from "../../../rendering/ssr-globals.ts";
 import type { MDXFrontmatter, MDXModule } from "../types.ts";
@@ -413,12 +413,17 @@ async function transformJsxImports(
 }
 
 /**
- * Cache HTTP imports to local file:// paths for Node/Bun SSR.
- * Deno supports HTTP imports natively, so we skip this step to avoid
- * creating pod-specific file:// paths that break distributed caching.
+ * Cache HTTP imports to local file:// paths for SSR.
+ *
+ * - Deno runtime: Supports HTTP imports natively, skip caching to avoid
+ *   creating pod-specific file:// paths that break distributed caching.
+ * - Deno compiled binary: CANNOT dynamically import HTTP URLs at runtime,
+ *   so we must cache them to local file:// paths (like Node.js/Bun).
+ * - Node.js/Bun: Must cache HTTP imports to local file:// paths.
  */
 async function cacheHttpImports(code: string, importMap: ImportMapConfig): Promise<string> {
-  if (isDeno) return code;
+  const canDoNativeHttpImports = isDeno && !isDenoCompiled;
+  if (canDoNativeHttpImports) return code;
   const result = await cacheHttpImportsToLocal(code, {
     cacheDir: getHttpBundleCacheDir(),
     importMap,

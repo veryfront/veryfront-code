@@ -22,6 +22,25 @@ function hasRealDeno(): boolean {
     typeof Deno.build.os === "string";
 }
 
+/**
+ * Detect if running in a compiled Deno binary.
+ * In compiled binaries, Deno.mainModule starts with "file://$deno$/" (internal bundle path)
+ * instead of a real file path like "file:///path/to/script.ts".
+ *
+ * This matters because compiled Deno binaries CANNOT dynamically import from HTTP URLs
+ * at runtime - the imports must be pre-included at compile time or cached to local files.
+ */
+function isDenoCompiledBinary(): boolean {
+  if (!hasRealDeno()) return false;
+  try {
+    // In compiled binaries, mainModule is "file://$deno$/..." or similar internal path
+    const mainModule = Deno.mainModule;
+    return mainModule.includes("$deno$") || mainModule.includes("/deno-compile/");
+  } catch {
+    return false;
+  }
+}
+
 function hasCloudflareGlobals(): boolean {
   return "caches" in globalThis && "WebSocketPair" in globalThis;
 }
@@ -34,6 +53,13 @@ export const isNode: boolean = !isBun && hasNodeProcess();
 
 /** True if running in real Deno runtime (not dnt shim) */
 export const isDeno: boolean = !isNode && !isBun && hasRealDeno();
+
+/**
+ * True if running in a compiled Deno binary.
+ * Compiled binaries cannot dynamically import HTTP URLs - they must use local file:// paths.
+ * This is evaluated once at module load time.
+ */
+export const isDenoCompiled: boolean = isDeno && isDenoCompiledBinary();
 
 /** True if running in Cloudflare Workers runtime */
 export const isCloudflare: boolean = hasCloudflareGlobals();

@@ -12,7 +12,7 @@ import { gunzipSync } from "node:zlib";
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { isDeno, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
@@ -439,14 +439,19 @@ function resolveBareSpecifier(
 async function cacheHttpModule(url: string, options: CacheOptions): Promise<string | null> {
   const normalizedUrl = normalizeHttpUrl(url);
 
-  // For Deno: Skip React core modules (prevents multiple instances).
+  // For Deno runtime (not compiled): Skip React core modules (prevents multiple instances).
   // All packages use external=react and import from the same esm.sh URL.
-  // For Node.js: Must cache React to disk because Node.js can't import HTTP URLs.
+  // For Node.js and compiled Deno binaries: Must cache React to disk because they can't
+  // dynamically import HTTP URLs at runtime.
   // The cached esm.sh bundles are ESM-compatible and work with dynamic import().
-  if (isDeno && isReactCoreUrl(normalizedUrl)) {
-    logger.debug("[HTTP-CACHE] Skipping React core module for Deno (prevents multiple instances)", {
-      url: normalizedUrl,
-    });
+  const canDoNativeHttpImports = isDeno && !isDenoCompiled;
+  if (canDoNativeHttpImports && isReactCoreUrl(normalizedUrl)) {
+    logger.debug(
+      "[HTTP-CACHE] Skipping React core module for Deno runtime (prevents multiple instances)",
+      {
+        url: normalizedUrl,
+      },
+    );
     return null;
   }
 
@@ -703,10 +708,11 @@ async function resolveSpecifier(
 ): Promise<string | null> {
   if (isExternalScheme(specifier) || isInternalBare(specifier)) return null;
 
-  // For Deno: Keep npm: specifiers as-is (Deno resolves them natively with auto-dedup)
-  // For other runtimes: Convert to esm.sh and cache locally (or return bare specifier for React)
+  // For Deno runtime (not compiled): Keep npm: specifiers as-is (Deno resolves them natively with auto-dedup)
+  // For other runtimes and compiled binaries: Convert to esm.sh and cache locally (or return bare specifier for React)
   if (specifier.startsWith("npm:")) {
-    if (isDeno) {
+    const canDoNativeNpmImports = isDeno && !isDenoCompiled;
+    if (canDoNativeNpmImports) {
       return specifier; // Let Deno's native npm resolution handle it
     }
     const bareSpecifier = specifier.slice(4); // Remove "npm:" prefix
@@ -728,9 +734,10 @@ async function resolveSpecifier(
 
     const resolved = new URL(specifier, baseUrl).toString();
 
-    // For Deno: Return the full esm.sh URL for React core (not cached, to prevent multiple instances).
-    // For Node.js: Cache React like other modules (Node.js can't import HTTP URLs).
-    if (isDeno && isReactCoreUrl(resolved)) {
+    // For Deno runtime (not compiled): Return the full esm.sh URL for React core (not cached, to prevent multiple instances).
+    // For Node.js and compiled Deno binaries: Cache React like other modules (they can't import HTTP URLs).
+    const canDoNativeHttpImports = isDeno && !isDenoCompiled;
+    if (canDoNativeHttpImports && isReactCoreUrl(resolved)) {
       return normalizeHttpUrl(resolved);
     }
 
