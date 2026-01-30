@@ -1,5 +1,7 @@
 import { __unstable__loadDesignSystem, compile } from "tailwindcss";
 import plugin from "tailwindcss/plugin";
+import defaultTheme from "tailwindcss/defaultTheme";
+import colors from "tailwindcss/colors";
 import { serverLogger as logger } from "#veryfront/utils";
 import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
 import {
@@ -13,9 +15,17 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { minifyCSS } from "#veryfront/build/asset-pipeline/tailwind-processor/css-utils.ts";
 
-// Set up global shim for tailwindcss/plugin - used by dynamically loaded plugins
+// Set up global shims for tailwindcss subpaths - used by dynamically loaded plugins
 (globalThis as Record<string, unknown>).__tailwindPluginShim = {
   default: plugin,
+  __esModule: true,
+};
+(globalThis as Record<string, unknown>).__tailwindDefaultThemeShim = {
+  default: defaultTheme,
+  __esModule: true,
+};
+(globalThis as Record<string, unknown>).__tailwindColorsShim = {
+  default: colors,
   __esModule: true,
 };
 
@@ -644,12 +654,25 @@ export async function loadModuleFromEsmSh(packageName: string): Promise<unknown>
   }
   let code = await bundleResponse.text();
 
-  // Step 4: Rewrite tailwindcss/plugin import to use our global shim
-  // The bundle contains: import*as __0$ from"tailwindcss/plugin"
-  const tailwindImport = 'import*as __0$ from"tailwindcss/plugin"';
-  if (code.includes(tailwindImport)) {
-    code = code.replace(tailwindImport, "const __0$ = globalThis.__tailwindPluginShim");
-    logger.debug("[tailwind] Rewrote tailwindcss/plugin import to use global shim");
+  // Step 4: Rewrite tailwindcss/* imports to use our global shims
+  // The bundle contains imports like: import*as __0$ from"tailwindcss/plugin"
+  // Variable names can be __0$, __1$, __2$, etc. so we use regex
+  const shimMap: Record<string, string> = {
+    "tailwindcss/plugin": "__tailwindPluginShim",
+    "tailwindcss/defaultTheme": "__tailwindDefaultThemeShim",
+    "tailwindcss/colors": "__tailwindColorsShim",
+  };
+
+  for (const [importPath, shimName] of Object.entries(shimMap)) {
+    // Match: import*as __N$ from"tailwindcss/plugin" (where N is any number)
+    const importRegex = new RegExp(
+      `import\\*as\\s+(__\\d+\\$)\\s+from["']${importPath.replace("/", "\\/")}["']`,
+      "g",
+    );
+    code = code.replace(importRegex, (_, varName) => {
+      logger.debug(`[tailwind] Rewrote ${importPath} import to use global shim`, { varName });
+      return `const ${varName} = globalThis.${shimName}`;
+    });
   }
 
   // Step 5: Write to temp file and import
