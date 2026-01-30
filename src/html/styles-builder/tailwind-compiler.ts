@@ -597,6 +597,19 @@ export function extractCandidatesFromFiles(
   return candidates;
 }
 
+/**
+ * Known Tailwind plugins with pinned versions.
+ * These are bundled into the compiled binary with --include.
+ * The version MUST match what's used in .github/workflows/cicd.yml.
+ */
+const PINNED_PLUGIN_VERSIONS: Record<string, string> = {
+  "tailwindcss-animate": "1.0.7",
+  "@tailwindcss/typography": "0.5.19",
+  "@tailwindcss/forms": "0.5.11",
+  "tailwind-scrollbar-hide": "2.0.0",
+  daisyui: "5.5.14",
+};
+
 async function loadPlugin(
   id: string,
   pluginCache: Map<string, unknown>,
@@ -616,7 +629,9 @@ async function loadPlugin(
 
     if (isDeno) {
       // Deno supports HTTP imports natively
-      const url = `https://esm.sh/${id}`;
+      // Use pinned versions for known plugins (bundled into compiled binary)
+      const version = PINNED_PLUGIN_VERSIONS[id];
+      const url = version ? `https://esm.sh/${id}@${version}` : `https://esm.sh/${id}`;
       logger.debug("[tailwind] Loading plugin via esm.sh", { id, url });
       mod = await import(url);
     } else {
