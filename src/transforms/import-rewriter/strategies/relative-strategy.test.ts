@@ -48,26 +48,35 @@ describe("RelativeStrategy", () => {
   });
 
   describe("rewrite", () => {
-    it("should normalize .tsx extension to .js for SSR", () => {
+    it("should resolve to module server URL for SSR when moduleServerUrl is available", () => {
+      // Critical for compiled Deno binaries - framework files need to resolve via module server
       const result = relativeStrategy.rewrite(
         makeInfo("./component.tsx"),
         makeCtx({ target: "ssr" }),
       );
+      assertEquals(result.specifier, "http://localhost:3000/_vf_modules/pages/component.js");
+    });
+
+    it("should normalize .tsx extension to .js for SSR when no moduleServerUrl", () => {
+      const result = relativeStrategy.rewrite(
+        makeInfo("./component.tsx"),
+        makeCtx({ target: "ssr", moduleServerUrl: undefined }),
+      );
       assertEquals(result.specifier, "./component.js");
     });
 
-    it("should normalize .ts extension to .js for SSR", () => {
+    it("should normalize .ts extension to .js for SSR when no moduleServerUrl", () => {
       const result = relativeStrategy.rewrite(
         makeInfo("./utils.ts"),
-        makeCtx({ target: "ssr" }),
+        makeCtx({ target: "ssr", moduleServerUrl: undefined }),
       );
       assertEquals(result.specifier, "./utils.js");
     });
 
-    it("should return null for .js in SSR (no change needed)", () => {
+    it("should return null for .js in SSR when no moduleServerUrl (no change needed)", () => {
       const result = relativeStrategy.rewrite(
         makeInfo("./utils.js"),
-        makeCtx({ target: "ssr" }),
+        makeCtx({ target: "ssr", moduleServerUrl: undefined }),
       );
       assertEquals(result.specifier, null);
     });

@@ -24,29 +24,27 @@ export class RelativeStrategy implements ImportRewriteStrategy {
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
     const specifier = info.specifier;
 
-    if (ctx.target === "ssr") {
-      // SSR: Normalize extension to .js
-      if (/\.(tsx?|jsx|mdx)$/.test(specifier)) {
-        return { specifier: normalizeExtension(specifier) };
-      }
-      return { specifier: null };
-    }
-
-    // Browser: Resolve to module server URL
+    // Normalize extension for TypeScript/JSX files
     const rewrittenSpecifier = /\.(tsx?|jsx)$/.test(specifier)
       ? normalizeExtension(specifier)
       : specifier;
 
-    if (!ctx.moduleServerUrl) {
-      return { specifier: rewrittenSpecifier };
+    // For both SSR and browser: if moduleServerUrl is available, resolve to module server URL.
+    // This is critical for compiled Deno binaries where framework files are served via module server.
+    // Without this, relative imports in framework files would resolve to compiled binary paths,
+    // causing multiple React instances (bundled-in vs esm.sh) and breaking hooks.
+    if (ctx.moduleServerUrl) {
+      const relativeFilePath = this.getRelativeFilePath(ctx.filePath, ctx.projectDir);
+      const fileDir = relativeFilePath.substring(0, relativeFilePath.lastIndexOf("/"));
+      const resolvedPath = this.resolveRelativePath(fileDir, rewrittenSpecifier);
+      return { specifier: buildModuleServerUrl(ctx.moduleServerUrl, resolvedPath) };
     }
 
-    // Resolve the relative path from the current file
-    const relativeFilePath = this.getRelativeFilePath(ctx.filePath, ctx.projectDir);
-    const fileDir = relativeFilePath.substring(0, relativeFilePath.lastIndexOf("/"));
-    const resolvedPath = this.resolveRelativePath(fileDir, rewrittenSpecifier);
-
-    return { specifier: buildModuleServerUrl(ctx.moduleServerUrl, resolvedPath) };
+    // No module server URL: just normalize the extension
+    if (/\.(tsx?|jsx|mdx)$/.test(specifier)) {
+      return { specifier: rewrittenSpecifier };
+    }
+    return { specifier: null };
   }
 
   private getRelativeFilePath(filePath: string, projectDir: string): string {
