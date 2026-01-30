@@ -41,14 +41,18 @@ describe("modules/import-map/default-import-map", () => {
       assert("veryfront/react/fonts" in imports, "should have 'veryfront/react/fonts'");
     });
 
-    it("should map veryfront aliases to file:// URLs", () => {
+    it("should map veryfront aliases to module server URLs", () => {
       const map = getDefaultImportMap();
       const imports = map.imports;
       assertExists(imports);
 
       const headUrl = imports["veryfront/head"];
       assertExists(headUrl);
-      assert(headUrl.startsWith("file://"), `Expected file:// URL but got: ${headUrl}`);
+      assert(
+        headUrl.startsWith("/_vf_modules/_veryfront/"),
+        `Expected module server URL but got: ${headUrl}`,
+      );
+      assert(headUrl.includes("?ssr=true"), `Expected ssr=true param but got: ${headUrl}`);
     });
 
     it("should map veryfront/head and veryfront/react/head to the same file", () => {

@@ -1,39 +1,26 @@
 import type { ImportMapConfig } from "./types.ts";
 import { getReactImportMap } from "#veryfront/transforms/esm/package-registry.ts";
-import { isDeno as isRealDeno } from "#veryfront/platform/compat/runtime.ts";
 
-function ensureTrailingSlash(path: string): string {
-  return path.endsWith("/") ? path : `${path}/`;
-}
-
-function getFrameworkRoot(): string {
-  try {
-    return ensureTrailingSlash(new URL("../../..", import.meta.url).pathname);
-  } catch {
-    // Fallback for environments where import.meta.url doesn't work correctly
-    const cwd = (typeof Deno !== "undefined" && Deno.cwd?.()) ||
-      (typeof process !== "undefined" && process.cwd?.());
-
-    if (cwd) return ensureTrailingSlash(cwd);
-
-    throw new Error(
-      "Unable to determine framework root: import.meta.url is unavailable and neither Deno.cwd() nor process.cwd() are supported in this environment.",
-    );
-  }
-}
-
+/**
+ * Get the veryfront framework import map for SSR.
+ *
+ * Uses module server URLs (/_vf_modules/_veryfront/...) instead of file:// URLs.
+ * This ensures framework code goes through the same SSR transform pipeline as user code,
+ * with React imports rewritten to the same esm.sh URLs - preventing dual React instances.
+ *
+ * The module server (module-server.ts) resolves _veryfront/ paths to the framework source
+ * and applies the same transforms including applySSRImportRewrites().
+ */
 function getVeryfrontSsrImportMap(): Record<string, string> {
-  const srcPath = `file://${getFrameworkRoot()}src`;
+  // Use module server URLs so framework code goes through SSR transform.
+  // This ensures React imports in framework components (like Head.tsx) get
+  // rewritten to the same esm.sh URLs as user code - single React instance.
+  const base = "/_vf_modules/_veryfront";
 
-  // In Deno source, files have .tsx/.ts extensions
-  // In npm package (Node.js/Bun), dnt transforms to .js
-  const tsxExt = isRealDeno ? ".tsx" : ".js";
-  const tsExt = isRealDeno ? ".ts" : ".js";
-
-  const head = `${srcPath}/react/components/Head${tsxExt}`;
-  const router = `${srcPath}/react/router/index${tsExt}`;
-  const context = `${srcPath}/react/context/index${tsExt}`;
-  const fonts = `${srcPath}/react/fonts/index${tsExt}`;
+  const head = `${base}/react/components/Head.js?ssr=true`;
+  const router = `${base}/react/router/index.js?ssr=true`;
+  const context = `${base}/react/context/index.js?ssr=true`;
+  const fonts = `${base}/react/fonts/index.js?ssr=true`;
 
   return {
     "veryfront/head": head,

@@ -32,10 +32,10 @@ function getVersionedPathCacheKey(normalizedPath: string): string {
 }
 
 const VERYFRONT_IMPORT_MAP: Record<string, string> = {
-  "veryfront/head": "/_vf_modules/react/components/Head.js",
-  "veryfront/router": "/_vf_modules/react/router/index.js",
-  "veryfront/context": "/_vf_modules/react/context/index.js",
-  "veryfront/fonts": "/_vf_modules/react/fonts/index.js",
+  "veryfront/head": "/_vf_modules/_veryfront/react/components/Head.js",
+  "veryfront/router": "/_vf_modules/_veryfront/react/router/index.js",
+  "veryfront/context": "/_vf_modules/_veryfront/react/context/index.js",
+  "veryfront/fonts": "/_vf_modules/_veryfront/react/fonts/index.js",
 };
 
 function rewriteVeryfrontImports(code: string): string {
@@ -144,13 +144,16 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     it("rewrites known veryfront/* imports to /_vf_modules/ paths", () => {
       const code = `import Head from "veryfront/head";`;
       const result = rewriteVeryfrontImports(code);
-      assertEquals(result, `import Head from "/_vf_modules/react/components/Head.js";`);
+      assertEquals(result, `import Head from "/_vf_modules/_veryfront/react/components/Head.js";`);
     });
 
     it("rewrites veryfront/router", () => {
       const code = `import { useRouter } from "veryfront/router";`;
       const result = rewriteVeryfrontImports(code);
-      assertEquals(result, `import { useRouter } from "/_vf_modules/react/router/index.js";`);
+      assertEquals(
+        result,
+        `import { useRouter } from "/_vf_modules/_veryfront/react/router/index.js";`,
+      );
     });
 
     it("leaves unknown veryfront/* specifiers unchanged", () => {
@@ -166,15 +169,15 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
         `import other from "other-lib";`,
       ].join("\n");
       const result = rewriteVeryfrontImports(code);
-      assertEquals(result.includes("/_vf_modules/react/components/Head.js"), true);
-      assertEquals(result.includes("/_vf_modules/react/router/index.js"), true);
+      assertEquals(result.includes("/_vf_modules/_veryfront/react/components/Head.js"), true);
+      assertEquals(result.includes("/_vf_modules/_veryfront/react/router/index.js"), true);
       assertEquals(result.includes(`from "other-lib"`), true);
     });
 
     it("handles single-quoted imports", () => {
       const code = `import Head from 'veryfront/head';`;
       const result = rewriteVeryfrontImports(code);
-      assertEquals(result, `import Head from "/_vf_modules/react/components/Head.js";`);
+      assertEquals(result, `import Head from "/_vf_modules/_veryfront/react/components/Head.js";`);
     });
 
     it("does not rewrite non-veryfront imports", () => {

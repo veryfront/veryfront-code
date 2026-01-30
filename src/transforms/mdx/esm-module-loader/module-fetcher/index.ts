@@ -86,15 +86,19 @@ function getTransformCacheKey(
 }
 
 /**
- * Map veryfront/* bare specifiers to /_vf_modules/ paths for MDX module loading.
+ * Map veryfront/* bare specifiers to /_vf_modules/_veryfront/ paths for MDX module loading.
  * These need to be resolved to file paths because the cached .mjs files are
  * dynamically imported and don't have access to deno.json import maps.
+ *
+ * Uses /_vf_modules/_veryfront/ prefix so framework code goes through the module server
+ * transform pipeline, ensuring React imports get rewritten to the same esm.sh URLs as
+ * user code - preventing dual React instances.
  */
 const VERYFRONT_IMPORT_MAP: Record<string, string> = {
-  "veryfront/head": "/_vf_modules/react/components/Head.js",
-  "veryfront/router": "/_vf_modules/react/router/index.js",
-  "veryfront/context": "/_vf_modules/react/context/index.js",
-  "veryfront/fonts": "/_vf_modules/react/fonts/index.js",
+  "veryfront/head": "/_vf_modules/_veryfront/react/components/Head.js",
+  "veryfront/router": "/_vf_modules/_veryfront/react/router/index.js",
+  "veryfront/context": "/_vf_modules/_veryfront/react/context/index.js",
+  "veryfront/fonts": "/_vf_modules/_veryfront/react/fonts/index.js",
 };
 
 /**
