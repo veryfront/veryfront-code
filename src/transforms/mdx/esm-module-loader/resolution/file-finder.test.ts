@@ -118,4 +118,75 @@ describe("resolveModuleFile", () => {
       "src/react/fonts/index.ts",
     );
   });
+
+  // === Production path format tests ===
+  // These tests use the EXACT paths that production generates, including:
+  // - _veryfront/ namespace prefix (from import map)
+  // - ?ssr=true query parameters (from SSR import rewriter)
+  // This prevents regressions where tests pass but production fails.
+
+  it("resolves _veryfront/ prefixed paths (production import map format)", async () => {
+    // This is the actual path format used in production via VERYFRONT_IMPORT_MAP
+    await assertResolvedModuleFile(
+      "_vf_modules/_veryfront/react/components/Head.js",
+      "src/react/components/Head.tsx",
+      "Head",
+    );
+  });
+
+  it("resolves paths with ?ssr=true query parameter", async () => {
+    // SSR import rewriter appends ?ssr=true to framework imports
+    await assertResolvedModuleFile(
+      "_vf_modules/_veryfront/react/components/Head.js?ssr=true",
+      "src/react/components/Head.tsx",
+      "Head",
+    );
+  });
+
+  it("resolves all production import map paths", async () => {
+    // Contract test: verify all paths in VERYFRONT_IMPORT_MAP are resolvable
+    // This catches mismatches between import map output and file-finder expectations
+    const productionPaths = [
+      "/_vf_modules/_veryfront/react/components/Head.js",
+      "/_vf_modules/_veryfront/react/router/index.js",
+      "/_vf_modules/_veryfront/react/context/index.js",
+      "/_vf_modules/_veryfront/react/fonts/index.js",
+    ];
+
+    for (const path of productionPaths) {
+      // Strip leading slash (file-finder expects paths without leading /)
+      const normalizedPath = path.replace(/^\//, "");
+      const result = await resolveModuleFile(normalizedPath, mockAdapter, undefined);
+      assertExists(result, `Production path should resolve: ${path}`);
+    }
+  });
+
+  it("resolves all production import map paths with ?ssr=true", async () => {
+    // Same as above but with SSR query parameter
+    const productionPathsWithSSR = [
+      "_vf_modules/_veryfront/react/components/Head.js?ssr=true",
+      "_vf_modules/_veryfront/react/router/index.js?ssr=true",
+      "_vf_modules/_veryfront/react/context/index.js?ssr=true",
+      "_vf_modules/_veryfront/react/fonts/index.js?ssr=true",
+    ];
+
+    for (const path of productionPathsWithSSR) {
+      const result = await resolveModuleFile(path, mockAdapter, undefined);
+      assertExists(result, `Production SSR path should resolve: ${path}`);
+    }
+  });
+
+  it("handles various query parameter formats", async () => {
+    // Edge cases for query parameter stripping
+    const pathsWithQueryParams = [
+      "_vf_modules/_veryfront/react/router/index.js?ssr=true",
+      "_vf_modules/_veryfront/react/router/index.js?ssr=true&cache=false",
+      "_vf_modules/_veryfront/react/router/index.js?",
+    ];
+
+    for (const path of pathsWithQueryParams) {
+      const result = await resolveModuleFile(path, mockAdapter, undefined);
+      assertExists(result, `Should resolve path with query params: ${path}`);
+    }
+  });
 });

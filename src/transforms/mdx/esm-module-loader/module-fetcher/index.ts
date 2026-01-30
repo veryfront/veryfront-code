@@ -93,6 +93,10 @@ function getTransformCacheKey(
  * Uses /_vf_modules/_veryfront/ prefix so framework code goes through the module server
  * transform pipeline, ensuring React imports get rewritten to the same esm.sh URLs as
  * user code - preventing dual React instances.
+ *
+ * IMPORTANT: If you change these paths, also update the contract tests in:
+ * - resolution/file-finder.test.ts ("resolves all production import map paths")
+ * These tests ensure paths are resolvable by the file-finder in production.
  */
 const VERYFRONT_IMPORT_MAP: Record<string, string> = {
   "veryfront/head": "/_vf_modules/_veryfront/react/components/Head.js",
