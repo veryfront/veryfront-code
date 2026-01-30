@@ -60,7 +60,7 @@ export async function handleClientScript(
   adapter: RuntimeAdapter,
 ): Promise<Response> {
   const path = new URL(
-    "../../../../../rendering/rsc/client-boot.ts",
+    "../../../../rendering/rsc/client-boot.ts",
     import.meta.url,
   ).pathname;
 
@@ -82,7 +82,7 @@ export async function handleClientScript(
 
 export async function handleDomScript(adapter: RuntimeAdapter): Promise<Response> {
   const path = new URL(
-    "../../../../../rendering/rsc/client-dom.ts",
+    "../../../../rendering/rsc/client-dom.ts",
     import.meta.url,
   ).pathname;
 

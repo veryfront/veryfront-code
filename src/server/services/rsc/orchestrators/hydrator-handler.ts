@@ -12,7 +12,7 @@ export class HydratorHandler {
   async handle(): Promise<Response> {
     const hydratorPath = pathHelper.join(
       pathHelper.dirname(pathHelper.fromFileUrl(import.meta.url)),
-      "../../../../../rendering/rsc/hydrate-client.ts",
+      "../../../../rendering/rsc/hydrate-client.ts",
     );
 
     try {

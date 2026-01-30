@@ -20,6 +20,7 @@ import {
 } from "#veryfront/utils/path-utils.ts";
 import { normalizeChunkPath } from "#veryfront/utils/chunk-utils.ts";
 import { computeEtag } from "../../handlers/utils/etag.ts";
+import { getContentType as getContentTypeFromExt } from "../../handlers/utils/content-types.ts";
 
 /**
  * Result of resolving a static file
@@ -310,37 +311,7 @@ export class StaticFileService {
    * Get content type for file extension
    */
   private getContentType(ext: string): string {
-    // Import dynamically to avoid circular dependency
-    // The handler already imports content-types, so this is just for the service interface
-    const contentTypes: Record<string, string> = {
-      ".html": "text/html; charset=utf-8",
-      ".css": "text/css; charset=utf-8",
-      ".js": "text/javascript; charset=utf-8",
-      ".mjs": "text/javascript; charset=utf-8",
-      ".json": "application/json; charset=utf-8",
-      ".png": "image/png",
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".gif": "image/gif",
-      ".svg": "image/svg+xml",
-      ".ico": "image/x-icon",
-      ".woff": "font/woff",
-      ".woff2": "font/woff2",
-      ".ttf": "font/ttf",
-      ".eot": "application/vnd.ms-fontobject",
-      ".txt": "text/plain; charset=utf-8",
-      ".xml": "application/xml; charset=utf-8",
-      ".pdf": "application/pdf",
-      ".zip": "application/zip",
-      ".webp": "image/webp",
-      ".avif": "image/avif",
-      ".mp4": "video/mp4",
-      ".webm": "video/webm",
-      ".mp3": "audio/mpeg",
-      ".wav": "audio/wav",
-      ".ogg": "audio/ogg",
-    };
-    return contentTypes[ext.toLowerCase()] || "application/octet-stream";
+    return getContentTypeFromExt(ext);
   }
 
   /**
