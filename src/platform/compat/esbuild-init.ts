@@ -1,12 +1,10 @@
 /**
  * Early esbuild binary initialization for deno compile.
- *
- * This module MUST be imported at the very start of the CLI entry point,
- * BEFORE any other imports that might load esbuild. This ensures the
- * ESBUILD_BINARY_PATH environment variable is set before esbuild reads it.
+ * MUST be imported at CLI entry point BEFORE any esbuild imports.
  */
 
 import process from "node:process";
+import { isDenoCompiled } from "./runtime.ts";
 
 const ESBUILD_VERSION = "0.20.2";
 
@@ -16,16 +14,6 @@ function getTempDir(): string {
 
 function getEsbuildCacheDir(): string {
   return `${getTempDir()}/veryfront-esbuild`;
-}
-
-function isDenoCompiled(): boolean {
-  try {
-    const denoExecPath = Deno.execPath().toLowerCase();
-    const hasDenoInPath = denoExecPath.includes("/deno") || denoExecPath.includes("\\deno");
-    return !hasDenoInPath || denoExecPath.includes("veryfront");
-  } catch {
-    return false;
-  }
 }
 
 function getEsbuildBinaryName(): string {
@@ -101,7 +89,7 @@ async function extractEsbuildBinary(): Promise<string | null> {
 }
 
 // Run initialization immediately when this module is imported
-if (!Deno.env.get("ESBUILD_BINARY_PATH") && isDenoCompiled()) {
+if (!Deno.env.get("ESBUILD_BINARY_PATH") && isDenoCompiled) {
   try {
     const binaryPath = await extractEsbuildBinary();
     if (binaryPath) {

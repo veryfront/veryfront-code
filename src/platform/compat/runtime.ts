@@ -23,19 +23,21 @@ function hasRealDeno(): boolean {
 }
 
 /**
- * Detect if running in a compiled Deno binary.
- * In compiled binaries, Deno.mainModule starts with "file://$deno$/" (internal bundle path)
- * instead of a real file path like "file:///path/to/script.ts".
- *
- * This matters because compiled Deno binaries CANNOT dynamically import from HTTP URLs
- * at runtime - the imports must be pre-included at compile time or cached to local files.
+ * Check if an executable path is a compiled Deno binary.
+ * Detects by binary name: "deno" or "deno.exe" = standard runtime, anything else = compiled.
+ * @internal Exported for testing only.
  */
+export function testDenoCompiledDetection(execPath: string): boolean {
+  if (!execPath) return false;
+  const binaryName = execPath.split(/[/\\]/).pop()?.toLowerCase() || "";
+  return binaryName !== "deno" && binaryName !== "deno.exe" && binaryName !== "";
+}
+
+/** Compiled Deno binaries cannot dynamically import HTTP URLs at runtime. */
 function isDenoCompiledBinary(): boolean {
   if (!hasRealDeno()) return false;
   try {
-    // In compiled binaries, mainModule is "file://$deno$/..." or similar internal path
-    const mainModule = Deno.mainModule;
-    return mainModule.includes("$deno$") || mainModule.includes("/deno-compile/");
+    return testDenoCompiledDetection(Deno.execPath());
   } catch {
     return false;
   }

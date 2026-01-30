@@ -1,24 +1,19 @@
 /**
  * esbuild compatibility layer with deno compile support.
- *
- * In deno compile, esbuild's native binary is embedded in VFS but cannot be
- * executed from there. This module extracts it to the system temp dir on first use.
- *
- * IMPORTANT: We must set ESBUILD_BINARY_PATH in BOTH Deno.env AND process.env
- * because esbuild (a Node module) reads from process.env, and in Deno's Node
- * compatibility layer these may not always be perfectly synchronized.
+ * Extracts esbuild binary from VFS to temp dir on first use in compiled binaries.
+ * Sets ESBUILD_BINARY_PATH in both Deno.env and process.env (esbuild reads process.env).
  */
 
 export type { BuildOptions, BuildResult, TransformOptions, TransformResult } from "esbuild";
 
-// Import process from node:process for proper Node compatibility
-// esbuild uses process.env.ESBUILD_BINARY_PATH, not Deno.env
-import process from "node:process";
+import nodeProcess from "node:process";
+import { getEnv, setEnv } from "./process.ts";
+import { isDenoCompiled } from "./runtime.ts";
 
 const ESBUILD_VERSION = "0.20.2";
 
 function getTempDir(): string {
-  return Deno.env.get("TMPDIR") ?? Deno.env.get("TEMP") ?? Deno.env.get("TMP") ?? "/tmp";
+  return getEnv("TMPDIR") ?? getEnv("TEMP") ?? getEnv("TMP") ?? "/tmp";
 }
 
 function getEsbuildCacheDir(): string {
@@ -28,16 +23,6 @@ function getEsbuildCacheDir(): string {
 let esbuildModule: typeof import("esbuild") | null = null;
 let setupComplete = false;
 let setupPromise: Promise<void> | null = null;
-
-function isDenoCompiled(): boolean {
-  try {
-    const denoExecPath = Deno.execPath().toLowerCase();
-    const hasDenoInPath = denoExecPath.includes("/deno") || denoExecPath.includes("\\deno");
-    return !hasDenoInPath || denoExecPath.includes("veryfront");
-  } catch {
-    return false;
-  }
-}
 
 function getEsbuildBinaryName(): string {
   const archMap: Record<string, string> = {
@@ -148,23 +133,20 @@ async function ensureEsbuildBinary(): Promise<void> {
   }
 
   setupPromise = (async () => {
-    if (Deno.env.get("ESBUILD_BINARY_PATH")) {
+    if (getEnv("ESBUILD_BINARY_PATH")) {
       setupComplete = true;
       return;
     }
 
-    if (!isDenoCompiled()) {
+    if (!isDenoCompiled) {
       setupComplete = true;
       return;
     }
 
     try {
       const binaryPath = await extractEsbuildBinary();
-
-      // Set in both Deno.env AND process.env to ensure esbuild sees it
-      // esbuild is a Node module that reads from process.env.ESBUILD_BINARY_PATH
-      Deno.env.set("ESBUILD_BINARY_PATH", binaryPath);
-      process.env.ESBUILD_BINARY_PATH = binaryPath;
+      setEnv("ESBUILD_BINARY_PATH", binaryPath);
+      nodeProcess.env.ESBUILD_BINARY_PATH = binaryPath;
 
       console.log(`[esbuild] Set ESBUILD_BINARY_PATH=${binaryPath}`);
     } catch (error) {
