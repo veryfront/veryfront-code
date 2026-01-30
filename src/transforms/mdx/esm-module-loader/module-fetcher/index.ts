@@ -336,7 +336,9 @@ function recordModuleToSession(normalizedPath: string): void {
  * Normalize a module path, resolving relative paths if a parent is provided.
  */
 function normalizePath(modulePath: string, parentModulePath?: string): string {
-  let normalizedPath = modulePath.replace(/^\//, "");
+  // Strip query parameters (e.g., ?ssr=true) as they're not part of the file path
+  // and cause issues with cache key validation (? is not an allowed character)
+  let normalizedPath = modulePath.replace(/\?.*$/, "").replace(/^\//, "");
 
   if (!parentModulePath) return normalizedPath;
   if (!modulePath.startsWith("./") && !modulePath.startsWith("../")) return normalizedPath;
