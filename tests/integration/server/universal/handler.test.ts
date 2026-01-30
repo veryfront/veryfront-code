@@ -8,7 +8,7 @@ import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "../../../../src/server/universal-handler/index.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
-import { setServerInitialized } from "../../../../src/server/handlers/monitoring/health.ts";
+import { setServerInitialized } from "../../../../src/server/handlers/monitoring/health.handler.ts";
 import { isDeno } from "../../../../src/platform/compat/runtime.ts";
 
 describe(

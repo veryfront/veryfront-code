@@ -1,6 +1,6 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { HealthHandler, isServerInitialized, setServerInitialized } from "./health.ts";
+import { HealthHandler, isServerInitialized, setServerInitialized } from "./health.handler.ts";
 
 describe("server/handlers/monitoring/health", () => {
   describe("setServerInitialized / isServerInitialized", () => {

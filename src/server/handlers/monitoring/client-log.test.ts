@@ -1,6 +1,6 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ClientLogHandler } from "./client-log.ts";
+import { ClientLogHandler } from "./client-log.handler.ts";
 
 describe("server/handlers/monitoring/client-log", () => {
   describe("ClientLogHandler metadata", () => {
