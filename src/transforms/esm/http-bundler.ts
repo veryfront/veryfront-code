@@ -255,10 +255,13 @@ export function bundleHttpImports(
   return replaceSpecifiers(code, (specifier) => {
     // Handle relative esm.sh paths like "/react-dom?target=es2022" or "/hoist-non-react-statics@..."
     // These are returned by esm.sh stub modules and need to be converted to full URLs
-    if (specifier.startsWith("/") && !specifier.startsWith("//")) {
-      // Skip /_vf_modules/ paths - these are framework module URLs served locally, not esm.sh paths
-      if (specifier.startsWith("/_vf_modules/")) return null;
-
+    // Skip Veryfront module paths - they're served by the module server, not esm.sh
+    if (
+      specifier.startsWith("/") &&
+      !specifier.startsWith("//") &&
+      !specifier.startsWith("/_vf_modules/") &&
+      !specifier.startsWith("/_veryfront/")
+    ) {
       const fullUrl = `https://esm.sh${specifier}`;
       const isReactPackage = /^\/react(-dom)?(@|\/|\?|$)/.test(specifier);
 
