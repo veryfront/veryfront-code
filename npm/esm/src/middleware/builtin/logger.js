@@ -107,10 +107,32 @@ export function logger(options) {
     const format = options?.format ?? "dev";
     const skip = options?.skip;
     const isJson = format === "json";
-    const log = options?.log ??
-        (isJson ? (msg) => console.log(msg) : (msg) => serverLogger.info(msg));
-    function logError(message) {
-        log(isJson ? message : `${message} ${colors.red}[ERROR]${colors.reset}`);
+    const logFn = options?.log;
+    function logMessage(req, status, duration) {
+        if (logFn) {
+            logFn(formatLog(format, req, status, duration));
+            return;
+        }
+        if (isJson) {
+            const { pathname } = new URL(req.url);
+            const requestId = req.headers.get("x-request-id") ?? undefined;
+            const traceId = req.headers.get("x-trace-id") ?? req.headers.get("traceparent") ?? undefined;
+            const projectSlug = req.headers.get("x-project-slug") ?? undefined;
+            const userAgent = req.headers.get("user-agent") ?? undefined;
+            serverLogger.info(`${req.method} ${pathname} ${status}`, {
+                requestId,
+                traceId,
+                project_slug: projectSlug,
+                request_url: pathname,
+                durationMs: Math.round(duration),
+                method: req.method,
+                statusCode: status,
+                remoteAddr: getRemoteAddr(req),
+                ...(userAgent ? { userAgent } : {}),
+            });
+            return;
+        }
+        serverLogger.info(formatLog(format, req, status, duration));
     }
     return async (ctx, next) => {
         const req = getRequest(ctx);
@@ -121,15 +143,15 @@ export function logger(options) {
             const response = await next();
             const duration = performance.now() - start;
             if (!response) {
-                logError(formatLog(format, req, HTTP_SERVER_ERROR, duration));
+                logMessage(req, HTTP_SERVER_ERROR, duration);
                 return response;
             }
-            log(formatLog(format, req, response.status, duration));
+            logMessage(req, response.status, duration);
             return response;
         }
         catch (error) {
             const duration = performance.now() - start;
-            logError(formatLog(format, req, HTTP_SERVER_ERROR, duration));
+            logMessage(req, HTTP_SERVER_ERROR, duration);
             throw error;
         }
     };

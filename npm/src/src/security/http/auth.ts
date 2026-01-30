@@ -9,6 +9,7 @@ import type {
 } from "../../types/index.js";
 import type { AuthConfig } from "./middleware/types.js";
 import { Buffer } from "node:buffer";
+import { constantTimeEqual } from "../utils/constant-time.js";
 
 function encodeBase64(value: string): string {
   if (typeof globalThis.btoa === "function") {
@@ -106,7 +107,7 @@ export class AuthHandler extends BaseHandler {
     const expected = `Basic ${encodeBase64(`${this.basicUser}:${this.basicPass}`)}`;
     const auth = req.headers.get("authorization") || "";
 
-    if (auth === expected) return null;
+    if (constantTimeEqual(auth, expected)) return null;
 
     return this.respond(
       new dntShim.Response("Unauthorized", {
@@ -119,7 +120,12 @@ export class AuthHandler extends BaseHandler {
   private checkBearerAuth(req: dntShim.Request): HandlerResult | null {
     const auth = req.headers.get("authorization") || "";
 
-    if (auth.startsWith("Bearer ") && auth.slice(7) === this.bearerToken) return null;
+    if (
+      auth.startsWith("Bearer ") &&
+      constantTimeEqual(auth.slice(7), this.bearerToken ?? "")
+    ) {
+      return null;
+    }
 
     return this.respond(new dntShim.Response("Unauthorized", { status: 401 }));
   }

@@ -3,6 +3,8 @@ import { logger } from "../../utils/index.js";
 import { injectContext, withSpan } from "../../observability/tracing/otlp-setup.js";
 const DOMAIN_CACHE_TTL_MS = 60_000;
 const DOMAIN_CACHE_MAX_ENTRIES = 1000;
+/** Timeout for domain lookup API calls (10 seconds) */
+const DOMAIN_LOOKUP_TIMEOUT_MS = 10_000;
 const domainCache = new Map();
 const inFlightRequests = new Map();
 function normalizeDomain(domain) {
@@ -69,13 +71,15 @@ function fetchDomainLookup(domain, config) {
         const normalizedDomain = domainWithoutPort.toLowerCase();
         const url = `${config.apiBaseUrl}/projects/${encodeURIComponent(domainWithoutPort)}`;
         logger.debug("[DomainLookup] Fetching from API", { domain, url });
+        const controller = new AbortController();
+        const timeoutId = dntShim.setTimeout(() => controller.abort(), DOMAIN_LOOKUP_TIMEOUT_MS);
         try {
             const headers = new dntShim.Headers({
                 Authorization: `Bearer ${config.apiToken}`,
                 Accept: "application/json",
             });
             injectContext(headers);
-            const response = await dntShim.fetch(url, { headers });
+            const response = await dntShim.fetch(url, { headers, signal: controller.signal });
             if (response.status === 404) {
                 logger.debug("[DomainLookup] No project found for domain", { domain });
                 return null;
@@ -105,11 +109,16 @@ function fetchDomainLookup(domain, config) {
             return result;
         }
         catch (error) {
+            const isTimeout = error instanceof Error && error.name === "AbortError";
             logger.error("[DomainLookup] Failed to lookup domain", {
                 domain,
                 error: error instanceof Error ? error.message : String(error),
+                timeout: isTimeout,
             });
             return null;
+        }
+        finally {
+            clearTimeout(timeoutId);
         }
     }, { "domain.fetch.domain": domain });
 }

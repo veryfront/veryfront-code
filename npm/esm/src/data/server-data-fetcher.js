@@ -2,6 +2,7 @@ import { serverLogger } from "../utils/index.js";
 import { DATA_FETCH_TIMEOUT_MS } from "../config/defaults.js";
 import { TimeoutError, withTimeoutThrow } from "../rendering/utils/stream-utils.js";
 import { withSpan } from "../observability/tracing/otlp-setup.js";
+import { CircuitBreakerOpen, getCircuitBreaker } from "../utils/circuit-breaker.js";
 export class ServerDataFetcher {
     adapter;
     constructor(adapter) {
@@ -12,10 +13,19 @@ export class ServerDataFetcher {
             return Promise.resolve({ props: {} });
         }
         const pathname = context.url?.pathname ?? "unknown";
+        // Extract projectId from request headers (set by proxy) or use default
+        const projectId = context.request?.headers?.get("x-project-id") ?? "default";
+        // Circuit breaker per project to prevent cascade failures
+        const circuitBreaker = getCircuitBreaker(`data-fetch:${projectId}`, {
+            failureThreshold: 5,
+            resetTimeoutMs: 30_000,
+            successThreshold: 2,
+        });
         return withSpan("data.fetch_server", async () => {
             const start = performance.now();
             try {
-                const result = await withTimeoutThrow(Promise.resolve(pageModule.getServerData(context)), DATA_FETCH_TIMEOUT_MS, `getServerData for ${pathname}`);
+                // Wrap the data fetch in circuit breaker
+                const result = await circuitBreaker.execute(() => withTimeoutThrow(Promise.resolve(pageModule.getServerData(context)), DATA_FETCH_TIMEOUT_MS, `getServerData for ${pathname}`));
                 if (result.redirect)
                     return { redirect: result.redirect };
                 if (result.notFound)
@@ -27,7 +37,14 @@ export class ServerDataFetcher {
             }
             catch (error) {
                 const durationMs = Math.round(performance.now() - start);
-                if (error instanceof TimeoutError) {
+                if (error instanceof CircuitBreakerOpen) {
+                    serverLogger.warn("DATA_FETCH_CIRCUIT_OPEN circuit breaker open, failing fast", {
+                        pathname,
+                        projectId,
+                        retryAfterMs: error.nextAttemptMs,
+                    });
+                }
+                else if (error instanceof TimeoutError) {
                     serverLogger.error("DATA_FETCH_TIMEOUT getServerData timed out", {
                         pathname,
                         durationMs,
@@ -43,11 +60,14 @@ export class ServerDataFetcher {
             "data.fetch_method": "getServerData",
             "data.pathname": pathname,
             "data.timeout_ms": DATA_FETCH_TIMEOUT_MS,
+            "data.project_id": projectId,
         });
     }
+    /**
+     * Log errors unconditionally. Production errors should always be logged.
+     * @see plans/architecture-audit/010-error-handling.md
+     */
     logError(message, error, context) {
-        if (!this.adapter?.env.get("VERYFRONT_DEBUG"))
-            return;
         serverLogger.error(message, context ?? {}, error);
     }
 }

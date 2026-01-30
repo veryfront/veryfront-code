@@ -1,6 +1,7 @@
 import * as dntShim from "../../../_dnt.shims.js";
 import { BaseHandler } from "./base-handler.js";
 import { createError, toError } from "../../errors/veryfront-error.js";
+import { constantTimeEqual } from "../utils/constant-time.js";
 function encodeBase64(value) {
     if (typeof globalThis.btoa === "function") {
         try {
@@ -83,7 +84,7 @@ export class AuthHandler extends BaseHandler {
     checkBasicAuth(req) {
         const expected = `Basic ${encodeBase64(`${this.basicUser}:${this.basicPass}`)}`;
         const auth = req.headers.get("authorization") || "";
-        if (auth === expected)
+        if (constantTimeEqual(auth, expected))
             return null;
         return this.respond(new dntShim.Response("Unauthorized", {
             status: 401,
@@ -92,8 +93,10 @@ export class AuthHandler extends BaseHandler {
     }
     checkBearerAuth(req) {
         const auth = req.headers.get("authorization") || "";
-        if (auth.startsWith("Bearer ") && auth.slice(7) === this.bearerToken)
+        if (auth.startsWith("Bearer ") &&
+            constantTimeEqual(auth.slice(7), this.bearerToken ?? "")) {
             return null;
+        }
         return this.respond(new dntShim.Response("Unauthorized", { status: 401 }));
     }
 }

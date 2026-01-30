@@ -149,41 +149,15 @@ class RequestTracker {
       return;
     }
 
-    // Clean path for display
-    const displayPath = tracked.path.length > 30
-      ? tracked.path.slice(0, 27) + "..."
-      : tracked.path.padEnd(30);
-
-    // Color codes
-    const statusColor = statusCode >= 500
-      ? "\x1b[31m"
-      : statusCode >= 400
-      ? "\x1b[33m"
-      : statusCode >= 300
-      ? "\x1b[36m"
-      : "\x1b[32m";
-    const reset = "\x1b[0m";
-    const dim = "\x1b[2m";
-    const cyan = "\x1b[36m";
-
-    // Build context: project:env:release - full names, TUI handles display
-    let ctx = "";
-    if (tracked.projectSlug) {
-      const envPart = tracked.env || "dev";
-      const releasePart = tracked.releaseId || "";
-      ctx = ` ${cyan}${tracked.projectSlug}${reset}${dim}:${envPart}${
-        releasePart ? `:${releasePart}` : ""
-      }${reset}`;
-    }
-
-    // Clean format: METHOD path status duration project:env
-    console.log(
-      `  ${dim}${
-        tracked.method.padEnd(4)
-      }${reset} ${displayPath} ${statusColor}${statusCode}${reset} ${dim}${
-        String(durationMs).padStart(4)
-      }ms${reset}${ctx}`,
-    );
+    logger.info(`${tracked.method} ${tracked.path} ${statusCode}`, {
+      project_slug: tracked.projectSlug,
+      request_url: tracked.path,
+      durationMs,
+      method: tracked.method,
+      statusCode,
+      env: tracked.env,
+      release_id: tracked.releaseId,
+    });
   }
 
   getInFlightCount(): number {

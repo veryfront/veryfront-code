@@ -294,6 +294,12 @@ export const veryfrontConfigSchema = z
     })
         .partial()
         .optional(),
+    generate: z
+        .object({
+        preferredRouter: z.enum(["app-router", "pages-router"]).optional(),
+    })
+        .partial()
+        .optional(),
     tailwind: z
         .object({
         stylesheet: z.string().optional(),

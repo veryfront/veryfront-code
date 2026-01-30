@@ -149,6 +149,22 @@ export const MAX_CONCURRENT_REVALIDATIONS = getEnvNumber("MAX_CONCURRENT_REVALID
 export const MAX_CONCURRENT_HTTP_FETCHES = getEnvNumber("MAX_CONCURRENT_HTTP_FETCHES", 50);
 export const REVALIDATION_TIMEOUT_MS = getEnvNumber("REVALIDATION_TIMEOUT_MS", 15000);
 
+// Per-project fairness limit for revalidations (prevents one project from starving others)
+export const REVALIDATION_PER_PROJECT_LIMIT = getEnvNumber(
+  "REVALIDATION_PER_PROJECT_LIMIT",
+  Math.ceil(MAX_CONCURRENT_REVALIDATIONS / 3),
+);
+
+// Bundle manifest for atomic HTTP bundle group validation
+export const BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC = getEnvNumber(
+  "BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC",
+  HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE, // 24 hours (86400)
+);
+export const BUNDLE_MANIFEST_LRU_MAX_ENTRIES = getEnvNumber(
+  "BUNDLE_MANIFEST_LRU_MAX_ENTRIES",
+  5000,
+);
+
 // HTTP module cache (esm.sh, CDN bundles)
 // These bundles are immutable once fetched, so long TTLs are safe
 export const HTTP_MODULE_CACHE_MAX_ENTRIES = getEnvNumber("HTTP_MODULE_CACHE_MAX_ENTRIES", 2000);
@@ -158,10 +174,12 @@ export const HTTP_MODULE_DISTRIBUTED_TTL_SEC = getEnvNumber(
 );
 
 // Transform cache for module compilation
-// Same TTL as HTTP module cache since transforms are tied to content hashes
+// MUST be shorter than HTTP_MODULE_DISTRIBUTED_TTL_SEC (24h) so that
+// HTTP bundles always outlive the transforms that reference them.
+// 6h matches DISTRIBUTED_TRANSFORM_TTL_PRODUCTION_SEC used by the SSR loader.
 export const TRANSFORM_DISTRIBUTED_TTL_SEC = getEnvNumber(
   "TRANSFORM_DISTRIBUTED_TTL_SEC",
-  HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE, // 24 hours (86400)
+  6 * MINUTES_PER_HOUR * SECONDS_PER_MINUTE, // 6 hours (21600)
 );
 
 // Pod-level module cache (shared across all RenderPipeline instances)

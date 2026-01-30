@@ -7,6 +7,8 @@ export const HMR_FILE_WATCHER_DEBOUNCE_MS = 100;
 export const HMR_KEEP_ALIVE_INTERVAL_MS = 30000;
 export const DASHBOARD_RECONNECT_DELAY_MS = 3000;
 export const SERVER_FUNCTION_DEFAULT_TIMEOUT_MS = 30000;
+/** Default timeout for HTTP module/bundle fetch operations (30 seconds) */
+export const HTTP_FETCH_TIMEOUT_MS = 30000;
 export const PREFETCH_MAX_SIZE_BYTES = 200 * KB_IN_BYTES;
 export const PREFETCH_DEFAULT_TIMEOUT_MS = 10000;
 export const PREFETCH_DEFAULT_DELAY_MS = 200;

@@ -221,6 +221,9 @@ declare namespace _default {
         "@ai-sdk/openai": string;
         "@ai-sdk/anthropic": string;
         tailwindcss: string;
+        "tailwindcss/plugin": string;
+        "tailwindcss/defaultTheme": string;
+        "tailwindcss/colors": string;
         redis: string;
         pg: string;
         "@opentelemetry/api": string;
@@ -284,6 +287,7 @@ declare namespace _default {
         "test:e2e": string;
         "check:circular": string;
         cli: string;
+        mcp: string;
         "batch:estimate": string;
         "batch:prepare": string;
         "batch:submit": string;

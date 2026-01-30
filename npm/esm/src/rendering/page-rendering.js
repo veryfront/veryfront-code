@@ -50,11 +50,12 @@ export function handleMDXPage(pageInfo, slug, projectDir, mergedComponents, _com
             }
             catch (e) {
                 const normalizedError = ensureError(e);
-                logger.warn("generateMetadata threw for MDX page", normalizedError);
-                if (normalizedError.message.includes("ReferenceError") ||
-                    normalizedError.message.includes("SyntaxError")) {
-                    throw normalizedError;
-                }
+                logger.warn("generateMetadata threw for MDX page", {
+                    error: normalizedError.message,
+                    slug,
+                    path: pageInfo.entity.path,
+                });
+                throw normalizedError;
             }
             // Get project's React for createElement to ensure element symbols match user components
             const React = await getProjectReact();

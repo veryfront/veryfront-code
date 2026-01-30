@@ -1,54 +1,69 @@
-import * as dntShim from "../../_dnt.shims.js";
+/**
+ * Tool Registry
+ *
+ * Project-scoped registry for AI tools. Each project has its own isolated
+ * tool namespace, preventing cross-project tool access.
+ *
+ * @module
+ */
+
 import type { Tool, ToolDefinition } from "./types.js";
 import { zodToJsonSchema } from "./schema/zod-json-schema.js";
 import { agentLogger } from "../utils/logger/logger.js";
+import { ProjectScopedRegistryManager } from "../ai/registry-manager.js";
+
+const toolManager = new ProjectScopedRegistryManager<Tool>("tool");
 
 class ToolRegistryClass {
-  private tools = new Map<string, Tool>();
-
   register(id: string, toolInstance: Tool): void {
-    if (this.tools.has(id)) {
-      agentLogger.debug(`Tool "${id}" is already registered. Overwriting.`);
-    }
+    toolManager.register(id, toolInstance);
+  }
 
-    this.tools.set(id, toolInstance);
+  /**
+   * Register a framework-provided tool available to all projects.
+   */
+  registerShared(id: string, toolInstance: Tool): void {
+    toolManager.registerShared(id, toolInstance);
   }
 
   get(id: string): Tool | undefined {
-    return this.tools.get(id);
+    return toolManager.get(id);
   }
 
   has(id: string): boolean {
-    return this.tools.has(id);
+    return toolManager.has(id);
   }
 
   getAllIds(): string[] {
-    return [...this.tools.keys()];
+    return toolManager.getAllIds();
   }
 
   getAll(): Map<string, Tool> {
-    return new Map(this.tools);
+    return toolManager.getAll();
   }
 
   clear(): void {
-    this.tools.clear();
+    toolManager.clear();
+  }
+
+  /**
+   * Clear everything (for testing).
+   */
+  clearAll(): void {
+    toolManager.clearAll();
   }
 
   getToolsForProvider(): ToolDefinition[] {
-    return [...this.tools.values()].map(toolToProviderDefinition);
+    return [...this.getAll().values()].map(toolToProviderDefinition);
+  }
+
+  getStats() {
+    return toolManager.getStats();
   }
 }
 
-const TOOL_REGISTRY_KEY = "__veryfront_tool_registry__";
-
-type GlobalToolRegistry = {
-  [TOOL_REGISTRY_KEY]?: ToolRegistryClass;
-};
-
-const globalRegistry = dntShim.dntGlobalThis as GlobalToolRegistry;
-
-export const toolRegistry: ToolRegistryClass = globalRegistry[TOOL_REGISTRY_KEY] ??=
-  new ToolRegistryClass();
+// Singleton instance - maintains same interface but now project-scoped internally
+export const toolRegistry = new ToolRegistryClass();
 
 export function toolToProviderDefinition(tool: Tool): ToolDefinition {
   const jsonSchema = tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema);

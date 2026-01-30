@@ -8,11 +8,10 @@
  *
  * Works in: Deno, Node.js, Bun (client-side React)
  */
-import * as dntShim from "../../../../_dnt.shims.js";
-
 
 import * as React from "react";
 import { cn } from "./theme.js";
+import { isBrowserEnvironment } from "../../../platform/compat/runtime.js";
 
 export interface MarkdownProps {
   /** Markdown content to render */
@@ -30,8 +29,6 @@ export interface CodeBlockProps {
   code: string;
   inline?: boolean;
 }
-
-const isBrowser = typeof dntShim.dntGlobalThis !== "undefined" && typeof document !== "undefined";
 
 const ESM_REACT_MARKDOWN = "https://esm.sh/react-markdown@9?external=react&target=es2022";
 const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4?target=es2022";
@@ -53,7 +50,7 @@ let mermaidPromise: Promise<any> | null = null;
 let mermaidModule: any = null;
 
 async function loadMermaid(): Promise<any | null> {
-  if (!isBrowser) return null;
+  if (!isBrowserEnvironment()) return null;
   if (mermaidModule) return mermaidModule;
 
   mermaidPromise ??= dynamicImport(ESM_MERMAID);
@@ -73,7 +70,7 @@ function MermaidDiagram({ code }: { code: string }): React.ReactElement {
   const [error, setError] = React.useState<string>("");
 
   React.useEffect(() => {
-    if (!isBrowser) return;
+    if (!isBrowserEnvironment()) return;
 
     let cancelled = false;
 
@@ -101,7 +98,7 @@ function MermaidDiagram({ code }: { code: string }): React.ReactElement {
     };
   }, [code]);
 
-  if (!isBrowser) {
+  if (!isBrowserEnvironment()) {
     return (
       <pre className="my-4 p-4 bg-neutral-100 dark:bg-neutral-800 rounded-lg overflow-auto">
         <code>{code}</code>

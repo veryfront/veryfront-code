@@ -13,6 +13,7 @@ export interface LogEntry {
     timestamp: string;
     level: "debug" | "info" | "warn" | "error";
     service: string;
+    veryfrontVersion: string;
     message: string;
     context?: Record<string, unknown>;
     error?: {
@@ -69,13 +70,26 @@ declare class ConsoleLogger implements Logger {
  * @internal
  */
 export declare function getDefaultLevel(envLevel?: string | undefined, debugFlag?: string | undefined): LogLevel;
-export declare const cliLogger: ConsoleLogger;
-export declare const serverLogger: ConsoleLogger;
-export declare const rendererLogger: ConsoleLogger;
-export declare const bundlerLogger: ConsoleLogger;
-export declare const agentLogger: ConsoleLogger;
-export declare const proxyLogger: ConsoleLogger;
-export declare const logger: ConsoleLogger;
+/**
+ * Register the request context getter.
+ * Called by request-context.ts during module initialization.
+ * @internal
+ */
+export declare function __registerRequestContextGetter(getter: () => {
+    logger: Logger;
+} | undefined): void;
+export declare const cliLogger: Logger;
+export declare const serverLogger: Logger;
+export declare const rendererLogger: Logger;
+export declare const bundlerLogger: Logger;
+export declare const agentLogger: Logger;
+export declare const proxyLogger: Logger;
+export declare const logger: Logger;
+/**
+ * Get the base logger without request context awareness.
+ * Use this when you need to create a request-scoped logger in middleware.
+ */
+export declare function getBaseLogger(prefix: string): ConsoleLogger;
 /**
  * Create a logger for a specific request context.
  * Useful for binding request-specific metadata to all logs.

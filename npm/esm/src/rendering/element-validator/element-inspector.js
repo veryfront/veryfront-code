@@ -2,15 +2,25 @@ import { rendererLogger as logger } from "../../utils/index.js";
 import { createError, toError } from "../../errors/veryfront-error.js";
 import { getElementTypeName, getObjectKeys, getObjectSample, hasReactSymbol, isReactElement, isValidPrimitive, } from "./primitive-checks.js";
 /** Recursively inspects element tree for invalid children that would cause React Error #31 */
-export function deepInspectElement(element, path, depth, options) {
+export function deepInspectElement(element, path, depth, options, visited = new WeakSet()) {
     if (depth > options.maxDepth) {
         if (options.debugMode) {
             logger.debug(`[DEEP INSPECT] Max depth reached at ${path}`);
         }
         return;
     }
+    // Cycle detection: prevent infinite loops from circular references
+    if (element && typeof element === "object") {
+        if (visited.has(element)) {
+            if (options.debugMode) {
+                logger.debug(`[DEEP INSPECT] Cycle detected at ${path}, skipping`);
+            }
+            return;
+        }
+        visited.add(element);
+    }
     if (isReactElement(element)) {
-        inspectReactElement(element, path, depth, options);
+        inspectReactElement(element, path, depth, options, visited);
         return;
     }
     if (isValidPrimitive(element)) {
@@ -23,14 +33,14 @@ export function deepInspectElement(element, path, depth, options) {
         return;
     }
     if (Array.isArray(element)) {
-        inspectArray(element, path, depth, options);
+        inspectArray(element, path, depth, options, visited);
         return;
     }
     if (element && typeof element === "object") {
         handleInvalidObject(element, path, depth);
     }
 }
-function inspectReactElement(element, path, depth, options) {
+function inspectReactElement(element, path, depth, options, visited) {
     const elementType = getElementTypeName(element);
     if (options.debugMode) {
         logger.debug(`[DEEP INSPECT] ✓ Valid React element at ${path}`, {
@@ -40,19 +50,19 @@ function inspectReactElement(element, path, depth, options) {
     }
     const props = element.props;
     if (props && typeof props === "object") {
-        inspectElementProps(props, path, depth, options);
+        inspectElementProps(props, path, depth, options, visited);
     }
 }
-function inspectElementProps(props, path, depth, options) {
+function inspectElementProps(props, path, depth, options, visited) {
     for (const [key, value] of Object.entries(props)) {
         if (key === "__self" || key === "__source")
             continue;
         if (key === "children") {
-            inspectChildren(value, path, depth, options);
+            inspectChildren(value, path, depth, options, visited);
             continue;
         }
         if (isReactElement(value)) {
-            deepInspectElement(value, `${path}.props.${key}`, depth + 1, options);
+            deepInspectElement(value, `${path}.props.${key}`, depth + 1, options, visited);
             continue;
         }
         if (!Array.isArray(value))
@@ -60,23 +70,23 @@ function inspectElementProps(props, path, depth, options) {
         for (let i = 0; i < value.length; i++) {
             const item = value[i];
             if (isReactElement(item)) {
-                deepInspectElement(item, `${path}.props.${key}[${i}]`, depth + 1, options);
+                deepInspectElement(item, `${path}.props.${key}[${i}]`, depth + 1, options, visited);
             }
         }
     }
 }
-function inspectChildren(children, path, depth, options) {
+function inspectChildren(children, path, depth, options, visited) {
     if (Array.isArray(children)) {
         for (let i = 0; i < children.length; i++) {
-            deepInspectElement(children[i], `${path}.children[${i}]`, depth + 1, options);
+            deepInspectElement(children[i], `${path}.children[${i}]`, depth + 1, options, visited);
         }
         return;
     }
     if (children != null) {
-        deepInspectElement(children, `${path}.children`, depth + 1, options);
+        deepInspectElement(children, `${path}.children`, depth + 1, options, visited);
     }
 }
-function inspectArray(arr, path, depth, options) {
+function inspectArray(arr, path, depth, options, visited) {
     if (options.debugMode) {
         logger.debug(`[DEEP INSPECT] ✓ Array at ${path}`, {
             length: arr.length,
@@ -84,7 +94,7 @@ function inspectArray(arr, path, depth, options) {
         });
     }
     for (let i = 0; i < arr.length; i++) {
-        deepInspectElement(arr[i], `${path}[${i}]`, depth + 1, options);
+        deepInspectElement(arr[i], `${path}[${i}]`, depth + 1, options, visited);
     }
 }
 function handleInvalidObject(element, path, depth) {

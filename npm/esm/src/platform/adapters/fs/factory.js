@@ -5,7 +5,7 @@ import { clearSSRModuleCache, clearSSRModuleCacheForProject, } from "../../../mo
 import { clearRouterDetectionCache, clearRouterDetectionCacheForProject, } from "../../../rendering/router-detection.js";
 import { clearModulePathCache, invalidateModulePaths, } from "../../../transforms/mdx/esm-module-loader/cache/index.js";
 import { clearSnippetCache, clearSnippetCacheForProject, } from "../../../rendering/snippet-renderer.js";
-import { clearRendererCacheForProject, clearRendererCaches } from "../../../rendering/renderer.js";
+import { clearRendererCacheForProject } from "../../../rendering/renderer.js";
 import { invalidateProjectCSS } from "../../../html/styles-builder/tailwind-compiler.js";
 import { clearDomainCache } from "../../../server/utils/domain-lookup.js";
 export function createFSAdapter(config) {
@@ -29,7 +29,6 @@ export function createFSAdapter(config) {
                     clearModulePathCache,
                     invalidateModulePaths,
                     clearSnippetCache,
-                    clearRendererCache: clearRendererCaches,
                     clearSSRModuleCacheForProject,
                     clearRouterDetectionCacheForProject,
                     clearSnippetCacheForProject,

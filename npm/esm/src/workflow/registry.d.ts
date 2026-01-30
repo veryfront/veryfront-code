@@ -1,3 +1,15 @@
+/****
+ * Workflow Registry
+ *
+ * Project-scoped registry for workflow DEFINITIONS (not executions).
+ * Each project has its own isolated workflow namespace, preventing
+ * cross-project workflow access.
+ *
+ * Note: This registry stores workflow metadata/definitions only.
+ * Workflow RUNS are managed by WorkflowClient with backend-specific storage.
+ *
+ * @module
+ */
 import type { Workflow, WorkflowDefinition } from "./types.js";
 /**
  * Serializable node information for the registry
@@ -48,12 +60,14 @@ export interface WorkflowMetadata {
  * Workflow Registry class
  */
 declare class WorkflowRegistryClass {
-    private workflows;
-    private definitions;
     /**
      * Register a workflow definition
      */
     register(workflow: Workflow | WorkflowDefinition): void;
+    /**
+     * Register a framework-provided workflow available to all projects.
+     */
+    registerShared(workflow: Workflow | WorkflowDefinition): void;
     /**
      * Get workflow metadata by ID
      */
@@ -92,9 +106,19 @@ declare class WorkflowRegistryClass {
      */
     unregister(id: string): boolean;
     /**
-     * Clear all workflows (for testing)
+     * Clear all workflows for current project
      */
     clear(): void;
+    /**
+     * Clear everything (for testing)
+     */
+    clearAll(): void;
+    getRegistryStats(): {
+        projectCount: number;
+        sharedCount: number;
+        totalItems: number;
+        currentProjectItems: number;
+    };
 }
 export declare const workflowRegistry: WorkflowRegistryClass;
 export { WorkflowRegistryClass };

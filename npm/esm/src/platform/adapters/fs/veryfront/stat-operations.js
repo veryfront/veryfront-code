@@ -4,7 +4,7 @@ import { buildFileCacheKeyPrefix, buildFileListCacheKey, buildStatCacheKeyPrefix
 import { withSpan } from "../../../../observability/tracing/otlp-setup.js";
 const EXTENSION_PRIORITY = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"];
 const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
-const FRAMEWORK_PREFIXES = ["exports/", "react/", "veryfront/"];
+const FRAMEWORK_PREFIXES = ["exports/", "react/", "veryfront/", "node_modules/veryfront/"];
 export class StatOperations {
     client;
     cache;
@@ -296,7 +296,8 @@ export class StatOperations {
             });
             return indexPath;
         }
-        if (FRAMEWORK_PREFIXES.some((prefix) => normalizedPath.startsWith(prefix))) {
+        if (FRAMEWORK_PREFIXES.some((prefix) => normalizedPath.startsWith(prefix)) ||
+            normalizedPath.includes("node_modules/veryfront/")) {
             logger.debug("[StatOperations] Skipping API search for framework path", { normalizedPath });
             return null;
         }

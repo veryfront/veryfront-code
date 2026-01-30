@@ -9,7 +9,7 @@ import type { SSRRenderer } from "../ssr-renderer.js";
 import { computeHash } from "../utils/index.js";
 import type { HTMLGenerationContext, HTMLGenerator } from "./html.js";
 import type { RenderOptions } from "./types.js";
-import { flushHeadCollector, resetHeadCollector } from "../../react/head-collector.js";
+import { runWithHeadCollector } from "../../react/head-collector.js";
 
 export interface SSROrchestratorConfig {
   mode: "development" | "production";
@@ -59,24 +59,27 @@ export class SSROrchestrator {
       validatedType: getElementTypeName(validatedElement),
     });
 
-    resetHeadCollector();
-
     const wantsStream = options?.delivery === "stream";
-    const { html, stream } = await withSpan(
-      SpanNames.SSR_ORCHESTRATOR_RENDER,
+
+    // Use AsyncLocalStorage-based head collection for multi-tenant safety
+    const { result: renderResult, head: collectedHead } = await runWithHeadCollector(
       () =>
-        this.config.ssrRenderer.renderToHTML(validatedElement, {
-          mode: this.config.mode,
-          wantsStream,
-          debugMode: this.config.debugMode,
-        }),
-      {
-        "ssr.wants_stream": wantsStream,
-        "ssr.mode": this.config.mode,
-      },
+        withSpan(
+          SpanNames.SSR_ORCHESTRATOR_RENDER,
+          () =>
+            this.config.ssrRenderer.renderToHTML(validatedElement, {
+              mode: this.config.mode,
+              wantsStream,
+              debugMode: this.config.debugMode,
+            }),
+          {
+            "ssr.wants_stream": wantsStream,
+            "ssr.mode": this.config.mode,
+          },
+        ),
     );
 
-    const collectedHead = flushHeadCollector();
+    const { html, stream } = renderResult;
 
     const mergedOptions = {
       ...generationContext.options,

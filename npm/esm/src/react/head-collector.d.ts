@@ -1,13 +1,12 @@
 /**
  * Head Collector - Request-scoped metadata collection for SSR
  *
- * Collects head metadata during React SSR render, avoiding HTML parsing.
- * Works across Deno, Bun, and Node.js with no external dependencies.
+ * Collects head metadata during React SSR render using AsyncLocalStorage
+ * for proper isolation between concurrent requests.
  *
  * Usage:
- *   resetHeadCollector()           // Before render
- *   collectHead({ title: "..." })  // During render (from Head component)
- *   const data = flushHeadCollector()  // After render
+ *   const { result, head } = await runWithHeadCollector(() => renderToString(element));
+ *   // head.title, head.description, head.metas are now available
  */
 export interface HeadMeta {
     name?: string;
@@ -27,22 +26,43 @@ export interface CollectedHead {
     styles: string[];
 }
 /**
+ * Run a function with isolated head collection context.
+ *
+ * @example
+ * const { result: html, head } = await runWithHeadCollector(async () => {
+ *   return await renderToString(pageElement);
+ * });
+ * // head.title, head.description, head.metas are now available
+ */
+export declare function runWithHeadCollector<T>(fn: () => T | Promise<T>): Promise<{
+    result: T;
+    head: CollectedHead;
+}>;
+/**
+ * Get the current head collection context.
+ * Returns null if not within a runWithHeadCollector context.
+ */
+export declare function getHeadCollectorContext(): CollectedHead | null;
+/**
  * Collect head metadata during SSR render.
  * Called by Head component for each child element.
+ *
+ * Must be called within a runWithHeadCollector context.
+ * Calls outside of context are silently ignored (client-side rendering).
  */
 export declare function collectHead(data: Partial<CollectedHead>): void;
 /**
- * Flush collected head data and reset for next request.
- * Call after SSR render completes.
+ * Check if any head data has been collected in the current context.
  */
-export declare function flushHeadCollector(): CollectedHead;
+export declare function hasCollectedHead(): boolean;
 /**
- * Reset collector before SSR render.
- * Ensures clean state for each request.
+ * Reset the head collector for the current context.
+ * Only works within a runWithHeadCollector context.
  */
 export declare function resetHeadCollector(): void;
 /**
- * Check if any head data has been collected.
+ * Flush and return collected head data for the current context.
+ * Only works within a runWithHeadCollector context.
  */
-export declare function hasCollectedHead(): boolean;
+export declare function flushHeadCollector(): CollectedHead;
 //# sourceMappingURL=head-collector.d.ts.map

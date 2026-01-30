@@ -10,6 +10,12 @@ export declare class StaticDataFetcher {
     private fetchFreshNoCache;
     private fetchFresh;
     private revalidateInBackground;
+    /**
+     * Log errors unconditionally. Production errors should always be logged
+     * for debugging and monitoring purposes.
+     *
+     * @see plans/architecture-audit/010-error-handling.md
+     */
     private logError;
 }
 //# sourceMappingURL=static-data-fetcher.d.ts.map

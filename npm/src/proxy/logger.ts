@@ -7,17 +7,64 @@ function getEnv(key: string): string | undefined {
     return dntShim.Deno.env.get(key);
   }
   // Node.js / Bun
-  const nodeProcess = (dntShim.dntGlobalThis as { process?: { env?: Record<string, string> } }).process;
+  const nodeProcess =
+    (dntShim.dntGlobalThis as { process?: { env?: Record<string, string> } }).process;
   return nodeProcess?.env?.[key];
 }
+
+// Import version from root deno.json (the source of truth)
+import denoConfig from "../deno.js";
 import { getTraceContext } from "./tracing.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+
+/**
+ * Request context for proxy logging.
+ * Stored in AsyncLocalStorage to propagate through the call stack.
+ */
+export interface ProxyRequestContext {
+  requestId: string;
+  projectSlug?: string;
+  projectId?: string;
+  releaseId?: string;
+  branchId?: string;
+  branchName?: string;
+  domain?: string;
+  environment?: string;
+}
+
+const requestContextStore = new AsyncLocalStorage<ProxyRequestContext>();
+
+/**
+ * Run a function with proxy request context.
+ * All logs within the function will include the request context fields.
+ */
+export function runWithProxyRequestContext<T>(
+  context: ProxyRequestContext,
+  fn: () => T,
+): T {
+  return requestContextStore.run(context, fn);
+}
+
+/**
+ * Get the current proxy request context (if any).
+ */
+export function getProxyRequestContext(): ProxyRequestContext | undefined {
+  return requestContextStore.getStore();
+}
+
+// Get version from environment variable or root deno.json
+const VERYFRONT_VERSION: string = getEnv("VERYFRONT_VERSION") ??
+  (typeof denoConfig.version === "string" ? denoConfig.version : "0.0.0");
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 // Log level configuration
 const MIN_LOG_LEVEL: LogLevel = ((): LogLevel => {
   const level = getEnv("LOG_LEVEL")?.toLowerCase();
-  if (level === "debug" || level === "info" || level === "warn" || level === "error") {
+  if (
+    level === "debug" || level === "info" || level === "warn" ||
+    level === "error"
+  ) {
     return level;
   }
   return "info"; // Default: suppress debug logs
@@ -56,19 +103,25 @@ function padTag(tag: string): string {
 
 function formatTimestamp(date: Date = new Date()): string {
   const pad = (value: number) => String(value).padStart(2, "0");
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${
+    pad(date.getSeconds())
+  }`;
 }
 
 function isTty(): boolean {
   try {
-    if (typeof dntShim.Deno !== "undefined" && typeof dntShim.Deno.stdout?.isTerminal === "function") {
+    if (
+      typeof dntShim.Deno !== "undefined" &&
+      typeof dntShim.Deno.stdout?.isTerminal === "function"
+    ) {
       return dntShim.Deno.stdout.isTerminal();
     }
   } catch {
     // ignore
   }
 
-  const stdout = (dntShim.dntGlobalThis as { process?: { stdout?: { isTTY?: boolean } } }).process?.stdout;
+  const stdout = (dntShim.dntGlobalThis as { process?: { stdout?: { isTTY?: boolean } } })
+    .process?.stdout;
   return stdout?.isTTY ?? false;
 }
 
@@ -83,7 +136,11 @@ function shouldUseColor(): boolean {
   return isTty();
 }
 
-function colorize(text: string, color: string | undefined, enable: boolean): string {
+function colorize(
+  text: string,
+  color: string | undefined,
+  enable: boolean,
+): string {
   if (!enable || !color) return text;
   return `${color}${text}${ANSI.reset}`;
 }
@@ -103,7 +160,9 @@ function formatValue(value: unknown): string {
     if (/\s/.test(trimmed)) return JSON.stringify(trimmed);
     return trimmed;
   }
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
   if (value === null) return "null";
   if (value === undefined) return "undefined";
   let text = "";
@@ -129,7 +188,9 @@ function formatContextText(
   error: LogEntry["error"] | undefined,
   enableColor: boolean,
 ): string {
-  const entries = Object.entries(context).map(([key, value]) => `${key}=${formatValue(value)}`);
+  const entries = Object.entries(context).map(([key, value]) =>
+    `${key}=${formatValue(value)}`
+  );
   if (error) {
     entries.push(`err=${formatErrorText(error)}`);
   }
@@ -158,9 +219,19 @@ interface LogEntry {
   timestamp: string;
   level: LogLevel;
   service: string;
+  veryfrontVersion: string;
   message: string;
   traceId?: string;
   spanId?: string;
+  // Request context fields (at top level for Grafana filtering)
+  requestId?: string;
+  projectSlug?: string;
+  projectId?: string;
+  releaseId?: string;
+  branchId?: string;
+  branchName?: string;
+  domain?: string;
+  environment?: string;
   context?: Record<string, unknown>;
   error?: {
     name: string;
@@ -211,12 +282,24 @@ class ProxyLogger {
     }
     if (this.format === "json") {
       const traceCtx = getTraceContext();
+      const reqCtx = getProxyRequestContext();
       const entry: LogEntry = {
         timestamp: new Date().toISOString(),
         level,
         service: "proxy",
+        veryfrontVersion: VERYFRONT_VERSION,
         message,
-        ...(traceCtx.traceId && { traceId: traceCtx.traceId, spanId: traceCtx.spanId }),
+        ...(traceCtx.traceId &&
+          { traceId: traceCtx.traceId, spanId: traceCtx.spanId }),
+        // Include request context fields at top level (like renderer logs)
+        ...(reqCtx?.requestId && { requestId: reqCtx.requestId }),
+        ...(reqCtx?.projectSlug && { projectSlug: reqCtx.projectSlug }),
+        ...(reqCtx?.projectId && { projectId: reqCtx.projectId }),
+        ...(reqCtx?.releaseId && { releaseId: reqCtx.releaseId }),
+        ...(reqCtx?.branchId && { branchId: reqCtx.branchId }),
+        ...(reqCtx?.branchName && { branchName: reqCtx.branchName }),
+        ...(reqCtx?.domain && { domain: reqCtx.domain }),
+        ...(reqCtx?.environment && { environment: reqCtx.environment }),
       };
       if (context && Object.keys(context).length > 0) {
         entry.context = context;

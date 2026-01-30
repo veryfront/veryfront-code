@@ -95,5 +95,12 @@ export interface PageDataResponse {
     }>;
     /** JIT-compiled Tailwind CSS for this page (for SPA navigation in prod mode) */
     css?: string;
+    /**
+     * Error message if CSS generation failed.
+     * When set, the css field will be undefined and clients should fall back
+     * to inline styles or show a warning. This surfaces silent CSS failures
+     * instead of serving broken pages with no indication of the problem.
+     */
+    cssError?: string;
 }
 //# sourceMappingURL=types.d.ts.map

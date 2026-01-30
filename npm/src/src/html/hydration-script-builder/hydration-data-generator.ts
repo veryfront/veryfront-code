@@ -1,5 +1,6 @@
 import type { ComponentProps } from "../../types/index.js";
 import { resolveRelativePath } from "../../modules/react-loader/path-resolver.js";
+import { getExtensionName } from "../../utils/path-utils.js";
 import type { HTMLGenerationOptions } from "../types.js";
 import type { HydrationDataStructure } from "./types.js";
 
@@ -17,7 +18,8 @@ const PAGE_TYPE_EXTENSIONS = new Set(["mdx", "tsx", "jsx", "ts", "js"] as const)
 type PageType = "mdx" | "tsx" | "jsx" | "ts" | "js";
 
 function inferPageType(pagePath?: string): PageType | undefined {
-  const ext = pagePath?.split(".").pop()?.toLowerCase();
+  if (!pagePath) return undefined;
+  const ext = getExtensionName(pagePath);
   if (!ext) return undefined;
 
   return PAGE_TYPE_EXTENSIONS.has(ext as PageType) ? (ext as PageType) : undefined;

@@ -1,4 +1,12 @@
-import * as dntShim from "../../_dnt.shims.js";
+/**
+ * Provider Registry
+ *
+ * Project-scoped registry for AI providers. Each project can have its own
+ * provider configuration with different API keys.
+ *
+ * @module
+ */
+
 import type { Provider, ProvidersConfig } from "./types.js";
 import { OpenAIProvider } from "./openai.js";
 import { AnthropicProvider } from "./anthropic.js";
@@ -10,19 +18,23 @@ import {
   getGoogleGenAIEnvConfig,
   getOpenAIEnvConfig,
 } from "../config/env.js";
+import { ProjectScopedRegistryManager } from "../ai/registry-manager.js";
+
+const providerManager = new ProjectScopedRegistryManager<Provider>("provider");
+
+// Track auto-initialization state per project
+const autoInitializedProjects = new Set<string>();
+let defaultProviderName = "openai";
 
 class ProviderRegistry {
-  private providers = new Map<string, Provider>();
-  private config: ProvidersConfig = {};
-  private autoInitialized = false;
-
   private registerProvider(
     name: string,
     createProvider: () => Provider,
     fromEnv = false,
   ): void {
     try {
-      this.providers.set(name, createProvider());
+      const provider = createProvider();
+      providerManager.register(name, provider);
       if (fromEnv) {
         agentLogger.debug(`Auto-initialized ${name} provider from environment`);
       }
@@ -32,13 +44,24 @@ class ProviderRegistry {
     }
   }
 
-  private autoInitializeFromEnv(): void {
-    if (this.autoInitialized) return;
-    this.autoInitialized = true;
+  private registerProviderShared(
+    name: string,
+    createProvider: () => Provider,
+  ): void {
+    try {
+      const provider = createProvider();
+      providerManager.registerShared(name, provider);
+      agentLogger.debug(`Registered shared ${name} provider`);
+    } catch (error) {
+      agentLogger.warn(`Failed to register shared ${name} provider:`, error);
+    }
+  }
 
+  private autoInitializeFromEnv(): void {
+    // Check environment for API keys and auto-register providers
     const openaiEnv = getOpenAIEnvConfig();
     const openaiApiKey = openaiEnv.apiKey;
-    if (openaiApiKey && !this.providers.has("openai")) {
+    if (openaiApiKey && !providerManager.has("openai")) {
       this.registerProvider(
         "openai",
         () =>
@@ -53,7 +76,7 @@ class ProviderRegistry {
 
     const anthropicEnv = getAnthropicEnvConfig();
     const anthropicApiKey = anthropicEnv.apiKey;
-    if (anthropicApiKey && !this.providers.has("anthropic")) {
+    if (anthropicApiKey && !providerManager.has("anthropic")) {
       this.registerProvider(
         "anthropic",
         () =>
@@ -67,7 +90,7 @@ class ProviderRegistry {
 
     const googleEnv = getGoogleGenAIEnvConfig();
     const googleApiKey = googleEnv.apiKey;
-    if (googleApiKey && !this.providers.has("google")) {
+    if (googleApiKey && !providerManager.has("google")) {
       this.registerProvider(
         "google",
         () => new GoogleProvider({ apiKey: googleApiKey }),
@@ -77,7 +100,9 @@ class ProviderRegistry {
   }
 
   initialize(config: ProvidersConfig): void {
-    this.config = config;
+    if (config.default) {
+      defaultProviderName = config.default;
+    }
 
     const openaiConfig = config.openai;
     if (openaiConfig) {
@@ -98,19 +123,59 @@ class ProviderRegistry {
     }
   }
 
+  /**
+   * Initialize shared providers from environment variables.
+   * These will be available to all projects as fallback.
+   */
+  initializeSharedFromEnv(): void {
+    const openaiEnv = getOpenAIEnvConfig();
+    const openaiKey = openaiEnv.apiKey;
+    if (openaiKey) {
+      this.registerProviderShared(
+        "openai",
+        () =>
+          new OpenAIProvider({
+            apiKey: openaiKey,
+            baseURL: openaiEnv.baseURL,
+            organizationId: openaiEnv.organizationId,
+          }),
+      );
+    }
+
+    const anthropicEnv = getAnthropicEnvConfig();
+    const anthropicKey = anthropicEnv.apiKey;
+    if (anthropicKey) {
+      this.registerProviderShared(
+        "anthropic",
+        () =>
+          new AnthropicProvider({
+            apiKey: anthropicKey,
+            baseURL: anthropicEnv.baseURL,
+          }),
+      );
+    }
+
+    const googleEnv = getGoogleGenAIEnvConfig();
+    const googleKey = googleEnv.apiKey;
+    if (googleKey) {
+      this.registerProviderShared(
+        "google",
+        () => new GoogleProvider({ apiKey: googleKey }),
+      );
+    }
+  }
+
   getProvider(name: string): Provider {
     this.autoInitializeFromEnv();
 
-    const provider = this.providers.get(name);
+    const provider = providerManager.get(name);
     if (provider) return provider;
 
     throw toError(
       createError({
         type: "agent",
         message: `Provider "${name}" not found. Available providers: ${
-          Array.from(
-            this.providers.keys(),
-          ).join(", ")
+          providerManager.getAllIds().join(", ")
         }`,
       }),
     );
@@ -144,31 +209,38 @@ class ProviderRegistry {
   }
 
   getDefaultProvider(): Provider {
-    return this.getProvider(this.config.default ?? "openai");
+    return this.getProvider(defaultProviderName);
   }
 
   hasProvider(name: string): boolean {
     this.autoInitializeFromEnv();
-    return this.providers.has(name);
+    return providerManager.has(name);
   }
 
   getAvailableProviders(): string[] {
     this.autoInitializeFromEnv();
-    return Array.from(this.providers.keys());
+    return providerManager.getAllIds();
   }
 
   clear(): void {
-    this.providers.clear();
-    this.config = {};
+    providerManager.clear();
+  }
+
+  /**
+   * Clear everything (for testing).
+   */
+  clearAll(): void {
+    providerManager.clearAll();
+    autoInitializedProjects.clear();
+  }
+
+  getStats() {
+    return providerManager.getStats();
   }
 }
 
-const PROVIDER_REGISTRY_KEY = "__veryfront_provider_registry__";
-// deno-lint-ignore no-explicit-any
-const _globalProvider = dntShim.dntGlobalThis as any;
-
-export const providerRegistry: ProviderRegistry = _globalProvider[PROVIDER_REGISTRY_KEY] ||=
-  new ProviderRegistry();
+// Singleton instance - maintains same interface but now project-scoped internally
+export const providerRegistry = new ProviderRegistry();
 
 export function initializeProviders(config: ProvidersConfig): void {
   providerRegistry.initialize(config);

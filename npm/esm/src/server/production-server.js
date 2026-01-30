@@ -62,8 +62,8 @@ export function startUniversalServer(options) {
                 setServerInitialized(false);
                 await server.stop();
             }
-            catch {
-                /* ignore */
+            catch (error) {
+                logger.debug("Server stop failed", { error });
             }
         }
         return { ready, stop };
@@ -76,13 +76,22 @@ if (globalThis[Symbol.for("import-meta-ponyfill-esmodule")](import.meta).main) {
     // Register global error handlers FIRST to prevent process crashes from application errors
     // This ensures the renderer stays up even if user code throws unhandled exceptions
     onGlobalError((error, type) => {
-        logger.error(`[GLOBAL] ${type}: Application error caught (process will continue)`, {
+        // Fatal errors that indicate corrupted process state — let the process crash
+        // so the orchestrator (k8s) can restart it cleanly
+        const isFatal = error.name === "RangeError" && error.message.includes("Maximum call stack") ||
+            error.message.includes("out of memory") ||
+            error.message.includes("allocation failed");
+        logger.error(`[GLOBAL] ${type}: Application error caught`, {
             message: error.message,
             stack: error.stack,
             type,
+            fatal: isFatal,
         });
-        // Return true to prevent process exit - the renderer should stay up
-        // Individual requests may fail, but the service remains available
+        if (isFatal) {
+            logger.error("[GLOBAL] Fatal error detected, allowing process exit for clean restart");
+            return false;
+        }
+        // Non-fatal: prevent process exit — individual requests may fail but service stays up
         return true;
     });
     try {

@@ -1,8 +1,8 @@
 import * as dntShim from "../../_dnt.shims.js";
-import { initialize, transform } from "esbuild";
 import type { RuntimeAdapter } from "../platform/adapters/base.js";
 import { createError, toError } from "../errors/veryfront-error.js";
 import { loadImportMap, transformImportsWithMap } from "../modules/import-map/index.js";
+import { transformJsx } from "../platform/compat/transform.js";
 
 interface VirtualModule {
   id: string;
@@ -46,18 +46,8 @@ export class VirtualModuleSystem {
       source.includes("useState<") ||
       source.includes("useRef<");
 
-    try {
-      await initialize({ worker: false });
-    } catch {
-      // Already initialized
-    }
-
-    const result = await transform(source, {
+    const result = await transformJsx(source, {
       loader: hasTypeScript ? "tsx" : "jsx",
-      jsx: "automatic",
-      jsxImportSource: "react",
-      format: "esm",
-      target: "es2020",
     });
 
     let transformedCode = transformImportsWithMap(result.code, importMap, undefined, {

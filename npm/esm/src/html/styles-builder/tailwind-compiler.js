@@ -1,5 +1,8 @@
 import * as dntShim from "../../../_dnt.shims.js";
 import { compile } from "tailwindcss";
+import plugin from "tailwindcss/plugin";
+import defaultTheme from "tailwindcss/defaultTheme";
+import colors from "tailwindcss/colors";
 import { serverLogger as logger } from "../../utils/index.js";
 import { getTailwindCSSUrl } from "../../utils/constants/cdn.js";
 import { CacheBackends, createCacheBackend, MemoryCacheBackend, } from "../../cache/backend.js";
@@ -7,11 +10,48 @@ import { withSpan } from "../../observability/tracing/otlp-setup.js";
 import { SpanNames } from "../../observability/tracing/span-names.js";
 import { registerCache } from "../../utils/memory/index.js";
 import { minifyCSS } from "../../build/asset-pipeline/tailwind-processor/css-utils.js";
+// Provide localStorage shim for plugins that use util-deprecate (which checks localStorage)
+// This prevents "LocalStorage is not supported in this context" errors in Deno.
+// In Deno, localStorage is a GETTER that throws - simple assignment doesn't override it.
+// We must use Object.defineProperty to properly replace the getter with our shim.
+try {
+    // deno-lint-ignore no-explicit-any
+    const _test = dntShim.dntGlobalThis.localStorage;
+    // If we get here, localStorage exists (browser or already shimmed)
+}
+catch {
+    // localStorage access threw - use defineProperty to override the throwing getter
+    const localStorageShim = {
+        getItem: () => null,
+        setItem: () => { },
+        removeItem: () => { },
+        clear: () => { },
+        key: () => null,
+        length: 0,
+    };
+    Object.defineProperty(dntShim.dntGlobalThis, "localStorage", {
+        value: localStorageShim,
+        writable: true,
+        configurable: true,
+        enumerable: true,
+    });
+}
+// Set up global shims for tailwindcss subpaths - used by dynamically loaded plugins
+dntShim.dntGlobalThis.__tailwindPluginShim = {
+    default: plugin,
+    __esModule: true,
+};
+dntShim.dntGlobalThis.__tailwindDefaultThemeShim = {
+    default: defaultTheme,
+    __esModule: true,
+};
+dntShim.dntGlobalThis.__tailwindColorsShim = {
+    default: colors,
+    __esModule: true,
+};
 let tailwindBaseCSS = null;
-let compiler = null;
-let lastStylesheetHash = "";
-const pluginCache = new Map();
-const pluginErrors = new Map();
+const compilerCache = new Map();
+const MAX_CACHED_COMPILERS = 10;
 let cssCache = null;
 let cssCacheInitPromise = null;
 const CSS_CACHE_TTL_SECONDS = 3600;
@@ -34,6 +74,11 @@ registerCache("project-css-cache", () => ({
     entries: projectCSSLocalFallback.size,
     maxEntries: PROJECT_CSS_LOCAL_FALLBACK_MAX,
     backend: projectCSSBackend?.type ?? "uninitialized",
+}));
+registerCache("tailwind-compiler-cache", () => ({
+    name: "tailwind-compiler-cache",
+    entries: compilerCache.size,
+    maxEntries: MAX_CACHED_COMPILERS,
 }));
 /**
  * Initialize project CSS distributed cache.
@@ -126,8 +171,13 @@ export async function getProjectCSS(projectSlug, stylesheet, candidates, options
     // Generate CSS (cache miss)
     const result = await generateTailwindCSS(stylesheet, candidates, options);
     if (result.error) {
-        logger.error("[tailwind] Project CSS generation failed", { projectSlug, error: result.error });
-        return { css: result.css, hash: "", fromCache: false };
+        const formatted = formatCSSError(result.error);
+        logger.error("[tailwind] Project CSS generation failed", {
+            projectSlug,
+            error: formatted.message,
+            suggestion: formatted.suggestion,
+        });
+        throw new Error(`[tailwind] ${formatted.title}: ${formatted.message} Suggestion: ${formatted.suggestion}`);
     }
     const hash = hashCSS(result.css);
     const entry = { css: result.css, hash, candidatesHash };
@@ -464,7 +514,77 @@ export function extractCandidatesFromFiles(files) {
     }
     return candidates;
 }
-async function loadPlugin(id) {
+/**
+ * Dynamically load a module from esm.sh in a compiled Deno binary.
+ *
+ * This works around the limitation that compiled Deno binaries cannot do
+ * dynamic imports from URLs. Instead, we:
+ * 1. Fetch the bundled code from esm.sh (with ?bundle&external=tailwindcss)
+ * 2. Rewrite the tailwindcss/plugin import to use our global shim
+ * 3. Write to a temp file
+ * 4. Import via file:// URL
+ *
+ * @param packageName - The npm package name (e.g., "tailwindcss-animate" or "tailwindcss-animate@1.0.7")
+ * @returns The loaded module
+ */
+export async function loadModuleFromEsmSh(packageName) {
+    // Step 1: Fetch the redirect stub to find the actual bundle URL
+    // Use target=denonext to avoid browser-specific APIs like localStorage
+    const stubUrl = `https://esm.sh/${packageName}?bundle&external=tailwindcss&target=denonext`;
+    logger.debug("[tailwind] Fetching esm.sh stub", { url: stubUrl });
+    const stubResponse = await dntShim.fetch(stubUrl);
+    if (!stubResponse.ok) {
+        throw new Error(`Failed to fetch stub: ${stubResponse.status}`);
+    }
+    const stubCode = await stubResponse.text();
+    // Step 2: Parse stub to find actual bundle path
+    const bundleMatch = stubCode.match(/from\s*["'](\/[^"']+\.bundle\.mjs)["']/);
+    if (!bundleMatch) {
+        throw new Error(`Could not find bundle path in esm.sh response: ${stubCode.substring(0, 200)}`);
+    }
+    const bundleUrl = `https://esm.sh${bundleMatch[1]}`;
+    logger.debug("[tailwind] Fetching actual bundle", { url: bundleUrl });
+    // Step 3: Fetch the actual bundled code
+    const bundleResponse = await dntShim.fetch(bundleUrl);
+    if (!bundleResponse.ok) {
+        throw new Error(`Failed to fetch bundle: ${bundleResponse.status}`);
+    }
+    let code = await bundleResponse.text();
+    // Step 4: Rewrite tailwindcss/* imports to use our global shims
+    // The bundle contains imports like: import*as __0$ from"tailwindcss/plugin"
+    // Variable names can be __0$, __1$, __2$, etc. so we use regex
+    const shimMap = {
+        "tailwindcss/plugin": "__tailwindPluginShim",
+        "tailwindcss/defaultTheme": "__tailwindDefaultThemeShim",
+        "tailwindcss/colors": "__tailwindColorsShim",
+    };
+    for (const [importPath, shimName] of Object.entries(shimMap)) {
+        // Match: import*as __N$ from"tailwindcss/plugin" (where N is any number)
+        const importRegex = new RegExp(`import\\*as\\s+(__\\d+\\$)\\s+from["']${importPath.replace("/", "\\/")}["']`, "g");
+        code = code.replace(importRegex, (_, varName) => {
+            logger.debug(`[tailwind] Rewrote ${importPath} import to use global shim`, { varName });
+            return `const ${varName} = globalThis.${shimName}`;
+        });
+    }
+    // Step 4b: Patch out localStorage access from util-deprecate
+    // The bundled code contains patterns like: try{if(!globalThis.localStorage)return!1}
+    // In Deno compiled binaries, even with our global shim, this can fail.
+    // Replace globalThis.localStorage with a safe inline shim.
+    code = code.replace(/globalThis\.localStorage/g, "(globalThis.__localStorageShim||(globalThis.__localStorageShim={getItem:()=>null,setItem:()=>{},length:0}))");
+    // Step 5: Write to temp file and import
+    const tempPath = `/tmp/tw_plugin_${dntShim.crypto.randomUUID()}.mjs`;
+    await dntShim.Deno.writeTextFile(tempPath, code);
+    logger.debug("[tailwind] Wrote plugin to temp file", { path: tempPath });
+    try {
+        const mod = await import(`file://${tempPath}`);
+        return mod;
+    }
+    finally {
+        // Clean up temp file
+        await dntShim.Deno.remove(tempPath).catch(() => { });
+    }
+}
+async function loadPlugin(id, pluginCache, pluginErrors) {
     if (pluginCache.has(id)) {
         const errorMsg = pluginErrors.get(id);
         if (errorMsg)
@@ -476,29 +596,28 @@ async function loadPlugin(id) {
     try {
         let mod;
         if (isDeno) {
-            // Deno supports HTTP imports natively
-            const url = `https://esm.sh/${id}`;
-            logger.debug("[tailwind] Loading plugin via esm.sh", { id, url });
-            mod = await import(url);
+            // Use dynamic module loading that works in compiled binaries
+            // This fetches the bundled code, rewrites imports, and loads via temp file
+            logger.debug("[tailwind] Loading plugin via dynamic esm.sh fetch", { id });
+            mod = await loadModuleFromEsmSh(id);
         }
         else {
             // Node.js: Try to import from node_modules
-            // First try the bare specifier, then fall back to global node_modules
             logger.debug("[tailwind] Loading plugin from node_modules", { id });
             try {
                 mod = await import(id);
             }
             catch {
-                // Plugin not installed - this is expected for most user projects
-                // Log at debug level since it's not an error, just a missing optional plugin
-                logger.debug("[tailwind] Plugin not installed", { id });
+                const errorMsg = `Failed to load plugin "${id}": plugin not installed`;
+                logger.warn("[tailwind] Plugin not installed", { id });
+                pluginErrors.set(id, errorMsg);
                 pluginCache.set(id, null);
-                return null;
+                throw new Error(errorMsg);
             }
         }
-        const plugin = mod.default ?? mod;
-        pluginCache.set(id, plugin);
-        return plugin;
+        const pluginExport = mod.default ?? mod;
+        pluginCache.set(id, pluginExport);
+        return pluginExport;
     }
     catch (error) {
         const errorMsg = `Failed to load plugin "${id}": ${error instanceof Error ? error.message : String(error)}`;
@@ -509,12 +628,18 @@ async function loadPlugin(id) {
 }
 export function clearPluginCache(id) {
     if (id) {
-        pluginCache.delete(id);
-        pluginErrors.delete(id);
+        // Clear specific plugin from all compiler caches
+        for (const entry of compilerCache.values()) {
+            entry.pluginCache.delete(id);
+            entry.pluginErrors.delete(id);
+        }
         return;
     }
-    pluginCache.clear();
-    pluginErrors.clear();
+    // Clear all plugin caches
+    for (const entry of compilerCache.values()) {
+        entry.pluginCache.clear();
+        entry.pluginErrors.clear();
+    }
 }
 async function getTailwindBaseCSS() {
     if (tailwindBaseCSS)
@@ -530,11 +655,18 @@ async function getTailwindBaseCSS() {
 }
 async function getCompiler(stylesheet) {
     const hash = hashString(stylesheet);
-    if (compiler && hash === lastStylesheetHash)
-        return compiler;
+    // Check LRU cache
+    const cached = compilerCache.get(hash);
+    if (cached) {
+        logger.debug("[tailwind] Compiler cache hit", { hash });
+        return cached.compiler;
+    }
     logger.debug("[tailwind] Creating new compiler", { hash });
     const tailwindBase = await getTailwindBaseCSS();
-    compiler = await compile(stylesheet, {
+    // Create new plugin caches for this stylesheet
+    const pluginCache = new Map();
+    const pluginErrors = new Map();
+    const newCompiler = await compile(stylesheet, {
         base: "/",
         loadStylesheet: (id) => {
             if (id === "tailwindcss") {
@@ -544,19 +676,56 @@ async function getCompiler(stylesheet) {
             return Promise.resolve({ content: "", base: "/", path: "/" });
         },
         loadModule: async (id) => {
-            const plugin = await loadPlugin(id);
-            // If plugin is null (not installed in Node.js), return empty module to prevent crash
-            // The stylesheet will compile but plugin-specific features won't work
+            const plugin = await loadPlugin(id, pluginCache, pluginErrors);
+            if (!plugin) {
+                throw new Error(`Failed to load plugin "${id}": plugin not installed`);
+            }
             // deno-lint-ignore no-explicit-any
-            return { module: (plugin ?? {}), base: "/", path: "/" };
+            return { module: plugin, base: "/", path: "/" };
         },
     });
-    lastStylesheetHash = hash;
-    return compiler;
+    // Evict oldest entry if at capacity
+    if (compilerCache.size >= MAX_CACHED_COMPILERS) {
+        let oldestKey = null;
+        let oldestTime = Infinity;
+        for (const [key, entry] of compilerCache) {
+            if (entry.createdAt < oldestTime) {
+                oldestTime = entry.createdAt;
+                oldestKey = key;
+            }
+        }
+        if (oldestKey) {
+            compilerCache.delete(oldestKey);
+            logger.debug("[tailwind] Evicted oldest compiler from cache", { hash: oldestKey });
+        }
+    }
+    // Store in cache
+    compilerCache.set(hash, {
+        compiler: newCompiler,
+        createdAt: Date.now(),
+        pluginCache,
+        pluginErrors,
+    });
+    return newCompiler;
 }
 export function invalidateCompiler() {
-    compiler = null;
-    lastStylesheetHash = "";
+    compilerCache.clear();
+    logger.debug("[tailwind] All compilers invalidated");
+}
+/**
+ * Get compiler cache statistics for monitoring.
+ */
+export function getCompilerCacheStats() {
+    const entries = Array.from(compilerCache.entries()).map(([hash, entry]) => ({
+        hash,
+        createdAt: entry.createdAt,
+        pluginCount: entry.pluginCache.size,
+    }));
+    return {
+        size: compilerCache.size,
+        maxSize: MAX_CACHED_COMPILERS,
+        entries,
+    };
 }
 export async function generateTailwindCSS(stylesheet, candidates, options) {
     const candidateArray = Array.isArray(candidates) ? candidates : [...candidates];
@@ -587,6 +756,15 @@ export async function generateTailwindCSS(stylesheet, candidates, options) {
 }
 export function formatCSSError(error) {
     const msg = typeof error === "string" ? error : error.message;
+    if (msg.includes("does not accept options")) {
+        const pluginMatch = msg.match(/"([^"]+)"/);
+        const pluginName = pluginMatch?.[1] ?? "unknown plugin";
+        return {
+            title: "Plugin Options Not Supported",
+            message: `${pluginName} does not accept options in Tailwind CSS v4`,
+            suggestion: `Remove the options block from @plugin. Use: @plugin "${pluginName}";`,
+        };
+    }
     if (msg.includes("Could not resolve") || msg.includes("Failed to load plugin")) {
         const pluginMatch = msg.match(/plugin\s*["']([^"']+)["']/i) || msg.match(/"([^"]+)"/);
         const pluginName = pluginMatch?.[1] ?? "unknown";

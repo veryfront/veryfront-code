@@ -5,6 +5,7 @@ import { resourceRegistry } from "../resource/index.js";
 import { promptRegistry } from "../prompt/index.js";
 import { createError, toError } from "../errors/veryfront-error.js";
 import { withSpan } from "../observability/tracing/otlp-setup.js";
+import { VERSION } from "../utils/version.js";
 function asParamsRecord(params) {
     if (!params || Array.isArray(params))
         return {};
@@ -59,7 +60,7 @@ export class MCPServer {
     initialize(_params) {
         return Promise.resolve({
             protocolVersion: "2024-11-05",
-            serverInfo: { name: "veryfront-mcp", version: "0.1.0" },
+            serverInfo: { name: "veryfront-mcp", version: VERSION },
             capabilities: {
                 tools: {},
                 resources: { subscribe: true },

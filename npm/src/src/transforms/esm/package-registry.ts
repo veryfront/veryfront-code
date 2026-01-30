@@ -1,17 +1,27 @@
 /**
  * Central package version and URL registry.
  *
- * Single source of truth for all package versions used in both SSR and browser transforms.
- * SSR resolves to esm.sh URLs (then cached to file://), browser uses esm.sh URLs.
+ * Re-exports from the unified import-rewriter module.
+ * This file is kept for backward compatibility with existing imports.
  */
 
-/** Default React version - used when not specified in project config */
-export const DEFAULT_REACT_VERSION = "19.1.1";
-export const TAILWIND_VERSION = "4.1.8";
+import { rendererLogger } from "../../utils/index.js";
+import {
+  buildReactUrl,
+  CSSTYPE_VERSION,
+  DEFAULT_REACT_VERSION,
+  getReactImportMap as getReactImportMapFromRewriter,
+  TAILWIND_VERSION,
+} from "../import-rewriter/url-builder.js";
+
+// Re-export constants from unified source
+export { CSSTYPE_VERSION, DEFAULT_REACT_VERSION, TAILWIND_VERSION };
+
+/** @deprecated Use DEFAULT_REACT_VERSION instead */
+export const REACT_VERSION = DEFAULT_REACT_VERSION;
 
 /**
  * Validate React version format (semver: X.Y.Z).
- * Returns true if valid, false otherwise.
  */
 export function isValidReactVersion(version: string): boolean {
   return /^\d+\.\d+\.\d+$/.test(version);
@@ -19,72 +29,47 @@ export function isValidReactVersion(version: string): boolean {
 
 /**
  * Validate and normalize React version.
- * Returns the version if valid, or DEFAULT_REACT_VERSION if invalid.
- * Logs a warning if the version is invalid.
  */
 export function normalizeReactVersion(version: string | undefined): string {
   if (!version) return DEFAULT_REACT_VERSION;
   if (isValidReactVersion(version)) return version;
-  console.warn(
-    `[VERYFRONT] Invalid React version format "${version}" (expected X.Y.Z). Using default: ${DEFAULT_REACT_VERSION}`,
+  rendererLogger.warn(
+    `Invalid React version format "${version}" (expected X.Y.Z). Using default: ${DEFAULT_REACT_VERSION}`,
   );
   return DEFAULT_REACT_VERSION;
 }
 
 /**
- * @deprecated Global React version is no longer supported.
- * Use config.react.version passed through TransformOptions instead.
- * This function now always returns DEFAULT_REACT_VERSION.
+ * @deprecated Use DEFAULT_REACT_VERSION directly
  */
 export function getReactVersion(): string {
   return DEFAULT_REACT_VERSION;
 }
 
-/** @deprecated Use DEFAULT_REACT_VERSION or getReactVersion() */
-export const REACT_VERSION = DEFAULT_REACT_VERSION;
+import { VERSION } from "../../utils/version.js";
 
 /**
- * Transform cache version - bump when transform logic changes.
- * This invalidates all cached modules (local + Redis) to prevent stale transform issues.
- * See: https://github.com/veryfront/veryfront-renderer/issues/79
+ * Transform cache version - now uses the application VERSION for consistent
+ * cache invalidation on deployments.
  *
- * v2: Skip ssr-http-cache on Deno for cross-pod compatibility
- * v3: Use HTTP imports in shared React modules on Deno
- * v4: Enable ssr-http-cache for Deno; resolve React to shared-*.ts files
- * v5: Use npm: specifiers for Deno SSR (auto-dedup, no shared-*.ts needed)
- * v6: Update all shared-*.ts files to use npm: specifiers
- * v7: Keep npm: specifiers for Deno in http-cache (don't convert to esm.sh)
- * v8: Remove shared-*.ts files; use npm: specifiers directly in deno.json
- * v9: Align ssr-import-rewriter to use npm: specifiers for Deno SSR
- * v10: Fix import regex to match minified code (from"..." without whitespace)
- * v11: Add HTTP bundle hash→URL mapping for cross-pod recovery
- * v12: Store HTTP bundle code by hash for direct recovery (code:{hash})
- * v13: Fix npm: specifiers for Node.js (convert to esm.sh or local React)
- * v14: Fix SSR pipeline to use local React paths on Node.js (not esm.sh URLs)
- * v15: Keep React as bare specifiers on Node.js for CJS/ESM interop
- * v16: Invalidate Deno-created transforms with https:// React URLs
+ * @deprecated Use VERSION from #veryfront/utils/version.ts directly
  */
-export const TRANSFORM_CACHE_VERSION = 16;
-
-/** csstype version - must match deno.json for type consistency */
-export const CSSTYPE_VERSION = "3.2.3";
+export const TRANSFORM_CACHE_VERSION = VERSION;
 
 /**
- * Build esm.sh URL with deps=csstype for React packages (ensures type consistency).
- * CRITICAL: This is the single source of truth for React URLs. All other files
- * (html/utils.ts, import-rewriter.ts, etc.) must use this or getReactImportMap().
+ * Build esm.sh URL with deps=csstype for React packages.
  */
 export function esmShReact(pkg: string, version: string, path = "", external = false): string {
-  const params = external
-    ? [`external=react`, `target=es2022`, `deps=csstype@${CSSTYPE_VERSION}`]
-    : [`target=es2022`, `deps=csstype@${CSSTYPE_VERSION}`];
-  return `https://esm.sh/${pkg}@${version}${path}?${params.join("&")}`;
+  return buildReactUrl(
+    pkg as "react" | "react-dom",
+    version,
+    path || undefined,
+    external,
+  );
 }
 
 /**
  * Generate esm.sh URL for browser.
- * Uses ?external= so browser import map provides React (ensures single instance).
- * Uses ?target=es2022 for consistent builds.
  */
 export function getEsmShUrl(pkg: string, version: string, external?: readonly string[]): string {
   const params = ["target=es2022"];
@@ -94,60 +79,29 @@ export function getEsmShUrl(pkg: string, version: string, external?: readonly st
 
 /**
  * Get React esm.sh URLs with consistent versioning.
- * Used by both SSR and browser for full-stack consistency.
- * Uses ?target=es2022 to ensure identical builds (esm.sh auto-detects target otherwise).
- *
- * All React sub-packages must use external=react to share the same React instance.
- * This ensures jsx-runtime, react-dom, and third-party packages all use one React.
- *
- * @param version - React version to use (defaults to configured or DEFAULT_REACT_VERSION)
  */
 export function getReactUrls(version?: string): Record<string, string> {
-  const v = version ?? getReactVersion();
+  const v = version ?? DEFAULT_REACT_VERSION;
   return {
-    react: esmShReact("react", v),
-    "react-dom": esmShReact("react-dom", v, "", true),
-    "react-dom/client": esmShReact("react-dom", v, "/client", true),
-    "react-dom/server": esmShReact("react-dom", v, "/server", true),
-    "react/jsx-runtime": esmShReact("react", v, "/jsx-runtime", true),
-    "react/jsx-dev-runtime": esmShReact("react", v, "/jsx-dev-runtime", true),
+    react: buildReactUrl("react", v),
+    "react-dom": buildReactUrl("react-dom", v, undefined, true),
+    "react-dom/client": buildReactUrl("react-dom", v, "/client", true),
+    "react-dom/server": buildReactUrl("react-dom", v, "/server", true),
+    "react/jsx-runtime": buildReactUrl("react", v, "/jsx-runtime", true),
+    "react/jsx-dev-runtime": buildReactUrl("react", v, "/jsx-dev-runtime", true),
   };
 }
 
 /**
  * Get complete React import map for esm.sh.
- * This is used by BOTH SSR and browser to ensure identical React instances,
- * preventing hydration mismatches.
- *
- * Works in Deno, Node, and Bun since esm.sh URLs are standard HTTPS imports.
- * Uses ?target=es2022 to ensure identical builds across all runtimes.
- *
- * @param version - React version to use (defaults to configured or DEFAULT_REACT_VERSION)
  */
 export function getReactImportMap(version?: string): Record<string, string> {
-  const v = version ?? getReactVersion();
-  return {
-    ...getReactUrls(v),
-    // Prefix match for any react/* subpath imports
-    "react/": esmShReact("react", v, "/", true),
-  };
+  return getReactImportMapFromRewriter(version ?? DEFAULT_REACT_VERSION);
 }
 
 /**
  * Get React esm.sh URLs for Deno SSR.
- * Uses esm.sh for both SSR and browser to ensure identical React instances.
- * All sub-packages use external=react to share the same React instance.
- *
- * @param version - React version to use (defaults to REACT_VERSION)
  */
 export function getDenoNpmReactMap(version?: string): Record<string, string> {
-  const v = version ?? getReactVersion();
-  return {
-    "react": esmShReact("react", v),
-    "react-dom": esmShReact("react-dom", v, "", true),
-    "react-dom/client": esmShReact("react-dom", v, "/client", true),
-    "react-dom/server": esmShReact("react-dom", v, "/server", true),
-    "react/jsx-runtime": esmShReact("react", v, "/jsx-runtime", true),
-    "react/jsx-dev-runtime": esmShReact("react", v, "/jsx-dev-runtime", true),
-  };
+  return getReactUrls(version);
 }

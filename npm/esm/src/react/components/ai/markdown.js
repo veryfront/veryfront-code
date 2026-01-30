@@ -8,10 +8,9 @@
  *
  * Works in: Deno, Node.js, Bun (client-side React)
  */
-import * as dntShim from "../../../../_dnt.shims.js";
 import * as React from "react";
 import { cn } from "./theme.js";
-const isBrowser = typeof dntShim.dntGlobalThis !== "undefined" && typeof document !== "undefined";
+import { isBrowserEnvironment } from "../../../platform/compat/runtime.js";
 const ESM_REACT_MARKDOWN = "https://esm.sh/react-markdown@9?external=react&target=es2022";
 const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4?target=es2022";
 const ESM_REHYPE_HIGHLIGHT = "https://esm.sh/rehype-highlight@7?target=es2022";
@@ -28,7 +27,7 @@ let mermaidPromise = null;
 // deno-lint-ignore no-explicit-any
 let mermaidModule = null;
 async function loadMermaid() {
-    if (!isBrowser)
+    if (!isBrowserEnvironment())
         return null;
     if (mermaidModule)
         return mermaidModule;
@@ -45,7 +44,7 @@ function MermaidDiagram({ code }) {
     const [svg, setSvg] = React.useState("");
     const [error, setError] = React.useState("");
     React.useEffect(() => {
-        if (!isBrowser)
+        if (!isBrowserEnvironment())
             return;
         let cancelled = false;
         async function render() {
@@ -71,7 +70,7 @@ function MermaidDiagram({ code }) {
             cancelled = true;
         };
     }, [code]);
-    if (!isBrowser) {
+    if (!isBrowserEnvironment()) {
         return (React.createElement("pre", { className: "my-4 p-4 bg-neutral-100 dark:bg-neutral-800 rounded-lg overflow-auto" },
             React.createElement("code", null, code)));
     }

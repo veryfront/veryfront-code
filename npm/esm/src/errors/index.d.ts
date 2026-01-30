@@ -12,4 +12,5 @@ export { ERROR_SOLUTIONS, formatUserError, identifyError, wrapErrorHandler, } fr
 export type { ErrorSolution as UserFriendlyErrorSolution } from "./user-friendly/index.js";
 export type { ErrorCodeType } from "./error-codes.js";
 export { createError, ensureError, getErrorMessage, toError } from "./veryfront-error.js";
+export type { VeryfrontErrorData } from "./veryfront-error.js";
 //# sourceMappingURL=index.d.ts.map

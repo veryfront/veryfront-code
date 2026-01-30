@@ -69,8 +69,34 @@ export declare function extractCandidatesFromFiles(files: Array<{
     path: string;
     content?: string;
 }>): Set<string>;
+/**
+ * Dynamically load a module from esm.sh in a compiled Deno binary.
+ *
+ * This works around the limitation that compiled Deno binaries cannot do
+ * dynamic imports from URLs. Instead, we:
+ * 1. Fetch the bundled code from esm.sh (with ?bundle&external=tailwindcss)
+ * 2. Rewrite the tailwindcss/plugin import to use our global shim
+ * 3. Write to a temp file
+ * 4. Import via file:// URL
+ *
+ * @param packageName - The npm package name (e.g., "tailwindcss-animate" or "tailwindcss-animate@1.0.7")
+ * @returns The loaded module
+ */
+export declare function loadModuleFromEsmSh(packageName: string): Promise<unknown>;
 export declare function clearPluginCache(id?: string): void;
 export declare function invalidateCompiler(): void;
+/**
+ * Get compiler cache statistics for monitoring.
+ */
+export declare function getCompilerCacheStats(): {
+    size: number;
+    maxSize: number;
+    entries: Array<{
+        hash: string;
+        createdAt: number;
+        pluginCount: number;
+    }>;
+};
 export declare function generateTailwindCSS(stylesheet: string | undefined, candidates: string[] | Set<string>, options?: GenerateOptions): Promise<TailwindResult>;
 export declare function formatCSSError(error: Error | string): CSSErrorInfo;
 /** @deprecated Use generateTailwindCSS with explicit candidates instead */

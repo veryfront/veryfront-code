@@ -1,3 +1,13 @@
+/**
+ * Markdown Component - Rich markdown renderer for chat messages
+ *
+ * Supports:
+ * - GitHub Flavored Markdown (tables, strikethrough, etc.)
+ * - Syntax highlighted code blocks
+ * - Mermaid diagrams (lazy loaded, client-side only)
+ *
+ * Works in: Deno, Node.js, Bun (client-side React)
+ */
 import * as React from "react";
 export interface MarkdownProps {
     /** Markdown content to render */

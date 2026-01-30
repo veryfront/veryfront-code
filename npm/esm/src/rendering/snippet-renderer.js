@@ -101,7 +101,10 @@ async function hashContent(content) {
 function getModuleServerBase(moduleServerUrl) {
     if (moduleServerUrl &&
         (moduleServerUrl.startsWith("http://") || moduleServerUrl.startsWith("https://"))) {
-        return moduleServerUrl;
+        // Deno's dynamic import() only supports file:// and http:// schemes.
+        // In production, the module server is always local (same pod), so
+        // downgrade https:// to http:// to avoid "Received protocol 'https:'" errors.
+        return moduleServerUrl.replace(/^https:\/\//, "http://");
     }
     return "http://localhost:3002";
 }

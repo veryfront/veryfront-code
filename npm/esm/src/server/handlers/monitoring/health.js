@@ -2,6 +2,7 @@ import { BaseHandler } from "../response/base.js";
 import { joinPath } from "../../../utils/path-utils.js";
 import { HTTP_OK, HTTP_UNAVAILABLE, PRIORITY_HIGH } from "../../../utils/constants/index.js";
 import { isTracingDegraded, isTracingEnabled } from "../../../observability/tracing/index.js";
+import { VERSION } from "../../../utils/version.js";
 let serverInitialized = false;
 export function setServerInitialized(ready) {
     serverInitialized = ready;
@@ -58,7 +59,7 @@ export class HealthHandler extends BaseHandler {
                 status: tracingDegraded ? "degraded" : "ok",
                 timestamp: new Date().toISOString(),
                 mode: hasStaticBuild ? "static+ssr" : "ssr",
-                version: "0.1.0",
+                version: VERSION,
                 tracing: {
                     enabled: isTracingEnabled(),
                     degraded: tracingDegraded,

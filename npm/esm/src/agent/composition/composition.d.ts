@@ -1,3 +1,11 @@
+/**
+ * Agent Composition and Registry
+ *
+ * Project-scoped registry for agents. Each project has its own isolated
+ * agent namespace, preventing cross-project agent access.
+ *
+ * @module
+ */
 import type { Agent } from "../types.js";
 import type { Tool } from "../../tool/index.js";
 export declare function agentAsTool(agent: Agent, description: string): Tool;
@@ -24,13 +32,26 @@ export declare function createWorkflow(config: WorkflowConfig): {
     execute(input: string): Promise<WorkflowResult>;
 };
 declare class AgentRegistryClass {
-    private agents;
     register(id: string, agent: Agent): void;
+    /**
+     * Register a framework-provided agent available to all projects.
+     */
+    registerShared(id: string, agent: Agent): void;
     get(id: string): Agent | undefined;
     has(id: string): boolean;
     getAllIds(): string[];
     getAll(): Map<string, Agent>;
     clear(): void;
+    /**
+     * Clear everything (for testing).
+     */
+    clearAll(): void;
+    getStats(): {
+        projectCount: number;
+        sharedCount: number;
+        totalItems: number;
+        currentProjectItems: number;
+    };
 }
 export declare const agentRegistry: AgentRegistryClass;
 export { AgentRegistryClass };

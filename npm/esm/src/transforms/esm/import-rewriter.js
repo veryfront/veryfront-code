@@ -19,19 +19,31 @@ export function addHMRTimestamps(code, timestamp) {
         return `${specifier}${separator}t=${timestamp}`;
     }), { "transforms.timestamp": String(timestamp) });
 }
+/**
+ * Track unversioned import warnings per-project to avoid cross-tenant warning suppression.
+ * Key format: `${projectId}:${specifier}` for project-scoped deduplication.
+ * @see plans/architecture-audit/011.1-global-warning-state-pollution.md
+ */
+const MAX_WARNED_ENTRIES = 10_000;
 const unversionedImportsWarned = new Set();
 function hasVersionSpecifier(specifier) {
     return /@[\d^~x][\d.x^~-]*(?=\/|$)/.test(specifier);
 }
-function warnUnversionedImport(specifier) {
-    if (unversionedImportsWarned.has(specifier))
+function warnUnversionedImport(specifier, projectId) {
+    // Scope warnings by project to prevent cross-tenant warning suppression
+    const key = projectId ? `${projectId}:${specifier}` : specifier;
+    if (unversionedImportsWarned.has(key))
         return;
-    unversionedImportsWarned.add(specifier);
+    if (unversionedImportsWarned.size >= MAX_WARNED_ENTRIES) {
+        unversionedImportsWarned.clear();
+    }
+    unversionedImportsWarned.add(key);
     const isScoped = specifier.startsWith("@");
     const parts = specifier.split("/");
     const packageName = isScoped ? parts.slice(0, 2).join("/") : (parts[0] ?? "");
     logger.warn("[ESM] Unversioned import may cause reproducibility issues", {
         import: specifier,
+        projectId,
         suggestion: `Pin version: import '${packageName}@x.y.z'`,
         help: `Run 'npm info ${packageName} version' to find current version`,
     });
@@ -49,7 +61,7 @@ function shouldSkipRewrite(specifier) {
         specifier.startsWith("#") ||
         specifier.startsWith("veryfront"));
 }
-export function rewriteBareImports(code, _moduleServerUrl, reactVersion) {
+export function rewriteBareImports(code, _moduleServerUrl, reactVersion, projectId) {
     // Get React import map for the specified version (uses centralized URL builder)
     const reactImportMap = getReactImportMap(reactVersion ?? REACT_DEFAULT_VERSION);
     return withSpan("transforms.esm.rewriteBareImports", () => replaceSpecifiers(code, (specifier) => {
@@ -64,10 +76,13 @@ export function rewriteBareImports(code, _moduleServerUrl, reactVersion) {
             finalSpecifier = normalized.replace(/^tailwindcss/, `tailwindcss@${TAILWIND_VERSION}`);
         }
         else if (!hasVersionSpecifier(specifier)) {
-            warnUnversionedImport(specifier);
+            warnUnversionedImport(specifier, projectId);
         }
         return `https://esm.sh/${finalSpecifier}?external=react&target=es2022`;
-    }), { "transforms.code_length": code.length });
+    }), {
+        "transforms.code_length": code.length,
+        ...(projectId && { "transforms.project_id": projectId }),
+    });
 }
 const REACT_PACKAGES = new Set([
     "react",

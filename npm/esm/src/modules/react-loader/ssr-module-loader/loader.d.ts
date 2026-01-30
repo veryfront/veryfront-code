@@ -10,7 +10,10 @@ export declare class SSRModuleLoader {
     private options;
     private fs;
     private missingDependencies;
+    private cachedConfigHash;
     constructor(options: SSRModuleLoaderOptions);
+    /** Lazily compute config hash once per loader instance. */
+    private getConfigHash;
     /**
      * Load and transform a module for SSR.
      */
@@ -31,27 +34,6 @@ export declare class SSRModuleLoader {
      * This allows the parent file to have its imports rewritten to the correct hashed paths.
      */
     private processLocalImports;
-    private rewriteCrossProjectImport;
-    /**
-     * Rewrite local imports to use hashed temp paths.
-     * This ensures each content version uses its own cached module file.
-     */
-    private rewriteLocalImports;
-    /**
-     * Build import patterns for a given specifier to match in transformed code.
-     */
-    private buildImportPatterns;
-    private buildAliasImportPatterns;
-    private buildAbsoluteImportPatterns;
-    private buildRelativeImportPatterns;
-    /**
-     * Compute relative path from source directory to target file.
-     */
-    private computeRelativePath;
-    /**
-     * Convert TypeScript/JSX extension to .js
-     */
-    private toJsExtension;
     private ensureDependenciesExist;
     /**
      * Async hash for large content using Web Crypto API.

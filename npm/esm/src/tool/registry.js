@@ -1,37 +1,55 @@
-import * as dntShim from "../../_dnt.shims.js";
+/**
+ * Tool Registry
+ *
+ * Project-scoped registry for AI tools. Each project has its own isolated
+ * tool namespace, preventing cross-project tool access.
+ *
+ * @module
+ */
 import { zodToJsonSchema } from "./schema/zod-json-schema.js";
 import { agentLogger } from "../utils/logger/logger.js";
+import { ProjectScopedRegistryManager } from "../ai/registry-manager.js";
+const toolManager = new ProjectScopedRegistryManager("tool");
 class ToolRegistryClass {
-    tools = new Map();
     register(id, toolInstance) {
-        if (this.tools.has(id)) {
-            agentLogger.debug(`Tool "${id}" is already registered. Overwriting.`);
-        }
-        this.tools.set(id, toolInstance);
+        toolManager.register(id, toolInstance);
+    }
+    /**
+     * Register a framework-provided tool available to all projects.
+     */
+    registerShared(id, toolInstance) {
+        toolManager.registerShared(id, toolInstance);
     }
     get(id) {
-        return this.tools.get(id);
+        return toolManager.get(id);
     }
     has(id) {
-        return this.tools.has(id);
+        return toolManager.has(id);
     }
     getAllIds() {
-        return [...this.tools.keys()];
+        return toolManager.getAllIds();
     }
     getAll() {
-        return new Map(this.tools);
+        return toolManager.getAll();
     }
     clear() {
-        this.tools.clear();
+        toolManager.clear();
+    }
+    /**
+     * Clear everything (for testing).
+     */
+    clearAll() {
+        toolManager.clearAll();
     }
     getToolsForProvider() {
-        return [...this.tools.values()].map(toolToProviderDefinition);
+        return [...this.getAll().values()].map(toolToProviderDefinition);
+    }
+    getStats() {
+        return toolManager.getStats();
     }
 }
-const TOOL_REGISTRY_KEY = "__veryfront_tool_registry__";
-const globalRegistry = dntShim.dntGlobalThis;
-export const toolRegistry = globalRegistry[TOOL_REGISTRY_KEY] ??=
-    new ToolRegistryClass();
+// Singleton instance - maintains same interface but now project-scoped internally
+export const toolRegistry = new ToolRegistryClass();
 export function toolToProviderDefinition(tool) {
     const jsonSchema = tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema);
     agentLogger.info(`[TOOL] Using ${tool.inputSchemaJson ? "pre-converted" : "runtime-converted"} schema for "${tool.id}"`);

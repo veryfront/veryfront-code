@@ -7,6 +7,7 @@ import { getStudioScripts } from "./dev-scripts.js";
 import { processMetadata } from "./metadata-builder.js";
 import { extractCandidates, getDevStyles, getProductionStyles, getProjectCSS, } from "./styles-builder/index.js";
 import { buildContentAttributes, buildImportMapJson, buildRootAttributes, shouldDisableLayout, } from "./utils.js";
+import { serverLogger } from "../utils/logger/logger.js";
 import { isMarkdownPreview as checkMarkdownPreview } from "../transforms/md/utils.js";
 import { generateModulePreloadHintsFromManifest, getRouteManifest, } from "../modules/manifest/route-module-manifest.js";
 function pathToModuleUrl(path, studioEmbed) {
@@ -148,12 +149,19 @@ async function generateHTMLShellPartsImpl(meta, options, params, props, contentF
     ].join(" ");
     const themePersistenceScript = options.colorSchemeFromParam
         ? `<script${nonce ? ` nonce="${nonce}"` : ""}>
-(function(){try{localStorage.setItem('theme','${colorScheme}')}catch(e){}})();
+(function(){try{localStorage.setItem('theme','${colorScheme}')}catch(e){/* SILENT: localStorage may be unavailable */}})();
 </script>`
         : "";
     let tailwindCSSBlock = "";
-    if (useProductionCSS) {
+    if (useProductionCSS && cssHash) {
         tailwindCSSBlock = `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`;
+    }
+    else if (useProductionCSS && !cssHash) {
+        // CSS generation failed — log error prominently and omit link to avoid /_vf/css/.css 404
+        serverLogger.error("[HTML] Tailwind CSS hash is empty — CSS link omitted. CSS generation likely failed.", {
+            projectSlug,
+            environment: options.environment,
+        });
     }
     else {
         // Dev/preview: use link tag for HMR cache-busting

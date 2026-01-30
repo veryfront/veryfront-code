@@ -4,6 +4,8 @@ import { injectContext, withSpan } from "../../../observability/tracing/otlp-set
 import { SpanNames } from "../../../observability/tracing/span-names.js";
 import { recordApiRequest, recordApiRetry } from "../../../observability/simple-metrics/index.js";
 import { VeryfrontAPIError } from "./types.js";
+/** Default timeout for API requests (30 seconds) */
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 export async function requestWithRetry(url, apiToken, retryConfig, options = {}) {
     const urlObj = new URL(url);
     const urlPath = urlObj.pathname;
@@ -11,7 +13,10 @@ export async function requestWithRetry(url, apiToken, retryConfig, options = {})
     // Note: We only trace the individual fetch attempts (HTTP_CLIENT_FETCH),
     // not the outer retry wrapper, to reduce span nesting and trace size.
     let lastError = null;
+    const timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        const controller = new AbortController();
+        const timeoutId = dntShim.setTimeout(() => controller.abort(), timeoutMs);
         try {
             const result = await withSpan(SpanNames.HTTP_CLIENT_FETCH, async () => {
                 const startTime = performance.now();
@@ -20,7 +25,7 @@ export async function requestWithRetry(url, apiToken, retryConfig, options = {})
                     "Content-Type": "application/json",
                 });
                 injectContext(headers);
-                const response = await dntShim.fetch(url, { headers });
+                const response = await dntShim.fetch(url, { headers, signal: controller.signal });
                 const duration = performance.now() - startTime;
                 recordApiRequest(response.status);
                 logger.debug("[API] Request completed", {
@@ -52,6 +57,15 @@ export async function requestWithRetry(url, apiToken, retryConfig, options = {})
         }
         catch (error) {
             lastError = error instanceof Error ? error : new Error(String(error));
+            // Check if this was a timeout
+            const isTimeout = error instanceof Error && error.name === "AbortError";
+            if (isTimeout) {
+                logger.warn("[VeryfrontAPIClient] Request timed out", {
+                    url: url.replace(/token=[^&]+/, "token=***"),
+                    timeoutMs,
+                    attempt: attempt + 1,
+                });
+            }
             if (error instanceof VeryfrontAPIError) {
                 const status = error.status;
                 if (status && status >= 400 && status < 500 && status !== 429) {
@@ -68,8 +82,12 @@ export async function requestWithRetry(url, apiToken, retryConfig, options = {})
                 maxRetries,
                 delay,
                 error: lastError.message,
+                timeout: isTimeout,
             });
             await new Promise((resolve) => dntShim.setTimeout(resolve, delay));
+        }
+        finally {
+            clearTimeout(timeoutId);
         }
     }
     throw new VeryfrontAPIError(`API request failed after ${maxRetries} retries: ${lastError?.message}`, undefined, { originalError: lastError });

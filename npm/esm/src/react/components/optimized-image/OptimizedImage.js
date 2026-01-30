@@ -1,11 +1,11 @@
 import React from "react";
 import { RESPONSIVE_IMAGE_WIDTH_LG, RESPONSIVE_IMAGE_WIDTHS } from "../../../utils/index.js";
-import { generateSrcSet, getExtension, getOptimizedPath } from "./helpers.js";
+import { generateSrcSet, getImageExtension, getOptimizedPath } from "./helpers.js";
 const DEFAULT_SIZES = RESPONSIVE_IMAGE_WIDTHS;
 const DEFAULT_FORMATS = ["avif", "webp", "jpeg"];
 export function OptimizedImage({ src, alt, width, height, sizes = "100vw", formats = DEFAULT_FORMATS, quality = 80, loading, priority = false, className, style, placeholder = "empty", blurDataURL, onClick, onLoad, onError, }) {
     const loadingStrategy = priority ? "eager" : (loading ?? "lazy");
-    const originalFormat = getExtension(src);
+    const originalFormat = getImageExtension(src);
     const imgStyle = {
         ...style,
         ...(placeholder === "blur" && blurDataURL

@@ -34,6 +34,27 @@ export function isExtendedFSAdapter(fs: FileSystemAdapter): fs is ExtendedFileSy
   return "isVeryfrontAdapter" in fs && "getUnderlyingAdapter" in fs && "isMultiProjectMode" in fs;
 }
 
+/**
+ * Virtual filesystem adapters that fetch files remotely (API, GitHub, etc.)
+ * rather than reading from a local disk.
+ */
+const VIRTUAL_FS_ADAPTERS = new Set([
+  "VeryfrontFSAdapter",
+  "MultiProjectFSAdapter",
+  "GitHubFSAdapter",
+]);
+
+/**
+ * Check if the adapter is using a virtual filesystem (Veryfront API, GitHub, etc.)
+ * Centralized predicate — use this instead of inline checks.
+ */
+export function isVirtualFilesystem(fs: FileSystemAdapter): boolean {
+  if (!fs || typeof fs !== "object") return false;
+  if (!isExtendedFSAdapter(fs)) return false;
+  if (fs.isVeryfrontAdapter()) return true;
+  return VIRTUAL_FS_ADAPTERS.has(fs.getAdapterType());
+}
+
 export class NotSupportedError extends Error {
   constructor(operation: string, adapterType?: string) {
     super(

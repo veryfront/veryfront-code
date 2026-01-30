@@ -1,5 +1,5 @@
 import { RESPONSIVE_IMAGE_WIDTH_LG, RESPONSIVE_IMAGE_WIDTHS } from "../../../utils/index.js";
-import { generateSrcSet, getExtension, getOptimizedPath } from "./helpers.js";
+import { generateSrcSet, getImageExtension, getOptimizedPath } from "./helpers.js";
 const DEFAULT_SIZES = [...RESPONSIVE_IMAGE_WIDTHS];
 const DEFAULT_FORMATS = ["avif", "webp", "jpeg"];
 export function useOptimizedImage(src, options = {}) {
@@ -10,6 +10,6 @@ export function useOptimizedImage(src, options = {}) {
         srcSet: generateSrcSet(src, format, DEFAULT_SIZES, quality),
         type: `image/${format}`,
     }));
-    const fallback = getOptimizedPath(src, getExtension(src), RESPONSIVE_IMAGE_WIDTH_LG, quality);
+    const fallback = getOptimizedPath(src, getImageExtension(src), RESPONSIVE_IMAGE_WIDTH_LG, quality);
     return { sources, fallback };
 }

@@ -1,3 +1,4 @@
+import * as dntShim from "../../../../_dnt.shims.js";
 import { getSsrMaxConcurrentTransformsEnv } from "../../../config/env.js";
 import {
   DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC,
@@ -31,6 +32,20 @@ export const MAX_CONCURRENT_TRANSFORMS = Number.parseInt(
   String(getSsrMaxConcurrentTransformsEnv(50)),
   10,
 );
+
+/**
+ * Maximum concurrent transforms per project (noisy-neighbor protection).
+ * Defaults to ceil(MAX_CONCURRENT_TRANSFORMS / 3) so no single project can consume
+ * more than ~1/3 of transform capacity. Set to 0 to disable per-project limits.
+ * Configurable via SSR_TRANSFORM_PER_PROJECT_LIMIT env var.
+ */
+// deno-lint-ignore no-explicit-any
+const envLimit = (dntShim.dntGlobalThis as any).Deno?.env?.get("SSR_TRANSFORM_PER_PROJECT_LIMIT") ??
+  // deno-lint-ignore no-explicit-any
+  (dntShim.dntGlobalThis as any).process?.env?.SSR_TRANSFORM_PER_PROJECT_LIMIT;
+export const TRANSFORM_PER_PROJECT_LIMIT = envLimit !== undefined
+  ? parseInt(String(envLimit), 10)
+  : Math.ceil(MAX_CONCURRENT_TRANSFORMS / 3);
 
 export const TRANSFORM_ACQUIRE_TIMEOUT_MS = 500;
 export const IN_PROGRESS_WAIT_TIMEOUT_MS = 30_000;

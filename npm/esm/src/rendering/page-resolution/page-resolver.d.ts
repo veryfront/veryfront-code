@@ -12,7 +12,18 @@ export declare class PageResolver {
     private adapter;
     constructor(options: PageResolverOptions);
     resolvePage(slug: string): Promise<EntityInfo>;
+    /**
+     * Discover all pages from both App Router and Pages Router directories.
+     * This is used for SSG to determine which pages need to be statically generated.
+     *
+     * @see plans/architecture-audit/005.2-ssg-getallpages-missing-app-router.md
+     */
     getAllPages(): Promise<string[]>;
+    /**
+     * Recursively discover all page.tsx files in the App Router directory.
+     * Handles route groups (parentheses) and parallel routes (@).
+     */
+    private discoverAppRouterPages;
     pageExists(slug: string): Promise<boolean>;
     getRouterMode(): Promise<"app" | "pages">;
 }

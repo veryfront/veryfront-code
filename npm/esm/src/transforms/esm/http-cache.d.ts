@@ -5,10 +5,16 @@ type CacheOptions = {
     /** React version to use for esm.sh URLs (defaults to REACT_VERSION) */
     reactVersion?: string;
 };
+/** Result of cacheHttpImportsToLocal including bundle manifest info. */
+export interface CacheHttpImportsResult {
+    code: string;
+    bundleManifestId?: string;
+}
 /**
  * Rewrite HTTP imports in the provided code to cached local file:// paths.
+ * Returns the rewritten code and an optional bundle manifest ID for atomic validation.
  */
-export declare function cacheHttpImportsToLocal(code: string, options: CacheOptions): Promise<string>;
+export declare function cacheHttpImportsToLocal(code: string, options: CacheOptions): Promise<CacheHttpImportsResult>;
 /**
  * Cache a specific HTTP module URL and return its local file:// path.
  * Used by server-loader.ts to cache react-dom/server and ensure the same

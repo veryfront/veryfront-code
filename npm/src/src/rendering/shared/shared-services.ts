@@ -12,7 +12,7 @@
  */
 
 import { rendererLogger as logger } from "../../utils/index.js";
-import { initialize as initializeEsbuild } from "esbuild";
+import { initializeTransform, isUsingEsbuild } from "../../platform/compat/transform.js";
 import { withSpan } from "../../observability/tracing/otlp-setup.js";
 import { SpanNames } from "../../observability/tracing/span-names.js";
 import { ElementValidator, type ValidationOptions } from "../element-validator/index.js";
@@ -26,7 +26,6 @@ export interface SharedServicesOptions {
 export interface SharedServices {
   elementValidator: ElementValidator;
   compilerService: CompilerService;
-  esbuildInitialized: boolean;
 }
 
 let sharedServices: SharedServices | null = null;
@@ -47,15 +46,11 @@ export async function initializeSharedServices(
       logger.debug("[SharedServices] Initializing shared renderer services");
       const startTime = performance.now();
 
-      let esbuildInitialized = false;
-      try {
-        await initializeEsbuild({ worker: false });
-        esbuildInitialized = true;
-        logger.debug("[SharedServices] esbuild initialized");
-      } catch {
-        // Already initialized
-        esbuildInitialized = true;
-      }
+      // Initialize JSX transform (esbuild in dev, sucrase in deno compile)
+      await initializeTransform();
+      logger.debug("[SharedServices] Transform initialized", {
+        backend: isUsingEsbuild() ? "esbuild" : "sucrase",
+      });
 
       const validatorOptions: ValidationOptions = {
         maxDepth: maxValidationDepth,
@@ -65,7 +60,6 @@ export async function initializeSharedServices(
       sharedServices = {
         elementValidator: new ElementValidator(validatorOptions),
         compilerService: new CompilerService(),
-        esbuildInitialized,
       };
 
       const duration = performance.now() - startTime;

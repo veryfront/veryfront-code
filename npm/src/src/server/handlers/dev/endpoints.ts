@@ -503,7 +503,7 @@ document.head.appendChild(errorScript);
         const sincePong = Date.now() - lastPongAt;
         if (sincePong > pongTimeoutMs) {
           console.warn('[Preview HMR] Pong timeout (' + sincePong + 'ms), reconnecting...');
-          try { ws.close(); } catch {}
+          try { ws.close(); } catch { /* SILENT: WebSocket already closed */ }
           return;
         }
         try {

@@ -46,6 +46,7 @@ import { SSROrchestrator } from "./orchestrator/ssr-orchestrator.js";
 import { RenderPipeline } from "./orchestrator/pipeline.js";
 import { createLayoutComponentCache } from "./layouts/utils/component-loader.js";
 import { TimeoutError, withTimeoutThrow } from "./utils/stream-utils.js";
+import { Singleflight } from "../utils/singleflight.js";
 /**
  * Get environment variable (cross-platform: Deno, Node, Bun).
  */
@@ -69,6 +70,13 @@ const RENDER_PIPELINE_TIMEOUT_MS = parseInt(getEnv("RENDER_TIMEOUT_MS") ?? "6000
  */
 const RENDER_MAX_CONCURRENT = parseInt(getEnv("RENDER_MAX_CONCURRENT") ?? "30", 10);
 /**
+ * Maximum concurrent renders per project (noisy-neighbor protection).
+ * Defaults to ceil(RENDER_MAX_CONCURRENT / 3) so no single project can consume
+ * more than ~1/3 of pod capacity. Set to 0 to disable per-project limits.
+ * Configurable via RENDER_PER_PROJECT_LIMIT env var.
+ */
+const RENDER_PER_PROJECT_LIMIT = parseInt(getEnv("RENDER_PER_PROJECT_LIMIT") ?? String(Math.ceil(RENDER_MAX_CONCURRENT / 3)), 10);
+/**
  * Timeout for acquiring render permit (ms).
  * If semaphore cannot be acquired within this time, request fails fast with 503.
  */
@@ -79,25 +87,131 @@ const RENDER_ACQUIRE_TIMEOUT_MS = 5000;
  */
 const renderSemaphore = new Semaphore(RENDER_MAX_CONCURRENT);
 /**
+ * Per-project active render counter. Prevents a single noisy tenant from
+ * monopolizing the global semaphore and starving other projects.
+ * Only enforced when RENDER_PER_PROJECT_LIMIT > 0.
+ */
+const projectRenderCounts = new Map();
+/**
+ * Lock map to prevent race conditions in acquireProjectSlot/releaseProjectSlot.
+ * Each project has its own lock to allow concurrent access across different projects
+ * while serializing access within the same project.
+ *
+ * The race condition: Without locking, concurrent requests can read the same count,
+ * both pass the limit check, and both increment - allowing 2*limit concurrent renders.
+ */
+const projectSlotLocks = new Map();
+/** Maximum time to wait for a lock before giving up (10 seconds) */
+const LOCK_TIMEOUT_MS = 10_000;
+/**
+ * Acquire a lock for a specific project. Returns a release function.
+ * Uses a retry loop to ensure atomicity - avoids TOCTOU race conditions.
+ */
+async function acquireProjectLock(projectId) {
+    const startTime = Date.now();
+    // Retry loop to handle race conditions atomically
+    while (true) {
+        // Check for timeout
+        if (Date.now() - startTime > LOCK_TIMEOUT_MS) {
+            throw new Error(`Lock acquisition timeout for project: ${projectId}`);
+        }
+        // Get existing lock
+        const existingLock = projectSlotLocks.get(projectId);
+        if (existingLock) {
+            // Wait for existing lock to release
+            await existingLock;
+            // After await, another thread might have taken the lock, so retry
+            continue;
+        }
+        // No existing lock - try to create one
+        let releaseLock;
+        const lockPromise = new Promise((resolve) => {
+            releaseLock = resolve;
+        });
+        // Double-check that no lock was set while we were creating ours
+        // This is the critical section that prevents the race
+        if (projectSlotLocks.has(projectId)) {
+            // Another thread beat us - retry
+            continue;
+        }
+        // Successfully acquired lock
+        projectSlotLocks.set(projectId, lockPromise);
+        // Return release function that cleans up
+        return () => {
+            releaseLock();
+            // Only delete if this is still our lock
+            if (projectSlotLocks.get(projectId) === lockPromise) {
+                projectSlotLocks.delete(projectId);
+            }
+        };
+    }
+}
+/**
+ * Attempt to acquire a project render slot with proper locking.
+ * Returns true if acquired, false if limit reached.
+ */
+async function acquireProjectSlot(projectId) {
+    if (RENDER_PER_PROJECT_LIMIT <= 0)
+        return true;
+    const release = await acquireProjectLock(projectId);
+    try {
+        const current = projectRenderCounts.get(projectId) ?? 0;
+        if (current >= RENDER_PER_PROJECT_LIMIT) {
+            return false;
+        }
+        projectRenderCounts.set(projectId, current + 1);
+        return true;
+    }
+    finally {
+        release();
+    }
+}
+/**
+ * Release a project render slot with proper locking.
+ */
+async function releaseProjectSlot(projectId) {
+    if (RENDER_PER_PROJECT_LIMIT <= 0)
+        return;
+    const release = await acquireProjectLock(projectId);
+    try {
+        const current = projectRenderCounts.get(projectId) ?? 0;
+        if (current <= 1) {
+            projectRenderCounts.delete(projectId);
+        }
+        else {
+            projectRenderCounts.set(projectId, current - 1);
+        }
+    }
+    finally {
+        release();
+    }
+}
+/**
  * Renderer - Shared renderer for all projects
  *
  * Initialize once at startup, then use for any project by passing
  * a RenderContext to each render call.
- */
-/**
- * Note: Singleflight was previously used for render deduplication but caused
- * "body already consumed" errors when multiple concurrent requests shared the
- * same RenderResult. The RenderResult.stream is a ReadableStream that can only
- * be consumed once. Without Singleflight, concurrent requests for the same page
- * may duplicate work, but this is acceptable since:
- * 1. The cache (checkCache) handles repeated requests after first render completes
- * 2. Duplicate renders are rare in practice and don't cause errors
- * 3. This matches the pattern in http-cache.ts which also removed Singleflight
+ *
+ * ## Singleflight Deduplication
+ *
+ * Uses Singleflight to deduplicate concurrent renders of the same page.
+ * Key insight: We cache the HTML string, not the stream. Each caller gets
+ * a fresh RenderResult with the same HTML but no stream (streams can only
+ * be consumed once). This prevents "body already consumed" errors while
+ * still avoiding duplicate render work.
+ *
+ * The Singleflight key includes: projectId, environment, releaseId, slug, colorScheme
  */
 export class Renderer {
     cache;
     initialized = false;
     initializationPromise = null;
+    /**
+     * Singleflight for render deduplication. Caches HTML string results so
+     * concurrent requests for the same page share the render work.
+     * Key format: {projectId}:{environment}:{releaseId}:{slug}:{colorScheme}
+     */
+    renderFlight = new Singleflight();
     constructor(options = {}) {
         this.cache = new ContextAwareCacheCoordinator(options.cache);
     }
@@ -145,8 +259,26 @@ export class Renderer {
                 });
                 return cacheResult.cachedResult;
             }
+            // Per-project cap: reject immediately if this project has too many concurrent renders.
+            // This prevents a single noisy tenant from monopolizing the global semaphore.
+            if (!(await acquireProjectSlot(ctx.projectId))) {
+                const activeCount = projectRenderCounts.get(ctx.projectId) ?? 0;
+                logger.error("[Renderer] Per-project render limit reached", {
+                    slug,
+                    projectId: ctx.projectId,
+                    activeRenders: activeCount,
+                    limit: RENDER_PER_PROJECT_LIMIT,
+                });
+                throw new VeryfrontError(`Per-project render limit reached (${activeCount}/${RENDER_PER_PROJECT_LIMIT} active). Try again shortly.`, ErrorCode.SERVICE_OVERLOADED, {
+                    slug,
+                    projectId: ctx.projectId,
+                    activeRenders: activeCount,
+                    limit: RENDER_PER_PROJECT_LIMIT,
+                });
+            }
             const acquired = await renderSemaphore.tryAcquire(RENDER_ACQUIRE_TIMEOUT_MS);
             if (!acquired) {
+                await releaseProjectSlot(ctx.projectId);
                 logger.error("[Renderer] Render capacity exceeded - service overloaded", {
                     slug,
                     projectId: ctx.projectId,
@@ -160,6 +292,7 @@ export class Renderer {
             }
             finally {
                 renderSemaphore.release();
+                await releaseProjectSlot(ctx.projectId);
             }
         }, {
             "renderer.slug": slug,
@@ -167,38 +300,84 @@ export class Renderer {
             "renderer.environment": ctx.environment,
         });
     }
+    /**
+     * Build a Singleflight key for render deduplication.
+     * Includes all context that affects rendering output.
+     */
+    getSingleflightKey(slug, ctx, colorScheme) {
+        return `${ctx.projectId}:${ctx.environment}:${ctx.contentSourceId ?? "draft"}:${slug}:${colorScheme ?? "default"}`;
+    }
     async doRenderPage(slug, ctx, options, startTime) {
-        const services = this.createServicesForContext(ctx, options?.colorScheme);
-        const contentSourceId = ctx.contentSourceId;
-        let result;
-        try {
-            result = await withTimeoutThrow(services.pipeline.renderPage(slug, {
-                ...options,
-                projectId: ctx.projectId,
-                projectSlug: ctx.projectSlug,
-                environment: ctx.environment,
-                contentSourceId,
-                skipCacheCheck: true,
-            }), RENDER_PIPELINE_TIMEOUT_MS, `Render pipeline for ${ctx.projectId}:${slug}`);
-        }
-        catch (error) {
-            if (error instanceof TimeoutError) {
-                logger.error("[Renderer] Render pipeline timeout - aborting", {
-                    slug,
+        // Use Singleflight to deduplicate concurrent renders of the same page.
+        // Key insight: We cache the HTML string, not the stream. Each caller gets
+        // a fresh RenderResult with the same HTML but no stream.
+        const flightKey = this.getSingleflightKey(slug, ctx, options?.colorScheme);
+        // Check if there's already an in-flight render for this key
+        const isFollower = this.renderFlight.has(flightKey);
+        const cachedData = await this.renderFlight.do(flightKey, async () => {
+            // Leader path: Actually perform the render
+            const services = this.createServicesForContext(ctx, options?.colorScheme);
+            const contentSourceId = ctx.contentSourceId;
+            let result;
+            try {
+                // Force string delivery for Singleflight renders to ensure we have HTML to cache.
+                // Streaming would require each caller to get a unique stream, which defeats deduplication.
+                result = await withTimeoutThrow(services.pipeline.renderPage(slug, {
+                    ...options,
+                    delivery: "string", // Force string mode for deduplication
                     projectId: ctx.projectId,
-                    timeoutMs: RENDER_PIPELINE_TIMEOUT_MS,
-                });
+                    projectSlug: ctx.projectSlug,
+                    environment: ctx.environment,
+                    contentSourceId,
+                    skipCacheCheck: true,
+                }), RENDER_PIPELINE_TIMEOUT_MS, `Render pipeline for ${ctx.projectId}:${slug}`);
             }
-            throw error;
-        }
-        await this.cache.persistResult(result, slug, ctx, options?.colorScheme);
-        logger.debug("[Renderer] Render complete", {
-            slug,
-            projectId: ctx.projectId,
-            duration: `${(performance.now() - startTime).toFixed(2)}ms`,
-            htmlLength: result.html?.length ?? 0,
+            catch (error) {
+                if (error instanceof TimeoutError) {
+                    logger.error("[Renderer] Render pipeline timeout - aborting", {
+                        slug,
+                        projectId: ctx.projectId,
+                        timeoutMs: RENDER_PIPELINE_TIMEOUT_MS,
+                    });
+                }
+                throw error;
+            }
+            // Persist to cache (only leader does this)
+            await this.cache.persistResult(result, slug, ctx, options?.colorScheme);
+            logger.debug("[Renderer] Render complete (leader)", {
+                slug,
+                projectId: ctx.projectId,
+                duration: `${(performance.now() - startTime).toFixed(2)}ms`,
+                htmlLength: result.html?.length ?? 0,
+            });
+            // Return only serializable data (no stream) for sharing
+            return {
+                html: result.html,
+                frontmatter: result.frontmatter,
+                headings: result.headings,
+                ssrHash: result.ssrHash,
+                pageModule: result.pageModule,
+            };
         });
-        return result;
+        // Log if this was a follower (deduplicated request)
+        if (isFollower) {
+            logger.debug("[Renderer] Render deduplicated (follower)", {
+                slug,
+                projectId: ctx.projectId,
+                duration: `${(performance.now() - startTime).toFixed(2)}ms`,
+                htmlLength: cachedData.html?.length ?? 0,
+            });
+        }
+        // Return a fresh RenderResult for this caller (no stream for followers)
+        return {
+            html: cachedData.html,
+            frontmatter: cachedData.frontmatter,
+            headings: cachedData.headings,
+            ssrHash: cachedData.ssrHash,
+            pageModule: cachedData.pageModule,
+            // No stream - callers that need streaming should not use concurrent requests
+            stream: null,
+        };
     }
     resolvePageData(slug, ctx, options) {
         if (!this.initialized) {

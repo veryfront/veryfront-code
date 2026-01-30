@@ -52,6 +52,8 @@ export interface TransformOptions {
     studioEmbed?: boolean;
     /** React version to use (detected from project package.json if not provided) */
     reactVersion?: string;
+    /** File reader for dependency hash computation. When provided, enables dependency-aware cache invalidation. */
+    readFile?: (path: string) => Promise<string>;
 }
 /**
  * Context passed through the transform pipeline.

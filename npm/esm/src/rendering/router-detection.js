@@ -13,8 +13,6 @@ import { withSpan } from "../observability/tracing/otlp-setup.js";
 import { SpanNames } from "../observability/tracing/span-names.js";
 // Re-export from app-route-resolver for backward compatibility
 export { getAppRouteEntity } from "./app-route-resolver.js";
-// Re-export from route-params-extractor for backward compatibility
-export { extractAppRouteParams, extractPagesRouteParams } from "./route-params-extractor.js";
 const routerDetectionCache = new LRUCache({
     maxEntries: 200,
     ttlMs: 60_000,

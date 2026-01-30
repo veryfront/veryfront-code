@@ -70,7 +70,8 @@ export type {
   UserId,
 } from "./branded.js";
 
-export { brandValue, isBrandedString, unbrandValue } from "./branded.js";
+// Runtime branded value utilities removed — zero production consumers.
+// See P2-2 Dead Export Audit.
 
 export type ComponentProps = Record<string, unknown>;
 

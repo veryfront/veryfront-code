@@ -1,5 +1,6 @@
 import type { LRUCache } from "../../../utils/lru-wrapper.js";
 import type { RuntimeAdapter } from "../../../platform/adapters/base.js";
+import type { Logger } from "../../../utils/logger/logger.js";
 import type { MDXModule } from "../types.js";
 
 export interface ESMLoaderContext {
@@ -12,6 +13,11 @@ export interface ESMLoaderContext {
   contentSourceId?: string;
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /**
+   * If true, missing modules fail fast instead of being stubbed.
+   * Defaults to true when not specified.
+   */
+  strictMissingModules?: boolean;
 }
 
 export interface FSAdapter {
@@ -55,6 +61,19 @@ export interface ModuleFetcherContext {
   inFlightModules?: Map<string, Promise<string | null>>;
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /** Logger with request-scoped context (project_id, project_slug, requestId, etc.) */
+  logger?: Logger;
+  /**
+   * If true, missing modules fail fast instead of being stubbed.
+   * Defaults to true when not specified.
+   */
+  strictMissingModules?: boolean;
+  /**
+   * Deadline timestamp (Date.now() + timeout) for the entire transform tree.
+   * If not set, defaults to TRANSFORM_TREE_TIMEOUT_MS from the first fetchAndCacheModule call.
+   * Prevents infinite recursion from causing pod hangs.
+   */
+  transformDeadline?: number;
 }
 
 export interface JSXTransform {

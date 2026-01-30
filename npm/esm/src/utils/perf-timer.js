@@ -5,6 +5,7 @@
  * Enable with VERYFRONT_PERF=1 environment variable.
  */
 import { isPerfEnabledEnv } from "../config/env.js";
+import { serverLogger } from "./index.js";
 const enabled = isPerfEnabledEnv();
 const timings = new Map();
 let currentRequestId = null;
@@ -48,8 +49,6 @@ export function endRequest(requestId) {
         .sort((a, b) => (b.durationMs ?? 0) - (a.durationMs ?? 0));
     const total = entries.find((e) => e.label === "total")?.durationMs ??
         sorted.reduce((sum, e) => sum + (e.durationMs ?? 0), 0);
-    console.log(`\n[PERF] Request ${requestId} - Total: ${total.toFixed(1)}ms`);
-    console.log("─".repeat(60));
     const roots = sorted.filter((e) => !e.parent);
     const children = new Map();
     for (const entry of sorted) {
@@ -59,23 +58,33 @@ export function endRequest(requestId) {
         list.push(entry);
         children.set(entry.parent, list);
     }
+    const breakdown = [];
     for (const entry of roots) {
         const duration = entry.durationMs ?? 0;
         const pct = ((duration / total) * 100).toFixed(1);
-        console.log(`  ${entry.label}: ${entry.durationMs?.toFixed(1)}ms (${pct}%)`);
+        const item = {
+            label: entry.label,
+            durationMs: Number(entry.durationMs?.toFixed(1)),
+            pct,
+        };
         const childList = children.get(entry.label);
-        if (!childList)
-            continue;
-        for (const child of childList.slice(0, 5)) {
-            const childDuration = child.durationMs ?? 0;
-            const childPct = ((childDuration / total) * 100).toFixed(1);
-            console.log(`    └─ ${child.label}: ${child.durationMs?.toFixed(1)}ms (${childPct}%)`);
+        if (childList) {
+            item.children = childList.slice(0, 5).map((child) => ({
+                label: child.label,
+                durationMs: Number(child.durationMs?.toFixed(1)),
+                pct: ((child.durationMs ?? 0) / total * 100).toFixed(1),
+            }));
+            if (childList.length > 5) {
+                item.childrenOmitted = childList.length - 5;
+            }
         }
-        if (childList.length > 5) {
-            console.log(`    └─ ... and ${childList.length - 5} more`);
-        }
+        breakdown.push(item);
     }
-    console.log("─".repeat(60));
+    serverLogger.debug(`[PERF] Request ${requestId}`, {
+        requestId,
+        totalMs: Number(total.toFixed(1)),
+        breakdown,
+    });
     timings.delete(requestId);
     currentRequestId = null;
 }

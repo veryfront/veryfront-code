@@ -777,6 +777,13 @@ export declare const veryfrontConfigSchema: z.ZodObject<{
         } | undefined;
         moduleResolution?: "cdn" | "self-hosted" | "bundled" | undefined;
     }>>>;
+    generate: z.ZodOptional<z.ZodOptional<z.ZodObject<{
+        preferredRouter: z.ZodOptional<z.ZodOptional<z.ZodEnum<["app-router", "pages-router"]>>>;
+    }, "strip", z.ZodTypeAny, {
+        preferredRouter?: "app-router" | "pages-router" | undefined;
+    }, {
+        preferredRouter?: "app-router" | "pages-router" | undefined;
+    }>>>;
     tailwind: z.ZodOptional<z.ZodOptional<z.ZodObject<{
         stylesheet: z.ZodOptional<z.ZodOptional<z.ZodString>>;
         plugins: z.ZodOptional<z.ZodOptional<z.ZodArray<z.ZodEnum<["forms", "typography", "aspect-ratio", "container-queries"]>, "many">>>;
@@ -988,6 +995,9 @@ export declare const veryfrontConfigSchema: z.ZodObject<{
             } | undefined;
         } | undefined;
     } | undefined;
+    generate?: {
+        preferredRouter?: "app-router" | "pages-router" | undefined;
+    } | undefined;
     tailwind?: {
         theme?: {
             extend?: Record<string, unknown> | undefined;
@@ -1180,6 +1190,9 @@ export declare const veryfrontConfigSchema: z.ZodObject<{
                 maxDelay?: number | undefined;
             } | undefined;
         } | undefined;
+    } | undefined;
+    generate?: {
+        preferredRouter?: "app-router" | "pages-router" | undefined;
     } | undefined;
     tailwind?: {
         theme?: {

@@ -1745,7 +1745,6 @@ export declare const ListEnvironmentFilesResponseSchema: z.ZodObject<{
         prev: string | null;
     }>;
 }, "strip", z.ZodTypeAny, {
-    release_id: string;
     data: {
         type: "function" | "page" | "file" | "component";
         path: string;
@@ -1797,6 +1796,7 @@ export declare const ListEnvironmentFilesResponseSchema: z.ZodObject<{
             }>]>>;
         }, z.ZodTypeAny, "passthrough"> | undefined;
     }[];
+    release_id: string;
     page_info: {
         self: string | null;
         first: null;
@@ -1849,7 +1849,6 @@ export declare const ListEnvironmentFilesResponseSchema: z.ZodObject<{
         }>]>>;
     }, z.ZodTypeAny, "passthrough"> | undefined;
 }, {
-    release_id: string;
     data: {
         type: "function" | "page" | "file" | "component";
         path: string;
@@ -1901,6 +1900,7 @@ export declare const ListEnvironmentFilesResponseSchema: z.ZodObject<{
             }>]>>;
         }, z.ZodTypeAny, "passthrough"> | undefined;
     }[];
+    release_id: string;
     page_info: {
         self: string | null;
         first: null;
@@ -2808,7 +2808,6 @@ export declare const ListReleaseFilesResponseSchema: z.ZodObject<{
         prev: string | null;
     }>;
 }, "strip", z.ZodTypeAny, {
-    release_id: string;
     data: {
         type: "function" | "page" | "file" | "component";
         path: string;
@@ -2860,6 +2859,7 @@ export declare const ListReleaseFilesResponseSchema: z.ZodObject<{
             }>]>>;
         }, z.ZodTypeAny, "passthrough"> | undefined;
     }[];
+    release_id: string;
     page_info: {
         self: string | null;
         first: null;
@@ -2910,7 +2910,6 @@ export declare const ListReleaseFilesResponseSchema: z.ZodObject<{
         }>]>>;
     }, z.ZodTypeAny, "passthrough"> | undefined;
 }, {
-    release_id: string;
     data: {
         type: "function" | "page" | "file" | "component";
         path: string;
@@ -2962,6 +2961,7 @@ export declare const ListReleaseFilesResponseSchema: z.ZodObject<{
             }>]>>;
         }, z.ZodTypeAny, "passthrough"> | undefined;
     }[];
+    release_id: string;
     page_info: {
         self: string | null;
         first: null;

@@ -11,7 +11,7 @@
  * @module rendering/shared/shared-services
  */
 import { rendererLogger as logger } from "../../utils/index.js";
-import { initialize as initializeEsbuild } from "esbuild";
+import { initializeTransform, isUsingEsbuild } from "../../platform/compat/transform.js";
 import { withSpan } from "../../observability/tracing/otlp-setup.js";
 import { SpanNames } from "../../observability/tracing/span-names.js";
 import { ElementValidator } from "../element-validator/index.js";
@@ -28,16 +28,11 @@ export async function initializeSharedServices(options = {}) {
     initializationPromise = withSpan(SpanNames.SHARED_SERVICES_INIT, async () => {
         logger.debug("[SharedServices] Initializing shared renderer services");
         const startTime = performance.now();
-        let esbuildInitialized = false;
-        try {
-            await initializeEsbuild({ worker: false });
-            esbuildInitialized = true;
-            logger.debug("[SharedServices] esbuild initialized");
-        }
-        catch {
-            // Already initialized
-            esbuildInitialized = true;
-        }
+        // Initialize JSX transform (esbuild in dev, sucrase in deno compile)
+        await initializeTransform();
+        logger.debug("[SharedServices] Transform initialized", {
+            backend: isUsingEsbuild() ? "esbuild" : "sucrase",
+        });
         const validatorOptions = {
             maxDepth: maxValidationDepth,
             debugMode,
@@ -45,7 +40,6 @@ export async function initializeSharedServices(options = {}) {
         sharedServices = {
             elementValidator: new ElementValidator(validatorOptions),
             compilerService: new CompilerService(),
-            esbuildInitialized,
         };
         const duration = performance.now() - startTime;
         logger.debug("[SharedServices] Shared services initialized", {

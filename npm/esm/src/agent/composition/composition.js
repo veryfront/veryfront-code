@@ -1,7 +1,14 @@
-import * as dntShim from "../../../_dnt.shims.js";
+/**
+ * Agent Composition and Registry
+ *
+ * Project-scoped registry for agents. Each project has its own isolated
+ * agent namespace, preventing cross-project agent access.
+ *
+ * @module
+ */
 import { z } from "zod";
-import { agentLogger } from "../../utils/logger/logger.js";
 import { setActiveSpanAttributes, withSpan } from "../../observability/tracing/otlp-setup.js";
+import { ProjectScopedRegistryManager } from "../../ai/registry-manager.js";
 export function agentAsTool(agent, description) {
     return {
         id: `agent_${agent.id}`,
@@ -65,34 +72,44 @@ export function createWorkflow(config) {
         },
     };
 }
+const agentManager = new ProjectScopedRegistryManager("agent");
 class AgentRegistryClass {
-    agents = new Map();
     register(id, agent) {
-        if (this.agents.has(id)) {
-            agentLogger.debug(`Agent "${id}" is already registered. Overwriting.`);
-        }
-        this.agents.set(id, agent);
-        agentLogger.debug(`Registered agent: ${id}`);
+        agentManager.register(id, agent);
+    }
+    /**
+     * Register a framework-provided agent available to all projects.
+     */
+    registerShared(id, agent) {
+        agentManager.registerShared(id, agent);
     }
     get(id) {
-        return this.agents.get(id);
+        return agentManager.get(id);
     }
     has(id) {
-        return this.agents.has(id);
+        return agentManager.has(id);
     }
     getAllIds() {
-        return Array.from(this.agents.keys());
+        return agentManager.getAllIds();
     }
     getAll() {
-        return new Map(this.agents);
+        return agentManager.getAll();
     }
     clear() {
-        this.agents.clear();
+        agentManager.clear();
+    }
+    /**
+     * Clear everything (for testing).
+     */
+    clearAll() {
+        agentManager.clearAll();
+    }
+    getStats() {
+        return agentManager.getStats();
     }
 }
-const AGENT_REGISTRY_KEY = "__veryfront_agent_registry__";
-const globalWithRegistry = dntShim.dntGlobalThis;
-export const agentRegistry = (globalWithRegistry[AGENT_REGISTRY_KEY] ??= new AgentRegistryClass());
+// Singleton instance - maintains same interface but now project-scoped internally
+export const agentRegistry = new AgentRegistryClass();
 export { AgentRegistryClass };
 export function registerAgent(id, agent) {
     agentRegistry.register(id, agent);

@@ -18,10 +18,10 @@ import * as dntShim from "../_dnt.shims.js";
 import { createProxyHandler } from "./handler.js";
 import { createCacheFromEnv } from "./cache/index.js";
 import { endSpan, extractContext, initializeOTLPWithApis, injectContext, ProxySpanNames, shutdownOTLP, startServerSpan, withContext, withSpan, } from "./tracing.js";
-import { proxyLogger } from "./logger.js";
+import { proxyLogger, runWithProxyRequestContext } from "./logger.js";
 import { parseProjectDomain } from "../src/server/utils/domain-parser.js";
 import { exit, getEnv, onSignal } from "../src/platform/compat/process.js";
-import { createHttpServer, upgradeWebSocket } from "../src/platform/compat/http/index.js";
+import { createHttpServer, upgradeWebSocket, } from "../src/platform/compat/http/index.js";
 // Configuration from environment variables
 const config = {
     apiBaseUrl: getEnv("VERYFRONT_API_BASE_URL") ||
@@ -30,8 +30,11 @@ const config = {
     clientSecret: getEnv("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY") || "",
     // Preview uses same service account (scopes determine access)
     previewClientId: getEnv("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY") || "",
-    previewClientSecret: getEnv("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY") || "",
-    localProjects: getEnv("LOCAL_PROJECTS") ? JSON.parse(getEnv("LOCAL_PROJECTS")) : {},
+    previewClientSecret: getEnv("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY") ||
+        "",
+    localProjects: getEnv("LOCAL_PROJECTS")
+        ? JSON.parse(getEnv("LOCAL_PROJECTS"))
+        : {},
 };
 const RENDERER_URL = getEnv("RENDERER_URL") || "http://localhost:3001";
 const PORT = parseInt(getEnv("PORT") || "8080");
@@ -193,106 +196,130 @@ function jsonErrorResponse(status, body) {
 function forwardToRenderer(req) {
     const startTime = performance.now();
     const url = new URL(req.url);
+    const requestId = dntShim.crypto.randomUUID();
+    const host = req.headers.get("host") || "";
     const parentContext = extractContext(req.headers);
     const spanInfo = startServerSpan(req.method, url.pathname, parentContext);
     const execute = async () => {
         try {
             const ctx = await proxyHandler.processRequest(req);
-            if (ctx.error) {
-                const ms = Math.round(performance.now() - startTime);
-                proxyLogger.error(`${ctx.error.status} ${req.method} ${url.pathname}`, {
-                    ms,
-                    domain: ctx.host,
-                });
-                endSpan(spanInfo?.span, ctx.error.status);
-                // Handle redirect for protected environments
-                if (ctx.error.redirectUrl) {
-                    return new dntShim.Response(null, {
-                        status: 302,
-                        headers: { Location: ctx.error.redirectUrl },
+            // Wrap all subsequent logging with request context
+            return runWithProxyRequestContext({
+                requestId,
+                projectSlug: ctx.projectSlug,
+                projectId: ctx.projectId,
+                releaseId: ctx.releaseId,
+                branchId: ctx.branchId,
+                branchName: ctx.branchName,
+                domain: ctx.host || host,
+                environment: ctx.environment,
+            }, async () => {
+                if (ctx.error) {
+                    const ms = Math.round(performance.now() - startTime);
+                    proxyLogger.error(`${ctx.error.status} ${req.method} ${url.pathname}`, {
+                        ms,
+                    });
+                    endSpan(spanInfo?.span, ctx.error.status);
+                    // Handle redirect for protected environments
+                    if (ctx.error.redirectUrl) {
+                        return new dntShim.Response(null, {
+                            status: 302,
+                            headers: { Location: ctx.error.redirectUrl },
+                        });
+                    }
+                    return jsonErrorResponse(ctx.error.status, {
+                        error: ctx.error.message,
+                        status: ctx.error.status,
                     });
                 }
-                return jsonErrorResponse(ctx.error.status, {
-                    error: ctx.error.message,
-                    status: ctx.error.status,
+                const reqLogger = proxyLogger.child({
+                    ...(ctx.projectSlug && { project: ctx.projectSlug }),
+                    env: ctx.environment,
                 });
-            }
-            const reqLogger = proxyLogger.child({
-                ...(ctx.projectSlug && { project: ctx.projectSlug }),
-                env: ctx.environment,
-            });
-            const newHeaders = new dntShim.Headers(req.headers);
-            if (ctx.token)
-                newHeaders.set("x-token", ctx.token);
-            newHeaders.set("x-project-slug", ctx.projectSlug || "");
-            newHeaders.set("x-environment", ctx.environment);
-            newHeaders.set("x-forwarded-host", ctx.host);
-            if (ctx.localPath)
-                newHeaders.set("x-project-path", ctx.localPath);
-            // Forward project/release context for cache keying
-            if (ctx.projectId)
-                newHeaders.set("x-project-id", ctx.projectId);
-            if (ctx.releaseId)
-                newHeaders.set("x-release-id", ctx.releaseId);
-            if (ctx.branchId)
-                newHeaders.set("x-branch-id", ctx.branchId);
-            if (ctx.branchName)
-                newHeaders.set("x-branch-name", ctx.branchName);
-            newHeaders.delete("host");
-            injectContext(newHeaders);
-            const rendererUrl = new URL(url.pathname + url.search, RENDERER_URL);
-            // Create abort controller for timeout
-            const abortController = new AbortController();
-            const timeoutId = dntShim.setTimeout(() => {
-                abortController.abort();
-            }, RENDERER_REQUEST_TIMEOUT_MS);
-            let response;
-            try {
-                response = await withSpan(ProxySpanNames.HTTP_CLIENT_FETCH, () => dntShim.fetch(rendererUrl.toString(), {
-                    method: req.method,
-                    headers: newHeaders,
-                    body: req.body,
-                    redirect: "manual",
-                    signal: abortController.signal,
-                }), {
-                    "http.method": req.method,
-                    "http.url": rendererUrl.toString(),
-                    "http.host": rendererUrl.host,
-                    "proxy.target": "renderer",
-                    "proxy.project_slug": ctx.projectSlug || "",
-                    "proxy.timeout_ms": RENDERER_REQUEST_TIMEOUT_MS,
-                });
-            }
-            finally {
+                const newHeaders = new dntShim.Headers(req.headers);
+                if (ctx.token)
+                    newHeaders.set("x-token", ctx.token);
+                newHeaders.set("x-project-slug", ctx.projectSlug || "");
+                newHeaders.set("x-environment", ctx.environment);
+                newHeaders.set("x-forwarded-host", ctx.host);
+                if (ctx.localPath)
+                    newHeaders.set("x-project-path", ctx.localPath);
+                // Forward project/release context for cache keying
+                if (ctx.projectId)
+                    newHeaders.set("x-project-id", ctx.projectId);
+                if (ctx.releaseId)
+                    newHeaders.set("x-release-id", ctx.releaseId);
+                if (ctx.branchId)
+                    newHeaders.set("x-branch-id", ctx.branchId);
+                if (ctx.branchName)
+                    newHeaders.set("x-branch-name", ctx.branchName);
+                newHeaders.delete("host");
+                injectContext(newHeaders);
+                const rendererUrl = new URL(url.pathname + url.search, RENDERER_URL);
+                // Create abort controller for timeout
+                const abortController = new AbortController();
+                const timeoutId = dntShim.setTimeout(() => {
+                    abortController.abort();
+                }, RENDERER_REQUEST_TIMEOUT_MS);
+                let response;
+                try {
+                    response = await withSpan(ProxySpanNames.HTTP_CLIENT_FETCH, () => dntShim.fetch(rendererUrl.toString(), {
+                        method: req.method,
+                        headers: newHeaders,
+                        body: req.body,
+                        redirect: "manual",
+                        signal: abortController.signal,
+                    }), {
+                        "http.method": req.method,
+                        "http.url": rendererUrl.toString(),
+                        "http.host": rendererUrl.host,
+                        "proxy.target": "renderer",
+                        "proxy.project_slug": ctx.projectSlug || "",
+                        "proxy.timeout_ms": RENDERER_REQUEST_TIMEOUT_MS,
+                    });
+                }
+                catch (error) {
+                    clearTimeout(timeoutId);
+                    const ms = Math.round(performance.now() - startTime);
+                    // Handle timeout specifically
+                    if (error instanceof Error && error.name === "AbortError") {
+                        proxyLogger.error(`504 ${req.method} ${url.pathname}`, {
+                            ms,
+                            timeoutMs: RENDERER_REQUEST_TIMEOUT_MS,
+                        });
+                        endSpan(spanInfo?.span, 504, error);
+                        return jsonErrorResponse(504, {
+                            error: "Gateway Timeout",
+                            message: `Renderer request timed out after ${RENDERER_REQUEST_TIMEOUT_MS}ms`,
+                        });
+                    }
+                    proxyLogger.error(`502 ${req.method} ${url.pathname}`, { ms }, error);
+                    endSpan(spanInfo?.span, 502, error);
+                    return jsonErrorResponse(502, {
+                        error: "Proxy Error",
+                        message: error instanceof Error ? error.message : "Unknown error",
+                    });
+                }
                 clearTimeout(timeoutId);
-            }
-            const ms = Math.round(performance.now() - startTime);
-            reqLogger.info(`${response.status} ${req.method} ${url.pathname}`, { ms });
-            endSpan(spanInfo?.span, response.status);
-            return new dntShim.Response(response.body, {
-                status: response.status,
-                statusText: response.statusText,
-                headers: response.headers,
+                const ms = Math.round(performance.now() - startTime);
+                reqLogger.info(`${response.status} ${req.method} ${url.pathname}`, {
+                    ms,
+                });
+                endSpan(spanInfo?.span, response.status);
+                return new dntShim.Response(response.body, {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: response.headers,
+                });
             });
         }
         catch (error) {
+            // Only catches if processRequest itself throws (no ctx available)
             const ms = Math.round(performance.now() - startTime);
-            // Handle timeout specifically
-            if (error instanceof Error && error.name === "AbortError") {
-                proxyLogger.error(`504 ${req.method} ${url.pathname}`, {
-                    ms,
-                    timeoutMs: RENDERER_REQUEST_TIMEOUT_MS,
-                });
-                endSpan(spanInfo?.span, 504, error);
-                return jsonErrorResponse(504, {
-                    error: "Gateway Timeout",
-                    message: `Renderer request timed out after ${RENDERER_REQUEST_TIMEOUT_MS}ms`,
-                });
-            }
-            proxyLogger.error(`502 ${req.method} ${url.pathname}`, { ms }, error);
-            endSpan(spanInfo?.span, 502, error);
-            return jsonErrorResponse(502, {
-                error: "Proxy Error",
+            proxyLogger.error(`500 ${req.method} ${url.pathname}`, { ms }, error);
+            endSpan(spanInfo?.span, 500, error);
+            return jsonErrorResponse(500, {
+                error: "Internal Proxy Error",
                 message: error instanceof Error ? error.message : "Unknown error",
             });
         }
@@ -328,9 +355,12 @@ async function handleApiProxy(req) {
             headers: {
                 Authorization: `Bearer ${token}`,
                 Accept: "application/json",
-                "Content-Type": req.headers.get("Content-Type") || "application/json",
+                "Content-Type": req.headers.get("Content-Type") ||
+                    "application/json",
             },
-            body: req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined,
+            body: req.method !== "GET" && req.method !== "HEAD"
+                ? req.body
+                : undefined,
         }), {
             "http.method": req.method,
             "http.url": apiUrl,

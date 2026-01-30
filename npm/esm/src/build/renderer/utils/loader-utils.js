@@ -1,3 +1,4 @@
+import { getExtensionName } from "../../../utils/path-utils.js";
 const EXTENSION_MAP = {
     mdx: "mdx",
     tsx: "tsx",
@@ -18,14 +19,11 @@ const LOADER_MAP = {
     css: "css",
     json: "json",
 };
-function getExtension(path) {
-    return path.split(".").pop()?.toLowerCase() ?? "";
-}
 export function getLoaderFromPath(path) {
-    return LOADER_MAP[getExtension(path)] ?? "default";
+    return LOADER_MAP[getExtensionName(path)] ?? "default";
 }
 export function getFileType(path) {
-    return EXTENSION_MAP[getExtension(path)] ?? "js";
+    return EXTENSION_MAP[getExtensionName(path)] ?? "js";
 }
 export function getSlugFromPath(path) {
     return path

@@ -11,6 +11,7 @@ export { DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC, DISTRIBUTED_SSR_MODULE_TTL_PROD
 export declare const CIRCUIT_BREAKER_THRESHOLD = 3;
 export declare const CIRCUIT_BREAKER_RESET_MS: number;
 export declare const MAX_CONCURRENT_TRANSFORMS: number;
+export declare const TRANSFORM_PER_PROJECT_LIMIT: number;
 export declare const TRANSFORM_ACQUIRE_TIMEOUT_MS = 500;
 export declare const IN_PROGRESS_WAIT_TIMEOUT_MS = 30000;
 export declare const MAX_TRANSFORM_DEPTH = 15;

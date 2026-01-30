@@ -8,5 +8,5 @@ export declare function isSSR(ctx: TransformContext): boolean;
 export declare function isBrowser(ctx: TransformContext): boolean;
 export declare function isMDX(ctx: TransformContext): boolean;
 export declare function isTypeScript(ctx: TransformContext): boolean;
-export declare function getExtension(ctx: TransformContext): string;
+export { getExtension } from "../../utils/path-utils.js";
 //# sourceMappingURL=context.d.ts.map

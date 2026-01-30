@@ -198,20 +198,39 @@ export function clearAllCaches(): void {
   }
 }
 
+/**
+ * Memory pressure thresholds - should match pressure.ts defaults for consistency.
+ * Uses same env vars: MEMORY_WARNING_THRESHOLD (default: 75), MEMORY_CRITICAL_THRESHOLD (default: 80)
+ */
+function getMemoryThreshold(envVar: string, fallback: number): number {
+  try {
+    const value = typeof dntShim.Deno !== "undefined" ? dntShim.Deno.env.get(envVar) : undefined;
+    if (!value) return fallback;
+    const parsed = parseInt(value, 10);
+    return Number.isNaN(parsed) ? fallback : parsed;
+  } catch {
+    return fallback;
+  }
+}
+
+const PROFILER_WARNING_THRESHOLD = getMemoryThreshold("MEMORY_WARNING_THRESHOLD", 75);
+const PROFILER_CRITICAL_THRESHOLD = getMemoryThreshold("MEMORY_CRITICAL_THRESHOLD", 80);
+
 export function checkMemoryPressure(): {
   critical: boolean;
   warning: boolean;
   heapUsedPercent: number;
 } {
   const heap = getHeapStats();
-  const critical = heap.heapUsedPercent > 90;
-  const warning = heap.heapUsedPercent > 75;
+  const critical = heap.heapUsedPercent > PROFILER_CRITICAL_THRESHOLD;
+  const warning = heap.heapUsedPercent > PROFILER_WARNING_THRESHOLD;
 
   if (critical) {
     logger.error("[MemoryProfiler] CRITICAL MEMORY PRESSURE", {
       heapUsedPercent: heap.heapUsedPercent,
       usedMB: heap.usedHeapSizeMB,
       limitMB: heap.heapSizeLimitMB,
+      threshold: PROFILER_CRITICAL_THRESHOLD,
     });
   }
 

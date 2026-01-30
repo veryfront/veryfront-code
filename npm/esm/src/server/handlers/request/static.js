@@ -174,7 +174,7 @@ export class StaticHandler extends BaseHandler {
                 return indexValue;
             }
             catch (error) {
-                this.logDebug("Failed to load manifest", { error: this.getErrorMessage(error), manifestPath }, ctx);
+                this.logInfo("Failed to load manifest, falling back to disk scan", { error: this.getErrorMessage(error), manifestPath }, ctx);
                 StaticHandler.manifestCache.delete(cacheKey);
                 return null;
             }

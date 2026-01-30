@@ -9,7 +9,6 @@
 import type { RuntimeAdapter } from "../platform/adapters/base.js";
 import type { VeryfrontConfig } from "../config/index.js";
 export { getAppRouteEntity } from "./app-route-resolver.js";
-export { extractAppRouteParams, extractPagesRouteParams } from "./route-params-extractor.js";
 /**
  * Clear the router detection cache. Call when filesystem changes.
  * @deprecated Use clearRouterDetectionCacheForProject for multi-tenant deployments

@@ -265,8 +265,8 @@ export class StaticHandler extends BaseHandler {
         StaticHandler.manifestCache.set(cacheKey, indexValue);
         return indexValue;
       } catch (error) {
-        this.logDebug(
-          "Failed to load manifest",
+        this.logInfo(
+          "Failed to load manifest, falling back to disk scan",
           { error: this.getErrorMessage(error), manifestPath },
           ctx,
         );

@@ -1,3 +1,26 @@
+/**
+ * Request context for proxy logging.
+ * Stored in AsyncLocalStorage to propagate through the call stack.
+ */
+export interface ProxyRequestContext {
+    requestId: string;
+    projectSlug?: string;
+    projectId?: string;
+    releaseId?: string;
+    branchId?: string;
+    branchName?: string;
+    domain?: string;
+    environment?: string;
+}
+/**
+ * Run a function with proxy request context.
+ * All logs within the function will include the request context fields.
+ */
+export declare function runWithProxyRequestContext<T>(context: ProxyRequestContext, fn: () => T): T;
+/**
+ * Get the current proxy request context (if any).
+ */
+export declare function getProxyRequestContext(): ProxyRequestContext | undefined;
 export type LogLevel = "debug" | "info" | "warn" | "error";
 declare class ProxyLogger {
     private format;

@@ -23,6 +23,11 @@ export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
     shutdown(): Promise<void>;
 }
 export declare function isExtendedFSAdapter(fs: FileSystemAdapter): fs is ExtendedFileSystemAdapter;
+/**
+ * Check if the adapter is using a virtual filesystem (Veryfront API, GitHub, etc.)
+ * Centralized predicate — use this instead of inline checks.
+ */
+export declare function isVirtualFilesystem(fs: FileSystemAdapter): boolean;
 export declare class NotSupportedError extends Error {
     constructor(operation: string, adapterType?: string);
 }

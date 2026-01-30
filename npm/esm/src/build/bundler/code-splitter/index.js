@@ -15,7 +15,12 @@ export function createCodeSplitter(options) {
 export async function loadChunkManifest(manifestPath) {
     const fs = createFileSystem();
     const content = await fs.readTextFile(manifestPath);
-    return JSON.parse(content);
+    try {
+        return JSON.parse(content);
+    }
+    catch {
+        throw new Error(`Failed to parse chunk manifest: ${manifestPath}`);
+    }
 }
 export function getChunksForRoute(manifest, routePath) {
     const route = manifest.routes[routePath];

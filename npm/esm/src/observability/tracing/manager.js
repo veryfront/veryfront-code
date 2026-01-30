@@ -2,6 +2,7 @@ import { serverLogger as logger } from "../../utils/index.js";
 import { loadConfig } from "./config.js";
 import { SpanOperations } from "./span-operations.js";
 import { ContextPropagation } from "./context-propagation.js";
+import { VERSION } from "../../utils/version.js";
 /**
  * Tracing manager class
  * Exported for testing - use tracingManager singleton for production
@@ -43,7 +44,7 @@ export class TracingManager {
     async initializeTracer(config) {
         const api = (await import("@opentelemetry/api"));
         this.state.api = api;
-        this.state.tracer = api.trace.getTracer(config.serviceName || "veryfront", "0.1.0");
+        this.state.tracer = api.trace.getTracer(config.serviceName || "veryfront", VERSION);
         const { W3CTraceContextPropagator } = await import("@opentelemetry/core");
         const propagator = new W3CTraceContextPropagator();
         this.state.propagator = propagator;

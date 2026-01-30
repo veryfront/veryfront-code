@@ -6,6 +6,7 @@ import { promptRegistry } from "../prompt/index.js";
 import type { MCPServerConfig } from "./types.js";
 import { createError, toError } from "../errors/veryfront-error.js";
 import { withSpan } from "../observability/tracing/otlp-setup.js";
+import { VERSION } from "../utils/version.js";
 
 type JSONRPCParams = Record<string, unknown> | unknown[];
 
@@ -90,7 +91,7 @@ export class MCPServer {
   private initialize(_params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
     return Promise.resolve({
       protocolVersion: "2024-11-05",
-      serverInfo: { name: "veryfront-mcp", version: "0.1.0" },
+      serverInfo: { name: "veryfront-mcp", version: VERSION },
       capabilities: {
         tools: {},
         resources: { subscribe: true },

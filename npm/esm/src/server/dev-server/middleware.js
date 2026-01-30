@@ -1,7 +1,9 @@
 import * as dntShim from "../../../_dnt.shims.js";
-import { serverLogger as logger } from "../../utils/index.js";
+import { getBaseLogger } from "../../utils/logger/logger.js";
+import { runWithRequestContextAsync, } from "../../utils/logger/request-context.js";
+const logger = getBaseLogger("SERVER");
 import { cors } from "../../security/index.js";
-import { isExtendedFSAdapter } from "../../platform/adapters/fs/wrapper.js";
+import { isVirtualFilesystem } from "../../platform/adapters/fs/wrapper.js";
 import { dirname, join } from "../../platform/compat/path/index.js";
 import { createFileSystem } from "../../platform/compat/fs.js";
 import { getEsbuildLoader } from "../../utils/path-utils.js";
@@ -32,44 +34,51 @@ export function createRequestLoggerMiddleware() {
         });
         c.var.requestId = requestId;
         c.var.logger = reqLogger;
-        try {
-            await enrichSpanWithRequestInfo(method, pathname, requestId);
-            reqLogger.debug(`${method} ${pathname} started`);
-        }
-        catch {
-            /* dev only */
-        }
-        let response;
-        try {
-            response = await next();
-        }
-        catch (error) {
+        // Create request context for AsyncLocalStorage propagation
+        const requestContext = {
+            logger: reqLogger,
+            requestId,
+            projectSlug,
+            projectId,
+            domain,
+        };
+        // Run the entire request within the AsyncLocalStorage context
+        // This makes the request-scoped logger available to ALL code in the call stack
+        return await runWithRequestContextAsync(requestContext, async () => {
+            try {
+                await enrichSpanWithRequestInfo(method, pathname, requestId);
+                reqLogger.debug(`${method} ${pathname} started`);
+            }
+            catch {
+                /* dev only */
+            }
+            let response;
+            try {
+                response = await next();
+            }
+            catch (error) {
+                const durationMs = Math.round(performance.now() - start);
+                reqLogger.error(`${method} ${pathname} failed`, { durationMs }, error);
+                throw error;
+            }
             const durationMs = Math.round(performance.now() - start);
-            reqLogger.error(`${method} ${pathname} failed`, { durationMs }, error);
-            throw error;
-        }
-        const durationMs = Math.round(performance.now() - start);
-        if (response && response.status !== 101) {
-            response.headers.set("x-request-id", requestId);
-        }
-        try {
-            reqLogger.debug(`${method} ${pathname} completed`, {
-                status: response?.status ?? 0,
-                durationMs,
-            });
-        }
-        catch {
-            /* dev only */
-        }
-        return response;
+            if (response && response.status !== 101) {
+                response.headers.set("x-request-id", requestId);
+            }
+            try {
+                reqLogger.debug(`${method} ${pathname} completed`, {
+                    status: response?.status ?? 0,
+                    durationMs,
+                });
+            }
+            catch {
+                /* dev only */
+            }
+            return response;
+        });
     };
 }
-function isVirtualFilesystem(adapter) {
-    const fs = adapter?.fs;
-    if (!fs || typeof fs !== "object")
-        return false;
-    return isExtendedFSAdapter(fs) && fs.isVeryfrontAdapter();
-}
+// isVirtualFilesystem is now imported from the shared wrapper module
 async function loadMiddlewareFile(projectDir, adapter) {
     const middlewareFiles = ["middleware.ts", "middleware.js", "middleware.mjs"];
     for (const middlewareFile of middlewareFiles) {
@@ -78,7 +87,7 @@ async function loadMiddlewareFile(projectDir, adapter) {
             continue;
         try {
             logger.debug(`[MIDDLEWARE] Loading ${middlewareFile}`);
-            if (isVirtualFilesystem(adapter)) {
+            if (isVirtualFilesystem(adapter.fs)) {
                 return await loadMiddlewareFromVirtualFS(middlewarePath, adapter);
             }
             const middlewareUrl = `file://${middlewarePath}?t=${Date.now()}-${dntShim.crypto.randomUUID()}`;

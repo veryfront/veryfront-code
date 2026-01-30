@@ -1,18 +1,28 @@
-import * as dntShim from "../../_dnt.shims.js";
-import { agentLogger } from "../utils/logger/logger.js";
+/**
+ * Resource Registry
+ *
+ * Project-scoped registry for MCP resources. Each project has its own
+ * isolated resource namespace, preventing cross-project resource access.
+ *
+ * @module
+ */
+import { ProjectScopedRegistryManager } from "../ai/registry-manager.js";
+const resourceManager = new ProjectScopedRegistryManager("resource");
 class ResourceRegistryClass {
-    resources = new Map();
     register(id, resourceInstance) {
-        if (this.resources.has(id)) {
-            agentLogger.debug(`Resource "${id}" is already registered. Overwriting.`);
-        }
-        this.resources.set(id, resourceInstance);
+        resourceManager.register(id, resourceInstance);
+    }
+    /**
+     * Register a framework-provided resource available to all projects.
+     */
+    registerShared(id, resourceInstance) {
+        resourceManager.registerShared(id, resourceInstance);
     }
     get(id) {
-        return this.resources.get(id);
+        return resourceManager.get(id);
     }
     findByPattern(uri) {
-        for (const resource of this.resources.values()) {
+        for (const resource of this.getAll().values()) {
             if (this.matchesPattern(uri, resource.pattern))
                 return resource;
         }
@@ -28,18 +38,26 @@ class ResourceRegistryClass {
         return uri.match(this.patternToRegex(pattern))?.groups ?? {};
     }
     getAll() {
-        return new Map(this.resources);
+        return resourceManager.getAll();
     }
     list() {
-        return [...this.resources.keys()];
+        return resourceManager.getAllIds();
     }
     has(id) {
-        return this.resources.has(id);
+        return resourceManager.has(id);
     }
     clear() {
-        this.resources.clear();
+        resourceManager.clear();
+    }
+    /**
+     * Clear everything (for testing).
+     */
+    clearAll() {
+        resourceManager.clearAll();
+    }
+    getStats() {
+        return resourceManager.getStats();
     }
 }
-const RESOURCE_REGISTRY_KEY = "__veryfront_resource_registry__";
-const globalWithRegistry = dntShim.dntGlobalThis;
-export const resourceRegistry = (globalWithRegistry[RESOURCE_REGISTRY_KEY] ??= new ResourceRegistryClass());
+// Singleton instance - maintains same interface but now project-scoped internally
+export const resourceRegistry = new ResourceRegistryClass();

@@ -4,18 +4,79 @@ import type { LayoutItem } from "../../../types/index.js";
 import { dirname, extname, join } from "../../../platform/compat/path-helper.js";
 import { LAYOUT_EXTENSIONS } from "../types.js";
 
-// Explicit cache for layout discovery - can be cleared for HMR
-const layoutDiscoveryCache = new Map<string, LayoutItem[]>();
+/**
+ * LRU cache for layout discovery with project isolation.
+ * Key format: "projectDir:hash(pageFilePath, rootDir)"
+ * This format allows efficient project-scoped clearing.
+ */
+interface CacheEntry {
+  layouts: LayoutItem[];
+  accessedAt: number;
+  projectDir: string;
+}
+
+const MAX_CACHE_SIZE = 500;
+const layoutDiscoveryCache = new Map<string, CacheEntry>();
 
 /**
  * Clear the layout discovery cache.
  * Call this when config or layout files change to ensure HMR works correctly.
+ * @param projectDir - Optional: clear only entries for a specific project
  */
-export function clearLayoutDiscoveryCache(): void {
-  logger.debug("[discovery] Clearing layout discovery cache", {
+export function clearLayoutDiscoveryCache(projectDir?: string): void {
+  if (projectDir) {
+    // Clear entries for specific project
+    let cleared = 0;
+    for (const [key, entry] of layoutDiscoveryCache.entries()) {
+      if (entry.projectDir === projectDir) {
+        layoutDiscoveryCache.delete(key);
+        cleared++;
+      }
+    }
+    logger.debug("[discovery] Cleared layout discovery cache for project", {
+      projectDir,
+      cleared,
+      remaining: layoutDiscoveryCache.size,
+    });
+  } else {
+    // Clear entire cache
+    logger.debug("[discovery] Clearing entire layout discovery cache", {
+      size: layoutDiscoveryCache.size,
+    });
+    layoutDiscoveryCache.clear();
+  }
+}
+
+/**
+ * Get cache statistics for monitoring.
+ */
+export function getLayoutDiscoveryCacheStats(): { size: number; maxSize: number } {
+  return {
     size: layoutDiscoveryCache.size,
+    maxSize: MAX_CACHE_SIZE,
+  };
+}
+
+/**
+ * Evict oldest entries when cache exceeds max size.
+ */
+function evictOldestEntries(): void {
+  if (layoutDiscoveryCache.size <= MAX_CACHE_SIZE) return;
+
+  // Sort by access time and remove oldest 10%
+  const entries = [...layoutDiscoveryCache.entries()].sort(
+    (a, b) => a[1].accessedAt - b[1].accessedAt,
+  );
+  const toRemove = Math.ceil(layoutDiscoveryCache.size * 0.1);
+
+  for (let i = 0; i < toRemove && i < entries.length; i++) {
+    layoutDiscoveryCache.delete(entries[i]![0]);
+  }
+
+  logger.debug("[discovery] Evicted old cache entries", {
+    removed: toRemove,
+    remaining: layoutDiscoveryCache.size,
   });
-  layoutDiscoveryCache.clear();
 }
 
 export async function discoverNestedLayouts(
@@ -24,12 +85,26 @@ export async function discoverNestedLayouts(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<LayoutItem[]> {
-  const key = simpleHash(pageFilePath, rootDir);
+  // Include projectDir in cache key for multi-tenant isolation
+  const key = simpleHash(projectDir, pageFilePath, rootDir);
   const cached = layoutDiscoveryCache.get(key);
-  if (cached) return cached;
+  if (cached) {
+    // Update access time for LRU
+    cached.accessedAt = Date.now();
+    return cached.layouts;
+  }
 
   const result = await discoverNestedLayoutsImpl(pageFilePath, rootDir, projectDir, adapter);
-  layoutDiscoveryCache.set(key, result);
+
+  // Evict before adding if needed
+  evictOldestEntries();
+
+  layoutDiscoveryCache.set(key, {
+    layouts: result,
+    accessedAt: Date.now(),
+    projectDir,
+  });
+
   return result;
 }
 
@@ -86,12 +161,21 @@ async function resolveExistingFiles(
   const results = await Promise.allSettled(candidates.map((file) => adapter.fs.stat(file)));
 
   const existing: string[] = [];
+  const seenDirs = new Set<string>();
+
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
     if (!result) continue;
 
     if (result.status === "fulfilled" && result.value.isFile) {
-      existing.push(candidates[i]!);
+      const candidatePath = candidates[i]!;
+      const dir = dirname(candidatePath);
+
+      // Only include the first layout found per directory (based on extension priority)
+      if (!seenDirs.has(dir)) {
+        existing.push(candidatePath);
+        seenDirs.add(dir);
+      }
       continue;
     }
 
@@ -133,13 +217,18 @@ async function addMissedAncestorLayouts(
 ): Promise<void> {
   try {
     const included = new Set(existing);
+    // Track directories that already have a layout
+    const dirsWithLayouts = new Set(existing.map((p) => dirname(p)));
     const candidates: string[] = [];
     let dir = dirname(pageFilePath);
 
     while (dir.startsWith(rootDir)) {
-      for (const ext of LAYOUT_EXTENSIONS) {
-        const candidate = join(dir, `layout.${ext}`);
-        if (!included.has(candidate)) candidates.push(candidate);
+      // Skip directories that already have a layout
+      if (!dirsWithLayouts.has(dir)) {
+        for (const ext of LAYOUT_EXTENSIONS) {
+          const candidate = join(dir, `layout.${ext}`);
+          if (!included.has(candidate)) candidates.push(candidate);
+        }
       }
 
       const parent = dirname(dir);
@@ -155,8 +244,13 @@ async function addMissedAncestorLayouts(
       if (!result || !cand) continue;
 
       if (result.status === "fulfilled" && result.value.isFile) {
-        addLayoutsFromFiles([cand], nestedLayouts);
-        included.add(cand);
+        const candDir = dirname(cand);
+        // Only add if this directory doesn't already have a layout
+        if (!dirsWithLayouts.has(candDir)) {
+          addLayoutsFromFiles([cand], nestedLayouts);
+          included.add(cand);
+          dirsWithLayouts.add(candDir);
+        }
         continue;
       }
 

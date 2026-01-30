@@ -15,23 +15,13 @@ export declare class VeryfrontFSAdapter implements FSAdapter {
     /** Rejects when file list initialization fails */
     private fileListReadyReject;
     private projectData?;
-    private ws;
-    private wsReconnectTimer;
-    private wsHeartbeatTimer;
-    private wsLastPong;
-    private invalidationTimer;
-    private selectiveInvalidationTimer;
-    private pendingChangedPaths;
     private apiBaseUrl;
     private apiToken;
     private projectSlug;
     private invalidationCallbacks;
+    private wsManager;
     /** Per-request branch override (for branch preview URLs) */
     private requestBranch;
-    /** WebSocket connection identity for observability */
-    private wsConnectionId;
-    /** Poke notification metrics for observability */
-    private pokeMetrics;
     /** Content source configuration from config */
     private contentSource;
     /** Resolved content context after initialization (includes resolved releaseId for env/domain) */
@@ -42,22 +32,13 @@ export declare class VeryfrontFSAdapter implements FSAdapter {
     initialize(): Promise<void>;
     private resolveContentSource;
     private fetchFileList;
-    private connectWebSocket;
     private isPersistentCacheInvalidated;
-    private startHeartbeat;
-    private cleanupWebSocketTimers;
-    private scheduleInvalidation;
-    private scheduleSelectiveInvalidation;
-    private performSelectiveInvalidation;
-    private performInvalidation;
     getPokeMetrics(): {
         received: number;
         invalidationsTriggered: number;
         lastPokeTime: number;
         connectionId: string | null;
     };
-    /** Send acknowledgment back to API after cache invalidation completes */
-    private sendPokeAck;
     readFile(path: string): Promise<string>;
     readFileBytes(path: string): Promise<Uint8Array>;
     readTextFile(path: string): Promise<string>;

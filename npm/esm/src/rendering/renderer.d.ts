@@ -17,24 +17,35 @@ export interface RendererOptions {
  *
  * Initialize once at startup, then use for any project by passing
  * a RenderContext to each render call.
- */
-/**
- * Note: Singleflight was previously used for render deduplication but caused
- * "body already consumed" errors when multiple concurrent requests shared the
- * same RenderResult. The RenderResult.stream is a ReadableStream that can only
- * be consumed once. Without Singleflight, concurrent requests for the same page
- * may duplicate work, but this is acceptable since:
- * 1. The cache (checkCache) handles repeated requests after first render completes
- * 2. Duplicate renders are rare in practice and don't cause errors
- * 3. This matches the pattern in http-cache.ts which also removed Singleflight
+ *
+ * ## Singleflight Deduplication
+ *
+ * Uses Singleflight to deduplicate concurrent renders of the same page.
+ * Key insight: We cache the HTML string, not the stream. Each caller gets
+ * a fresh RenderResult with the same HTML but no stream (streams can only
+ * be consumed once). This prevents "body already consumed" errors while
+ * still avoiding duplicate render work.
+ *
+ * The Singleflight key includes: projectId, environment, releaseId, slug, colorScheme
  */
 export declare class Renderer {
     private cache;
     private initialized;
     private initializationPromise;
+    /**
+     * Singleflight for render deduplication. Caches HTML string results so
+     * concurrent requests for the same page share the render work.
+     * Key format: {projectId}:{environment}:{releaseId}:{slug}:{colorScheme}
+     */
+    private renderFlight;
     constructor(options?: RendererOptions);
     initialize(options?: SharedServicesOptions): Promise<void>;
     renderPage(slug: string, ctx: RenderContext, options?: RenderOptions): Promise<RenderResult>;
+    /**
+     * Build a Singleflight key for render deduplication.
+     * Includes all context that affects rendering output.
+     */
+    private getSingleflightKey;
     private doRenderPage;
     resolvePageData(slug: string, ctx: RenderContext, options?: RenderOptions): Promise<PageDataResponse>;
     getAllPages(ctx: RenderContext): Promise<string[]>;

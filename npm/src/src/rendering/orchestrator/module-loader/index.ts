@@ -20,42 +20,41 @@ import {
 } from "../../../transforms/esm/transform-cache.js";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "../../../utils/constants/cache.js";
 import { ensureHttpBundlesExist } from "../../../transforms/esm/http-cache.js";
+import { validateBundleGroup } from "../../../transforms/esm/bundle-manifest.js";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "../../../utils/cache-dir.js";
 import { join } from "../../../platform/compat/path/index.js";
 import { hashCodeHex } from "../../../utils/hash-utils.js";
-import { TRANSFORM_CACHE_VERSION } from "../../../transforms/esm/package-registry.js";
+import { VERSION } from "../../../utils/version.js";
 import {
   getModulePathCache,
   lookupMdxEsmCache,
   saveModulePathCache,
 } from "../../../transforms/mdx/esm-module-loader/cache/index.js";
+import { extractHttpBundlePaths } from "../../../modules/react-loader/ssr-module-loader/http-bundle-helpers.js";
 
 // Re-export utilities
 export { createEsmCache, createModuleCache, generateHash } from "./cache.js";
 export { fetchEsmModule, rewriteEsmPaths } from "./esm-rewriter.js";
 
-/** Pattern to match HTTP bundle file:// paths in transformed code */
-const HTTP_BUNDLE_PATTERN = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+/** Maximum number of directories to track to prevent memory leaks */
+const MAX_CREATED_DIRS = 5000;
 
-/** Extract HTTP bundle paths from transformed code for proactive recovery */
-function extractHttpBundlePaths(code: string): Array<{ path: string; hash: string }> {
-  const bundles: Array<{ path: string; hash: string }> = [];
-  const seen = new Set<string>();
-  let match;
-  while ((match = HTTP_BUNDLE_PATTERN.exec(code)) !== null) {
-    const path = match[1] as string;
-    const hash = match[2] as string;
-    if (!seen.has(hash)) {
-      seen.add(hash);
-      bundles.push({ path, hash });
-    }
-  }
-  HTTP_BUNDLE_PATTERN.lastIndex = 0;
-  return bundles;
-}
-
-/** Cache for created directories to avoid repeated mkdir calls */
+/** Cache for created directories to avoid repeated mkdir calls (LRU-style) */
 const createdDirs = new Set<string>();
+
+/** Prune oldest entries when cache exceeds limit */
+function pruneCreatedDirs(): void {
+  if (createdDirs.size <= MAX_CREATED_DIRS) return;
+
+  // Set iteration order is insertion order, so delete first entries
+  const toDelete = createdDirs.size - MAX_CREATED_DIRS;
+  let deleted = 0;
+  for (const dir of createdDirs) {
+    if (deleted >= toDelete) break;
+    createdDirs.delete(dir);
+    deleted++;
+  }
+}
 
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
@@ -72,8 +71,17 @@ export interface ModuleLoaderConfig {
   reactVersion?: string;
 }
 
-function getModuleCacheKey(filePath: string, projectId?: string, projectDir?: string): string {
-  return `${projectId ?? projectDir ?? "default"}:${filePath}`;
+function getModuleCacheKey(
+  filePath: string,
+  projectId?: string,
+  projectDir?: string,
+  contentSourceId?: string,
+): string {
+  // Include contentSourceId to isolate cache between branches/releases
+  // This prevents serving wrong code in multi-branch deployments
+  const base = projectId ?? projectDir ?? "default";
+  const source = contentSourceId ?? "default";
+  return `${base}:${source}:${filePath}`;
 }
 
 function decodeFileContent(fileContent: string | Uint8Array): string {
@@ -90,6 +98,7 @@ async function ensureDir(adapter: RuntimeAdapter, dir: string): Promise<void> {
     // Directory might already exist, ignore errors
   } finally {
     createdDirs.add(dir);
+    pruneCreatedDirs();
   }
 }
 
@@ -136,7 +145,7 @@ export async function transformModuleWithDeps(
   useLocalAdapter = false,
 ): Promise<string> {
   const { moduleCache, projectDir, projectId, contentSourceId, adapter, mode } = config;
-  const cacheKey = getModuleCacheKey(filePath, projectId, projectDir);
+  const cacheKey = getModuleCacheKey(filePath, projectId, projectDir, contentSourceId);
 
   const cachedPath = moduleCache.get(cacheKey);
   if (cachedPath) return cachedPath;
@@ -148,10 +157,15 @@ export async function transformModuleWithDeps(
     const sourceKey = encodeURIComponent(contentSourceId);
     const mdxCacheDir = join(baseCacheDir, projectKey, sourceKey);
 
-    const mdxCachedPath = await lookupMdxEsmCache(filePath, mdxCacheDir, projectDir);
-    if (mdxCachedPath) {
-      moduleCache.set(cacheKey, mdxCachedPath);
-      return mdxCachedPath;
+    const mdxCacheResult = await lookupMdxEsmCache(filePath, mdxCacheDir, projectDir);
+    if (mdxCacheResult.status === "hit") {
+      moduleCache.set(cacheKey, mdxCacheResult.path);
+      return mdxCacheResult.path;
+    } else if (mdxCacheResult.status === "corrupted") {
+      logger.warn("[ModuleLoader] MDX-ESM cache corrupted, will re-transform", {
+        filePath,
+        reason: mdxCacheResult.reason,
+      });
     }
   }
 
@@ -220,7 +234,7 @@ export async function transformModuleWithDeps(
   await initializeTransformCache();
 
   // Use consolidated transform cache with getOrCompute pattern
-  let transformedCode = await getOrComputeTransform(
+  const transformResult = await getOrComputeTransform(
     transformCacheKey,
     () => {
       logger.debug("[ModuleLoader] Transform cache miss, transforming", { filePath });
@@ -233,37 +247,57 @@ export async function transformModuleWithDeps(
     },
     TRANSFORM_CACHE_TTL_SECONDS,
   );
+  let transformedCode = transformResult.code;
 
-  // Proactively ensure HTTP bundles exist before writing the module.
-  // Cached transforms from a different pod may reference file:// paths
-  // to HTTP bundles that don't exist locally.
-  const bundlePaths = extractHttpBundlePaths(transformedCode);
-  if (bundlePaths.length > 0) {
-    const cacheDir = getHttpBundleCacheDir();
-    const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-    if (failed.length > 0) {
-      logger.warn("[ModuleLoader] HTTP bundle recovery failed, re-transforming", {
+  // Validate HTTP bundles using manifest (preferred) or legacy extraction
+  const cacheDir = getHttpBundleCacheDir();
+  let bundlesValid = true;
+
+  if (transformResult.cacheHit && transformResult.bundleManifestId) {
+    // Manifest-based validation: atomic check that ALL bundles exist
+    const validation = await validateBundleGroup(transformResult.bundleManifestId, cacheDir);
+    if (!validation.valid) {
+      logger.warn("[ModuleLoader] Bundle manifest validation failed, re-transforming", {
         filePath,
-        failed,
+        manifestId: transformResult.bundleManifestId.slice(0, 12),
+        failedHashes: validation.failedHashes,
       });
-      transformedCode = await transformToESM(fileContent, filePath, projectDir, adapter, {
-        projectId: effectiveProjectId,
-        dev: mode === "development",
-        ssr: true,
-        reactVersion: config.reactVersion,
-      });
-      setCachedTransformAsync(
-        transformCacheKey,
-        transformedCode,
-        contentHash,
-        TRANSFORM_CACHE_TTL_SECONDS,
-      ).catch((error) => {
-        logger.debug("[ModuleLoader] Failed to update transform cache after re-transform", {
-          filePath,
-          error,
-        });
-      });
+      bundlesValid = false;
     }
+  } else {
+    // Legacy path: extract bundle paths and ensure they exist
+    const bundlePaths = extractHttpBundlePaths(transformedCode);
+    if (bundlePaths.length > 0) {
+      const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+      if (failed.length > 0) {
+        logger.warn("[ModuleLoader] HTTP bundle recovery failed, re-transforming", {
+          filePath,
+          failed,
+        });
+        bundlesValid = false;
+      }
+    }
+  }
+
+  if (!bundlesValid) {
+    // Re-transform from source — this will create fresh bundles with a new manifest
+    transformedCode = await transformToESM(fileContent, filePath, projectDir, adapter, {
+      projectId: effectiveProjectId,
+      dev: mode === "development",
+      ssr: true,
+      reactVersion: config.reactVersion,
+    });
+    setCachedTransformAsync(
+      transformCacheKey,
+      transformedCode,
+      contentHash,
+      TRANSFORM_CACHE_TTL_SECONDS,
+    ).catch((error) => {
+      logger.debug("[ModuleLoader] Failed to update transform cache after re-transform", {
+        filePath,
+        error,
+      });
+    });
   }
 
   // Use TRANSFORMED hash for filename (matches SSR loader behavior)
@@ -294,7 +328,7 @@ export async function transformModuleWithDeps(
   // Register in MDX-ESM cache index so other loaders can find this module
   if (contentSourceId) {
     const normalizedPath = `_vf_modules/${relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js")}`;
-    const mdxCacheKey = `v${TRANSFORM_CACHE_VERSION}:${normalizedPath}`;
+    const mdxCacheKey = `v${VERSION}:${normalizedPath}`;
     const cache = await getModulePathCache(tmpDir);
     cache.set(mdxCacheKey, tempFilePath);
     // Persist to disk so MDX loader can find it

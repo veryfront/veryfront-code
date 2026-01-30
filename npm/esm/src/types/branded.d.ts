@@ -18,9 +18,6 @@ export type MessageId = Brand<string, "MessageId">;
 export type AuthToken = Brand<string, "AuthToken">;
 export type CsrfToken = Brand<string, "CsrfToken">;
 export type ApiKey = Brand<string, "ApiKey">;
-export declare function brandValue<T extends Brand<string, string>>(value: string): T;
-export declare function isBrandedString(value: unknown): value is Brand<string, string>;
 export type Unbrand<T> = T extends Brand<infer U, string> ? U : T;
-export declare function unbrandValue<T extends Brand<string, string>>(value: T): string;
 export {};
 //# sourceMappingURL=branded.d.ts.map

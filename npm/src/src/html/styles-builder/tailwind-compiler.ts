@@ -1,5 +1,8 @@
 import * as dntShim from "../../../_dnt.shims.js";
-import { compile } from "tailwindcss";
+import { __unstable__loadDesignSystem, compile } from "tailwindcss";
+import plugin from "tailwindcss/plugin";
+import defaultTheme from "tailwindcss/defaultTheme";
+import colors from "tailwindcss/colors";
 import { serverLogger as logger } from "../../utils/index.js";
 import { getTailwindCSSUrl } from "../../utils/constants/cdn.js";
 import {
@@ -12,6 +15,46 @@ import { withSpan } from "../../observability/tracing/otlp-setup.js";
 import { SpanNames } from "../../observability/tracing/span-names.js";
 import { registerCache } from "../../utils/memory/index.js";
 import { minifyCSS } from "../../build/asset-pipeline/tailwind-processor/css-utils.js";
+
+// Provide localStorage shim for plugins that use util-deprecate (which checks localStorage)
+// This prevents "LocalStorage is not supported in this context" errors in Deno.
+// In Deno, localStorage is a GETTER that throws - simple assignment doesn't override it.
+// We must use Object.defineProperty to properly replace the getter with our shim.
+try {
+  // deno-lint-ignore no-explicit-any
+  const _test = (dntShim.dntGlobalThis as any).localStorage;
+  // If we get here, localStorage exists (browser or already shimmed)
+} catch {
+  // localStorage access threw - use defineProperty to override the throwing getter
+  const localStorageShim = {
+    getItem: () => null,
+    setItem: () => {},
+    removeItem: () => {},
+    clear: () => {},
+    key: () => null,
+    length: 0,
+  };
+  Object.defineProperty(dntShim.dntGlobalThis, "localStorage", {
+    value: localStorageShim,
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
+}
+
+// Set up global shims for tailwindcss subpaths - used by dynamically loaded plugins
+(dntShim.dntGlobalThis as Record<string, unknown>).__tailwindPluginShim = {
+  default: plugin,
+  __esModule: true,
+};
+(dntShim.dntGlobalThis as Record<string, unknown>).__tailwindDefaultThemeShim = {
+  default: defaultTheme,
+  __esModule: true,
+};
+(dntShim.dntGlobalThis as Record<string, unknown>).__tailwindColorsShim = {
+  default: colors,
+  __esModule: true,
+};
 
 export interface TailwindResult {
   css: string;
@@ -29,16 +72,21 @@ export interface CSSErrorInfo {
 }
 
 let tailwindBaseCSS: string | null = null;
-let compiler: Awaited<ReturnType<typeof compile>> | null = null;
-let lastStylesheetHash = "";
 
-const pluginCache = new Map<string, unknown>();
-const pluginErrors = new Map<string, string>();
-const pluginErrorExpiry = new Map<string, number>();
+/**
+ * LRU cache for Tailwind compilers, keyed by stylesheet hash.
+ * Prevents race conditions when multiple concurrent requests use different stylesheets.
+ * Each entry stores the compiler and its associated plugin state.
+ */
+interface CompilerCacheEntry {
+  compiler: Awaited<ReturnType<typeof compile>>;
+  createdAt: number;
+  pluginCache: Map<string, unknown>;
+  pluginErrors: Map<string, string>;
+}
 
-// Retry configuration for esm.sh requests
-const ESM_RETRY_DELAYS = [100, 500, 2000]; // ms - exponential backoff
-const PLUGIN_ERROR_CACHE_TTL_MS = 60000; // 1 minute - don't retry failed plugins too frequently
+const compilerCache = new Map<string, CompilerCacheEntry>();
+const MAX_CACHED_COMPILERS = 10;
 
 let cssCache: CacheBackend | null = null;
 let cssCacheInitPromise: Promise<CacheBackend> | null = null;
@@ -82,6 +130,12 @@ registerCache("project-css-cache", () => ({
   entries: projectCSSLocalFallback.size,
   maxEntries: PROJECT_CSS_LOCAL_FALLBACK_MAX,
   backend: projectCSSBackend?.type ?? "uninitialized",
+}));
+
+registerCache("tailwind-compiler-cache", () => ({
+  name: "tailwind-compiler-cache",
+  entries: compilerCache.size,
+  maxEntries: MAX_CACHED_COMPILERS,
 }));
 
 interface ProjectCSSCacheEntry {
@@ -191,8 +245,15 @@ export async function getProjectCSS(
   const result = await generateTailwindCSS(stylesheet, candidates, options);
 
   if (result.error) {
-    logger.error("[tailwind] Project CSS generation failed", { projectSlug, error: result.error });
-    return { css: result.css, hash: "", fromCache: false };
+    const formatted = formatCSSError(result.error);
+    logger.error("[tailwind] Project CSS generation failed", {
+      projectSlug,
+      error: formatted.message,
+      suggestion: formatted.suggestion,
+    });
+    throw new Error(
+      `[tailwind] ${formatted.title}: ${formatted.message} Suggestion: ${formatted.suggestion}`,
+    );
   }
 
   const hash = hashCSS(result.css);
@@ -581,64 +642,99 @@ export function extractCandidatesFromFiles(
 }
 
 /**
- * Fetch with retry and exponential backoff for esm.sh requests.
- * This helps handle transient 500 errors from the CDN.
+ * Dynamically load a module from esm.sh in a compiled Deno binary.
+ *
+ * This works around the limitation that compiled Deno binaries cannot do
+ * dynamic imports from URLs. Instead, we:
+ * 1. Fetch the bundled code from esm.sh (with ?bundle&external=tailwindcss)
+ * 2. Rewrite the tailwindcss/plugin import to use our global shim
+ * 3. Write to a temp file
+ * 4. Import via file:// URL
+ *
+ * @param packageName - The npm package name (e.g., "tailwindcss-animate" or "tailwindcss-animate@1.0.7")
+ * @returns The loaded module
  */
-async function fetchWithRetry(url: string, retryDelays = ESM_RETRY_DELAYS): Promise<unknown> {
-  let lastError: Error | null = null;
+export async function loadModuleFromEsmSh(packageName: string): Promise<unknown> {
+  // Step 1: Fetch the redirect stub to find the actual bundle URL
+  // Use target=denonext to avoid browser-specific APIs like localStorage
+  const stubUrl = `https://esm.sh/${packageName}?bundle&external=tailwindcss&target=denonext`;
+  logger.debug("[tailwind] Fetching esm.sh stub", { url: stubUrl });
 
-  for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
-    try {
-      const mod = await import(url);
-      return mod;
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
+  const stubResponse = await dntShim.fetch(stubUrl);
+  if (!stubResponse.ok) {
+    throw new Error(`Failed to fetch stub: ${stubResponse.status}`);
+  }
+  const stubCode = await stubResponse.text();
 
-      // Check if this is a retryable error (5xx from esm.sh)
-      const isRetryable =
-        lastError.message.includes("500") ||
-        lastError.message.includes("502") ||
-        lastError.message.includes("503") ||
-        lastError.message.includes("504") ||
-        lastError.message.includes("Internal Server Error");
-
-      if (!isRetryable || attempt >= retryDelays.length) {
-        throw lastError;
-      }
-
-      const delay = retryDelays[attempt];
-      logger.debug("[tailwind] esm.sh request failed, retrying", {
-        url,
-        attempt: attempt + 1,
-        maxAttempts: retryDelays.length + 1,
-        delayMs: delay,
-        error: lastError.message,
-      });
-
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
+  // Step 2: Parse stub to find actual bundle path
+  const bundleMatch = stubCode.match(/from\s*["'](\/[^"']+\.bundle\.mjs)["']/);
+  if (!bundleMatch) {
+    throw new Error(`Could not find bundle path in esm.sh response: ${stubCode.substring(0, 200)}`);
   }
 
-  throw lastError;
+  const bundleUrl = `https://esm.sh${bundleMatch[1]}`;
+  logger.debug("[tailwind] Fetching actual bundle", { url: bundleUrl });
+
+  // Step 3: Fetch the actual bundled code
+  const bundleResponse = await dntShim.fetch(bundleUrl);
+  if (!bundleResponse.ok) {
+    throw new Error(`Failed to fetch bundle: ${bundleResponse.status}`);
+  }
+  let code = await bundleResponse.text();
+
+  // Step 4: Rewrite tailwindcss/* imports to use our global shims
+  // The bundle contains imports like: import*as __0$ from"tailwindcss/plugin"
+  // Variable names can be __0$, __1$, __2$, etc. so we use regex
+  const shimMap: Record<string, string> = {
+    "tailwindcss/plugin": "__tailwindPluginShim",
+    "tailwindcss/defaultTheme": "__tailwindDefaultThemeShim",
+    "tailwindcss/colors": "__tailwindColorsShim",
+  };
+
+  for (const [importPath, shimName] of Object.entries(shimMap)) {
+    // Match: import*as __N$ from"tailwindcss/plugin" (where N is any number)
+    const importRegex = new RegExp(
+      `import\\*as\\s+(__\\d+\\$)\\s+from["']${importPath.replace("/", "\\/")}["']`,
+      "g",
+    );
+    code = code.replace(importRegex, (_, varName) => {
+      logger.debug(`[tailwind] Rewrote ${importPath} import to use global shim`, { varName });
+      return `const ${varName} = globalThis.${shimName}`;
+    });
+  }
+
+  // Step 4b: Patch out localStorage access from util-deprecate
+  // The bundled code contains patterns like: try{if(!globalThis.localStorage)return!1}
+  // In Deno compiled binaries, even with our global shim, this can fail.
+  // Replace globalThis.localStorage with a safe inline shim.
+  code = code.replace(
+    /globalThis\.localStorage/g,
+    "(globalThis.__localStorageShim||(globalThis.__localStorageShim={getItem:()=>null,setItem:()=>{},length:0}))",
+  );
+
+  // Step 5: Write to temp file and import
+  const tempPath = `/tmp/tw_plugin_${dntShim.crypto.randomUUID()}.mjs`;
+  await dntShim.Deno.writeTextFile(tempPath, code);
+  logger.debug("[tailwind] Wrote plugin to temp file", { path: tempPath });
+
+  try {
+    const mod = await import(`file://${tempPath}`);
+    return mod;
+  } finally {
+    // Clean up temp file
+    await dntShim.Deno.remove(tempPath).catch(() => {});
+  }
 }
 
-async function loadPlugin(id: string): Promise<unknown> {
-  // Check if we have a cached successful result
+async function loadPlugin(
+  id: string,
+  pluginCache: Map<string, unknown>,
+  pluginErrors: Map<string, string>,
+): Promise<unknown> {
   if (pluginCache.has(id)) {
     const errorMsg = pluginErrors.get(id);
-    if (errorMsg) {
-      // Check if the error has expired (allow retry after TTL)
-      const expiry = pluginErrorExpiry.get(id) ?? 0;
-      if (Date.now() < expiry) {
-        throw new Error(errorMsg);
-      }
-      // Error expired, clear it and retry
-      pluginErrors.delete(id);
-      pluginErrorExpiry.delete(id);
-      pluginCache.delete(id);
-    } else {
-      return pluginCache.get(id);
-    }
+    if (errorMsg) throw new Error(errorMsg);
+    return pluginCache.get(id);
   }
 
   // Use the proper isDeno check that distinguishes between real Deno and dnt shim
@@ -648,55 +744,52 @@ async function loadPlugin(id: string): Promise<unknown> {
     let mod: unknown;
 
     if (isDeno) {
-      // Deno supports HTTP imports natively
-      const url = `https://esm.sh/${id}`;
-      logger.debug("[tailwind] Loading plugin via esm.sh", { id, url });
-      mod = await fetchWithRetry(url);
+      // Use dynamic module loading that works in compiled binaries
+      // This fetches the bundled code, rewrites imports, and loads via temp file
+      logger.debug("[tailwind] Loading plugin via dynamic esm.sh fetch", { id });
+      mod = await loadModuleFromEsmSh(id);
     } else {
       // Node.js: Try to import from node_modules
-      // First try the bare specifier, then fall back to global node_modules
       logger.debug("[tailwind] Loading plugin from node_modules", { id });
       try {
         mod = await import(id);
       } catch {
-        // Plugin not installed - this is expected for most user projects
-        // Log at debug level since it's not an error, just a missing optional plugin
-        logger.debug("[tailwind] Plugin not installed", { id });
+        const errorMsg = `Failed to load plugin "${id}": plugin not installed`;
+        logger.warn("[tailwind] Plugin not installed", { id });
+        pluginErrors.set(id, errorMsg);
         pluginCache.set(id, null);
-        return null;
+        throw new Error(errorMsg);
       }
     }
 
-    const plugin = (mod as { default?: unknown }).default ?? mod;
-    pluginCache.set(id, plugin);
-    // Clear any previous error state
-    pluginErrors.delete(id);
-    pluginErrorExpiry.delete(id);
-    return plugin;
+    const pluginExport = (mod as { default?: unknown }).default ?? mod;
+    pluginCache.set(id, pluginExport);
+    return pluginExport;
   } catch (error) {
     const errorMsg = `Failed to load plugin "${id}": ${
       error instanceof Error ? error.message : String(error)
     }`;
     logger.warn(`[tailwind] ${errorMsg}`);
-    // Cache the error with expiry so we don't hammer esm.sh on every request
     pluginErrors.set(id, errorMsg);
-    pluginErrorExpiry.set(id, Date.now() + PLUGIN_ERROR_CACHE_TTL_MS);
-    pluginCache.set(id, null); // Mark as attempted
     throw new Error(errorMsg);
   }
 }
 
 export function clearPluginCache(id?: string): void {
   if (id) {
-    pluginCache.delete(id);
-    pluginErrors.delete(id);
-    pluginErrorExpiry.delete(id);
+    // Clear specific plugin from all compiler caches
+    for (const entry of compilerCache.values()) {
+      entry.pluginCache.delete(id);
+      entry.pluginErrors.delete(id);
+    }
     return;
   }
 
-  pluginCache.clear();
-  pluginErrors.clear();
-  pluginErrorExpiry.clear();
+  // Clear all plugin caches
+  for (const entry of compilerCache.values()) {
+    entry.pluginCache.clear();
+    entry.pluginErrors.clear();
+  }
 }
 
 async function getTailwindBaseCSS(): Promise<string> {
@@ -716,13 +809,23 @@ async function getTailwindBaseCSS(): Promise<string> {
 
 async function getCompiler(stylesheet: string): Promise<Awaited<ReturnType<typeof compile>>> {
   const hash = hashString(stylesheet);
-  if (compiler && hash === lastStylesheetHash) return compiler;
+
+  // Check LRU cache
+  const cached = compilerCache.get(hash);
+  if (cached) {
+    logger.debug("[tailwind] Compiler cache hit", { hash });
+    return cached.compiler;
+  }
 
   logger.debug("[tailwind] Creating new compiler", { hash });
 
   const tailwindBase = await getTailwindBaseCSS();
 
-  compiler = await compile(stylesheet, {
+  // Create new plugin caches for this stylesheet
+  const pluginCache = new Map<string, unknown>();
+  const pluginErrors = new Map<string, string>();
+
+  const newCompiler = await compile(stylesheet, {
     base: "/",
     loadStylesheet: (id: string) => {
       if (id === "tailwindcss") {
@@ -732,21 +835,65 @@ async function getCompiler(stylesheet: string): Promise<Awaited<ReturnType<typeo
       return Promise.resolve({ content: "", base: "/", path: "/" });
     },
     loadModule: async (id: string) => {
-      const plugin = await loadPlugin(id);
-      // If plugin is null (not installed in Node.js), return empty module to prevent crash
-      // The stylesheet will compile but plugin-specific features won't work
+      const plugin = await loadPlugin(id, pluginCache, pluginErrors);
+      if (!plugin) {
+        throw new Error(`Failed to load plugin "${id}": plugin not installed`);
+      }
       // deno-lint-ignore no-explicit-any
-      return { module: (plugin ?? {}) as any, base: "/", path: "/" };
+      return { module: plugin as any, base: "/", path: "/" };
     },
   });
 
-  lastStylesheetHash = hash;
-  return compiler;
+  // Evict oldest entry if at capacity
+  if (compilerCache.size >= MAX_CACHED_COMPILERS) {
+    let oldestKey: string | null = null;
+    let oldestTime = Infinity;
+    for (const [key, entry] of compilerCache) {
+      if (entry.createdAt < oldestTime) {
+        oldestTime = entry.createdAt;
+        oldestKey = key;
+      }
+    }
+    if (oldestKey) {
+      compilerCache.delete(oldestKey);
+      logger.debug("[tailwind] Evicted oldest compiler from cache", { hash: oldestKey });
+    }
+  }
+
+  // Store in cache
+  compilerCache.set(hash, {
+    compiler: newCompiler,
+    createdAt: Date.now(),
+    pluginCache,
+    pluginErrors,
+  });
+
+  return newCompiler;
 }
 
 export function invalidateCompiler(): void {
-  compiler = null;
-  lastStylesheetHash = "";
+  compilerCache.clear();
+  logger.debug("[tailwind] All compilers invalidated");
+}
+
+/**
+ * Get compiler cache statistics for monitoring.
+ */
+export function getCompilerCacheStats(): {
+  size: number;
+  maxSize: number;
+  entries: Array<{ hash: string; createdAt: number; pluginCount: number }>;
+} {
+  const entries = Array.from(compilerCache.entries()).map(([hash, entry]) => ({
+    hash,
+    createdAt: entry.createdAt,
+    pluginCount: entry.pluginCache.size,
+  }));
+  return {
+    size: compilerCache.size,
+    maxSize: MAX_CACHED_COMPILERS,
+    entries,
+  };
 }
 
 export async function generateTailwindCSS(
@@ -791,6 +938,16 @@ export async function generateTailwindCSS(
 
 export function formatCSSError(error: Error | string): CSSErrorInfo {
   const msg = typeof error === "string" ? error : error.message;
+
+  if (msg.includes("does not accept options")) {
+    const pluginMatch = msg.match(/"([^"]+)"/);
+    const pluginName = pluginMatch?.[1] ?? "unknown plugin";
+    return {
+      title: "Plugin Options Not Supported",
+      message: `${pluginName} does not accept options in Tailwind CSS v4`,
+      suggestion: `Remove the options block from @plugin. Use: @plugin "${pluginName}";`,
+    };
+  }
 
   if (msg.includes("Could not resolve") || msg.includes("Failed to load plugin")) {
     const pluginMatch = msg.match(/plugin\s*["']([^"']+)["']/i) || msg.match(/"([^"]+)"/);

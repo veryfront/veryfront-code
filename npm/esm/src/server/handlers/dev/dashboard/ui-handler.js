@@ -1,5 +1,5 @@
 import * as dntShim from "../../../../../_dnt.shims.js";
-import * as esbuild from "esbuild";
+import { getEsbuild } from "../../../../platform/compat/esbuild.js";
 import { readTextFile } from "../../../../platform/compat/fs.js";
 import { withSpan } from "../../../../observability/tracing/otlp-setup.js";
 import { logger } from "../../../../utils/index.js";
@@ -25,6 +25,7 @@ function resolveRelativeImport(currentDir, importPath) {
 }
 function transformModule(filePath, source, relativePath) {
     return withSpan("server.dev.dashboardUI.transformModule", async () => {
+        const esbuild = await getEsbuild();
         const result = await esbuild.transform(source, {
             loader: filePath.endsWith(".tsx") ? "tsx" : "ts",
             format: "esm",

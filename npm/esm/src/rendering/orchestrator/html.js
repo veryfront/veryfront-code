@@ -1,4 +1,5 @@
 import { join } from "../../platform/compat/path-helper.js";
+import { getExtensionName } from "../../utils/path-utils.js";
 import { extractHTMLMetadata, generateHTMLShellParts, injectHTMLContent, isFullHTMLDocument, } from "../../html/index.js";
 import { extractCandidates } from "../../html/styles-builder/tailwind-compiler.js";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "../../utils/index.js";
@@ -173,7 +174,7 @@ export class HTMLGenerator {
         });
         const pagePath = extractRelativePath(context.pageInfo.entity.path, this.config.projectDir);
         // Determine pageType from file extension
-        const fileExtension = context.pageInfo.entity.path.split(".").pop()?.toLowerCase();
+        const fileExtension = getExtensionName(context.pageInfo.entity.path);
         const pageType = fileExtension;
         const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
             ? computeSourceHash(context.pageInfo.entity.content)

@@ -4,7 +4,7 @@ import { createError, toError } from "../../errors/veryfront-error.js";
 import { withSpan } from "../../observability/tracing/otlp-setup.js";
 import { SpanNames } from "../../observability/tracing/span-names.js";
 import { computeHash } from "../utils/index.js";
-import { flushHeadCollector, resetHeadCollector } from "../../react/head-collector.js";
+import { runWithHeadCollector } from "../../react/head-collector.js";
 function getElementTypeName(el) {
     if (!el?.type)
         return "unknown";
@@ -27,17 +27,17 @@ export class SSROrchestrator {
         logger.debug("[SSROrchestrator] Element validated", {
             validatedType: getElementTypeName(validatedElement),
         });
-        resetHeadCollector();
         const wantsStream = options?.delivery === "stream";
-        const { html, stream } = await withSpan(SpanNames.SSR_ORCHESTRATOR_RENDER, () => this.config.ssrRenderer.renderToHTML(validatedElement, {
+        // Use AsyncLocalStorage-based head collection for multi-tenant safety
+        const { result: renderResult, head: collectedHead } = await runWithHeadCollector(() => withSpan(SpanNames.SSR_ORCHESTRATOR_RENDER, () => this.config.ssrRenderer.renderToHTML(validatedElement, {
             mode: this.config.mode,
             wantsStream,
             debugMode: this.config.debugMode,
         }), {
             "ssr.wants_stream": wantsStream,
             "ssr.mode": this.config.mode,
-        });
-        const collectedHead = flushHeadCollector();
+        }));
+        const { html, stream } = renderResult;
         const mergedOptions = {
             ...generationContext.options,
             ...options,

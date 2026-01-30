@@ -22,6 +22,7 @@ export function deepInspectElement(
   path: string,
   depth: number,
   options: InspectionOptions,
+  visited: WeakSet<object> = new WeakSet(),
 ): void {
   if (depth > options.maxDepth) {
     if (options.debugMode) {
@@ -30,8 +31,19 @@ export function deepInspectElement(
     return;
   }
 
+  // Cycle detection: prevent infinite loops from circular references
+  if (element && typeof element === "object") {
+    if (visited.has(element)) {
+      if (options.debugMode) {
+        logger.debug(`[DEEP INSPECT] Cycle detected at ${path}, skipping`);
+      }
+      return;
+    }
+    visited.add(element);
+  }
+
   if (isReactElement(element)) {
-    inspectReactElement(element as React.ReactElement, path, depth, options);
+    inspectReactElement(element as React.ReactElement, path, depth, options, visited);
     return;
   }
 
@@ -46,7 +58,7 @@ export function deepInspectElement(
   }
 
   if (Array.isArray(element)) {
-    inspectArray(element, path, depth, options);
+    inspectArray(element, path, depth, options, visited);
     return;
   }
 
@@ -60,6 +72,7 @@ function inspectReactElement(
   path: string,
   depth: number,
   options: InspectionOptions,
+  visited: WeakSet<object>,
 ): void {
   const elementType = getElementTypeName(element);
 
@@ -72,7 +85,7 @@ function inspectReactElement(
 
   const props = element.props;
   if (props && typeof props === "object") {
-    inspectElementProps(props as Record<string, unknown>, path, depth, options);
+    inspectElementProps(props as Record<string, unknown>, path, depth, options, visited);
   }
 }
 
@@ -81,17 +94,18 @@ function inspectElementProps(
   path: string,
   depth: number,
   options: InspectionOptions,
+  visited: WeakSet<object>,
 ): void {
   for (const [key, value] of Object.entries(props)) {
     if (key === "__self" || key === "__source") continue;
 
     if (key === "children") {
-      inspectChildren(value, path, depth, options);
+      inspectChildren(value, path, depth, options, visited);
       continue;
     }
 
     if (isReactElement(value)) {
-      deepInspectElement(value, `${path}.props.${key}`, depth + 1, options);
+      deepInspectElement(value, `${path}.props.${key}`, depth + 1, options, visited);
       continue;
     }
 
@@ -100,7 +114,7 @@ function inspectElementProps(
     for (let i = 0; i < value.length; i++) {
       const item = value[i];
       if (isReactElement(item)) {
-        deepInspectElement(item, `${path}.props.${key}[${i}]`, depth + 1, options);
+        deepInspectElement(item, `${path}.props.${key}[${i}]`, depth + 1, options, visited);
       }
     }
   }
@@ -111,16 +125,17 @@ function inspectChildren(
   path: string,
   depth: number,
   options: InspectionOptions,
+  visited: WeakSet<object>,
 ): void {
   if (Array.isArray(children)) {
     for (let i = 0; i < children.length; i++) {
-      deepInspectElement(children[i], `${path}.children[${i}]`, depth + 1, options);
+      deepInspectElement(children[i], `${path}.children[${i}]`, depth + 1, options, visited);
     }
     return;
   }
 
   if (children != null) {
-    deepInspectElement(children, `${path}.children`, depth + 1, options);
+    deepInspectElement(children, `${path}.children`, depth + 1, options, visited);
   }
 }
 
@@ -129,6 +144,7 @@ function inspectArray(
   path: string,
   depth: number,
   options: InspectionOptions,
+  visited: WeakSet<object>,
 ): void {
   if (options.debugMode) {
     logger.debug(`[DEEP INSPECT] ✓ Array at ${path}`, {
@@ -138,7 +154,7 @@ function inspectArray(
   }
 
   for (let i = 0; i < arr.length; i++) {
-    deepInspectElement(arr[i], `${path}[${i}]`, depth + 1, options);
+    deepInspectElement(arr[i], `${path}[${i}]`, depth + 1, options, visited);
   }
 }
 

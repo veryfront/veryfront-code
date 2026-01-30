@@ -8,12 +8,9 @@ import {
   clearSSRModuleCache,
   clearSSRModuleCacheForProject,
 } from "../../modules/react-loader/ssr-module-loader/index.js";
-import { clearRendererCacheForProject, clearRendererCaches } from "../../rendering/renderer.js";
+import { clearRendererCacheForProject } from "../../rendering/renderer.js";
 import { clearRouterDetectionCache } from "../../rendering/router-detection.js";
-import {
-  clearSnippetCache,
-  clearSnippetCacheForProject,
-} from "../../rendering/snippet-renderer.js";
+import { clearSnippetCacheForProject } from "../../rendering/snippet-renderer.js";
 import { cacheRegistry } from "../../cache/index.js";
 
 export interface InvalidationOptions {
@@ -75,16 +72,18 @@ export async function invalidateProjectCaches(
   clearRouterDetectionCache();
 
   if (!hasRealProjectSlug) {
-    logger.warn("[CacheInvalidation] Using GLOBAL cache clearing (no project slug)", {
-      projectSlug,
-      reason: "projectSlug is 'preview' or undefined",
-    });
-    await clearRendererCaches();
-    clearSnippetCache();
-    logger.debug("[CacheInvalidation] ✓ Global cache invalidation complete", {
-      projectSlug,
-      durationMs: Date.now() - startTime,
-    });
+    logger.error(
+      "[CacheInvalidation] Skipping cache invalidation — no project identity available",
+      {
+        projectSlug,
+        reason: "projectSlug is 'preview' and no projectId provided",
+        action: "skipped_global_wipe",
+      },
+    );
+    // Previously called clearRendererCaches() which wiped ALL projects' caches on this pod.
+    // This was a multi-tenant blast radius risk: one preview deployment could nuke every tenant's cache.
+    // Now we skip the invalidation entirely. The stale cache will be naturally evicted by TTL
+    // or the next scoped invalidation that includes a projectId.
     return;
   }
 

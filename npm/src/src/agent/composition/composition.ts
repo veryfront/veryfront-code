@@ -1,9 +1,17 @@
-import * as dntShim from "../../../_dnt.shims.js";
+/**
+ * Agent Composition and Registry
+ *
+ * Project-scoped registry for agents. Each project has its own isolated
+ * agent namespace, preventing cross-project agent access.
+ *
+ * @module
+ */
+
 import type { Agent } from "../types.js";
 import type { Tool } from "../../tool/index.js";
 import { z } from "zod";
-import { agentLogger } from "../../utils/logger/logger.js";
 import { setActiveSpanAttributes, withSpan } from "../../observability/tracing/otlp-setup.js";
+import { ProjectScopedRegistryManager } from "../../ai/registry-manager.js";
 
 export function agentAsTool(agent: Agent, description: string): Tool {
   return {
@@ -115,49 +123,54 @@ export function createWorkflow(
   };
 }
 
+const agentManager = new ProjectScopedRegistryManager<Agent>("agent");
+
 class AgentRegistryClass {
-  private agents = new Map<string, Agent>();
-
   register(id: string, agent: Agent): void {
-    if (this.agents.has(id)) {
-      agentLogger.debug(`Agent "${id}" is already registered. Overwriting.`);
-    }
+    agentManager.register(id, agent);
+  }
 
-    this.agents.set(id, agent);
-    agentLogger.debug(`Registered agent: ${id}`);
+  /**
+   * Register a framework-provided agent available to all projects.
+   */
+  registerShared(id: string, agent: Agent): void {
+    agentManager.registerShared(id, agent);
   }
 
   get(id: string): Agent | undefined {
-    return this.agents.get(id);
+    return agentManager.get(id);
   }
 
   has(id: string): boolean {
-    return this.agents.has(id);
+    return agentManager.has(id);
   }
 
   getAllIds(): string[] {
-    return Array.from(this.agents.keys());
+    return agentManager.getAllIds();
   }
 
   getAll(): Map<string, Agent> {
-    return new Map(this.agents);
+    return agentManager.getAll();
   }
 
   clear(): void {
-    this.agents.clear();
+    agentManager.clear();
+  }
+
+  /**
+   * Clear everything (for testing).
+   */
+  clearAll(): void {
+    agentManager.clearAll();
+  }
+
+  getStats() {
+    return agentManager.getStats();
   }
 }
 
-const AGENT_REGISTRY_KEY = "__veryfront_agent_registry__";
-
-type GlobalWithRegistry = typeof dntShim.dntGlobalThis & {
-  [AGENT_REGISTRY_KEY]?: AgentRegistryClass;
-};
-
-const globalWithRegistry = dntShim.dntGlobalThis as GlobalWithRegistry;
-
-export const agentRegistry: AgentRegistryClass =
-  (globalWithRegistry[AGENT_REGISTRY_KEY] ??= new AgentRegistryClass());
+// Singleton instance - maintains same interface but now project-scoped internally
+export const agentRegistry = new AgentRegistryClass();
 
 export { AgentRegistryClass };
 

@@ -134,7 +134,7 @@ export declare function isDistributedBackend(backend: CacheBackend): boolean;
  * This encapsulates the common pattern of:
  * 1. Lazy-init a cache backend via Singleflight
  * 2. Skip if memory-only (not useful for cross-pod sharing)
- * 3. Return null if init fails
+ * 3. Return null if init fails, but retry after DISTRIBUTED_CACHE_RETRY_MS
  *
  * @param factory - Function that creates the cache backend
  * @param name - Log prefix for debug messages

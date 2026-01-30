@@ -17,8 +17,13 @@ import { registerCache } from "../../../../utils/memory/index.js";
 import { isKeyForProject, registerMapCache } from "../../../../cache/keys.js";
 import { rendererLogger as logger } from "../../../../utils/index.js";
 import { LRUCache } from "../../../../utils/lru-wrapper.js";
-import { MAX_CONCURRENT_TRANSFORMS, SSR_TMP_DIRS_MAX_ENTRIES } from "../constants.js";
+import {
+  MAX_CONCURRENT_TRANSFORMS,
+  SSR_TMP_DIRS_MAX_ENTRIES,
+  TRANSFORM_PER_PROJECT_LIMIT,
+} from "../constants.js";
 import { Semaphore } from "../concurrency/semaphore.js";
+import { verifiedHttpBundlePaths } from "../http-bundle-helpers.js";
 import type { FailureRecord, ModuleCacheEntry } from "../types.js";
 
 /** Maximum entries for temp path tracking (small, just pointers) */
@@ -42,6 +47,55 @@ export const failedComponents = new Map<string, FailureRecord>();
 
 export const transformSemaphore = new Semaphore(MAX_CONCURRENT_TRANSFORMS);
 
+/**
+ * Per-project active transform counter. Prevents a single noisy tenant from
+ * monopolizing the global semaphore and starving other projects.
+ * Only enforced when TRANSFORM_PER_PROJECT_LIMIT > 0.
+ */
+const projectTransformCounts = new Map<string, number>();
+
+/**
+ * Attempt to acquire a project-level transform slot.
+ * Returns true if acquired, false if project is at capacity.
+ */
+export function acquireTransformSlot(projectId: string): boolean {
+  if (TRANSFORM_PER_PROJECT_LIMIT <= 0) return true;
+  const current = projectTransformCounts.get(projectId) ?? 0;
+  if (current >= TRANSFORM_PER_PROJECT_LIMIT) return false;
+  projectTransformCounts.set(projectId, current + 1);
+  return true;
+}
+
+/**
+ * Release a project-level transform slot.
+ */
+export function releaseTransformSlot(projectId: string): void {
+  if (TRANSFORM_PER_PROJECT_LIMIT <= 0) return;
+  const current = projectTransformCounts.get(projectId) ?? 0;
+  if (current <= 1) {
+    projectTransformCounts.delete(projectId);
+  } else {
+    projectTransformCounts.set(projectId, current - 1);
+  }
+}
+
+/**
+ * Get per-project transform statistics.
+ */
+export function getTransformStats(): {
+  globalAvailable: number;
+  globalWaiting: number;
+  perProjectLimit: number;
+  activeProjects: Map<string, number>;
+} {
+  return {
+    globalAvailable: transformSemaphore.available,
+    globalWaiting: transformSemaphore.waiting,
+    perProjectLimit: TRANSFORM_PER_PROJECT_LIMIT,
+    activeProjects: new Map(projectTransformCounts),
+  };
+}
+
 registerCache("ssr-module-cache", () => ({
   name: "ssr-module-cache",
   entries: globalModuleCache.size,
@@ -60,6 +114,8 @@ registerCache("ssr-transform-semaphore", () => ({
   entries: MAX_CONCURRENT_TRANSFORMS - transformSemaphore.available,
   maxEntries: MAX_CONCURRENT_TRANSFORMS,
   waiting: transformSemaphore.waiting,
+  perProjectLimit: TRANSFORM_PER_PROJECT_LIMIT,
+  activeProjects: Object.fromEntries(projectTransformCounts),
 }));
 
 function createCacheRegistryWrapper<T>(cache: LRUCache<string, T>) {
@@ -90,13 +146,17 @@ registerMapCache("ssr-failed-components", failedComponents);
 export function clearSSRModuleCache(): void {
   const moduleCount = globalModuleCache.size;
   const failedCount = failedComponents.size;
+  const transformSlotsCount = projectTransformCounts.size;
 
   globalModuleCache.clear();
   failedComponents.clear();
+  projectTransformCounts.clear();
+  verifiedHttpBundlePaths.clear();
 
   logger.info("[SSR-MODULE-LOADER] ✓ Global cache cleared", {
     modulesCleared: moduleCount,
     failedComponentsCleared: failedCount,
+    transformSlotsCleared: transformSlotsCount,
   });
 }
 
@@ -128,6 +188,13 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
     if (!key.includes(`:${projectId}`)) continue;
     globalTmpDirs.delete(key);
   }
+
+  // Clear project's transform slot count
+  projectTransformCounts.delete(projectId);
+
+  // Clear verified HTTP bundle paths — keys are tempPath:contentHash (not project-scoped),
+  // so full clear is needed. This just forces re-verification on next access.
+  verifiedHttpBundlePaths.clear();
 
   logger.debug("[SSR-MODULE-LOADER] ✓ Project cache cleared", {
     projectId,

@@ -11,12 +11,8 @@ import { getReactUrls, REACT_VERSION } from "./package-registry.js";
 import { isDeno } from "../../platform/compat/runtime.js";
 import { getRuntimeEnv } from "../../config/runtime-env.js";
 import { isReactSpecifier } from "../../platform/compat/react-paths.js";
+import { HTTP_FETCH_TIMEOUT_MS } from "../../utils/constants/http.js";
 const LOG_PREFIX = "[HTTP-HANDLER]";
-/**
- * HTTP fetch timeout in milliseconds.
- * Can be overridden via VF_HTTP_FETCH_TIMEOUT environment variable.
- */
-const DEFAULT_HTTP_TIMEOUT_MS = 30_000;
 /**
  * User agent string for HTTP fetches.
  */
@@ -30,7 +26,7 @@ function getHttpTimeout(env = getRuntimeEnv()) {
     const timeout = env.httpFetchTimeoutMs;
     if (timeout !== undefined && timeout > 0)
         return timeout;
-    return DEFAULT_HTTP_TIMEOUT_MS;
+    return HTTP_FETCH_TIMEOUT_MS;
 }
 /** Check if code has HTTP imports */
 export function hasHttpImports(code) {

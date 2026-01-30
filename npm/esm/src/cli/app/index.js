@@ -26,6 +26,7 @@ import { openBrowser } from "../auth/browser.js";
 import { fetchRemoteProjects } from "../sync/index.js";
 import { pullCommand } from "../commands/pull.js";
 import { pushCommand } from "../commands/push.js";
+import { getLogBuffer } from "../mcp/log-buffer.js";
 async function copyDirectory(src, dest) {
     const fs = await import("../../platform/compat/fs.js");
     const pathMod = await import("../../platform/compat/path/index.js");
@@ -1200,6 +1201,9 @@ export function createApp(config) {
             // Regex to strip ANSI escape codes (ESC [ ... m)
             // deno-lint-ignore no-control-regex
             const ansiPattern = /\x1b\[[0-9;]*m/g;
+            // Feed LogBuffer so the Dashboard API (/_dev/api/live-logs) can serve entries
+            // to the standalone MCP process
+            const logBuffer = getLogBuffer();
             const capture = (level) => (...args) => {
                 const msg = args
                     .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
@@ -1208,6 +1212,7 @@ export function createApp(config) {
                 if (msg.trim()) {
                     const meta = parseRequestLog(msg);
                     state = addLog(level, msg, meta)(state);
+                    logBuffer.append({ level, message: msg, source: "console" });
                     render();
                 }
             };

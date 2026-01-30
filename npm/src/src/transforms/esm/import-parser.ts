@@ -1,4 +1,4 @@
-import * as esbuild from "esbuild";
+import { getEsbuild } from "../../platform/compat/esbuild.js";
 import { join } from "../../../deps/deno.land/std@0.220.0/path/mod.js";
 import { createFileSystem } from "../../platform/compat/fs.js";
 import type { RuntimeAdapter } from "../../platform/adapters/base.js";
@@ -45,6 +45,7 @@ export async function parseLocalImports(
     return { imports: [], crossProjectImports: [], missing: [] };
   }
 
+  const esbuild = await getEsbuild();
   const result = await esbuild.transform(code, {
     loader: getLoaderFromPath(filePath),
     format: "esm",
@@ -191,7 +192,12 @@ async function resolveAliasImportPath(
     if (found) return found;
   }
 
-  if (adapter?.fs.resolveFile) {
+  // Skip the API adapter for paths that are clearly framework-internal
+  // (e.g. "usr/local/lib/node_modules/veryfront/..." after leading-slash stripping).
+  const isFrameworkPath = normalizedPath.includes("node_modules/veryfront/") ||
+    (FRAMEWORK_ROOT && normalizedPath.startsWith(FRAMEWORK_ROOT.replace(/^\/+/, "")));
+
+  if (adapter?.fs.resolveFile && !isFrameworkPath) {
     try {
       const resolved = await adapter.fs.resolveFile(normalizedPath);
       if (resolved) return resolved;

@@ -1,19 +1,29 @@
-import * as dntShim from "../../_dnt.shims.js";
-import { agentLogger } from "../utils/logger/logger.js";
+/**
+ * Prompt Registry
+ *
+ * Project-scoped registry for prompt templates. Each project has its own
+ * isolated prompt namespace, preventing cross-project prompt access.
+ *
+ * @module
+ */
 import { createError, toError } from "../errors/veryfront-error.js";
+import { ProjectScopedRegistryManager } from "../ai/registry-manager.js";
+const promptManager = new ProjectScopedRegistryManager("prompt");
 class PromptRegistryClass {
-    prompts = new Map();
     register(id, promptInstance) {
-        if (this.prompts.has(id)) {
-            agentLogger.debug(`Prompt "${id}" is already registered. Overwriting.`);
-        }
-        this.prompts.set(id, promptInstance);
+        promptManager.register(id, promptInstance);
+    }
+    /**
+     * Register a framework-provided prompt available to all projects.
+     */
+    registerShared(id, promptInstance) {
+        promptManager.registerShared(id, promptInstance);
     }
     get(id) {
-        return this.prompts.get(id);
+        return promptManager.get(id);
     }
     getContent(id, variables) {
-        const promptInstance = this.prompts.get(id);
+        const promptInstance = promptManager.get(id);
         if (!promptInstance) {
             throw toError(createError({
                 type: "agent",
@@ -23,20 +33,26 @@ class PromptRegistryClass {
         return promptInstance.getContent(variables);
     }
     getAll() {
-        return new Map(this.prompts);
+        return promptManager.getAll();
     }
     list() {
-        return [...this.prompts.keys()];
+        return promptManager.getAllIds();
     }
     has(id) {
-        return this.prompts.has(id);
+        return promptManager.has(id);
     }
     clear() {
-        this.prompts.clear();
+        promptManager.clear();
+    }
+    /**
+     * Clear everything (for testing).
+     */
+    clearAll() {
+        promptManager.clearAll();
+    }
+    getStats() {
+        return promptManager.getStats();
     }
 }
-// Singleton instance using globalThis to share across module contexts
-// This is necessary for esbuild-bundled API routes to access the same registry
-const PROMPT_REGISTRY_KEY = "__veryfront_prompt_registry__";
-const globalWithRegistry = dntShim.dntGlobalThis;
-export const promptRegistry = (globalWithRegistry[PROMPT_REGISTRY_KEY] ??= new PromptRegistryClass());
+// Singleton instance - maintains same interface but now project-scoped internally
+export const promptRegistry = new PromptRegistryClass();

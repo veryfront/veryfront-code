@@ -306,7 +306,7 @@ export const getRouterScript = () => `
       if (cached) {
         log('Using cached page data:', path);
         // Revalidate in background (no reload trigger)
-        fetchPageDataFresh(path, null).catch(() => {});
+        fetchPageDataFresh(path, null).catch(() => { /* SILENT: background revalidation is best-effort */ });
         return cached;
       }
 
@@ -316,7 +316,7 @@ export const getRouterScript = () => `
     // Fetch for prefetch (no reload trigger - just cache the data)
     async function fetchPageDataForPrefetch(path) {
       if (getCachedPageData(path)) return;
-      return fetchPageDataFresh(path, null).catch(() => {});
+      return fetchPageDataFresh(path, null).catch(() => { /* SILENT: prefetch is best-effort */ });
     }
 
     // ============================================

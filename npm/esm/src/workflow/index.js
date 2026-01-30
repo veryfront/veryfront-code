@@ -78,12 +78,8 @@ export { createWorkflowClient, WorkflowClient } from "./api/index.js";
 // Workflow Registry (for discovery/dev tools)
 // =============================================================================
 export { getAllWorkflowIds, getWorkflow, registerWorkflow, workflowRegistry } from "./registry.js";
-// =============================================================================
-// Adapter Backends (for external workflow engines)
-// =============================================================================
-export { TemporalAdapter } from "./backends/temporal.js";
-export { InngestAdapter } from "./backends/inngest.js";
-export { CloudflareAdapter } from "./backends/cloudflare.js";
+// Stub workflow backends (Temporal, Inngest, Cloudflare) removed — zero consumers.
+// See P2-2 Dead Export Audit.
 // =============================================================================
 // React Hooks (re-exported for convenience)
 // Note: For tree-shaking, prefer importing from 'veryfront/workflow/react'

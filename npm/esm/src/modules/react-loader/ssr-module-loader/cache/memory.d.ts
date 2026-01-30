@@ -21,6 +21,24 @@ export declare const globalInProgress: Map<string, Promise<void>>;
 export declare const globalTmpDirs: LRUCache<string, string>;
 export declare const failedComponents: Map<string, FailureRecord>;
 export declare const transformSemaphore: Semaphore;
+/**
+ * Attempt to acquire a project-level transform slot.
+ * Returns true if acquired, false if project is at capacity.
+ */
+export declare function acquireTransformSlot(projectId: string): boolean;
+/**
+ * Release a project-level transform slot.
+ */
+export declare function releaseTransformSlot(projectId: string): void;
+/**
+ * Get per-project transform statistics.
+ */
+export declare function getTransformStats(): {
+    globalAvailable: number;
+    globalWaiting: number;
+    perProjectLimit: number;
+    activeProjects: Map<string, number>;
+};
 export declare function clearSSRModuleCache(): void;
 export declare function clearSSRModuleCacheForProject(projectId: string): void;
 //# sourceMappingURL=memory.d.ts.map

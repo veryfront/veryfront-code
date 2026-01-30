@@ -1,4 +1,5 @@
 import { resolveRelativePath } from "../../modules/react-loader/path-resolver.js";
+import { getExtensionName } from "../../utils/path-utils.js";
 function toProjectRelativePath(absolutePath, projectDir) {
     if (!absolutePath)
         return "";
@@ -9,7 +10,9 @@ function toProjectRelativePath(absolutePath, projectDir) {
 }
 const PAGE_TYPE_EXTENSIONS = new Set(["mdx", "tsx", "jsx", "ts", "js"]);
 function inferPageType(pagePath) {
-    const ext = pagePath?.split(".").pop()?.toLowerCase();
+    if (!pagePath)
+        return undefined;
+    const ext = getExtensionName(pagePath);
     if (!ext)
         return undefined;
     return PAGE_TYPE_EXTENSIONS.has(ext) ? ext : undefined;

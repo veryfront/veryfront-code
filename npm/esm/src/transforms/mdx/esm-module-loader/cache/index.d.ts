@@ -6,6 +6,29 @@
  * @module build/transforms/mdx/esm-module-loader/cache
  */
 import { type FileSystem } from "../../../../platform/compat/fs.js";
+import { LRUCache } from "../../../../utils/lru-wrapper.js";
+/**
+ * Typed result from lookupMdxEsmCache.
+ * Distinguishes between normal cache miss (cold start) and cache corruption
+ * (a problem to track and alert on).
+ */
+export type CacheLookupResult = {
+    status: "hit";
+    path: string;
+} | {
+    status: "miss";
+} | {
+    status: "corrupted";
+    reason: string;
+    filePath: string;
+};
+/**
+ * LRU cache for verified module dependency paths.
+ * Keyed by `cachedPath:codeSize` to skip re-stat'ing file:// dependencies
+ * on every lookupMdxEsmCache call.
+ * Cleared alongside modulePathCaches via clearModulePathCache().
+ */
+export declare const verifiedModuleDeps: LRUCache<string, true>;
 /**
  * Get or create the local filesystem instance.
  */
@@ -46,7 +69,7 @@ export declare function clearESMDiskCache(): Promise<void>;
  * @param cacheDir - The MDX-ESM cache directory for this project/contentSource
  * @param projectDir - Project directory to strip from absolute paths
  * @param contentHash - Optional content hash to validate cached file freshness
- * @returns The cached file path if found and valid, null otherwise
+ * @returns Typed result: hit (with path), miss, or corrupted (with reason)
  */
-export declare function lookupMdxEsmCache(filePath: string, cacheDir: string, projectDir?: string, _contentHash?: string): Promise<string | null>;
+export declare function lookupMdxEsmCache(filePath: string, cacheDir: string, projectDir?: string, _contentHash?: string): Promise<CacheLookupResult>;
 //# sourceMappingURL=index.d.ts.map

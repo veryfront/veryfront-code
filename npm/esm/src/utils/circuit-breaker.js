@@ -45,6 +45,9 @@ export class CircuitBreaker {
         }
         if (this.state === "HALF_OPEN") {
             if (this.halfOpenAttempts >= 3) {
+                // Too many half-open attempts failed - transition back to OPEN
+                this.transitionTo("OPEN");
+                this.lastFailureTime = Date.now();
                 throw new CircuitBreakerOpen(this.breakerName, this.resetTimeoutMs);
             }
             this.halfOpenAttempts++;
@@ -96,13 +99,80 @@ export class CircuitBreaker {
     getState() {
         return this.state;
     }
+    /** Get the last activity time (failure or success) */
+    getLastActivityTime() {
+        return this.lastFailureTime || Date.now();
+    }
+    /** Update last activity time on use */
+    touch() {
+        if (this.state === "CLOSED" && this.failureCount === 0) {
+            // Only update for healthy breakers to track activity
+            this.lastFailureTime = Date.now();
+        }
+    }
 }
+/** Maximum number of circuit breakers to keep in registry */
+const MAX_BREAKERS = 1000;
+/** Minimum age (ms) before a breaker can be evicted (1 hour) */
+const MIN_EVICTION_AGE_MS = 60 * 60 * 1000;
 const breakers = new Map();
+/** Evict stale circuit breakers to prevent memory leaks */
+function evictStaleBreakers() {
+    if (breakers.size <= MAX_BREAKERS)
+        return;
+    const now = Date.now();
+    const entries = Array.from(breakers.entries());
+    // Sort by last used time (oldest first)
+    entries.sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+    // Evict oldest entries that are past minimum age, keeping at most MAX_BREAKERS
+    const toEvict = entries.length - MAX_BREAKERS;
+    let evicted = 0;
+    for (const [name, entry] of entries) {
+        if (evicted >= toEvict)
+            break;
+        const age = now - entry.lastUsed;
+        // Only evict if idle for at least MIN_EVICTION_AGE_MS and in CLOSED state
+        if (age >= MIN_EVICTION_AGE_MS && entry.breaker.getState() === "CLOSED") {
+            breakers.delete(name);
+            evicted++;
+            logger.debug(`[CircuitBreaker] Evicted stale breaker: ${name}`, {
+                age: Math.round(age / 1000),
+            });
+        }
+    }
+    if (evicted > 0) {
+        logger.info(`[CircuitBreaker] Evicted ${evicted} stale breakers, ${breakers.size} remaining`);
+    }
+}
 export function getCircuitBreaker(name, options) {
     const existing = breakers.get(name);
-    if (existing)
-        return existing;
+    if (existing) {
+        existing.lastUsed = Date.now();
+        return existing.breaker;
+    }
+    // Evict stale breakers before adding new one
+    evictStaleBreakers();
     const breaker = new CircuitBreaker({ ...options, name });
-    breakers.set(name, breaker);
+    breakers.set(name, { breaker, lastUsed: Date.now() });
     return breaker;
+}
+/** Get circuit breaker registry stats for monitoring */
+export function getCircuitBreakerStats() {
+    let open = 0;
+    let halfOpen = 0;
+    let closed = 0;
+    for (const entry of breakers.values()) {
+        switch (entry.breaker.getState()) {
+            case "OPEN":
+                open++;
+                break;
+            case "HALF_OPEN":
+                halfOpen++;
+                break;
+            case "CLOSED":
+                closed++;
+                break;
+        }
+    }
+    return { total: breakers.size, open, halfOpen, closed };
 }

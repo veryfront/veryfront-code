@@ -1,4 +1,5 @@
 import type * as esbuild from "esbuild";
+import { getExtensionName } from "../../../utils/path-utils.js";
 
 type FileType = "mdx" | "tsx" | "ts" | "jsx" | "js" | "css" | "json";
 
@@ -24,16 +25,12 @@ const LOADER_MAP: Record<string, esbuild.Loader> = {
   json: "json",
 };
 
-function getExtension(path: string): string {
-  return path.split(".").pop()?.toLowerCase() ?? "";
-}
-
 export function getLoaderFromPath(path: string): esbuild.Loader {
-  return LOADER_MAP[getExtension(path)] ?? "default";
+  return LOADER_MAP[getExtensionName(path)] ?? "default";
 }
 
 export function getFileType(path: string): FileType {
-  return EXTENSION_MAP[getExtension(path)] ?? "js";
+  return EXTENSION_MAP[getExtensionName(path)] ?? "js";
 }
 
 export function getSlugFromPath(path: string): string {

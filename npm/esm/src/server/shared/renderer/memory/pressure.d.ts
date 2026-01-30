@@ -2,9 +2,14 @@
  * Memory Pressure Management
  *
  * Progressive throttling to prevent OOM conditions:
- * - 70%: Warning, reduce cache TTL
- * - 80%: High pressure, start aggressive eviction
- * - 90%: Critical, reject requests
+ * - WARNING: Reduce cache TTL to slow memory growth
+ * - HIGH: Aggressive eviction to reclaim memory
+ * - CRITICAL: Reject requests to prevent OOM
+ *
+ * Thresholds are configurable via environment variables:
+ * - MEMORY_WARNING_THRESHOLD (default: 65)
+ * - MEMORY_HIGH_THRESHOLD (default: 75)
+ * - MEMORY_CRITICAL_THRESHOLD (default: 80)
  *
  * @module server/shared/renderer/memory/pressure
  */

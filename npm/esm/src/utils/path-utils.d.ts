@@ -1,7 +1,16 @@
 export declare function normalizePath(pathname: string): string;
 export declare function joinPath(a: string, b: string): string;
 export declare function isWithinDirectory(root: string, target: string): boolean;
+/**
+ * Get file extension including the dot (e.g., ".ts", ".tsx").
+ * Returns empty string if no extension found.
+ */
 export declare function getExtension(path: string): string;
+/**
+ * Get file extension without the dot, lowercased (e.g., "ts", "tsx").
+ * Returns empty string if no extension found.
+ */
+export declare function getExtensionName(path: string): string;
 export declare function getDirectory(path: string): string;
 export declare function hasHashedFilename(path: string): boolean;
 /**

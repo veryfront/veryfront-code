@@ -187,17 +187,8 @@ export type { WorkflowClientConfig } from "./api/index.js";
 export { getAllWorkflowIds, getWorkflow, registerWorkflow, workflowRegistry } from "./registry.js";
 export type { WorkflowMetadata } from "./registry.js";
 
-// =============================================================================
-// Adapter Backends (for external workflow engines)
-// =============================================================================
-export { TemporalAdapter } from "./backends/temporal.js";
-export type { TemporalAdapterConfig } from "./backends/temporal.js";
-
-export { InngestAdapter } from "./backends/inngest.js";
-export type { InngestAdapterConfig } from "./backends/inngest.js";
-
-export { CloudflareAdapter } from "./backends/cloudflare.js";
-export type { CloudflareAdapterConfig } from "./backends/cloudflare.js";
+// Stub workflow backends (Temporal, Inngest, Cloudflare) removed — zero consumers.
+// See P2-2 Dead Export Audit.
 
 // =============================================================================
 // React Hooks (re-exported for convenience)

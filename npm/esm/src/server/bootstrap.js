@@ -4,11 +4,16 @@ import { enhanceAdapterWithFS } from "../platform/adapters/fs/integration.js";
 import { logger } from "../utils/index.js";
 import { isDebugEnabled } from "../utils/constants/env.js";
 import { loadEnv, supportsEnvFiles } from "../utils/env-loader.js";
+import { getEnv } from "../platform/compat/process.js";
+import { initializeEsbuild } from "../platform/compat/esbuild.js";
 export async function bootstrap(projectDir, adapter) {
     logger.debug("[Bootstrap] Starting framework initialization", {
         projectDir,
         runtime: adapter.id,
     });
+    // Initialize esbuild early - extracts binary from VFS if running as deno compile
+    // This must happen before any module imports esbuild
+    await initializeEsbuild();
     if (supportsEnvFiles()) {
         try {
             await loadEnv({
@@ -92,6 +97,9 @@ export async function bootstrapDev(projectDir, adapter) {
 }
 export async function bootstrapProd(projectDir, adapter) {
     logger.debug("[Bootstrap:Prod] Starting production mode initialization");
+    // Validate NODE_ENV in proxy mode to prevent dev behavior in production
+    // @see plans/architecture-audit/014.1-node-env-missing.md
+    validateProductionEnvironment(adapter);
     try {
         const result = await bootstrap(projectDir, adapter);
         if (result.usingFSAdapter) {
@@ -107,4 +115,33 @@ export async function bootstrapProd(projectDir, adapter) {
         });
         throw error;
     }
+}
+/**
+ * Validates that critical environment variables are set correctly in production.
+ * This prevents dev behavior from accidentally being enabled in production pods.
+ *
+ * @see plans/architecture-audit/014.1-node-env-missing.md
+ */
+function validateProductionEnvironment(_adapter) {
+    const nodeEnv = getEnv("NODE_ENV") ?? getEnv("DENO_ENV");
+    const proxyMode = getEnv("PROXY_MODE");
+    // In proxy mode (deployed pods), NODE_ENV must be explicitly set to production
+    if (proxyMode === "1") {
+        if (!nodeEnv) {
+            logger.error("[Bootstrap:Prod] CRITICAL: NODE_ENV is not set in proxy mode. " +
+                "This will cause isLocalDev=true, enabling dev features in production. " +
+                "Set NODE_ENV=production in your pod configuration.");
+            throw new Error("NODE_ENV must be set to 'production' when running in proxy mode (PROXY_MODE=1)");
+        }
+        if (nodeEnv !== "production") {
+            logger.warn("[Bootstrap:Prod] NODE_ENV is set to '%s' in proxy mode. " +
+                "Expected 'production'. This may enable dev features.", nodeEnv);
+        }
+    }
+    // Log effective configuration for debugging
+    logger.debug("[Bootstrap:Prod] Environment configuration", {
+        nodeEnv: nodeEnv ?? "(unset, defaults to development)",
+        proxyMode: proxyMode ?? "0",
+        isLocalDev: nodeEnv !== "production",
+    });
 }

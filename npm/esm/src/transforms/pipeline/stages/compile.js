@@ -3,8 +3,9 @@
  *
  * Uses esbuild to transform JSX/TSX to plain JavaScript with ES modules.
  */
-import * as esbuild from "esbuild";
+import { getEsbuild } from "../../../platform/compat/esbuild.js";
 import { rendererLogger as logger } from "../../../utils/index.js";
+import { getErrorCollector } from "../../../cli/mcp/error-collector.js";
 import { getLoaderFromPath } from "../../esm/transform-utils.js";
 import { TransformStage } from "../types.js";
 /**
@@ -15,6 +16,7 @@ export const compilePlugin = {
     stage: TransformStage.COMPILE,
     async transform(ctx) {
         const loader = getLoaderFromPath(ctx.filePath);
+        const esbuild = await getEsbuild();
         try {
             const result = await esbuild.transform(ctx.code, {
                 loader,
@@ -52,6 +54,8 @@ export const compilePlugin = {
                 error: errorMsg,
             });
             logger.error("[ESM-TRANSFORM] Source preview (first 10 lines):\n" + sourcePreview);
+            // Capture compile error for MCP flywheel
+            getErrorCollector().addCompileError(errorMsg, ctx.filePath);
             throw new Error(`ESM transform failed for ${ctx.filePath} (loader: ${loader}): ${errorMsg}`);
         }
     },

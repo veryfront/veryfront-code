@@ -17,13 +17,24 @@ async function tryReadFile(path, readFile) {
 function stripTrailingSlashes(path) {
     return path.replace(/\/+$/, "");
 }
+/** Prefixes that indicate a framework-internal module (resolved locally, not via API).
+ * Note: "lib/" is intentionally excluded — user projects commonly have lib/ files
+ * (e.g. lib/utils.ts from shadcn). Project files are resolved first via the API adapter,
+ * with framework lib/ files (Head, Router, etc.) as a fallback in the framework lookup below. */
+const FRAMEWORK_PREFIXES = ["src/exports/", "exports/", "react/"];
+function isFrameworkPath(filePathWithoutJs) {
+    return FRAMEWORK_PREFIXES.some((prefix) => filePathWithoutJs.startsWith(prefix));
+}
 export async function resolveModuleFile(normalizedPath, adapter, projectDir) {
     const filePathWithoutJs = normalizedPath.replace(/^_vf_modules\//, "").replace(/\.js$/, "");
     const hasKnownExt = MODULE_EXTENSIONS.some((ext) => filePathWithoutJs.endsWith(ext));
     const filePathWithoutExt = hasKnownExt
         ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
         : filePathWithoutJs;
-    if (adapter.fs.resolveFile) {
+    // Framework modules (react/, exports/) are local files — skip the API adapter
+    // to avoid unnecessary 404 errors from the remote API.
+    const isFramework = isFrameworkPath(filePathWithoutJs);
+    if (adapter.fs.resolveFile && !isFramework) {
         for (const prefix of DIRECTORY_PREFIXES) {
             const basePath = prefix + filePathWithoutExt;
             const resolvedPath = await adapter.fs.resolveFile(basePath);
@@ -50,7 +61,7 @@ export async function resolveModuleFile(normalizedPath, adapter, projectDir) {
             filePathWithoutExt,
         });
     }
-    else if (projectDir) {
+    else if (projectDir && !isFramework) {
         const localFs = getLocalFs();
         const normalizedProjectDir = stripTrailingSlashes(projectDir);
         for (const prefix of DIRECTORY_PREFIXES) {

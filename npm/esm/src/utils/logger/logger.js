@@ -1,6 +1,7 @@
 import * as dntShim from "../../../_dnt.shims.js";
 import { getEnvironmentVariable } from "./env.js";
 import { hasDenoRuntime, hasNodeProcess } from "../runtime-guards.js";
+import { VERSION } from "../version.js";
 export var LogLevel;
 (function (LogLevel) {
     LogLevel[LogLevel["DEBUG"] = 0] = "DEBUG";
@@ -229,6 +230,7 @@ class ConsoleLogger {
             timestamp: new Date().toISOString(),
             level,
             service: this.prefix.toLowerCase(),
+            veryfrontVersion: VERSION,
             message,
         };
         // Extract known fields to top level for easier Grafana filtering
@@ -323,13 +325,96 @@ export function getDefaultLevel(envLevel = getEnvironmentVariable("LOG_LEVEL"), 
 function createLogger(prefix) {
     return new ConsoleLogger(prefix);
 }
-export const cliLogger = createLogger("CLI");
-export const serverLogger = createLogger("SERVER");
-export const rendererLogger = createLogger("RENDERER");
-export const bundlerLogger = createLogger("BUNDLER");
-export const agentLogger = createLogger("AGENT");
-export const proxyLogger = createLogger("PROXY");
-export const logger = createLogger("VERYFRONT");
+// Base loggers without request context
+const baseCliLogger = createLogger("CLI");
+const baseServerLogger = createLogger("SERVER");
+const baseRendererLogger = createLogger("RENDERER");
+const baseBundlerLogger = createLogger("BUNDLER");
+const baseAgentLogger = createLogger("AGENT");
+const baseProxyLogger = createLogger("PROXY");
+const baseLogger = createLogger("VERYFRONT");
+/**
+ * Request context getter - set by request-context.ts to avoid circular imports.
+ * This pattern allows the logger module to be imported first without
+ * depending on request-context.ts.
+ */
+let requestContextGetter = null;
+/**
+ * Register the request context getter.
+ * Called by request-context.ts during module initialization.
+ * @internal
+ */
+export function __registerRequestContextGetter(getter) {
+    requestContextGetter = getter;
+}
+/**
+ * Create a context-aware logger proxy that automatically uses
+ * request-scoped context from AsyncLocalStorage when available.
+ */
+function createContextAwareLogger(baseLogger) {
+    return {
+        debug(message, ...args) {
+            const ctx = requestContextGetter?.();
+            const logger = ctx?.logger ?? baseLogger;
+            logger.debug(message, ...args);
+        },
+        info(message, ...args) {
+            const ctx = requestContextGetter?.();
+            const logger = ctx?.logger ?? baseLogger;
+            logger.info(message, ...args);
+        },
+        warn(message, ...args) {
+            const ctx = requestContextGetter?.();
+            const logger = ctx?.logger ?? baseLogger;
+            logger.warn(message, ...args);
+        },
+        error(message, ...args) {
+            const ctx = requestContextGetter?.();
+            const logger = ctx?.logger ?? baseLogger;
+            logger.error(message, ...args);
+        },
+        time(label, fn) {
+            const ctx = requestContextGetter?.();
+            const logger = ctx?.logger ?? baseLogger;
+            return logger.time(label, fn);
+        },
+        child(context) {
+            const ctx = requestContextGetter?.();
+            const logger = ctx?.logger ?? baseLogger;
+            return logger.child(context);
+        },
+    };
+}
+// Context-aware loggers that automatically include request context
+export const cliLogger = createContextAwareLogger(baseCliLogger);
+export const serverLogger = createContextAwareLogger(baseServerLogger);
+export const rendererLogger = createContextAwareLogger(baseRendererLogger);
+export const bundlerLogger = createContextAwareLogger(baseBundlerLogger);
+export const agentLogger = createContextAwareLogger(baseAgentLogger);
+export const proxyLogger = createContextAwareLogger(baseProxyLogger);
+export const logger = createContextAwareLogger(baseLogger);
+/**
+ * Get the base logger without request context awareness.
+ * Use this when you need to create a request-scoped logger in middleware.
+ */
+export function getBaseLogger(prefix) {
+    switch (prefix.toUpperCase()) {
+        case "CLI":
+            return baseCliLogger;
+        case "SERVER":
+            return baseServerLogger;
+        case "RENDERER":
+            return baseRendererLogger;
+        case "BUNDLER":
+            return baseBundlerLogger;
+        case "AGENT":
+            return baseAgentLogger;
+        case "PROXY":
+            return baseProxyLogger;
+        default:
+            return baseLogger;
+    }
+}
 /**
  * Create a logger for a specific request context.
  * Useful for binding request-specific metadata to all logs.

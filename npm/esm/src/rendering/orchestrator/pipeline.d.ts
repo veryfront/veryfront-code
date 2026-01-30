@@ -53,6 +53,13 @@ export declare class RenderPipeline {
     private collectModulesToLoad;
     /**
      * Load modules in parallel and return only successfully loaded ones.
+     *
+     * IMPORTANT: Page modules are considered critical - if a page module fails to load,
+     * we throw an error instead of silently continuing with missing props. This prevents
+     * users from seeing broken pages with no indication of the problem.
+     *
+     * Layout modules are considered non-critical - their failures are logged as warnings
+     * and the page continues to render (possibly without that layout's data).
      */
     private loadModulesInParallel;
     /**

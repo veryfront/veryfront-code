@@ -1,5 +1,6 @@
 import * as React from "react";
 import { rendererLogger as logger } from "../utils/index.js";
+import { getExtensionName } from "../utils/path-utils.js";
 import { ErrorCode, VeryfrontError } from "../errors/index.js";
 import { createDefaultMDXComponents } from "./utils/index.js";
 import { extractRouteParams } from "../utils/route-path-utils.js";
@@ -82,7 +83,7 @@ export class PageRenderer {
     type: "mdx" | "component" | "script";
     extension: string;
   } {
-    const extension = pageInfo.entity.path.split(".").pop()!.toLowerCase();
+    const extension = getExtensionName(pageInfo.entity.path);
 
     if (extension === "tsx" || extension === "jsx") {
       return { type: "component", extension };

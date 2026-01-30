@@ -15,8 +15,8 @@ export function generateDevErrorLoggerScript(nonce) {
               details,
               timestamp: new Date().toISOString()
             })
-          }).catch(() => {});
-        } catch {}
+          }).catch(() => { /* SILENT: error reporting is best-effort */ });
+        } catch { /* SILENT: error logger must never throw */ }
       };
 
       window.addEventListener('error', (event) => {

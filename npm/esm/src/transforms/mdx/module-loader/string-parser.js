@@ -41,5 +41,10 @@ export function parseJsonish(value) {
     const jsonish = value
         .replace(/'([^']*)'/g, '"$1"')
         .replace(/([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":');
-    return JSON.parse(jsonish);
+    try {
+        return JSON.parse(jsonish);
+    }
+    catch {
+        return value;
+    }
 }

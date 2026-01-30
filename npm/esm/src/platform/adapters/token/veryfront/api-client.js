@@ -2,6 +2,8 @@ import * as dntShim from "../../../../../_dnt.shims.js";
 import { logger } from "../../../../utils/index.js";
 import { injectContext } from "../../../../observability/tracing/otlp-setup.js";
 import { TokenStorageError } from "./types.js";
+/** Default timeout for token storage API requests (30 seconds) */
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 export class TokenStorageAPIClient {
     config;
     constructor(config) {
@@ -128,12 +130,15 @@ export class TokenStorageAPIClient {
     }
     async fetchWithRetry(url, init) {
         const { maxRetries, initialDelay, maxDelay } = this.config.retry;
+        const timeoutMs = this.config.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
         let lastError;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            const controller = new AbortController();
+            const timeoutId = dntShim.setTimeout(() => controller.abort(), timeoutMs);
             try {
                 const headers = new dntShim.Headers(init.headers);
                 injectContext(headers);
-                const response = await dntShim.fetch(url, { ...init, headers });
+                const response = await dntShim.fetch(url, { ...init, headers, signal: controller.signal });
                 if (response.status >= 400 && response.status < 500 && response.status !== 429) {
                     return response;
                 }
@@ -144,6 +149,15 @@ export class TokenStorageAPIClient {
             }
             catch (error) {
                 lastError = error instanceof Error ? error : new Error(String(error));
+                // Check if this was a timeout
+                const isTimeout = error instanceof Error && error.name === "AbortError";
+                if (isTimeout) {
+                    logger.warn("[TokenStorageAPIClient] Request timed out", {
+                        url: url.replace(/token=[^&]+/, "token=***"),
+                        timeoutMs,
+                        attempt: attempt + 1,
+                    });
+                }
                 if (attempt >= maxRetries) {
                     break;
                 }
@@ -153,8 +167,12 @@ export class TokenStorageAPIClient {
                     maxRetries,
                     delay,
                     error: lastError.message,
+                    timeout: isTimeout,
                 });
                 await new Promise((resolve) => dntShim.setTimeout(resolve, delay));
+            }
+            finally {
+                clearTimeout(timeoutId);
             }
         }
         throw new TokenStorageError(`Request failed after ${maxRetries} retries: ${lastError?.message}`);

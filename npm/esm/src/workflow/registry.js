@@ -1,15 +1,18 @@
 /****
  * Workflow Registry
  *
- * Global registry for workflow DEFINITIONS (not executions).
- * Used for discovery and visibility in dev tools.
+ * Project-scoped registry for workflow DEFINITIONS (not executions).
+ * Each project has its own isolated workflow namespace, preventing
+ * cross-project workflow access.
  *
  * Note: This registry stores workflow metadata/definitions only.
  * Workflow RUNS are managed by WorkflowClient with backend-specific storage.
+ *
+ * @module
  */
-import * as dntShim from "../../_dnt.shims.js";
 import { zodToJsonSchema } from "../tool/schema/index.js";
 import { agentLogger as logger } from "../utils/index.js";
+import { ProjectScopedRegistryManager } from "../ai/registry-manager.js";
 function createProxy() {
     return new Proxy({}, {
         get: (_target, prop) => (typeof prop === "string" ? createProxy() : undefined),
@@ -129,56 +132,65 @@ function extractMetadata(definition) {
         registeredAt: new Date().toISOString(),
     };
 }
+const workflowMetadataManager = new ProjectScopedRegistryManager("workflow");
+const workflowDefinitionManager = new ProjectScopedRegistryManager("workflow-definition");
 /**
  * Workflow Registry class
  */
 class WorkflowRegistryClass {
-    workflows = new Map();
-    definitions = new Map();
     /**
      * Register a workflow definition
      */
     register(workflow) {
         const definition = "definition" in workflow ? workflow.definition : workflow;
         const metadata = extractMetadata(definition);
-        this.workflows.set(definition.id, metadata);
-        this.definitions.set(definition.id, definition);
+        workflowMetadataManager.register(definition.id, metadata);
+        workflowDefinitionManager.register(definition.id, definition);
+    }
+    /**
+     * Register a framework-provided workflow available to all projects.
+     */
+    registerShared(workflow) {
+        const definition = "definition" in workflow ? workflow.definition : workflow;
+        const metadata = extractMetadata(definition);
+        workflowMetadataManager.registerShared(definition.id, metadata);
+        workflowDefinitionManager.registerShared(definition.id, definition);
     }
     /**
      * Get workflow metadata by ID
      */
     get(id) {
-        return this.workflows.get(id);
+        return workflowMetadataManager.get(id);
     }
     /**
      * Get workflow definition by ID
      */
     getDefinition(id) {
-        return this.definitions.get(id);
+        return workflowDefinitionManager.get(id);
     }
     /**
      * Check if a workflow is registered
      */
     has(id) {
-        return this.workflows.has(id);
+        return workflowMetadataManager.has(id);
     }
     /**
      * Get all workflow IDs
      */
     getAllIds() {
-        return Array.from(this.workflows.keys());
+        return workflowMetadataManager.getAllIds();
     }
     /**
      * Get all workflow metadata
      */
     getAll() {
-        return new Map(this.workflows);
+        return workflowMetadataManager.getAll();
     }
     /**
      * Get all as array (for API responses)
      */
     getAllAsArray() {
-        return Array.from(this.workflows.values());
+        return Array.from(this.getAll().values());
     }
     /**
      * Get registry stats
@@ -187,7 +199,7 @@ class WorkflowRegistryClass {
         const byNodeType = {};
         let withInputSchema = 0;
         let withOutputSchema = 0;
-        for (const metadata of this.workflows.values()) {
+        for (const metadata of this.getAll().values()) {
             for (const nodeType of metadata.nodeTypes) {
                 byNodeType[nodeType] = (byNodeType[nodeType] ?? 0) + 1;
             }
@@ -197,7 +209,7 @@ class WorkflowRegistryClass {
                 withOutputSchema++;
         }
         return {
-            total: this.workflows.size,
+            total: this.getAll().size,
             byNodeType,
             withInputSchema,
             withOutputSchema,
@@ -207,22 +219,30 @@ class WorkflowRegistryClass {
      * Remove a workflow
      */
     unregister(id) {
-        this.definitions.delete(id);
-        return this.workflows.delete(id);
+        const metaDeleted = workflowMetadataManager.delete(id);
+        const defDeleted = workflowDefinitionManager.delete(id);
+        return metaDeleted || defDeleted;
     }
     /**
-     * Clear all workflows (for testing)
+     * Clear all workflows for current project
      */
     clear() {
-        this.workflows.clear();
-        this.definitions.clear();
+        workflowMetadataManager.clear();
+        workflowDefinitionManager.clear();
+    }
+    /**
+     * Clear everything (for testing)
+     */
+    clearAll() {
+        workflowMetadataManager.clearAll();
+        workflowDefinitionManager.clearAll();
+    }
+    getRegistryStats() {
+        return workflowMetadataManager.getStats();
     }
 }
-// Singleton using globalThis pattern
-const WORKFLOW_REGISTRY_KEY = "__veryfront_workflow_registry__";
-const _globalWorkflow = dntShim.dntGlobalThis;
-export const workflowRegistry = _globalWorkflow[WORKFLOW_REGISTRY_KEY] ??=
-    new WorkflowRegistryClass();
+// Singleton instance - maintains same interface but now project-scoped internally
+export const workflowRegistry = new WorkflowRegistryClass();
 // Export class for type usage
 export { WorkflowRegistryClass };
 /**

@@ -1,5 +1,6 @@
 import * as BundledReact from "react";
 import { rendererLogger as logger } from "../utils/index.js";
+import { normalizePath } from "../utils/path-utils.js";
 import type { RuntimeAdapter } from "../platform/adapters/base.js";
 
 type ReservedComponent = BundledReact.ComponentType<{ error?: Error; reset?: () => void }>;
@@ -11,7 +12,7 @@ export const RESERVED_COMPONENTS = {
 };
 
 export function collectAncestorDirs(segmentDir: string, appRootDir: string): string[] {
-  const normalize = (p: string) => p.replace(/\\+/g, "/").replace(/\/\.+\//g, "/");
+  const normalize = (p: string) => normalizePath(p);
   const getDirname = (p: string) => normalize(p).replace(/\/?[^/]+\/?$/, "");
 
   const dirs: string[] = [];

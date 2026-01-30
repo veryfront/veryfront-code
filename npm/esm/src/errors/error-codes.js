@@ -36,6 +36,7 @@ export const ErrorCode = {
     SERVER_START_ERROR: "VF501",
     HMR_ERROR: "VF502",
     CACHE_ERROR: "VF503",
+    CACHE_PATH_MISMATCH: "VF507",
     FILE_WATCH_ERROR: "VF504",
     REQUEST_ERROR: "VF505",
     SERVICE_OVERLOADED: "VF506",
@@ -83,6 +84,9 @@ export function inferErrorCode(error) {
         return ErrorCode.CLIENT_BOUNDARY_VIOLATION;
     if (has("server-only") && has("client"))
         return ErrorCode.SERVER_ONLY_IN_CLIENT;
+    if (has("cache path mismatch") || has("incompatible") && has("path")) {
+        return ErrorCode.CACHE_PATH_MISMATCH;
+    }
     if (has("module not found") || has("cannot find module"))
         return ErrorCode.MODULE_NOT_FOUND;
     if (has("import") || has("resolve"))

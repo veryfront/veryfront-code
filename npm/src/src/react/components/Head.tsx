@@ -1,13 +1,8 @@
 import "../../../_dnt.polyfills.js";
 import "../../../_dnt.polyfills.js";
-import * as dntShim from "../../../_dnt.shims.js";
 import React, { useEffect, useRef } from "react";
 import { collectHead } from "../head-collector.js";
-
-function isServerEnvironment(): boolean {
-  const ssrFlag = (dntShim.dntGlobalThis as Record<string, unknown>).__VERYFRONT_SSR__;
-  return ssrFlag === true || typeof dntShim.dntGlobalThis === "undefined";
-}
+import { isServerEnvironment } from "../../platform/compat/runtime.js";
 
 export function Head({ children }: { children: React.ReactNode }): React.ReactElement {
   const mountedRef = useRef(false);

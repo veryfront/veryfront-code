@@ -1,0 +1,143 @@
+/**
+ * Parse cache for es-module-lexer.
+ *
+ * Single parse per file - reused across all strategies.
+ * This eliminates redundant parsing that happened with the fragmented system.
+ */
+import { init, parse } from "es-module-lexer";
+let initPromise = null;
+/**
+ * Initialize es-module-lexer (must be called before parsing).
+ */
+export async function initLexer() {
+    if (!initPromise) {
+        const anyInit = init;
+        initPromise = typeof anyInit === "function"
+            ? anyInit()
+            : anyInit;
+    }
+    await initPromise;
+}
+// Matches HTTP/HTTPS URLs in string literals (single, double, or backtick quotes)
+const HTTP_URL_PATTERN = /(?<!\\)(['"`])(https?:\/\/[^'"`\n\\]+)\1/g;
+function maskHttpUrls(code) {
+    const urlMap = new Map();
+    let counter = 0;
+    const masked = code.replace(HTTP_URL_PATTERN, (_match, quote, url) => {
+        const placeholder = `__VFURL_${counter++}__`;
+        urlMap.set(placeholder, url);
+        return `${quote}${placeholder}${quote}`;
+    });
+    return { masked, urlMap };
+}
+function unmaskUrl(specifier, urlMap) {
+    if (urlMap.size === 0)
+        return specifier;
+    for (const [placeholder, url] of urlMap) {
+        if (specifier.includes(placeholder)) {
+            return specifier.replace(placeholder, url);
+        }
+    }
+    return specifier;
+}
+/**
+ * Parse all imports from code using es-module-lexer.
+ * Returns structured import info with position data.
+ */
+export async function parseAllImports(code) {
+    await initLexer();
+    const { masked, urlMap } = maskHttpUrls(code);
+    const [rawImports] = parse(masked);
+    const imports = rawImports
+        .filter((imp) => imp.n !== undefined)
+        .map((imp) => ({
+        specifier: unmaskUrl(imp.n, urlMap),
+        isDynamic: imp.d > -1,
+        start: imp.s,
+        end: imp.e,
+        statementStart: imp.ss,
+        statementEnd: imp.se,
+        raw: imp,
+    }));
+    return { imports, urlMap, maskedCode: masked };
+}
+/**
+ * Apply import rewrites to code.
+ *
+ * Takes the parsed imports and a map of specifier -> replacement.
+ * Applies replacements from end to start to preserve positions.
+ *
+ * IMPORTANT: Positions from es-module-lexer are relative to the masked code
+ * (HTTP URLs replaced with short placeholders). We must apply rewrites to the
+ * masked code first, then unmask the final result to restore any untouched URLs.
+ */
+export function applyRewrites(_code, parsed, rewrites) {
+    // Work on masked code since positions are from the masked parse
+    let result = parsed.maskedCode;
+    // Sort by start position descending to apply from end to start
+    const sortedIndices = Array.from(rewrites.keys()).sort((a, b) => {
+        const impA = parsed.imports[a];
+        const impB = parsed.imports[b];
+        return (impB?.start ?? 0) - (impA?.start ?? 0);
+    });
+    for (const idx of sortedIndices) {
+        const imp = parsed.imports[idx];
+        const rewrite = rewrites.get(idx);
+        if (!imp || !rewrite)
+            continue;
+        if (rewrite.statement !== undefined) {
+            // Replace entire statement
+            result = result.substring(0, imp.statementStart) +
+                rewrite.statement +
+                result.substring(imp.statementEnd);
+        }
+        else if (rewrite.specifier !== null && rewrite.specifier !== undefined) {
+            // Replace just the specifier
+            if (imp.isDynamic) {
+                // For dynamic imports, preserve the quote style
+                const quote = result[imp.start];
+                if (quote === '"' || quote === "'" || quote === "`") {
+                    result = result.substring(0, imp.start) +
+                        quote +
+                        rewrite.specifier +
+                        quote +
+                        result.substring(imp.end);
+                }
+                else {
+                    result = result.substring(0, imp.start) +
+                        rewrite.specifier +
+                        result.substring(imp.end);
+                }
+            }
+            else {
+                result = result.substring(0, imp.start) +
+                    rewrite.specifier +
+                    result.substring(imp.end);
+            }
+        }
+    }
+    // Restore any remaining masked URLs that weren't rewritten
+    if (parsed.urlMap.size > 0) {
+        for (const [placeholder, url] of parsed.urlMap) {
+            result = result.replaceAll(placeholder, url);
+        }
+    }
+    return result;
+}
+/**
+ * Simple specifier replacement (for strategies that don't need full statement control).
+ */
+export async function replaceSpecifiers(code, replacer) {
+    const parsed = await parseAllImports(code);
+    const rewrites = new Map();
+    for (let i = 0; i < parsed.imports.length; i++) {
+        const imp = parsed.imports[i];
+        const replacement = replacer(imp.specifier, imp.isDynamic);
+        if (replacement !== null && replacement !== undefined && replacement !== imp.specifier) {
+            rewrites.set(i, { specifier: replacement });
+        }
+    }
+    if (rewrites.size === 0)
+        return code;
+    return applyRewrites(code, parsed, rewrites);
+}

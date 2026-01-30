@@ -23,6 +23,32 @@ export interface LayoutCollectionResult {
     layoutBundle: MdxBundle | undefined;
     nestedLayouts: LayoutItem[];
 }
+/** Result of a single layout preload operation */
+export interface LayoutPreloadResult {
+    type: "tsx" | "mdx" | "importMap";
+    path?: string;
+    success: boolean;
+    error?: string;
+}
+/** Aggregated result of layout preloading with structured error tracking */
+export interface LayoutPreloadSummary {
+    tsxTotal: number;
+    tsxSuccess: number;
+    tsxFailures: Array<{
+        path: string;
+        error: string;
+    }>;
+    mdxTotal: number;
+    mdxSuccess: number;
+    mdxFailures: Array<{
+        path: string;
+        error: string;
+    }>;
+    importMapSuccess: boolean;
+    importMapError?: string;
+    durationMs: number;
+    allSuccess: boolean;
+}
 export declare class LayoutOrchestrator {
     private config;
     /** Preloaded import map for MDX layout application */
@@ -32,7 +58,7 @@ export declare class LayoutOrchestrator {
     getPreloadedImportMap(): ImportMapConfig | null;
     clearCache(): void;
     collectLayouts(pageInfo: EntityInfo): Promise<LayoutCollectionResult>;
-    preloadLayoutModules(nestedLayouts: LayoutItem[]): Promise<void>;
+    preloadLayoutModules(nestedLayouts: LayoutItem[]): Promise<LayoutPreloadSummary>;
     applyLayoutsAndWrappers(pageElement: React.ReactElement, pageInfo: EntityInfo, layoutBundle: MdxBundle | undefined, nestedLayouts: LayoutItem[], layoutDataMap?: Map<string, Record<string, unknown>>, requestUrl?: URL, frontmatter?: Record<string, unknown>, headings?: Array<{
         id: string;
         text: string;

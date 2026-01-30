@@ -83,7 +83,30 @@ export declare function buildSSRModuleCacheKey(version: string | number, project
 export declare function buildRedisSSRModuleKey(key: string): string;
 export declare function buildRedisFileCacheKey(key: string): string;
 export declare function buildRedisTransformKey(key: string): string;
-export declare function buildTransformCacheKey(filePath: string, contentHash: string, ssr?: boolean, studioEmbed?: boolean): string;
+export interface TransformCacheKeyOptions {
+    filePath: string;
+    contentHash: string;
+    ssr?: boolean;
+    studioEmbed?: boolean;
+    /** Hash of transitive dependencies (for invalidation when deps change) */
+    depsHash?: string;
+    /** Hash of transform-affecting config (for invalidation when config changes) */
+    configHash?: string;
+    /** Project ID for multi-tenant isolation */
+    projectId?: string;
+}
+/**
+ * Build a transform cache key with full dependency tracking.
+ *
+ * Key format: v{VERSION}:{projectId}:{filePath}:{contentHash}:{depsHash}:{configHash}:{target}
+ *
+ * @param options - Cache key options
+ */
+export declare function buildTransformCacheKey(filePath: string, contentHash: string, ssr?: boolean, studioEmbed?: boolean, options?: {
+    depsHash?: string;
+    configHash?: string;
+    projectId?: string;
+}): string;
 export declare function buildContentHashCacheKey(prefix: string, filePath: string, contentHash: string, suffix?: string): string;
 export declare function buildComponentCacheKey(projectId: string, filePath: string, contentHash: string): string;
 export declare function buildLayoutComponentCacheKey(projectId: string, componentPath: string, hash: string, contentSourceId: string): string;
@@ -112,4 +135,5 @@ export declare function deleteAllKeysForProjectAsync(projectId: string): Promise
     memoryDeleted: number;
     redisDeleted: number;
 }>;
+export declare function buildBundleManifestCacheKey(manifestId: string): string;
 //# sourceMappingURL=keys.d.ts.map

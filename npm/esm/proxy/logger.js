@@ -9,11 +9,32 @@ function getEnv(key) {
     const nodeProcess = dntShim.dntGlobalThis.process;
     return nodeProcess?.env?.[key];
 }
+// Import version from root deno.json (the source of truth)
+import denoConfig from "../deno.js";
 import { getTraceContext } from "./tracing.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+const requestContextStore = new AsyncLocalStorage();
+/**
+ * Run a function with proxy request context.
+ * All logs within the function will include the request context fields.
+ */
+export function runWithProxyRequestContext(context, fn) {
+    return requestContextStore.run(context, fn);
+}
+/**
+ * Get the current proxy request context (if any).
+ */
+export function getProxyRequestContext() {
+    return requestContextStore.getStore();
+}
+// Get version from environment variable or root deno.json
+const VERYFRONT_VERSION = getEnv("VERYFRONT_VERSION") ??
+    (typeof denoConfig.version === "string" ? denoConfig.version : "0.0.0");
 // Log level configuration
 const MIN_LOG_LEVEL = (() => {
     const level = getEnv("LOG_LEVEL")?.toLowerCase();
-    if (level === "debug" || level === "info" || level === "warn" || level === "error") {
+    if (level === "debug" || level === "info" || level === "warn" ||
+        level === "error") {
         return level;
     }
     return "info"; // Default: suppress debug logs
@@ -51,14 +72,16 @@ function formatTimestamp(date = new Date()) {
 }
 function isTty() {
     try {
-        if (typeof dntShim.Deno !== "undefined" && typeof dntShim.Deno.stdout?.isTerminal === "function") {
+        if (typeof dntShim.Deno !== "undefined" &&
+            typeof dntShim.Deno.stdout?.isTerminal === "function") {
             return dntShim.Deno.stdout.isTerminal();
         }
     }
     catch {
         // ignore
     }
-    const stdout = dntShim.dntGlobalThis.process?.stdout;
+    const stdout = dntShim.dntGlobalThis
+        .process?.stdout;
     return stdout?.isTTY ?? false;
 }
 function shouldUseColor() {
@@ -95,8 +118,9 @@ function formatValue(value) {
             return JSON.stringify(trimmed);
         return trimmed;
     }
-    if (typeof value === "number" || typeof value === "boolean")
+    if (typeof value === "number" || typeof value === "boolean") {
         return String(value);
+    }
     if (value === null)
         return "null";
     if (value === undefined)
@@ -171,12 +195,24 @@ class ProxyLogger {
         }
         if (this.format === "json") {
             const traceCtx = getTraceContext();
+            const reqCtx = getProxyRequestContext();
             const entry = {
                 timestamp: new Date().toISOString(),
                 level,
                 service: "proxy",
+                veryfrontVersion: VERYFRONT_VERSION,
                 message,
-                ...(traceCtx.traceId && { traceId: traceCtx.traceId, spanId: traceCtx.spanId }),
+                ...(traceCtx.traceId &&
+                    { traceId: traceCtx.traceId, spanId: traceCtx.spanId }),
+                // Include request context fields at top level (like renderer logs)
+                ...(reqCtx?.requestId && { requestId: reqCtx.requestId }),
+                ...(reqCtx?.projectSlug && { projectSlug: reqCtx.projectSlug }),
+                ...(reqCtx?.projectId && { projectId: reqCtx.projectId }),
+                ...(reqCtx?.releaseId && { releaseId: reqCtx.releaseId }),
+                ...(reqCtx?.branchId && { branchId: reqCtx.branchId }),
+                ...(reqCtx?.branchName && { branchName: reqCtx.branchName }),
+                ...(reqCtx?.domain && { domain: reqCtx.domain }),
+                ...(reqCtx?.environment && { environment: reqCtx.environment }),
             };
             if (context && Object.keys(context).length > 0) {
                 entry.context = context;

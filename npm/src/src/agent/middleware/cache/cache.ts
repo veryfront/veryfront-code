@@ -202,7 +202,7 @@ export function createCache(config: CacheConfig): {
   size(): number;
 } {
   const cache = createCacheByStrategy(config);
-  const keyGenerator = config.keyGenerator ?? ((input: string) => `cache_${hashString(input)}`);
+  const keyGenerator = config.keyGenerator ?? defaultKeyGenerator;
 
   function keyFor(input: string, context?: Record<string, unknown>): string {
     return keyGenerator(input, context);
@@ -240,6 +240,29 @@ function hashString(str: string): string {
   }
 
   return Math.abs(hash).toString(36);
+}
+
+/**
+ * Default key generator that includes project context to prevent multi-tenant
+ * cache leakage. If projectId is available in context, it's prepended to the key.
+ * This ensures different projects cannot share cached agent responses.
+ *
+ * @see plans/architecture-audit/013.2-agent-cache-project-isolation.md
+ */
+function defaultKeyGenerator(input: string, context?: Record<string, unknown>): string {
+  const inputHash = hashString(input);
+
+  // Extract projectId from context if available (various possible locations)
+  const projectId = context?.projectId ??
+    (context?.project as Record<string, unknown> | undefined)?.id ??
+    (context?.renderContext as Record<string, unknown> | undefined)?.projectId;
+
+  if (projectId && typeof projectId === "string") {
+    return `cache_${projectId}:${inputHash}`;
+  }
+
+  // Fallback to input-only hash (backwards compatible, but logs warning in dev)
+  return `cache_${inputHash}`;
 }
 
 export function cacheMiddleware(

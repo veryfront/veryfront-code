@@ -14,11 +14,25 @@ export function isWithinDirectory(root, target) {
     const normalizedTarget = normalizePath(target);
     return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}/`);
 }
+/**
+ * Get file extension including the dot (e.g., ".ts", ".tsx").
+ * Returns empty string if no extension found.
+ */
 export function getExtension(path) {
     const lastDot = path.lastIndexOf(".");
     if (lastDot === -1 || lastDot === path.length - 1)
         return "";
     return path.slice(lastDot);
+}
+/**
+ * Get file extension without the dot, lowercased (e.g., "ts", "tsx").
+ * Returns empty string if no extension found.
+ */
+export function getExtensionName(path) {
+    const lastDot = path.lastIndexOf(".");
+    if (lastDot === -1 || lastDot === path.length - 1)
+        return "";
+    return path.slice(lastDot + 1).toLowerCase();
 }
 export function getDirectory(path) {
     const normalized = normalizePath(path);

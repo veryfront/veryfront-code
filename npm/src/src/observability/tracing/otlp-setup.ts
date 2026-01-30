@@ -13,6 +13,7 @@ import * as dntShim from "../../../_dnt.shims.js";
 
 import { serverLogger as logger } from "../../utils/index.js";
 import { getOtelTracingConfig } from "../../config/env.js";
+import { VERSION } from "../../utils/version.js";
 
 let initialized = false;
 
@@ -95,10 +96,15 @@ export async function initializeOTLP(): Promise<void> {
     );
     const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-http");
     const { Resource } = await import("@opentelemetry/resources");
-    const { ATTR_SERVICE_NAME } = await import("@opentelemetry/semantic-conventions");
+    const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } = await import(
+      "@opentelemetry/semantic-conventions"
+    );
     const { AsyncLocalStorageContextManager } = await import("@opentelemetry/context-async-hooks");
 
-    const resource = new Resource({ [ATTR_SERVICE_NAME]: config.serviceName });
+    const resource = new Resource({
+      [ATTR_SERVICE_NAME]: config.serviceName,
+      [ATTR_SERVICE_VERSION]: VERSION,
+    });
 
     const endpointBase = config.endpoint.replace(/\/$/, "");
     const exporter = new OTLPTraceExporter({

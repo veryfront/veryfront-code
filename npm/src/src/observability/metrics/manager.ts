@@ -10,6 +10,7 @@ import { loadConfig } from "./config.js";
 import { initializeInstruments } from "../instruments/index.js";
 import { MetricsRecorder } from "./recorder.js";
 import type { MetricsConfig, MetricsInstruments, OpenTelemetryAPI, RuntimeState } from "./types.js";
+import { VERSION } from "../../utils/version.js";
 
 /**
  * Metrics manager class
@@ -75,7 +76,7 @@ export class MetricsManager {
 
     try {
       this.api = await import("@opentelemetry/api");
-      this.meter = this.api.metrics.getMeter(finalConfig.prefix, "0.1.0");
+      this.meter = this.api.metrics.getMeter(finalConfig.prefix, VERSION);
 
       this.instruments = await initializeInstruments(this.meter, finalConfig, this.runtimeState);
       this.recorder.instruments = this.instruments;

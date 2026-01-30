@@ -39,6 +39,17 @@ export declare class CircuitBreaker {
     private recordFailure;
     private transitionTo;
     getState(): CircuitState;
+    /** Get the last activity time (failure or success) */
+    getLastActivityTime(): number;
+    /** Update last activity time on use */
+    touch(): void;
 }
 export declare function getCircuitBreaker(name: string, options?: Omit<CircuitBreakerOptions, "name">): CircuitBreaker;
+/** Get circuit breaker registry stats for monitoring */
+export declare function getCircuitBreakerStats(): {
+    total: number;
+    open: number;
+    halfOpen: number;
+    closed: number;
+};
 //# sourceMappingURL=circuit-breaker.d.ts.map

@@ -80,7 +80,4 @@ export function isMDX(ctx) {
 export function isTypeScript(ctx) {
     return ctx.filePath.endsWith(".ts") || ctx.filePath.endsWith(".tsx");
 }
-export function getExtension(ctx) {
-    const dot = ctx.filePath.lastIndexOf(".");
-    return dot >= 0 ? ctx.filePath.slice(dot) : "";
-}
+export { getExtension } from "../../utils/path-utils.js";

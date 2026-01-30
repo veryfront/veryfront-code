@@ -87,7 +87,7 @@ export async function streamToString(
   let timedOut = false;
   const timeoutId = dntShim.setTimeout(() => {
     timedOut = true;
-    reader.cancel("Stream read timeout").catch(() => {});
+    reader.cancel("Stream read timeout").catch(() => {/* SILENT: stream already closed */});
   }, timeoutMs);
 
   const throwTimeout = (): never => {

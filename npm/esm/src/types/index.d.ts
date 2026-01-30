@@ -7,7 +7,6 @@ export type { HMRConnectedMessage, HMRMessage, HMRMessageType, HMRReloadMessage,
 export type { BundleInfo, Entity, EntityInfo, EntityTypeInfo, Frontmatter, LoaderData, } from "./entities.js";
 export type { AppProps } from "./app.js";
 export type { AgentId, ApiKey, AuthToken, Brand, CsrfToken, EntityId, LayoutId, MessageId, PageId, PromptId, RequestId, ResourceId, SessionId, Slug, ToolCallId, ToolId, Unbrand, UserId, } from "./branded.js";
-export { brandValue, isBrandedString, unbrandValue } from "./branded.js";
 export type ComponentProps = Record<string, unknown>;
 export type Component = React.ComponentType<ComponentProps>;
 export type ComponentFunction = (props: ComponentProps) => React.ReactElement | null;

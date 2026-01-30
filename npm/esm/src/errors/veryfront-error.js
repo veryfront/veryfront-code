@@ -1,7 +1,7 @@
 export function createError(error) {
     return error;
 }
-/** Type guard factory for VeryfrontError types */
+/** Type guard factory for VeryfrontErrorData types */
 function isErrorType(type) {
     return (error) => error.type === type;
 }
@@ -12,9 +12,22 @@ export const isConfigError = isErrorType("config");
 export const isAgentError = isErrorType("agent");
 export const isFileError = isErrorType("file");
 export const isNetworkError = isErrorType("network");
+/**
+ * Convert a VeryfrontErrorData (plain object) to a throwable Error instance.
+ *
+ * Uses Error.captureStackTrace when available (V8 engines) to exclude toError()
+ * from the stack trace, making the stack point to the actual call site.
+ *
+ * @see plans/architecture-audit/010.3-dual-veryfront-error-definitions.md
+ */
 export function toError(veryfrontError) {
     const error = new Error(veryfrontError.message);
     error.name = `VeryfrontError[${veryfrontError.type}]`;
+    // Capture stack at call site, excluding toError from the trace
+    // This makes debugging easier by showing where createError+toError was called
+    if (Error.captureStackTrace) {
+        Error.captureStackTrace(error, toError);
+    }
     Object.defineProperty(error, "context", {
         value: veryfrontError,
         enumerable: false,

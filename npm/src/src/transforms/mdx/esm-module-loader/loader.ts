@@ -10,14 +10,20 @@
 import { join } from "../../../../deps/deno.land/std@0.220.0/path/mod.js";
 import React from "react";
 import { rendererLogger as logger } from "../../../utils/index.js";
+import { getErrorCollector } from "../../../cli/mcp/error-collector.js";
 import { withSpan } from "../../../observability/tracing/otlp-setup.js";
 import { SpanNames } from "../../../observability/tracing/span-names.js";
-import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "../../../utils/cache-dir.js";
+import {
+  ensureCacheNodeModules,
+  getHttpBundleCacheDir,
+  getMdxEsmCacheDir,
+} from "../../../utils/cache-dir.js";
 import { Singleflight } from "../../../utils/singleflight.js";
 import { loadImportMap, transformImportsWithMap } from "../../../modules/import-map/index.js";
 import type { ImportMapConfig } from "../../../modules/import-map/index.js";
 import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../esm/http-cache.js";
-import { TRANSFORM_CACHE_VERSION } from "../../esm/package-registry.js";
+import { extractHttpBundlePaths } from "../../../modules/react-loader/ssr-module-loader/http-bundle-helpers.js";
+import { VERSION } from "../../../utils/version.js";
 import { isDeno } from "../../../platform/compat/runtime.js";
 import { replaceSpecifiers } from "../../esm/lexer.js";
 import { setupSSRGlobals } from "../../../rendering/ssr-globals.js";
@@ -37,7 +43,13 @@ import {
 import { getLocalFs } from "./cache/index.js";
 import { hashString } from "./utils/hash.js";
 import { createStubModule } from "./utils/stub-module.js";
-import { createModuleFetcherContext, fetchAndCacheModule } from "./module-fetcher/index.js";
+import {
+  createModuleFetcherContext,
+  fetchAndCacheModule,
+  rewriteDntImports,
+} from "./module-fetcher/index.js";
+import { ensureCachedJsxModulePatched } from "./jsx-cache.js";
+import { buildMissingModuleError } from "./missing-module.js";
 
 /** Singleflight for MDX module file writes to prevent race conditions */
 const mdxWriteFlight = new Singleflight<void>();
@@ -170,6 +182,7 @@ async function processVfModuleImports(
   imports: Array<{ original: string; path: string }>,
   context: ESMLoaderContext,
   projectDir: string,
+  strictMissingModules: boolean,
 ): Promise<string> {
   const projectSlug = context.projectSlug || "unknown";
   const adapter = context.adapter;
@@ -203,7 +216,15 @@ async function processVfModuleImports(
     adapter,
     projectDir,
     context.projectId,
-    { reactVersion: context.reactVersion },
+    {
+      reactVersion: context.reactVersion,
+      projectSlug: context.projectSlug,
+      logger: logger.child({
+        project_id: context.projectId,
+        project_slug: context.projectSlug,
+      }),
+      strictMissingModules,
+    },
   );
 
   const fetchStart = performance.now();
@@ -248,6 +269,16 @@ async function processVfModuleImports(
     if (filePath) {
       result = result.replace(original, `from "file://${filePath}"`);
       continue;
+    }
+
+    if (strictMissingModules) {
+      throw buildMissingModuleError({
+        modulePath: path,
+        importer: projectSlug,
+        importStatement: original,
+        code,
+        projectSlug,
+      });
     }
 
     const stubPath = await createStubModule(path, result, original, context.esmCacheDir!);
@@ -302,17 +333,20 @@ async function transformJsxImports(
   const transformResults = await Promise.all(
     importsToProcess.map(async ({ fullMatch, importClause, filePath, ext }) => {
       try {
-        const transformedFileName = `jsx-v${TRANSFORM_CACHE_VERSION}-${hashString(filePath)}.mjs`;
+        const transformedFileName = `jsx-v${VERSION}-${hashString(filePath)}.mjs`;
         const transformedPath = join(esmCacheDir, transformedFileName);
 
         try {
           const stat = await getLocalFs().stat(transformedPath);
           if (stat?.isFile) {
-            return {
-              original: fullMatch,
-              transformed: `import ${importClause} from "file://${transformedPath}";`,
-              cached: true,
-            };
+            const useCached = await ensureCachedJsxModulePatched(transformedPath, filePath);
+            if (useCached) {
+              return {
+                original: fullMatch,
+                transformed: `import ${importClause} from "file://${transformedPath}";`,
+                cached: true,
+              };
+            }
           }
         } catch {
           // Not cached
@@ -343,6 +377,11 @@ async function transformJsxImports(
         if (!REACT_IMPORT_PATTERN.test(transformed)) {
           transformed = `import React from 'react';\n${transformed}`;
         }
+
+        // Rewrite _dnt.polyfills.js / _dnt.shims.js relative imports to absolute file:// paths.
+        // Framework files from the npm package contain relative dnt imports that resolve
+        // incorrectly when cached to a different directory.
+        transformed = rewriteDntImports(transformed, filePath);
 
         await getLocalFs().writeTextFile(transformedPath, transformed);
 
@@ -380,34 +419,11 @@ async function transformJsxImports(
  */
 async function cacheHttpImports(code: string, importMap: ImportMapConfig): Promise<string> {
   if (isDeno) return code;
-  return await cacheHttpImportsToLocal(code, { cacheDir: getHttpBundleCacheDir(), importMap });
-}
-
-/** Pattern to extract HTTP bundle paths from code */
-const HTTP_BUNDLE_PATTERN = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
-
-/**
- * Extract all HTTP bundle paths and hashes from code.
- * Returns array of {path, hash} for proactive bundle checking.
- */
-function extractHttpBundlePaths(code: string): Array<{ path: string; hash: string }> {
-  const bundles: Array<{ path: string; hash: string }> = [];
-  const seen = new Set<string>();
-
-  let match;
-  while ((match = HTTP_BUNDLE_PATTERN.exec(code)) !== null) {
-    const path = match[1] as string;
-    const hash = match[2] as string;
-    if (!seen.has(hash)) {
-      seen.add(hash);
-      bundles.push({ path, hash });
-    }
-  }
-
-  // Reset regex state
-  HTTP_BUNDLE_PATTERN.lastIndex = 0;
-
-  return bundles;
+  const result = await cacheHttpImportsToLocal(code, {
+    cacheDir: getHttpBundleCacheDir(),
+    importMap,
+  });
+  return result.code;
 }
 
 export async function loadModuleESM(
@@ -459,9 +475,17 @@ async function doLoadModuleESM(
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports START`, { projectSlug });
     const vfModuleImports = findVfModuleImports(rewritten);
+    const strictMissingModules = context.strictMissingModules ?? true;
     rewritten = await withSpan(
       SpanNames.MDX_PROCESS_VF_MODULES,
-      () => processVfModuleImports(rewritten, vfModuleImports, context, projectDir),
+      () =>
+        processVfModuleImports(
+          rewritten,
+          vfModuleImports,
+          context,
+          projectDir,
+          strictMissingModules,
+        ),
       { "mdx.vf_module_count": vfModuleImports.length },
     );
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports DONE`, { projectSlug });
@@ -492,7 +516,7 @@ async function doLoadModuleESM(
     rewritten = await transformReactToLocalPaths(rewritten);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformReactToLocalPaths DONE`, { projectSlug });
 
-    const codeHash = hashString(rewritten);
+    let codeHash = hashString(rewritten);
     if (!context.projectId) {
       throw new Error(
         `Missing projectId for MDX module cache (projectSlug: ${context.projectSlug})`,
@@ -500,7 +524,7 @@ async function doLoadModuleESM(
     }
     const namespace = context.projectId;
     const namespaceKey = encodeURIComponent(namespace);
-    const compositeKey = `${namespaceKey}:${codeHash}`;
+    let compositeKey = `${namespaceKey}:${codeHash}`;
 
     const cached = context.moduleCache.get(compositeKey);
     if (cached) {
@@ -533,7 +557,7 @@ async function doLoadModuleESM(
       );
     }
 
-    const filePath = join(nsDir, `${codeHash}.mjs`);
+    let filePath = join(nsDir, `${codeHash}.mjs`);
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: mdxWriteFlight START`, { projectSlug, filePath });
     await mdxWriteFlight.do(filePath, async () => {
@@ -563,22 +587,66 @@ async function doLoadModuleESM(
 
     setupSSRGlobals();
 
-    // Proactively ensure all HTTP bundles exist before import
-    // This is more reliable than fail-then-recover: check first, don't wait for import to fail
-    const bundlePaths = extractHttpBundlePaths(rewritten);
-    if (bundlePaths.length > 0) {
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} Checking HTTP bundles`, {
-        count: bundlePaths.length,
-        projectSlug,
-      });
-      const cacheDir = getHttpBundleCacheDir();
-      const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-      if (failed.length > 0) {
-        throw new Error(
-          `Failed to recover ${failed.length} HTTP bundle(s) from distributed cache: ${
-            failed.join(", ")
-          }`,
-        );
+    // Ensure bare specifiers (e.g. 'react') resolve from cache dir on Node.js
+    await ensureCacheNodeModules();
+
+    // Proactively ensure all HTTP bundles exist before import.
+    // Deno handles HTTP imports natively, so this is only needed for Node.js/Bun.
+    if (!isDeno) {
+      const bundlePaths = extractHttpBundlePaths(rewritten);
+      if (bundlePaths.length > 0) {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Checking HTTP bundles`, {
+          count: bundlePaths.length,
+          projectSlug,
+        });
+        const cacheDir = getHttpBundleCacheDir();
+        const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+        if (failed.length > 0) {
+          // Recovery: re-run HTTP caching to re-fetch expired bundles from esm.sh.
+          // This happens when distributed cache entries expire (24h TTL) and the local
+          // disk files are missing (pod restart / new deployment).
+          logger.warn(
+            `${LOG_PREFIX_MDX_LOADER} ${failed.length} HTTP bundle(s) missing, re-fetching from network`,
+            {
+              failed,
+              projectSlug,
+            },
+          );
+          const originalFilePath = filePath;
+          const refreshResult = await cacheHttpImportsToLocal(rewritten, {
+            cacheDir,
+            importMap,
+          });
+          rewritten = refreshResult.code;
+
+          // Re-write the module file with refreshed HTTP bundle paths
+          const refreshedHash = hashString(rewritten);
+          const refreshedPath = join(nsDir, `${refreshedHash}.mjs`);
+          await mdxWriteFlight.do(refreshedPath, async () => {
+            await getLocalFs().writeTextFile(refreshedPath, rewritten);
+          });
+          filePath = refreshedPath;
+          codeHash = refreshedHash;
+          compositeKey = `${namespaceKey}:${codeHash}`;
+
+          // Clean up orphaned module file if path changed
+          if (refreshedPath !== originalFilePath) {
+            getLocalFs().remove(originalFilePath).catch(() => {});
+          }
+
+          // Verify bundles exist after re-fetch
+          const refreshedBundles = extractHttpBundlePaths(rewritten);
+          if (refreshedBundles.length > 0) {
+            const stillFailed = await ensureHttpBundlesExist(refreshedBundles, cacheDir);
+            if (stillFailed.length > 0) {
+              throw new Error(
+                `Failed to recover ${stillFailed.length} HTTP bundle(s) after re-fetch: ${
+                  stillFailed.join(", ")
+                }`,
+              );
+            }
+          }
+        }
       }
     }
 
@@ -615,6 +683,11 @@ async function doLoadModuleESM(
     return result;
   } catch (error) {
     logger.error(`${LOG_PREFIX_MDX_RENDERER} MDX ESM load failed:`, error);
+
+    // Capture compile error for MCP flywheel
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    getErrorCollector().addCompileError(errorMsg, context.projectSlug || "mdx");
+
     throw error;
   }
 }

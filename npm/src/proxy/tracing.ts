@@ -18,6 +18,13 @@ function getEnv(key: string): string | undefined {
   return nodeProcess?.env?.[key];
 }
 
+// Import version from root deno.json (the source of truth)
+import denoConfig from "../deno.js";
+
+// Get version from environment variable or root deno.json
+const VERYFRONT_VERSION: string = getEnv("VERYFRONT_VERSION") ??
+  (typeof denoConfig.version === "string" ? denoConfig.version : "0.0.0");
+
 let initialized = false;
 let tracerProvider: { shutdown: () => Promise<void> } | null = null;
 let tracer: Tracer | null = null;
@@ -82,9 +89,14 @@ export async function initializeOTLP(): Promise<void> {
     );
     const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-http");
     const { Resource } = await import("@opentelemetry/resources");
-    const { ATTR_SERVICE_NAME } = await import("@opentelemetry/semantic-conventions");
+    const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } = await import(
+      "@opentelemetry/semantic-conventions"
+    );
 
-    const resource = new Resource({ [ATTR_SERVICE_NAME]: config.serviceName });
+    const resource = new Resource({
+      [ATTR_SERVICE_NAME]: config.serviceName,
+      [ATTR_SERVICE_VERSION]: VERYFRONT_VERSION,
+    });
     const exporter = new OTLPTraceExporter({
       url: `${config.endpoint}/v1/traces`,
       headers: config.headers,

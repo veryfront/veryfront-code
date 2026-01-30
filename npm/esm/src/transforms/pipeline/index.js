@@ -2,27 +2,22 @@ import { generateCacheKey, getCachedTransformAsync, setCachedTransform, } from "
 import { rendererLogger as logger } from "../../utils/index.js";
 import { createTransformContext, formatTimingLog, recordStageTiming } from "./context.js";
 import { withSpan } from "../../observability/tracing/otlp-setup.js";
-import { compilePlugin, finalizePlugin, parsePlugin, resolveAliasesPlugin, resolveBarePlugin, resolveContextPlugin, resolveReactPlugin, resolveRelativePlugin, ssrHttpCachePlugin, ssrHttpStubPlugin, } from "./stages/index.js";
+import { computeConfigHash } from "../../cache/config-hash.js";
+import { computeDepsHash } from "../../cache/dependency-graph.js";
+import { compilePlugin, finalizePlugin, parsePlugin, resolveImportsPlugin, ssrHttpCachePlugin, ssrHttpStubPlugin, } from "./stages/index.js";
+import { createFileSystem } from "../../platform/compat/fs.js";
 const SSR_PIPELINE = [
     parsePlugin,
     compilePlugin,
-    resolveAliasesPlugin,
-    resolveReactPlugin,
-    resolveContextPlugin,
+    resolveImportsPlugin, // Unified import resolution
     ssrHttpStubPlugin,
-    resolveRelativePlugin,
-    resolveBarePlugin,
     ssrHttpCachePlugin,
     finalizePlugin,
 ];
 const BROWSER_PIPELINE = [
     parsePlugin,
     compilePlugin,
-    resolveAliasesPlugin,
-    resolveReactPlugin,
-    resolveContextPlugin,
-    resolveRelativePlugin,
-    resolveBarePlugin,
+    resolveImportsPlugin, // Unified import resolution
     finalizePlugin,
 ];
 export function runPipeline(source, filePath, projectDir, options, config) {
@@ -31,7 +26,24 @@ export function runPipeline(source, filePath, projectDir, options, config) {
         const transformStart = performance.now();
         const ctx = await createTransformContext(source, filePath, projectDir, options);
         ctx.debug = config?.debug ?? false;
-        const cacheKey = generateCacheKey(filePath, ctx.contentHash, options.ssr ?? false, options.studioEmbed ?? false);
+        // Compute config hash (cheap, no I/O)
+        const configHash = await computeConfigHash({
+            reactVersion: ctx.reactVersion,
+            jsxImportSource: ctx.jsxImportSource,
+            studioEmbed: ctx.studioEmbed,
+            dev: ctx.dev,
+        });
+        // Compute dependency hash when file reader is available
+        const depsHash = options.readFile
+            ? await computeDepsHash(filePath, options.readFile, projectDir).catch((err) => {
+                logger.debug("[PIPELINE] depsHash computation failed, skipping", {
+                    file: filePath.slice(-60),
+                    error: err instanceof Error ? err.message : String(err),
+                });
+                return undefined;
+            })
+            : undefined;
+        const cacheKey = generateCacheKey(filePath, ctx.contentHash, options.ssr ?? false, options.studioEmbed ?? false, { depsHash, configHash, projectId: options.projectId });
         const cached = await getCachedTransformAsync(cacheKey);
         if (cached) {
             return {
@@ -82,12 +94,51 @@ export function runPipeline(source, filePath, projectDir, options, config) {
         "transform.studio_embed": options.studioEmbed ?? false,
     });
 }
-export async function transformToESM(source, filePath, projectDir, _adapter, options) {
+export async function transformToESM(source, filePath, projectDir, adapter, options) {
     if (filePath.endsWith(".css") || filePath.endsWith(".json")) {
         return source;
     }
-    const { code } = await runPipeline(source, filePath, projectDir, options);
+    // Extract readFile from adapter for dependency tracking
+    const enrichedOptions = options.readFile ? options : {
+        ...options,
+        readFile: buildReadFile(adapter, projectDir),
+    };
+    const { code } = await runPipeline(source, filePath, projectDir, enrichedOptions);
     return code;
+}
+/** Extract readFile from adapter if available, for dependency hash computation. */
+function extractReadFile(adapter) {
+    const a = adapter;
+    return typeof a?.fs?.readFile === "function" ? (p) => a.fs.readFile(p) : undefined;
+}
+/**
+ * Build a readFile helper that avoids routing local framework paths
+ * through the remote adapter.
+ *
+ * This prevents API fetches for file:// or absolute paths outside projectDir
+ * (e.g. framework files under /usr/local/lib/node_modules/veryfront).
+ */
+function buildReadFile(adapter, projectDir) {
+    const adapterRead = extractReadFile(adapter);
+    const fs = createFileSystem();
+    const normalizedProjectDir = projectDir.replace(/\/+$/, "");
+    return async (path) => {
+        let normalizedPath = path;
+        if (normalizedPath.startsWith("file://")) {
+            normalizedPath = normalizedPath.slice("file://".length);
+        }
+        const isAbsolute = normalizedPath.startsWith("/");
+        const isOutsideProject = isAbsolute &&
+            normalizedProjectDir.length > 0 &&
+            !normalizedPath.startsWith(normalizedProjectDir);
+        if (isOutsideProject) {
+            return await fs.readTextFile(normalizedPath);
+        }
+        if (adapterRead) {
+            return await adapterRead(normalizedPath);
+        }
+        return await fs.readTextFile(normalizedPath);
+    };
 }
 export function getDefaultPlugins(ssr) {
     return ssr ? [...SSR_PIPELINE] : [...BROWSER_PIPELINE];

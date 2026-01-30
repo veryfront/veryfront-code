@@ -15,6 +15,7 @@
  */
 
 import { rendererLogger as logger } from "../../utils/index.js";
+import { getExtensionName } from "../../utils/path-utils.js";
 import { createBuildVersion } from "../../utils/version.js";
 import { withSpan } from "../../observability/tracing/otlp-setup.js";
 import { SpanNames } from "../../observability/tracing/span-names.js";
@@ -193,6 +194,13 @@ export class RenderPipeline {
 
   /**
    * Load modules in parallel and return only successfully loaded ones.
+   *
+   * IMPORTANT: Page modules are considered critical - if a page module fails to load,
+   * we throw an error instead of silently continuing with missing props. This prevents
+   * users from seeing broken pages with no indication of the problem.
+   *
+   * Layout modules are considered non-critical - their failures are logged as warnings
+   * and the page continues to render (possibly without that layout's data).
    */
   private async loadModulesInParallel(modules: ModuleToLoad[]): Promise<LoadedModule[]> {
     const results = await Promise.all(
@@ -204,6 +212,8 @@ export class RenderPipeline {
     );
 
     const loaded: LoadedModule[] = [];
+    const criticalFailures: Array<{ path: string; error: string }> = [];
+
     for (const result of results) {
       if (result.mod && !result.error) {
         loaded.push({ type: result.type, id: result.id, mod: result.mod });
@@ -211,11 +221,38 @@ export class RenderPipeline {
       }
 
       if (result.error) {
-        logger.warn("[renderPage] Failed to load module", {
-          path: result.path,
-          error: result.error.message,
-        });
+        const errorMessage = result.error.message;
+
+        // Page modules are critical - collect failures to throw after processing all
+        if (result.type === "page") {
+          criticalFailures.push({ path: result.path, error: errorMessage });
+          logger.error("[renderPage] Critical page module failed to load", {
+            path: result.path,
+            error: errorMessage,
+          });
+        } else {
+          // Layout modules are non-critical - warn and continue
+          logger.warn("[renderPage] Layout module failed to load (non-critical)", {
+            path: result.path,
+            error: errorMessage,
+          });
+        }
       }
+    }
+
+    // Fail fast if any critical page modules failed to load
+    if (criticalFailures.length > 0) {
+      const failedPaths = criticalFailures.map((f) => f.path).join(", ");
+      throw new VeryfrontError(
+        `Critical page module(s) failed to load: ${failedPaths}. ` +
+          `This would result in missing props and a broken page.`,
+        ErrorCode.RENDER_ERROR,
+        {
+          criticalFailures,
+          loadedCount: loaded.length,
+          totalModules: modules.length,
+        },
+      );
     }
 
     return loaded;
@@ -286,7 +323,7 @@ export class RenderPipeline {
         let dataFetchingProps: Record<string, unknown> | undefined;
         const layoutDataMap = new Map<string, Record<string, unknown>>();
 
-        const fileExtension = pageInfo.entity.path.split(".").pop()!.toLowerCase();
+        const fileExtension = getExtensionName(pageInfo.entity.path);
         const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
         const isInPagesDir = pageInfo.entity.path.includes("/pages/");
         const isInAppDir = pageInfo.entity.path.includes("/app/");
@@ -538,7 +575,7 @@ export class RenderPipeline {
       : await this.config.layoutOrchestrator.collectLayouts(pageInfo);
 
     const pagePath = extractRelativePathShared(pageInfo.entity.path, this.config.projectDir);
-    const fileExtension = pageInfo.entity.path.split(".").pop()!.toLowerCase();
+    const fileExtension = getExtensionName(pageInfo.entity.path);
     const pageType = fileExtension as PageDataResponse["pageType"];
     const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
     const isInPagesDir = pageInfo.entity.path.includes("/pages/");
@@ -664,6 +701,7 @@ export class RenderPipeline {
     }
 
     let css: string | undefined;
+    let cssError: string | undefined;
     const cssCacheKey = getPageCssCacheKey(
       options?.projectId,
       options?.environment,
@@ -698,9 +736,14 @@ export class RenderPipeline {
           });
         }
       } catch (error) {
-        logger.warn("[resolvePageData] Failed to generate CSS via SSR", {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        // Surface CSS generation failures instead of silently swallowing them.
+        // This allows clients to show a warning or fall back gracefully.
+        cssError = `CSS generation failed: ${errorMessage}`;
+        logger.error("[resolvePageData] CSS generation failed", {
           slug,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage,
+          projectId: options?.projectId,
         });
       }
     }
@@ -713,6 +756,7 @@ export class RenderPipeline {
       appPath,
       headingsCount: headings.length,
       hasCss: !!css,
+      hasCssError: !!cssError,
     });
 
     return {
@@ -729,6 +773,7 @@ export class RenderPipeline {
       appPath,
       headings,
       css,
+      cssError,
     };
   }
 }

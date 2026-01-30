@@ -7,10 +7,40 @@
  */
 import { join } from "../../../../../deps/deno.land/std@0.220.0/path/mod.js";
 import { rendererLogger as logger } from "../../../../utils/index.js";
-import { getMdxEsmCacheDir } from "../../../../utils/cache-dir.js";
+import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "../../../../utils/cache-dir.js";
 import { createFileSystem, isNotFoundError, } from "../../../../platform/compat/fs.js";
-import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.js";
+import { VERSION } from "../../../../utils/version.js";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.js";
+import { LRUCache } from "../../../../utils/lru-wrapper.js";
+/**
+ * LRU cache for verified module dependency paths.
+ * Keyed by `cachedPath:codeSize` to skip re-stat'ing file:// dependencies
+ * on every lookupMdxEsmCache call.
+ * Cleared alongside modulePathCaches via clearModulePathCache().
+ */
+export const verifiedModuleDeps = new LRUCache({ maxEntries: 2000 });
+/** Pattern to match file:// paths in cached code */
+const FILE_PATH_PATTERN = /file:\/\/([^"'\s]+)/gi;
+/**
+ * Check if cached code has HTTP bundle paths from a different environment.
+ * Returns true if any veryfront-http-bundle paths don't match local cache dir.
+ */
+function hasIncompatibleHttpPaths(code) {
+    const localHttpCacheDir = getHttpBundleCacheDir();
+    const pattern = new RegExp(FILE_PATH_PATTERN.source, "gi");
+    let match;
+    while ((match = pattern.exec(code)) !== null) {
+        const path = match[1];
+        if (path.includes("veryfront-http-bundle") && !path.startsWith(localHttpCacheDir)) {
+            logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible HTTP bundle path`, {
+                path,
+                expectedDir: localHttpCacheDir,
+            });
+            return true;
+        }
+    }
+    return false;
+}
 // Local filesystem for cache operations (not project's FSAdapter which may be remote/read-only)
 // This uses the platform's native fs (Deno, Node, Bun) for local cache writes
 let localFs = null;
@@ -76,6 +106,7 @@ export async function saveModulePathCache(cacheDir) {
 export function clearModulePathCache() {
     modulePathCaches.clear();
     modulePathCacheLoaded.clear();
+    verifiedModuleDeps.clear();
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared module path cache`);
 }
 /**
@@ -147,7 +178,7 @@ function toMdxEsmCacheKey(filePath, projectDir) {
     // Convert extension to .js
     const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
     // Build the versioned key in MDX-ESM format
-    return `v${TRANSFORM_CACHE_VERSION}:_vf_modules/${jsPath}`;
+    return `v${VERSION}:_vf_modules/${jsPath}`;
 }
 /**
  * Look up a module in the MDX-ESM cache.
@@ -160,35 +191,62 @@ function toMdxEsmCacheKey(filePath, projectDir) {
  * @param cacheDir - The MDX-ESM cache directory for this project/contentSource
  * @param projectDir - Project directory to strip from absolute paths
  * @param contentHash - Optional content hash to validate cached file freshness
- * @returns The cached file path if found and valid, null otherwise
+ * @returns Typed result: hit (with path), miss, or corrupted (with reason)
  */
 export async function lookupMdxEsmCache(filePath, cacheDir, projectDir, _contentHash) {
     const cache = await getModulePathCache(cacheDir);
     const cacheKey = toMdxEsmCacheKey(filePath, projectDir);
     const cachedPath = cache.get(cacheKey);
     if (!cachedPath) {
-        return null;
+        return { status: "miss" };
+    }
+    // P3b: Skip re-validation if already verified for this path
+    const verifyKey = `${cachedPath}:${cacheKey}`;
+    if (verifiedModuleDeps.get(verifyKey)) {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache (verified): ${filePath} -> ${cachedPath}`);
+        return { status: "hit", path: cachedPath };
     }
     // Verify the cached file still exists
     try {
         const stat = await getLocalFs().stat(cachedPath);
         if (!stat?.isFile) {
             cache.delete(cacheKey);
-            return null;
+            return { status: "corrupted", reason: "Cached file no longer exists on disk", filePath };
+        }
+        // CRITICAL: Check for incompatible HTTP bundle paths from different environments.
+        // Cached modules may have file:// paths to HTTP bundles that were created on a
+        // different machine (e.g., local dev vs production pod). If paths don't match
+        // our local cache directory, the import will fail at runtime.
+        const cachedCode = await getLocalFs().readTextFile(cachedPath);
+        if (hasIncompatibleHttpPaths(cachedCode)) {
+            logger.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible HTTP bundle paths, invalidating`, { filePath, cachedPath });
+            cache.delete(cacheKey);
+            // Delete the stale file so it gets recreated
+            try {
+                await getLocalFs().remove(cachedPath);
+            }
+            catch { /* ignore removal errors */ }
+            return {
+                status: "corrupted",
+                reason: "Incompatible HTTP bundle paths from different environment",
+                filePath,
+            };
         }
         // Note: We intentionally skip contentHash validation for MDX-ESM cached files.
-        // The MDX-ESM cache uses transformed-code hashes in filenames (vfmod-v13-{hash}.mjs),
+        // The MDX-ESM cache uses transformed-code hashes in filenames (vfmod-v{VERSION}-{hash}.mjs),
         // while the SSR loader provides source-code hashes. These will never match.
-        // The cache version in the key (v13:) provides sufficient staleness protection,
+        // The cache version in the key (v{VERSION}:) provides sufficient staleness protection,
         // and the file's existence confirms it's a valid transform for this codebase.
         // This allows both loaders to share the same module instance, preventing
         // duplicate React contexts which break hooks like useContext.
+        // P3b: Mark as verified to skip re-stat on subsequent calls
+        verifiedModuleDeps.set(verifyKey, true);
         logger.debug(`${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache: ${filePath} -> ${cachedPath}`);
-        return cachedPath;
+        return { status: "hit", path: cachedPath };
     }
     catch {
         // File no longer exists, remove stale entry
         cache.delete(cacheKey);
+        return { status: "corrupted", reason: "Cached file inaccessible", filePath };
     }
-    return null;
 }

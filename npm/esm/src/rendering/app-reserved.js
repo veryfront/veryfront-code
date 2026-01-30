@@ -1,12 +1,13 @@
 import * as BundledReact from "react";
 import { rendererLogger as logger } from "../utils/index.js";
+import { normalizePath } from "../utils/path-utils.js";
 export const RESERVED_COMPONENTS = {
     loading: "loading.tsx",
     error: "error.tsx",
     notFound: "not-found.tsx",
 };
 export function collectAncestorDirs(segmentDir, appRootDir) {
-    const normalize = (p) => p.replace(/\\+/g, "/").replace(/\/\.+\//g, "/");
+    const normalize = (p) => normalizePath(p);
     const getDirname = (p) => normalize(p).replace(/\/?[^/]+\/?$/, "");
     const dirs = [];
     let current = normalize(segmentDir);

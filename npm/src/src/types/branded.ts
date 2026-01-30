@@ -25,16 +25,7 @@ export type AuthToken = Brand<string, "AuthToken">;
 export type CsrfToken = Brand<string, "CsrfToken">;
 export type ApiKey = Brand<string, "ApiKey">;
 
-export function brandValue<T extends Brand<string, string>>(value: string): T {
-  return value as T;
-}
-
-export function isBrandedString(value: unknown): value is Brand<string, string> {
-  return typeof value === "string";
-}
-
 export type Unbrand<T> = T extends Brand<infer U, string> ? U : T;
 
-export function unbrandValue<T extends Brand<string, string>>(value: T): string {
-  return value;
-}
+// Runtime branded value utilities (brandValue, isBrandedString, unbrandValue)
+// removed — zero production consumers. See P2-2 Dead Export Audit.

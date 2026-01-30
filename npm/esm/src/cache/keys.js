@@ -10,7 +10,6 @@
  * @module core/cache/keys
  ********************************************************************************/
 import { VERSION } from "../utils/version.js";
-import { TRANSFORM_CACHE_VERSION } from "../transforms/esm/package-registry.js";
 import { withSpan } from "../observability/tracing/otlp-setup.js";
 import { SpanNames } from "../observability/tracing/span-names.js";
 import { cacheRegistry, extractProjectIdFromKey, isKeyForProject, LRUCacheStore, MapCacheStore, registerLRUCache, registerMapCache, } from "./registry.js";
@@ -164,10 +163,20 @@ export function buildRedisFileCacheKey(key) {
 export function buildRedisTransformKey(key) {
     return `${CacheKeyPrefix.TRANSFORM}${key}`;
 }
-export function buildTransformCacheKey(filePath, contentHash, ssr = false, studioEmbed = false) {
-    const ssrKey = ssr ? "ssr" : "browser";
+/**
+ * Build a transform cache key with full dependency tracking.
+ *
+ * Key format: v{VERSION}:{projectId}:{filePath}:{contentHash}:{depsHash}:{configHash}:{target}
+ *
+ * @param options - Cache key options
+ */
+export function buildTransformCacheKey(filePath, contentHash, ssr = false, studioEmbed = false, options) {
+    const target = ssr ? "ssr" : "browser";
     const studioKey = studioEmbed ? ":studio" : "";
-    return `v${TRANSFORM_CACHE_VERSION}:${filePath}:${contentHash}:${ssrKey}${studioKey}`;
+    const depsKey = options?.depsHash ? `:deps:${options.depsHash.slice(0, 8)}` : "";
+    const configKey = options?.configHash ? `:cfg:${options.configHash.slice(0, 8)}` : "";
+    const projectKey = options?.projectId ? `${options.projectId}:` : "";
+    return `v${VERSION}:${projectKey}${filePath}:${contentHash}:${target}${studioKey}${depsKey}${configKey}`;
 }
 export function buildContentHashCacheKey(prefix, filePath, contentHash, suffix) {
     const base = `${prefix}:${filePath}:${contentHash}`;
@@ -252,4 +261,7 @@ export function deleteAllKeysForProjectAsync(projectId) {
         span?.setAttribute("cache.redis.deleted", result.redisDeleted);
         return result;
     }, { "cache.project_id": projectId });
+}
+export function buildBundleManifestCacheKey(manifestId) {
+    return `bm:${manifestId}`;
 }

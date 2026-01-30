@@ -1,7 +1,7 @@
 import * as dntShim from "../../_dnt.shims.js";
 import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./schema.js";
-import { dirname, extname, join } from "../platform/compat/path/index.js";
-import { isExtendedFSAdapter } from "../platform/adapters/fs/wrapper.js";
+import { extname, join } from "../platform/compat/path/index.js";
+import { isVirtualFilesystem } from "../platform/adapters/fs/wrapper.js";
 import { isBun } from "../platform/compat/runtime.js";
 import { serverLogger } from "../utils/logger/logger.js";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "../utils/constants/cdn.js";
@@ -11,60 +11,77 @@ import { DEFAULT_CACHE_DIR } from "../utils/constants/server.js";
 import { buildConfigCacheKey } from "../cache/keys.js";
 import { DEFAULT_PORT } from "./defaults.js";
 import { createFileSystem } from "../platform/compat/fs.js";
-import { getEsbuildLoader } from "../utils/path-utils.js";
 import { getErrorMessage } from "../errors/veryfront-error.js";
 import { withSpan } from "../observability/tracing/otlp-setup.js";
 import { SpanNames } from "../observability/tracing/span-names.js";
+/**
+ * Creates fresh default import map per-request.
+ * Previously this was called once at module load, causing all projects to share
+ * the same import map object which could be mutated.
+ *
+ * @see plans/architecture-audit/007.3-default-config-shared-reference.md
+ */
 function getDefaultImportMapForConfig() {
     return { imports: getReactImportMap(REACT_DEFAULT_VERSION) };
 }
-const DEFAULT_CONFIG = {
-    title: "Veryfront App",
-    description: "Built with Veryfront",
-    experimental: {
-        esmLayouts: true,
-    },
-    router: undefined,
-    theme: {
-        colors: {
-            primary: "#3B82F6",
+/**
+ * Creates a fresh copy of default config for each merge operation.
+ * This prevents shared mutable state between projects.
+ *
+ * Previously DEFAULT_CONFIG was a module-level object that could be mutated
+ * through shallow spreads, causing cross-tenant contamination.
+ *
+ * @see plans/architecture-audit/007.3-default-config-shared-reference.md
+ */
+function createFreshDefaults() {
+    return {
+        title: "Veryfront App",
+        description: "Built with Veryfront",
+        experimental: {
+            esmLayouts: true,
         },
-    },
-    build: {
-        outDir: "dist",
-        trailingSlash: false,
-        esbuild: {
-            wasmURL: "https://deno.land/x/esbuild@v0.20.1/esbuild.wasm",
-            worker: false,
+        router: undefined,
+        theme: {
+            colors: {
+                primary: "#3B82F6",
+            },
         },
-    },
-    cache: {
-        dir: DEFAULT_CACHE_DIR,
-        render: {
-            type: "memory",
-            ttl: undefined,
-            maxEntries: 500,
-            kvPath: undefined,
-            redisUrl: undefined,
-            redisKeyPrefix: undefined,
+        build: {
+            outDir: "dist",
+            trailingSlash: false,
+            esbuild: {
+                wasmURL: "https://deno.land/x/esbuild@v0.20.1/esbuild.wasm",
+                worker: false,
+            },
         },
-    },
-    dev: {
-        port: DEFAULT_PORT,
-        host: "localhost",
-        open: false,
-    },
-    resolve: {
-        importMap: getDefaultImportMapForConfig(),
-    },
-    client: {
-        moduleResolution: "cdn",
-        cdn: {
-            provider: "esm.sh",
-            versions: "auto",
+        cache: {
+            dir: DEFAULT_CACHE_DIR,
+            render: {
+                type: "memory",
+                ttl: undefined,
+                maxEntries: 500,
+                kvPath: undefined,
+                redisUrl: undefined,
+                redisKeyPrefix: undefined,
+            },
         },
-    },
-};
+        dev: {
+            port: DEFAULT_PORT,
+            host: "localhost",
+            open: false,
+        },
+        resolve: {
+            importMap: getDefaultImportMapForConfig(), // Fresh per-request, not module-load-time
+        },
+        client: {
+            moduleResolution: "cdn",
+            cdn: {
+                provider: "esm.sh",
+                versions: "auto",
+            },
+        },
+    };
+}
 const configCacheByProject = new Map();
 let cacheRevision = 0;
 class ConfigValidationError extends Error {
@@ -91,43 +108,45 @@ function validateConfigShape(userConfig) {
         return;
     const unknown = findUnknownTopLevelKeys(userConfig);
     if (unknown.length > 0) {
-        serverLogger.warn(`Unknown config keys: ${unknown.join(", ")}. These will be ignored.`);
+        throw new ConfigValidationError(`Unknown config keys: ${unknown.join(", ")}. Check for typos in veryfront.config.`);
     }
 }
 function mergeConfigs(userConfig) {
+    // Create fresh defaults per-merge to prevent shared mutable state
+    const defaults = createFreshDefaults();
     const merged = {
-        ...DEFAULT_CONFIG,
+        ...defaults,
         ...userConfig,
         dev: {
-            ...DEFAULT_CONFIG.dev,
+            ...defaults.dev,
             ...userConfig.dev,
         },
         theme: {
-            ...DEFAULT_CONFIG.theme,
+            ...defaults.theme,
             ...userConfig.theme,
         },
         build: {
-            ...DEFAULT_CONFIG.build,
+            ...defaults.build,
             ...userConfig.build,
         },
         cache: {
-            ...DEFAULT_CONFIG.cache,
+            ...defaults.cache,
             ...userConfig.cache,
         },
         resolve: {
-            ...DEFAULT_CONFIG.resolve,
+            ...defaults.resolve,
             ...userConfig.resolve,
         },
         client: {
-            ...DEFAULT_CONFIG.client,
+            ...defaults.client,
             ...userConfig.client,
             cdn: {
-                ...DEFAULT_CONFIG.client?.cdn,
+                ...defaults.client?.cdn,
                 ...userConfig.client?.cdn,
             },
         },
     };
-    const defaultMap = DEFAULT_CONFIG.resolve?.importMap;
+    const defaultMap = defaults.resolve?.importMap;
     const userMap = userConfig.resolve?.importMap;
     if (merged.resolve && (defaultMap || userMap)) {
         merged.resolve.importMap = {
@@ -143,25 +162,7 @@ function mergeConfigs(userConfig) {
     }
     return merged;
 }
-// Virtual filesystem adapters that require special config loading
-const VIRTUAL_FS_ADAPTERS = new Set([
-    "VeryfrontFSAdapter",
-    "MultiProjectFSAdapter",
-    "GitHubFSAdapter",
-]);
-/**
- * Check if the adapter is using a virtual filesystem (e.g., Veryfront API, GitHub)
- */
-function isVirtualFilesystem(adapter) {
-    const fs = adapter?.fs;
-    if (!fs || typeof fs !== "object")
-        return false;
-    if (!isExtendedFSAdapter(fs))
-        return false;
-    if (fs.isVeryfrontAdapter())
-        return true;
-    return VIRTUAL_FS_ADAPTERS.has(fs.getAdapterType());
-}
+// isVirtualFilesystem is now imported from the shared wrapper module
 /**
  * Validate config and cache it.
  *
@@ -184,39 +185,20 @@ function validateAndCacheConfig(userConfig, cacheKey) {
     return merged;
 }
 /**
- * Load config from virtual filesystem by transpiling TypeScript content
+ * Load config from virtual filesystem.
+ * Uses Deno's native TypeScript support - no esbuild transpilation needed.
  */
 function loadConfigFromVirtualFS(configPath, cacheKey, adapter) {
     return withSpan(SpanNames.CONFIG_LOAD_PROJECT, async () => {
         const fs = createFileSystem();
         const content = await adapter.fs.readFile(configPath);
         const source = typeof content === "string" ? content : new TextDecoder().decode(content);
-        const loader = getEsbuildLoader(configPath);
-        const transpileResult = await withSpan(SpanNames.CONFIG_TRANSPILE, async () => {
-            const { build } = await import("esbuild");
-            return build({
-                bundle: false,
-                write: false,
-                format: "esm",
-                platform: "neutral",
-                target: "es2022",
-                stdin: {
-                    contents: source,
-                    loader,
-                    resolveDir: dirname(configPath),
-                    sourcefile: configPath,
-                },
-            });
-        }, { "config.path": configPath, "config.loader": loader });
-        if (transpileResult.errors?.length) {
-            const first = transpileResult.errors[0]?.text || "unknown error";
-            throw new ConfigValidationError(`Failed to transpile config: ${first}`);
-        }
-        const js = transpileResult.outputFiles?.[0]?.text ?? "export default {}";
+        // Keep original extension - Deno handles TS/TSX natively
+        const extension = extname(configPath) || ".mjs";
         const tempDir = await fs.makeTempDir({ prefix: "vf-config-" });
-        const tempFile = join(tempDir, "config.mjs");
+        const tempFile = join(tempDir, `config${extension}`);
         try {
-            await fs.writeTextFile(tempFile, js);
+            await fs.writeTextFile(tempFile, source);
             const configModule = await import(`file://${tempFile}?v=${Date.now()}`);
             const userConfig = configModule.default || configModule;
             return validateAndCacheConfig(userConfig, cacheKey);
@@ -227,7 +209,7 @@ function loadConfigFromVirtualFS(configPath, cacheKey, adapter) {
     }, { "config.path": configPath, "config.project_dir": cacheKey, "config.source": "virtual_fs" });
 }
 async function loadAndMergeConfig(configPath, cacheKey, adapter) {
-    if (isVirtualFilesystem(adapter)) {
+    if (isVirtualFilesystem(adapter.fs)) {
         return loadConfigFromVirtualFS(configPath, cacheKey, adapter);
     }
     if (isBun) {
@@ -263,7 +245,7 @@ export function getConfig(projectDir, adapter, options) {
     const cacheKeyForLog = options?.cacheKey || "unknown";
     serverLogger.debug("[CONFIG] getConfig START", { projectDir, cacheKey: cacheKeyForLog });
     return withSpan(SpanNames.CONFIG_LOAD, async () => {
-        const isVirtualFS = isVirtualFilesystem(adapter);
+        const isVirtualFS = isVirtualFilesystem(adapter.fs);
         const effectiveCacheKey = buildConfigCacheKey(isVirtualFS && options?.cacheKey ? options.cacheKey : projectDir, isVirtualFS && !!options?.cacheKey);
         serverLogger.debug("[CONFIG] Cache key built", {
             effectiveCacheKey,
@@ -305,7 +287,7 @@ export function getConfig(projectDir, adapter, options) {
             effectiveCacheKey,
             duration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
         });
-        const defaultConfig = DEFAULT_CONFIG;
+        const defaultConfig = createFreshDefaults();
         configCacheByProject.set(effectiveCacheKey, {
             revision: cacheRevision,
             config: defaultConfig,

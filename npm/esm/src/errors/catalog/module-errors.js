@@ -1,6 +1,25 @@
 import { ErrorCode } from "../error-codes.js";
 import { createErrorSolution, createSimpleError } from "./factory.js";
 export const MODULE_ERROR_CATALOG = {
+    [ErrorCode.CACHE_PATH_MISMATCH]: createErrorSolution(ErrorCode.CACHE_PATH_MISMATCH, {
+        title: "Cache path mismatch",
+        message: "Cached code contains file paths from a different environment.",
+        steps: [
+            "This is a distributed cache issue - cached code has paths like 'file:///app/...' but local expects different paths",
+            "Clear the project transform cache (see command below)",
+            "If widespread, restart renderer pods to clear all caches",
+            "This happens when local dev hits production cache or vice versa",
+        ],
+        example: `# Clear project cache:
+curl -X DELETE "https://api.veryfront.com/internal/cache/project/{projectId}/transforms" \\
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# Or restart pods:
+kubectl rollout restart deployment/veryfront-renderer -n veryfront-production
+
+# To reproduce locally with production cache:
+VERYFRONT_API_BASE_URL=https://api.veryfront.com PROXY_MODE=1 deno task start`,
+    }),
     [ErrorCode.MODULE_NOT_FOUND]: createErrorSolution(ErrorCode.MODULE_NOT_FOUND, {
         title: "Module not found",
         message: "Cannot find the imported module.",

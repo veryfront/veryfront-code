@@ -8,6 +8,11 @@ export function generateSrcSet(src, format, sizes, quality) {
         .map((size) => `${getOptimizedPath(src, format, size, quality)} ${size}w`)
         .join(", ");
 }
-export function getExtension(src) {
-    return src.match(/\.([^.]+)$/)?.[1]?.toLowerCase() ?? "jpeg";
+import { getExtensionName } from "../../../utils/path-utils.js";
+/**
+ * Get image file extension, defaulting to "jpeg" if none found.
+ */
+export function getImageExtension(src) {
+    const ext = getExtensionName(src);
+    return ext || "jpeg";
 }

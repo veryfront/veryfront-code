@@ -1,6 +1,6 @@
 import React from "react";
 import { RESPONSIVE_IMAGE_WIDTH_LG, RESPONSIVE_IMAGE_WIDTHS } from "../../../utils/index.js";
-import { generateSrcSet, getExtension, getOptimizedPath } from "./helpers.js";
+import { generateSrcSet, getImageExtension, getOptimizedPath } from "./helpers.js";
 
 export interface OptimizedImageProps {
   src: string;
@@ -43,7 +43,7 @@ export function OptimizedImage({
   onError,
 }: OptimizedImageProps): React.JSX.Element {
   const loadingStrategy = priority ? "eager" : (loading ?? "lazy");
-  const originalFormat = getExtension(src);
+  const originalFormat = getImageExtension(src);
 
   const imgStyle: React.CSSProperties = {
     ...style,

@@ -35,16 +35,16 @@ declare const getLogsInput: z.ZodObject<{
     since: z.ZodOptional<z.ZodNumber>;
 }, "strip", z.ZodTypeAny, {
     limit: number;
-    level?: "debug" | "info" | "warn" | "error" | undefined;
+    level?: "debug" | "error" | "info" | "warn" | undefined;
     pattern?: string | undefined;
-    source?: string | undefined;
     since?: number | undefined;
+    source?: string | undefined;
 }, {
-    level?: "debug" | "info" | "warn" | "error" | undefined;
+    level?: "debug" | "error" | "info" | "warn" | undefined;
     limit?: number | undefined;
     pattern?: string | undefined;
-    source?: string | undefined;
     since?: number | undefined;
+    source?: string | undefined;
 }>;
 type GetLogsInput = z.infer<typeof getLogsInput>;
 export declare const vfGetLogs: MCPTool<GetLogsInput, LogEntry[]>;

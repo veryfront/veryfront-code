@@ -19,7 +19,6 @@ export interface SharedServicesOptions {
 export interface SharedServices {
     elementValidator: ElementValidator;
     compilerService: CompilerService;
-    esbuildInitialized: boolean;
 }
 export declare function initializeSharedServices(options?: SharedServicesOptions): Promise<SharedServices>;
 export declare function getSharedServices(): SharedServices;

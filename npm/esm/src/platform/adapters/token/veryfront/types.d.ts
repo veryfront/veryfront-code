@@ -54,6 +54,8 @@ export interface VeryfrontTokenConfig {
     apiBaseUrl: string;
     apiToken: string;
     projectSlug: string;
+    /** Request timeout in milliseconds. Defaults to 30000ms (30 seconds). */
+    timeoutMs?: number;
     retry: {
         maxRetries: number;
         initialDelay: number;

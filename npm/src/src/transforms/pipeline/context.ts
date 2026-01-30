@@ -132,7 +132,4 @@ export function isTypeScript(ctx: TransformContext): boolean {
   return ctx.filePath.endsWith(".ts") || ctx.filePath.endsWith(".tsx");
 }
 
-export function getExtension(ctx: TransformContext): string {
-  const dot = ctx.filePath.lastIndexOf(".");
-  return dot >= 0 ? ctx.filePath.slice(dot) : "";
-}
+export { getExtension } from "../../utils/path-utils.js";
