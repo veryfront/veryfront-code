@@ -126,7 +126,7 @@ export class VeryfrontRouter {
       return;
     }
 
-    const ReactDOMToUse = (globalThis as GlobalWithReactDOM).ReactDOM || ReactDOM;
+    const ReactDOMToUse = (globalThis as unknown as GlobalWithReactDOM).ReactDOM || ReactDOM;
     this.root = ReactDOMToUse.createRoot(rootElement);
 
     document.addEventListener("click", this.handleClick);
