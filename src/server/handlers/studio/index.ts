@@ -1,1 +1,1 @@
-export { StudioEndpointsHandler } from "./endpoints.ts";
+export { StudioEndpointsHandler } from "./endpoints.handler.ts";

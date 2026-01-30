@@ -9,7 +9,7 @@ import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
 import { isWithinDirectory, joinPath } from "#veryfront/utils/path-utils.ts";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { RSCDevServerHandler } from "../handlers/index.ts";
+import type { RSCDevServerHandler } from "../orchestrators/index.ts";
 import { handleActionRequest } from "./action-handler.ts";
 import { getRSCHandler } from "./handler-registry.ts";
 import { handleClientScript, handleDomScript } from "./script-handlers.ts";

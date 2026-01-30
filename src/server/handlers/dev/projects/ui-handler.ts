@@ -13,7 +13,8 @@ const JS_HEADERS = {
 
 function getUiDirectory(): string {
   const currentFile = new URL(import.meta.url).pathname;
-  return currentFile.replace(/\/ui-handler\.ts$/, "/ui");
+  // UI moved to src/server/dev-ui/projects/
+  return currentFile.replace(/\/handlers\/dev\/projects\/ui-handler\.ts$/, "/dev-ui/projects");
 }
 
 function resolveRelativeImport(currentDir: string, importPath: string): string {

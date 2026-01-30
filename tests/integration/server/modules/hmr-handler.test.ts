@@ -12,7 +12,7 @@
 
 import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
 import { afterAll, afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { HMRHandler } from "../../../../src/server/handlers/preview/hmr-handler.ts";
+import { HMRHandler } from "../../../../src/server/handlers/preview/hmr.handler.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
 describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, () => {

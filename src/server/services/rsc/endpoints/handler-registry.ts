@@ -3,7 +3,7 @@
  * @module rsc-endpoints/handler-registry
  */
 
-import { RSCDevServerHandler } from "../handlers/index.ts";
+import { RSCDevServerHandler } from "../orchestrators/index.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 

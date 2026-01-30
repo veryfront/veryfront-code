@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isProductionMode } from "./ssr-handler.ts";
+import { isProductionMode } from "./ssr.handler.ts";
 import type { HandlerContext } from "../../types.ts";
 
 function createContext(overrides: Partial<HandlerContext> = {}): HandlerContext {

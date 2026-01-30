@@ -6,7 +6,7 @@
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { LibModulesHandler } from "./lib-modules-handler.ts";
+import { LibModulesHandler } from "./lib-modules.handler.ts";
 
 function getPattern(handler: LibModulesHandler, method: string): RegExp {
   const patterns = handler.metadata.patterns;

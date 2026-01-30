@@ -1,4 +1,4 @@
-export { ModuleHandler } from "./module-handler.ts";
+export { ModuleHandler } from "./module.handler.ts";
 export { getRendererForProject } from "../../../shared/renderer-factory.ts";
 export { handleModuleServer } from "./module-server-handler.ts";
 export { handleVirtualModule } from "./virtual-module-handler.ts";

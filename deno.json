@@ -295,6 +295,7 @@
     "lint:ban-console": "deno run --allow-read scripts/ban-console.ts",
     "lint:ban-deep-imports": "deno run --allow-read scripts/ban-deep-imports.ts",
     "lint:ban-internal-root-imports": "deno run --allow-read scripts/ban-internal-root-imports.ts",
+    "validate:architecture": "deno run --allow-read scripts/validate-architecture.ts",
     "lint:check-awaits": "deno run --allow-read scripts/check-unawaited-promises.ts",
     "lint:platform": "deno run --allow-read scripts/lint-platform-agnostic.ts",
     "test:smoke": "deno run --allow-all src/platform/compat/smoke-test.ts",

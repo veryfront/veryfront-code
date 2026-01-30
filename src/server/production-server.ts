@@ -17,7 +17,7 @@ import {
   stopMemoryMonitoring,
 } from "#veryfront/utils/memory/index.ts";
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
-import { setServerInitialized } from "./handlers/monitoring/health.ts";
+import { setServerInitialized } from "./handlers/monitoring/health.handler.ts";
 import {
   enableSSRClientOnlyFetching,
   enableSSRFetchInterception,

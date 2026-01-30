@@ -2,7 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseActionBody } from "./action-parser.ts";
 
-describe("server/handlers/request/rsc/endpoints/action-parser", () => {
+describe("server/services/rsc/endpoints/action-parser", () => {
   describe("parseActionBody", () => {
     it("should parse a valid action body with id and args", async () => {
       const result = await parseActionBody({ id: "myAction", args: [1, "two"] });

@@ -1,4 +1,4 @@
-export { MetricsHandler } from "./metrics.ts";
-export { HealthHandler } from "./health.ts";
-export { ClientLogHandler } from "./client-log.ts";
-export { MemoryDebugHandler } from "./memory.ts";
+export { MetricsHandler } from "./metrics.handler.ts";
+export { HealthHandler } from "./health.handler.ts";
+export { ClientLogHandler } from "./client-log.handler.ts";
+export { MemoryDebugHandler } from "./memory.handler.ts";

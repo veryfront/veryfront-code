@@ -15,7 +15,7 @@ export async function cleanupBundler(): Promise<void> {
 
   try {
     const { __destroyRSCHandlerForTests } = await import(
-      "../server/handlers/request/rsc/endpoints/handler-registry.ts"
+      "../server/services/rsc/endpoints/handler-registry.ts"
     );
     __destroyRSCHandlerForTests();
   } catch {

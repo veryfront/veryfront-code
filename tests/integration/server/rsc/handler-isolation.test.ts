@@ -30,7 +30,7 @@ describe("RSC Handler Isolation Tests", { sanitizeOps: false, sanitizeResources:
       });
       // Reset between contexts
       const { __resetRSCHandlerForTests } = await import(
-        "../../../../src/server/handlers/request/rsc/endpoints/index.ts"
+        "../../../../src/server/services/rsc/endpoints/index.ts"
       );
       __resetRSCHandlerForTests();
 
