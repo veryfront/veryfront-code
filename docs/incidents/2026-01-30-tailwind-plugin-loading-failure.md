@@ -18,7 +18,12 @@ Veryfront renderer pods crashed with "Failed to load plugin 'tailwindcss-animate
 - **01:57 UTC** - First fix attempted with `--include` flags for common plugins
 - **01:58 UTC** - Build failed: `tailwind-scrollbar-hide` returns 500 from esm.sh
 - **01:59 UTC** - Second fix: pinned problematic packages to working versions
-- **02:00 UTC** - Build re-triggered with working plugin versions
+- **02:00 UTC** - Build failed: Windows PowerShell parsing error with multiline command
+- **02:03 UTC** - Third fix: Use `shell: bash` for cross-platform compatibility
+- **02:05 UTC** - Build failed: esm.sh returning 500 for unpinned `tailwindcss-animate`
+- **02:08 UTC** - Fourth fix: Pin ALL packages to specific versions
+- **02:14 UTC** - Build succeeded, v0.1.0-rc.66 released
+- **02:14 UTC** - Cloud-renderer deployment triggered
 
 ## Root Cause Analysis
 
@@ -73,21 +78,26 @@ deno compile -A -o test test.ts
 
 ### Solution: Bundle Common Plugins at Compile Time
 
-Updated `.github/workflows/cicd.yml` to include commonly used Tailwind plugins:
+Updated `.github/workflows/cicd.yml` to include commonly used Tailwind plugins with pinned versions:
 
 ```yaml
-deno compile --allow-all --unstable-net \
-  --include "https://esm.sh/tailwindcss-animate" \
-  --include "https://esm.sh/@tailwindcss/typography" \
-  --include "https://esm.sh/@tailwindcss/forms" \
-  --include "https://esm.sh/tailwind-scrollbar-hide@2.0.0" \
-  --include "https://esm.sh/daisyui" \
-  --target ${{ matrix.target }} --output ${{ matrix.name }} src/cli/main.ts
+- name: Compile binary with version
+  shell: bash  # Required for Windows compatibility
+  run: |
+    deno compile --allow-all --unstable-net \
+      --include "https://esm.sh/tailwindcss-animate@1.0.7" \
+      --include "https://esm.sh/@tailwindcss/typography@0.5.19" \
+      --include "https://esm.sh/@tailwindcss/forms@0.5.11" \
+      --include "https://esm.sh/tailwind-scrollbar-hide@2.0.0" \
+      --include "https://esm.sh/daisyui@5.5.14" \
+      --target ${{ matrix.target }} --output ${{ matrix.name }} src/cli/main.ts
 ```
 
-### Additional Issue: esm.sh Returning 500
+### Additional Issues Encountered
 
-Some packages like `tailwind-scrollbar-hide` (latest) and `@headlessui/tailwindcss` return 500 errors from esm.sh. Fix: pin to specific working versions.
+1. **PowerShell parsing error on Windows**: The `--` prefix was interpreted as a unary operator by PowerShell. Fix: explicitly set `shell: bash`.
+
+2. **esm.sh intermittent 500 errors**: Unpinned package versions occasionally return 500 errors. Fix: pin ALL packages to specific versions.
 
 ## Learnings
 
@@ -145,6 +155,8 @@ Some packages like `tailwind-scrollbar-hide` (latest) and `@headlessui/tailwindc
 
 - `1f93ed67` - fix(build): include Tailwind CSS plugins in compiled binary
 - `1ca075be` - fix(build): use pinned version for tailwind-scrollbar-hide
+- `e189c511` - fix(build): use bash shell for compile step on all platforms
+- `4a150800` - fix(build): pin all esm.sh packages to avoid intermittent 500 errors
 
 ## References
 
