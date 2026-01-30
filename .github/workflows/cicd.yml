@@ -149,6 +149,7 @@ jobs:
           cat deno.json | grep version
       - run: deno run -A scripts/generate-templates-manifest.ts
       - name: Compile binary with version
+        shell: bash
         run: |
           # Include commonly used Tailwind CSS v4 plugins so they can be dynamically imported
           # in compiled binaries. Without --include, dynamic imports to URLs fail.
