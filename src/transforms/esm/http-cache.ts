@@ -72,6 +72,21 @@ function decodeGzipContent(content: string): string | null {
 }
 
 /**
+ * Check if content appears to be HTML instead of JavaScript.
+ * esm.sh can return HTTP 200 with HTML error pages when packages fail to build.
+ */
+function looksLikeHtmlNotJs(content: string): boolean {
+  const trimmed = content.trimStart();
+  return (
+    trimmed.startsWith("<!DOCTYPE") ||
+    trimmed.startsWith("<html") ||
+    trimmed.startsWith("<HTML") ||
+    // esm.sh error pages often have this pattern
+    /<title>ESM[^<]*<\/title>/i.test(content.slice(0, 500))
+  );
+}
+
+/**
  * Try to decode content if it's gzip-encoded, otherwise return as-is.
  * Returns [decodedContent, wasGzipped] tuple.
  */
@@ -103,8 +118,9 @@ const getDistributedCache = createDistributedCacheAccessor(
  *
  * v1: Initial version
  * v2: 2026-01-30 - Invalidate stale React bundles causing "useContext is null"
+ * v3: 2026-01-30 - Invalidate HTML error pages incorrectly cached as JS (parse errors)
  */
-const HTTP_CACHE_VERSION = "v2";
+const HTTP_CACHE_VERSION = "v3";
 
 /**
  * Generate cache key for HTTP bundles.
@@ -622,6 +638,16 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
             localCacheDir: cacheDir,
           });
           // Fall through to network fetch
+        } else if (looksLikeHtmlNotJs(cachedCode)) {
+          // Cached content is HTML (likely an esm.sh error page), not JavaScript.
+          // This can happen if esm.sh returned an error page that was incorrectly cached.
+          // The cache version (HTTP_CACHE_VERSION) will invalidate on next deployment.
+          logger.warn("[HTTP-CACHE] Cached content is HTML not JavaScript, will re-fetch", {
+            url: normalizedUrl,
+            hash,
+            preview: cachedCode.slice(0, 100),
+          });
+          // Fall through to network fetch
         } else {
           // Validate that all file:// deps in the cached code exist or can be recovered.
           // Without this check, a bundle loaded from Redis might reference child bundles
@@ -708,6 +734,28 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   }
 
   let code = await response.text();
+
+  // Validate response is JavaScript, not an HTML error page.
+  // esm.sh can return HTTP 200 with HTML error pages when packages fail to build.
+  // These HTML pages would be cached and cause parse errors later.
+  const contentType = response.headers.get("content-type") || "";
+  const isHtmlContent = contentType.includes("text/html") ||
+    code.trimStart().startsWith("<!DOCTYPE") ||
+    code.trimStart().startsWith("<html") ||
+    code.trimStart().startsWith("<HTML") ||
+    // esm.sh error pages often have this pattern
+    /<title>ESM[^<]*<\/title>/i.test(code.slice(0, 500));
+
+  if (isHtmlContent) {
+    logger.error("[HTTP-CACHE] Received HTML instead of JavaScript, likely an esm.sh error page", {
+      url: normalizedUrl,
+      contentType,
+      preview: code.slice(0, 200),
+    });
+    throw new Error(
+      `Received HTML instead of JavaScript from ${normalizedUrl}. The package may not exist or failed to build on esm.sh.`,
+    );
+  }
 
   getProcessingStack().add(normalizedUrl);
   try {

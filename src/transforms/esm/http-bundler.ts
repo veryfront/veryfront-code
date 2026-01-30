@@ -133,6 +133,26 @@ export function createHTTPPlugin(): Plugin {
           }
 
           const contents = await res.text();
+
+          // Validate response is JavaScript, not an HTML error page.
+          // esm.sh can return HTTP 200 with HTML error pages when packages fail to build.
+          const contentType = res.headers.get("content-type") || "";
+          const isHtmlContent = contentType.includes("text/html") ||
+            contents.trimStart().startsWith("<!DOCTYPE") ||
+            contents.trimStart().startsWith("<html") ||
+            contents.trimStart().startsWith("<HTML") ||
+            /<title>ESM[^<]*<\/title>/i.test(contents.slice(0, 500));
+
+          if (isHtmlContent) {
+            logger.warn(`${LOG_PREFIX} Received HTML instead of JS for ${args.path}`);
+            return {
+              errors: [{
+                text:
+                  `Received HTML instead of JavaScript from ${args.path}. Package may not exist or failed to build on esm.sh.`,
+              }],
+            };
+          }
+
           return { contents, loader: "js" };
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
