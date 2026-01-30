@@ -12,3 +12,4 @@ if (import.meta.main) {
   const { main } = await import("./index.ts");
   await main();
 }
+// Trigger release test 20260130122243
