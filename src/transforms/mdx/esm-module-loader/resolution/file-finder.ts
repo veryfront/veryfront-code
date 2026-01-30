@@ -56,7 +56,7 @@ export async function resolveModuleFile(
   const filePathWithoutJs = normalizedPath
     .replace(/^_vf_modules\//, "")
     .replace(/^_veryfront\//, "")
-    .replace(/\?.*$/, "")  // Strip query parameters (e.g., ?ssr=true)
+    .replace(/\?.*$/, "") // Strip query parameters (e.g., ?ssr=true)
     .replace(/\.js$/, "");
 
   const hasKnownExt = MODULE_EXTENSIONS.some((ext) => filePathWithoutJs.endsWith(ext));
