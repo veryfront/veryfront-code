@@ -94,12 +94,28 @@ const getDistributedCache = createDistributedCacheAccessor(
 );
 
 /**
+ * Cache version for HTTP bundles.
+ * Increment this to invalidate ALL cached bundles across all projects.
+ * Use when:
+ * - React version changes
+ * - Bundle format changes
+ * - Cache corruption detected globally
+ *
+ * v1: Initial version
+ * v2: 2026-01-30 - Invalidate stale React bundles causing "useContext is null"
+ */
+const HTTP_CACHE_VERSION = "v2";
+
+/**
  * Generate cache key for HTTP bundles.
- * Uses simple prefix:hash format. Cache invalidation is handled by:
+ * Uses versioned prefix:hash format to enable global cache invalidation.
+ * Cache invalidation is handled by:
+ * - Version prefix (HTTP_CACHE_VERSION) for global invalidation
  * - hasIncompatibleFilePaths() for path compatibility
  * - gzip detection for corrupted content
  */
-const distributedKey = (prefix: string, hash: string | number) => `${prefix}:${hash}`;
+const distributedKey = (prefix: string, hash: string | number) =>
+  `${HTTP_CACHE_VERSION}:${prefix}:${hash}`;
 
 /**
  * Check if cached HTTP bundle code has file:// paths from a different environment.
