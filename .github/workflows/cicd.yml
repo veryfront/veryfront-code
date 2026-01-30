@@ -161,13 +161,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: 1password/load-secrets-action@v2
+      - name: Load secrets from 1Password
+        uses: nick-fields/retry@v3
         with:
-          export-env: true
+          timeout_minutes: 3
+          max_attempts: 5
+          retry_wait_seconds: 10
+          command: |
+            # Install 1Password CLI
+            curl -sS https://downloads.1password.com/linux/keys/1password.asc | gpg --dearmor --output /tmp/1password-archive-keyring.gpg
+            echo "deb [arch=amd64 signed-by=/tmp/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main" | sudo tee /etc/apt/sources.list.d/1password.list
+            sudo apt-get update && sudo apt-get install -y 1password-cli
+
+            # Fetch secrets with retry
+            NPM_TOKEN=$(op read "op://VERYFRONT_CI/NPM_TOKEN_VERYFRONT/password")
+            GITHUB_PAT=$(op read "op://VERYFRONT_CI/GITHUB_VERYFRONT_PAT/credential")
+
+            # Export to GITHUB_ENV (masked)
+            echo "::add-mask::$NPM_TOKEN"
+            echo "::add-mask::$GITHUB_PAT"
+            echo "NPM_TOKEN=$NPM_TOKEN" >> $GITHUB_ENV
+            echo "GITHUB_PAT=$GITHUB_PAT" >> $GITHUB_ENV
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          NPM_TOKEN: op://VERYFRONT_CI/NPM_TOKEN_VERYFRONT/password
-          GITHUB_PAT: op://VERYFRONT_CI/GITHUB_VERYFRONT_PAT/credential
 
       - uses: denoland/setup-deno@v2
         with:
@@ -240,13 +256,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: 1password/load-secrets-action@v2
+      - name: Load secrets from 1Password
+        uses: nick-fields/retry@v3
         with:
-          export-env: true
+          timeout_minutes: 3
+          max_attempts: 5
+          retry_wait_seconds: 10
+          command: |
+            # Install 1Password CLI
+            curl -sS https://downloads.1password.com/linux/keys/1password.asc | gpg --dearmor --output /tmp/1password-archive-keyring.gpg
+            echo "deb [arch=amd64 signed-by=/tmp/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main" | sudo tee /etc/apt/sources.list.d/1password.list
+            sudo apt-get update && sudo apt-get install -y 1password-cli
+
+            # Fetch secrets with retry
+            NPM_TOKEN=$(op read "op://VERYFRONT_CI/NPM_TOKEN_VERYFRONT/password")
+            GITHUB_PAT=$(op read "op://VERYFRONT_CI/GITHUB_VERYFRONT_PAT/credential")
+
+            # Export to GITHUB_ENV (masked)
+            echo "::add-mask::$NPM_TOKEN"
+            echo "::add-mask::$GITHUB_PAT"
+            echo "NPM_TOKEN=$NPM_TOKEN" >> $GITHUB_ENV
+            echo "GITHUB_PAT=$GITHUB_PAT" >> $GITHUB_ENV
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          NPM_TOKEN: op://VERYFRONT_CI/NPM_TOKEN_VERYFRONT/password
-          GITHUB_PAT: op://VERYFRONT_CI/GITHUB_VERYFRONT_PAT/credential
 
       - name: Validate version
         run: |
@@ -333,12 +365,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: 1password/load-secrets-action@v2
+      - name: Load secrets from 1Password
+        uses: nick-fields/retry@v3
         with:
-          export-env: true
+          timeout_minutes: 3
+          max_attempts: 5
+          retry_wait_seconds: 10
+          command: |
+            # Install 1Password CLI
+            curl -sS https://downloads.1password.com/linux/keys/1password.asc | gpg --dearmor --output /tmp/1password-archive-keyring.gpg
+            echo "deb [arch=amd64 signed-by=/tmp/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main" | sudo tee /etc/apt/sources.list.d/1password.list
+            sudo apt-get update && sudo apt-get install -y 1password-cli
+
+            # Fetch secrets with retry
+            GITHUB_PAT=$(op read "op://VERYFRONT_CI/GITHUB_VERYFRONT_PAT/credential")
+
+            # Export to GITHUB_ENV (masked)
+            echo "::add-mask::$GITHUB_PAT"
+            echo "GITHUB_PAT=$GITHUB_PAT" >> $GITHUB_ENV
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          GITHUB_PAT: op://VERYFRONT_CI/GITHUB_VERYFRONT_PAT/credential
 
       - name: Update Homebrew tap
         uses: nick-fields/retry@v3
