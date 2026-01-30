@@ -11,7 +11,8 @@ describe("getFrameworkRoot", () => {
     });
 
     it("should resolve Linux dev path correctly", () => {
-      const devPath = "/home/developer/projects/veryfront-renderer/src/platform/compat/vfs-paths.ts";
+      const devPath =
+        "/home/developer/projects/veryfront-renderer/src/platform/compat/vfs-paths.ts";
       const result = getFrameworkRoot(devPath);
       assertEquals(result, "/home/developer/projects/veryfront-renderer");
     });
@@ -39,13 +40,15 @@ describe("getFrameworkRoot", () => {
 
   describe("Windows paths", () => {
     it("should resolve Windows dev path with backslashes", () => {
-      const winPath = "C:\\Users\\dev\\code\\veryfront-renderer\\src\\modules\\server\\module-server.ts";
+      const winPath =
+        "C:\\Users\\dev\\code\\veryfront-renderer\\src\\modules\\server\\module-server.ts";
       const result = getFrameworkRoot(winPath);
       assertEquals(result, "C:/Users/dev/code/veryfront-renderer");
     });
 
     it("should resolve Windows deno-compile VFS path", () => {
-      const winVfsPath = "C:\\Users\\dev\\AppData\\Local\\Temp\\deno-compile-xyz\\src\\platform\\runtime.ts";
+      const winVfsPath =
+        "C:\\Users\\dev\\AppData\\Local\\Temp\\deno-compile-xyz\\src\\platform\\runtime.ts";
       const result = getFrameworkRoot(winVfsPath);
       assertEquals(result, "C:\\Users\\dev\\AppData\\Local\\Temp\\deno-compile-xyz");
     });
