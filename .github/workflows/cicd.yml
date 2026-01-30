@@ -152,13 +152,13 @@ jobs:
         run: |
           # Include commonly used Tailwind CSS v4 plugins so they can be dynamically imported
           # in compiled binaries. Without --include, dynamic imports to URLs fail.
+          # Note: Some packages need pinned versions as esm.sh returns 500 for latest.
           deno compile --allow-all --unstable-net \
             --include "https://esm.sh/tailwindcss-animate" \
             --include "https://esm.sh/@tailwindcss/typography" \
             --include "https://esm.sh/@tailwindcss/forms" \
-            --include "https://esm.sh/tailwind-scrollbar-hide" \
+            --include "https://esm.sh/tailwind-scrollbar-hide@2.0.0" \
             --include "https://esm.sh/daisyui" \
-            --include "https://esm.sh/@headlessui/tailwindcss" \
             --target ${{ matrix.target }} --output ${{ matrix.name }} src/cli/main.ts
       - uses: actions/upload-artifact@v4
         with:
