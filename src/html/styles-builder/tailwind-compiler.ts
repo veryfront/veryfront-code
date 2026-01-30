@@ -17,15 +17,15 @@ import { minifyCSS } from "#veryfront/build/asset-pipeline/tailwind-processor/cs
 
 // Provide localStorage shim for plugins that use util-deprecate (which checks localStorage)
 // This prevents "LocalStorage is not supported in this context" errors in Deno.
-// In Deno, accessing globalThis.localStorage throws instead of returning undefined,
-// so we must use try-catch.
+// In Deno, localStorage is a GETTER that throws - simple assignment doesn't override it.
+// We must use Object.defineProperty to properly replace the getter with our shim.
 try {
   // deno-lint-ignore no-explicit-any
   const _test = (globalThis as any).localStorage;
   // If we get here, localStorage exists (browser or already shimmed)
 } catch {
-  // localStorage access threw - set up the shim
-  (globalThis as Record<string, unknown>).localStorage = {
+  // localStorage access threw - use defineProperty to override the throwing getter
+  const localStorageShim = {
     getItem: () => null,
     setItem: () => {},
     removeItem: () => {},
@@ -33,6 +33,12 @@ try {
     key: () => null,
     length: 0,
   };
+  Object.defineProperty(globalThis, "localStorage", {
+    value: localStorageShim,
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
 }
 
 // Set up global shims for tailwindcss subpaths - used by dynamically loaded plugins
@@ -695,6 +701,15 @@ export async function loadModuleFromEsmSh(packageName: string): Promise<unknown>
       return `const ${varName} = globalThis.${shimName}`;
     });
   }
+
+  // Step 4b: Patch out localStorage access from util-deprecate
+  // The bundled code contains patterns like: try{if(!globalThis.localStorage)return!1}
+  // In Deno compiled binaries, even with our global shim, this can fail.
+  // Replace globalThis.localStorage with a safe inline shim.
+  code = code.replace(
+    /globalThis\.localStorage/g,
+    "(globalThis.__localStorageShim||(globalThis.__localStorageShim={getItem:()=>null,setItem:()=>{},length:0}))",
+  );
 
   // Step 5: Write to temp file and import
   const tempPath = `/tmp/tw_plugin_${crypto.randomUUID()}.mjs`;
