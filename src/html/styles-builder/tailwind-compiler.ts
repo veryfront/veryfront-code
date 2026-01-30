@@ -16,8 +16,15 @@ import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { minifyCSS } from "#veryfront/build/asset-pipeline/tailwind-processor/css-utils.ts";
 
 // Provide localStorage shim for plugins that use util-deprecate (which checks localStorage)
-// This prevents "LocalStorage is not supported in this context" errors in Deno
-if (typeof (globalThis as Record<string, unknown>).localStorage === "undefined") {
+// This prevents "LocalStorage is not supported in this context" errors in Deno.
+// In Deno, accessing globalThis.localStorage throws instead of returning undefined,
+// so we must use try-catch.
+try {
+  // deno-lint-ignore no-explicit-any
+  const _test = (globalThis as any).localStorage;
+  // If we get here, localStorage exists (browser or already shimmed)
+} catch {
+  // localStorage access threw - set up the shim
   (globalThis as Record<string, unknown>).localStorage = {
     getItem: () => null,
     setItem: () => {},
