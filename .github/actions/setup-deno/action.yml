@@ -1,0 +1,22 @@
+name: Setup Deno
+description: Setup Deno with caching for CI
+
+inputs:
+  warm-cache:
+    description: Pre-warm the esm.sh cache for tests
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - uses: denoland/setup-deno@v2
+      with:
+        deno-version: lts
+        cache: true
+        cache-hash: ${{ hashFiles('deno.json') }}
+
+    - name: Warm esm.sh cache
+      if: inputs.warm-cache == 'true'
+      shell: bash
+      run: deno cache --reload=https://esm.sh src/mod.ts || true

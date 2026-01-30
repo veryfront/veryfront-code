@@ -14,95 +14,87 @@ concurrency:
 
 jobs:
   # ============================================
-  # CI: Quality Checks (PR + main)
+  # CI: Quality Checks (PR + main, skip tags)
   # ============================================
 
-  format:
+  ci:
     if: startsWith(github.ref, 'refs/tags/') == false
     runs-on: veryfront-k8s-runners
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [format, lint, typecheck]
     steps:
       - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: lts
-          cache: true
-          cache-hash: ${{ hashFiles('deno.json') }}
-      - run: deno fmt --check
-
-  lint:
-    if: startsWith(github.ref, 'refs/tags/') == false
-    runs-on: veryfront-k8s-runners
-    steps:
-      - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: lts
-          cache: true
-          cache-hash: ${{ hashFiles('deno.json') }}
-      - run: deno task lint
-
-  typecheck:
-    if: startsWith(github.ref, 'refs/tags/') == false
-    runs-on: veryfront-k8s-runners
-    steps:
-      - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: lts
-          cache: true
-          cache-hash: ${{ hashFiles('deno.json') }}
-      - run: deno task typecheck
+      - uses: ./.github/actions/setup-deno
+      - name: Run ${{ matrix.check }}
+        run: |
+          case "${{ matrix.check }}" in
+            format) deno fmt --check ;;
+            lint) deno task lint ;;
+            typecheck) deno task typecheck ;;
+          esac
 
   # ============================================
-  # CI: Tests (PR + main)
+  # CI: Tests (PR + main, skip tags)
   # ============================================
 
-  unit-tests:
-    if: startsWith(github.ref, 'refs/tags/') == false
-    runs-on: veryfront-k8s-runners
-    steps:
-      - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: lts
-          cache: true
-          cache-hash: ${{ hashFiles('deno.json') }}
-      - run: deno cache --reload=https://esm.sh src/mod.ts || true
-      - uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 5
-          max_attempts: 3
-          retry_wait_seconds: 10
-          command: deno task test:unit --no-lock
-
-  integration-tests:
+  tests:
     if: startsWith(github.ref, 'refs/tags/') == false
     runs-on: veryfront-k8s-runners
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [unit, integration]
     steps:
       - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
+      - uses: ./.github/actions/setup-deno
         with:
-          deno-version: lts
-          cache: true
-          cache-hash: ${{ hashFiles('deno.json') }}
-      - run: deno cache --reload=https://esm.sh src/mod.ts || true
+          warm-cache: 'true'
       - uses: nick-fields/retry@v3
         with:
-          timeout_minutes: 10
+          timeout_minutes: ${{ matrix.suite == 'integration' && 10 || 5 }}
           max_attempts: 3
           retry_wait_seconds: 10
-          command: VF_DISABLE_LRU_INTERVAL=1 deno task test:integration --no-lock
+          command: |
+            if [ "${{ matrix.suite }}" = "integration" ]; then
+              VF_DISABLE_LRU_INTERVAL=1 deno task test:integration --no-lock
+            else
+              deno task test:unit --no-lock
+            fi
+
+  # ============================================
+  # CD: Calculate Version (single source of truth)
+  # ============================================
+
+  version:
+    if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || startsWith(github.ref, 'refs/tags/v')
+    needs: [ci, tests]
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Calculate version
+        id: version
+        run: |
+          BASE_VERSION=$(jq -r '.version' deno.json)
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION="${BASE_VERSION}-rc.${{ github.run_number }}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
 
   # ============================================
   # CD: Build Binaries (main + tags)
   # ============================================
 
   build-binaries:
-    if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || startsWith(github.ref, 'refs/tags/v')
-    needs: [format, lint, typecheck, unit-tests, integration-tests]
-    # For tags, CI jobs are skipped so we need to handle that
-    # The 'if' on CI jobs returns false for tags, making needs pass
+    needs: [version]
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -127,33 +119,19 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: lts
-      - name: Calculate and bake version into deno.json
-        id: version
-        shell: bash
-        run: |
-          BASE_VERSION=$(cat deno.json | grep '"version"' | head -1 | sed 's/.*: "\(.*\)".*/\1/')
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            # For tag pushes, use the tag version
-            VERSION="${{ github.ref_name }}"
-            VERSION="${VERSION#v}"
-          else
-            # For main branch, use rc version
-            VERSION="${BASE_VERSION}-rc.${{ github.run_number }}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Building version: $VERSION"
 
-          # Update deno.json with the version (baked into compiled binary)
-          jq ".version = \"$VERSION\"" deno.json > deno.json.tmp
-          mv deno.json.tmp deno.json
-          cat deno.json | grep version
+      - name: Bake version into binary
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          echo "Building version: $VERSION"
+          jq ".version = \"$VERSION\"" deno.json > deno.json.tmp && mv deno.json.tmp deno.json
+
       - run: deno run -A scripts/generate-templates-manifest.ts
-      - name: Compile binary with version
+
+      - name: Compile binary
         shell: bash
         run: |
-          # Include commonly used Tailwind CSS v4 plugins so they can be dynamically imported
-          # in compiled binaries. Without --include, dynamic imports to URLs fail.
-          # IMPORTANT: These versions MUST match PINNED_PLUGIN_VERSIONS in tailwind-compiler.ts
+          # Include Tailwind CSS v4 plugins (versions must match PINNED_PLUGIN_VERSIONS in tailwind-compiler.ts)
           deno compile --allow-all --unstable-net \
             --include "https://esm.sh/tailwindcss-animate@1.0.7" \
             --include "https://esm.sh/@tailwindcss/typography@0.5.19" \
@@ -161,6 +139,7 @@ jobs:
             --include "https://esm.sh/tailwind-scrollbar-hide@2.0.0" \
             --include "https://esm.sh/daisyui@5.5.14" \
             --target ${{ matrix.target }} --output ${{ matrix.name }} src/cli/main.ts
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
@@ -169,12 +148,11 @@ jobs:
 
   # ============================================
   # CD: Pre-release (main only)
-  # Publishes veryfront@{version}-rc.{run_number}
   # ============================================
 
   prerelease:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [build-binaries]
+    needs: [version, build-binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -200,74 +178,60 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Build and publish pre-release
-        id: version
-        run: |
-          BASE_VERSION=$(jq -r '.version' deno.json)
-          VERSION="${BASE_VERSION}-rc.${{ github.run_number }}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-          VERYFRONT_VERSION=$VERSION deno task build:npm
-          cd npm
-          jq ".version = \"$VERSION\"" package.json > package.json.tmp
-          mv package.json.tmp package.json
-          npm publish --access public --tag rc
+      - name: Build and publish
         env:
+          VERSION: ${{ needs.version.outputs.version }}
           NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+        run: |
+          VERYFRONT_VERSION=$VERSION deno task build:npm
+          cd npm && jq ".version = \"$VERSION\"" package.json > package.json.tmp && mv package.json.tmp package.json
+          npm publish --access public --tag rc
 
-      - name: Create deployment
-        uses: chrnorm/deployment-action@v2
+      - uses: chrnorm/deployment-action@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           environment: npm
-          environment-url: https://www.npmjs.com/package/veryfront/v/${{ steps.version.outputs.version }}
-          description: veryfront@${{ steps.version.outputs.version }}
+          environment-url: https://www.npmjs.com/package/veryfront/v/${{ needs.version.outputs.version }}
+          description: veryfront@${{ needs.version.outputs.version }}
           initial-status: success
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: binaries
+
+      - name: Create GitHub releases
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          GH_TOKEN: ${{ env.GITHUB_PAT }}
+        run: |
+          # Public repo release
+          gh release create "v${VERSION}" \
+            --repo veryfront/veryfront \
+            --title "v${VERSION}" \
+            --notes '```bash
+          npx veryfront@'"${VERSION}"'
+          ```' \
+            binaries/veryfront-macos-arm64/veryfront-macos-arm64 \
+            binaries/veryfront-macos-x64/veryfront-macos-x64 \
+            binaries/veryfront-linux-x64/veryfront-linux-x64 \
+            binaries/veryfront-linux-arm64/veryfront-linux-arm64 \
+            binaries/veryfront-windows-x64.exe/veryfront-windows-x64.exe
+
+      - name: Create source repo release
+        run: |
+          gh release create "v${{ needs.version.outputs.version }}" \
+            --title "v${{ needs.version.outputs.version }}" \
+            --notes 'Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${{ needs.version.outputs.version }}'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Trigger cloud-renderer deploy
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ env.GITHUB_PAT }}
           repository: veryfront/veryfront-cloud-renderer
-          event-type: npm-published
-          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
-
-      - uses: actions/download-artifact@v4
-        with:
-          path: binaries
-
-      - name: Create GitHub Release (public)
-        uses: softprops/action-gh-release@v1
-        with:
-          repository: veryfront/veryfront
-          tag_name: v${{ steps.version.outputs.version }}
-          name: v${{ steps.version.outputs.version }}
-          body: |
-            ```bash
-            npx veryfront@${{ steps.version.outputs.version }}
-            ```
-          files: |
-            binaries/veryfront-macos-arm64/veryfront-macos-arm64
-            binaries/veryfront-macos-x64/veryfront-macos-x64
-            binaries/veryfront-linux-x64/veryfront-linux-x64
-            binaries/veryfront-linux-arm64/veryfront-linux-arm64
-            binaries/veryfront-windows-x64.exe/veryfront-windows-x64.exe
-        env:
-          GITHUB_TOKEN: ${{ env.GITHUB_PAT }}
-
-      - name: Create GitHub Release (source repo)
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: v${{ steps.version.outputs.version }}
-          body: |
-            ```bash
-            npx veryfront@${{ steps.version.outputs.version }}
-            ```
-
-            Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${{ steps.version.outputs.version }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          event-type: veryfront-code-released
+          client-payload: '{"version": "${{ needs.version.outputs.version }}"}'
 
   # ============================================
   # CD: Stable Release (tags only)
@@ -275,7 +239,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build-binaries
+    needs: [version, build-binaries]
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -316,8 +280,7 @@ jobs:
       - name: Build and publish
         run: |
           deno task build:npm
-          cd npm
-          npm publish --access public
+          cd npm && npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
 
@@ -325,43 +288,51 @@ jobs:
         with:
           path: binaries
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          repository: veryfront/veryfront
-          tag_name: v${{ env.VERSION }}
-          name: v${{ env.VERSION }}
-          body: |
-            ## Install
+      - name: Create GitHub releases
+        run: |
+          # Public repo release with binaries and install scripts
+          gh release create "v${VERSION}" \
+            --repo veryfront/veryfront \
+            --title "v${VERSION}" \
+            --notes '## Install
 
-            ```bash
-            # macOS/Linux
-            curl -fsSL https://veryfront.com/install.sh | sh
+          ```bash
+          # macOS/Linux
+          curl -fsSL https://veryfront.com/install.sh | sh
 
-            # npm
-            npm install -g veryfront
-            ```
-          files: |
-            binaries/veryfront-macos-arm64/veryfront-macos-arm64
-            binaries/veryfront-macos-x64/veryfront-macos-x64
-            binaries/veryfront-linux-x64/veryfront-linux-x64
-            binaries/veryfront-linux-arm64/veryfront-linux-arm64
-            binaries/veryfront-windows-x64.exe/veryfront-windows-x64.exe
-            scripts/install.sh
+          # npm
+          npm install -g veryfront
+          ```' \
+            binaries/veryfront-macos-arm64/veryfront-macos-arm64 \
+            binaries/veryfront-macos-x64/veryfront-macos-x64 \
+            binaries/veryfront-linux-x64/veryfront-linux-x64 \
+            binaries/veryfront-linux-arm64/veryfront-linux-arm64 \
+            binaries/veryfront-windows-x64.exe/veryfront-windows-x64.exe \
+            scripts/install.sh \
             scripts/install.ps1
         env:
-          GITHUB_TOKEN: ${{ env.GITHUB_PAT }}
+          GH_TOKEN: ${{ env.GITHUB_PAT }}
 
-      - name: Create GitHub Release (source repo)
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v${{ env.VERSION }}
-          name: v${{ env.VERSION }}
-          generate_release_notes: true
-          body: |
-            Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${{ env.VERSION }}
+      - name: Create source repo release
+        run: |
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --generate-notes \
+            --notes 'Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v'"${VERSION}"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger cloud-renderer deploy
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ env.GITHUB_PAT }}
+          repository: veryfront/veryfront-cloud-renderer
+          event-type: veryfront-code-released
+          client-payload: '{"version": "${{ env.VERSION }}"}'
+
+  # ============================================
+  # CD: Update Homebrew (tags only)
+  # ============================================
 
   update-homebrew:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -378,29 +349,38 @@ jobs:
           GITHUB_PAT: op://VERYFRONT_CI/GITHUB_VERYFRONT_PAT/credential
 
       - name: Update Homebrew tap
-        run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: |
+            VERSION="${GITHUB_REF#refs/tags/v}"
 
-          for binary in veryfront-macos-arm64 veryfront-macos-x64 veryfront-linux-arm64 veryfront-linux-x64; do
-            curl -fsSL "https://github.com/veryfront/veryfront/releases/download/v${VERSION}/${binary}" -o "${binary}"
-            SHA=$(sha256sum "${binary}" | cut -d' ' -f1)
-            VAR_NAME="SHA256_$(echo ${binary} | tr '-' '_' | tr '[:lower:]' '[:upper:]')"
-            echo "${VAR_NAME}=${SHA}" >> $GITHUB_ENV
-          done
+            # Download binaries and calculate checksums
+            declare -A SHAS
+            for binary in veryfront-macos-arm64 veryfront-macos-x64 veryfront-linux-arm64 veryfront-linux-x64; do
+              curl -fsSL "https://github.com/veryfront/veryfront/releases/download/v${VERSION}/${binary}" -o "${binary}"
+              SHAS[$binary]=$(sha256sum "${binary}" | cut -d' ' -f1)
+            done
 
-          FORMULA=$(cat homebrew/veryfront.rb)
-          FORMULA="${FORMULA//VERSION_PLACEHOLDER/$VERSION}"
-          FORMULA="${FORMULA//SHA256_MACOS_ARM64_PLACEHOLDER/$SHA256_VERYFRONT_MACOS_ARM64}"
-          FORMULA="${FORMULA//SHA256_MACOS_X64_PLACEHOLDER/$SHA256_VERYFRONT_MACOS_X64}"
-          FORMULA="${FORMULA//SHA256_LINUX_ARM64_PLACEHOLDER/$SHA256_VERYFRONT_LINUX_ARM64}"
-          FORMULA="${FORMULA//SHA256_LINUX_X64_PLACEHOLDER/$SHA256_VERYFRONT_LINUX_X64}"
+            # Generate formula from template
+            FORMULA=$(cat homebrew/veryfront.rb)
+            FORMULA="${FORMULA//VERSION_PLACEHOLDER/$VERSION}"
+            FORMULA="${FORMULA//SHA256_MACOS_ARM64_PLACEHOLDER/${SHAS[veryfront-macos-arm64]}}"
+            FORMULA="${FORMULA//SHA256_MACOS_X64_PLACEHOLDER/${SHAS[veryfront-macos-x64]}}"
+            FORMULA="${FORMULA//SHA256_LINUX_ARM64_PLACEHOLDER/${SHAS[veryfront-linux-arm64]}}"
+            FORMULA="${FORMULA//SHA256_LINUX_X64_PLACEHOLDER/${SHAS[veryfront-linux-x64]}}"
 
-          git clone https://x-access-token:${GITHUB_PAT}@github.com/veryfront/homebrew-tap.git tap
-          mkdir -p tap/Formula
-          echo "$FORMULA" > tap/Formula/veryfront.rb
-          cd tap
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add Formula/veryfront.rb
-          git commit -m "Update veryfront to v${VERSION}" || true
-          git push || true
+            # Push to tap repo (fresh clone each retry to avoid conflicts)
+            rm -rf tap
+            git clone "https://x-access-token:${GITHUB_PAT}@github.com/veryfront/homebrew-tap.git" tap
+            mkdir -p tap/Formula
+            echo "$FORMULA" > tap/Formula/veryfront.rb
+            cd tap
+            git config user.name "GitHub Actions"
+            git config user.email "actions@github.com"
+            git add Formula/veryfront.rb
+            git diff --cached --quiet && echo "No changes to commit" && exit 0
+            git commit -m "Update veryfront to v${VERSION}"
+            git push
