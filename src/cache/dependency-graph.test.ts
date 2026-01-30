@@ -113,7 +113,6 @@ describe("filterLocalImports", () => {
       "./local.ts",
       "../parent.ts",
       "@/alias.ts",
-      "#veryfront/utils",
       "file:///absolute.ts",
       "react",
       "https://esm.sh/lodash",
@@ -124,11 +123,25 @@ describe("filterLocalImports", () => {
     expect(local).toContain("./local.ts");
     expect(local).toContain("../parent.ts");
     expect(local).toContain("@/alias.ts");
-    expect(local).toContain("#veryfront/utils");
     expect(local).toContain("file:///absolute.ts");
     expect(local).not.toContain("react");
     expect(local).not.toContain("https://esm.sh/lodash");
     expect(local).not.toContain("@tanstack/react-query");
+  });
+
+  it("should exclude #veryfront/* framework imports", () => {
+    const specifiers = [
+      "#veryfront/utils",
+      "#veryfront/platform/compat/runtime.ts",
+      "#veryfront/react/head-collector.ts",
+      "@/components/Button.tsx",
+    ];
+
+    const local = filterLocalImports(specifiers);
+    expect(local).not.toContain("#veryfront/utils");
+    expect(local).not.toContain("#veryfront/platform/compat/runtime.ts");
+    expect(local).not.toContain("#veryfront/react/head-collector.ts");
+    expect(local).toContain("@/components/Button.tsx");
   });
 });
 
