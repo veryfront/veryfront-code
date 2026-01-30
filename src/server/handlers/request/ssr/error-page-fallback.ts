@@ -1,6 +1,16 @@
+/**
+ * Error Page Fallback Handler
+ *
+ * Attempts to render custom error pages (404.tsx, 500.tsx, _error.tsx) from the pages directory.
+ * Supports optional cache injection for testing.
+ *
+ * @module server/handlers/request/ssr/error-page-fallback
+ */
+
 import type * as React from "react";
 import type { HandlerContext } from "../../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
+import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import { join as joinPath } from "#veryfront/platform/compat/path/index.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import { buildErrorPageCacheKey } from "#veryfront/cache";
@@ -13,6 +23,19 @@ interface ErrorPageOptions {
   statusCode: number;
   error?: Error;
   pathname?: string;
+}
+
+/** Injected cache repository for testing */
+let injectedCacheRepo: CacheRepository<string> | null = null;
+
+/**
+ * Inject a CacheRepository for testing.
+ * Call with null to restore default Map-based caching.
+ */
+export function __injectCacheForTests(
+  cacheRepo: CacheRepository<string> | null,
+): void {
+  injectedCacheRepo = cacheRepo;
 }
 
 export async function tryErrorPageFallback(
@@ -75,8 +98,39 @@ export async function tryErrorPageFallback(
 }
 
 const ERROR_PAGE_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"] as const;
+/** Special value to indicate "not found" in cache (distinguishes from cache miss) */
+const CACHE_NOT_FOUND = "__NOT_FOUND__";
 
 const errorPagePathCache = new Map<string, string | null>();
+
+/** Get cached path from injected repo or internal Map */
+async function getCachedPath(cacheKey: string): Promise<string | null | undefined> {
+  if (injectedCacheRepo) {
+    const cached = await injectedCacheRepo.get(cacheKey);
+    if (cached === CACHE_NOT_FOUND) return null;
+    if (cached) return cached;
+    return undefined; // cache miss
+  }
+  return errorPagePathCache.get(cacheKey);
+}
+
+/** Set cached path in injected repo or internal Map */
+async function setCachedPath(cacheKey: string, path: string | null): Promise<void> {
+  if (injectedCacheRepo) {
+    await injectedCacheRepo.set(cacheKey, path ?? CACHE_NOT_FOUND);
+  } else {
+    errorPagePathCache.set(cacheKey, path);
+  }
+}
+
+/** Delete cached path from injected repo or internal Map */
+async function deleteCachedPath(cacheKey: string): Promise<void> {
+  if (injectedCacheRepo) {
+    await injectedCacheRepo.delete(cacheKey);
+  } else {
+    errorPagePathCache.delete(cacheKey);
+  }
+}
 
 async function tryLoadErrorPage(
   pagesDir: string,
@@ -85,13 +139,13 @@ async function tryLoadErrorPage(
 ): Promise<React.ComponentType<unknown> | null> {
   const cacheKey = buildErrorPageCacheKey(ctx.projectId, ctx.projectDir, pageType);
 
-  const cachedPath = errorPagePathCache.get(cacheKey);
+  const cachedPath = await getCachedPath(cacheKey);
   if (cachedPath !== undefined) {
     if (!cachedPath) return null;
     try {
       return await loadErrorComponent(cachedPath, ctx);
     } catch {
-      errorPagePathCache.delete(cacheKey);
+      await deleteCachedPath(cacheKey);
     }
   }
 
@@ -101,21 +155,21 @@ async function tryLoadErrorPage(
     try {
       const resolvedPath = await ctx.adapter.fs.resolveFile(basePath);
       if (!resolvedPath) {
-        errorPagePathCache.set(cacheKey, null);
+        await setCachedPath(cacheKey, null);
         return null;
       }
 
       const fullPath = joinPath(ctx.projectDir, resolvedPath);
       const component = await loadErrorComponent(fullPath, ctx);
       if (component) {
-        errorPagePathCache.set(cacheKey, fullPath);
+        await setCachedPath(cacheKey, fullPath);
         return component;
       }
     } catch {
       // fall through
     }
 
-    errorPagePathCache.set(cacheKey, null);
+    await setCachedPath(cacheKey, null);
     return null;
   }
 
@@ -127,7 +181,7 @@ async function tryLoadErrorPage(
 
       const component = await loadErrorComponent(filePath, ctx);
       if (component) {
-        errorPagePathCache.set(cacheKey, filePath);
+        await setCachedPath(cacheKey, filePath);
         return component;
       }
     } catch {
@@ -135,7 +189,7 @@ async function tryLoadErrorPage(
     }
   }
 
-  errorPagePathCache.set(cacheKey, null);
+  await setCachedPath(cacheKey, null);
   return null;
 }
 

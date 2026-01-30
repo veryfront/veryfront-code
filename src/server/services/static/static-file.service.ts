@@ -4,13 +4,16 @@
  * Business logic for static file serving, extracted from StaticHandler.
  * Handles manifest resolution, file candidate determination, and cache strategy.
  *
+ * Supports optional FileSystemRepository injection for testing and advanced use cases.
+ *
  * @module server/services/static/static-file-service
  */
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { BuildManifest } from "#veryfront/build/production-build/index.ts";
 import type { CacheStrategy } from "#veryfront/security";
-import { createSecureFs, type SecureFs } from "#veryfront/security";
+import { createSecureFs } from "#veryfront/security";
+import type { FileSystemRepository } from "#veryfront/repositories/types.ts";
 import {
   getExtension,
   hasHashedFilename,
@@ -63,16 +66,70 @@ interface ManifestIndex {
 }
 
 /**
+ * Filesystem interface for StaticFileService
+ * Abstraction over SecureFs and FileSystemRepository
+ */
+interface FileSystemLike {
+  readFile(path: string): Promise<string>;
+  readFileBytes(path: string): Promise<Uint8Array>;
+  stat(path: string): Promise<{ isFile: boolean; mtime: Date | null }>;
+}
+
+/**
  * Static File Service
  *
  * Handles the business logic of static file serving:
  * - Manifest loading and caching
  * - File candidate resolution
  * - Cache strategy determination
+ *
+ * Supports optional FileSystemRepository injection for testing.
+ *
+ * @example
+ * ```typescript
+ * // Default usage (creates SecureFs internally)
+ * const service = new StaticFileService();
+ * const result = await service.resolveFile("/style.css", options);
+ *
+ * // With injected repository (for testing)
+ * const mockFs = new MockFileSystemRepository({ context, files: {...} });
+ * const service = new StaticFileService(mockFs);
+ * ```
  */
 export class StaticFileService {
   private static manifestCache = new Map<string, ManifestIndex>();
   private static manifestLoading = new Map<string, Promise<ManifestIndex | null>>();
+
+  /**
+   * Optional filesystem repository for dependency injection.
+   * When provided, used instead of creating SecureFs internally.
+   */
+  private readonly fsRepo?: FileSystemRepository;
+
+  /**
+   * Create a StaticFileService.
+   *
+   * @param fsRepo - Optional filesystem repository for testing/DI
+   */
+  constructor(fsRepo?: FileSystemRepository) {
+    this.fsRepo = fsRepo;
+  }
+
+  /**
+   * Get a filesystem interface for the given options.
+   * Uses injected repository if available, otherwise creates SecureFs.
+   */
+  private getFileSystem(options: StaticFileOptions): FileSystemLike {
+    if (this.fsRepo) {
+      return this.fsRepo;
+    }
+    return createSecureFs({
+      baseDir: options.projectDir,
+      adapter: options.adapter,
+      context: "static-serving",
+      throwOnError: false,
+    });
+  }
 
   /**
    * Resolve a static file from the request path
@@ -81,18 +138,13 @@ export class StaticFileService {
     requestPath: string,
     options: StaticFileOptions,
   ): Promise<StaticFileResult | null> {
-    const secureFs = createSecureFs({
-      baseDir: options.projectDir,
-      adapter: options.adapter,
-      context: "static-serving",
-      throwOnError: false,
-    });
+    const fs = this.getFileSystem(options);
 
     const normalizedPath = requestPath === "/" ? "/index.html" : requestPath;
-    const candidates = await this.buildCandidates(normalizedPath, options, secureFs);
+    const candidates = await this.buildCandidates(normalizedPath, options, fs);
 
     for (const candidate of candidates) {
-      const result = await this.tryResolveCandidate(candidate, requestPath, options, secureFs);
+      const result = await this.tryResolveCandidate(candidate, requestPath, options, fs);
       if (result) return result;
     }
 
@@ -105,7 +157,7 @@ export class StaticFileService {
   private async buildCandidates(
     normalizedPath: string,
     options: StaticFileOptions,
-    secureFs: SecureFs,
+    fs: FileSystemLike,
   ): Promise<Array<{ path: string; source: "manifest" | "dist" | "public" }>> {
     const candidates: Array<{ path: string; source: "manifest" | "dist" | "public" }> = [];
     const seen = new Set<string>();
@@ -118,7 +170,7 @@ export class StaticFileService {
     };
 
     // Try manifest first
-    const manifestPath = await this.resolveManifestAsset(normalizedPath, options, secureFs);
+    const manifestPath = await this.resolveManifestAsset(normalizedPath, options, fs);
     if (manifestPath) {
       addCandidate(manifestPath, "manifest");
     }
@@ -143,13 +195,13 @@ export class StaticFileService {
     candidate: { path: string; source: "manifest" | "dist" | "public" },
     requestPath: string,
     options: StaticFileOptions,
-    secureFs: SecureFs,
+    fs: FileSystemLike,
   ): Promise<StaticFileResult | null> {
     try {
-      const info = await secureFs.stat(candidate.path);
+      const info = await fs.stat(candidate.path);
       if (!info.isFile) return null;
 
-      const data = await secureFs.readFileBytes(candidate.path);
+      const data = await fs.readFileBytes(candidate.path);
       const etag = computeEtag(data);
       const ext = getExtension(candidate.path);
       const cacheStrategy = this.determineCacheStrategy(candidate, requestPath, options);
@@ -200,9 +252,9 @@ export class StaticFileService {
   private async resolveManifestAsset(
     requestPath: string,
     options: StaticFileOptions,
-    secureFs: SecureFs,
+    fs: FileSystemLike,
   ): Promise<string | null> {
-    const index = await this.loadManifestIndex(options, secureFs);
+    const index = await this.loadManifestIndex(options, fs);
     if (!index) return null;
 
     const normalized = normalizePath(
@@ -216,7 +268,7 @@ export class StaticFileService {
    */
   private async loadManifestIndex(
     options: StaticFileOptions,
-    secureFs: SecureFs,
+    fs: FileSystemLike,
   ): Promise<ManifestIndex | null> {
     const cacheKey = options.projectDir;
     const distRoot = joinPath(options.projectDir, "dist");
@@ -224,7 +276,7 @@ export class StaticFileService {
 
     let stat;
     try {
-      stat = await secureFs.stat(manifestPath);
+      stat = await fs.stat(manifestPath);
     } catch {
       return null;
     }
@@ -243,7 +295,7 @@ export class StaticFileService {
     // Load manifest
     loader = (async () => {
       try {
-        const manifestRaw = await secureFs.readFile(manifestPath);
+        const manifestRaw = await fs.readFile(manifestPath);
         const manifest = JSON.parse(manifestRaw) as BuildManifest;
         const assets = this.extractManifestAssets(manifest, distRoot);
         const indexValue = { assets, mtime: currentMtime };

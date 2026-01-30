@@ -1,5 +1,15 @@
+/**
+ * Domain Lookup Utility
+ *
+ * Resolves custom domains to project information via API lookup.
+ * Supports optional CacheRepository injection for testing and distributed caching.
+ *
+ * @module server/utils/domain-lookup
+ */
+
 import { logger } from "#veryfront/utils";
 import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import type { CacheRepository } from "#veryfront/repositories/types.ts";
 
 export interface DomainLookupResult {
   project_id: string;
@@ -23,9 +33,14 @@ const DOMAIN_CACHE_TTL_MS = 60_000;
 const DOMAIN_CACHE_MAX_ENTRIES = 1000;
 /** Timeout for domain lookup API calls (10 seconds) */
 const DOMAIN_LOOKUP_TIMEOUT_MS = 10_000;
+/** TTL in seconds for external cache repository */
+const DOMAIN_CACHE_TTL_SECONDS = 60;
 
 const domainCache = new Map<string, CacheEntry>();
 const inFlightRequests = new Map<string, Promise<DomainLookupResult | null>>();
+
+/** Injected cache repository for testing or distributed caching */
+let injectedCacheRepo: CacheRepository<string> | null = null;
 
 function normalizeDomain(domain: string): string {
   return domain.replace(/:\d+$/, "").toLowerCase();
@@ -60,14 +75,28 @@ export function lookupProjectByDomain(
       const cacheKey = normalizeDomain(domain);
       const now = Date.now();
 
-      const cached = domainCache.get(cacheKey);
-      if (cached?.expiresAt && cached.expiresAt > now) {
-        logger.debug("[DomainLookup] Cache hit", {
-          domain,
-          projectSlug: cached.result?.project_slug,
-          ttlRemaining: cached.expiresAt - now,
-        });
-        return cached.result;
+      // Try injected cache repository first (for testing or distributed caching)
+      if (injectedCacheRepo) {
+        const cached = await injectedCacheRepo.get(cacheKey);
+        if (cached) {
+          const result = JSON.parse(cached) as DomainLookupResult | null;
+          logger.debug("[DomainLookup] Repository cache hit", {
+            domain,
+            projectSlug: result?.project_slug,
+          });
+          return result;
+        }
+      } else {
+        // Fall back to internal Map-based cache
+        const cached = domainCache.get(cacheKey);
+        if (cached?.expiresAt && cached.expiresAt > now) {
+          logger.debug("[DomainLookup] Cache hit", {
+            domain,
+            projectSlug: cached.result?.project_slug,
+            ttlRemaining: cached.expiresAt - now,
+          });
+          return cached.result;
+        }
       }
 
       const inFlight = inFlightRequests.get(cacheKey);
@@ -82,14 +111,19 @@ export function lookupProjectByDomain(
       try {
         const result = await requestPromise;
 
-        domainCache.set(cacheKey, {
-          result,
-          expiresAt: now + DOMAIN_CACHE_TTL_MS,
-        });
+        // Store in injected cache repository or internal cache
+        if (injectedCacheRepo) {
+          await injectedCacheRepo.set(cacheKey, JSON.stringify(result), DOMAIN_CACHE_TTL_SECONDS);
+        } else {
+          domainCache.set(cacheKey, {
+            result,
+            expiresAt: now + DOMAIN_CACHE_TTL_MS,
+          });
 
-        if (domainCache.size > DOMAIN_CACHE_MAX_ENTRIES / 2) {
-          cleanupExpiredEntries();
-          evictOldestEntries();
+          if (domainCache.size > DOMAIN_CACHE_MAX_ENTRIES / 2) {
+            cleanupExpiredEntries();
+            evictOldestEntries();
+          }
         }
 
         return result;
@@ -194,11 +228,36 @@ function fetchDomainLookup(
 export function clearDomainCache(): void {
   domainCache.clear();
   inFlightRequests.clear();
+  if (injectedCacheRepo?.clear) {
+    void injectedCacheRepo.clear();
+  }
   logger.debug("[DomainLookup] Cache cleared");
 }
 
 export function getDomainCacheStats(): { size: number; maxSize: number } {
   return { size: domainCache.size, maxSize: DOMAIN_CACHE_MAX_ENTRIES };
+}
+
+/**
+ * Inject a CacheRepository for testing or distributed caching.
+ * Call with null to restore default Map-based caching.
+ *
+ * @example
+ * ```typescript
+ * import { MockCacheRepository, createMockRepositoryContext } from "#veryfront/repositories/testing";
+ *
+ * const mockCache = new MockCacheRepository({ context: createMockRepositoryContext() });
+ * __injectCacheForTests(mockCache);
+ *
+ * // Run tests...
+ *
+ * __injectCacheForTests(null); // Restore default
+ * ```
+ */
+export function __injectCacheForTests(
+  cacheRepo: CacheRepository<string> | null,
+): void {
+  injectedCacheRepo = cacheRepo;
 }
 
 export function getEnvironmentType(

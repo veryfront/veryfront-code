@@ -19,13 +19,67 @@ let cacheBackend: CacheBackend | null = null;
 let cacheInitialized = false;
 let cacheInitPromise: Promise<void> | null = null;
 
-const localFallback = new Map<string, TransformCacheEntry>();
+const defaultLocalFallback = new Map<string, TransformCacheEntry>();
+
+/**
+ * Cache interface for local fallback dependency injection.
+ */
+export interface LocalFallbackLike<K, V> {
+  get(key: K): V | undefined;
+  set(key: K, value: V): this;
+  delete(key: K): boolean;
+  has(key: K): boolean;
+  clear(): void;
+  readonly size: number;
+  entries(): IterableIterator<[K, V]>;
+}
+
+/** Injected caches for testing */
+let injectedLocalFallback: LocalFallbackLike<string, TransformCacheEntry> | null = null;
+let injectedCacheBackend: CacheBackend | null | undefined = undefined; // undefined = not injected
+
+function getLocalFallback(): LocalFallbackLike<string, TransformCacheEntry> {
+  return injectedLocalFallback ?? defaultLocalFallback;
+}
+
+function getEffectiveCacheBackend(): CacheBackend | null {
+  return injectedCacheBackend !== undefined ? injectedCacheBackend : cacheBackend;
+}
+
+/**
+ * Inject custom caches for testing.
+ * Call with null to restore default behavior.
+ */
+export function __injectCachesForTests(
+  caches: {
+    localFallback?: LocalFallbackLike<string, TransformCacheEntry> | null;
+    cacheBackend?: CacheBackend | null;
+  } | null,
+): void {
+  if (caches === null) {
+    injectedLocalFallback = null;
+    injectedCacheBackend = undefined;
+    return;
+  }
+  if (caches.localFallback !== undefined) injectedLocalFallback = caches.localFallback;
+  if (caches.cacheBackend !== undefined) injectedCacheBackend = caches.cacheBackend;
+}
+
+/**
+ * Reset initialization state for testing.
+ * This allows tests to simulate fresh initialization.
+ */
+export function __resetInitStateForTests(): void {
+  cacheInitialized = false;
+  cacheInitPromise = null;
+  cacheBackend = null;
+}
 
 registerCache("transform-cache", () => ({
   name: "transform-cache",
-  entries: localFallback.size,
+  entries: getLocalFallback().size,
   maxEntries: FALLBACK_MAX_ENTRIES,
-  backend: cacheBackend?.type ?? "uninitialized",
+  backend: getEffectiveCacheBackend()?.type ?? "uninitialized",
 }));
 
 export async function initializeTransformCache(): Promise<boolean> {
@@ -54,7 +108,8 @@ export async function initializeTransformCache(): Promise<boolean> {
 }
 
 export function isDistributedCacheEnabled(): boolean {
-  return cacheBackend?.type !== "memory" && cacheBackend !== null;
+  const backend = getEffectiveCacheBackend();
+  return backend?.type !== "memory" && backend !== null;
 }
 
 export interface CacheKeyOptions {
@@ -76,9 +131,10 @@ export function generateCacheKey(
 export async function getCachedTransformAsync(
   key: string,
 ): Promise<TransformCacheEntry | undefined> {
-  if (cacheBackend) {
+  const backend = getEffectiveCacheBackend();
+  if (backend) {
     try {
-      const raw = await cacheBackend.get(key);
+      const raw = await backend.get(key);
       if (raw) {
         const entry = JSON.parse(raw) as TransformCacheEntry;
         if (!entry.code) {
@@ -92,12 +148,13 @@ export async function getCachedTransformAsync(
     }
   }
 
-  return localFallback.get(key);
+  return getLocalFallback().get(key);
 }
 
 export function getCachedTransform(key: string): TransformCacheEntry | undefined {
-  if (cacheBackend?.type !== "memory" && cacheBackend !== null) return undefined;
-  return localFallback.get(key);
+  const backend = getEffectiveCacheBackend();
+  if (backend?.type !== "memory" && backend !== null) return undefined;
+  return getLocalFallback().get(key);
 }
 
 export async function setCachedTransformAsync(
@@ -108,10 +165,11 @@ export async function setCachedTransformAsync(
   bundleManifestId?: string,
 ): Promise<void> {
   const entry: TransformCacheEntry = { code, hash, timestamp: Date.now(), bundleManifestId };
+  const backend = getEffectiveCacheBackend();
 
-  if (cacheBackend) {
+  if (backend) {
     try {
-      await cacheBackend.set(key, JSON.stringify(entry), normalizeTtl(ttlSeconds));
+      await backend.set(key, JSON.stringify(entry), normalizeTtl(ttlSeconds));
       return;
     } catch (error) {
       logger.debug("[TransformCache] Backend set failed", { key, error });
@@ -128,17 +186,18 @@ export function setCachedTransform(
   ttlSeconds: number = DEFAULT_TTL_SECONDS,
 ): void {
   const entry: TransformCacheEntry = { code, hash, timestamp: Date.now() };
+  const backend = getEffectiveCacheBackend();
 
-  if (!cacheBackend) {
+  if (!backend) {
     setLocalFallback(key, entry);
     return;
   }
 
-  cacheBackend.set(key, JSON.stringify(entry), normalizeTtl(ttlSeconds)).catch((error) => {
+  backend.set(key, JSON.stringify(entry), normalizeTtl(ttlSeconds)).catch((error) => {
     logger.debug("[TransformCache] Backend set failed", { key, error });
   });
 
-  if (cacheBackend.type === "memory") {
+  if (backend.type === "memory") {
     setLocalFallback(key, entry);
   }
 }
@@ -148,24 +207,24 @@ function normalizeTtl(ttlSeconds: number): number {
 }
 
 function setLocalFallback(key: string, entry: TransformCacheEntry): void {
-  localFallback.set(key, entry);
-  if (localFallback.size > FALLBACK_MAX_ENTRIES) pruneLocalFallback();
+  const fallback = getLocalFallback();
+  fallback.set(key, entry);
+  if (fallback.size > FALLBACK_MAX_ENTRIES) pruneLocalFallback();
 }
 
 function pruneLocalFallback(): void {
-  const entries = Array.from(localFallback.entries()).sort(([, a], [, b]) =>
-    a.timestamp - b.timestamp
-  );
-  const excess = localFallback.size - FALLBACK_MAX_ENTRIES;
+  const fallback = getLocalFallback();
+  const entries = Array.from(fallback.entries()).sort(([, a], [, b]) => a.timestamp - b.timestamp);
+  const excess = fallback.size - FALLBACK_MAX_ENTRIES;
 
   for (let i = 0; i < excess; i++) {
     const [key] = entries[i]!;
-    localFallback.delete(key);
+    fallback.delete(key);
   }
 }
 
 export function destroyTransformCache(): void {
-  localFallback.clear();
+  getLocalFallback().clear();
 }
 
 /**
@@ -179,8 +238,9 @@ export function destroyTransformCache(): void {
  */
 export async function getDistributedTransformBackend(): Promise<CacheBackend | null> {
   await initializeTransformCache();
-  if (!cacheBackend || cacheBackend.type === "memory") return null;
-  return cacheBackend;
+  const backend = getEffectiveCacheBackend();
+  if (!backend || backend.type === "memory") return null;
+  return backend;
 }
 
 /** Result from getOrComputeTransform including metadata */
@@ -237,9 +297,9 @@ export function getTransformCacheStats(): {
   backend: string;
 } {
   return {
-    fallbackEntries: localFallback.size,
+    fallbackEntries: getLocalFallback().size,
     maxFallbackEntries: FALLBACK_MAX_ENTRIES,
-    backend: cacheBackend?.type ?? "uninitialized",
+    backend: getEffectiveCacheBackend()?.type ?? "uninitialized",
   };
 }
 
@@ -334,7 +394,7 @@ export async function warmupTransformCache(
     skipped,
     total: entries.length,
     durationMs,
-    backend: cacheBackend?.type,
+    backend: getEffectiveCacheBackend()?.type,
   });
 
   return { success, failed, skipped, durationMs };
@@ -355,8 +415,9 @@ export async function prewarmProjectTransforms(
   filePaths: string[],
 ): Promise<number> {
   await initializeTransformCache();
+  const backend = getEffectiveCacheBackend();
 
-  if (!cacheBackend || cacheBackend.type === "memory") {
+  if (!backend || backend.type === "memory") {
     logger.debug("[TransformCache] Prewarm skipped - no distributed cache");
     return 0;
   }
@@ -369,8 +430,8 @@ export async function prewarmProjectTransforms(
       // We don't know the exact cache key without content hash, but we can
       // use pattern matching if the backend supports it
       const pattern = `v*:${projectId}:${filePath}:*:ssr`;
-      if (typeof (cacheBackend as any).scan === "function") {
-        const keys = await (cacheBackend as any).scan(pattern, 10);
+      if (typeof (backend as any).scan === "function") {
+        const keys = await (backend as any).scan(pattern, 10);
         for (const key of keys) {
           const cached = await getCachedTransformAsync(key);
           if (cached) {

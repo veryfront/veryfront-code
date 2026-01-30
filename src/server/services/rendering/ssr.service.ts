@@ -4,6 +4,9 @@
  * Business logic for server-side rendering, extracted from SSRHandler.
  * This service handles rendering logic independent of HTTP concerns.
  *
+ * Supports optional CacheRepository injection for render result caching
+ * and dependency injection in tests.
+ *
  * @module server/services/rendering/ssr-service
  */
 
@@ -33,6 +36,7 @@ import {
   HTTP_OK,
   HTTP_UNAVAILABLE,
 } from "#veryfront/utils/constants/index.ts";
+import type { CacheRepository } from "#veryfront/repositories/types.ts";
 
 /**
  * Result of an SSR render operation
@@ -102,8 +106,38 @@ export interface MemoryStatus {
  * - Renderer lifecycle management
  * - Page rendering
  * - Error classification
+ *
+ * Supports optional CacheRepository injection for testing and
+ * future render result caching.
+ *
+ * @example
+ * ```typescript
+ * // Default usage
+ * const service = new SSRService();
+ * const result = await service.renderPage(ctx, options);
+ *
+ * // With injected cache (for testing or custom caching)
+ * const mockCache = new MockCacheRepository({ context });
+ * const service = new SSRService({ cacheRepo: mockCache });
+ * ```
  */
 export class SSRService {
+  /**
+   * Optional cache repository for render result caching.
+   * Reserved for future use - currently rendering delegates to RendererAdapter.
+   */
+  private readonly cacheRepo?: CacheRepository<string>;
+
+  /**
+   * Create an SSRService.
+   *
+   * @param options - Optional configuration
+   * @param options.cacheRepo - Cache repository for render results (reserved for future use)
+   */
+  constructor(options?: { cacheRepo?: CacheRepository<string> }) {
+    this.cacheRepo = options?.cacheRepo;
+  }
+
   /**
    * Check if the request should be rejected due to memory pressure
    */

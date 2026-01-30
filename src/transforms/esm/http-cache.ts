@@ -283,7 +283,7 @@ async function validateBundleDepsExist(
         if (originalUrl) {
           const normalizedUrl = normalizeHttpUrl(originalUrl);
           const cacheKey = `${absoluteCacheDir}:${normalizedUrl}`;
-          cachedPaths.set(cacheKey, canonicalPath);
+          getCachedPaths().set(cacheKey, canonicalPath);
         }
 
         // Queue transitive deps for recovery
@@ -311,13 +311,74 @@ type CacheOptions = {
   reactVersion?: string;
 };
 
-const cachedPaths = new LRUCache<string, string>({ maxEntries: HTTP_MODULE_CACHE_MAX_ENTRIES });
-const processingStack = new Set<string>();
+/**
+ * Cache interface for dependency injection (matches LRU essential methods).
+ */
+export interface HttpCacheLike<K, V> {
+  get(key: K): V | undefined;
+  set(key: K, value: V): void;
+  delete(key: K): void;
+}
 
-/** Tracks last TTL refresh per hash. Refresh every 4h to keep 20h+ remaining (24h total). */
-const lastDistributedRefresh = new LRUCache<string, number>({
+/**
+ * Set interface for dependency injection.
+ */
+export interface SetLike<T> {
+  has(value: T): boolean;
+  add(value: T): this;
+  delete(value: T): boolean;
+}
+
+const defaultCachedPaths = new LRUCache<string, string>({
   maxEntries: HTTP_MODULE_CACHE_MAX_ENTRIES,
 });
+const defaultProcessingStack = new Set<string>();
+
+/** Tracks last TTL refresh per hash. Refresh every 4h to keep 20h+ remaining (24h total). */
+const defaultLastDistributedRefresh = new LRUCache<string, number>({
+  maxEntries: HTTP_MODULE_CACHE_MAX_ENTRIES,
+});
+
+/** Injected caches for testing */
+let injectedCachedPaths: HttpCacheLike<string, string> | null = null;
+let injectedProcessingStack: SetLike<string> | null = null;
+let injectedLastDistributedRefresh: HttpCacheLike<string, number> | null = null;
+
+function getCachedPaths(): HttpCacheLike<string, string> {
+  return injectedCachedPaths ?? defaultCachedPaths;
+}
+
+function getProcessingStack(): SetLike<string> {
+  return injectedProcessingStack ?? defaultProcessingStack;
+}
+
+function getLastDistributedRefresh(): HttpCacheLike<string, number> {
+  return injectedLastDistributedRefresh ?? defaultLastDistributedRefresh;
+}
+
+/**
+ * Inject custom caches for testing.
+ * Call with null to restore default behavior.
+ */
+export function __injectCachesForTests(
+  caches: {
+    cachedPaths?: HttpCacheLike<string, string> | null;
+    processingStack?: SetLike<string> | null;
+    lastDistributedRefresh?: HttpCacheLike<string, number> | null;
+  } | null,
+): void {
+  if (caches === null) {
+    injectedCachedPaths = null;
+    injectedProcessingStack = null;
+    injectedLastDistributedRefresh = null;
+    return;
+  }
+  if (caches.cachedPaths !== undefined) injectedCachedPaths = caches.cachedPaths;
+  if (caches.processingStack !== undefined) injectedProcessingStack = caches.processingStack;
+  if (caches.lastDistributedRefresh !== undefined) {
+    injectedLastDistributedRefresh = caches.lastDistributedRefresh;
+  }
+}
 const DISTRIBUTED_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 /** Per-request accumulator for bundle metadata during cacheHttpImportsToLocal. */
@@ -458,17 +519,17 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   const cacheDir = ensureAbsoluteDir(options.cacheDir);
   const cacheKey = `${cacheDir}:${normalizedUrl}`;
 
-  const existing = cachedPaths.get(cacheKey);
+  const existing = getCachedPaths().get(cacheKey);
   if (existing) {
     if (await exists(existing)) return existing;
-    cachedPaths.delete(cacheKey);
+    getCachedPaths().delete(cacheKey);
   }
 
   const cachePath = join(cacheDir, `http-${simpleHash(normalizedUrl)}.mjs`);
   const fs = createFileSystem();
 
   if (await exists(cachePath)) {
-    cachedPaths.set(cacheKey, cachePath);
+    getCachedPaths().set(cacheKey, cachePath);
 
     // Refresh distributed cache TTL so bundles outlive transforms that reference them.
     // Without this, bundles expire (24h) while SSR transforms (6h) are still valid.
@@ -477,7 +538,7 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
       const hash = simpleHash(normalizedUrl);
       const hashStr = String(hash);
       const now = Date.now();
-      const lastRefresh = lastDistributedRefresh.get(hashStr);
+      const lastRefresh = getLastDistributedRefresh().get(hashStr);
       const needsRefresh = !lastRefresh || (now - lastRefresh > DISTRIBUTED_REFRESH_INTERVAL_MS);
 
       if (needsRefresh) {
@@ -492,7 +553,7 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
               HTTP_MODULE_DISTRIBUTED_TTL_SEC,
             ),
           ]);
-          lastDistributedRefresh.set(hashStr, now);
+          getLastDistributedRefresh().set(hashStr, now);
           logger.debug("[HTTP-CACHE] Refreshed distributed cache TTL", { hash });
 
           // Co-refresh manifest TTL when any bundle is refreshed
@@ -525,7 +586,7 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
     return cachePath;
   }
 
-  if (processingStack.has(normalizedUrl)) {
+  if (getProcessingStack().has(normalizedUrl)) {
     logger.debug("[HTTP-CACHE] Circular dependency detected, returning expected path", {
       url: normalizedUrl,
     });
@@ -593,7 +654,7 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
               }
               await fs.mkdir(cacheDir, { recursive: true });
               await fs.writeTextFile(cachePath, cachedCode);
-              cachedPaths.set(cacheKey, cachePath);
+              getCachedPaths().set(cacheKey, cachePath);
               return cachePath;
             }
           } else {
@@ -608,7 +669,7 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
             }
             await fs.mkdir(cacheDir, { recursive: true });
             await fs.writeTextFile(cachePath, cachedCode);
-            cachedPaths.set(cacheKey, cachePath);
+            getCachedPaths().set(cacheKey, cachePath);
             return cachePath;
           }
         }
@@ -648,11 +709,11 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
 
   let code = await response.text();
 
-  processingStack.add(normalizedUrl);
+  getProcessingStack().add(normalizedUrl);
   try {
     code = await rewriteModuleImports(code, normalizedUrl, options);
   } finally {
-    processingStack.delete(normalizedUrl);
+    getProcessingStack().delete(normalizedUrl);
   }
 
   await fs.mkdir(cacheDir, { recursive: true });
@@ -686,7 +747,7 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
     }
   }
 
-  cachedPaths.set(cacheKey, cachePath);
+  getCachedPaths().set(cacheKey, cachePath);
 
   // Record bundle metadata for manifest creation
   const accumulatorAfterWrite = bundleAccumulatorStorage.getStore();
@@ -908,13 +969,13 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
         await fs.writeTextFile(cachePath, cachedCode);
 
         // Update LRU cache so subsequent lookups find this recovered bundle.
-        // Without this, cachedPaths.get() would miss and trigger redundant recovery attempts.
+        // Without this, getCachedPaths().get() would miss and trigger redundant recovery attempts.
         // We need to reconstruct the original URL from the hash to build the cache key.
         const originalUrl = await distributed.get(distributedKey("hash", hash));
         if (originalUrl) {
           const normalizedUrl = normalizeHttpUrl(originalUrl);
           const cacheKey = `${absoluteCacheDir}:${normalizedUrl}`;
-          cachedPaths.set(cacheKey, cachePath);
+          getCachedPaths().set(cacheKey, cachePath);
           logger.debug("[HTTP-CACHE] Updated LRU cache after recovery", { hash, cacheKey });
         }
 
@@ -1149,13 +1210,13 @@ export async function ensureHttpBundlesExist(
           logger.debug("[HTTP-CACHE] Wrote bundle to disk", { hash, path: canonicalPath });
 
           // Update LRU cache so subsequent lookups find this recovered bundle.
-          // Without this, cachedPaths.get() would miss and trigger redundant recovery.
+          // Without this, getCachedPaths().get() would miss and trigger redundant recovery.
           // Look up the original URL from distributed cache to build the cache key.
           const originalUrl = await distributed.get(distributedKey("hash", hash));
           if (originalUrl) {
             const normalizedUrl = normalizeHttpUrl(originalUrl);
             const cacheKey = `${absoluteCacheDir}:${normalizedUrl}`;
-            cachedPaths.set(cacheKey, canonicalPath);
+            getCachedPaths().set(cacheKey, canonicalPath);
           }
 
           // Scan recovered code for transitive HTTP bundle dependencies.

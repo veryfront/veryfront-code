@@ -11,10 +11,13 @@
  * - Two-phase data fetching: load all modules first, then fetch all data in parallel
  * - Supports both /pages/ and /app/ router directories
  *
+ * Supports optional CacheRepository injection for CSS cache testing.
+ *
  * @module rendering/orchestrator/pipeline
  */
 
 import { rendererLogger as logger } from "#veryfront/utils";
+import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import { createBuildVersion } from "#veryfront/utils/version.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -56,6 +59,19 @@ const CSS_SSR_TIMEOUT_MS = 5000;
 const pageCssCache = new Map<string, string>();
 const PAGE_CSS_CACHE_MAX_SIZE = 200;
 
+/** Injected cache repository for testing */
+let injectedCssCacheRepo: CacheRepository<string> | null = null;
+
+/**
+ * Inject a CacheRepository for CSS cache testing.
+ * Call with null to restore default Map-based caching.
+ */
+export function __injectCssCacheForTests(
+  cacheRepo: CacheRepository<string> | null,
+): void {
+  injectedCssCacheRepo = cacheRepo;
+}
+
 /** Create a cache key for page CSS */
 function getPageCssCacheKey(
   projectId: string | undefined,
@@ -68,18 +84,48 @@ function getPageCssCacheKey(
   }`;
 }
 
-/** Get cached CSS for a page (if available) */
-function getCachedPageCss(cacheKey: string): string | undefined {
+/** Get cached CSS for a page (if available) - async to support injected repo */
+async function _getCachedPageCssAsync(cacheKey: string): Promise<string | undefined> {
+  if (injectedCssCacheRepo) {
+    const cached = await injectedCssCacheRepo.get(cacheKey);
+    return cached ?? undefined;
+  }
   return pageCssCache.get(cacheKey);
 }
 
-/** Cache CSS for a page */
-function cachePageCss(cacheKey: string, css: string): void {
+/** Get cached CSS for a page (if available) - sync for backward compatibility */
+function getCachedPageCss(cacheKey: string): string | undefined {
+  // Note: Can't use injected repo synchronously, falls back to internal cache
+  if (injectedCssCacheRepo) return undefined;
+  return pageCssCache.get(cacheKey);
+}
+
+/** Cache CSS for a page - async to support injected repo */
+async function cachePageCssAsync(cacheKey: string, css: string): Promise<void> {
+  if (injectedCssCacheRepo) {
+    await injectedCssCacheRepo.set(cacheKey, css);
+    return;
+  }
+  cachePageCssInternal(cacheKey, css);
+}
+
+/** Cache CSS for a page - internal implementation */
+function cachePageCssInternal(cacheKey: string, css: string): void {
   if (pageCssCache.size >= PAGE_CSS_CACHE_MAX_SIZE && !pageCssCache.has(cacheKey)) {
     const firstKey = pageCssCache.keys().next().value as string | undefined;
     if (firstKey) pageCssCache.delete(firstKey);
   }
   pageCssCache.set(cacheKey, css);
+}
+
+/** Cache CSS for a page - sync for backward compatibility */
+function cachePageCss(cacheKey: string, css: string): void {
+  // Fire-and-forget if using injected repo
+  if (injectedCssCacheRepo) {
+    void cachePageCssAsync(cacheKey, css);
+    return;
+  }
+  cachePageCssInternal(cacheKey, css);
 }
 
 /** Timeout for module loading in resolvePageData (prevents hanging on slow transforms) */
