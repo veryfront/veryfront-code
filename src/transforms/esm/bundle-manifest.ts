@@ -19,6 +19,7 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { CacheBackends, createDistributedCacheAccessor } from "../../cache/backend.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
+import { ensureHttpBundlesExist } from "./http-cache.ts";
 
 const LOG_PREFIX = "[BundleManifest]";
 
@@ -141,9 +142,10 @@ export async function loadBundleManifest(
 
 /**
  * Validate that ALL bundles in a manifest group exist on the local filesystem.
+ * If bundles are missing, attempts to recover them from distributed cache.
  *
- * This is the core safety check: if any bundle is missing, the transform
- * should be re-computed rather than returning a 500 error.
+ * This is the core safety check: if any bundle is missing after recovery attempts,
+ * the transform should be re-computed rather than returning a 500 error.
  */
 export async function validateBundleGroup(
   manifestId: string,
@@ -157,25 +159,41 @@ export async function validateBundleGroup(
     return { valid: false, failedHashes: [] };
   }
 
-  const failedHashes: string[] = [];
+  // First pass: check which bundles are missing locally
+  const missingBundles: Array<{ path: string; hash: string }> = [];
 
   await Promise.all(
     manifest.bundles.map(async (bundle) => {
       const bundlePath = join(cacheDir, `http-${bundle.hash}.mjs`);
       const fileExists = await exists(bundlePath);
       if (!fileExists) {
-        failedHashes.push(bundle.hash);
+        missingBundles.push({ path: bundlePath, hash: bundle.hash });
       }
     }),
   );
 
-  if (failedHashes.length > 0) {
-    logger.debug(`${LOG_PREFIX} Validation failed`, {
+  // If bundles are missing, try to recover them from distributed cache
+  if (missingBundles.length > 0) {
+    logger.info(`${LOG_PREFIX} Attempting to recover missing bundles`, {
       manifestId: manifestId.slice(0, 12),
+      missing: missingBundles.length,
       total: manifest.bundles.length,
-      failed: failedHashes.length,
     });
-    return { valid: false, failedHashes };
+
+    const unrecoverableHashes = await ensureHttpBundlesExist(missingBundles, cacheDir);
+
+    if (unrecoverableHashes.length > 0) {
+      logger.warn(`${LOG_PREFIX} Some bundles could not be recovered`, {
+        manifestId: manifestId.slice(0, 12),
+        unrecoverable: unrecoverableHashes,
+      });
+      return { valid: false, failedHashes: unrecoverableHashes };
+    }
+
+    logger.info(`${LOG_PREFIX} All missing bundles recovered successfully`, {
+      manifestId: manifestId.slice(0, 12),
+      recovered: missingBundles.length,
+    });
   }
 
   return { valid: true, failedHashes: [] };
