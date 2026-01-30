@@ -271,7 +271,7 @@
     "start:headless": "deno run --allow-all scripts/server.ts --headless",
     "proxy": "deno run --allow-net --allow-env --allow-read src/proxy/main.ts",
     "renderer": "deno run --allow-all --unstable-net --unstable-worker-options src/cli/main.ts dev",
-    "build": "deno run -A scripts/generate-templates-manifest.ts && deno compile --allow-all --output ../../bin/veryfront src/cli/main.ts",
+    "build": "deno run -A scripts/generate-templates-manifest.ts && deno compile --allow-all --output ./bin/veryfront src/cli/main.ts",
     "build:npm": "deno run -A scripts/build-npm-dnt.ts",
     "release": "deno run -A scripts/release.ts",
     "test": "VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --allow-all --unstable-worker-options --unstable-net",
@@ -318,7 +318,9 @@
     "batch:apply": "deno run -A scripts/batch-simplify/batch-simplify.ts apply",
     "rlm:example": "deno run -A scripts/rlm-ts/examples/basic.ts",
     "rlm:explore": "deno run -A scripts/rlm-ts/apps/explore.ts",
-    "rlm:audit": "deno run -A scripts/rlm-ts/apps/audit.ts"
+    "rlm:audit": "deno run -A scripts/rlm-ts/apps/audit.ts",
+    "start-split": "./scripts/split-mode/start.sh",
+    "test-split": "./scripts/split-mode/test.sh"
   },
   "lint": {
     "include": [
