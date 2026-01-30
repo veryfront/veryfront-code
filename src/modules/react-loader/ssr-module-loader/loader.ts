@@ -1040,7 +1040,9 @@ export class SSRModuleLoader {
     // - contentHash: Invalidates when source content changes
     // This prevents Deno's module cache from returning stale modules
     const versionPrefix = VERSION.replace(/\./g, "-"); // e.g., "0-1-3-rc-113"
-    const hashSuffix = contentHash ? `.v${versionPrefix}.${contentHash.slice(0, 8)}` : `.v${versionPrefix}`;
+    const hashSuffix = contentHash
+      ? `.v${versionPrefix}.${contentHash.slice(0, 8)}`
+      : `.v${versionPrefix}`;
     const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, `${hashSuffix}.js`);
     return join(tmpDir, jsPath);
   }
