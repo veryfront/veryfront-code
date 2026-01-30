@@ -15,6 +15,19 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { minifyCSS } from "#veryfront/build/asset-pipeline/tailwind-processor/css-utils.ts";
 
+// Provide localStorage shim for plugins that use util-deprecate (which checks localStorage)
+// This prevents "LocalStorage is not supported in this context" errors in Deno
+if (typeof (globalThis as Record<string, unknown>).localStorage === "undefined") {
+  (globalThis as Record<string, unknown>).localStorage = {
+    getItem: () => null,
+    setItem: () => {},
+    removeItem: () => {},
+    clear: () => {},
+    key: () => null,
+    length: 0,
+  };
+}
+
 // Set up global shims for tailwindcss subpaths - used by dynamically loaded plugins
 (globalThis as Record<string, unknown>).__tailwindPluginShim = {
   default: plugin,
