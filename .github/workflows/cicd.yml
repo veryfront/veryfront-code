@@ -156,7 +156,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      deployments: write
       id-token: write
     steps:
       - uses: actions/checkout@v4
@@ -186,14 +185,6 @@ jobs:
           VERYFRONT_VERSION=$VERSION deno task build:npm
           cd npm && jq ".version = \"$VERSION\"" package.json > package.json.tmp && mv package.json.tmp package.json
           npm publish --access public --tag rc
-
-      - uses: chrnorm/deployment-action@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          environment: npm
-          environment-url: https://www.npmjs.com/package/veryfront/v/${{ needs.version.outputs.version }}
-          description: veryfront@${{ needs.version.outputs.version }}
-          initial-status: success
 
       - uses: actions/download-artifact@v4
         with:
