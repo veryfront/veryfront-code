@@ -629,7 +629,8 @@ export function extractCandidatesFromFiles(
  */
 export async function loadModuleFromEsmSh(packageName: string): Promise<unknown> {
   // Step 1: Fetch the redirect stub to find the actual bundle URL
-  const stubUrl = `https://esm.sh/${packageName}?bundle&external=tailwindcss`;
+  // Use target=denonext to avoid browser-specific APIs like localStorage
+  const stubUrl = `https://esm.sh/${packageName}?bundle&external=tailwindcss&target=denonext`;
   logger.debug("[tailwind] Fetching esm.sh stub", { url: stubUrl });
 
   const stubResponse = await fetch(stubUrl);
