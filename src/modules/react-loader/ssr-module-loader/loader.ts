@@ -1035,9 +1035,12 @@ export class SSRModuleLoader {
       ? filePath.substring(projectDir.length)
       : filePath;
 
-    // Include content hash in filename to ensure each content version gets a unique file
+    // Include VERSION and content hash in filename to ensure cache invalidation:
+    // - VERSION: Invalidates when framework code changes (e.g., transform bug fixes)
+    // - contentHash: Invalidates when source content changes
     // This prevents Deno's module cache from returning stale modules
-    const hashSuffix = contentHash ? `.${contentHash.slice(0, 8)}` : "";
+    const versionPrefix = VERSION.replace(/\./g, "-"); // e.g., "0-1-3-rc-113"
+    const hashSuffix = contentHash ? `.v${versionPrefix}.${contentHash.slice(0, 8)}` : `.v${versionPrefix}`;
     const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, `${hashSuffix}.js`);
     return join(tmpDir, jsPath);
   }
