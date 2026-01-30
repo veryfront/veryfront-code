@@ -2,7 +2,8 @@
 
 **Date**: 2026-01-30
 **Severity**: High (P1)
-**Duration**: ~2 hours
+**Duration**: ~1 hour 20 minutes (01:26 - 02:45 UTC)
+**Status**: Resolved
 **Affected Projects**: codersociety.com and any project using Tailwind CSS v4 plugins
 
 ## Summary
@@ -24,6 +25,15 @@ Veryfront renderer pods crashed with "Failed to load plugin 'tailwindcss-animate
 - **02:08 UTC** - Fourth fix: Pin ALL packages to specific versions
 - **02:14 UTC** - Build succeeded, v0.1.0-rc.66 released
 - **02:14 UTC** - Cloud-renderer deployment triggered
+- **02:17 UTC** - Staging deployment timed out (proxy not ready)
+- **02:23 UTC** - Manual production deployment via `kubectl set image`
+- **02:25 UTC** - Fix not working - wrong URL bundled (pinned vs unpinned mismatch)
+- **02:28 UTC** - Fifth fix: Use unpinned esm.sh URLs to match runtime imports
+- **02:30 UTC** - Build failed: esm.sh still returning 500 for `tailwind-scrollbar-hide` (unpinned)
+- **02:34 UTC** - Sixth fix: Add PINNED_PLUGIN_VERSIONS to tailwind-compiler.ts to use pinned URLs at runtime
+- **02:40 UTC** - Build succeeded, v0.1.0-rc.69 released
+- **02:43 UTC** - Manual production deployment via `kubectl set image`
+- **02:45 UTC** - **RESOLVED**: codersociety.com returning HTTP 200
 
 ## Root Cause Analysis
 
@@ -97,7 +107,9 @@ Updated `.github/workflows/cicd.yml` to include commonly used Tailwind plugins w
 
 1. **PowerShell parsing error on Windows**: The `--` prefix was interpreted as a unary operator by PowerShell. Fix: explicitly set `shell: bash`.
 
-2. **esm.sh intermittent 500 errors**: Unpinned package versions occasionally return 500 errors. Fix: pin ALL packages to specific versions.
+2. **esm.sh intermittent 500 errors**: Unpinned package versions occasionally return 500 errors. Initial fix was to pin versions, but this caused URL mismatch.
+
+3. **URL mismatch between compile and runtime**: Bundling `https://esm.sh/pkg@1.0.0` doesn't work when runtime imports `https://esm.sh/pkg`. The compiled binary looks for an exact URL match. Fix: bundle the same unpinned URLs that runtime uses.
 
 ## Learnings
 
@@ -157,6 +169,8 @@ Updated `.github/workflows/cicd.yml` to include commonly used Tailwind plugins w
 - `1ca075be` - fix(build): use pinned version for tailwind-scrollbar-hide
 - `e189c511` - fix(build): use bash shell for compile step on all platforms
 - `4a150800` - fix(build): pin all esm.sh packages to avoid intermittent 500 errors
+- `9d0dfa22` - fix(build): use unpinned esm.sh URLs to match runtime imports
+- `ea6c8b9a` - fix(tailwind): use pinned plugin versions at both compile and runtime
 
 ## References
 
