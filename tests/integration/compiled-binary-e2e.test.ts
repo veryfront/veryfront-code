@@ -1159,6 +1159,50 @@ export default function MyComponent() {
     });
   });
 
+  // Test: Deeply nested relative imports (multi-level ../ paths)
+  it("should handle deeply nested relative imports with multiple levels", async () => {
+    const projectDir = await createTestProject(
+      "deep-relative-import-test",
+      `export default function Placeholder() { return null; }`, // Placeholder, we use additionalFiles for the real page
+      {
+        "pages/admin/settings/index.tsx": `
+import Button from "../../../components/ui/Button";
+import { formatDate } from "../../../lib/utils/date";
+
+export default function SettingsPage() {
+  return (
+    <div id="settings-page">
+      <h1>Settings</h1>
+      <p id="date">{formatDate()}</p>
+      <Button />
+    </div>
+  );
+}
+`,
+        "components/ui/Button.tsx": `
+export default function Button() {
+  return <button id="ui-button">Click me</button>;
+}
+`,
+        "lib/utils/date.ts": `
+export function formatDate() {
+  return "2024-01-01";
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/admin/settings`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+      assertStringIncludes(html, "settings-page", "Should render settings page");
+      assertStringIncludes(html, "ui-button", "Should render Button component from deep path");
+      assertStringIncludes(html, "2024-01-01", "Should render formatted date from lib/utils");
+    });
+  });
+
   // Test: Client components with "use client" directive
   it("should handle client components with use client directive", async () => {
     const projectDir = await createTestProject(
