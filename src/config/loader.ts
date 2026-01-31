@@ -13,6 +13,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getErrorMessage } from "../errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 export type { VeryfrontConfig } from "./types.ts";
 
 /**
@@ -24,6 +25,30 @@ export type { VeryfrontConfig } from "./types.ts";
  */
 function getDefaultImportMapForConfig(): { imports: ReturnType<typeof getReactImportMap> } {
   return { imports: getReactImportMap(REACT_DEFAULT_VERSION) };
+}
+
+/**
+ * Creates default fs config based on environment.
+ * In proxy mode (PROXY_MODE=1), uses veryfront-api filesystem.
+ * Otherwise uses local filesystem.
+ */
+function getDefaultFsConfig(): VeryfrontConfig["fs"] {
+  const isProxyMode = getEnv("PROXY_MODE") === "1";
+  const apiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
+
+  if (isProxyMode && apiBaseUrl) {
+    return {
+      type: "veryfront-api",
+      veryfront: {
+        apiBaseUrl,
+        proxyMode: true,
+        cache: { enabled: true, ttl: 60000 },
+        retry: { maxRetries: 3, initialDelay: 500, maxDelay: 5000 },
+      },
+    };
+  }
+
+  return { type: "local" };
 }
 
 /**
@@ -39,6 +64,7 @@ function createFreshDefaults(): Partial<VeryfrontConfig> {
   return {
     title: "Veryfront App",
     description: "Built with Veryfront",
+    fs: getDefaultFsConfig(),
     experimental: {
       esmLayouts: true,
     },
@@ -328,38 +354,6 @@ export function getConfig(
         isVirtualFS,
       });
 
-      // Check for VERYFRONT_CONFIG env var (used by split-mode scripts)
-      // This provides infrastructure overrides (fs, cache) that get merged with project config
-      let envOverrides: Partial<VeryfrontConfig> | null = null;
-      const envConfigPath = Deno.env.get("VERYFRONT_CONFIG");
-      if (envConfigPath) {
-        const fs = createFileSystem();
-        const absoluteConfigPath = envConfigPath.startsWith("/")
-          ? envConfigPath
-          : join(Deno.cwd(), envConfigPath);
-
-        try {
-          const exists = await fs.exists(absoluteConfigPath);
-          if (exists) {
-            serverLogger.debug("[CONFIG] Loading overrides from VERYFRONT_CONFIG env var", {
-              path: absoluteConfigPath,
-            });
-            const configUrl = `file://${absoluteConfigPath}?t=${Date.now()}-${crypto.randomUUID()}`;
-            const configModule = await import(configUrl);
-            envOverrides = configModule.default || configModule;
-            serverLogger.debug("[CONFIG] Loaded VERYFRONT_CONFIG overrides", {
-              hasFs: !!envOverrides?.fs,
-              hasLayout: !!envOverrides?.layout,
-            });
-          }
-        } catch (error) {
-          serverLogger.debug("[CONFIG] Failed to load VERYFRONT_CONFIG:", {
-            path: absoluteConfigPath,
-            error: getErrorMessage(error),
-          });
-        }
-      }
-
       const configFiles = ["veryfront.config.js", "veryfront.config.ts", "veryfront.config.mjs"];
 
       for (const configFile of configFiles) {
@@ -367,29 +361,7 @@ export function getConfig(
         if (!(await adapter.fs.exists(configPath))) continue;
 
         try {
-          let merged = await loadAndMergeConfig(configPath, effectiveCacheKey, adapter);
-
-          // Apply VERYFRONT_CONFIG overrides (infrastructure settings like fs, cache)
-          // These override project config for infrastructure but preserve project's app/layout
-          if (envOverrides) {
-            serverLogger.debug("[CONFIG] Applying VERYFRONT_CONFIG overrides to project config", {
-              projectLayout: merged.layout,
-              projectApp: merged.app,
-            });
-            merged = {
-              ...merged,
-              ...envOverrides,
-              // Keep project's app/layout unless envOverrides explicitly sets them
-              app: envOverrides.app !== undefined ? envOverrides.app : merged.app,
-              layout: envOverrides.layout !== undefined ? envOverrides.layout : merged.layout,
-            };
-            // Re-cache with merged config
-            configCacheByProject.set(effectiveCacheKey, {
-              revision: cacheRevision,
-              config: merged,
-            });
-          }
-
+          const merged = await loadAndMergeConfig(configPath, effectiveCacheKey, adapter);
           return merged;
         } catch (error) {
           if (isConfigError(error)) throw error;
@@ -405,11 +377,7 @@ export function getConfig(
         duration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
       });
 
-      let defaultConfig = createFreshDefaults() as VeryfrontConfig;
-      // Apply VERYFRONT_CONFIG overrides to defaults if present
-      if (envOverrides) {
-        defaultConfig = { ...defaultConfig, ...envOverrides };
-      }
+      const defaultConfig = createFreshDefaults() as VeryfrontConfig;
       configCacheByProject.set(effectiveCacheKey, {
         revision: cacheRevision,
         config: defaultConfig,

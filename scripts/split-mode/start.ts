@@ -51,7 +51,6 @@ const STATIC_CONFIG: Record<string, string> = {
   PROJECT_MAX_CONCURRENT: "1000",
   PROJECT_CIRCUIT_THRESHOLD: "20",
   PROJECT_CIRCUIT_RESET_MS: "15000",
-  VERYFRONT_CONFIG: "scripts/split-mode/veryfront.config.mjs",
 };
 
 function error(message: string): never {

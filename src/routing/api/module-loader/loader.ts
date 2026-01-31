@@ -13,6 +13,7 @@ import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { isCompiledBinary } from "#veryfront/utils";
 
 export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute | null> {
   return withSpan(
@@ -50,7 +51,10 @@ function loadModule(args: {
 
   if (modulePath.endsWith(".js")) return loadJSModule(modulePath);
 
-  if (!isDeno) return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+  // Always transpile TypeScript in compiled binaries - they can't import raw .ts files
+  if (!isDeno || isCompiledBinary()) {
+    return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+  }
 
   return fs.exists(modulePath).then((fileExistsLocally) => {
     if (fileExistsLocally) return loadTSModuleDirect(modulePath);
