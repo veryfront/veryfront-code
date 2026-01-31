@@ -2,6 +2,57 @@
 # Start split mode for manual debugging - keeps running until interrupted.
 # Usage: deno task start-split [--deno]
 #   --deno  Use deno task instead of compiled binary
+#
+# Prerequisites:
+#   - 1Password CLI (op) installed
+#   - OP_SERVICE_ACCOUNT_TOKEN env var set (for non-interactive auth)
+#   - Get token from: https://start.1password.com/open/i?a=TEAMSACCOUNT&v=VERYFRONT_CI&i=OP_SERVICE_ACCOUNT_TOKEN
+#
+#   Example:
+#     export OP_SERVICE_ACCOUNT_TOKEN="ops_..."
+#     deno task start-split
+#
+# Architecture:
+# ┌─────────────────────────────────────────────────────────────────────┐
+# │  deno task start-split                                              │
+# │  ┌─────────────────┐                                                │
+# │  │ 1. Compile      │  deno task build (if ./bin/veryfront missing) │
+# │  └────────┬────────┘                                                │
+# │           ▼                                                         │
+# │  ┌─────────────────┐      ┌──────────────────────────────────────┐ │
+# │  │ 2. Load secrets │ ───► │ 1Password (op read)                  │ │
+# │  └────────┬────────┘      │ - OAuth credentials                  │ │
+# │           │               │ - Redis URL                          │ │
+# │           ▼               └──────────────────────────────────────┘ │
+# │  ┌─────────────────┐      ┌──────────────────────────────────────┐ │
+# │  │ 3. Set env vars │ ───► │ VERYFRONT_CONFIG=split-mode/config   │ │
+# │  └────────┬────────┘      │ PROXY_MODE=1, PRODUCTION_MODE=1      │ │
+# │           │               └──────────────────────────────────────┘ │
+# │           ▼                                                         │
+# │  ┌─────────────────────────────────────────────────────────────┐   │
+# │  │ 4. Start servers                                            │   │
+# │  │                                                             │   │
+# │  │   ./bin/veryfront serve --mode=renderer --port=3000         │   │
+# │  │   ./bin/veryfront serve --mode=proxy --port=8080            │   │
+# │  │                                                             │   │
+# │  │   ┌───────┐          ┌─────────────────────┐                │   │
+# │  │   │ Redis │◄─cache──►│        API          │                │   │
+# │  │   │(token)│          │  (OAuth + Files)    │                │   │
+# │  │   └───▲───┘          └──────▲────▲─────────┘                │   │
+# │  │       │                     │    │                          │   │
+# │  │       │               token │    │ files                    │   │
+# │  │       │                     │    │                          │   │
+# │  │   ┌───┴─────┐    ┌──────────┴────┴─────────┐                │   │
+# │  │   │ proxy   │───►│       renderer          │                │   │
+# │  │   │  :8080  │    │         :3000           │                │   │
+# │  │   └────▲────┘    └─────────────────────────┘                │   │
+# │  │        │                                                    │   │
+# │  │   ┌────┴────┐                                               │   │
+# │  │   │ Browser │                                               │   │
+# │  │   └─────────┘                                               │   │
+# │  └─────────────────────────────────────────────────────────────┘   │
+# └─────────────────────────────────────────────────────────────────────┘
+#
 set -e
 cd "$(dirname "$0")/../.."
 
@@ -9,6 +60,11 @@ cd "$(dirname "$0")/../.."
 if [[ "$1" == "--deno" ]]; then
   VERYFRONT="deno run --allow-all src/cli/main.ts"
 else
+  # Ensure binary exists
+  if [[ ! -f "./bin/veryfront" ]]; then
+    echo "Binary not found. Compiling..."
+    deno task build
+  fi
   VERYFRONT="./bin/veryfront"
 fi
 

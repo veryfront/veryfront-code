@@ -2,6 +2,43 @@
 # Start split mode, run test, cleanup, exit.
 # Usage: deno task test-split [--deno]
 #   --deno  Use deno task instead of compiled binary
+#
+# Prerequisites:
+#   - 1Password CLI (op) installed
+#   - OP_SERVICE_ACCOUNT_TOKEN env var set (for non-interactive auth)
+#   - Get token from: https://start.1password.com/open/i?a=TEAMSACCOUNT&v=VERYFRONT_CI&i=OP_SERVICE_ACCOUNT_TOKEN
+#
+#   Example:
+#     export OP_SERVICE_ACCOUNT_TOKEN="ops_..."
+#     deno task test-split
+#
+# Flow:
+# ┌─────────────────────────────────────────────────────────────────┐
+# │  deno task test-split                                           │
+# │                                                                 │
+# │  1. Compile (if needed)                                         │
+# │  2. Load secrets from 1Password                                 │
+# │  3. Start renderer (:3000) + proxy (:8080)                      │
+# │  4. Test: curl http://codersociety.lvh.me:8080/                 │
+# │  5. Cleanup + exit                                              │
+# │                                                                 │
+# │  ┌───────┐            ┌─────────────────────┐                   │
+# │  │ Redis │◄──cache───►│        API          │                   │
+# │  │(token)│            │  (OAuth + Files)    │                   │
+# │  └───▲───┘            └──────▲────▲─────────┘                   │
+# │      │                       │    │                             │
+# │      │                 token │    │ files                       │
+# │      │                       │    │                             │
+# │  ┌───┴─────┐      ┌──────────┴────┴─────────┐                   │
+# │  │  proxy  │─────►│       renderer          │                   │
+# │  │  :8080  │      │         :3000           │                   │
+# │  └────▲────┘      └─────────────────────────┘                   │
+# │       │                                                         │
+# │  ┌────┴────┐                                                    │
+# │  │  curl   │                                                    │
+# │  └─────────┘                                                    │
+# └─────────────────────────────────────────────────────────────────┘
+#
 set -e
 cd "$(dirname "$0")/../.."
 
@@ -9,6 +46,11 @@ cd "$(dirname "$0")/../.."
 if [[ "$1" == "--deno" ]]; then
   VERYFRONT="deno run --allow-all src/cli/main.ts"
 else
+  # Ensure binary exists
+  if [[ ! -f "./bin/veryfront" ]]; then
+    echo "Binary not found. Compiling..."
+    deno task build
+  fi
   VERYFRONT="./bin/veryfront"
 fi
 
