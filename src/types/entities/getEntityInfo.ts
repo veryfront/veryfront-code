@@ -353,6 +353,8 @@ export async function getLayoutEntity(
         const directPath = pathHelper.join(projectDir, resolvedLayoutName);
         const info = await getEntityInfo(directPath, adapter);
         if (info?.entity.isLayout) return info;
+        // If explicit path with extension fails, don't fall back to convention-based discovery
+        return null;
       }
 
       const possiblePaths = [
