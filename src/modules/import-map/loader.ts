@@ -1,6 +1,7 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getConfig } from "#veryfront/config";
 import type { ImportMapConfig } from "./types.ts";
 import { getDefaultImportMap } from "./default-import-map.ts";
@@ -70,6 +71,32 @@ async function loadDenoJsonImportMap(
   startPath: string,
   adapter: RuntimeAdapter,
 ): Promise<ImportMapConfig | null> {
+  // For virtual filesystems (API-backed), only check project root
+  // Virtual filesystems use relative paths, not absolute local paths
+  if (isVirtualFilesystem(adapter.fs)) {
+    try {
+      const content = await adapter.fs.readFile("deno.json");
+      const config = JSON.parse(content);
+
+      if (config.imports || config.scopes) {
+        logger.debug("Loaded import map from deno.json (virtual filesystem)");
+        const imports = config.imports ? filterRelativePaths(config.imports) : {};
+        const scopes = config.scopes
+          ? Object.fromEntries(
+            Object.entries(config.scopes as Record<string, Record<string, string>>).map(
+              ([scope, mappings]) => [scope, filterRelativePaths(mappings)],
+            ),
+          )
+          : {};
+        return { imports, scopes };
+      }
+    } catch {
+      // deno.json not found in virtual filesystem
+    }
+    return null;
+  }
+
+  // For local filesystems, walk up directory tree
   let currentPath = startPath;
 
   while (currentPath !== "/" && currentPath !== "") {

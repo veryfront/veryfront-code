@@ -19,7 +19,7 @@ function resolveProjectDir(context: {
 }
 
 function rewriteProjectAliasImports(code: string): string {
-  return code.replace(/from\s+["']@\/([^"']+)["']/g, (_match, path: string) => {
+  return code.replace(/from\s*["']@\/([^"']+)["']/g, (_match, path: string) => {
     const jsPath = path.endsWith(".js") ? path : `${path}.js`;
     return `from "/_vf_modules/${jsPath}"`;
   });
@@ -59,7 +59,7 @@ function stripReactFromImportMap(importMap: {
 
 function findVfModuleImports(code: string): Array<{ original: string; path: string }> {
   const imports: Array<{ original: string; path: string }> = [];
-  const pattern = /from\s+["'](\/?)(_vf_modules\/[^"']+)["']/g;
+  const pattern = /from\s*["'](\/?)(_vf_modules\/[^"']+)["']/g;
 
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(code)) !== null) {

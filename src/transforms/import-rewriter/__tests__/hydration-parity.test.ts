@@ -80,8 +80,10 @@ describe("Hydration Parity", () => {
         createContext({ target: "browser", ...ctxOverrides }),
       );
 
-      expect(ssrResult).toContain("..");
-      expect(browserResult).toContain("..");
+      // SSR uses /_vf_modules/ paths for HTTP module resolution
+      expect(ssrResult).toContain("/_vf_modules/components/Button.js");
+      // Browser uses relative paths
+      expect(browserResult).toContain("../../components/Button.js");
     });
   });
 

@@ -64,13 +64,13 @@ export async function transformReactImportsToAbsolute(code: string): Promise<str
   if (!IS_TRUE_NODE) return code;
 
   const replacements: Array<[RegExp, string | null]> = [
-    [/from\s+['"]react\/jsx-runtime['"]/g, await resolveNodePackage("react/jsx-runtime")],
+    [/from\s*['"]react\/jsx-runtime['"]/g, await resolveNodePackage("react/jsx-runtime")],
     [
-      /from\s+['"]react\/jsx-dev-runtime['"]/g,
+      /from\s*['"]react\/jsx-dev-runtime['"]/g,
       await resolveNodePackage("react/jsx-dev-runtime"),
     ],
-    [/from\s+['"]react-dom['"]/g, await resolveNodePackage("react-dom")],
-    [/from\s+['"]react['"]/g, await resolveNodePackage("react")],
+    [/from\s*['"]react-dom['"]/g, await resolveNodePackage("react-dom")],
+    [/from\s*['"]react['"]/g, await resolveNodePackage("react")],
   ];
 
   let result = code;

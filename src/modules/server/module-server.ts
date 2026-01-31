@@ -459,6 +459,7 @@ async function findSourceFile(
     ["src/exports/", FRAMEWORK_ROOT, "src/exports", false],
     ["exports/", join(FRAMEWORK_ROOT, "src"), "exports", false],
     ["react/", join(FRAMEWORK_ROOT, "src"), "react", false],
+    ["platform/", join(FRAMEWORK_ROOT, "src"), "platform", false],
   ];
 
   const platformFs = createFileSystem();

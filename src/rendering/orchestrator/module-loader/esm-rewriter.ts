@@ -9,7 +9,11 @@ function escapeRegExp(value: string): string {
 }
 
 export function rewriteEsmPaths(code: string, urlBase: string): string {
-  const resolveAbsolute: PathResolver = (path) => `https://esm.sh${path}`;
+  // Skip veryfront module paths - they're served locally, not via esm.sh
+  const resolveAbsolute: PathResolver = (path) =>
+    path.startsWith("/_vf_modules/") || path.startsWith("/_veryfront/")
+      ? path
+      : `https://esm.sh${path}`;
   const resolveRelative: PathResolver = (path) => new URL(path, urlBase).href;
 
   const patterns: Array<[RegExp, number, PathResolver]> = [

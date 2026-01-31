@@ -7,8 +7,91 @@
  * @module module-system/react-loader/ssr-module-loader/http-bundle-helpers
  */
 
+import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
+/**
+ * Extract VF module paths (veryfront-mdx-esm/*.mjs) from code.
+ * These are user project modules that may import HTTP bundles.
+ */
+export function extractVfModulePaths(code: string): string[] {
+  // Create regex per call to avoid shared lastIndex state across concurrent calls.
+  const vfModulePattern = /file:\/\/([^"'\s]+veryfront-mdx-esm\/[^"'\s]+\.mjs)/gi;
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  let match;
+  while ((match = vfModulePattern.exec(code)) !== null) {
+    const path = match[1] as string;
+    // Strip query params for path comparison
+    const cleanPath = path.replace(/\?.*$/, "");
+    if (!seen.has(cleanPath)) {
+      seen.add(cleanPath);
+      paths.push(cleanPath);
+    }
+  }
+  return paths;
+}
+
+/**
+ * Recursively extract all HTTP bundle paths from code and any VF modules it imports.
+ * This ensures transitive HTTP bundle dependencies through VF modules are discovered.
+ */
+export async function extractAllHttpBundlePathsRecursive(
+  code: string,
+): Promise<Array<{ path: string; hash: string }>> {
+  const allBundles: Array<{ path: string; hash: string }> = [];
+  const seenHashes = new Set<string>();
+  const seenVfModules = new Set<string>();
+  const fs = createFileSystem();
+
+  // Helper to add bundles without duplicates
+  const addBundles = (bundles: Array<{ path: string; hash: string }>) => {
+    for (const bundle of bundles) {
+      if (!seenHashes.has(bundle.hash)) {
+        seenHashes.add(bundle.hash);
+        allBundles.push(bundle);
+      }
+    }
+  };
+
+  // Process initial code
+  const directBundles = extractHttpBundlePaths(code);
+  addBundles(directBundles);
+
+  // Process VF module imports recursively
+  const pendingVfModules = extractVfModulePaths(code);
+
+  while (pendingVfModules.length > 0) {
+    const vfModulePath = pendingVfModules.pop()!;
+    if (seenVfModules.has(vfModulePath)) continue;
+    seenVfModules.add(vfModulePath);
+
+    // Check if the VF module exists locally
+    if (!(await exists(vfModulePath))) continue;
+
+    try {
+      const vfModuleCode = await fs.readTextFile(vfModulePath);
+
+      // Extract HTTP bundles from this VF module
+      const vfBundles = extractHttpBundlePaths(vfModuleCode);
+      addBundles(vfBundles);
+
+      // Extract more VF modules for recursive processing
+      const nestedVfModules = extractVfModulePaths(vfModuleCode);
+      for (const nestedPath of nestedVfModules) {
+        if (!seenVfModules.has(nestedPath)) {
+          pendingVfModules.push(nestedPath);
+        }
+      }
+    } catch {
+      // Ignore read errors for VF modules
+    }
+  }
+
+  return allBundles;
+}
+
+/** Extract HTTP bundle paths from transformed code for proactive recovery */
 export function extractHttpBundlePaths(code: string): Array<{ path: string; hash: string }> {
   // Create regex per call to avoid shared lastIndex state across concurrent calls.
   const httpBundlePattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;

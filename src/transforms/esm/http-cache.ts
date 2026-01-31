@@ -419,7 +419,9 @@ function isInternalBare(specifier: string): boolean {
     specifier.startsWith("#veryfront/") ||
     specifier.startsWith("@std/") ||
     specifier.startsWith("_vf_modules/") ||
-    specifier.startsWith("/_vf_modules/");
+    specifier.startsWith("/_vf_modules/") ||
+    specifier.startsWith("_veryfront/") ||
+    specifier.startsWith("/_veryfront/");
 }
 
 function normalizeEsmShUrl(url: URL): void {

@@ -46,6 +46,61 @@ function hasIncompatibleHttpPaths(code: string): boolean {
   return false;
 }
 
+/**
+ * Check if all file:// dependencies in cached code exist on disk.
+ * Returns list of missing file paths, or empty array if all exist.
+ */
+async function findMissingFileDependencies(code: string): Promise<string[]> {
+  const localFs = getLocalFs();
+  const pattern = new RegExp(FILE_PATH_PATTERN.source, "gi");
+  const missing: string[] = [];
+  let match;
+  while ((match = pattern.exec(code)) !== null) {
+    const path = match[1] as string;
+    // Skip query parameters in paths
+    const cleanPath = path.replace(/\?.*$/, "");
+    try {
+      const stat = await localFs.stat(cleanPath);
+      if (!stat?.isFile) {
+        missing.push(cleanPath);
+      }
+    } catch {
+      missing.push(cleanPath);
+    }
+  }
+  return missing;
+}
+
+/**
+ * Pattern to match unresolved /_vf_modules/ imports that weren't converted to proper file:// paths.
+ * Matches both:
+ * - `from "/_vf_modules/..."` or `from "_vf_modules/..."` (unresolved)
+ * - `from "file:///_vf_modules/..."` (malformed - points to non-existent root /_vf_modules/)
+ * Note: Uses \s* instead of \s+ because minified code may have no space after `from`.
+ * These imports will fail at runtime because they can't be resolved by Deno's dynamic import.
+ */
+const UNRESOLVED_VF_MODULES_PATTERN = /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/g;
+
+/**
+ * Check if cached code has unresolved or malformed /_vf_modules/ imports.
+ * These should have been resolved to proper file:// paths (e.g., file:///Users/.cache/...).
+ * Returns true if any unresolved or malformed imports are found.
+ */
+function hasUnresolvedVfModules(code: string): boolean {
+  const pattern = new RegExp(UNRESOLVED_VF_MODULES_PATTERN.source, "g");
+  let match;
+  while ((match = pattern.exec(code)) !== null) {
+    const importPath = match[1] as string;
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached module has unresolved _vf_modules import`, {
+      importPath,
+    });
+    return true;
+  }
+  return false;
+}
+
+// Local filesystem for cache operations (not project's FSAdapter which may be remote/read-only)
+// This uses the platform's native fs (Deno, Node, Bun) for local cache writes
 let localFs: FileSystem | null = null;
 
 export function getLocalFs(): FileSystem {
@@ -212,6 +267,57 @@ export async function lookupMdxEsmCache(
       };
     }
 
+    // CRITICAL: Check for unresolved /_vf_modules/ imports.
+    // These imports should have been resolved to file:// paths during MDX processing.
+    // If they're still present, the distributed cache returned stale data that wasn't
+    // fully processed, and the import will fail at runtime.
+    if (hasUnresolvedVfModules(cachedCode)) {
+      logger.warn(
+        `${LOG_PREFIX_MDX_LOADER} Cached module has unresolved _vf_modules imports, invalidating`,
+        { filePath, cachedPath },
+      );
+      cache.delete(cacheKey);
+      // Delete the stale file so it gets recreated
+      try {
+        await getLocalFs().remove(cachedPath);
+      } catch { /* ignore removal errors */ }
+      return {
+        status: "corrupted",
+        reason: "Unresolved _vf_modules imports in cached code",
+        filePath,
+      };
+    }
+
+    // CRITICAL: Check that all file:// dependencies actually exist on disk.
+    // The distributed cache may contain code referencing file:// paths from other pods
+    // that don't exist locally (e.g., HTTP bundles, MDX-ESM modules).
+    const missingDeps = await findMissingFileDependencies(cachedCode);
+    if (missingDeps.length > 0) {
+      logger.warn(
+        `${LOG_PREFIX_MDX_LOADER} Cached module has ${missingDeps.length} missing file dependencies, invalidating`,
+        { filePath, cachedPath, missingDeps: missingDeps.slice(0, 5) },
+      );
+      cache.delete(cacheKey);
+      // Delete the stale file so it gets recreated
+      try {
+        await getLocalFs().remove(cachedPath);
+      } catch { /* ignore removal errors */ }
+      return {
+        status: "corrupted",
+        reason: `Missing file dependencies: ${missingDeps.slice(0, 3).join(", ")}`,
+        filePath,
+      };
+    }
+
+    // Note: We intentionally skip contentHash validation for MDX-ESM cached files.
+    // The MDX-ESM cache uses transformed-code hashes in filenames (vfmod-v{VERSION}-{hash}.mjs),
+    // while the SSR loader provides source-code hashes. These will never match.
+    // The cache version in the key (v{VERSION}:) provides sufficient staleness protection,
+    // and the file's existence confirms it's a valid transform for this codebase.
+    // This allows both loaders to share the same module instance, preventing
+    // duplicate React contexts which break hooks like useContext.
+
+    // P3b: Mark as verified to skip re-stat on subsequent calls
     verifiedModuleDeps.set(verifyKey, true);
 
     logger.debug(

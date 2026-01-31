@@ -78,5 +78,29 @@ describe("AliasStrategy", () => {
 
       assertEquals(result.specifier?.endsWith(".js"), true);
     });
+
+    it("should rewrite @/ to /_vf_modules/ path for SSR target", () => {
+      const result = aliasStrategy.rewrite(
+        makeInfo("@/components/Button"),
+        makeCtx({ target: "ssr", filePath: "/project/pages/index.tsx" }),
+      );
+      assertEquals(result.specifier, "/_vf_modules/components/Button.js");
+    });
+
+    it("should rewrite @/ with nested path to /_vf_modules/ for SSR", () => {
+      const result = aliasStrategy.rewrite(
+        makeInfo("@/components/forms/ContactForm"),
+        makeCtx({ target: "ssr", filePath: "/project/components/sections/ContactSection.tsx" }),
+      );
+      assertEquals(result.specifier, "/_vf_modules/components/forms/ContactForm.js");
+    });
+
+    it("should normalize extension for SSR", () => {
+      const result = aliasStrategy.rewrite(
+        makeInfo("@/lib/data.tsx"),
+        makeCtx({ target: "ssr", filePath: "/project/pages/index.tsx" }),
+      );
+      assertEquals(result.specifier, "/_vf_modules/lib/data.js");
+    });
   });
 });

@@ -22,7 +22,10 @@ import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../esm/http-cache.ts";
-import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
+import {
+  extractAllHttpBundlePathsRecursive,
+  extractHttpBundlePaths,
+} from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { isDeno, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { replaceSpecifiers } from "../../esm/lexer.ts";
@@ -107,7 +110,7 @@ async function initializeCacheDir(context: ESMLoaderContext): Promise<string> {
  * Rewrite @/ aliased imports to /_vf_modules/ paths.
  */
 function rewriteProjectAliasImports(code: string): string {
-  return code.replace(/from\s+["']@\/([^"']+)["']/g, (_match, path) => {
+  return code.replace(/from\s*["']@\/([^"']+)["']/g, (_match, path) => {
     const jsPath = path.endsWith(".js") ? path : `${path}.js`;
     return `from "/_vf_modules/${jsPath}"`;
   });
@@ -163,7 +166,7 @@ function transformImports(code: string, importMap: ImportMapConfig): string {
  */
 function findVfModuleImports(code: string): Array<{ original: string; path: string }> {
   const imports: Array<{ original: string; path: string }> = [];
-  const pattern = /from\s+["'](\/?)(_vf_modules\/[^"']+)["']/g;
+  const pattern = /from\s*["'](\/?)(_vf_modules\/[^"']+)["']/g;
 
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(code)) !== null) {
@@ -598,10 +601,13 @@ async function doLoadModuleESM(
     // Proactively ensure all HTTP bundles exist before import.
     // Deno runtime handles HTTP imports natively, but compiled Deno binaries cannot
     // dynamically import HTTP URLs - they need local file:// paths like Node.js/Bun.
-    if (!isDeno || isDenoCompiled) {
-      const bundlePaths = extractHttpBundlePaths(rewritten);
+    // We use recursive extraction to find bundles imported by VF modules too.
+    const needsHttpBundleCheck = !isDeno || isDenoCompiled;
+    if (needsHttpBundleCheck) {
+      // Extract HTTP bundles from MDX code AND any VF modules it imports (recursively)
+      const bundlePaths = await extractAllHttpBundlePathsRecursive(rewritten);
       if (bundlePaths.length > 0) {
-        logger.debug(`${LOG_PREFIX_MDX_LOADER} Checking HTTP bundles`, {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Checking HTTP bundles (recursive scan)`, {
           count: bundlePaths.length,
           projectSlug,
         });

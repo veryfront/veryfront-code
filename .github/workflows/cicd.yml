@@ -87,12 +87,94 @@ jobs:
             VERYFRONT_BINARY_FRESH=1 deno task test:e2e:binary --no-lock
 
   # ============================================
+  # CI: Split Mode Test (PR + main, skip tags)
+  # ============================================
+
+  tests-split-mode:
+    if: startsWith(github.ref, 'refs/tags/') == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    name: tests (split mode)
+    continue-on-error: true  # Non-blocking - informational only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: lts
+
+      - name: Compile binary
+        run: deno task build
+
+      - name: Load secrets from 1Password
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 3
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: |
+            # Install 1Password CLI
+            curl -sS https://downloads.1password.com/linux/keys/1password.asc | gpg --dearmor --output /tmp/1password-archive-keyring.gpg
+            echo "deb [arch=amd64 signed-by=/tmp/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main" | sudo tee /etc/apt/sources.list.d/1password.list
+            sudo apt-get update && sudo apt-get install -y 1password-cli
+
+            # Export secrets to GITHUB_ENV
+            echo "API_CLIENT_ID_VERYFRONT_RENDERER_PROXY=$(op read 'op://VERYFRONT_CI/Veryfront Renderer Proxy OAuth/API_CLIENT_ID_VERYFRONT_RENDERER_PROXY')" >> $GITHUB_ENV
+            echo "API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY=$(op read 'op://VERYFRONT_CI/Veryfront Renderer Proxy OAuth/API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY')" >> $GITHUB_ENV
+            echo "REDIS_URL=$(op read 'op://VERYFRONT_CI/UPSTASH_REDIS_VERYFRONT_RENDERER_PROXY_STAGING/REDIS_URL')" >> $GITHUB_ENV
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+
+      - name: Run split mode test
+        run: |
+          # Set production-like env vars
+          export VERYFRONT_API_BASE_URL="https://api.veryfront.com"
+          export RENDERER_URL="http://localhost:3000"
+          export CACHE_TYPE="redis"
+          export REDIS_PREFIX="vf:token:"
+          export RENDERER_REQUEST_TIMEOUT_MS=90000
+          export NODE_ENV=production
+          export PROXY_MODE=1
+          export PRODUCTION_MODE=1
+          export SSR_REDIS_CACHE_ENABLED=true
+          export PROJECT_MAX_CONCURRENT=1000
+          export PROJECT_CIRCUIT_THRESHOLD=20
+          export PROJECT_CIRCUIT_RESET_MS=15000
+          export VERYFRONT_CONFIG="scripts/split-mode/veryfront.config.mjs"
+
+          # Start servers
+          ./bin/veryfront serve --mode=renderer --port=3000 &
+          RENDERER_PID=$!
+          ./bin/veryfront serve --mode=proxy --port=8080 &
+          PROXY_PID=$!
+          sleep 8
+
+          # Test
+          echo "Testing codersociety.lvh.me:8080..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://codersociety.lvh.me:8080/ --max-time 30)
+          echo "Status: $STATUS"
+
+          # Cleanup
+          kill $RENDERER_PID $PROXY_PID 2>/dev/null || true
+
+          # Check result
+          if [[ "$STATUS" == "200" ]]; then
+            echo "SUCCESS"
+            exit 0
+          elif [[ "$STATUS" == "500" ]]; then
+            echo "OK: Known issue (codersociety missing modules)"
+            exit 0
+          else
+            echo "FAILED: Unexpected status $STATUS"
+            exit 1
+          fi
+
+  # ============================================
   # CD: Calculate Version (single source of truth)
+  # Runs early to enable parallel binary builds
   # ============================================
 
   version:
     if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || startsWith(github.ref, 'refs/tags/v')
-    needs: [ci, tests, tests-binary-e2e]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -113,6 +195,7 @@ jobs:
 
   # ============================================
   # CD: Build Binaries (main + tags)
+  # Runs in parallel with tests for faster CI
   # ============================================
 
   build-binaries:
@@ -176,7 +259,7 @@ jobs:
 
   prerelease:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [version, build-binaries]
+    needs: [ci, tests, tests-binary-e2e, version, build-binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: write

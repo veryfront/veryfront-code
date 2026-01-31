@@ -60,6 +60,28 @@ import {
   verifiedHttpBundlePaths,
 } from "./http-bundle-helpers.ts";
 import { rewriteCrossProjectImport, rewriteLocalImports } from "./import-rewriter.ts";
+import {
+  createModuleFetcherContext,
+  fetchAndCacheModule,
+} from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
+import { VF_MODULE_IMPORT_PATTERN } from "#veryfront/transforms/mdx/esm-module-loader/constants.ts";
+
+/**
+ * Find /_vf_modules/ imports in transformed code.
+ * These need to be resolved to file:// paths for dynamic import.
+ */
+function findVfModuleImports(code: string): Array<{ original: string; path: string }> {
+  const imports: Array<{ original: string; path: string }> = [];
+  const pattern = new RegExp(VF_MODULE_IMPORT_PATTERN.source, "g");
+
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(code)) !== null) {
+    const path = match[1];
+    if (path) imports.push({ original: match[0], path: path.replace(/^\//, "") });
+  }
+
+  return imports;
+}
 
 /**
  * SSR Module Loader with Redis Support.
@@ -476,27 +498,42 @@ export class SSRModuleLoader {
       if (!verifiedHttpBundlePaths.get(verifyKey)) {
         try {
           const cachedCode = await this.fs.readTextFile(cachedEntry.tempPath);
-          const bundlePaths = extractHttpBundlePaths(cachedCode);
 
-          if (bundlePaths.length > 0) {
-            const cacheDir = getHttpBundleCacheDir();
-            const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-            if (failed.length > 0) {
-              logger.warn("[SSR-MODULE-LOADER] Unrecoverable HTTP bundles, re-transforming", {
-                file: filePath.slice(-40),
-                failed,
-                totalBundles: bundlePaths.length,
-                cacheDir,
-                source: "memory-cache",
-              });
-              globalModuleCache.delete(contentCacheKey);
-              globalModuleCache.delete(filePathCacheKey);
-              verifiedHttpBundlePaths.delete(verifyKey);
+          // Check for unresolved /_vf_modules/ imports
+          const unresolvedPattern = /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/g;
+          if (unresolvedPattern.test(cachedCode)) {
+            logger.warn(
+              "[SSR-MODULE-LOADER] Memory cache has unresolved _vf_modules imports, invalidating",
+              { file: filePath.slice(-40), tempPath: cachedEntry.tempPath.slice(-60) },
+            );
+            globalModuleCache.delete(contentCacheKey);
+            globalModuleCache.delete(filePathCacheKey);
+            verifiedHttpBundlePaths.delete(verifyKey);
+            // Fall through to Redis or fresh transform
+          } else {
+            const bundlePaths = extractHttpBundlePaths(cachedCode);
+            if (bundlePaths.length > 0) {
+              const cacheDir = getHttpBundleCacheDir();
+              const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+              if (failed.length > 0) {
+                logger.warn("[SSR-MODULE-LOADER] Unrecoverable HTTP bundles, re-transforming", {
+                  file: filePath.slice(-40),
+                  failed,
+                  totalBundles: bundlePaths.length,
+                  cacheDir,
+                  source: "memory-cache",
+                });
+                globalModuleCache.delete(contentCacheKey);
+                globalModuleCache.delete(filePathCacheKey);
+                // Also clear the verification cache so re-verification happens after re-transform
+                verifiedHttpBundlePaths.delete(verifyKey);
+                // Fall through to Redis or fresh transform
+              } else {
+                verifiedHttpBundlePaths.set(verifyKey, true);
+              }
             } else {
               verifiedHttpBundlePaths.set(verifyKey, true);
             }
-          } else {
-            verifiedHttpBundlePaths.set(verifyKey, true);
           }
         } catch {
           globalModuleCache.delete(contentCacheKey);
@@ -559,6 +596,19 @@ export class SSRModuleLoader {
                 allPathsOk = false;
                 break;
               }
+            }
+          }
+
+          // CRITICAL: Check for unresolved /_vf_modules/ imports.
+          // Stale cache entries may have unresolved paths that weren't converted to file:// URLs.
+          if (allPathsOk) {
+            const unresolvedPattern = /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/g;
+            if (unresolvedPattern.test(redisCode)) {
+              logger.warn(
+                "[SSR-MODULE-LOADER] Redis cache has unresolved _vf_modules imports, re-transforming",
+                { file: filePath.slice(-40) },
+              );
+              allPathsOk = false;
             }
           }
 
@@ -799,6 +849,53 @@ export class SSRModuleLoader {
           this.options.projectDir,
         );
 
+        // Process /_vf_modules/ imports and resolve them to file:// paths
+        // These are framework module imports that need to be fetched and cached
+        const vfModuleImports = findVfModuleImports(transformed);
+        if (vfModuleImports.length > 0) {
+          logger.debug("[SSR-MODULE-LOADER] Processing _vf_modules imports", {
+            file: filePath.slice(-40),
+            count: vfModuleImports.length,
+            paths: vfModuleImports.map((i) => i.path).slice(0, 5),
+          });
+
+          const baseCacheDir = getMdxEsmCacheDir();
+          const projectKey = encodeURIComponent(this.options.projectId);
+          const sourceKey = this.options.contentSourceId!;
+          const esmCacheDir = join(baseCacheDir, projectKey, sourceKey);
+
+          const fetcherContext = createModuleFetcherContext(
+            esmCacheDir,
+            this.options.adapter,
+            this.options.projectDir,
+            this.options.projectId,
+            {
+              reactVersion: this.options.reactVersion,
+              projectSlug: this.options.projectId,
+              strictMissingModules: true,
+            },
+          );
+
+          const vfModuleResults = await Promise.all(
+            vfModuleImports.map(async ({ original, path }) => {
+              const cachedFilePath = await fetchAndCacheModule(path, fetcherContext);
+              return { original, cachedFilePath, path };
+            }),
+          );
+
+          for (const { original, cachedFilePath, path } of vfModuleResults) {
+            if (cachedFilePath) {
+              transformed = transformed.replace(original, `from "file://${cachedFilePath}"`);
+            } else {
+              logger.warn("[SSR-MODULE-LOADER] Failed to resolve _vf_modules import", {
+                file: filePath.slice(-40),
+                path,
+              });
+            }
+          }
+        }
+
+        // Ensure HTTP bundles exist for this transform (handles nested bundle deps)
         const bundlePaths = extractHttpBundlePaths(transformed);
         if (bundlePaths.length > 0) {
           const cacheDir = getHttpBundleCacheDir();

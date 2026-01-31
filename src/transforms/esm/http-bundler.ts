@@ -75,6 +75,10 @@ export function createHTTPPlugin(): Plugin {
         }
 
         if (path.startsWith("./") || path.startsWith("../") || path.startsWith("/")) {
+          // Veryfront module paths are served locally, not via esm.sh
+          if (path.startsWith("/_vf_modules/") || path.startsWith("/_veryfront/")) {
+            return { path, external: true };
+          }
           try {
             return { path: new URL(path, args.importer).toString(), namespace: "http-url" };
           } catch {
@@ -253,12 +257,24 @@ export function bundleHttpImports(
   const version = reactVersion ?? REACT_VERSION;
 
   return replaceSpecifiers(code, (specifier) => {
+    // Skip Veryfront internal module paths - they're served locally, not via esm.sh
+    // Check both with and without leading slash (import rewriter may strip it)
+    if (
+      specifier.startsWith("/_vf_modules/") ||
+      specifier.startsWith("/_veryfront/") ||
+      specifier.startsWith("_vf_modules/") ||
+      specifier.startsWith("_veryfront/")
+    ) {
+      logger.debug(`${LOG_PREFIX} Skipping veryfront path: ${specifier}`);
+      return null;
+    }
+
     // Handle relative esm.sh paths like "/react-dom?target=es2022" or "/hoist-non-react-statics@..."
     // These are returned by esm.sh stub modules and need to be converted to full URLs
-    if (specifier.startsWith("/") && !specifier.startsWith("//")) {
-      // Skip /_vf_modules/ paths - these are framework module URLs served locally, not esm.sh paths
-      if (specifier.startsWith("/_vf_modules/")) return null;
-
+    if (
+      specifier.startsWith("/") &&
+      !specifier.startsWith("//")
+    ) {
       const fullUrl = `https://esm.sh${specifier}`;
       const isReactPackage = /^\/react(-dom)?(@|\/|\?|$)/.test(specifier);
 
