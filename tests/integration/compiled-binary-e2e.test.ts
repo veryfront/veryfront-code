@@ -168,8 +168,11 @@ async function startBinaryServer(projectDir: string): Promise<TestServer> {
   }
 
   if (Date.now() >= deadline) {
-    process.kill();
-    throw new Error(`Server failed to start on port ${port}`);
+    // Process may have crashed - try to kill but ignore errors
+    try { process.kill(); } catch { /* already dead */ }
+    // Include logs in error for debugging CI failures
+    const logOutput = logs.join("\n").slice(-2000); // Last 2KB
+    throw new Error(`Server failed to start on port ${port}. Logs:\n${logOutput}`);
   }
 
   return {

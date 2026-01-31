@@ -123,9 +123,9 @@ export default useGitHub ? {
     type: "github" as const,
     github: {
       token: Deno.env.get("GITHUB_TOKEN"),
-      owner: "veryfront",
-      repo: "codersociety",
-      ref: "main",
+      owner: Deno.env.get("GITHUB_OWNER") || "veryfront",
+      repo: Deno.env.get("GITHUB_REPO") || "example-project",
+      ref: Deno.env.get("GITHUB_REF") || "main",
       cache: { enabled: true, ttl: 60000 },
     },
   },
