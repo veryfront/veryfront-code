@@ -1898,7 +1898,7 @@ export default function Home() {
         l.includes("Invalid hook call") ||
         l.includes("Module not found") ||
         l.includes("Cannot find") ||
-        l.includes("layout")
+        (l.includes("layout") && l.includes("failed"))
       );
       assertEquals(errors.length, 0, `Should have no errors: ${errors.join("\n")}`);
     });

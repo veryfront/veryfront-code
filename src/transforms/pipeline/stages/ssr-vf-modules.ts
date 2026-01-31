@@ -48,7 +48,7 @@ const FRAMEWORK_LOOKUPS: Array<[prefix: string, frameworkDir: string]> = [
  */
 function findVfModuleImports(code: string): string[] {
   const imports: string[] = [];
-  const pattern = /from\s+["'](\/\_vf\_modules\/[^"']+)["']/g;
+  const pattern = /from\s*["'](\/\_vf\_modules\/[^"']+)["']/g;
 
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(code)) !== null) {
