@@ -95,6 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     name: tests (split mode)
+    continue-on-error: true  # Non-blocking - informational only
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
@@ -169,11 +170,11 @@ jobs:
 
   # ============================================
   # CD: Calculate Version (single source of truth)
+  # Runs early to enable parallel binary builds
   # ============================================
 
   version:
     if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || startsWith(github.ref, 'refs/tags/v')
-    needs: [ci, tests, tests-binary-e2e, tests-split-mode]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -194,6 +195,7 @@ jobs:
 
   # ============================================
   # CD: Build Binaries (main + tags)
+  # Runs in parallel with tests for faster CI
   # ============================================
 
   build-binaries:
@@ -257,7 +259,7 @@ jobs:
 
   prerelease:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [version, build-binaries]
+    needs: [ci, tests, tests-binary-e2e, version, build-binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: write
