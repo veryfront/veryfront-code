@@ -16,6 +16,38 @@ import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
 import { addHMRTimestamps } from "#veryfront/transforms/esm/import-rewriter.ts";
 import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
+import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
+
+/**
+ * Embedded polyfills for compiled Deno binaries.
+ *
+ * In compiled binaries, framework source files are not accessible via filesystem
+ * because they're not statically imported (only referenced as path strings).
+ * These inline polyfills ensure browser compatibility without filesystem I/O.
+ */
+const EMBEDDED_POLYFILLS: Record<string, string> = {
+  "_veryfront/platform/polyfills/node-async-hooks": `/**
+ * Browser polyfill for node:async_hooks.
+ * Provides a no-op AsyncLocalStorage that safely does nothing in the browser.
+ */
+export class AsyncLocalStorage {
+  run(_store, callback, ...args) {
+    return callback(...args);
+  }
+  getStore() {
+    return undefined;
+  }
+  disable() {}
+  enterWith(_store) {}
+}
+`,
+  "_veryfront/platform/polyfills/node-noop": `/**
+ * Browser polyfill for unknown Node.js built-in modules.
+ * Exports an empty object to prevent import crashes.
+ */
+export default {};
+`,
+};
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
 const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
@@ -273,15 +305,25 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           });
         }
 
-        const { path: sourceFile, isFrameworkFile } = findResult;
+        const { path: sourceFile, isFrameworkFile, embeddedContent } = findResult;
 
         let code = "";
 
         if (!isHeadRequest) {
-          const platformFs = createFileSystem();
-          let source = isFrameworkFile
-            ? await platformFs.readTextFile(sourceFile)
-            : await secureFs.readFile(sourceFile);
+          // Use embedded content for compiled polyfills (no filesystem I/O needed)
+          let source: string;
+          if (embeddedContent) {
+            source = embeddedContent;
+            logger.debug("[ModuleServer] Using embedded polyfill content", {
+              path: sourceFile,
+              contentLength: embeddedContent.length,
+            });
+          } else {
+            const platformFs = createFileSystem();
+            source = isFrameworkFile
+              ? await platformFs.readTextFile(sourceFile)
+              : await secureFs.readFile(sourceFile);
+          }
 
           const userAgent = req.headers.get("user-agent") ?? "";
           const isSSR = url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
@@ -349,6 +391,8 @@ const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
 interface FindSourceFileResult {
   path: string;
   isFrameworkFile: boolean;
+  /** Embedded content for compiled binaries (no filesystem access needed) */
+  embeddedContent?: string;
 }
 
 async function findSourceFile(
@@ -450,6 +494,21 @@ async function findSourceFile(
       } catch {
         // continue
       }
+    }
+  }
+
+  // In compiled binaries, check for embedded polyfills first (no filesystem access)
+  if (isDenoCompiled) {
+    const embeddedContent = EMBEDDED_POLYFILLS[basePathWithoutExt];
+    if (embeddedContent) {
+      logger.debug("[ModuleServer] Using embedded polyfill for compiled binary", {
+        basePath: basePathWithoutExt,
+      });
+      return {
+        path: `embedded:${basePathWithoutExt}`,
+        isFrameworkFile: true,
+        embeddedContent,
+      };
     }
   }
 
