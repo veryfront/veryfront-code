@@ -469,10 +469,7 @@ export function createVeryfrontHandler(
             !shouldSkipDomainLookup
           ) {
             const effectiveToken = proxyToken || config.fs.veryfront.apiToken || "";
-            const baseUrl =
-              (config.fs.veryfront as { baseUrl?: string; apiBaseUrl?: string }).baseUrl ||
-              config.fs.veryfront.apiBaseUrl ||
-              "https://api.veryfront.com";
+            const baseUrl = config.fs.veryfront.apiBaseUrl || "https://api.veryfront.com";
 
             const lookupHost = forwardedHost || host;
 
@@ -533,10 +530,7 @@ export function createVeryfrontHandler(
             !shouldSkipDomainLookup
           ) {
             const effectiveToken = proxyToken || config.fs.veryfront.apiToken || "";
-            const baseUrl =
-              (config.fs.veryfront as { baseUrl?: string; apiBaseUrl?: string }).baseUrl ||
-              config.fs.veryfront.apiBaseUrl ||
-              "https://api.veryfront.com";
+            const baseUrl = config.fs.veryfront.apiBaseUrl || "https://api.veryfront.com";
 
             if (effectiveToken) {
               const lookupResult = await withSpan(

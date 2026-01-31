@@ -4,7 +4,7 @@ import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 
 const baseConfig = {
   veryfront: {
-    baseUrl: "https://api.example.com",
+    apiBaseUrl: "https://api.example.com",
     apiToken: "test-token",
     projectSlug: "test-project",
     cache: { enabled: false },

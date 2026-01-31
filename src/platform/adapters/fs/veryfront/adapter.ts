@@ -1,4 +1,5 @@
 import { logger } from "#veryfront/utils";
+import { createError, toError } from "#veryfront/errors";
 import type {
   CacheStats,
   ContentSource,
@@ -8,7 +9,6 @@ import type {
   InvalidationCallbacks,
   ResolvedContentContext,
 } from "./types.ts";
-import { createVeryfrontConfig } from "./types.ts";
 import type { FileInfo } from "../../base.ts";
 import { VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
 import type { Project } from "../../veryfront-api-client/index.ts";
@@ -65,24 +65,47 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   constructor(config: FSAdapterConfig) {
     this.invalidationCallbacks = config.invalidationCallbacks ?? {};
-    const veryfrontConfig = createVeryfrontConfig(config);
+    const vf = config.veryfront;
+    if (!vf) {
+      throw toError(
+        createError({
+          type: "config",
+          message: "Veryfront adapter requires veryfront configuration",
+        }),
+      );
+    }
 
-    this.apiBaseUrl = veryfrontConfig.apiBaseUrl;
-    this.apiToken = veryfrontConfig.apiToken;
-    this.projectSlug = veryfrontConfig.projectSlug;
-    this.contentSource = veryfrontConfig.contentSource;
-    this.proxyMode = veryfrontConfig.proxyMode ?? false;
+    this.apiBaseUrl = vf.apiBaseUrl ?? "";
+    this.apiToken = vf.apiToken ?? "";
+    this.projectSlug = vf.projectSlug ?? "";
+    this.contentSource = vf.contentSource ?? { type: "branch", branch: "main" };
+    this.proxyMode = vf.proxyMode ?? false;
+
+    const retryConfig = {
+      maxRetries: 3,
+      initialDelay: 1000,
+      maxDelay: 10000,
+      ...vf.retry,
+    };
 
     this.client = new VeryfrontAPIClient({
-      apiBaseUrl: veryfrontConfig.apiBaseUrl,
-      apiToken: veryfrontConfig.apiToken,
-      projectSlug: veryfrontConfig.projectSlug,
-      projectId: veryfrontConfig.projectId,
-      proxyMode: veryfrontConfig.proxyMode,
-      retry: veryfrontConfig.retry,
+      apiBaseUrl: this.apiBaseUrl,
+      apiToken: this.apiToken,
+      projectSlug: this.projectSlug,
+      projectId: vf.projectId,
+      proxyMode: vf.proxyMode,
+      retry: retryConfig,
     });
 
-    this.cache = new FileCache(veryfrontConfig.cache as FileCacheOptions);
+    const cacheConfig: FileCacheOptions = {
+      enabled: true,
+      ttl: 60_000,
+      maxSize: 1000,
+      maxMemory: 100 * 1024 * 1024,
+      ...vf.cache,
+    };
+
+    this.cache = new FileCache(cacheConfig);
     this.normalizer = new PathNormalizer(config.projectDir);
 
     const contentContextGetter = {
@@ -188,11 +211,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
 
     logger.debug("[VeryfrontFSAdapter] Created", {
-      apiBaseUrl: veryfrontConfig.apiBaseUrl,
-      projectSlug: veryfrontConfig.projectSlug,
+      apiBaseUrl: this.apiBaseUrl,
+      projectSlug: this.projectSlug,
       projectDir: config.projectDir,
       contentSource: this.contentSource,
-      cacheEnabled: veryfrontConfig.cache.enabled,
+      cacheEnabled: cacheConfig.enabled,
     });
   }
 

@@ -48,7 +48,7 @@ export interface TokenStorageAdapterConfig {
     /** Project slug */
     projectSlug?: string;
     /** API base URL (defaults to production) */
-    baseUrl?: string;
+    apiBaseUrl?: string;
     /** Retry configuration */
     retry?: {
       maxRetries?: number;
@@ -117,7 +117,7 @@ export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontT
   const retry = veryfront.retry;
 
   return {
-    apiBaseUrl: veryfront.baseUrl ?? "https://api.veryfront.com",
+    apiBaseUrl: veryfront.apiBaseUrl ?? "https://api.veryfront.com",
     apiToken,
     projectSlug,
     retry: {

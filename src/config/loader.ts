@@ -156,6 +156,14 @@ function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontConfig {
   const merged = {
     ...defaults,
     ...userConfig,
+    fs: {
+      ...defaults.fs,
+      ...userConfig.fs,
+      veryfront: {
+        ...defaults.fs?.veryfront,
+        ...userConfig.fs?.veryfront,
+      },
+    },
     dev: {
       ...defaults.dev,
       ...userConfig.dev,

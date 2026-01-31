@@ -1,7 +1,6 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
-import { createVeryfrontConfig } from "./types.ts";
 import type { FSAdapterConfig, ResolvedContentContext } from "./types.ts";
 
 function createAdapter(
@@ -9,7 +8,7 @@ function createAdapter(
 ): VeryfrontFSAdapter {
   return new VeryfrontFSAdapter({
     veryfront: {
-      baseUrl: "https://api.example.com",
+      apiBaseUrl: "https://api.example.com",
       apiToken: "test-token",
       projectSlug: "test-project",
       cache: { enabled: false },
@@ -35,7 +34,7 @@ describe("VeryfrontFSAdapter", () => {
       assertExists(
         createAdapter({
           veryfront: {
-            baseUrl: "https://api.example.com",
+            apiBaseUrl: "https://api.example.com",
             apiToken: "test-token",
             projectSlug: "test-project",
             proxyMode: true,
@@ -53,7 +52,7 @@ describe("VeryfrontFSAdapter", () => {
       assertExists(
         createAdapter({
           veryfront: {
-            baseUrl: "https://api.example.com",
+            apiBaseUrl: "https://api.example.com",
             apiToken: "test-token",
             projectSlug: "test-project",
             contentSource: { type: "environment", name: "production" },
@@ -68,7 +67,7 @@ describe("VeryfrontFSAdapter", () => {
 
       const adapter = new VeryfrontFSAdapter({
         veryfront: {
-          baseUrl: "https://api.example.com",
+          apiBaseUrl: "https://api.example.com",
           apiToken: "test-token",
           projectSlug: "test-project",
           cache: { enabled: false },
@@ -307,142 +306,5 @@ describe("VeryfrontFSAdapter", () => {
     it("should return API client instance", () => {
       assertExists(createAdapter().getClient());
     });
-  });
-});
-
-describe("createVeryfrontConfig", () => {
-  it("should throw when veryfront config is missing", () => {
-    try {
-      createVeryfrontConfig({});
-      assertEquals(true, false, "Should have thrown");
-    } catch (e) {
-      assertExists(e);
-    }
-  });
-
-  it("should use default cache settings", () => {
-    const config = createVeryfrontConfig({
-      veryfront: {
-        baseUrl: "https://api.example.com",
-        apiToken: "test-token",
-        projectSlug: "test",
-      },
-    });
-
-    assertEquals(config.cache.enabled, true);
-    assertEquals(config.cache.ttl, 60_000);
-    assertEquals(config.cache.maxSize, 1000);
-  });
-
-  it("should override cache settings", () => {
-    const config = createVeryfrontConfig({
-      veryfront: {
-        baseUrl: "https://api.example.com",
-        apiToken: "test-token",
-        projectSlug: "test",
-        cache: { enabled: false, ttl: 5000 },
-      },
-    });
-
-    assertEquals(config.cache.enabled, false);
-    assertEquals(config.cache.ttl, 5000);
-  });
-
-  it("should use default retry settings", () => {
-    const config = createVeryfrontConfig({
-      veryfront: {
-        baseUrl: "https://api.example.com",
-        apiToken: "test-token",
-        projectSlug: "test",
-      },
-    });
-
-    assertEquals(config.retry.maxRetries, 3);
-    assertEquals(config.retry.initialDelay, 1000);
-    assertEquals(config.retry.maxDelay, 10000);
-  });
-
-  it("should default to branch content source", () => {
-    const config = createVeryfrontConfig({
-      veryfront: {
-        baseUrl: "https://api.example.com",
-        apiToken: "test-token",
-        projectSlug: "test",
-      },
-    });
-
-    assertEquals(config.contentSource.type, "branch");
-  });
-
-  it("should use provided content source", () => {
-    const config = createVeryfrontConfig({
-      veryfront: {
-        baseUrl: "https://api.example.com",
-        apiToken: "test-token",
-        projectSlug: "test",
-        contentSource: { type: "environment", name: "production" },
-      },
-    });
-
-    assertEquals(config.contentSource.type, "environment");
-  });
-
-  it("should use apiKey as fallback for apiToken", () => {
-    const config = createVeryfrontConfig({
-      veryfront: {
-        baseUrl: "https://api.example.com",
-        apiKey: "key-123",
-        projectSlug: "test",
-      },
-    });
-
-    assertEquals(config.apiToken, "key-123");
-  });
-
-  it("should prefer apiToken over apiKey", () => {
-    const config = createVeryfrontConfig({
-      veryfront: {
-        baseUrl: "https://api.example.com",
-        apiToken: "token-123",
-        apiKey: "key-123",
-        projectSlug: "test",
-      },
-    });
-
-    assertEquals(config.apiToken, "token-123");
-  });
-
-  it("should default empty strings when optional fields missing", () => {
-    const config = createVeryfrontConfig({ veryfront: {} });
-
-    assertEquals(config.apiBaseUrl, "");
-    assertEquals(config.apiToken, "");
-    assertEquals(config.projectSlug, "");
-  });
-
-  it("should pass through proxyMode", () => {
-    const config = createVeryfrontConfig({
-      veryfront: {
-        baseUrl: "https://api.example.com",
-        apiToken: "test-token",
-        projectSlug: "test",
-        proxyMode: true,
-      },
-    });
-
-    assertEquals(config.proxyMode, true);
-  });
-
-  it("should pass through projectId", () => {
-    const config = createVeryfrontConfig({
-      veryfront: {
-        baseUrl: "https://api.example.com",
-        apiToken: "test-token",
-        projectSlug: "test",
-        projectId: "proj-abc",
-      },
-    });
-
-    assertEquals(config.projectId, "proj-abc");
   });
 });

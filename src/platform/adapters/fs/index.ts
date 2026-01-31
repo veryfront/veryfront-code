@@ -16,7 +16,6 @@ export type {
   DirectoryEntry,
   FSAdapter,
   FSAdapterConfig,
-  VeryfrontConfig,
   VeryfrontFSState,
 } from "./veryfront/types.ts";
 export {
