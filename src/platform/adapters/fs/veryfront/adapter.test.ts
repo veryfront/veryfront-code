@@ -308,4 +308,3 @@ describe("VeryfrontFSAdapter", () => {
     });
   });
 });
-
