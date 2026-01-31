@@ -420,6 +420,31 @@ describe("createVeryfrontConfig", () => {
     assertEquals(config.projectSlug, "");
   });
 
+  it("should resolve apiBaseUrl from apiBaseUrl property", () => {
+    const config = createVeryfrontConfig({
+      veryfront: {
+        apiBaseUrl: "https://api.veryfront.com",
+        apiToken: "test-token",
+        projectSlug: "test",
+      },
+    });
+
+    assertEquals(config.apiBaseUrl, "https://api.veryfront.com");
+  });
+
+  it("should prefer baseUrl over apiBaseUrl", () => {
+    const config = createVeryfrontConfig({
+      veryfront: {
+        baseUrl: "https://custom.example.com",
+        apiBaseUrl: "https://api.veryfront.com",
+        apiToken: "test-token",
+        projectSlug: "test",
+      },
+    });
+
+    assertEquals(config.apiBaseUrl, "https://custom.example.com");
+  });
+
   it("should pass through proxyMode", () => {
     const config = createVeryfrontConfig({
       veryfront: {
