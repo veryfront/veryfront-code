@@ -131,7 +131,7 @@ function rewriteVeryfrontImports(code: string): string {
 export function rewriteDntImports(code: string, sourceFilePath: string): string {
   // Only needed for framework files that come from the npm package.
   // IMPORTANT: Use FRAMEWORK_ROOT + "src/" to avoid matching project source files
-  // that live under FRAMEWORK_ROOT (e.g., projects/codersociety/components/...).
+  // that live under FRAMEWORK_ROOT (e.g., projects/myproject/components/...).
   // Without this, project relative imports get rewritten to absolute file:// source
   // paths with .js extensions, which fail because actual files are .tsx/.ts.
   const frameworkSrcRoot = join(FRAMEWORK_ROOT, "src") + "/";

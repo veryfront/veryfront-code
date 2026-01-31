@@ -11,7 +11,7 @@ if [ -z "$PROJECT_SLUG" ]; then
   echo "Usage: ./scripts/debug-production.sh <project-slug> [port]"
   echo ""
   echo "Examples:"
-  echo "  ./scripts/debug-production.sh codersociety"
+  echo "  ./scripts/debug-production.sh myproject"
   echo "  ./scripts/debug-production.sh myproject 3000"
   exit 1
 fi

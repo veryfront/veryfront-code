@@ -3,8 +3,8 @@
  * Test production fixes locally against production API
  *
  * Usage:
- *   deno run --allow-all scripts/test-production-fix.ts codersociety
- *   deno run --allow-all scripts/test-production-fix.ts codersociety --compiled
+ *   deno run --allow-all scripts/test-production-fix.ts <project-slug>
+ *   deno run --allow-all scripts/test-production-fix.ts <project-slug> --compiled
  *
  * This script:
  * 1. Starts the renderer (source or compiled)
@@ -13,7 +13,12 @@
  * 4. Reports results
  */
 
-const PROJECT_SLUG = Deno.args[0] || "codersociety";
+const PROJECT_SLUG = Deno.args[0];
+if (!PROJECT_SLUG) {
+  console.error("Error: project slug is required");
+  console.error("Usage: deno run --allow-all scripts/test-production-fix.ts <project-slug> [--compiled]");
+  Deno.exit(1);
+}
 const USE_COMPILED = Deno.args.includes("--compiled");
 const PORT = 8080;
 

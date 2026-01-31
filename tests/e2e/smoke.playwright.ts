@@ -14,37 +14,26 @@ import { setupErrorCollection } from "./helpers/assertions.js";
 /**
  * Projects to test.
  *
- * Comment/uncomment to enable/disable projects.
- * Filter by project: E2E_PROJECT=codersociety npx playwright test
+ * Configure via environment variables:
+ *   E2E_PROJECT=myproject npx playwright test     # Test a single project
+ *   E2E_PROJECTS="proj1,proj2" npx playwright test # Test multiple projects
+ *
+ * If neither is set, uses example projects for demonstration.
  */
-const ENABLED_PROJECTS = [
-  "blank",
-  "codersociety",
-  "veryfront",
-  "restaurant-template",
-  "lease-calculator",
-  "impartial-chandrasekhar-qsohb",
-  "immo-price-finder",
-  "real-estate-template",
-  "dashboard",
-  "task-manager-template",
-  "ai-assistant-template",
-  // "tomcode", // RENDERER BUG: SVG components missing `export default` (see docs/E2E_PROJECT_ISSUES.md)
+const getProjectsToTest = (): string[] => {
+  // Single project override
+  const singleProject = process.env.E2E_PROJECT;
+  if (singleProject) return [singleProject];
 
-  // AI templates:
-  // "ai-inbox-assistant",
-  // "immo-agent-template",
-  // "doc-agent-template",
-  // "outlook-agent",
-  // "ai-agent",
-  // "ai-agent-kitchen-sink",
-  // "invest-pro-template",
+  // Multiple projects from env
+  const projectList = process.env.E2E_PROJECTS;
+  if (projectList) return projectList.split(",").map((p) => p.trim()).filter(Boolean);
 
-  // "marketing-template", // missing remote deps (veryfront-ui 404s)
-];
+  // Default: blank project for basic smoke test
+  return ["blank"];
+};
 
-const targetProject = process.env.E2E_PROJECT;
-const PROJECTS = targetProject ? [targetProject] : ENABLED_PROJECTS;
+const PROJECTS = getProjectsToTest();
 
 /**
  * Test modes: production ({subdomain}.lvh.me) and preview ({subdomain}.preview.lvh.me)

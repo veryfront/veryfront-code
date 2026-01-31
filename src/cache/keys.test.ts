@@ -67,7 +67,7 @@ describe("cache/keys", () => {
 
   describe("buildConfigCacheKey", () => {
     it("should build key for virtual filesystem", () => {
-      assertMatch(buildConfigCacheKey("codersociety", true), /^vf:codersociety:.+$/);
+      assertMatch(buildConfigCacheKey("example-project", true), /^vf:example-project:.+$/);
     });
 
     it("should build key for local filesystem", () => {

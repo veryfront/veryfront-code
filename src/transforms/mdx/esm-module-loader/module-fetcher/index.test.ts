@@ -425,7 +425,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     });
 
     it("does not rewrite project files under FRAMEWORK_ROOT in local dev", () => {
-      const localProjectPath = join(FRAMEWORK_ROOT, "projects/codersociety/components/Header.tsx");
+      const localProjectPath = join(FRAMEWORK_ROOT, "projects/example-project/components/Header.tsx");
       const code = `import { Logo } from "../elements/Logo.js";\nexport const foo = 1;`;
       const result = rewriteDntImports(code, localProjectPath);
       assertEquals(result, code, "Project files under FRAMEWORK_ROOT should not be rewritten");

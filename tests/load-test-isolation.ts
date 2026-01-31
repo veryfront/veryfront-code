@@ -191,7 +191,13 @@ async function testSlowEndpointIsolation(baseUrl: string): Promise<boolean> {
 }
 
 async function main(): Promise<void> {
-  const baseUrl = Deno.args[0] ?? "http://codersociety.lvh.me:8080";
+  const baseUrl = Deno.args[0];
+  if (!baseUrl) {
+    console.error("Error: URL is required");
+    console.error("Usage: deno run --allow-all tests/load-test-isolation.ts <url>");
+    console.error("Example: deno run --allow-all tests/load-test-isolation.ts http://myproject.lvh.me:8080");
+    Deno.exit(1);
+  }
 
   console.log(`\n${COLORS.cyan}Veryfront Renderer - Load Test Suite${COLORS.reset}`);
   console.log(`Testing against: ${baseUrl}\n`);
