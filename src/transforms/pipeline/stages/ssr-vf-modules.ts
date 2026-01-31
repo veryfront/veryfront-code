@@ -16,7 +16,7 @@ import { replaceSpecifiers } from "../../esm/lexer.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import { getMdxEsmCacheDir, getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
 import { cacheHttpImportsToLocal } from "../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
@@ -109,7 +109,7 @@ async function resolveFrameworkFile(
  */
 async function resolveVeryfrontImport(
   specifier: string,
-  fs: ReturnType<typeof createFileSystem>,
+  _fs: ReturnType<typeof createFileSystem>,
 ): Promise<string | null> {
   if (!specifier.startsWith("#veryfront/")) return null;
 
@@ -198,7 +198,9 @@ async function transformFrameworkSource(
         // Fail fast - unresolved #veryfront/ imports will cause runtime errors
         throw new Error(
           `${LOG_PREFIX} Could not resolve framework import "${specifier}" in ${sourcePath}. ` +
-            `Expected to find ${join(FRAMEWORK_ROOT, "src", specifier.slice("#veryfront/".length))}.{ts,tsx,js,jsx} ` +
+            `Expected to find ${
+              join(FRAMEWORK_ROOT, "src", specifier.slice("#veryfront/".length))
+            }.{ts,tsx,js,jsx} ` +
             `or an index file at that path.`,
         );
       }

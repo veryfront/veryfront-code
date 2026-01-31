@@ -7,11 +7,11 @@
  * @see ssr-vf-modules.ts
  */
 
-import { assertEquals, assertStringIncludes, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ssrVfModulesPlugin, _testExports } from "./ssr-vf-modules.ts";
+import { _testExports, ssrVfModulesPlugin } from "./ssr-vf-modules.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { getReactImportMap, buildReactUrl } from "../../import-rewriter/url-builder.ts";
+import { buildReactUrl, getReactImportMap } from "../../import-rewriter/url-builder.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import type { TransformContext } from "../types.ts";
 
@@ -20,7 +20,8 @@ const { findVfModuleImports, FRAMEWORK_ROOT, EXTENSIONS } = _testExports;
 describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () => {
   describe("findVfModuleImports", () => {
     it("finds single /_vf_modules/ import", () => {
-      const code = `import { Head } from "/_vf_modules/_veryfront/react/components/Head.js?ssr=true";`;
+      const code =
+        `import { Head } from "/_vf_modules/_veryfront/react/components/Head.js?ssr=true";`;
       const imports = findVfModuleImports(code);
       assertEquals(imports, ["/_vf_modules/_veryfront/react/components/Head.js?ssr=true"]);
     });
@@ -33,8 +34,14 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
       `;
       const imports = findVfModuleImports(code);
       assertEquals(imports.length, 2);
-      assertEquals(imports.includes("/_vf_modules/_veryfront/react/components/Head.js?ssr=true"), true);
-      assertEquals(imports.includes("/_vf_modules/_veryfront/react/router/index.js?ssr=true"), true);
+      assertEquals(
+        imports.includes("/_vf_modules/_veryfront/react/components/Head.js?ssr=true"),
+        true,
+      );
+      assertEquals(
+        imports.includes("/_vf_modules/_veryfront/react/router/index.js?ssr=true"),
+        true,
+      );
     });
 
     it("deduplicates repeated imports", () => {
@@ -167,7 +174,6 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(REACT_DEFAULT_VERSION.startsWith("19."), true);
     });
   });
-
 });
 
 describe("ssr-vf-modules integration", { sanitizeOps: false, sanitizeResources: false }, () => {
@@ -234,6 +240,10 @@ describe("ssr-vf-modules integration", { sanitizeOps: false, sanitizeResources: 
     // This ensures different environments (source vs compiled binary) don't share cache files
     const result = await resolveVeryfrontImport("#veryfront/utils", fs);
     assertEquals(result !== null, true, "Should resolve #veryfront/utils");
-    assertStringIncludes(result!, FRAMEWORK_ROOT, "Path should contain FRAMEWORK_ROOT for cache isolation");
+    assertStringIncludes(
+      result!,
+      FRAMEWORK_ROOT,
+      "Path should contain FRAMEWORK_ROOT for cache isolation",
+    );
   });
 });
