@@ -721,10 +721,47 @@ export function createVeryfrontHandler(
                   return effectiveAdapter.fs.runWithContext(
                     projectSlug,
                     proxyToken,
-                    () =>
-                      getConfig(effectiveProjectDir, effectiveAdapter, {
+                    async () => {
+                      const loaded = await getConfig(effectiveProjectDir, effectiveAdapter, {
                         cacheKey: projectId || projectSlug,
-                      }),
+                      });
+
+                      // Apply project-level layout from API if config doesn't specify one.
+                      // The API project data may have a layout field (set via dashboard) that
+                      // should be used when veryfront.config.ts doesn't define a layout.
+                      // This must run inside runWithContext so the adapter has project context.
+                      if (loaded.layout === undefined) {
+                        try {
+                          const adapterFs = effectiveAdapter.fs;
+                          const underlying = isExtendedFSAdapter(adapterFs)
+                            ? adapterFs.getUnderlyingAdapter() as {
+                              getProjectData?: () =>
+                                | { layout?: string | null }
+                                | Promise<{ layout?: string | null }>
+                                | undefined;
+                            }
+                            : undefined;
+
+                          if (underlying && typeof underlying.getProjectData === "function") {
+                            const projectData = await underlying.getProjectData();
+                            if (projectData?.layout) {
+                              logger.debug("[universal] Applied project-level layout from API", {
+                                projectSlug,
+                                layout: projectData.layout,
+                              });
+                              return { ...loaded, layout: projectData.layout };
+                            }
+                          }
+                        } catch (err) {
+                          logger.debug("[universal] Failed to get project layout from adapter", {
+                            projectSlug,
+                            error: getErrorMessage(err),
+                          });
+                        }
+                      }
+
+                      return loaded;
+                    },
                     projectId,
                     {
                       productionMode: proxyEnv === "production",
