@@ -1,7 +1,7 @@
 import {
   generateCacheKey,
   getCachedTransformAsync,
-  setCachedTransform,
+  setCachedTransformAsync,
 } from "../esm/transform-cache.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { createTransformContext, formatTimingLog, recordStageTiming } from "./context.ts";
@@ -183,7 +183,13 @@ export function runPipeline(
         recordStageTiming(ctx, plugin.stage, stageStart);
       }
 
-      setCachedTransform(cacheKey, ctx.code, ctx.contentHash);
+      // Store the bundleManifestId from ssrHttpCachePlugin for future cache validation
+      const bundleManifestId = ctx.metadata.get("bundleManifestId") as string | undefined;
+      setCachedTransformAsync(cacheKey, ctx.code, ctx.contentHash, undefined, bundleManifestId).catch(
+        (error) => {
+          logger.debug("[PIPELINE] Failed to cache transform", { error });
+        },
+      );
 
       const totalMs = performance.now() - transformStart;
 
