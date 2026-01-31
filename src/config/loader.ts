@@ -13,6 +13,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getErrorMessage } from "../errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import { transformJsx } from "#veryfront/platform/compat/transform.ts";
 
 export type { VeryfrontConfig } from "./types.ts";
 
@@ -226,7 +227,7 @@ async function loadConfigFromTempFile(
 
 /**
  * Load config from virtual filesystem.
- * Uses Deno's native TypeScript support - no esbuild transpilation needed.
+ * Uses esbuild to transpile TypeScript to JavaScript before importing.
  */
 function loadConfigFromVirtualFS(
   configPath: string,
@@ -329,8 +330,9 @@ export function getConfig(
         isVirtualFS,
       });
 
-      // Check for VERYFRONT_CONFIG env var first (used by split-mode scripts)
-      // Always load from LOCAL filesystem, even if adapter uses virtual FS
+      // Check for VERYFRONT_CONFIG env var (used by split-mode scripts)
+      // This provides infrastructure overrides (fs, cache) that get merged with project config
+      let envOverrides: Partial<VeryfrontConfig> | null = null;
       const envConfigPath = Deno.env.get("VERYFRONT_CONFIG");
       if (envConfigPath) {
         const fs = createFileSystem();
@@ -341,14 +343,16 @@ export function getConfig(
         try {
           const exists = await fs.exists(absoluteConfigPath);
           if (exists) {
-            serverLogger.debug("[CONFIG] Loading from VERYFRONT_CONFIG env var (local fs)", {
+            serverLogger.debug("[CONFIG] Loading overrides from VERYFRONT_CONFIG env var", {
               path: absoluteConfigPath,
             });
-            // Load config directly from local filesystem (bypass adapter.fs)
             const configUrl = `file://${absoluteConfigPath}?t=${Date.now()}-${crypto.randomUUID()}`;
             const configModule = await import(configUrl);
-            const userConfig = configModule.default || configModule;
-            return validateAndCacheConfig(userConfig, effectiveCacheKey);
+            envOverrides = configModule.default || configModule;
+            serverLogger.debug("[CONFIG] Loaded VERYFRONT_CONFIG overrides", {
+              hasFs: !!envOverrides?.fs,
+              hasLayout: !!envOverrides?.layout,
+            });
           }
         } catch (error) {
           serverLogger.debug("[CONFIG] Failed to load VERYFRONT_CONFIG:", {
@@ -365,7 +369,30 @@ export function getConfig(
         if (!(await adapter.fs.exists(configPath))) continue;
 
         try {
-          return await loadAndMergeConfig(configPath, effectiveCacheKey, adapter);
+          let merged = await loadAndMergeConfig(configPath, effectiveCacheKey, adapter);
+
+          // Apply VERYFRONT_CONFIG overrides (infrastructure settings like fs, cache)
+          // These override project config for infrastructure but preserve project's app/layout
+          if (envOverrides) {
+            serverLogger.debug("[CONFIG] Applying VERYFRONT_CONFIG overrides to project config", {
+              projectLayout: merged.layout,
+              projectApp: merged.app,
+            });
+            merged = {
+              ...merged,
+              ...envOverrides,
+              // Keep project's app/layout unless envOverrides explicitly sets them
+              app: envOverrides.app !== undefined ? envOverrides.app : merged.app,
+              layout: envOverrides.layout !== undefined ? envOverrides.layout : merged.layout,
+            };
+            // Re-cache with merged config
+            configCacheByProject.set(effectiveCacheKey, {
+              revision: cacheRevision,
+              config: merged,
+            });
+          }
+
+          return merged;
         } catch (error) {
           if (isConfigError(error)) throw error;
 
@@ -380,7 +407,11 @@ export function getConfig(
         duration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
       });
 
-      const defaultConfig = createFreshDefaults() as VeryfrontConfig;
+      let defaultConfig = createFreshDefaults() as VeryfrontConfig;
+      // Apply VERYFRONT_CONFIG overrides to defaults if present
+      if (envOverrides) {
+        defaultConfig = { ...defaultConfig, ...envOverrides };
+      }
       configCacheByProject.set(effectiveCacheKey, {
         revision: cacheRevision,
         config: defaultConfig,

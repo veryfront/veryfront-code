@@ -338,8 +338,22 @@ export class LayoutCollector {
   /**
    * Check for components/layout.* as a fallback when no nested layouts are found.
    * This provides consistent behavior between filesystem and API adapters.
+   *
+   * IMPORTANT: If config.layout is set, skip this fallback - config takes priority
+   * over convention-based discovery.
    */
   private async checkComponentsLayoutFallback(): Promise<LayoutItem[]> {
+    // If config.layout is set, don't use convention-based fallback
+    if (typeof this.config?.layout === "string" && this.config.layout.length > 0) {
+      logger.debug(
+        "[LayoutCollector] Skipping components/layout fallback - config.layout takes priority",
+        {
+          configLayout: this.config.layout,
+        },
+      );
+      return [];
+    }
+
     const checker: FileExistenceChecker = {
       exists: async (path: string) => {
         try {
