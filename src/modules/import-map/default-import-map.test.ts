@@ -47,8 +47,8 @@ describe("modules/import-map/default-import-map", () => {
       const headUrl = imports["veryfront/head"];
       assertExists(headUrl);
       assert(
-        headUrl.startsWith("/_vf_modules/_veryfront/"),
-        `Expected module server URL but got: ${headUrl}`,
+        headUrl.startsWith("/_vf_modules/react/"),
+        `Expected module server URL starting with /_vf_modules/react/ but got: ${headUrl}`,
       );
       assert(headUrl.includes("?ssr=true"), `Expected ssr=true param but got: ${headUrl}`);
     });

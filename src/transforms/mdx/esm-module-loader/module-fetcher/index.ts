@@ -877,7 +877,10 @@ async function doFetchAndCacheModule(
         outputLength: moduleCode.length,
       });
 
-      moduleCode = rewriteDntImports(rewriteVeryfrontImports(moduleCode), actualFilePath);
+      // Rewrite veryfront/* imports to /_vf_modules/ paths (cached files don't have import maps)
+      moduleCode = rewriteVeryfrontImports(moduleCode);
+      // Rewrite _dnt.polyfills.js / _dnt.shims.js relative imports to absolute file:// paths
+      moduleCode = rewriteDntImports(moduleCode, actualFilePath);
 
       // Mark for distributed cache write AFTER nested imports are resolved.
       // This ensures we don't cache code with unresolved /_vf_modules/ paths.
