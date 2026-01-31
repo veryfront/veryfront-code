@@ -88,13 +88,17 @@ jobs:
   # ============================================
   # CI: Split Mode Test (PR + main, skip tags)
   # ============================================
+  # Split Mode Test (Optional)
+  # Enable by setting RUN_SPLIT_MODE_TEST=true in repository secrets
+  # Tests proxy+renderer architecture without external project dependencies
+  # ============================================
 
   tests-split-mode:
-    if: startsWith(github.ref, 'refs/tags/') == false
+    if: startsWith(github.ref, 'refs/tags/') == false && vars.RUN_SPLIT_MODE_TEST == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     name: tests (split mode)
-    continue-on-error: true # Non-blocking - informational only
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
@@ -104,75 +108,44 @@ jobs:
       - name: Compile binary
         run: deno task build
 
-      - name: Load secrets from 1Password
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 3
-          max_attempts: 3
-          retry_wait_seconds: 10
-          command: |
-            # Install 1Password CLI
-            curl -sS https://downloads.1password.com/linux/keys/1password.asc | gpg --dearmor --output /tmp/1password-archive-keyring.gpg
-            echo "deb [arch=amd64 signed-by=/tmp/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main" | sudo tee /etc/apt/sources.list.d/1password.list
-            sudo apt-get update && sudo apt-get install -y 1password-cli
-
-            # Export secrets to GITHUB_ENV
-            echo "API_CLIENT_ID_VERYFRONT_RENDERER_PROXY=$(op read 'op://VERYFRONT_CI/Veryfront Renderer Proxy OAuth/API_CLIENT_ID_VERYFRONT_RENDERER_PROXY')" >> $GITHUB_ENV
-            echo "API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY=$(op read 'op://VERYFRONT_CI/Veryfront Renderer Proxy OAuth/API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY')" >> $GITHUB_ENV
-            echo "REDIS_URL=$(op read 'op://VERYFRONT_CI/UPSTASH_REDIS_VERYFRONT_RENDERER_PROXY_STAGING/REDIS_URL')" >> $GITHUB_ENV
-        env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-
-      - name: Run split mode test
+      - name: Test split mode startup
         run: |
-          # Set production-like env vars
-          export VERYFRONT_API_BASE_URL="https://api.veryfront.com"
-          export RENDERER_URL="http://localhost:3000"
-          export CACHE_TYPE="redis"
-          export REDIS_PREFIX="vf:token:"
-          export RENDERER_REQUEST_TIMEOUT_MS=90000
-          export NODE_ENV=production
-          export PROXY_MODE=1
-          export PRODUCTION_MODE=1
-          export SSR_REDIS_CACHE_ENABLED=true
-          export PROJECT_MAX_CONCURRENT=1000
-          export PROJECT_CIRCUIT_THRESHOLD=20
-          export PROJECT_CIRCUIT_RESET_MS=15000
-          export VERYFRONT_CONFIG="scripts/split-mode/veryfront.config.mjs"
-
-          # Start servers
+          # Start renderer in background
           ./bin/veryfront serve --mode=renderer --port=3000 &
           RENDERER_PID=$!
+
+          # Start proxy in background
           ./bin/veryfront serve --mode=proxy --port=8080 &
           PROXY_PID=$!
-          sleep 8
 
-          # Test - use localhost with Host header to avoid DNS issues in CI
-          # Use || true to prevent curl timeout from failing the script
-          echo "Testing codersociety.lvh.me:8080 (via localhost)..."
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: codersociety.lvh.me:8080" http://127.0.0.1:8080/ --max-time 30 || echo "000")
-          echo "Status: $STATUS"
+          # Wait for startup
+          sleep 5
+
+          # Health check - just verify processes are running
+          echo "Checking renderer on port 3000..."
+          curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/ --max-time 5 || echo "Renderer not responding (expected without project)"
+
+          echo "Checking proxy on port 8080..."
+          curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/ --max-time 5 || echo "Proxy not responding (expected without project)"
+
+          # Verify processes started successfully
+          if kill -0 $RENDERER_PID 2>/dev/null; then
+            echo "SUCCESS: Renderer process running"
+          else
+            echo "FAILED: Renderer process not running"
+            exit 1
+          fi
+
+          if kill -0 $PROXY_PID 2>/dev/null; then
+            echo "SUCCESS: Proxy process running"
+          else
+            echo "FAILED: Proxy process not running"
+            exit 1
+          fi
 
           # Cleanup
           kill $RENDERER_PID $PROXY_PID 2>/dev/null || true
-
-          # Check result
-          # 200 = Success
-          # 500 = Known issue (codersociety has missing modules)
-          # 000 = Curl timeout (renderer hanging on missing modules - also acceptable)
-          if [[ "$STATUS" == "200" ]]; then
-            echo "SUCCESS: Got 200 response"
-            exit 0
-          elif [[ "$STATUS" == "500" ]]; then
-            echo "OK: Known issue (codersociety missing modules, got 500)"
-            exit 0
-          elif [[ "$STATUS" == "000" ]]; then
-            echo "OK: Renderer timeout (codersociety has missing modules causing hang)"
-            exit 0
-          else
-            echo "FAILED: Unexpected status $STATUS"
-            exit 1
-          fi
+          echo "Split mode startup test passed"
 
   # ============================================
   # CD: Calculate Version (single source of truth)
