@@ -3,14 +3,18 @@
 # Usage: deno task test-split [--deno]
 #   --deno  Use deno task instead of compiled binary
 #
+# Environment variables:
+#   SPLIT_MODE_TEST_PROJECT  - Project slug to test (e.g., "myproject")
+#   OP_SERVICE_ACCOUNT_TOKEN - 1Password token for loading secrets
+#
 # Prerequisites:
 #   - 1Password CLI (op) installed
 #   - OP_SERVICE_ACCOUNT_TOKEN env var set (for non-interactive auth)
-#   - Get token from: https://start.1password.com/open/i?a=TEAMSACCOUNT&v=VERYFRONT_CI&i=OP_SERVICE_ACCOUNT_TOKEN
 #
-#   Example:
-#     export OP_SERVICE_ACCOUNT_TOKEN="ops_..."
-#     deno task test-split
+# Example:
+#   export SPLIT_MODE_TEST_PROJECT="myproject"
+#   export OP_SERVICE_ACCOUNT_TOKEN="ops_..."
+#   deno task test-split
 #
 # Flow:
 # ┌─────────────────────────────────────────────────────────────────┐
@@ -19,7 +23,7 @@
 # │  1. Compile (if needed)                                         │
 # │  2. Load secrets from 1Password                                 │
 # │  3. Start renderer (:3000) + proxy (:8080)                      │
-# │  4. Test: curl http://codersociety.lvh.me:8080/                 │
+# │  4. Test: curl http://${PROJECT}.lvh.me:8080/                   │
 # │  5. Cleanup + exit                                              │
 # │                                                                 │
 # │  ┌───────┐            ┌─────────────────────┐                   │
@@ -41,6 +45,14 @@
 #
 set -e
 cd "$(dirname "$0")/../.."
+
+# Configuration
+PROJECT="${SPLIT_MODE_TEST_PROJECT:-}"
+if [[ -z "$PROJECT" ]]; then
+  echo "Error: SPLIT_MODE_TEST_PROJECT environment variable is required"
+  echo "Example: export SPLIT_MODE_TEST_PROJECT=\"myproject\""
+  exit 1
+fi
 
 # Check for --deno flag
 if [[ "$1" == "--deno" ]]; then
@@ -98,22 +110,22 @@ sleep 5
 # Test
 # Use localhost with Host header to avoid DNS issues in CI
 # Use || echo "000" to handle curl timeout gracefully
-echo "Testing codersociety.lvh.me:8080 (via localhost)..."
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: codersociety.lvh.me:8080" http://127.0.0.1:8080/ --max-time 30 || echo "000")
+echo "Testing ${PROJECT}.lvh.me:8080 (via localhost)..."
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: ${PROJECT}.lvh.me:8080" http://127.0.0.1:8080/ --max-time 30 || echo "000")
 echo "Status: $STATUS"
 
 # Check result
 # 200 = Success
-# 500 = Known issue (codersociety has missing modules)
-# 000 = Curl timeout (renderer hanging on missing modules - also acceptable)
+# 500 = Server error (may indicate missing modules or configuration issues)
+# 000 = Curl timeout (may indicate renderer hanging)
 if [[ "$STATUS" == "200" ]]; then
   echo "SUCCESS: Got 200 response"
   exit 0
 elif [[ "$STATUS" == "500" ]]; then
-  echo "OK: Known issue (codersociety missing modules, got 500)"
+  echo "WARNING: Got 500 response (check project configuration)"
   exit 0
 elif [[ "$STATUS" == "000" ]]; then
-  echo "OK: Renderer timeout (codersociety has missing modules causing hang)"
+  echo "WARNING: Request timeout (check renderer logs)"
   exit 0
 else
   echo "FAILED: Unexpected status $STATUS"
