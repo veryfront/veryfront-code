@@ -23,8 +23,12 @@ import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { buildReactUrl, getReactImportMap } from "../../import-rewriter/url-builder.ts";
+import { Singleflight } from "#veryfront/utils/singleflight.ts";
 
 const LOG_PREFIX = "[SSR-VF-MODULES]";
+
+// Singleflight for framework module file writes to prevent race conditions
+const frameworkWriteFlight = new Singleflight<string>();
 
 // Get framework root - this works in both Deno source and compiled binaries
 const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
@@ -255,10 +259,21 @@ async function cacheTransformedCode(
   const frameworkCacheDir = join(cacheDir, "framework");
   const cachePath = join(frameworkCacheDir, fileName);
 
-  await fs.mkdir(frameworkCacheDir, { recursive: true });
-  await fs.writeTextFile(cachePath, transformed);
+  // Use Singleflight to prevent concurrent writes to the same file
+  return await frameworkWriteFlight.do(cachePath, async () => {
+    await fs.mkdir(frameworkCacheDir, { recursive: true });
 
-  return cachePath;
+    // Check if file already exists to avoid unnecessary writes
+    if (await fs.exists(cachePath)) {
+      logger.debug(`${LOG_PREFIX} Framework module cache hit`, { cachePath });
+      return cachePath;
+    }
+
+    await fs.writeTextFile(cachePath, transformed);
+    logger.debug(`${LOG_PREFIX} Wrote framework module to cache`, { cachePath });
+
+    return cachePath;
+  });
 }
 
 // Export internal functions for testing
