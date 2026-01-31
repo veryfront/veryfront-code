@@ -1,4 +1,0 @@
-/****
- * Tool type definitions
- */
-export {};

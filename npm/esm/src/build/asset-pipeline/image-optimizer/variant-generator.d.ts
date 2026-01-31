@@ -1,4 +1,0 @@
-import type { ImageFormat, ImageVariant, SharpConstructor, SharpInstance, SharpMetadata } from "./types.js";
-export declare function generateVariant(sharp: SharpConstructor, image: SharpInstance, relPath: string, format: ImageFormat, width: number, metadata: SharpMetadata, quality: number, outputDir: string): Promise<ImageVariant | null>;
-export declare function generateImageVariants(sharp: SharpConstructor, image: SharpInstance, relPath: string, metadata: SharpMetadata, formats: ImageFormat[], sizes: number[], quality: number, outputDir: string): Promise<ImageVariant[]>;
-//# sourceMappingURL=variant-generator.d.ts.map

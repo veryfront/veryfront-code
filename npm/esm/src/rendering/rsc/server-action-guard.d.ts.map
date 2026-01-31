@@ -1,1 +1,0 @@
-{"version":3,"file":"server-action-guard.d.ts","sourceRoot":"","sources":["../../../../src/src/rendering/rsc/server-action-guard.ts"],"names":[],"mappings":"AAEA,OAAO,KAAK,OAAO,MAAM,wBAAwB,CAAC;AAElD,wBAAgB,cAAc,CAAC,IAAI,EAAE,OAAO,CAAC,OAAO,EAAE,KAAK,EAAE;IAAE,EAAE,EAAE,MAAM,CAAC;IAAC,IAAI,EAAE,OAAO,EAAE,CAAA;CAAE,GAAG,OAAO,CAErG"}

@@ -1,1 +1,0 @@
-{"version":3,"file":"clean.d.ts","sourceRoot":"","sources":["../../../../src/src/cli/commands/clean.ts"],"names":[],"mappings":"AAyBA,UAAU,YAAY;IACpB,UAAU,EAAE,MAAM,CAAC;IACnB,KAAK,CAAC,EAAE,OAAO,CAAC;IAChB,KAAK,CAAC,EAAE,OAAO,CAAC;IAChB,GAAG,CAAC,EAAE,OAAO,CAAC;IACd,KAAK,CAAC,EAAE,OAAO,CAAC;CACjB;AAED,wBAAsB,YAAY,CAAC,OAAO,EAAE,YAAY,GAAG,OAAO,CAAC,IAAI,CAAC,CA+CvE"}

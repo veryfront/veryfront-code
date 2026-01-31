@@ -37,7 +37,6 @@ import {
 } from "./constants.ts";
 import { withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 import {
-  acquireTransformSlot,
   failedComponents,
   getFromRedis,
   globalCrossProjectCache,
@@ -47,6 +46,7 @@ import {
   isSSRDistributedCacheEnabled,
   releaseTransformSlot,
   setInRedis,
+  tryAcquireTransformSlot,
   transformSemaphore,
 } from "./cache/index.ts";
 import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
@@ -377,8 +377,8 @@ export class SSRModuleLoader {
       const projectId = this.options.projectId;
       let projectSlotAcquired = false;
 
-      // Per-project fairness check (fast, no waiting)
-      if (!acquireTransformSlot(projectId)) {
+      // Per-project fairness check (with short retry window for burst handling)
+      if (!await tryAcquireTransformSlot(projectId, TRANSFORM_ACQUIRE_TIMEOUT_MS)) {
         throw new Error(
           `Project ${projectId} at transform capacity. Consider reducing page complexity or request rate.`,
         );
@@ -538,6 +538,14 @@ export class SSRModuleLoader {
     if (isSSRDistributedCacheEnabled()) {
       const redisCode = await getFromRedis(contentCacheKey);
       if (redisCode) {
+        // Check for esm.sh URLs that reference /_vf_modules/ paths - these are invalid
+        // and indicate a cached transform from before the fix was deployed
+        if (/esm\.sh\/_?vf_modules\//.test(redisCode)) {
+          logger.warn("[SSR-MODULE-LOADER] Redis cache has invalid esm.sh/_vf_modules URL, re-transforming", {
+            file: filePath.slice(-40),
+          });
+          // Fall through to re-transform
+        } else {
         // Proactively ensure HTTP bundles exist before using cached transform.
         // The cached code may reference file:// paths to HTTP bundles that were
         // created on a different pod and may not exist locally.
@@ -608,6 +616,7 @@ export class SSRModuleLoader {
           return;
         }
         // Fall through to re-transform, which will create HTTP bundles locally
+        }
       }
     }
 
@@ -768,8 +777,8 @@ export class SSRModuleLoader {
       const projectId = this.options.projectId;
       let projectSlotAcquired = false;
 
-      // Per-project fairness check (fast, no waiting)
-      if (!acquireTransformSlot(projectId)) {
+      // Per-project fairness check (with short retry window for burst handling)
+      if (!await tryAcquireTransformSlot(projectId, TRANSFORM_ACQUIRE_TIMEOUT_MS)) {
         throw toError(
           createError({
             type: "build",

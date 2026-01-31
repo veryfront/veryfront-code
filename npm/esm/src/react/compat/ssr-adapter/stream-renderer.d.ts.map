@@ -1,1 +1,0 @@
-{"version":3,"file":"stream-renderer.d.ts","sourceRoot":"","sources":["../../../../../src/src/react/compat/ssr-adapter/stream-renderer.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,KAAK,MAAM,OAAO,CAAC;AAK/B,OAAO,KAAK,EAAE,UAAU,EAAE,SAAS,EAAE,MAAM,YAAY,CAAC;AAwMxD,wBAAsB,qBAAqB,CACzC,OAAO,EAAE,KAAK,CAAC,SAAS,EACxB,OAAO,GAAE,UAAe,GACvB,OAAO,CAAC,SAAS,CAAC,CAwBpB"}

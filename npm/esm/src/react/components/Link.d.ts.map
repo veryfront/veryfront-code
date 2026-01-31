@@ -1,1 +1,0 @@
-{"version":3,"file":"Link.d.ts","sourceRoot":"","sources":["../../../../src/src/react/components/Link.tsx"],"names":[],"mappings":"AAAA,OAAO,KAAK,MAAM,OAAO,CAAC;AAE1B,MAAM,MAAM,SAAS,GAAG,KAAK,CAAC,oBAAoB,CAAC,iBAAiB,CAAC,GAAG;IACtE,QAAQ,CAAC,EAAE,OAAO,CAAC;CACpB,CAAC;AAEF,wBAAgB,IAAI,CAAC,EACnB,QAAe,EACf,QAAQ,EACR,GAAG,IAAI,EACR,EAAE,SAAS,GAAG,KAAK,CAAC,YAAY,CAMhC"}

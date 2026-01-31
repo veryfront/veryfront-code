@@ -21,6 +21,7 @@ import {
   resolveImportsPlugin,
   ssrHttpCachePlugin,
   ssrHttpStubPlugin,
+  ssrVfModulesPlugin,
 } from "./stages/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
@@ -28,6 +29,7 @@ const SSR_PIPELINE: TransformPlugin[] = [
   parsePlugin,
   compilePlugin,
   resolveImportsPlugin, // Unified import resolution
+  ssrVfModulesPlugin, // Resolve /_vf_modules/ to framework files with React transforms
   ssrHttpStubPlugin,
   ssrHttpCachePlugin,
   finalizePlugin,

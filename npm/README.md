@@ -130,5 +130,5 @@ Once connected, your agent gets access to:
 | `vf_get_status` | Dev server status and stats |
 | `vf_trigger_hmr` | Trigger hot module reload |
 
-
+<!-- Auto-deploy proof test: 2026-01-30T12:44:06Z -->
 

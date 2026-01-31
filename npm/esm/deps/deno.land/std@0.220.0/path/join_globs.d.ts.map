@@ -1,1 +1,0 @@
-{"version":3,"file":"join_globs.d.ts","sourceRoot":"","sources":["../../../../../src/deps/deno.land/std@0.220.0/path/join_globs.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,WAAW,EAAE,MAAM,8BAA8B,CAAC;AAKhE,YAAY,EAAE,WAAW,EAAE,CAAC;AAE5B,0EAA0E;AAC1E,wBAAgB,SAAS,CACvB,KAAK,EAAE,MAAM,EAAE,EACf,OAAO,GAAE,WAAgB,GACxB,MAAM,CAIR"}

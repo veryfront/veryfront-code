@@ -1,1 +1,0 @@
-{"version":3,"file":"deno-sandbox.d.ts","sourceRoot":"","sources":["../../../../src/src/security/sandbox/deno-sandbox.ts"],"names":[],"mappings":"AAMA,MAAM,WAAW,cAAc;IAC7B,SAAS,CAAC,EAAE,MAAM,CAAC;IACnB,aAAa,CAAC,EAAE,MAAM,CAAC;CACxB;AAYD,wBAAgB,WAAW,CAAC,CAAC,GAAG,OAAO,EAAE,IAAI,EAAE,MAAM,EAAE,OAAO,GAAE,cAAmB,GAAG,OAAO,CAAC,CAAC,CAAC,CAqF/F"}

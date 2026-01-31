@@ -1,1 +1,0 @@
-{"version":3,"file":"ensure_symlink.d.ts","sourceRoot":"","sources":["../../../../../src/deps/deno.land/std@0.220.0/fs/ensure_symlink.ts"],"names":[],"mappings":"AAoBA;;;;;;;;GAQG;AACH,wBAAsB,aAAa,CACjC,MAAM,EAAE,MAAM,GAAG,GAAG,EACpB,QAAQ,EAAE,MAAM,GAAG,GAAG,iBAmCvB;AAED;;;;;;;;GAQG;AACH,wBAAgB,iBAAiB,CAC/B,MAAM,EAAE,MAAM,GAAG,GAAG,EACpB,QAAQ,EAAE,MAAM,GAAG,GAAG,QAmCvB"}

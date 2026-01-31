@@ -37,10 +37,17 @@ node_modules/
 
 # Binaries
 bin/
+veryfront-local
 
 # NPM config
 .npmrc
 deno.lock
+
+# NPM build artifacts (DNT output)
+npm/esm/
+npm/src/
+npm/node_modules/
+npm/package-lock.json
 
 # Veryfront ESM module cache
 .cache/

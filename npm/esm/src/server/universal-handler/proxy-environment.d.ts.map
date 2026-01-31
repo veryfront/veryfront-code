@@ -1,1 +1,0 @@
-{"version":3,"file":"proxy-environment.d.ts","sourceRoot":"","sources":["../../../../src/src/server/universal-handler/proxy-environment.ts"],"names":[],"mappings":"AAAA;;GAEG;AAEH,QAAA,MAAM,wBAAwB,oCAAqC,CAAC;AAEpE,MAAM,MAAM,gBAAgB,GAAG,CAAC,OAAO,wBAAwB,CAAC,CAAC,MAAM,CAAC,CAAC;AAEzE,kDAAkD;AAClD,wBAAgB,qBAAqB,CAAC,KAAK,EAAE,MAAM,GAAG,IAAI,GAAG,gBAAgB,GAAG,SAAS,CAMxF"}

@@ -10,6 +10,7 @@ export {
   globalTmpDirs,
   releaseTransformSlot,
   transformSemaphore,
+  tryAcquireTransformSlot,
 } from "./memory.ts";
 
 export {

@@ -15,6 +15,7 @@ import { cwd } from "#veryfront/platform/compat/process.ts";
 import { isDeno, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -109,30 +110,18 @@ const getDistributedCache = createDistributedCacheAccessor(
 );
 
 /**
- * Cache version for HTTP bundles.
- * Increment this to invalidate ALL cached bundles across all projects.
- * Use when:
- * - React version changes
- * - Bundle format changes
- * - Cache corruption detected globally
- *
- * v1: Initial version
- * v2: 2026-01-30 - Invalidate stale React bundles causing "useContext is null"
- * v3: 2026-01-30 - Invalidate HTML error pages incorrectly cached as JS (parse errors)
- * v4: 2026-01-30 - Invalidate cached transforms with /_vf_modules/ esm.sh URLs
- */
-const HTTP_CACHE_VERSION = "v4";
-
-/**
  * Generate cache key for HTTP bundles.
  * Uses versioned prefix:hash format to enable global cache invalidation.
+ *
+ * Cache key format: {VERSION}:{prefix}:{hash}
+ *
  * Cache invalidation is handled by:
- * - Version prefix (HTTP_CACHE_VERSION) for global invalidation
- * - hasIncompatibleFilePaths() for path compatibility
- * - gzip detection for corrupted content
+ * - VERSION prefix: Auto-invalidates on framework releases
+ * - hasIncompatibleFilePaths(): Rejects paths from different environments
+ * - gzip detection: Handles corrupted content
  */
 const distributedKey = (prefix: string, hash: string | number) =>
-  `${HTTP_CACHE_VERSION}:${prefix}:${hash}`;
+  `${VERSION}:${prefix}:${hash}`;
 
 /**
  * Check if cached HTTP bundle code has file:// paths from a different environment.
@@ -843,6 +832,9 @@ async function resolveSpecifier(
   }
 
   if (isRelative(specifier)) {
+    // Skip /_vf_modules/ paths - these are framework module URLs served locally
+    if (specifier.startsWith("/_vf_modules/")) return null;
+
     if (!baseUrl || !isHttpUrl(baseUrl)) return null;
 
     const resolved = new URL(specifier, baseUrl).toString();

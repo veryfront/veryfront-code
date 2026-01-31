@@ -55,15 +55,50 @@ export const transformSemaphore = new Semaphore(MAX_CONCURRENT_TRANSFORMS);
 const projectTransformCounts = new Map<string, number>();
 
 /**
- * Attempt to acquire a project-level transform slot.
+ * Projects that bypass per-project rate limiting.
+ * - "__single__": Used for local development and tests where there's no multi-tenancy
+ */
+const RATE_LIMIT_BYPASS_PROJECTS = new Set(["__single__"]);
+
+/**
+ * Attempt to acquire a project-level transform slot immediately.
  * Returns true if acquired, false if project is at capacity.
+ *
+ * Note: The "__single__" project (used in local dev and tests) bypasses
+ * rate limiting since there's no noisy-neighbor concern in single-project mode.
  */
 export function acquireTransformSlot(projectId: string): boolean {
   if (TRANSFORM_PER_PROJECT_LIMIT <= 0) return true;
+  // Bypass rate limiting for local/test mode (no multi-tenancy concern)
+  if (RATE_LIMIT_BYPASS_PROJECTS.has(projectId)) return true;
   const current = projectTransformCounts.get(projectId) ?? 0;
   if (current >= TRANSFORM_PER_PROJECT_LIMIT) return false;
   projectTransformCounts.set(projectId, current + 1);
   return true;
+}
+
+/** How long to wait between retry attempts for per-project slots */
+const PROJECT_SLOT_RETRY_INTERVAL_MS = 50;
+
+/**
+ * Try to acquire a project-level transform slot with retries.
+ * Waits up to timeoutMs for a slot to become available.
+ * Returns true if acquired, false if timed out.
+ */
+export async function tryAcquireTransformSlot(
+  projectId: string,
+  timeoutMs: number,
+): Promise<boolean> {
+  // Try immediate acquisition first
+  if (acquireTransformSlot(projectId)) return true;
+
+  // Retry with backoff until timeout
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, PROJECT_SLOT_RETRY_INTERVAL_MS));
+    if (acquireTransformSlot(projectId)) return true;
+  }
+  return false;
 }
 
 /**

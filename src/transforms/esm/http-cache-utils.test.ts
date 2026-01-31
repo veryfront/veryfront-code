@@ -63,7 +63,10 @@ function isRelative(specifier: string): boolean {
 function isInternalBare(specifier: string): boolean {
   return specifier.startsWith("veryfront/") ||
     specifier.startsWith("@veryfront/") ||
-    specifier.startsWith("@std/");
+    specifier.startsWith("#veryfront/") ||
+    specifier.startsWith("@std/") ||
+    specifier.startsWith("_vf_modules/") ||
+    specifier.startsWith("/_vf_modules/");
 }
 
 function normalizeEsmShUrl(url: URL): void {

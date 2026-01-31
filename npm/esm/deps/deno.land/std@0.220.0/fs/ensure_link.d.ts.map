@@ -1,1 +1,0 @@
-{"version":3,"file":"ensure_link.d.ts","sourceRoot":"","sources":["../../../../../src/deps/deno.land/std@0.220.0/fs/ensure_link.ts"],"names":[],"mappings":"AAOA;;;;;;;;;;;;;GAaG;AACH,wBAAsB,UAAU,CAAC,GAAG,EAAE,MAAM,GAAG,GAAG,EAAE,IAAI,EAAE,MAAM,GAAG,GAAG,iBAKrE;AAED;;;;;;;;;;;;;GAaG;AACH,wBAAgB,cAAc,CAAC,GAAG,EAAE,MAAM,GAAG,GAAG,EAAE,IAAI,EAAE,MAAM,GAAG,GAAG,QAKnE"}

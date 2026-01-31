@@ -174,6 +174,13 @@ function getVersionedPathCacheKey(normalizedPath: string): string {
  * the 'g' flag would cause interleaved exec() calls to skip paths.
  */
 async function hasIncompatibleFrameworkPaths(code: string, log: Logger): Promise<boolean> {
+  // Check for esm.sh URLs that reference /_vf_modules/ paths - these are invalid
+  // and indicate a cached transform from before the fix was deployed
+  if (/esm\.sh\/_?vf_modules\//.test(code)) {
+    log.debug(`${LOG_PREFIX_MDX_LOADER} Cached code has invalid esm.sh/_vf_modules URL`);
+    return true;
+  }
+
   const localHttpCacheDir = getHttpBundleCacheDir();
   const localMdxCacheDir = getMdxEsmCacheDir();
   const localFs = getLocalFs();

@@ -1,1 +1,0 @@
-{"version":3,"file":"static-paths-fetcher.d.ts","sourceRoot":"","sources":["../../../src/src/data/static-paths-fetcher.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,YAAY,EAAE,iBAAiB,EAAE,MAAM,YAAY,CAAC;AAMlE,qBAAa,kBAAkB;IAC7B,KAAK,CAAC,UAAU,EAAE,YAAY,GAAG,OAAO,CAAC,iBAAiB,GAAG,IAAI,CAAC;CAyBnE"}

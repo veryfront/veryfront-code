@@ -203,6 +203,9 @@ export function bundleHttpImports(
     // Handle relative esm.sh paths like "/react-dom?target=es2022" or "/hoist-non-react-statics@..."
     // These are returned by esm.sh stub modules and need to be converted to full URLs
     if (specifier.startsWith("/") && !specifier.startsWith("//")) {
+      // Skip /_vf_modules/ paths - these are framework module URLs served locally, not esm.sh paths
+      if (specifier.startsWith("/_vf_modules/")) return null;
+
       const fullUrl = `https://esm.sh${specifier}`;
       // Recursively process as full URL (will add external params if needed)
       const isReactPackage = /^\/react(-dom)?(@|\/|\?|$)/.test(specifier);

@@ -1,1 +1,0 @@
-{"version":3,"file":"shared-types.d.ts","sourceRoot":"","sources":["../../../../../src/src/platform/adapters/fs/shared-types.ts"],"names":[],"mappings":"AAAA;;;GAGG;AAEH,MAAM,WAAW,cAAc;IAC7B,IAAI,EAAE,MAAM,CAAC;IACb,IAAI,EAAE,MAAM,CAAC;IACb,WAAW,EAAE,OAAO,CAAC;IACrB,MAAM,EAAE,OAAO,CAAC;IAChB,SAAS,EAAE,OAAO,CAAC;CACpB"}
