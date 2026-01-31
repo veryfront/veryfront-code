@@ -206,6 +206,33 @@ export async function clearESMDiskCache(): Promise<void> {
   }
 }
 
+export async function clearHttpBundleCache(): Promise<void> {
+  const cacheDir = getHttpBundleCacheDir();
+  const fs = getLocalFs();
+
+  try {
+    for await (const entry of fs.readDir(cacheDir)) {
+      if (!entry.isFile || !entry.name.endsWith(".mjs")) continue;
+      await fs.remove(join(cacheDir, entry.name));
+    }
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared HTTP bundle cache`);
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to clear HTTP bundle cache`, error);
+    }
+  }
+}
+
+/**
+ * Clear all local ESM caches (MDX-ESM disk cache, HTTP bundles, in-memory caches).
+ * Call this on server startup to prevent stale module issues.
+ */
+export async function clearAllLocalCaches(): Promise<void> {
+  clearModulePathCache();
+  await Promise.all([clearESMDiskCache(), clearHttpBundleCache()]);
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared all local caches`);
+}
+
 function toMdxEsmCacheKey(filePath: string, projectDir?: string): string {
   let relativePath = filePath;
 

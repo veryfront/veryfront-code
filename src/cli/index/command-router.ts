@@ -221,6 +221,12 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           // Renderer mode: run SSR production server
           showLogo();
 
+          // Clear stale ESM caches to prevent module resolution issues
+          const { clearAllLocalCaches } = await import(
+            "../../transforms/mdx/esm-module-loader/cache/index.ts"
+          );
+          await clearAllLocalCaches();
+
           const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
           const adapter = await runtime.get();
           const { startUniversalServer } = await import("#veryfront/server/production-server.ts");

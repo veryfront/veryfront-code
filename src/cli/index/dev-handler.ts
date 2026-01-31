@@ -3,6 +3,7 @@ import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT } from "#veryfront/utils";
 import { devCommand } from "../commands/dev.ts";
+import { clearAllLocalCaches } from "../../transforms/mdx/esm-module-loader/cache/index.ts";
 import type { ParsedArgs } from "./types.ts";
 
 async function resolveProjectDir(args: ParsedArgs): Promise<string> {
@@ -32,6 +33,9 @@ async function resolveProjectDir(args: ParsedArgs): Promise<string> {
 export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   const projectDir = await resolveProjectDir(args);
   const port = typeof args.port === "number" ? args.port : DEFAULT_DEV_SERVER_PORT;
+
+  // Clear stale ESM caches to prevent module resolution issues from previous runs
+  await clearAllLocalCaches();
 
   await devCommand({
     port,
