@@ -20,7 +20,9 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import { ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
+import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
+import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
+import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import {
   createBundleManifest,
@@ -881,6 +883,22 @@ async function doFetchAndCacheModule(
       moduleCode = rewriteVeryfrontImports(moduleCode);
       // Rewrite _dnt.polyfills.js / _dnt.shims.js relative imports to absolute file:// paths
       moduleCode = rewriteDntImports(moduleCode, actualFilePath);
+
+      // Cache HTTP imports (esm.sh URLs) to local file:// paths for compiled binaries.
+      // Native Deno can do dynamic HTTP imports, but deno compile'd binaries cannot.
+      // This MUST happen before caching to disk or distributed cache.
+      if (isDenoCompiled) {
+        log.debug(`${LOG_PREFIX_MDX_LOADER} Caching HTTP imports for compiled binary`, {
+          normalizedPath,
+        });
+        const importMap = await loadImportMap(projectDir);
+        const cacheResult = await cacheHttpImportsToLocal(moduleCode, {
+          cacheDir: getHttpBundleCacheDir(),
+          importMap,
+          reactVersion: context.reactVersion,
+        });
+        moduleCode = cacheResult.code;
+      }
 
       // Mark for distributed cache write AFTER nested imports are resolved.
       // This ensures we don't cache code with unresolved /_vf_modules/ paths.
