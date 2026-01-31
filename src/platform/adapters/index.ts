@@ -29,7 +29,6 @@ export type {
   ExtendedFileSystemAdapter,
   FSAdapter,
   FSAdapterConfig,
-  VeryfrontConfig,
   VeryfrontFSState,
 } from "./fs/index.ts";
 

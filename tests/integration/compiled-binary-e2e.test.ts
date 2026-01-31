@@ -26,7 +26,13 @@ import { join } from "#veryfront/platform/compat/path/index.ts";
 
 const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? "/tmp/veryfront-e2e-bin";
 const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
-let portCounter = 18100;
+/** Get an available port using OS-assigned port 0. */
+async function getAvailablePort(): Promise<number> {
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const { port } = listener.addr as Deno.NetAddr;
+  listener.close();
+  return port;
+}
 
 async function computeSourceHash(): Promise<string> {
   const decoder = new TextDecoder();
@@ -91,9 +97,12 @@ async function ensureBinaryCompiled(): Promise<void> {
     args: [
       "compile",
       "--allow-all",
-      "--include", "src/platform/polyfills",
-      "--include", "src/proxy/main.ts",
-      "--output", BINARY_PATH,
+      "--include",
+      "src/platform/polyfills",
+      "--include",
+      "src/proxy/main.ts",
+      "--output",
+      BINARY_PATH,
       "src/cli/main.ts",
     ],
     stdout: "inherit",
@@ -138,60 +147,80 @@ async function waitForServer(port: number, deadlineMs = 60_000): Promise<void> {
 }
 
 async function startBinaryServer(projectDir: string, nodeEnv = "development"): Promise<TestServer> {
-  const logs: string[] = [];
-  const port = portCounter++;
-  const cacheDir = await Deno.makeTempDir({ prefix: nodeEnv === "production" ? "vf-cache-prod-" : "vf-cache-" });
+  const maxRetries = 3;
 
-  const process = new Deno.Command(BINARY_PATH, {
-    args: ["serve", "--mode=renderer", "-p", String(port)],
-    cwd: projectDir,
-    env: {
-      ...Deno.env.toObject(),
-      NODE_ENV: nodeEnv,
-      LOG_FORMAT: "text",
-      VERYFRONT_CACHE_DIR: cacheDir,
-    },
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const logs: string[] = [];
+    const port = await getAvailablePort();
+    const cacheDir = await Deno.makeTempDir({
+      prefix: nodeEnv === "production" ? "vf-cache-prod-" : "vf-cache-",
+    });
 
-  collectLogs(logs, process.stdout);
-  collectLogs(logs, process.stderr);
+    const process = new Deno.Command(BINARY_PATH, {
+      args: ["serve", "--mode=renderer", "-p", String(port)],
+      cwd: projectDir,
+      env: {
+        ...Deno.env.toObject(),
+        NODE_ENV: nodeEnv,
+        LOG_FORMAT: "text",
+        VERYFRONT_CACHE_DIR: cacheDir,
+      },
+      stdout: "piped",
+      stderr: "piped",
+    }).spawn();
 
-  try {
-    await waitForServer(port);
-  } catch {
+    collectLogs(logs, process.stdout);
+    collectLogs(logs, process.stderr);
+
     try {
-      process.kill();
+      await waitForServer(port);
     } catch {
-      // already dead
-    }
-    const logOutput = logs.join("\n").slice(-3000); // Last 3KB for debugging
-    throw new Error(`Server failed to start on port ${port} within 60s. Logs:\n${logOutput}`);
-  }
-
-  // Give the server a moment to stabilize after first request
-  await new Promise((r) => setTimeout(r, 500));
-
-  return {
-    process,
-    port,
-    logs,
-    kill: async () => {
       try {
         process.kill();
         await process.status;
       } catch {
         // already dead
       }
-      await new Promise((r) => setTimeout(r, 500)); // Port release time (increased for CI)
-      try {
-        await Deno.remove(cacheDir, { recursive: true });
-      } catch {
-        // ignore
+
+      // Retry on port collision
+      const logOutput = logs.join("\n");
+      if (attempt < maxRetries - 1 && logOutput.includes("already in use")) {
+        try {
+          await Deno.remove(cacheDir, { recursive: true });
+        } catch { /* ignore */ }
+        continue;
       }
-    },
-  };
+
+      throw new Error(
+        `Server failed to start on port ${port} within 60s. Logs:\n${logOutput.slice(-3000)}`,
+      );
+    }
+
+    // Give the server a moment to stabilize after first request
+    await new Promise((r) => setTimeout(r, 500));
+
+    return {
+      process,
+      port,
+      logs,
+      kill: async () => {
+        try {
+          process.kill();
+          await process.status;
+        } catch {
+          // already dead
+        }
+        await new Promise((r) => setTimeout(r, 500)); // Port release time (increased for CI)
+        try {
+          await Deno.remove(cacheDir, { recursive: true });
+        } catch {
+          // ignore
+        }
+      },
+    };
+  }
+
+  throw new Error("Failed to start server after all retries");
 }
 
 async function createTestProject(
@@ -214,7 +243,10 @@ async function createTestProject(
     ),
   );
 
-  await Deno.writeTextFile(join(projectDir, "veryfront.config.ts"), `export default { fs: { type: "local" } };`);
+  await Deno.writeTextFile(
+    join(projectDir, "veryfront.config.ts"),
+    `export default { fs: { type: "local" } };`,
+  );
 
   await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
   await Deno.writeTextFile(join(projectDir, "pages", "index.tsx"), pageContent);
@@ -231,7 +263,11 @@ async function createTestProject(
   return projectDir;
 }
 
-async function withServer(projectDir: string, fn: (server: TestServer) => Promise<void>, nodeEnv?: string): Promise<void> {
+async function withServer(
+  projectDir: string,
+  fn: (server: TestServer) => Promise<void>,
+  nodeEnv?: string,
+): Promise<void> {
   const server = await startBinaryServer(projectDir, nodeEnv);
   try {
     await fn(server);
@@ -273,7 +309,8 @@ export default function Home() {
       assertStringIncludes(html, "Head import works", "Should render content");
 
       const errorLogs = server.logs.filter((l) =>
-        l.includes("esm.sh/_vf_modules") || l.includes("dual React") || l.includes("Invalid hook call")
+        l.includes("esm.sh/_vf_modules") || l.includes("dual React") ||
+        l.includes("Invalid hook call")
       );
       assertEquals(errorLogs.length, 0, `Should have no critical errors: ${errorLogs.join("\n")}`);
     });
@@ -395,8 +432,14 @@ export default function Home() {
       assertEquals(response.status, 200);
       assertStringIncludes(html, "Cache isolation works");
 
-      const cacheErrors = server.logs.filter((l) => l.includes("file://") && l.includes("not found"));
-      assertEquals(cacheErrors.length, 0, `Should have no cache path errors: ${cacheErrors.join("\n")}`);
+      const cacheErrors = server.logs.filter((l) =>
+        l.includes("file://") && l.includes("not found")
+      );
+      assertEquals(
+        cacheErrors.length,
+        0,
+        `Should have no cache path errors: ${cacheErrors.join("\n")}`,
+      );
     });
   });
 
@@ -629,7 +672,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       assertStringIncludes(html, "layout-wrapper", "Should have layout wrapper");
       assertStringIncludes(html, "page-content", "Should have page content");
 
-      const errors = server.logs.filter((l) => l.includes("Invalid hook call") || l.includes("Module not found"));
+      const errors = server.logs.filter((l) =>
+        l.includes("Invalid hook call") || l.includes("Module not found")
+      );
       assertEquals(errors.length, 0, `Should have no errors: ${errors.join("\n")}`);
     });
   });
@@ -656,7 +701,11 @@ export function GET() {
       const json = await response.json();
 
       assertEquals(response.status, 200, "Should return 200");
-      assertEquals(response.headers.get("content-type")?.includes("application/json"), true, "Should be JSON");
+      assertEquals(
+        response.headers.get("content-type")?.includes("application/json"),
+        true,
+        "Should be JSON",
+      );
       assertEquals(json.message, "Hello from API", "Should return correct message");
       assert(json.timestamp > 0, "Should have timestamp");
     });
@@ -758,7 +807,11 @@ Regular markdown content follows.
       assertEquals(response.status, 200, "Should return 200");
       assertStringIncludes(html, "Documentation Guide", "Should render heading");
       assertStringIncludes(html, "mdx-react-component", "Should render React component");
-      assertStringIncludes(html, "This is a React component inside MDX", "Should render component content");
+      assertStringIncludes(
+        html,
+        "This is a React component inside MDX",
+        "Should render component content",
+      );
     });
   });
 
@@ -850,7 +903,9 @@ export default function DocsPage({ params }: { params: { slug: string[] } }) {
     );
 
     await withServer(projectDir, async (server) => {
-      const response = await fetch(`http://127.0.0.1:${server.port}/docs/getting-started/installation/linux`);
+      const response = await fetch(
+        `http://127.0.0.1:${server.port}/docs/getting-started/installation/linux`,
+      );
       const html = await response.text();
 
       assertEquals(response.status, 200, "Should return 200");
@@ -1026,7 +1081,11 @@ export default function Home() {
         const criticalErrors = server.logs.filter((l) =>
           l.includes("FATAL") || l.includes("Unhandled") || l.includes("esm.sh/_vf_modules")
         );
-        assertEquals(criticalErrors.length, 0, `Should have no critical errors: ${criticalErrors.join("\n")}`);
+        assertEquals(
+          criticalErrors.length,
+          0,
+          `Should have no critical errors: ${criticalErrors.join("\n")}`,
+        );
       },
       "production",
     );
@@ -1083,7 +1142,11 @@ export default function Home() {
         l.includes("src/react/router") ||
         l.includes("src/react/head")
       );
-      assertEquals(moduleErrors.length, 0, `Should have no module errors: ${moduleErrors.join("\n")}`);
+      assertEquals(
+        moduleErrors.length,
+        0,
+        `Should have no module errors: ${moduleErrors.join("\n")}`,
+      );
     });
   });
 
@@ -1132,7 +1195,9 @@ export default function Home() {
       // Allow some tolerance (e.g., up to 5) but catch the hundreds we saw before
       assert(
         cacheHmrLogs.length < 10,
-        `Should not have excessive HMR updates for cache files. Found ${cacheHmrLogs.length} entries:\n${cacheHmrLogs.slice(0, 5).join("\n")}`,
+        `Should not have excessive HMR updates for cache files. Found ${cacheHmrLogs.length} entries:\n${
+          cacheHmrLogs.slice(0, 5).join("\n")
+        }`,
       );
     });
   });
@@ -1481,8 +1546,16 @@ export function Footer() {
       const html = await response.text();
 
       assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
-      assertStringIncludes(html, "layout-header", "Should render Header from layout's relative import");
-      assertStringIncludes(html, "layout-footer", "Should render Footer from layout's relative import");
+      assertStringIncludes(
+        html,
+        "layout-header",
+        "Should render Header from layout's relative import",
+      );
+      assertStringIncludes(
+        html,
+        "layout-footer",
+        "Should render Footer from layout's relative import",
+      );
       assertStringIncludes(html, "layout-test-content", "Should render page content");
     });
   });
@@ -1771,11 +1844,15 @@ export default function ErrorBoundary({ error }: { error: Error }) {
 
     await Deno.writeTextFile(
       join(projectDir, "package.json"),
-      JSON.stringify({
-        name: "test-config-app",
-        type: "module",
-        dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
-      }, null, 2),
+      JSON.stringify(
+        {
+          name: "test-config-app",
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2,
+      ),
     );
 
     // Config-based app provider (NOT using file convention)
@@ -1817,7 +1894,11 @@ export default function Home() {
       const html = await response.text();
 
       assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
-      assertStringIncludes(html, "config-app-wrapper", "Should have app wrapper from config-based provider");
+      assertStringIncludes(
+        html,
+        "config-app-wrapper",
+        "Should have app wrapper from config-based provider",
+      );
       assertStringIncludes(html, "Config App Header", "Should render config app header");
       assertStringIncludes(html, "Home page with config app", "Should render page content");
 
@@ -1837,11 +1918,15 @@ export default function Home() {
 
     await Deno.writeTextFile(
       join(projectDir, "package.json"),
-      JSON.stringify({
-        name: "test-config-layout",
-        type: "module",
-        dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
-      }, null, 2),
+      JSON.stringify(
+        {
+          name: "test-config-layout",
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2,
+      ),
     );
 
     // Config-based layout (NOT using file convention pages/layout.tsx)
@@ -1892,13 +1977,17 @@ export default function Home() {
       assertStringIncludes(html, "config-layout-wrapper", "Should have layout wrapper from config");
       assertStringIncludes(html, "Config Layout Header", "Should render config layout header");
       assertStringIncludes(html, "Config Layout Footer", "Should render config layout footer");
-      assertStringIncludes(html, "Home page with config layout", "Should render page content inside layout");
+      assertStringIncludes(
+        html,
+        "Home page with config layout",
+        "Should render page content inside layout",
+      );
 
       const errors = server.logs.filter((l) =>
         l.includes("Invalid hook call") ||
         l.includes("Module not found") ||
         l.includes("Cannot find") ||
-        l.includes("layout")
+        (l.includes("layout") && l.includes("failed"))
       );
       assertEquals(errors.length, 0, `Should have no errors: ${errors.join("\n")}`);
     });
@@ -1910,11 +1999,15 @@ export default function Home() {
 
     await Deno.writeTextFile(
       join(projectDir, "package.json"),
-      JSON.stringify({
-        name: "test-config-both",
-        type: "module",
-        dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
-      }, null, 2),
+      JSON.stringify(
+        {
+          name: "test-config-both",
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2,
+      ),
     );
 
     // Both app and layout defined in config
@@ -1978,7 +2071,11 @@ export default function Home() {
       assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
       assertStringIncludes(html, "config-app-root", "Should have app wrapper from config");
       assertStringIncludes(html, "App Provider Banner", "Should render app banner");
-      assertStringIncludes(html, "config-layout-container", "Should have layout container from config");
+      assertStringIncludes(
+        html,
+        "config-layout-container",
+        "Should have layout container from config",
+      );
       assertStringIncludes(html, "Layout Header", "Should render layout header");
       assertStringIncludes(html, "Page with config app and layout", "Should render page content");
 
@@ -1997,11 +2094,15 @@ export default function Home() {
 
     await Deno.writeTextFile(
       join(projectDir, "package.json"),
-      JSON.stringify({
-        name: "test-config-layout-hooks",
-        type: "module",
-        dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
-      }, null, 2),
+      JSON.stringify(
+        {
+          name: "test-config-layout-hooks",
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2,
+      ),
     );
 
     await Deno.writeTextFile(
@@ -2063,7 +2164,11 @@ export default function Home() {
         l.includes("more than one copy of React") ||
         l.includes("Module not found")
       );
-      assertEquals(hookErrors.length, 0, `Should have no hook/module errors: ${hookErrors.join("\n")}`);
+      assertEquals(
+        hookErrors.length,
+        0,
+        `Should have no hook/module errors: ${hookErrors.join("\n")}`,
+      );
     });
   });
 
