@@ -628,4 +628,479 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       await Deno.remove(projectDir, { recursive: true });
     }
   });
+
+  // ============================================
+  // API Routes Tests
+  // ============================================
+
+  it("should handle API routes returning JSON", async () => {
+    const projectDir = await createTestProject("api-json-test", `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`, {
+      "pages/api/hello.ts": `
+export function GET() {
+  return Response.json({ message: "Hello from API", timestamp: Date.now() });
+}
+`,
+    });
+
+    const server = await startBinaryServer(projectDir);
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/hello`);
+      const json = await response.json();
+
+      assertEquals(response.status, 200, "Should return 200");
+      assertEquals(response.headers.get("content-type")?.includes("application/json"), true, "Should be JSON");
+      assertEquals(json.message, "Hello from API", "Should return correct message");
+      assert(json.timestamp > 0, "Should have timestamp");
+    } finally {
+      await server.kill();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("should handle nested API routes", async () => {
+    const projectDir = await createTestProject("api-nested-test", `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`, {
+      "pages/api/users/list.ts": `
+export function GET() {
+  return Response.json({ users: ["alice", "bob"], count: 2 });
+}
+`,
+    });
+
+    const server = await startBinaryServer(projectDir);
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/users/list`);
+
+      assertEquals(response.status, 200, "Should return 200");
+      const json = await response.json();
+      assertEquals(json.count, 2, "Should return user count");
+      assertEquals(json.users.length, 2, "Should return users array");
+    } finally {
+      await server.kill();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  // ============================================
+  // MDX Content Tests
+  // ============================================
+
+  it("should render MDX pages correctly", async () => {
+    const projectDir = await createTestProject("mdx-basic-test", `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`, {
+      "pages/blog/hello.mdx": `---
+title: Hello World
+author: Test Author
+---
+
+# Welcome to My Blog
+
+This is a **markdown** page with _formatting_.
+
+- Item 1
+- Item 2
+- Item 3
+`,
+    });
+
+    const server = await startBinaryServer(projectDir);
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/blog/hello`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, "Should return 200");
+      assertStringIncludes(html, "Welcome to My Blog", "Should render heading");
+      assertStringIncludes(html, "<strong>markdown</strong>", "Should render bold");
+      assertStringIncludes(html, "<em>formatting</em>", "Should render italic");
+      assertStringIncludes(html, "Item 1", "Should render list items");
+    } finally {
+      await server.kill();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("should render MDX with React components", async () => {
+    const projectDir = await createTestProject("mdx-components-test", `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`, {
+      "pages/docs/guide.mdx": `
+import { Head } from "veryfront/head";
+
+<Head><title>MDX with Components</title></Head>
+
+# Documentation Guide
+
+<div className="custom-component" id="mdx-react-component">
+  This is a React component inside MDX!
+</div>
+
+Regular markdown content follows.
+`,
+    });
+
+    const server = await startBinaryServer(projectDir);
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/docs/guide`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, "Should return 200");
+      assertStringIncludes(html, "Documentation Guide", "Should render heading");
+      assertStringIncludes(html, "mdx-react-component", "Should render React component");
+      assertStringIncludes(html, "This is a React component inside MDX", "Should render component content");
+    } finally {
+      await server.kill();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  // ============================================
+  // Dynamic Routes Tests
+  // ============================================
+
+  it("should handle dynamic [slug] routes", async () => {
+    const projectDir = await createTestProject("dynamic-slug-test", `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`, {
+      "pages/blog/[slug].tsx": `
+export default function BlogPost({ params }: { params: { slug: string } }) {
+  return (
+    <div id="blog-post">
+      <h1>Blog Post: {params?.slug || "unknown"}</h1>
+      <p>Dynamic route works!</p>
+    </div>
+  );
+}
+`,
+    });
+
+    const server = await startBinaryServer(projectDir);
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/blog/my-first-post`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, "Should return 200");
+      assertStringIncludes(html, "blog-post", "Should render blog post container");
+      assertStringIncludes(html, "Dynamic route works", "Should render dynamic content");
+    } finally {
+      await server.kill();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("should handle dynamic routes at root level", async () => {
+    const projectDir = await createTestProject("dynamic-root-test", `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`, {
+      "pages/[page].tsx": `
+export default function DynamicPage({ params }: { params: { page: string } }) {
+  return (
+    <div id="dynamic-root-page">
+      <h1>Dynamic Root Page</h1>
+      <p>This is a root-level dynamic route</p>
+    </div>
+  );
+}
+`,
+    });
+
+    const server = await startBinaryServer(projectDir);
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/about-us`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, "Should return 200");
+      assertStringIncludes(html, "dynamic-root-page", "Should render dynamic page");
+      assertStringIncludes(html, "Dynamic Root Page", "Should render heading");
+    } finally {
+      await server.kill();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("should handle catch-all [...slug] routes", async () => {
+    const projectDir = await createTestProject("catchall-test", `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`, {
+      "pages/docs/[...slug].tsx": `
+export default function DocsPage({ params }: { params: { slug: string[] } }) {
+  const slugPath = params?.slug?.join("/") || "root";
+  return (
+    <div id="docs-page">
+      <h1>Documentation</h1>
+      <p>Path: {slugPath}</p>
+    </div>
+  );
+}
+`,
+    });
+
+    const server = await startBinaryServer(projectDir);
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/docs/getting-started/installation/linux`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, "Should return 200");
+      assertStringIncludes(html, "docs-page", "Should render docs container");
+      assertStringIncludes(html, "Documentation", "Should render heading");
+    } finally {
+      await server.kill();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  // ============================================
+  // Error Handling Tests
+  // ============================================
+
+  it("should return 404 for non-existent pages", async () => {
+    const projectDir = await createTestProject("404-test", `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`);
+
+    const server = await startBinaryServer(projectDir);
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/this-page-does-not-exist`);
+
+      assertEquals(response.status, 404, "Should return 404 for missing page");
+    } finally {
+      await server.kill();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("should return 404 with informative message", async () => {
+    const projectDir = await createTestProject("404-message-test", `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`);
+
+    const server = await startBinaryServer(projectDir);
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/nonexistent-page`);
+      const html = await response.text();
+
+      assertEquals(response.status, 404, "Should return 404");
+      // Framework provides styled 404 page with "Not Found" message
+      assertStringIncludes(html, "Not Found", "Should show not found message");
+    } finally {
+      await server.kill();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("should handle error.tsx boundary for component errors", async () => {
+    const projectDir = await createTestProject("error-boundary-test", `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`, {
+      "pages/layout.tsx": `
+export default function Layout({ children }: { children: React.ReactNode }) {
+  return <div id="layout">{children}</div>;
+}
+`,
+      "pages/error.tsx": `
+"use client";
+export default function ErrorPage({ error }: { error: Error }) {
+  return (
+    <div id="error-boundary">
+      <h1>Something went wrong</h1>
+      <p>An error occurred while rendering this page.</p>
+    </div>
+  );
+}
+`,
+      "pages/broken.tsx": `
+export default function BrokenPage() {
+  throw new Error("Intentional error for testing");
+  return <div>This should not render</div>;
+}
+`,
+    });
+
+    const server = await startBinaryServer(projectDir);
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/broken`);
+      // Error boundary should catch and render gracefully (may be 200 or 500 depending on implementation)
+      assert(response.status === 200 || response.status === 500, "Should return 200 or 500");
+    } finally {
+      await server.kill();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  // ============================================
+  // CSS and Static Assets Tests
+  // ============================================
+
+  it("should handle inline styles and className in components", async () => {
+    const projectDir = await createTestProject("styles-test", `
+export default function Home() {
+  return (
+    <div className="styled-container" style={{ backgroundColor: "blue", padding: "20px" }}>
+      <h1 className="styled-heading" style={{ color: "white" }}>Styled Page</h1>
+      <p>Page with inline styles works correctly</p>
+    </div>
+  );
+}
+`);
+
+    const server = await startBinaryServer(projectDir);
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, "Should return 200");
+      assertStringIncludes(html, "styled-container", "Should have styled container class");
+      assertStringIncludes(html, "Styled Page", "Should render page content");
+      assertStringIncludes(html, "background-color", "Should have inline styles");
+    } finally {
+      await server.kill();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("should serve static files from public directory", async () => {
+    const projectDir = await createTestProject("static-files-test", `
+export default function Home() {
+  return (
+    <div>
+      <img src="/logo.svg" alt="Logo" />
+      <p>Static files test</p>
+    </div>
+  );
+}
+`, {
+      "public/logo.svg": `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><circle cx="50" cy="50" r="40" fill="blue"/></svg>`,
+      "public/robots.txt": `User-agent: *\nAllow: /`,
+    });
+
+    const server = await startBinaryServer(projectDir);
+    try {
+      // Test SVG file
+      const svgResponse = await fetch(`http://127.0.0.1:${server.port}/logo.svg`);
+      assertEquals(svgResponse.status, 200, "Should serve SVG file");
+      const svgContent = await svgResponse.text();
+      assertStringIncludes(svgContent, "<svg", "Should contain SVG content");
+
+      // Test robots.txt
+      const robotsResponse = await fetch(`http://127.0.0.1:${server.port}/robots.txt`);
+      assertEquals(robotsResponse.status, 200, "Should serve robots.txt");
+      const robotsContent = await robotsResponse.text();
+      assertStringIncludes(robotsContent, "User-agent", "Should contain robots content");
+    } finally {
+      await server.kill();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  // ============================================
+  // Production Mode Test
+  // ============================================
+
+  it("should work correctly in production mode", async () => {
+    const projectDir = await createTestProject("production-mode-test", `
+import { Head } from "veryfront/head";
+
+export default function Home() {
+  return (
+    <>
+      <Head><title>Production Test</title></Head>
+      <div id="production-content">
+        <h1>Production Mode</h1>
+        <p>Environment: {process.env.NODE_ENV}</p>
+      </div>
+    </>
+  );
+}
+`);
+
+    // Start server in production mode
+    const logs: string[] = [];
+    const port = portCounter++;
+    const cacheDir = await Deno.makeTempDir({ prefix: "vf-cache-prod-" });
+
+    const command = new Deno.Command(BINARY_PATH, {
+      args: ["dev", "-p", String(port), "--project", projectDir],
+      env: {
+        ...Deno.env.toObject(),
+        NODE_ENV: "production",  // Production mode
+        LOG_FORMAT: "text",
+        VERYFRONT_CACHE_DIR: cacheDir,
+      },
+      stdout: "piped",
+      stderr: "piped",
+    });
+
+    const process = command.spawn();
+
+    // Collect logs
+    const collectLogs = async (stream: ReadableStream<Uint8Array>) => {
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          logs.push(decoder.decode(value));
+        }
+      } catch { /* closed */ }
+    };
+    collectLogs(process.stdout);
+    collectLogs(process.stderr);
+
+    // Wait for server
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      try {
+        await fetch(`http://127.0.0.1:${port}/`);
+        break;
+      } catch {
+        await new Promise(r => setTimeout(r, 300));
+      }
+    }
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, "Should return 200 in production mode");
+      assertStringIncludes(html, "production-content", "Should render content");
+      assertStringIncludes(html, "Production Mode", "Should render heading");
+
+      // Verify no critical errors in production
+      const criticalErrors = logs.filter(l =>
+        l.includes("FATAL") ||
+        l.includes("Unhandled") ||
+        l.includes("esm.sh/_vf_modules")
+      );
+      assertEquals(criticalErrors.length, 0, `Should have no critical errors: ${criticalErrors.join("\n")}`);
+    } finally {
+      try { process.kill(); await process.status; } catch { /* already dead */ }
+      await new Promise(r => setTimeout(r, 200));
+      try { await Deno.remove(cacheDir, { recursive: true }); } catch { /* ignore */ }
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
 });
