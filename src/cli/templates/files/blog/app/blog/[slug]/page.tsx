@@ -1,6 +1,6 @@
-import { MDX } from "veryfront/mdx";
 import { getPost, getPosts } from "../../../lib/posts.ts";
 import { formatDate } from "../../../lib/utils.ts";
+import { MDXContent } from "../../../components/MDXContent.tsx";
 
 export default async function BlogPost({
   params,
@@ -38,7 +38,7 @@ export default async function BlogPost({
         )}
       </header>
 
-      <MDX source={post.content} />
+      <MDXContent content={post.content} />
     </article>
   );
 }

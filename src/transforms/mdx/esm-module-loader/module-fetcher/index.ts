@@ -101,10 +101,10 @@ function getTransformCacheKey(
  * These tests ensure paths are resolvable by the file-finder in production.
  */
 const VERYFRONT_IMPORT_MAP: Record<string, string> = {
-  "veryfront/head": "/_vf_modules/react/components/Head.js",
-  "veryfront/router": "/_vf_modules/react/router/index.js",
-  "veryfront/context": "/_vf_modules/react/context/index.js",
-  "veryfront/fonts": "/_vf_modules/react/fonts/index.js",
+  "veryfront/head": "/_vf_modules/_veryfront/react/components/Head.js?ssr=true",
+  "veryfront/router": "/_vf_modules/_veryfront/react/router/index.js?ssr=true",
+  "veryfront/context": "/_vf_modules/_veryfront/react/context/index.js?ssr=true",
+  "veryfront/fonts": "/_vf_modules/_veryfront/react/fonts/index.js?ssr=true",
 };
 
 /**
@@ -853,9 +853,14 @@ async function doFetchAndCacheModule(
         sourceLength: sourceCode.length,
       });
 
+      // Rewrite veryfront/* imports to /_vf_modules/ paths BEFORE transform
+      // so that ssrVfModulesPlugin can resolve them to file:// paths.
+      // Cached files don't have access to import maps, so we need to do this mapping here.
+      const preprocessedSource = rewriteVeryfrontImports(sourceCode);
+
       const transformStart = performance.now();
       try {
-        moduleCode = await transformToESM(sourceCode, actualFilePath, projectDir, adapter, {
+        moduleCode = await transformToESM(preprocessedSource, actualFilePath, projectDir, adapter, {
           projectId,
           dev: true,
           ssr: true,
@@ -879,8 +884,6 @@ async function doFetchAndCacheModule(
         outputLength: moduleCode.length,
       });
 
-      // Rewrite veryfront/* imports to /_vf_modules/ paths (cached files don't have import maps)
-      moduleCode = rewriteVeryfrontImports(moduleCode);
       // Rewrite _dnt.polyfills.js / _dnt.shims.js relative imports to absolute file:// paths
       moduleCode = rewriteDntImports(moduleCode, actualFilePath);
 

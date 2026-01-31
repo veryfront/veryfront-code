@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.6",
+  "version": "0.1.7-rc.1",
   "nodeModulesDir": "auto",
   "exclude": [
     "npm/",
@@ -25,6 +25,7 @@
     "./react": "./src/react/index.ts",
     "./react/components": "./src/react/components/index.ts",
     "./react/components/ai": "./src/react/components/ai/index.ts",
+    "./components/ai": "./src/react/components/ai/index.ts",
     "./react/primitives": "./src/react/primitives/index.ts",
     "./react/context": "./src/react/context/index.tsx",
     "./react/router": "./src/react/router/index.tsx",
@@ -33,6 +34,7 @@
     "./data": "./src/data/index.ts",
     "./config": "./src/config/index.ts",
     "./platform": "./src/platform/index.ts",
+    "./platform/path": "./src/platform/compat/path/index.ts",
     "./tool": "./src/tool/index.ts",
     "./tool/schema": "./src/tool/schema/index.ts",
     "./tool/testing": "./src/tool/testing/index.ts",
@@ -67,6 +69,7 @@
     "veryfront/react/context": "./src/react/context/index.tsx",
     "veryfront/react/fonts": "./src/react/fonts/index.ts",
     "veryfront/react/components/ai": "./src/react/components/ai/index.ts",
+    "veryfront/components/ai": "./src/react/components/ai/index.ts",
     "veryfront/agent/react": "./src/agent/react/index.ts",
     "veryfront/workflow/react": "./src/workflow/react/index.ts",
     "#veryfront": "./src/index.ts",

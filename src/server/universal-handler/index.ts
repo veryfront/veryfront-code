@@ -745,6 +745,7 @@ export function createVeryfrontHandler(
                 hasConfig: !!effectiveConfig,
                 layout: effectiveConfig?.layout,
                 router: effectiveConfig?.router,
+                configKeys: effectiveConfig ? Object.keys(effectiveConfig) : [],
               });
             } catch (error) {
               logger.warn("[universal] Failed to load proxy config, using defaults", {

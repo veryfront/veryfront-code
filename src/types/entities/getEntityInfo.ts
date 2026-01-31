@@ -27,22 +27,12 @@ export async function getEntityInfo(
       if (adapter) {
         const adapterFs = adapter.fs;
         if (isExtendedFSAdapter(adapterFs) && adapterFs.isVeryfrontAdapter()) {
-          // API adapter needs relative paths, not absolute paths.
-          // Only apply the first matching prefix strip to avoid double-matching
-          // (e.g., "components/layouts/Foo.mdx" must not become "layouts/Foo.mdx").
-          const prefixPatterns = [
-            /^.*?\/pages\//,
-            /^.*?\/components\//,
-            /^.*?\/app\//,
-            /^.*?\/layouts\//,
-          ];
-          const prefixNames = ["pages/", "components/", "app/", "layouts/"];
-          for (let i = 0; i < prefixPatterns.length; i++) {
-            if (prefixPatterns[i]!.test(filePath)) {
-              normalizedPath = filePath.replace(prefixPatterns[i]!, prefixNames[i]!);
-              break;
-            }
-          }
+          // API adapter needs relative paths, not absolute paths
+          // Use a single replace to avoid chaining issues (e.g., components/layouts/ becoming layouts/)
+          normalizedPath = filePath.replace(
+            /^.*?\/(pages|components|app|layouts)\//,
+            "$1/",
+          );
         }
       }
 

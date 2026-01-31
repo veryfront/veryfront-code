@@ -23,6 +23,14 @@ import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/a
 import { beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
+import { load as loadEnv } from "#veryfront/platform/compat/std/dotenv.ts";
+
+// Load .env file for test configuration (VERYFRONT_BINARY_FRESH, etc.)
+try {
+  await loadEnv({ export: true, allowEmptyValues: true, examplePath: null });
+} catch {
+  // .env file doesn't exist - that's fine
+}
 
 const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? "/tmp/veryfront-e2e-bin";
 const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
@@ -92,6 +100,16 @@ async function ensureBinaryCompiled(): Promise<void> {
   if (forceFresh) console.log("🗑️  Force fresh build (VERYFRONT_BINARY_FRESH=1)");
   if (binaryExists) await Deno.remove(BINARY_PATH);
 
+  // Prepare framework sources for embedding in binary
+  console.log("📦 Preparing framework sources...");
+  const prepareResult = await new Deno.Command("deno", {
+    args: ["run", "--allow-all", "scripts/prepare-framework-sources.ts"],
+    stdout: "inherit",
+    stderr: "inherit",
+  }).output();
+
+  if (!prepareResult.success) throw new Error("Failed to prepare framework sources");
+
   console.log("📦 Compiling binary...");
   const result = await new Deno.Command("deno", {
     args: [
@@ -101,6 +119,8 @@ async function ensureBinaryCompiled(): Promise<void> {
       "src/platform/polyfills",
       "--include",
       "src/proxy/main.ts",
+      "--include",
+      "dist/framework-src",
       "--output",
       BINARY_PATH,
       "src/cli/main.ts",
@@ -1914,7 +1934,7 @@ export default function Home() {
 
   // Test: layout defined in veryfront.config.ts instead of file convention
   it("should render layout defined in veryfront.config.ts", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-config-layout-test-" });
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-config-wrap-test-" });
 
     await Deno.writeTextFile(
       join(projectDir, "package.json"),

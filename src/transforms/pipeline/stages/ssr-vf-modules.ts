@@ -31,13 +31,30 @@ const LOG_PREFIX = "[SSR-VF-MODULES]";
 const frameworkWriteFlight = new Singleflight<string>();
 
 // Get framework root - this works in both Deno source and compiled binaries
-const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
+const RUNTIME_FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
+
+// Always use the runtime-detected framework root.
+// In compiled binaries, embedded files are extracted to the runtime directory,
+// NOT accessible at compile-time paths. The extraction structure mirrors the
+// original directory layout, so dist/framework-src is at {extraction_root}/dist/framework-src.
+const FRAMEWORK_ROOT = RUNTIME_FRAMEWORK_ROOT;
+
+// Directory containing embedded framework sources for compiled binaries.
+// These are .src files created by scripts/prepare-framework-sources.ts.
+// In compiled binaries, files are extracted to the runtime directory.
+const EMBEDDED_SRC_DIR = join(RUNTIME_FRAMEWORK_ROOT, "dist", "framework-src");
 
 // Extensions to try when resolving framework files
 const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 
 // Map of _vf_modules prefixes to framework directories
+// We try embedded sources first (for compiled binaries), then regular src/
 const FRAMEWORK_LOOKUPS: Array<[prefix: string, frameworkDir: string]> = [
+  // Embedded sources for compiled binaries (these are .src files)
+  ["_veryfront/", EMBEDDED_SRC_DIR],
+  ["react/", EMBEDDED_SRC_DIR],
+  ["lib/", EMBEDDED_SRC_DIR],
+  // Regular sources for dev mode
   ["_veryfront/", join(FRAMEWORK_ROOT, "src")],
   ["react/", join(FRAMEWORK_ROOT, "src")],
   ["lib/", join(FRAMEWORK_ROOT, "src")],
@@ -48,6 +65,7 @@ const FRAMEWORK_LOOKUPS: Array<[prefix: string, frameworkDir: string]> = [
  */
 function findVfModuleImports(code: string): string[] {
   const imports: string[] = [];
+  // Note: \s* allows zero whitespace (minified code: from"..." has no space)
   const pattern = /from\s*["'](\/\_vf\_modules\/[^"']+)["']/g;
 
   let match: RegExpExecArray | null;
@@ -62,7 +80,13 @@ async function tryReadWithExtensions(
   fs: ReturnType<typeof createFileSystem>,
   basePath: string,
 ): Promise<{ sourcePath: string; content: string } | null> {
-  for (const ext of EXTENSIONS) {
+  // Try all extensions, including .src versions for embedded sources
+  const allExtensions = [
+    ...EXTENSIONS.map((ext) => ext + ".src"), // Embedded sources (.tsx.src, .ts.src, etc.)
+    ...EXTENSIONS, // Regular sources (.tsx, .ts, etc.)
+  ];
+
+  for (const ext of allExtensions) {
     const sourcePath = basePath + ext;
     try {
       if (await exists(sourcePath)) {
@@ -364,7 +388,10 @@ export const ssrVfModulesPlugin: TransformPlugin = {
     const vfModuleImports = findVfModuleImports(ctx.code);
     if (vfModuleImports.length === 0) return ctx.code;
 
-    logger.debug(`${LOG_PREFIX} Found ${vfModuleImports.length} /_vf_modules/ imports`);
+    logger.debug(`${LOG_PREFIX} Found ${vfModuleImports.length} /_vf_modules/ imports`, {
+      imports: vfModuleImports,
+      frameworkRoot: FRAMEWORK_ROOT,
+    });
 
     const fs = createFileSystem();
     const replacements = new Map<string, string>();
@@ -373,7 +400,10 @@ export const ssrVfModulesPlugin: TransformPlugin = {
       try {
         const resolved = await resolveFrameworkFile(vfModulePath, fs);
         if (!resolved) {
-          logger.warn(`${LOG_PREFIX} Could not resolve ${vfModulePath}`);
+          logger.warn(`${LOG_PREFIX} Could not resolve ${vfModulePath}`, {
+            frameworkRoot: FRAMEWORK_ROOT,
+            lookups: FRAMEWORK_LOOKUPS.map(([prefix, dir]) => ({ prefix, dir })),
+          });
           continue;
         }
 

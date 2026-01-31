@@ -29,9 +29,10 @@ import { createTokenStore, tokenStore, type TokenStore } from "./token-store.ts"
  * ```
  */
 export function createVercelKVStore(): TokenStore {
-  let kvPromise: Promise<typeof import("@vercel/kv")> | null = null;
+  type VercelKV = typeof import("@vercel/kv");
+  let kvPromise: Promise<VercelKV> | null = null;
 
-  async function getKV(): Promise<(await import("@vercel/kv")).kv> {
+  async function getKV(): Promise<VercelKV["kv"]> {
     kvPromise ??= import("@vercel/kv");
     return (await kvPromise).kv;
   }
