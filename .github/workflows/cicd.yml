@@ -6,7 +6,7 @@ on:
     branches: [main]
   push:
     branches: [main]
-    tags: ['v*']
+    tags: ["v*"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -16,7 +16,6 @@ jobs:
   # ============================================
   # CI: Quality Checks (PR + main, skip tags)
   # ============================================
-
   ci:
     if: startsWith(github.ref, 'refs/tags/') == false
     runs-on: veryfront-k8s-runners
@@ -51,7 +50,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-deno
         with:
-          warm-cache: 'true'
+          warm-cache: "true"
       - uses: nick-fields/retry@v3
         with:
           timeout_minutes: ${{ matrix.suite == 'integration' && 10 || 5 }}
@@ -77,7 +76,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-deno
         with:
-          warm-cache: 'true'
+          warm-cache: "true"
       - uses: nick-fields/retry@v3
         with:
           timeout_minutes: 15
@@ -95,7 +94,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     name: tests (split mode)
-    continue-on-error: true  # Non-blocking - informational only
+    continue-on-error: true # Non-blocking - informational only
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
@@ -148,9 +147,9 @@ jobs:
           PROXY_PID=$!
           sleep 8
 
-          # Test
-          echo "Testing codersociety.lvh.me:8080..."
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://codersociety.lvh.me:8080/ --max-time 30)
+          # Test - use localhost with Host header to avoid DNS issues in CI
+          echo "Testing codersociety.lvh.me:8080 (via localhost)..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: codersociety.lvh.me:8080" http://127.0.0.1:8080/ --max-time 30)
           echo "Status: $STATUS"
 
           # Cleanup
@@ -297,8 +296,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
 
       - name: Build and publish
         env:
@@ -402,8 +401,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
 
       - run: npm install -g npm@latest
 
