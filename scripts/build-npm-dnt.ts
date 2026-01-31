@@ -73,7 +73,7 @@ await build({
 	mappings: {
 		"https://deno.land/std@0.220.0/fmt/colors.ts": {
 			name: "picocolors",
-			version: "^1.1.0",
+			version: "1.1.1",
 		},
 		"https://deno.land/std@0.220.0/flags/mod.ts": {
 			name: "mri",
