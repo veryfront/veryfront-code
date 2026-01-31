@@ -88,7 +88,14 @@ async function ensureBinaryCompiled(): Promise<void> {
 
   console.log("📦 Compiling binary...");
   const result = await new Deno.Command("deno", {
-    args: ["compile", "--allow-all", "--unstable-net", "--output", BINARY_PATH, "src/cli/main.ts"],
+    args: [
+      "compile",
+      "--allow-all",
+      "--include", "src/platform/polyfills",
+      "--include", "src/proxy/main.ts",
+      "--output", BINARY_PATH,
+      "src/cli/main.ts",
+    ],
     stdout: "inherit",
     stderr: "inherit",
   }).output();
@@ -115,14 +122,16 @@ function collectLogs(logs: string[], stream: ReadableStream<Uint8Array>): void {
   })();
 }
 
-async function waitForServer(port: number, deadlineMs = 30_000): Promise<void> {
+async function waitForServer(port: number, deadlineMs = 60_000): Promise<void> {
   const deadline = Date.now() + deadlineMs;
   while (Date.now() < deadline) {
     try {
-      await fetch(`http://127.0.0.1:${port}/`);
+      const resp = await fetch(`http://127.0.0.1:${port}/`);
+      // Consume the response body to avoid connection issues
+      await resp.text();
       return;
     } catch {
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 500));
     }
   }
   throw new Error(`Server failed to start on port ${port}`);
@@ -156,9 +165,12 @@ async function startBinaryServer(projectDir: string, nodeEnv = "development"): P
     } catch {
       // already dead
     }
-    const logOutput = logs.join("\n").slice(-2000);
-    throw new Error(`Server failed to start on port ${port}. Logs:\n${logOutput}`);
+    const logOutput = logs.join("\n").slice(-3000); // Last 3KB for debugging
+    throw new Error(`Server failed to start on port ${port} within 60s. Logs:\n${logOutput}`);
   }
+
+  // Give the server a moment to stabilize after first request
+  await new Promise((r) => setTimeout(r, 500));
 
   return {
     process,
@@ -171,7 +183,7 @@ async function startBinaryServer(projectDir: string, nodeEnv = "development"): P
       } catch {
         // already dead
       }
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 500)); // Port release time (increased for CI)
       try {
         await Deno.remove(cacheDir, { recursive: true });
       } catch {
