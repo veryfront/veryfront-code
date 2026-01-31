@@ -15,11 +15,11 @@ export const REACT_IMPORT_PATTERN = /import\s+.*React.*\s+from\s+['"]react['"]/;
 
 export const PROJECT_ALIAS_IMPORT_PATTERN = /import\s+([^'"]+)\s+from\s+['"]@\/([^'"]+)['"];?/g;
 
-export const MODULE_SERVER_IMPORT_PATTERN = /from\s+["']\/?_vf_modules\/([^"']+)["']/g;
+export const MODULE_SERVER_IMPORT_PATTERN = /from\s*["']\/?_vf_modules\/([^"']+)["']/g;
 
-export const VF_MODULE_IMPORT_PATTERN = /from\s+["'](\/?_vf_modules\/[^"'?]+)(?:\?[^"']*)?["']/g;
+export const VF_MODULE_IMPORT_PATTERN = /from\s*["'](\/?_vf_modules\/[^"'?]+)(?:\?[^"']*)?["']/g;
 
-export const RELATIVE_IMPORT_PATTERN = /from\s+["'](\.\.?\/[^"'?]+)(?:\?[^"']*)?["']/g;
+export const RELATIVE_IMPORT_PATTERN = /from\s*["'](\.\.?\/[^"'?]+)(?:\?[^"']*)?["']/g;
 
 export const UNRESOLVED_VF_MODULES_PATTERN =
   /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/g;

@@ -110,7 +110,7 @@ async function initializeCacheDir(context: ESMLoaderContext): Promise<string> {
  * Rewrite @/ aliased imports to /_vf_modules/ paths.
  */
 function rewriteProjectAliasImports(code: string): string {
-  return code.replace(/from\s+["']@\/([^"']+)["']/g, (_match, path) => {
+  return code.replace(/from\s*["']@\/([^"']+)["']/g, (_match, path) => {
     const jsPath = path.endsWith(".js") ? path : `${path}.js`;
     return `from "/_vf_modules/${jsPath}"`;
   });
@@ -166,7 +166,7 @@ function transformImports(code: string, importMap: ImportMapConfig): string {
  */
 function findVfModuleImports(code: string): Array<{ original: string; path: string }> {
   const imports: Array<{ original: string; path: string }> = [];
-  const pattern = /from\s+["'](\/?)(_vf_modules\/[^"']+)["']/g;
+  const pattern = /from\s*["'](\/?)(_vf_modules\/[^"']+)["']/g;
 
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(code)) !== null) {

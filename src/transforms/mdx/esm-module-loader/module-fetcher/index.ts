@@ -99,17 +99,17 @@ function getTransformCacheKey(
  * These tests ensure paths are resolvable by the file-finder in production.
  */
 const VERYFRONT_IMPORT_MAP: Record<string, string> = {
-  "veryfront/head": "/_vf_modules/_veryfront/react/components/Head.js",
-  "veryfront/router": "/_vf_modules/_veryfront/react/router/index.js",
-  "veryfront/context": "/_vf_modules/_veryfront/react/context/index.js",
-  "veryfront/fonts": "/_vf_modules/_veryfront/react/fonts/index.js",
+  "veryfront/head": "/_vf_modules/react/components/Head.js",
+  "veryfront/router": "/_vf_modules/react/router/index.js",
+  "veryfront/context": "/_vf_modules/react/context/index.js",
+  "veryfront/fonts": "/_vf_modules/react/fonts/index.js",
 };
 
 /**
  * Rewrite veryfront/* imports to /_vf_modules/ paths for MDX module loading.
  */
 function rewriteVeryfrontImports(code: string): string {
-  return code.replace(/from\s+["'](veryfront\/[^"']+)["']/g, (_match, specifier: string) => {
+  return code.replace(/from\s*["'](veryfront\/[^"']+)["']/g, (_match, specifier: string) => {
     const mapped = VERYFRONT_IMPORT_MAP[specifier];
     return `from "${mapped ?? specifier}"`;
   });
@@ -141,15 +141,19 @@ export function rewriteDntImports(code: string, sourceFilePath: string): string 
 
   const sourceDir = dirname(sourceFilePath);
 
-  return code
-    .replace(/from\s+["'](\.\.?\/[^"']+)["']/g, (_match, relativePath: string) => {
+  return code.replace(
+    /from\s*["'](\.\.?\/[^"']+)["']/g,
+    (_match, relativePath: string) => {
       const absolutePath = resolve(sourceDir, relativePath);
       return `from "file://${absolutePath}"`;
-    })
-    .replace(/import\s+["'](\.\.?\/[^"']+)["']/g, (_match, relativePath: string) => {
+    },
+  ).replace(
+    /import\s*["'](\.\.?\/[^"']+)["']/g,
+    (_match, relativePath: string) => {
       const absolutePath = resolve(sourceDir, relativePath);
       return `import "file://${absolutePath}"`;
-    });
+    },
+  );
 }
 
 function getVersionedPathCacheKey(normalizedPath: string): string {
