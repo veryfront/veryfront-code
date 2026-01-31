@@ -6,7 +6,7 @@
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
 import { assert, assertEquals } from "@veryfront/testing/assert";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { afterAll, beforeAll, describe, it } from "@veryfront/testing/bdd";
 import { join } from "@veryfront/compat/path";
 import { mkdir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
 
@@ -19,6 +19,23 @@ describe(
   "Full Lifecycle",
   { sanitizeResources: false, sanitizeOps: false },
   () => {
+    beforeAll(async () => {
+      // Clear framework cache to prevent cross-environment contamination
+      // (e.g., compiled binary e2e tests leaving stale caches that break source-based tests)
+      const frameworkCacheDir = join(Deno.cwd(), ".cache", "veryfront-mdx-esm", "framework");
+      const singleCacheDir = join(Deno.cwd(), ".cache", "veryfront-mdx-esm", "__single__");
+      try {
+        await remove(frameworkCacheDir, { recursive: true });
+      } catch {
+        // Ignore if doesn't exist
+      }
+      try {
+        await remove(singleCacheDir, { recursive: true });
+      } catch {
+        // Ignore if doesn't exist
+      }
+    });
+
     afterAll(async () => {
       // Global cleanup for any lingering resources
       await cleanupBundler();
