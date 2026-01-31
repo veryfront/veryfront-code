@@ -64,40 +64,40 @@ Place utilities in `src/{module}/utils/` when they:
 
 ```typescript
 // GOOD - Using import map alias
-import { createRenderer } from "@veryfront/rendering";
-import type { VeryfrontConfig } from "@veryfront/config";
-import { computeHash } from "@veryfront/utils";
+import { createRenderer } from "#veryfront/rendering";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { computeHash } from "#veryfront/utils";
 
 // BAD - Deep relative import
 import { createRenderer } from "../../../../rendering/index.ts";
 ```
 
-**Available aliases:**
-- `@veryfront/types` - Core types
-- `@veryfront/config` - Configuration
-- `@veryfront/utils` - Shared utilities
-- `@veryfront/errors` - Error handling
-- `@veryfront/platform` - Platform adapters
-- `@veryfront/security` - Security primitives
-- `@veryfront/routing` - Routing system
-- `@veryfront/middleware` - Middleware
-- `@veryfront/modules` - Module system
-- `@veryfront/data` - Data fetching
-- `@veryfront/html` - HTML generation
-- `@veryfront/react` - React integration
-- `@veryfront/components` - React components
-- `@veryfront/rendering` - SSR/RSC
-- `@veryfront/build` - Build system
-- `@veryfront/transforms` - Code transformations
-- `@veryfront/server` - Servers
-- `@veryfront/agent` - AI agent runtime
-- `@veryfront/tool` - Tool definitions and registry
-- `@veryfront/workflow` - Durable workflow engine
-- `@veryfront/prompt` - Prompt templates
-- `@veryfront/resource` - Resource definitions
-- `@veryfront/mcp` - MCP protocol server
-- `@veryfront/provider` - AI model providers
-- `@veryfront/observability` - Metrics/tracing
+**Available aliases** (defined in `deno.json`):
+- `#veryfront/types` - Core types
+- `#veryfront/config` - Configuration
+- `#veryfront/utils` - Shared utilities
+- `#veryfront/errors` - Error handling
+- `#veryfront/platform` - Platform adapters
+- `#veryfront/security` - Security primitives
+- `#veryfront/routing` - Routing system
+- `#veryfront/middleware` - Middleware
+- `#veryfront/modules` - Module system
+- `#veryfront/data` - Data fetching
+- `#veryfront/html` - HTML generation
+- `#veryfront/react` - React integration
+- `#veryfront/components` - React components
+- `#veryfront/rendering` - SSR/RSC
+- `#veryfront/build` - Build system
+- `#veryfront/transforms` - Code transformations
+- `#veryfront/server` - Servers
+- `#veryfront/agent` - AI agent runtime
+- `#veryfront/tool` - Tool definitions and registry
+- `#veryfront/workflow` - Durable workflow engine
+- `#veryfront/prompt` - Prompt templates
+- `#veryfront/resource` - Resource definitions
+- `#veryfront/mcp` - MCP protocol server
+- `#veryfront/provider` - AI model providers
+- `#veryfront/observability` - Metrics/tracing
 
 ### File Naming Conventions
 
@@ -123,8 +123,8 @@ src/{module}/
 
 ### Prerequisites
 
-- **Deno 1.40+** (recommended)
-- **Node.js 18+** or **Bun 1.0+** (alternative runtimes)
+- **Deno 2.6+** (required)
+- **Node.js 22+** or **Bun 1.0+** (alternative runtimes for npm distribution)
 
 ### Installation
 
@@ -212,8 +212,8 @@ import { join } from "node:path";
 import * as React from "react";
 
 // 2. Framework
-import { createRenderer } from "@veryfront/rendering";
-import type { VeryfrontConfig } from "@veryfront/config";
+import { createRenderer } from "#veryfront/rendering";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 // 3. Relative
 import { helperFunction } from "./helpers.ts";
@@ -230,7 +230,7 @@ import type { LocalType } from "./types.ts";
 
 Run formatter:
 ```bash
-deno task fmt
+deno fmt
 ```
 
 ### Naming Conventions
@@ -403,9 +403,9 @@ We follow [Semantic Versioning](https://semver.org/):
 
 | Trigger | Workflow | Action |
 |---------|----------|--------|
-| PR to main | `ci.yml` | Runs tests, lint, typecheck |
-| Push to main | `ci.yml` | Runs tests |
-| Push tag `v*` | `publish.yml` | Builds and publishes to npm |
+| PR to main | `cicd.yml` | Runs format, lint, typecheck, unit, integration, binary e2e tests |
+| Push to main | `cicd.yml` | Runs tests, builds binaries, publishes RC to npm |
+| Push tag `v*` | `cicd.yml` | Validates version, builds binaries, publishes to npm, updates Homebrew |
 
 ### Troubleshooting
 
@@ -433,8 +433,8 @@ Fix: Update `deno.json` version before creating the tag.
 2. **Add import map alias** in `deno.json`
    ```json
    {
-     "@veryfront/new-module": "./src/new-module/index.ts",
-     "@veryfront/new-module/": "./src/new-module/"
+     "#veryfront/new-module": "./src/new-module/index.ts",
+     "#veryfront/new-module/": "./src/new-module/"
    }
    ```
 
@@ -463,7 +463,7 @@ Fix: Update `deno.json` version before creating the tag.
 
 ### Module Dependencies
 
-- **Avoid circular dependencies** - check with `deno task check:circular`
+- **Avoid circular dependencies** - the module architecture enforces unidirectional dependencies
 - **Minimize coupling** - modules should have clear, minimal dependencies
 - **Document dependencies** - explain why each dependency is needed
 
