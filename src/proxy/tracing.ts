@@ -45,6 +45,21 @@ function parseHeaders(headerString: string | undefined): Record<string, string> 
   return headers;
 }
 
+/**
+ * Parse OTEL_RESOURCE_ATTRIBUTES env var (key=value,key2=value2 format).
+ */
+function parseResourceAttributes(attrString: string | undefined): Record<string, string> {
+  if (!attrString) return {};
+  const attrs: Record<string, string> = {};
+  for (const part of attrString.split(",")) {
+    const [key, ...valueParts] = part.split("=");
+    if (key && valueParts.length > 0) {
+      attrs[key.trim()] = valueParts.join("=").trim();
+    }
+  }
+  return attrs;
+}
+
 function getConfig(): OTLPConfig {
   return {
     enabled: getEnv("OTEL_TRACES_ENABLED") === "true",
@@ -90,9 +105,11 @@ export async function initializeOTLP(): Promise<void> {
       "@opentelemetry/semantic-conventions"
     );
 
+    const resourceAttrs = parseResourceAttributes(getEnv("OTEL_RESOURCE_ATTRIBUTES"));
     const resource = new Resource({
       [ATTR_SERVICE_NAME]: config.serviceName,
       [ATTR_SERVICE_VERSION]: VERYFRONT_VERSION,
+      ...resourceAttrs,
     });
 
     const exporter = new OTLPTraceExporter({
