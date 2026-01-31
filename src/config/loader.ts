@@ -1,6 +1,6 @@
 import type { VeryfrontConfig } from "./types.ts";
 import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./schema.ts";
-import { extname, join } from "#veryfront/platform/compat/path/index.ts";
+import { extname, join, resolve } from "#veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { isBun } from "#veryfront/platform/compat/runtime.ts";
@@ -297,7 +297,8 @@ async function loadAndMergeConfig(
     return validateAndCacheConfig(userConfig, cacheKey);
   }
 
-  const configUrl = `file://${configPath}?t=${Date.now()}-${crypto.randomUUID()}`;
+  const absolutePath = resolve(configPath);
+  const configUrl = `file://${absolutePath}?t=${Date.now()}-${crypto.randomUUID()}`;
   const configModule = await import(configUrl);
   return validateAndCacheConfig(configModule.default || configModule, cacheKey);
 }
