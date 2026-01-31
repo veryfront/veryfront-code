@@ -120,8 +120,7 @@ const getDistributedCache = createDistributedCacheAccessor(
  * - hasIncompatibleFilePaths(): Rejects paths from different environments
  * - gzip detection: Handles corrupted content
  */
-const distributedKey = (prefix: string, hash: string | number) =>
-  `${VERSION}:${prefix}:${hash}`;
+const distributedKey = (prefix: string, hash: string | number) => `${VERSION}:${prefix}:${hash}`;
 
 /**
  * Check if cached HTTP bundle code has file:// paths from a different environment.

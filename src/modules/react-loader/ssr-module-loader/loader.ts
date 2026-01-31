@@ -46,8 +46,8 @@ import {
   isSSRDistributedCacheEnabled,
   releaseTransformSlot,
   setInRedis,
-  tryAcquireTransformSlot,
   transformSemaphore,
+  tryAcquireTransformSlot,
 } from "./cache/index.ts";
 import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
@@ -541,81 +541,84 @@ export class SSRModuleLoader {
         // Check for esm.sh URLs that reference /_vf_modules/ paths - these are invalid
         // and indicate a cached transform from before the fix was deployed
         if (/esm\.sh\/_?vf_modules\//.test(redisCode)) {
-          logger.warn("[SSR-MODULE-LOADER] Redis cache has invalid esm.sh/_vf_modules URL, re-transforming", {
-            file: filePath.slice(-40),
-          });
+          logger.warn(
+            "[SSR-MODULE-LOADER] Redis cache has invalid esm.sh/_vf_modules URL, re-transforming",
+            {
+              file: filePath.slice(-40),
+            },
+          );
           // Fall through to re-transform
         } else {
-        // Proactively ensure HTTP bundles exist before using cached transform.
-        // The cached code may reference file:// paths to HTTP bundles that were
-        // created on a different pod and may not exist locally.
-        let allPathsOk = true;
-        const bundlePaths = extractHttpBundlePaths(redisCode);
-        if (bundlePaths.length > 0) {
-          const cacheDir = getHttpBundleCacheDir();
-          const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-          if (failed.length > 0) {
-            logger.warn("[SSR-MODULE-LOADER] Unrecoverable HTTP bundles, re-transforming", {
-              file: filePath.slice(-40),
-              failed,
-              totalBundles: bundlePaths.length,
-              cacheDir,
-              source: "redis-cache",
-            });
-            allPathsOk = false;
+          // Proactively ensure HTTP bundles exist before using cached transform.
+          // The cached code may reference file:// paths to HTTP bundles that were
+          // created on a different pod and may not exist locally.
+          let allPathsOk = true;
+          const bundlePaths = extractHttpBundlePaths(redisCode);
+          if (bundlePaths.length > 0) {
+            const cacheDir = getHttpBundleCacheDir();
+            const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+            if (failed.length > 0) {
+              logger.warn("[SSR-MODULE-LOADER] Unrecoverable HTTP bundles, re-transforming", {
+                file: filePath.slice(-40),
+                failed,
+                totalBundles: bundlePaths.length,
+                cacheDir,
+                source: "redis-cache",
+              });
+              allPathsOk = false;
+            }
           }
-        }
 
-        // Validate ALL file:// paths in cached code (including local imports).
-        // Redis may return cached transforms from other pods with different temp directories.
-        // If any local import paths are missing, we must re-transform.
-        if (allPathsOk) {
-          const allPaths = extractAllFilePaths(redisCode);
-          for (const path of allPaths) {
-            try {
-              const stat = await this.fs.stat(path);
-              if (!stat.isFile) {
+          // Validate ALL file:// paths in cached code (including local imports).
+          // Redis may return cached transforms from other pods with different temp directories.
+          // If any local import paths are missing, we must re-transform.
+          if (allPathsOk) {
+            const allPaths = extractAllFilePaths(redisCode);
+            for (const path of allPaths) {
+              try {
+                const stat = await this.fs.stat(path);
+                if (!stat.isFile) {
+                  allPathsOk = false;
+                  break;
+                }
+              } catch {
+                // Path doesn't exist locally
+                logger.debug(
+                  "[SSR-MODULE-LOADER] Redis cache has invalid local path, re-transforming",
+                  {
+                    file: filePath.slice(-40),
+                    missingPath: path.slice(-60),
+                  },
+                );
                 allPathsOk = false;
                 break;
               }
-            } catch {
-              // Path doesn't exist locally
-              logger.debug(
-                "[SSR-MODULE-LOADER] Redis cache has invalid local path, re-transforming",
-                {
-                  file: filePath.slice(-40),
-                  missingPath: path.slice(-60),
-                },
-              );
-              allPathsOk = false;
-              break;
             }
           }
-        }
 
-        if (allPathsOk) {
-          // CRITICAL: Use transformedHash (hash of the transformed code) for temp path,
-          // NOT contentHash (hash of source). Other modules importing this file use
-          // transformedHash in their import paths (set during fresh transform at line 703).
-          // Using contentHash here would create a path mismatch and "Module not found" errors.
-          const transformedHash = await this.hashContentAsync(redisCode);
-          const tempPath = await this.getTempPath(filePath, transformedHash);
-          await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), {
-            recursive: true,
-          });
-          await this.fs.writeTextFile(tempPath, redisCode);
-          verifiedHttpBundlePaths.set(`${tempPath}:${transformedHash}`, true);
+          if (allPathsOk) {
+            // CRITICAL: Use transformedHash (hash of the transformed code) for temp path,
+            // NOT contentHash (hash of source). Other modules importing this file use
+            // transformedHash in their import paths (set during fresh transform at line 703).
+            // Using contentHash here would create a path mismatch and "Module not found" errors.
+            const transformedHash = await this.hashContentAsync(redisCode);
+            const tempPath = await this.getTempPath(filePath, transformedHash);
+            await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), {
+              recursive: true,
+            });
+            await this.fs.writeTextFile(tempPath, redisCode);
+            verifiedHttpBundlePaths.set(`${tempPath}:${transformedHash}`, true);
 
-          const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
-          globalModuleCache.set(contentCacheKey, entry);
-          globalModuleCache.set(filePathCacheKey, entry);
+            const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
+            globalModuleCache.set(contentCacheKey, entry);
+            globalModuleCache.set(filePathCacheKey, entry);
 
-          logger.debug("[SSR-MODULE-LOADER] Redis cache hit", { file: filePath.slice(-40) });
+            logger.debug("[SSR-MODULE-LOADER] Redis cache hit", { file: filePath.slice(-40) });
 
-          await this.ensureDependenciesExist(code, filePath, depth);
-          return;
-        }
-        // Fall through to re-transform, which will create HTTP bundles locally
+            await this.ensureDependenciesExist(code, filePath, depth);
+            return;
+          }
+          // Fall through to re-transform, which will create HTTP bundles locally
         }
       }
     }
