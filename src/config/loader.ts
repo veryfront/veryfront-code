@@ -329,6 +329,35 @@ export function getConfig(
         isVirtualFS,
       });
 
+      // Check for VERYFRONT_CONFIG env var first (used by split-mode scripts)
+      // Always load from LOCAL filesystem, even if adapter uses virtual FS
+      const envConfigPath = Deno.env.get("VERYFRONT_CONFIG");
+      if (envConfigPath) {
+        const fs = createFileSystem();
+        const absoluteConfigPath = envConfigPath.startsWith("/")
+          ? envConfigPath
+          : join(Deno.cwd(), envConfigPath);
+
+        try {
+          const exists = await fs.exists(absoluteConfigPath);
+          if (exists) {
+            serverLogger.debug("[CONFIG] Loading from VERYFRONT_CONFIG env var (local fs)", {
+              path: absoluteConfigPath,
+            });
+            // Load config directly from local filesystem (bypass adapter.fs)
+            const configUrl = `file://${absoluteConfigPath}?t=${Date.now()}-${crypto.randomUUID()}`;
+            const configModule = await import(configUrl);
+            const userConfig = configModule.default || configModule;
+            return validateAndCacheConfig(userConfig, effectiveCacheKey);
+          }
+        } catch (error) {
+          serverLogger.debug("[CONFIG] Failed to load VERYFRONT_CONFIG:", {
+            path: absoluteConfigPath,
+            error: getErrorMessage(error),
+          });
+        }
+      }
+
       const configFiles = ["veryfront.config.js", "veryfront.config.ts", "veryfront.config.mjs"];
 
       for (const configFile of configFiles) {

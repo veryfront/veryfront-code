@@ -476,27 +476,42 @@ export class SSRModuleLoader {
       if (!verifiedHttpBundlePaths.get(verifyKey)) {
         try {
           const cachedCode = await this.fs.readTextFile(cachedEntry.tempPath);
-          const bundlePaths = extractHttpBundlePaths(cachedCode);
 
-          if (bundlePaths.length > 0) {
-            const cacheDir = getHttpBundleCacheDir();
-            const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-            if (failed.length > 0) {
-              logger.warn("[SSR-MODULE-LOADER] Unrecoverable HTTP bundles, re-transforming", {
-                file: filePath.slice(-40),
-                failed,
-                totalBundles: bundlePaths.length,
-                cacheDir,
-                source: "memory-cache",
-              });
-              globalModuleCache.delete(contentCacheKey);
-              globalModuleCache.delete(filePathCacheKey);
-              verifiedHttpBundlePaths.delete(verifyKey);
+          // Check for unresolved /_vf_modules/ imports
+          const unresolvedPattern = /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/g;
+          if (unresolvedPattern.test(cachedCode)) {
+            logger.warn(
+              "[SSR-MODULE-LOADER] Memory cache has unresolved _vf_modules imports, invalidating",
+              { file: filePath.slice(-40), tempPath: cachedEntry.tempPath.slice(-60) },
+            );
+            globalModuleCache.delete(contentCacheKey);
+            globalModuleCache.delete(filePathCacheKey);
+            verifiedHttpBundlePaths.delete(verifyKey);
+            // Fall through to Redis or fresh transform
+          } else {
+            const bundlePaths = extractHttpBundlePaths(cachedCode);
+            if (bundlePaths.length > 0) {
+              const cacheDir = getHttpBundleCacheDir();
+              const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+              if (failed.length > 0) {
+                logger.warn("[SSR-MODULE-LOADER] Unrecoverable HTTP bundles, re-transforming", {
+                  file: filePath.slice(-40),
+                  failed,
+                  totalBundles: bundlePaths.length,
+                  cacheDir,
+                  source: "memory-cache",
+                });
+                globalModuleCache.delete(contentCacheKey);
+                globalModuleCache.delete(filePathCacheKey);
+                // Also clear the verification cache so re-verification happens after re-transform
+                verifiedHttpBundlePaths.delete(verifyKey);
+                // Fall through to Redis or fresh transform
+              } else {
+                verifiedHttpBundlePaths.set(verifyKey, true);
+              }
             } else {
               verifiedHttpBundlePaths.set(verifyKey, true);
             }
-          } else {
-            verifiedHttpBundlePaths.set(verifyKey, true);
           }
         } catch {
           globalModuleCache.delete(contentCacheKey);
@@ -559,6 +574,19 @@ export class SSRModuleLoader {
                 allPathsOk = false;
                 break;
               }
+            }
+          }
+
+          // CRITICAL: Check for unresolved /_vf_modules/ imports.
+          // Stale cache entries may have unresolved paths that weren't converted to file:// URLs.
+          if (allPathsOk) {
+            const unresolvedPattern = /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/g;
+            if (unresolvedPattern.test(redisCode)) {
+              logger.warn(
+                "[SSR-MODULE-LOADER] Redis cache has unresolved _vf_modules imports, re-transforming",
+                { file: filePath.slice(-40) },
+              );
+              allPathsOk = false;
             }
           }
 

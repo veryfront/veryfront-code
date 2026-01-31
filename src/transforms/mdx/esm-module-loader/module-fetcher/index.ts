@@ -240,6 +240,43 @@ async function hasIncompatibleFrameworkPaths(code: string, log: Logger): Promise
 }
 
 /**
+ * Check if cached code has file:// paths that don't exist locally.
+ * Returns list of missing paths, or empty array if all exist.
+ *
+ * This catches cases where distributed cache returns code with file:// paths
+ * to vfmod modules that were created on a different pod/run with different hashes.
+ */
+async function findMissingFileDependenciesInCode(code: string, log: Logger): Promise<string[]> {
+  const localFs = getLocalFs();
+  const pattern = /file:\/\/([^"'\s]+\.mjs)/gi;
+  const missing: string[] = [];
+  const checked = new Set<string>();
+
+  let match;
+  while ((match = pattern.exec(code)) !== null) {
+    const path = match[1] as string;
+    // Skip query parameters in paths
+    const cleanPath = path.replace(/\?.*$/, "");
+
+    if (checked.has(cleanPath)) continue;
+    checked.add(cleanPath);
+
+    try {
+      const stat = await localFs.stat(cleanPath);
+      if (!stat?.isFile) {
+        log.debug(`${LOG_PREFIX_MDX_LOADER} File dependency does not exist`, { path: cleanPath });
+        missing.push(cleanPath);
+      }
+    } catch {
+      log.debug(`${LOG_PREFIX_MDX_LOADER} File dependency not accessible`, { path: cleanPath });
+      missing.push(cleanPath);
+    }
+  }
+
+  return missing;
+}
+
+/**
  * Render session state for module tracking.
  */
 interface RenderSession {
@@ -716,6 +753,7 @@ async function doFetchAndCacheModule(
     const transformCacheKey = getTransformCacheKey(projectId, normalizedPath, contentHash);
 
     let moduleCode: string | null = null;
+    let needsDistributedCacheWrite = false;
     const distributedCache = await getDistributedTransformBackend();
 
     if (distributedCache) {
@@ -765,6 +803,33 @@ async function doFetchAndCacheModule(
             });
             moduleCode = null;
           }
+
+          // CRITICAL: Check for unresolved /_vf_modules/ imports.
+          // Stale cache entries may have unresolved paths from before this fix.
+          if (moduleCode) {
+            const unresolved = hasUnresolvedImports(cached);
+            if (unresolved.count > 0) {
+              log.warn(
+                `${LOG_PREFIX_MDX_LOADER} Cached code has ${unresolved.count} unresolved imports, invalidating`,
+                { normalizedPath, unresolved: unresolved.paths },
+              );
+              moduleCode = null;
+            }
+          }
+
+          // CRITICAL: Check that all file:// paths (vfmod modules, etc.) exist locally.
+          // Distributed cache may return code with file:// paths from other pods/runs
+          // that don't exist on this machine.
+          if (moduleCode) {
+            const missingDeps = await findMissingFileDependenciesInCode(cached, log);
+            if (missingDeps.length > 0) {
+              log.warn(
+                `${LOG_PREFIX_MDX_LOADER} Cached code has ${missingDeps.length} missing file dependencies, invalidating`,
+                { normalizedPath, missingDeps: missingDeps.slice(0, 5) },
+              );
+              moduleCode = null;
+            }
+          }
         }
       } catch (error) {
         log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache get failed`, {
@@ -810,37 +875,9 @@ async function doFetchAndCacheModule(
 
       moduleCode = rewriteDntImports(rewriteVeryfrontImports(moduleCode), actualFilePath);
 
-      if (distributedCache) {
-        distributedCache
-          .set(transformCacheKey, moduleCode, TRANSFORM_CACHE_TTL_SECONDS)
-          .catch((error) => {
-            log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache set failed`, {
-              normalizedPath,
-              error,
-            });
-          });
-
-        const bundlePaths = extractHttpBundlePaths(moduleCode);
-        if (bundlePaths.length > 0) {
-          const entries = bundlePaths.map((b) => ({ hash: b.hash, url: "", sizeBytes: 0 }));
-          createBundleManifest(entries)
-            .then(async (manifest) => {
-              await storeBundleManifest(manifest);
-              const bundleManifestKey = `${transformCacheKey}:bm`;
-              await distributedCache.set(
-                bundleManifestKey,
-                manifest.manifestId,
-                TRANSFORM_CACHE_TTL_SECONDS,
-              );
-            })
-            .catch((error) => {
-              log.debug(`${LOG_PREFIX_MDX_LOADER} Bundle manifest creation failed`, {
-                normalizedPath,
-                error,
-              });
-            });
-        }
-      }
+      // Mark for distributed cache write AFTER nested imports are resolved.
+      // This ensures we don't cache code with unresolved /_vf_modules/ paths.
+      needsDistributedCacheWrite = true;
     }
 
     const { vfModules, relative } = findNestedImports(moduleCode);
@@ -906,6 +943,40 @@ async function doFetchAndCacheModule(
       normalizedPath,
       projectSlug,
     );
+
+    // Write to distributed cache AFTER nested imports are resolved.
+    // This ensures other pods get fully-resolved code without /_vf_modules/ paths.
+    if (needsDistributedCacheWrite && distributedCache) {
+      // Store transformed code in distributed cache
+      distributedCache
+        .set(transformCacheKey, moduleCode, TRANSFORM_CACHE_TTL_SECONDS)
+        .catch((error) => {
+          log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache set failed`, {
+            normalizedPath,
+            error,
+          });
+        });
+
+      // Create and store bundle manifest companion key for atomic validation
+      const bundlePaths = extractHttpBundlePaths(moduleCode);
+      if (bundlePaths.length > 0) {
+        const entries = bundlePaths.map((b) => ({ hash: b.hash, url: "", sizeBytes: 0 }));
+        createBundleManifest(entries).then(async (manifest) => {
+          await storeBundleManifest(manifest);
+          const bundleManifestKey = `${transformCacheKey}:bm`;
+          await distributedCache.set(
+            bundleManifestKey,
+            manifest.manifestId,
+            TRANSFORM_CACHE_TTL_SECONDS,
+          );
+        }).catch((error) => {
+          log.debug(`${LOG_PREFIX_MDX_LOADER} Bundle manifest creation failed`, {
+            normalizedPath,
+            error,
+          });
+        });
+      }
+    }
 
     log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule START`, {
       projectSlug,

@@ -72,15 +72,19 @@ async function findMissingFileDependencies(code: string): Promise<string[]> {
 }
 
 /**
- * Pattern to match unresolved /_vf_modules/ imports that weren't converted to file:// paths.
+ * Pattern to match unresolved /_vf_modules/ imports that weren't converted to proper file:// paths.
+ * Matches both:
+ * - `from "/_vf_modules/..."` or `from "_vf_modules/..."` (unresolved)
+ * - `from "file:///_vf_modules/..."` (malformed - points to non-existent root /_vf_modules/)
+ * Note: Uses \s* instead of \s+ because minified code may have no space after `from`.
  * These imports will fail at runtime because they can't be resolved by Deno's dynamic import.
  */
-const UNRESOLVED_VF_MODULES_PATTERN = /from\s+["'](\/?_vf_modules\/[^"']+)["']/g;
+const UNRESOLVED_VF_MODULES_PATTERN = /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/g;
 
 /**
- * Check if cached code has unresolved /_vf_modules/ imports.
- * These should have been resolved to file:// paths during processing.
- * Returns true if any unresolved imports are found.
+ * Check if cached code has unresolved or malformed /_vf_modules/ imports.
+ * These should have been resolved to proper file:// paths (e.g., file:///Users/.cache/...).
+ * Returns true if any unresolved or malformed imports are found.
  */
 function hasUnresolvedVfModules(code: string): boolean {
   const pattern = new RegExp(UNRESOLVED_VF_MODULES_PATTERN.source, "g");

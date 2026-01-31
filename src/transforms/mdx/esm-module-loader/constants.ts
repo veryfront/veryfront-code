@@ -21,7 +21,8 @@ export const VF_MODULE_IMPORT_PATTERN = /from\s+["'](\/?_vf_modules\/[^"'?]+)(?:
 
 export const RELATIVE_IMPORT_PATTERN = /from\s+["'](\.\.?\/[^"'?]+)(?:\?[^"']*)?["']/g;
 
-export const UNRESOLVED_VF_MODULES_PATTERN = /from\s+["'](\/?_vf_modules\/[^"']+)["']/g;
+export const UNRESOLVED_VF_MODULES_PATTERN =
+  /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/g;
 
 export const ESBUILD_JSX_FACTORY = "React.createElement";
 export const ESBUILD_JSX_FRAGMENT = "React.Fragment";
