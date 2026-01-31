@@ -97,8 +97,9 @@ sleep 5
 
 # Test
 # Use localhost with Host header to avoid DNS issues in CI
+# Use || echo "000" to handle curl timeout gracefully
 echo "Testing codersociety.lvh.me:8080 (via localhost)..."
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: codersociety.lvh.me:8080" http://127.0.0.1:8080/ --max-time 30)
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: codersociety.lvh.me:8080" http://127.0.0.1:8080/ --max-time 30 || echo "000")
 echo "Status: $STATUS"
 
 # Check result
