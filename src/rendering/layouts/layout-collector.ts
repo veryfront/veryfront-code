@@ -181,8 +181,11 @@ export class LayoutCollector {
       { "layout.page_path": pageInfo.entity.path },
     );
 
-    if (!layoutBundle || !layoutPath) {
-      logger.debug("[LayoutCollector] collectLayouts result", {
+    // If no layout path is set, return without adding config layout
+    // Note: layoutBundle can be undefined for TSX layouts (they don't need MDX compilation)
+    // but layoutPath will still be set if a config.layout was specified
+    if (!layoutPath) {
+      logger.debug("[LayoutCollector] collectLayouts result - no layout path", {
         hasLayoutBundle: !!layoutBundle,
         hasExplicitFrontmatterLayout,
         nestedLayoutsCount: nestedLayouts.length,

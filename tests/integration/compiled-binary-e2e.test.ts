@@ -1763,6 +1763,309 @@ export default function ErrorBoundary({ error }: { error: Error }) {
     });
   });
 
+  // Test: app provider defined in veryfront.config.ts instead of file convention
+  // Regression test: User reported bug when using config-based app/layout providers
+  it("should render app provider defined in veryfront.config.ts", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-config-app-test-" });
+
+    await Deno.writeTextFile(
+      join(projectDir, "package.json"),
+      JSON.stringify({
+        name: "test-config-app",
+        type: "module",
+        dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+      }, null, 2),
+    );
+
+    // Config-based app provider (NOT using file convention)
+    await Deno.writeTextFile(
+      join(projectDir, "veryfront.config.ts"),
+      `export default {
+  fs: { type: "local" },
+  app: "lib/providers/CustomApp.tsx"
+};`,
+    );
+
+    await Deno.mkdir(join(projectDir, "lib/providers"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "lib/providers/CustomApp.tsx"),
+      `
+export default function CustomApp({ children }: { children: React.ReactNode }) {
+  return (
+    <div id="config-app-wrapper" data-testid="config-app">
+      <header id="config-app-header">Config App Header</header>
+      {children}
+    </div>
+  );
+}
+`,
+    );
+
+    await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "pages/index.tsx"),
+      `
+export default function Home() {
+  return <div id="page-content">Home page with config app</div>;
+}
+`,
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+      assertStringIncludes(html, "config-app-wrapper", "Should have app wrapper from config-based provider");
+      assertStringIncludes(html, "Config App Header", "Should render config app header");
+      assertStringIncludes(html, "Home page with config app", "Should render page content");
+
+      const errors = server.logs.filter((l) =>
+        l.includes("Invalid hook call") ||
+        l.includes("Module not found") ||
+        l.includes("Cannot find") ||
+        l.includes("app provider")
+      );
+      assertEquals(errors.length, 0, `Should have no errors: ${errors.join("\n")}`);
+    });
+  });
+
+  // Test: layout defined in veryfront.config.ts instead of file convention
+  it("should render layout defined in veryfront.config.ts", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-config-layout-test-" });
+
+    await Deno.writeTextFile(
+      join(projectDir, "package.json"),
+      JSON.stringify({
+        name: "test-config-layout",
+        type: "module",
+        dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+      }, null, 2),
+    );
+
+    // Config-based layout (NOT using file convention pages/layout.tsx)
+    await Deno.writeTextFile(
+      join(projectDir, "veryfront.config.ts"),
+      `export default {
+  fs: { type: "local" },
+  layout: "lib/layouts/MainLayout.tsx"
+};`,
+    );
+
+    await Deno.mkdir(join(projectDir, "lib/layouts"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "lib/layouts/MainLayout.tsx"),
+      `
+import { Head } from "veryfront/head";
+
+export default function MainLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <Head><title>Config Layout Test</title></Head>
+      <div id="config-layout-wrapper">
+        <header id="config-layout-header">Config Layout Header</header>
+        <main id="config-layout-main">{children}</main>
+        <footer id="config-layout-footer">Config Layout Footer</footer>
+      </div>
+    </>
+  );
+}
+`,
+    );
+
+    await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "pages/index.tsx"),
+      `
+export default function Home() {
+  return <div id="page-content">Home page with config layout</div>;
+}
+`,
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+      assertStringIncludes(html, "config-layout-wrapper", "Should have layout wrapper from config");
+      assertStringIncludes(html, "Config Layout Header", "Should render config layout header");
+      assertStringIncludes(html, "Config Layout Footer", "Should render config layout footer");
+      assertStringIncludes(html, "Home page with config layout", "Should render page content inside layout");
+
+      const errors = server.logs.filter((l) =>
+        l.includes("Invalid hook call") ||
+        l.includes("Module not found") ||
+        l.includes("Cannot find") ||
+        l.includes("layout")
+      );
+      assertEquals(errors.length, 0, `Should have no errors: ${errors.join("\n")}`);
+    });
+  });
+
+  // Test: both app AND layout defined in veryfront.config.ts
+  it("should render both app and layout defined in veryfront.config.ts", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-config-both-test-" });
+
+    await Deno.writeTextFile(
+      join(projectDir, "package.json"),
+      JSON.stringify({
+        name: "test-config-both",
+        type: "module",
+        dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+      }, null, 2),
+    );
+
+    // Both app and layout defined in config
+    await Deno.writeTextFile(
+      join(projectDir, "veryfront.config.ts"),
+      `export default {
+  fs: { type: "local" },
+  app: "lib/AppProvider.tsx",
+  layout: "lib/RootLayout.tsx"
+};`,
+    );
+
+    await Deno.mkdir(join(projectDir, "lib"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "lib/AppProvider.tsx"),
+      `
+export default function AppProvider({ children }: { children: React.ReactNode }) {
+  return (
+    <div id="config-app-root" data-provider="app">
+      <div id="app-banner">App Provider Banner</div>
+      {children}
+    </div>
+  );
+}
+`,
+    );
+
+    await Deno.writeTextFile(
+      join(projectDir, "lib/RootLayout.tsx"),
+      `
+import { Head } from "veryfront/head";
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <Head><title>Config App + Layout</title></Head>
+      <div id="config-layout-container">
+        <header id="layout-header">Layout Header</header>
+        <main>{children}</main>
+      </div>
+    </>
+  );
+}
+`,
+    );
+
+    await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "pages/index.tsx"),
+      `
+export default function Home() {
+  return <div id="page-content">Page with config app and layout</div>;
+}
+`,
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+      assertStringIncludes(html, "config-app-root", "Should have app wrapper from config");
+      assertStringIncludes(html, "App Provider Banner", "Should render app banner");
+      assertStringIncludes(html, "config-layout-container", "Should have layout container from config");
+      assertStringIncludes(html, "Layout Header", "Should render layout header");
+      assertStringIncludes(html, "Page with config app and layout", "Should render page content");
+
+      const errors = server.logs.filter((l) =>
+        l.includes("Invalid hook call") ||
+        l.includes("Module not found") ||
+        l.includes("Cannot find")
+      );
+      assertEquals(errors.length, 0, `Should have no errors: ${errors.join("\n")}`);
+    });
+  });
+
+  // Test: config-based layout with useRouter hook (test framework imports work in config layouts)
+  it("should handle config layout with framework hooks", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-config-layout-hooks-test-" });
+
+    await Deno.writeTextFile(
+      join(projectDir, "package.json"),
+      JSON.stringify({
+        name: "test-config-layout-hooks",
+        type: "module",
+        dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+      }, null, 2),
+    );
+
+    await Deno.writeTextFile(
+      join(projectDir, "veryfront.config.ts"),
+      `export default {
+  fs: { type: "local" },
+  layout: "layouts/HooksLayout.tsx"
+};`,
+    );
+
+    await Deno.mkdir(join(projectDir, "layouts"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "layouts/HooksLayout.tsx"),
+      `
+import { useRouter } from "veryfront/router";
+import { Head } from "veryfront/head";
+import { usePageContext } from "veryfront/context";
+
+export default function HooksLayout({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const ctx = usePageContext();
+
+  return (
+    <>
+      <Head><title>Hooks Layout</title></Head>
+      <div id="hooks-layout">
+        <nav id="hooks-nav">
+          <span id="pathname">Path: {router.pathname}</span>
+        </nav>
+        <main>{children}</main>
+      </div>
+    </>
+  );
+}
+`,
+    );
+
+    await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "pages/index.tsx"),
+      `
+export default function Home() {
+  return <div id="page-content">Home with hooks layout</div>;
+}
+`,
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+      assertStringIncludes(html, "hooks-layout", "Should render hooks layout");
+      assertStringIncludes(html, "hooks-nav", "Should render nav");
+      assertStringIncludes(html, "Home with hooks layout", "Should render page content");
+
+      const hookErrors = server.logs.filter((l) =>
+        l.includes("Invalid hook call") ||
+        l.includes("more than one copy of React") ||
+        l.includes("Module not found")
+      );
+      assertEquals(hookErrors.length, 0, `Should have no hook/module errors: ${hookErrors.join("\n")}`);
+    });
+  });
+
   // Test: Framework imports should work with layout components importing from veryfront/*
   // Uses layout.tsx pattern since component-from-page imports have separate build issues
   it("should handle layout importing framework modules with hooks", async () => {
