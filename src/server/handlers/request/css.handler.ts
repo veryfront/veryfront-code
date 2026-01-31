@@ -41,16 +41,32 @@ export class CSSHandler extends BaseHandler {
     const css = await runWithCacheKeyContext(cacheCtx, () => getCSSWithJITFallback(cssHash));
 
     if (!css) {
-      this.logInfo(`CSS not found and JIT regeneration failed: ${cssHash}`, {}, ctx);
+      this.logInfo(
+        `CSS not found and JIT regeneration failed: ${cssHash}. ` +
+          `Server restart or cache expiry. Reload page to regenerate.`,
+        {},
+        ctx,
+      );
+
+      // Return 404 instead of 200 with comment - this is more honest
+      // and allows the browser to properly handle the missing resource
+      const response = this.createResponseBuilder(ctx)
+        .withCORS(req, ctx.securityConfig?.cors)
+        .withCache("no-cache")
+        .withContentType(
+          "text/css; charset=utf-8",
+          `/* CSS ${cssHash} not found - reload page to regenerate */`,
+          404,
+        );
+
+      return this.respond(response);
     }
 
-    const body = method === "HEAD"
-      ? null
-      : css ?? `/* CSS ${cssHash} not found - refresh page to regenerate styles */`;
+    const body = method === "HEAD" ? null : css;
 
     const response = this.createResponseBuilder(ctx)
       .withCORS(req, ctx.securityConfig?.cors)
-      .withCache(css ? "immutable" : "no-cache")
+      .withCache("immutable")
       .withContentType("text/css; charset=utf-8", body, HTTP_OK);
 
     return this.respond(response);

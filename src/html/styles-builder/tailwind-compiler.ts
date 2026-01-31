@@ -89,7 +89,10 @@ const MAX_CACHED_COMPILERS = 10;
 
 let cssCache: CacheBackend | null = null;
 let cssCacheInitPromise: Promise<CacheBackend> | null = null;
-const CSS_CACHE_TTL_SECONDS = 3600;
+// CSS cache TTL: 7 days for content-addressed immutable resources.
+// Hash is derived from content, so same content = same hash = safe to cache long-term.
+// Previous 1-hour TTL caused cache misses when server restarted after HTML was cached.
+const CSS_CACHE_TTL_SECONDS = 7 * 24 * 3600; // 7 days
 
 const localCssCache = new Map<string, string>();
 const LOCAL_CACHE_MAX_SIZE = 100;
