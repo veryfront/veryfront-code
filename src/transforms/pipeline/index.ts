@@ -24,6 +24,10 @@ import {
   ssrVfModulesPlugin,
 } from "./stages/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { ensureHttpBundlesExist } from "../esm/http-cache.ts";
+import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
+import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { validateBundleGroup } from "../esm/bundle-manifest.ts";
 
 const SSR_PIPELINE: TransformPlugin[] = [
   parsePlugin,
@@ -41,6 +45,46 @@ const BROWSER_PIPELINE: TransformPlugin[] = [
   resolveImportsPlugin, // Unified import resolution
   finalizePlugin,
 ];
+
+/**
+ * Validate that HTTP bundles referenced in cached code exist locally.
+ * If bundles are missing, try to recover them from distributed cache.
+ * Returns true if all bundles are valid/recovered, false if cache should be invalidated.
+ */
+async function validateCachedBundles(
+  code: string,
+  bundleManifestId: string | undefined,
+  cacheKey: string,
+): Promise<boolean> {
+  const cacheDir = getHttpBundleCacheDir();
+
+  // If we have a manifest ID, use the faster manifest-based validation
+  if (bundleManifestId) {
+    const validation = await validateBundleGroup(bundleManifestId, cacheDir);
+    if (validation.valid) return true;
+
+    logger.debug("[PIPELINE] Bundle manifest validation failed", {
+      cacheKey: cacheKey.slice(-40),
+      manifestId: bundleManifestId.slice(0, 12),
+      failedCount: validation.failedHashes.length,
+    });
+    return false;
+  }
+
+  // Fall back to extracting bundle paths from code and validating each
+  const bundlePaths = extractHttpBundlePaths(code);
+  if (bundlePaths.length === 0) return true;
+
+  const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+  if (failed.length === 0) return true;
+
+  logger.debug("[PIPELINE] HTTP bundle validation failed", {
+    cacheKey: cacheKey.slice(-40),
+    failedCount: failed.length,
+    totalBundles: bundlePaths.length,
+  });
+  return false;
+}
 
 export function runPipeline(
   source: string,
@@ -78,13 +122,37 @@ export function runPipeline(
 
       const cached = await getCachedTransformAsync(cacheKey);
       if (cached) {
-        return {
-          code: cached.code,
-          contentHash: ctx.contentHash,
-          timing: new Map(),
-          totalMs: performance.now() - transformStart,
-          cached: true,
-        };
+        // For SSR transforms, validate HTTP bundles exist before returning cached code
+        if (options.ssr) {
+          const bundlesValid = await validateCachedBundles(
+            cached.code,
+            cached.bundleManifestId,
+            cacheKey,
+          );
+
+          if (!bundlesValid) {
+            logger.debug("[PIPELINE] Cache invalidated due to missing HTTP bundles", {
+              file: filePath.slice(-60),
+            });
+            // Fall through to re-run the pipeline
+          } else {
+            return {
+              code: cached.code,
+              contentHash: ctx.contentHash,
+              timing: new Map(),
+              totalMs: performance.now() - transformStart,
+              cached: true,
+            };
+          }
+        } else {
+          return {
+            code: cached.code,
+            contentHash: ctx.contentHash,
+            timing: new Map(),
+            totalMs: performance.now() - transformStart,
+            cached: true,
+          };
+        }
       }
 
       const basePipeline = options.ssr ? SSR_PIPELINE : BROWSER_PIPELINE;
