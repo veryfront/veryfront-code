@@ -73,6 +73,12 @@ export API_CLIENT_ID_VERYFRONT_RENDERER_PROXY=$(op read "op://VERYFRONT_CI/Veryf
 export API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY=$(op read "op://VERYFRONT_CI/Veryfront Renderer Proxy OAuth/API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY")
 export REDIS_URL=$(op read "op://VERYFRONT_CI/UPSTASH_REDIS_VERYFRONT_RENDERER_PROXY_STAGING/REDIS_URL")
 
+# OpenTelemetry tracing to Grafana Cloud (service name suffix "-local" for easy filtering)
+export OTEL_TRACES_ENABLED=true
+export OTEL_SERVICE_NAME="veryfront-proxy-local"
+export OTEL_EXPORTER_OTLP_ENDPOINT=$(op read "op://VERYFRONT_CI/GRAFANA/tempo_url")
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $(op read "op://VERYFRONT_CI/GRAFANA/otlp_auth")"
+
 # Match production env vars exactly
 export VERYFRONT_API_BASE_URL="https://api.veryfront.com"
 export RENDERER_URL="http://localhost:3000"
