@@ -13,8 +13,6 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getErrorMessage } from "../errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import { transformJsx } from "#veryfront/platform/compat/transform.ts";
-
 export type { VeryfrontConfig } from "./types.ts";
 
 /**

@@ -16,6 +16,18 @@ export class AliasStrategy implements ImportRewriteStrategy {
 
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
     const path = info.specifier.slice(2);
+
+    // SSR uses /_vf_modules/ paths for HTTP module resolution
+    if (ctx.target === "ssr") {
+      let normalizedPath = normalizeExtension(path);
+      // Add .js if no extension present
+      if (!/\.(tsx?|jsx?|mjs|cjs|mdx|js)$/.test(normalizedPath)) {
+        normalizedPath = `${normalizedPath}.js`;
+      }
+      return { specifier: `/_vf_modules/${normalizedPath}` };
+    }
+
+    // Browser uses relative paths
     const relativeFilePath = this.getRelativeFilePath(ctx.filePath, ctx.projectDir);
     const fileDir = relativeFilePath.substring(0, relativeFilePath.lastIndexOf("/"));
     const depth = fileDir.split("/").filter(Boolean).length;
