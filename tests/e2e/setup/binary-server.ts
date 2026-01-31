@@ -12,7 +12,36 @@ import { BINARY_PATH, ensureBinaryCompiled } from "./binary.ts";
 
 export { BINARY_PATH, ensureBinaryCompiled };
 
-let portCounter = 18100;
+/** Track ports in use within this process to avoid collisions. */
+const usedPorts = new Set<number>();
+
+/**
+ * Get a random available port in the 30000-60000 range.
+ * Checks both local tracking and actual port availability.
+ */
+async function getAvailablePort(): Promise<number> {
+  const minPort = 30000;
+  const maxPort = 60000;
+  const maxAttempts = 50;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const port = Math.floor(Math.random() * (maxPort - minPort)) + minPort;
+
+    if (usedPorts.has(port)) continue;
+
+    // Check if port is actually available
+    try {
+      const listener = Deno.listen({ port });
+      listener.close();
+      usedPorts.add(port);
+      return port;
+    } catch {
+      // Port in use, try another
+    }
+  }
+
+  throw new Error("Could not find available port after 50 attempts");
+}
 
 export interface TestServer {
   process: Deno.ChildProcess;
@@ -79,7 +108,7 @@ export async function startServer(
 ): Promise<TestServer> {
   const { nodeEnv = "development", timeout = 30_000, env = {} } = options;
   const logs: string[] = [];
-  const port = portCounter++;
+  const port = await getAvailablePort();
   const cacheDir = await Deno.makeTempDir({
     prefix: nodeEnv === "production" ? "vf-cache-prod-" : "vf-cache-",
   });
@@ -138,6 +167,7 @@ export async function startServer(
       } catch {
         // Already dead
       }
+      usedPorts.delete(port);
       await new Promise((r) => setTimeout(r, 200));
       try {
         await Deno.remove(cacheDir, { recursive: true });

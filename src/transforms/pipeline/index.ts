@@ -185,11 +185,12 @@ export function runPipeline(
 
       // Store the bundleManifestId from ssrHttpCachePlugin for future cache validation
       const bundleManifestId = ctx.metadata.get("bundleManifestId") as string | undefined;
-      setCachedTransformAsync(cacheKey, ctx.code, ctx.contentHash, undefined, bundleManifestId).catch(
-        (error) => {
-          logger.debug("[PIPELINE] Failed to cache transform", { error });
-        },
-      );
+      setCachedTransformAsync(cacheKey, ctx.code, ctx.contentHash, undefined, bundleManifestId)
+        .catch(
+          (error) => {
+            logger.debug("[PIPELINE] Failed to cache transform", { error });
+          },
+        );
 
       const totalMs = performance.now() - transformStart;
 

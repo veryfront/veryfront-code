@@ -332,7 +332,8 @@ function getCachedPaths(): HttpCacheLike<string, string> {
 }
 
 function getProcessingStack(): SetLike<string> {
-  return injectedProcessingStack ?? defaultProcessingStack;
+  if (injectedProcessingStack) return injectedProcessingStack;
+  return processingStackStorage.getStore() ?? defaultProcessingStack;
 }
 
 function getLastDistributedRefresh(): HttpCacheLike<string, number> {
@@ -368,6 +369,10 @@ const DISTRIBUTED_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 /** Per-request accumulator for bundle metadata during cacheHttpImportsToLocal. */
 const bundleAccumulatorStorage = new AsyncLocalStorage<BundleEntry[]>();
+/** Per-request stack used to detect circular HTTP module dependencies. */
+const processingStackStorage = new AsyncLocalStorage<Set<string>>();
+/** Deduplicate concurrent HTTP module fetches to avoid races. */
+const inFlightHttpFetches = new Map<string, Promise<string | null>>();
 
 function ensureAbsoluteDir(path: string): string {
   return isAbsolute(path) ? path : join(cwd(), path);
@@ -481,7 +486,7 @@ function resolveBareSpecifier(
   return `https://esm.sh/${specifier}?target=es2022`;
 }
 
-async function cacheHttpModule(url: string, options: CacheOptions): Promise<string | null> {
+async function cacheHttpModuleInternal(url: string, options: CacheOptions): Promise<string | null> {
   const normalizedUrl = normalizeHttpUrl(url);
 
   const canDoNativeHttpImports = isDeno && !isDenoCompiled;
@@ -559,58 +564,75 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
     return cachePath;
   }
 
-  if (getProcessingStack().has(normalizedUrl)) {
+  const processingStack = getProcessingStack();
+  if (processingStack.has(normalizedUrl)) {
     logger.debug("[HTTP-CACHE] Circular dependency detected, returning expected path", {
       url: normalizedUrl,
     });
     return cachePath;
   }
 
-  const distributed = await getDistributedCache();
-  if (distributed) {
-    try {
-      const rawCachedCode = await distributed.get(distributedKey("url", hash));
-      if (rawCachedCode) {
-        const [cachedCode, wasGzipped] = maybeDecodeGzip(rawCachedCode);
+  const inFlight = inFlightHttpFetches.get(cacheKey);
+  if (inFlight) return inFlight;
 
-        if (cachedCode.startsWith("gz:") || cachedCode.startsWith("gzip:")) {
-          logger.warn("[HTTP-CACHE] Failed to decode gzip content, will re-fetch", {
-            url: normalizedUrl,
-            hash,
-            preview: cachedCode.substring(0, 50),
-          });
-        } else if (hasIncompatibleFilePaths(cachedCode, cacheDir)) {
-          logger.warn("[HTTP-CACHE] Cached code has incompatible file paths, will re-fetch", {
-            url: normalizedUrl,
-            hash,
-            localCacheDir: cacheDir,
-          });
-        } else if (looksLikeHtmlNotJs(cachedCode)) {
-          logger.warn("[HTTP-CACHE] Cached content is HTML not JavaScript, will re-fetch", {
-            url: normalizedUrl,
-            hash,
-            preview: cachedCode.slice(0, 100),
-          });
-        } else {
-          const depPattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
-          const deps: Array<{ path: string; hash: string }> = [];
-          let depMatch: RegExpExecArray | null;
-          while ((depMatch = depPattern.exec(cachedCode)) !== null) {
-            deps.push({ path: depMatch[1]!, hash: depMatch[2]! });
-          }
+  const fetchPromise = (async () => {
+    const distributed = await getDistributedCache();
+    if (distributed) {
+      try {
+        const rawCachedCode = await distributed.get(distributedKey("url", hash));
+        if (rawCachedCode) {
+          const [cachedCode, wasGzipped] = maybeDecodeGzip(rawCachedCode);
 
-          if (deps.length > 0) {
-            const depsExist = await validateBundleDepsExist(deps, cacheDir);
-            if (!depsExist) {
-              logger.warn("[HTTP-CACHE] Cached code has missing bundle deps, will re-fetch", {
-                url: normalizedUrl,
-                hash,
-                missingDeps: deps.length,
-              });
+          if (cachedCode.startsWith("gz:") || cachedCode.startsWith("gzip:")) {
+            logger.warn("[HTTP-CACHE] Failed to decode gzip content, will re-fetch", {
+              url: normalizedUrl,
+              hash,
+              preview: cachedCode.substring(0, 50),
+            });
+          } else if (hasIncompatibleFilePaths(cachedCode, cacheDir)) {
+            logger.warn("[HTTP-CACHE] Cached code has incompatible file paths, will re-fetch", {
+              url: normalizedUrl,
+              hash,
+              localCacheDir: cacheDir,
+            });
+          } else if (looksLikeHtmlNotJs(cachedCode)) {
+            logger.warn("[HTTP-CACHE] Cached content is HTML not JavaScript, will re-fetch", {
+              url: normalizedUrl,
+              hash,
+              preview: cachedCode.slice(0, 100),
+            });
+          } else {
+            const depPattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+            const deps: Array<{ path: string; hash: string }> = [];
+            let depMatch: RegExpExecArray | null;
+            while ((depMatch = depPattern.exec(cachedCode)) !== null) {
+              deps.push({ path: depMatch[1]!, hash: depMatch[2]! });
+            }
+
+            if (deps.length > 0) {
+              const depsExist = await validateBundleDepsExist(deps, cacheDir);
+              if (!depsExist) {
+                logger.warn("[HTTP-CACHE] Cached code has missing bundle deps, will re-fetch", {
+                  url: normalizedUrl,
+                  hash,
+                  missingDeps: deps.length,
+                });
+              } else {
+                logger.debug(
+                  wasGzipped
+                    ? "[HTTP-CACHE] Distributed cache hit (gzip decoded)"
+                    : "[HTTP-CACHE] Distributed cache hit",
+                  { url: normalizedUrl, hash },
+                );
+                await fs.mkdir(cacheDir, { recursive: true });
+                await fs.writeTextFile(cachePath, cachedCode);
+                getCachedPaths().set(cacheKey, cachePath);
+                return cachePath;
+              }
             } else {
               logger.debug(
                 wasGzipped
-                  ? "[HTTP-CACHE] Distributed cache hit (gzip decoded)"
+                  ? "[HTTP-CACHE] Distributed cache hit (gzip decoded, no deps)"
                   : "[HTTP-CACHE] Distributed cache hit",
                 { url: normalizedUrl, hash },
               );
@@ -619,107 +641,114 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
               getCachedPaths().set(cacheKey, cachePath);
               return cachePath;
             }
-          } else {
-            logger.debug(
-              wasGzipped
-                ? "[HTTP-CACHE] Distributed cache hit (gzip decoded, no deps)"
-                : "[HTTP-CACHE] Distributed cache hit",
-              { url: normalizedUrl, hash },
-            );
-            await fs.mkdir(cacheDir, { recursive: true });
-            await fs.writeTextFile(cachePath, cachedCode);
-            getCachedPaths().set(cacheKey, cachePath);
-            return cachePath;
           }
         }
+      } catch (error) {
+        logger.debug("[HTTP-CACHE] Distributed cache get failed", { url: normalizedUrl, error });
       }
-    } catch (error) {
-      logger.debug("[HTTP-CACHE] Distributed cache get failed", { url: normalizedUrl, error });
     }
-  }
 
-  logger.debug("[HTTP-CACHE] Fetching from network", { url: normalizedUrl });
+    logger.debug("[HTTP-CACHE] Fetching from network", { url: normalizedUrl });
 
-  const urlObj = new URL(normalizedUrl);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), HTTP_FETCH_TIMEOUT_MS);
+    const urlObj = new URL(normalizedUrl);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), HTTP_FETCH_TIMEOUT_MS);
 
-  const response = await withSpan(
-    SpanNames.HTTP_CLIENT_FETCH,
-    () =>
-      fetch(normalizedUrl, {
-        headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
-        signal: controller.signal,
-        redirect: "follow",
-      }),
-    {
-      "http.method": "GET",
-      "http.url": normalizedUrl,
-      "http.host": urlObj.host,
-      "http.scheme": urlObj.protocol.replace(":", ""),
-      "esm.package_fetch": true,
-    },
-  );
-  clearTimeout(timeout);
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch ${normalizedUrl}: ${response.status}`);
-  }
-
-  let code = await response.text();
-
-  const contentType = response.headers.get("content-type") ?? "";
-  const isHtmlContent = contentType.includes("text/html") || looksLikeHtmlNotJs(code);
-
-  if (isHtmlContent) {
-    logger.error("[HTTP-CACHE] Received HTML instead of JavaScript, likely an esm.sh error page", {
-      url: normalizedUrl,
-      contentType,
-      preview: code.slice(0, 200),
-    });
-    throw new Error(
-      `Received HTML instead of JavaScript from ${normalizedUrl}. The package may not exist or failed to build on esm.sh.`,
+    const response = await withSpan(
+      SpanNames.HTTP_CLIENT_FETCH,
+      () =>
+        fetch(normalizedUrl, {
+          headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
+          signal: controller.signal,
+          redirect: "follow",
+        }),
+      {
+        "http.method": "GET",
+        "http.url": normalizedUrl,
+        "http.host": urlObj.host,
+        "http.scheme": urlObj.protocol.replace(":", ""),
+        "esm.package_fetch": true,
+      },
     );
-  }
+    clearTimeout(timeout);
 
-  getProcessingStack().add(normalizedUrl);
-  try {
-    code = await rewriteModuleImports(code, normalizedUrl, options);
-  } finally {
-    getProcessingStack().delete(normalizedUrl);
-  }
-
-  await fs.mkdir(cacheDir, { recursive: true });
-  await fs.writeTextFile(cachePath, code);
-
-  if (distributed) {
-    try {
-      await Promise.all([
-        distributed.set(distributedKey("url", hash), code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
-        distributed.set(distributedKey("code", hash), code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
-        distributed.set(
-          distributedKey("hash", hash),
-          normalizedUrl,
-          HTTP_MODULE_DISTRIBUTED_TTL_SEC,
-        ),
-      ]);
-    } catch (error) {
-      logger.debug("[HTTP-CACHE] Distributed cache set failed", { url: normalizedUrl, error });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ${normalizedUrl}: ${response.status}`);
     }
+
+    let code = await response.text();
+
+    const contentType = response.headers.get("content-type") ?? "";
+    const isHtmlContent = contentType.includes("text/html") || looksLikeHtmlNotJs(code);
+
+    if (isHtmlContent) {
+      logger.error(
+        "[HTTP-CACHE] Received HTML instead of JavaScript, likely an esm.sh error page",
+        {
+          url: normalizedUrl,
+          contentType,
+          preview: code.slice(0, 200),
+        },
+      );
+      throw new Error(
+        `Received HTML instead of JavaScript from ${normalizedUrl}. The package may not exist or failed to build on esm.sh.`,
+      );
+    }
+
+    processingStack.add(normalizedUrl);
+    try {
+      code = await rewriteModuleImports(code, normalizedUrl, options);
+    } finally {
+      processingStack.delete(normalizedUrl);
+    }
+
+    await fs.mkdir(cacheDir, { recursive: true });
+    await fs.writeTextFile(cachePath, code);
+
+    if (distributed) {
+      try {
+        await Promise.all([
+          distributed.set(distributedKey("url", hash), code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+          distributed.set(distributedKey("code", hash), code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+          distributed.set(
+            distributedKey("hash", hash),
+            normalizedUrl,
+            HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+          ),
+        ]);
+      } catch (error) {
+        logger.debug("[HTTP-CACHE] Distributed cache set failed", { url: normalizedUrl, error });
+      }
+    }
+
+    getCachedPaths().set(cacheKey, cachePath);
+
+    const accumulator = bundleAccumulatorStorage.getStore();
+    if (accumulator) {
+      accumulator.push({
+        hash: String(hash),
+        url: normalizedUrl,
+        sizeBytes: code.length,
+      });
+    }
+
+    return cachePath;
+  })();
+
+  inFlightHttpFetches.set(cacheKey, fetchPromise);
+  try {
+    return await fetchPromise;
+  } finally {
+    inFlightHttpFetches.delete(cacheKey);
+  }
+}
+
+async function cacheHttpModule(url: string, options: CacheOptions): Promise<string | null> {
+  if (injectedProcessingStack || processingStackStorage.getStore()) {
+    return cacheHttpModuleInternal(url, options);
   }
 
-  getCachedPaths().set(cacheKey, cachePath);
-
-  const accumulator = bundleAccumulatorStorage.getStore();
-  if (accumulator) {
-    accumulator.push({
-      hash: String(hash),
-      url: normalizedUrl,
-      sizeBytes: code.length,
-    });
-  }
-
-  return cachePath;
+  return processingStackStorage.run(new Set(), () => cacheHttpModuleInternal(url, options));
 }
 
 async function resolveSpecifier(
