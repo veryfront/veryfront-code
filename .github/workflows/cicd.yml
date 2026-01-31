@@ -65,12 +65,33 @@ jobs:
             fi
 
   # ============================================
+  # CI: Compiled Binary E2E Tests (PR + main, skip tags)
+  # ============================================
+
+  binary-e2e:
+    if: startsWith(github.ref, 'refs/tags/') == false
+    runs-on: veryfront-k8s-runners
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-deno
+        with:
+          warm-cache: 'true'
+      - uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 15
+          max_attempts: 2
+          retry_wait_seconds: 30
+          command: |
+            VERYFRONT_BINARY_FRESH=1 deno task test:e2e:binary --no-lock
+
+  # ============================================
   # CD: Calculate Version (single source of truth)
   # ============================================
 
   version:
     if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || startsWith(github.ref, 'refs/tags/v')
-    needs: [ci, tests]
+    needs: [ci, tests, binary-e2e]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}

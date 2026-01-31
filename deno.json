@@ -304,6 +304,8 @@
     "test:bun": "node ./scripts/run-bun-tests.mjs src/",
     "test:all-runtimes": "deno task test:unit && deno task test:node && deno task test:bun",
     "test:e2e": "npx playwright test --config=tests/e2e/playwright.config.ts",
+    "test:e2e:binary": "deno test --allow-all tests/integration/compiled-binary-e2e.test.ts",
+    "test:e2e:binary:fresh": "VERYFRONT_BINARY_FRESH=1 deno test --allow-all tests/integration/compiled-binary-e2e.test.ts",
     "check:circular": "deno run -A jsr:@cunarist/deno-circular-deps src/index.ts",
     "cli": "deno run --allow-all src/cli/main.ts",
     "mcp": "deno run --allow-all src/cli/main.ts mcp",
