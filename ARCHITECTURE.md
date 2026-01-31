@@ -196,12 +196,12 @@ interface RuntimeAdapter {
 
 ### Import Strategy
 
-All internal imports use `@veryfront/*` aliases:
+All internal imports use `#veryfront/*` aliases:
 
 ```typescript
 // Good
-import { createRenderer } from "@veryfront/rendering";
-import type { VeryfrontConfig } from "@veryfront/config";
+import { createRenderer } from "#veryfront/rendering";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 // Bad
 import { createRenderer } from "../../../../rendering/index.ts";
@@ -242,8 +242,8 @@ Veryfront includes first-class AI agent support via dedicated modules:
 - **Testing**: Unit and integration test suites
 - **CLI**: Batteries-included dev tools
 
-## Learn More
+## Related Documentation
 
-- **Module Reference**: See `src/README.md` for detailed module documentation
-- **Contributing**: See `CONTRIBUTING.md` for development guidelines
-- **Examples**: See `examples/` for working code examples
+- `src/README.md` - Module reference
+- `examples/` - Working code examples
+- `AGENTS.md` - Quick start and commands
