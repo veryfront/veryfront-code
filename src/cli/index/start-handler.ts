@@ -95,8 +95,8 @@ interface ProxySetup {
 async function trySetupProxy(localProjects: Map<string, string>): Promise<ProxySetup> {
   try {
     // Proxy is only available in local dev, not in the npm package
-    const { createProxyHandler, injectContextHeaders } = await import("../../../proxy/handler.ts");
-    const { createCacheFromEnv } = await import("../../../proxy/cache/index.ts");
+    const { createProxyHandler, injectContextHeaders } = await import("../../proxy/handler.ts");
+    const { createCacheFromEnv } = await import("../../proxy/cache/index.ts");
 
     const proxyConfig = {
       apiBaseUrl: getEnv("VERYFRONT_API_BASE_URL") ?? "http://api.lvh.me:4000",
