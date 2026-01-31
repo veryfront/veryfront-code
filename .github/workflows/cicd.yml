@@ -68,10 +68,11 @@ jobs:
   # CI: Compiled Binary E2E Tests (PR + main, skip tags)
   # ============================================
 
-  binary-e2e:
+  tests-binary-e2e:
     if: startsWith(github.ref, 'refs/tags/') == false
     runs-on: veryfront-k8s-runners
     timeout-minutes: 20
+    name: tests (binary e2e)
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-deno
@@ -91,7 +92,7 @@ jobs:
 
   version:
     if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || startsWith(github.ref, 'refs/tags/v')
-    needs: [ci, tests, binary-e2e]
+    needs: [ci, tests, tests-binary-e2e]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
