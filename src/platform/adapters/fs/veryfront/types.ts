@@ -1,5 +1,4 @@
 import type { Project } from "../../veryfront-api-client/index.ts";
-import { createError, toError } from "#veryfront/errors";
 import type { GitHubConfig } from "../github/types.ts";
 import type { DirectoryEntry } from "../shared-types.ts";
 
@@ -72,11 +71,10 @@ export interface FSAdapterConfig {
   type?: "local" | "veryfront-api" | "memory" | "github";
   projectDir?: string;
   veryfront?: {
-    apiKey?: string;
     apiToken?: string;
     projectSlug?: string;
     projectId?: string;
-    baseUrl?: string;
+    apiBaseUrl?: string;
     proxyMode?: boolean;
     contentSource?: ContentSource;
     cache?: {
@@ -90,26 +88,6 @@ export interface FSAdapterConfig {
   };
   github?: GitHubConfig;
   invalidationCallbacks?: InvalidationCallbacks;
-}
-
-export interface VeryfrontConfig {
-  apiBaseUrl: string;
-  apiToken: string;
-  projectSlug: string;
-  projectId?: string;
-  proxyMode?: boolean;
-  contentSource: ContentSource;
-  cache: {
-    enabled: boolean;
-    ttl: number;
-    maxSize: number;
-    maxMemory: number;
-  };
-  retry: {
-    maxRetries: number;
-    initialDelay: number;
-    maxDelay: number;
-  };
 }
 
 export interface VeryfrontFSState {
@@ -161,40 +139,3 @@ export interface InvalidationCallbacks {
   clearDomainCache?: () => void;
 }
 
-function resolveContentSource(veryfront: NonNullable<FSAdapterConfig["veryfront"]>): ContentSource {
-  return veryfront.contentSource ?? { type: "branch", branch: "main" };
-}
-
-export function createVeryfrontConfig(config: FSAdapterConfig): VeryfrontConfig {
-  const veryfront = config.veryfront;
-  if (!veryfront) {
-    throw toError(
-      createError({
-        type: "config",
-        message: "Veryfront adapter requires veryfront configuration",
-      }),
-    );
-  }
-
-  return {
-    apiBaseUrl: veryfront.baseUrl ?? "",
-    apiToken: veryfront.apiToken ?? veryfront.apiKey ?? "",
-    projectSlug: veryfront.projectSlug ?? "",
-    projectId: veryfront.projectId,
-    proxyMode: veryfront.proxyMode,
-    contentSource: resolveContentSource(veryfront),
-    cache: {
-      enabled: true,
-      ttl: 60_000,
-      maxSize: 1000,
-      maxMemory: 100 * 1024 * 1024,
-      ...veryfront.cache,
-    },
-    retry: {
-      maxRetries: 3,
-      initialDelay: 1000,
-      maxDelay: 10000,
-      ...veryfront.retry,
-    },
-  };
-}

@@ -35,7 +35,7 @@ export function resetTokenStorageAdapter(): void {
 function buildAdapterConfigFromEnv(): TokenStorageAdapterConfig {
   const apiToken = getEnvVar("VERYFRONT_API_TOKEN");
   const projectSlug = getEnvVar("VERYFRONT_PROJECT_SLUG");
-  const baseUrl = getEnvVar("VERYFRONT_API_URL");
+  const apiBaseUrl = getEnvVar("VERYFRONT_API_URL");
 
   if (!apiToken || !projectSlug) {
     logger.debug("[TokenAdapterIntegration] Using in-memory storage (development)");
@@ -46,7 +46,7 @@ function buildAdapterConfigFromEnv(): TokenStorageAdapterConfig {
 
   return {
     type: "veryfront-api",
-    veryfront: { apiToken, projectSlug, baseUrl },
+    veryfront: { apiToken, projectSlug, apiBaseUrl },
   };
 }
 
