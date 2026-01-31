@@ -76,7 +76,7 @@ export interface FSAdapterConfig {
     apiToken?: string;
     projectSlug?: string;
     projectId?: string;
-    baseUrl?: string;
+    apiBaseUrl?: string;
     proxyMode?: boolean;
     contentSource?: ContentSource;
     cache?: {
@@ -177,7 +177,7 @@ export function createVeryfrontConfig(config: FSAdapterConfig): VeryfrontConfig 
   }
 
   return {
-    apiBaseUrl: veryfront.baseUrl ?? "",
+    apiBaseUrl: veryfront.apiBaseUrl ?? "",
     apiToken: veryfront.apiToken ?? veryfront.apiKey ?? "",
     projectSlug: veryfront.projectSlug ?? "",
     projectId: veryfront.projectId,

@@ -9,7 +9,7 @@ function createAdapter(
 ): VeryfrontFSAdapter {
   return new VeryfrontFSAdapter({
     veryfront: {
-      baseUrl: "https://api.example.com",
+      apiBaseUrl: "https://api.example.com",
       apiToken: "test-token",
       projectSlug: "test-project",
       cache: { enabled: false },
@@ -35,7 +35,7 @@ describe("VeryfrontFSAdapter", () => {
       assertExists(
         createAdapter({
           veryfront: {
-            baseUrl: "https://api.example.com",
+            apiBaseUrl: "https://api.example.com",
             apiToken: "test-token",
             projectSlug: "test-project",
             proxyMode: true,
@@ -53,7 +53,7 @@ describe("VeryfrontFSAdapter", () => {
       assertExists(
         createAdapter({
           veryfront: {
-            baseUrl: "https://api.example.com",
+            apiBaseUrl: "https://api.example.com",
             apiToken: "test-token",
             projectSlug: "test-project",
             contentSource: { type: "environment", name: "production" },
@@ -68,7 +68,7 @@ describe("VeryfrontFSAdapter", () => {
 
       const adapter = new VeryfrontFSAdapter({
         veryfront: {
-          baseUrl: "https://api.example.com",
+          apiBaseUrl: "https://api.example.com",
           apiToken: "test-token",
           projectSlug: "test-project",
           cache: { enabled: false },
@@ -323,7 +323,7 @@ describe("createVeryfrontConfig", () => {
   it("should use default cache settings", () => {
     const config = createVeryfrontConfig({
       veryfront: {
-        baseUrl: "https://api.example.com",
+        apiBaseUrl: "https://api.example.com",
         apiToken: "test-token",
         projectSlug: "test",
       },
@@ -337,7 +337,7 @@ describe("createVeryfrontConfig", () => {
   it("should override cache settings", () => {
     const config = createVeryfrontConfig({
       veryfront: {
-        baseUrl: "https://api.example.com",
+        apiBaseUrl: "https://api.example.com",
         apiToken: "test-token",
         projectSlug: "test",
         cache: { enabled: false, ttl: 5000 },
@@ -351,7 +351,7 @@ describe("createVeryfrontConfig", () => {
   it("should use default retry settings", () => {
     const config = createVeryfrontConfig({
       veryfront: {
-        baseUrl: "https://api.example.com",
+        apiBaseUrl: "https://api.example.com",
         apiToken: "test-token",
         projectSlug: "test",
       },
@@ -365,7 +365,7 @@ describe("createVeryfrontConfig", () => {
   it("should default to branch content source", () => {
     const config = createVeryfrontConfig({
       veryfront: {
-        baseUrl: "https://api.example.com",
+        apiBaseUrl: "https://api.example.com",
         apiToken: "test-token",
         projectSlug: "test",
       },
@@ -377,7 +377,7 @@ describe("createVeryfrontConfig", () => {
   it("should use provided content source", () => {
     const config = createVeryfrontConfig({
       veryfront: {
-        baseUrl: "https://api.example.com",
+        apiBaseUrl: "https://api.example.com",
         apiToken: "test-token",
         projectSlug: "test",
         contentSource: { type: "environment", name: "production" },
@@ -390,7 +390,7 @@ describe("createVeryfrontConfig", () => {
   it("should use apiKey as fallback for apiToken", () => {
     const config = createVeryfrontConfig({
       veryfront: {
-        baseUrl: "https://api.example.com",
+        apiBaseUrl: "https://api.example.com",
         apiKey: "key-123",
         projectSlug: "test",
       },
@@ -402,7 +402,7 @@ describe("createVeryfrontConfig", () => {
   it("should prefer apiToken over apiKey", () => {
     const config = createVeryfrontConfig({
       veryfront: {
-        baseUrl: "https://api.example.com",
+        apiBaseUrl: "https://api.example.com",
         apiToken: "token-123",
         apiKey: "key-123",
         projectSlug: "test",
@@ -423,7 +423,7 @@ describe("createVeryfrontConfig", () => {
   it("should pass through proxyMode", () => {
     const config = createVeryfrontConfig({
       veryfront: {
-        baseUrl: "https://api.example.com",
+        apiBaseUrl: "https://api.example.com",
         apiToken: "test-token",
         projectSlug: "test",
         proxyMode: true,
@@ -436,7 +436,7 @@ describe("createVeryfrontConfig", () => {
   it("should pass through projectId", () => {
     const config = createVeryfrontConfig({
       veryfront: {
-        baseUrl: "https://api.example.com",
+        apiBaseUrl: "https://api.example.com",
         apiToken: "test-token",
         projectSlug: "test",
         projectId: "proj-abc",
