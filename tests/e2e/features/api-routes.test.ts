@@ -114,17 +114,45 @@ export function GET() {
     });
   });
 
-  // TODO: Dynamic API routes ([id].ts) need investigation
-  // The handler signature might differ from page routes
   describe("Dynamic API Routes", () => {
-    it.ignore("should handle dynamic [id] in API routes", async () => {
+    it("should handle dynamic [id] in Pages Router API routes", async () => {
+      // Pages Router uses a single ctx argument with ctx.params
       const projectDir = await createProject(
-        "api-dynamic",
+        "api-dynamic-pages",
         pages.basic,
         {
           files: {
             "pages/api/items/[id].ts": `
-export function GET(request: Request, { params }: { params: { id: string } }) {
+export function GET(ctx) {
+  return Response.json({ id: ctx.params.id, found: true });
+}
+`,
+          },
+        },
+      );
+
+      await withServer(projectDir, async (server) => {
+        const { response, json } = await fetchJson<{ id: string; found: boolean }>(
+          server,
+          "/api/items/item-123",
+        );
+
+        expectApi(response, json)
+          .toBeOk()
+          .toHaveProperty("id", "item-123")
+          .toHaveProperty("found", true);
+      });
+    });
+
+    it("should handle dynamic [id] in App Router API routes", async () => {
+      // App Router uses (request, { params }) signature
+      const projectDir = await createProject(
+        "api-dynamic-app",
+        pages.basic,
+        {
+          files: {
+            "app/api/items/[id]/route.ts": `
+export function GET(request, { params }) {
   return Response.json({ id: params.id, found: true });
 }
 `,
@@ -140,6 +168,7 @@ export function GET(request: Request, { params }: { params: { id: string } }) {
 
         expectApi(response, json)
           .toBeOk()
+          .toHaveProperty("id", "item-123")
           .toHaveProperty("found", true);
       });
     });
