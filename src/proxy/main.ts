@@ -31,10 +31,7 @@ import {
 import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
-import {
-  createHttpServer,
-  upgradeWebSocket,
-} from "#veryfront/platform/compat/http/index.ts";
+import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
 
 // Configuration from environment variables
 const config: ProxyConfig = {
@@ -46,9 +43,7 @@ const config: ProxyConfig = {
   previewClientId: getEnv("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY") || "",
   previewClientSecret: getEnv("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY") ||
     "",
-  localProjects: getEnv("LOCAL_PROJECTS")
-    ? JSON.parse(getEnv("LOCAL_PROJECTS")!)
-    : {},
+  localProjects: getEnv("LOCAL_PROJECTS") ? JSON.parse(getEnv("LOCAL_PROJECTS")!) : {},
 };
 
 const RENDERER_URL = getEnv("RENDERER_URL") || "http://localhost:3001";
@@ -347,8 +342,7 @@ function forwardToRenderer(req: Request): Promise<Response> {
               endSpan(spanInfo?.span, 504, error);
               return jsonErrorResponse(504, {
                 error: "Gateway Timeout",
-                message:
-                  `Renderer request timed out after ${RENDERER_REQUEST_TIMEOUT_MS}ms`,
+                message: `Renderer request timed out after ${RENDERER_REQUEST_TIMEOUT_MS}ms`,
               });
             }
 
@@ -437,9 +431,7 @@ async function handleApiProxy(req: Request): Promise<Response> {
             "Content-Type": req.headers.get("Content-Type") ||
               "application/json",
           },
-          body: req.method !== "GET" && req.method !== "HEAD"
-            ? req.body
-            : undefined,
+          body: req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined,
         }),
       {
         "http.method": req.method,

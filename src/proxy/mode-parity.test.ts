@@ -7,11 +7,7 @@
  */
 import { assertEquals } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
-import {
-  createProxyHandler,
-  injectContextHeaders,
-  type ProxyContext,
-} from "./handler.ts";
+import { createProxyHandler, injectContextHeaders, type ProxyContext } from "./handler.ts";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 
 /**

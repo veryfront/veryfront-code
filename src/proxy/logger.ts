@@ -5,8 +5,7 @@ function getEnv(key: string): string | undefined {
     return Deno.env.get(key);
   }
   // Node.js / Bun
-  const nodeProcess =
-    (globalThis as { process?: { env?: Record<string, string> } }).process;
+  const nodeProcess = (globalThis as { process?: { env?: Record<string, string> } }).process;
   return nodeProcess?.env?.[key];
 }
 
@@ -101,9 +100,7 @@ function padTag(tag: string): string {
 
 function formatTimestamp(date: Date = new Date()): string {
   const pad = (value: number) => String(value).padStart(2, "0");
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${
-    pad(date.getSeconds())
-  }`;
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 function isTty(): boolean {
@@ -186,9 +183,7 @@ function formatContextText(
   error: LogEntry["error"] | undefined,
   enableColor: boolean,
 ): string {
-  const entries = Object.entries(context).map(([key, value]) =>
-    `${key}=${formatValue(value)}`
-  );
+  const entries = Object.entries(context).map(([key, value]) => `${key}=${formatValue(value)}`);
   if (error) {
     entries.push(`err=${formatErrorText(error)}`);
   }
