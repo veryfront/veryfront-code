@@ -306,4 +306,25 @@ Generic layout`,
       assertEquals(genericLayout.entity.content.includes("Generic layout"), true);
     });
   });
+
+  it("finds layout with explicit path in components/layouts/", async () => {
+    await withTestContext("entity-layout-nested-path", async (context) => {
+      const layoutsDir = join(context.projectDir, "components", "layouts");
+      await createTestFile(
+        join(layoutsDir, "DefaultLayout.mdx"),
+        `---
+isLayout: true
+---
+Default nested layout`,
+      );
+
+      const layout = await getLayoutEntity(
+        context.projectDir,
+        "components/layouts/DefaultLayout.mdx",
+      );
+      assertExists(layout);
+      assertEquals(layout.entity.isLayout, true);
+      assertEquals(layout.entity.content.includes("Default nested layout"), true);
+    });
+  });
 });

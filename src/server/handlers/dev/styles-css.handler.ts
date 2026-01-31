@@ -32,23 +32,40 @@ export class StylesCSSHandler extends BaseHandler {
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) return this.continue();
 
-    return this.withProxyContext(ctx, async () => {
-      const responseBuilder = this.createResponseBuilder(ctx).withCache("no-cache");
-      const rawCss = await this.loadStylesheet(ctx);
+    try {
+      return await this.withProxyContext(ctx, async () => {
+        const responseBuilder = this.createResponseBuilder(ctx).withCache("no-cache");
+        let rawCss: string;
+        try {
+          rawCss = await this.loadStylesheet(ctx);
+        } catch (error) {
+          logger.error("[StylesCSSHandler] Failed to load stylesheet", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          rawCss = `@import "tailwindcss";`;
+        }
 
-      const candidates = await this.extractProjectCandidates(ctx);
-      const result = await generateTailwindCSS(rawCss, candidates);
+        let candidates: Set<string>;
+        try {
+          candidates = await this.extractProjectCandidates(ctx);
+        } catch (error) {
+          logger.error("[StylesCSSHandler] Failed to extract candidates", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          candidates = new Set<string>();
+        }
+        const result = await generateTailwindCSS(rawCss, candidates);
 
-      if (result.error) {
-        const formatted = formatCSSError(result.error);
-        logger.error("[StylesCSSHandler] Tailwind error", {
-          error: formatted.message,
-          suggestion: formatted.suggestion,
-        });
+        if (result.error) {
+          const formatted = formatCSSError(result.error);
+          logger.error("[StylesCSSHandler] Tailwind error", {
+            error: formatted.message,
+            suggestion: formatted.suggestion,
+          });
 
-        const errorMessage =
-          `${formatted.title}: ${formatted.message}\nSuggestion: ${formatted.suggestion}`;
-        const errorCSS = `/*
+          const errorMessage =
+            `${formatted.title}: ${formatted.message}\nSuggestion: ${formatted.suggestion}`;
+          const errorCSS = `/*
   ╔══════════════════════════════════════════════════════════════╗
   ║  TAILWIND CSS COMPILATION ERROR                               ║
   ╠══════════════════════════════════════════════════════════════╣
@@ -71,26 +88,41 @@ body::before {
   white-space: pre-wrap;
 }
 `;
-        return this.respond(
-          responseBuilder.withContentType("text/css; charset=utf-8", errorCSS, HTTP_OK),
-        );
-      }
+          return this.respond(
+            responseBuilder.withContentType("text/css; charset=utf-8", errorCSS, HTTP_OK),
+          );
+        }
 
-      if (!result.css && candidates.size > 0) {
-        logger.warn("[StylesCSSHandler] CSS is empty despite having candidates", {
+        if (!result.css && candidates.size > 0) {
+          logger.warn("[StylesCSSHandler] CSS is empty despite having candidates", {
+            candidates: candidates.size,
+          });
+        }
+
+        logger.debug("[StylesCSSHandler] CSS generated", {
           candidates: candidates.size,
+          cssLength: result.css.length,
         });
-      }
 
-      logger.debug("[StylesCSSHandler] CSS generated", {
-        candidates: candidates.size,
-        cssLength: result.css.length,
+        return this.respond(
+          responseBuilder.withContentType("text/css; charset=utf-8", result.css, HTTP_OK),
+        );
       });
-
+    } catch (error) {
+      // Ensure the handler never throws — an uncaught error causes the route registry
+      // to skip this handler silently and fall through to the 404 handler.
+      logger.error("[StylesCSSHandler] Unhandled error in CSS handler", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      const responseBuilder = this.createResponseBuilder(ctx).withCache("no-cache");
+      const errorCSS = `/* StylesCSSHandler error: ${
+        (error instanceof Error ? error.message : String(error)).replace(/\*\//g, "")
+      } */`;
       return this.respond(
-        responseBuilder.withContentType("text/css; charset=utf-8", result.css, HTTP_OK),
+        responseBuilder.withContentType("text/css; charset=utf-8", errorCSS, HTTP_OK),
       );
-    });
+    }
   }
 
   private async loadStylesheet(ctx: HandlerContext): Promise<string> {
