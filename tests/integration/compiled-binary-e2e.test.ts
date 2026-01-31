@@ -1203,6 +1203,277 @@ export function formatDate() {
     });
   });
 
+  // Test: Same-directory relative imports (./)
+  it("should handle same-directory relative imports with ./", async () => {
+    const projectDir = await createTestProject(
+      "same-dir-import-test",
+      `export default function Placeholder() { return null; }`,
+      {
+        "pages/dashboard/index.tsx": `
+import { DashboardHeader } from "./header";
+import { DashboardStats } from "./stats";
+
+export default function Dashboard() {
+  return (
+    <div id="dashboard">
+      <DashboardHeader />
+      <DashboardStats />
+    </div>
+  );
+}
+`,
+        "pages/dashboard/header.tsx": `
+export function DashboardHeader() {
+  return <h1 id="dashboard-header">Dashboard</h1>;
+}
+`,
+        "pages/dashboard/stats.tsx": `
+export function DashboardStats() {
+  return <div id="dashboard-stats">Stats: 42</div>;
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/dashboard`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+      assertStringIncludes(html, "dashboard-header", "Should render header from same directory");
+      assertStringIncludes(html, "dashboard-stats", "Should render stats from same directory");
+    });
+  });
+
+  // Test: Mixed relative and @/ alias imports in same file
+  it("should handle mixed relative and @/ alias imports", async () => {
+    const projectDir = await createTestProject(
+      "mixed-import-test",
+      `
+import { Button } from "@/components/Button";
+import { helper } from "../lib/helper";
+
+export default function MixedPage() {
+  return (
+    <div id="mixed-page">
+      <Button />
+      <p id="helper-result">{helper()}</p>
+    </div>
+  );
+}
+`,
+      {
+        "components/Button.tsx": `
+export function Button() {
+  return <button id="alias-button">Alias Button</button>;
+}
+`,
+        "lib/helper.ts": `
+export function helper() {
+  return "helper-works";
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+      assertStringIncludes(html, "alias-button", "Should render @/ aliased component");
+      assertStringIncludes(html, "helper-works", "Should render relative imported helper");
+    });
+  });
+
+  // Test: Chained relative imports (component imports another component)
+  it("should handle chained relative imports between components", async () => {
+    const projectDir = await createTestProject(
+      "chained-import-test",
+      `
+import { Card } from "../components/Card";
+
+export default function CardPage() {
+  return (
+    <div id="card-page">
+      <Card title="Test Card" />
+    </div>
+  );
+}
+`,
+      {
+        "components/Card.tsx": `
+import { CardHeader } from "./CardHeader";
+import { CardBody } from "./CardBody";
+
+export function Card({ title }: { title: string }) {
+  return (
+    <div id="card">
+      <CardHeader title={title} />
+      <CardBody />
+    </div>
+  );
+}
+`,
+        "components/CardHeader.tsx": `
+export function CardHeader({ title }: { title: string }) {
+  return <h2 id="card-header">{title}</h2>;
+}
+`,
+        "components/CardBody.tsx": `
+export function CardBody() {
+  return <div id="card-body">Card content here</div>;
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+      assertStringIncludes(html, "card-header", "Should render chained CardHeader");
+      assertStringIncludes(html, "card-body", "Should render chained CardBody");
+      assertStringIncludes(html, "Test Card", "Should pass props through chain");
+    });
+  });
+
+  // Test: Index file resolution (import directory resolves to index.ts)
+  it("should resolve directory imports to index files", async () => {
+    const projectDir = await createTestProject(
+      "index-resolution-test",
+      `
+import { utils } from "../lib/utils";
+import { Button } from "../components/ui";
+
+export default function IndexPage() {
+  return (
+    <div id="index-page">
+      <p id="utils-result">{utils.format("test")}</p>
+      <Button />
+    </div>
+  );
+}
+`,
+      {
+        "lib/utils/index.ts": `
+export const utils = {
+  format: (str: string) => \`formatted-\${str}\`,
+};
+`,
+        "components/ui/index.tsx": `
+export { Button } from "./Button";
+`,
+        "components/ui/Button.tsx": `
+export function Button() {
+  return <button id="index-button">Index Button</button>;
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+      assertStringIncludes(html, "formatted-test", "Should resolve lib/utils to index.ts");
+      assertStringIncludes(html, "index-button", "Should resolve components/ui to index.tsx");
+    });
+  });
+
+  // Test: Re-exports (export * from)
+  it("should handle re-exports with export * from", async () => {
+    const projectDir = await createTestProject(
+      "reexport-test",
+      `
+import { add, multiply, PI } from "../lib/math";
+
+export default function MathPage() {
+  return (
+    <div id="math-page">
+      <p id="add-result">{add(2, 3)}</p>
+      <p id="multiply-result">{multiply(4, 5)}</p>
+      <p id="pi-result">{PI}</p>
+    </div>
+  );
+}
+`,
+      {
+        "lib/math/index.ts": `
+export * from "./operations";
+export * from "./constants";
+`,
+        "lib/math/operations.ts": `
+export function add(a: number, b: number) { return a + b; }
+export function multiply(a: number, b: number) { return a * b; }
+`,
+        "lib/math/constants.ts": `
+export const PI = 3.14159;
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+      assertStringIncludes(html, ">5<", "Should have add(2,3) = 5");
+      assertStringIncludes(html, ">20<", "Should have multiply(4,5) = 20");
+      assertStringIncludes(html, "3.14159", "Should have PI constant");
+    });
+  });
+
+  // Test: Layout with relative imports
+  it("should handle layout files with relative imports", async () => {
+    const projectDir = await createTestProject(
+      "layout-relative-import-test",
+      `
+export default function LayoutTestPage() {
+  return <div id="layout-test-content">Page Content</div>;
+}
+`,
+      {
+        "pages/layout.tsx": `
+import { Header } from "../components/Header";
+import { Footer } from "../components/Footer";
+
+export default function Layout({ children }: { children: React.ReactNode }) {
+  return (
+    <div id="layout-wrapper">
+      <Header />
+      <main>{children}</main>
+      <Footer />
+    </div>
+  );
+}
+`,
+        "components/Header.tsx": `
+export function Header() {
+  return <header id="layout-header">Site Header</header>;
+}
+`,
+        "components/Footer.tsx": `
+export function Footer() {
+  return <footer id="layout-footer">Site Footer</footer>;
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+      assertStringIncludes(html, "layout-header", "Should render Header from layout's relative import");
+      assertStringIncludes(html, "layout-footer", "Should render Footer from layout's relative import");
+      assertStringIncludes(html, "layout-test-content", "Should render page content");
+    });
+  });
+
   // Test: Client components with "use client" directive
   it("should handle client components with use client directive", async () => {
     const projectDir = await createTestProject(
