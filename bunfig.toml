@@ -8,7 +8,7 @@ timeout = 30000
 # Root directories for test file discovery
 # Bun test needs explicit root paths since tests are in src/ and tests/
 # Note: Excludes tests/e2e which requires Playwright test runner
-root = ["./src", "./tests/integration", "./tests/ai", "./tests/proxy", "./tests/rendering", "./proxy"]
+root = ["./src", "./tests/integration", "./tests/ai", "./tests/proxy", "./tests/rendering"]
 
 # Exclude Playwright e2e tests - they require playwright test runner
 
