@@ -59,14 +59,13 @@ export API_CLIENT_ID_VERYFRONT_RENDERER_PROXY=$(op read "op://VERYFRONT_CI/Veryf
 export API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY=$(op read "op://VERYFRONT_CI/Veryfront Renderer Proxy OAuth/API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY")
 export REDIS_URL=$(op read "op://VERYFRONT_CI/UPSTASH_REDIS_VERYFRONT_RENDERER_PROXY_STAGING/REDIS_URL")
 
-# OpenTelemetry tracing to Grafana Cloud (disabled until OTLP auth is fixed)
+# OpenTelemetry tracing to Grafana Cloud
 # Filter by: service.name="veryfront-proxy-local" AND resource.host.name="your-hostname"
-# export OTEL_TRACES_ENABLED=true
-# export OTEL_SERVICE_NAME="veryfront-proxy-local"
-# export OTEL_RESOURCE_ATTRIBUTES="host.name=$(hostname)"
-# export OTEL_EXPORTER_OTLP_ENDPOINT="$(op read 'op://VERYFRONT_CI/GRAFANA/tempo_url')/otlp"
-# export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $(op read 'op://VERYFRONT_CI/GRAFANA/otlp_auth')"
-# TODO: Fix OTLP auth - tempo_user (1434186) != otlp_auth user (1482083)
+export OTEL_TRACES_ENABLED=true
+export OTEL_SERVICE_NAME="veryfront-proxy-local"
+export OTEL_RESOURCE_ATTRIBUTES="host.name=$(hostname)"
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://otlp-gateway-prod-eu-west-2.grafana.net/otlp"
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $(op read 'op://VERYFRONT_CI/GRAFANA/otlp_auth')"
 
 # Match production env vars exactly
 export VERYFRONT_API_BASE_URL="https://api.veryfront.com"
