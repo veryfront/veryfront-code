@@ -16,31 +16,25 @@ export { BINARY_PATH, ensureBinaryCompiled };
 const usedPorts = new Set<number>();
 
 /**
- * Get a random available port in the 30000-60000 range.
- * Checks both local tracking and actual port availability.
+ * Get an available port using OS-assigned port 0.
+ * This lets the kernel pick a guaranteed-free ephemeral port,
+ * eliminating collisions between parallel test workers.
  */
 async function getAvailablePort(): Promise<number> {
-  const minPort = 30000;
-  const maxPort = 60000;
-  const maxAttempts = 50;
+  const maxAttempts = 10;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const port = Math.floor(Math.random() * (maxPort - minPort)) + minPort;
+    const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const { port } = listener.addr as Deno.NetAddr;
+    listener.close();
 
-    if (usedPorts.has(port)) continue;
-
-    // Check if port is actually available
-    try {
-      const listener = Deno.listen({ port });
-      listener.close();
+    if (!usedPorts.has(port)) {
       usedPorts.add(port);
       return port;
-    } catch {
-      // Port in use, try another
     }
   }
 
-  throw new Error("Could not find available port after 50 attempts");
+  throw new Error("Could not find available port after 10 attempts");
 }
 
 export interface TestServer {
@@ -107,77 +101,94 @@ export async function startServer(
   options: ServerOptions = {},
 ): Promise<TestServer> {
   const { nodeEnv = "development", timeout = 30_000, env = {} } = options;
-  const logs: string[] = [];
-  const port = await getAvailablePort();
-  const cacheDir = await Deno.makeTempDir({
-    prefix: nodeEnv === "production" ? "vf-cache-prod-" : "vf-cache-",
-  });
+  const maxRetries = 3;
 
-  const process = new Deno.Command(BINARY_PATH, {
-    args: ["dev", "-p", String(port), "--project", projectDir],
-    env: {
-      ...Deno.env.toObject(),
-      NODE_ENV: nodeEnv,
-      LOG_FORMAT: "text",
-      VERYFRONT_CACHE_DIR: cacheDir,
-      ...env,
-    },
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const logs: string[] = [];
+    const port = await getAvailablePort();
+    const cacheDir = await Deno.makeTempDir({
+      prefix: nodeEnv === "production" ? "vf-cache-prod-" : "vf-cache-",
+    });
 
-  collectLogs(logs, process.stdout);
-  collectLogs(logs, process.stderr);
+    const process = new Deno.Command(BINARY_PATH, {
+      args: ["dev", "-p", String(port), "--project", projectDir],
+      env: {
+        ...Deno.env.toObject(),
+        NODE_ENV: nodeEnv,
+        LOG_FORMAT: "text",
+        VERYFRONT_CACHE_DIR: cacheDir,
+        ...env,
+      },
+      stdout: "piped",
+      stderr: "piped",
+    }).spawn();
 
-  try {
-    await waitForServer(port, timeout);
-  } catch {
+    collectLogs(logs, process.stdout);
+    collectLogs(logs, process.stderr);
+
     try {
-      process.kill();
+      await waitForServer(port, timeout);
     } catch {
-      // Already dead
-    }
-    const logOutput = logs.join("\n").slice(-2000);
-    throw new Error(`Server failed to start on port ${port}. Logs:\n${logOutput}`);
-  }
-
-  const server: TestServer = {
-    process,
-    port,
-    logs,
-    cacheDir,
-    projectDir,
-    getLogs: () => logs.join("\n"),
-    getErrors: () =>
-      logs.filter(
-        (l) =>
-          l.includes("FATAL") ||
-          l.includes("Unhandled") ||
-          l.includes("Invalid hook call") ||
-          l.includes("more than one copy of React") ||
-          l.includes("esm.sh/_vf_modules") ||
-          l.includes("Module not found") ||
-          l.includes("Missing module"),
-      ),
-    hasErrors: () => server.getErrors().length > 0,
-    kill: async () => {
       try {
         process.kill();
         await process.status;
       } catch {
         // Already dead
       }
-      usedPorts.delete(port);
-      await new Promise((r) => setTimeout(r, 200));
-      try {
-        await Deno.remove(cacheDir, { recursive: true });
-      } catch {
-        // Ignore cleanup errors
-      }
-    },
-  };
 
-  return server;
+      // Retry on port collision (TOCTOU race between getAvailablePort and binary bind)
+      const logOutput = logs.join("\n");
+      if (attempt < maxRetries - 1 && logOutput.includes("already in use")) {
+        usedPorts.delete(port);
+        try {
+          await Deno.remove(cacheDir, { recursive: true });
+        } catch { /* ignore */ }
+        continue;
+      }
+
+      throw new Error(`Server failed to start on port ${port}. Logs:\n${logOutput.slice(-2000)}`);
+    }
+
+    const server: TestServer = {
+      process,
+      port,
+      logs,
+      cacheDir,
+      projectDir,
+      getLogs: () => logs.join("\n"),
+      getErrors: () =>
+        logs.filter(
+          (l) =>
+            l.includes("FATAL") ||
+            l.includes("Unhandled") ||
+            l.includes("Invalid hook call") ||
+            l.includes("more than one copy of React") ||
+            l.includes("esm.sh/_vf_modules") ||
+            l.includes("Module not found") ||
+            l.includes("Missing module"),
+        ),
+      hasErrors: () => server.getErrors().length > 0,
+      kill: async () => {
+        try {
+          process.kill();
+          await process.status;
+        } catch {
+          // Already dead
+        }
+        usedPorts.delete(port);
+        await new Promise((r) => setTimeout(r, 200));
+        try {
+          await Deno.remove(cacheDir, { recursive: true });
+        } catch {
+          // Ignore cleanup errors
+        }
+      },
+    };
+
+    return server;
+  }
+
+  throw new Error("Failed to start server after all retries");
 }
 
 /**
