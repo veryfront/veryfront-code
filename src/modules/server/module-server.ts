@@ -24,8 +24,11 @@ import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
  * In compiled binaries, framework source files are not accessible via filesystem
  * because they're not statically imported (only referenced as path strings).
  * These inline polyfills ensure browser compatibility without filesystem I/O.
+ *
+ * @see src/platform/polyfills/embedded-polyfills.test.ts - validates completeness
+ * @see getRequiredPolyfillPaths() in node-builtin-strategy.ts - source of truth for required paths
  */
-const EMBEDDED_POLYFILLS: Record<string, string> = {
+export const EMBEDDED_POLYFILLS: Record<string, string> = {
   "_veryfront/platform/polyfills/node-async-hooks": `/**
  * Browser polyfill for node:async_hooks.
  * Provides a no-op AsyncLocalStorage that safely does nothing in the browser.
@@ -48,6 +51,37 @@ export class AsyncLocalStorage {
 export default {};
 `,
 };
+
+/**
+ * Validate that all required polyfills are embedded.
+ * Call this at startup in compiled mode to fail fast if polyfills are missing.
+ *
+ * @throws Error if any required polyfill is missing from EMBEDDED_POLYFILLS
+ */
+export async function validateEmbeddedPolyfills(): Promise<void> {
+  if (!isDenoCompiled) return; // Only validate in compiled mode
+
+  // Dynamic import to avoid circular dependency at module load time
+  const { getRequiredPolyfillPaths } = await import(
+    "#veryfront/transforms/import-rewriter/strategies/node-builtin-strategy.ts"
+  );
+
+  const requiredPaths = getRequiredPolyfillPaths();
+  const embeddedPaths = new Set(Object.keys(EMBEDDED_POLYFILLS));
+
+  const missing = requiredPaths.filter((path: string) => !embeddedPaths.has(path));
+
+  if (missing.length > 0) {
+    const errorMsg = `FATAL: Missing embedded polyfills (will cause 404 errors in browser):\n` +
+      missing.map((p: string) => `  - ${p}`).join("\n") +
+      `\n\nAdd these to EMBEDDED_POLYFILLS in src/modules/server/module-server.ts`;
+
+    logger.error("[ModuleServer] " + errorMsg);
+    throw new Error(errorMsg);
+  }
+
+  logger.info(`[ModuleServer] Validated ${embeddedPaths.size} embedded polyfills`);
+}
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
 const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
