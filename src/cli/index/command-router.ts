@@ -215,11 +215,10 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           setEnv("PORT", String(port));
           setEnv("HOST", bindAddress);
 
-          await import("../../../proxy/main.ts");
-          break;
-        }
-
-        if (mode === "renderer" || mode === "combined") {
+          // Import and run proxy main
+          await import("../../proxy/main.ts");
+        } else if (mode === "renderer" || mode === "combined") {
+          // Renderer mode: run SSR production server
           showLogo();
 
           const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
