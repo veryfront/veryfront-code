@@ -267,10 +267,11 @@
   },
   "tasks": {
     "setup": "deno run --allow-all scripts/setup.ts",
-    "start": "rm -rf .cache/ && deno run --allow-all scripts/server.ts",
-    "start:headless": "deno run --allow-all scripts/server.ts --headless",
-    "proxy": "deno run --allow-net --allow-env --allow-read src/proxy/main.ts",
-    "renderer": "deno run --allow-all --unstable-net --unstable-worker-options src/cli/main.ts dev",
+    "start": "deno run --allow-all src/cli/main.ts",
+    "start:headless": "deno run --allow-all src/cli/main.ts --headless",
+    "proxy": "deno run --allow-all src/cli/main.ts serve --mode=proxy",
+    "dev": "deno run --allow-all src/cli/main.ts dev",
+    "renderer": "deno run --allow-all src/cli/main.ts serve --mode=renderer",
     "build": "deno run -A scripts/generate-templates-manifest.ts && deno compile --allow-all --include src/platform/polyfills --include src/proxy/main.ts --output ./bin/veryfront src/cli/main.ts",
     "build:npm": "deno run -A scripts/build-npm-dnt.ts",
     "release": "deno run -A scripts/release.ts",
@@ -319,8 +320,8 @@
     "rlm:example": "deno run -A scripts/rlm-ts/examples/basic.ts",
     "rlm:explore": "deno run -A scripts/rlm-ts/apps/explore.ts",
     "rlm:audit": "deno run -A scripts/rlm-ts/apps/audit.ts",
-    "start-split": "deno run --allow-all scripts/split-mode/start.ts",
-    "test-split": "./scripts/split-mode/test.sh"
+    "start-split": "deno run --allow-all src/cli/main.ts serve --split",
+    "start-split:binary": "deno run --allow-all src/cli/main.ts serve --split --binary"
   },
   "lint": {
     "include": [

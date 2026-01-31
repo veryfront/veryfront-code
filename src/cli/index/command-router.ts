@@ -206,6 +206,25 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         const mode = (args.mode || args.m || "renderer") as "combined" | "proxy" | "renderer";
         const port = args.port ?? DEFAULT_DEV_SERVER_PORT;
         const bindAddress = String(args.hostname || args.host || "0.0.0.0");
+        const splitMode = Boolean(args.split);
+
+        // Split mode: run proxy and renderer as separate processes
+        if (splitMode) {
+          showLogo();
+          const { runSplitMode } = await import("../commands/serve-split.ts");
+          const useBinary = Boolean(args.binary);
+          const binaryPath = typeof args.binary === "string" ? args.binary : "./bin/veryfront";
+          // Use explicit ports: renderer on 3000, proxy on 8080 (or user-specified if different from default)
+          // args.port defaults to DEFAULT_DEV_SERVER_PORT (3000), so only use it if explicitly different
+          const proxyPort = port !== DEFAULT_DEV_SERVER_PORT ? Number(port) : 8080;
+          await runSplitMode({
+            rendererPort: 3000,
+            proxyPort,
+            useBinary,
+            binaryPath,
+          });
+          return;
+        }
 
         if (mode === "proxy") {
           showLogo();

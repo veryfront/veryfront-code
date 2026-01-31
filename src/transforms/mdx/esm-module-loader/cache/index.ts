@@ -194,10 +194,10 @@ export async function clearESMDiskCache(): Promise<void> {
   const fs = getLocalFs();
 
   try {
-    for await (const entry of fs.readDir(cacheDir)) {
-      if (!entry.isFile || !entry.name.endsWith(".mjs")) continue;
-      await fs.remove(join(cacheDir, entry.name));
-    }
+    // Remove entire cache directory and recreate it
+    // This handles nested project directories like codersociety/local-main/
+    await fs.remove(cacheDir, { recursive: true });
+    await fs.mkdir(cacheDir, { recursive: true });
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared ESM disk cache`);
   } catch (error) {
     if (!isNotFoundError(error)) {
@@ -211,10 +211,9 @@ export async function clearHttpBundleCache(): Promise<void> {
   const fs = getLocalFs();
 
   try {
-    for await (const entry of fs.readDir(cacheDir)) {
-      if (!entry.isFile || !entry.name.endsWith(".mjs")) continue;
-      await fs.remove(join(cacheDir, entry.name));
-    }
+    // Remove entire cache directory and recreate it
+    await fs.remove(cacheDir, { recursive: true });
+    await fs.mkdir(cacheDir, { recursive: true });
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared HTTP bundle cache`);
   } catch (error) {
     if (!isNotFoundError(error)) {

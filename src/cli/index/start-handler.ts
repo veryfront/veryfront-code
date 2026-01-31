@@ -10,6 +10,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { isAbsolute, join, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { cliLogger } from "#veryfront/utils";
 import { exitProcess, registerTerminationSignals } from "../utils/index.ts";
+import { clearAllLocalCaches } from "../../transforms/mdx/esm-module-loader/cache/index.ts";
 import type { ParsedArgs } from "./types.ts";
 
 const DEFAULT_START_PORT = 8080;
@@ -126,6 +127,9 @@ export async function handleStartCommand(args: ParsedArgs): Promise<void> {
   const mcpPort = typeof args["mcp-port"] === "number" ? args["mcp-port"] : DEFAULT_MCP_PORT;
   const projectPath = args.project ? String(args.project) : null;
   const headless = Boolean(args.headless || args["no-tui"]);
+
+  // Clear stale ESM caches to prevent module resolution issues
+  await clearAllLocalCaches();
 
   const { createApp, showStartup } = await import("../app/index.ts");
   const discovered = await discoverProjects(projectPath);
