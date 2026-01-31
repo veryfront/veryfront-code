@@ -37,9 +37,7 @@ describe("cache-key-builder", () => {
 
       const result = runWithCacheKeyContext(ctx, getCurrentCacheKeyContext);
 
-      assertEquals(result.projectId, "test-project");
-      assertEquals(result.mode, "production");
-      assertEquals(result.versionId, "rel_123");
+      assertEquals(result, ctx);
     });
 
     it("should throw on invalid context", () => {
@@ -55,7 +53,11 @@ describe("cache-key-builder", () => {
 
   describe("getCurrentCacheKeyContext", () => {
     it("should throw when no context set", () => {
-      assertThrows(() => getCurrentCacheKeyContext(), Error, "No cache context available");
+      assertThrows(
+        () => getCurrentCacheKeyContext(),
+        Error,
+        "No cache context available",
+      );
     });
   });
 

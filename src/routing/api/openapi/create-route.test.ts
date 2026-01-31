@@ -8,11 +8,9 @@ import { createRoute, z } from "./create-route.ts";
 import { OPENAPI_METADATA, type OpenAPIRouteMetadata } from "./types.ts";
 
 function getMetadata(handler: unknown): OpenAPIRouteMetadata {
-  const metadata = (handler as Record<string | symbol, unknown>)[
-    OPENAPI_METADATA
-  ] as OpenAPIRouteMetadata;
+  const metadata = (handler as Record<string | symbol, unknown>)[OPENAPI_METADATA];
   assertExists(metadata);
-  return metadata;
+  return metadata as OpenAPIRouteMetadata;
 }
 
 describe("createRoute", () => {

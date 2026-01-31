@@ -45,14 +45,18 @@ describe("theme-variables", () => {
         "--radius",
       ];
 
-      for (const varName of requiredVars) assertStringIncludes(result, varName);
+      for (const varName of requiredVars) {
+        assertStringIncludes(result, varName);
+      }
     });
 
     it("should include input-related variables", () => {
       const result = getResult();
-      assertStringIncludes(result, "--input-foreground");
-      assertStringIncludes(result, "--input-border");
-      assertStringIncludes(result, "--input-placeholder");
+      const inputVars = ["--input-foreground", "--input-border", "--input-placeholder"];
+
+      for (const varName of inputVars) {
+        assertStringIncludes(result, varName);
+      }
     });
 
     it("should include code-block variable", () => {
@@ -61,9 +65,11 @@ describe("theme-variables", () => {
 
     it("should include vf-tailwind base styles", () => {
       const result = getResult();
-      assertStringIncludes(result, ".vf-tailwind");
-      assertStringIncludes(result, "line-height: 1.5");
-      assertStringIncludes(result, "font-family:");
+      const baseStyles = [".vf-tailwind", "line-height: 1.5", "font-family:"];
+
+      for (const style of baseStyles) {
+        assertStringIncludes(result, style);
+      }
     });
 
     it("should include tap-highlight-color reset", () => {
@@ -76,8 +82,11 @@ describe("theme-variables", () => {
 
     it("should have different values for light and dark modes", () => {
       const result = getResult();
-      assertStringIncludes(result, "0 0% 100%");
-      assertStringIncludes(result, "222.2 84% 4.9%");
+      const modeValues = ["0 0% 100%", "222.2 84% 4.9%"];
+
+      for (const value of modeValues) {
+        assertStringIncludes(result, value);
+      }
     });
   });
 });

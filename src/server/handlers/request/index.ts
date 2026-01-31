@@ -1,8 +1,3 @@
-/**
- * Request Handlers
- * Export all request-handling implementations
- */
-
 export * from "./api/index.ts";
 export { CSSHandler } from "./css.handler.ts";
 export { ModuleHandler } from "./module/index.ts";

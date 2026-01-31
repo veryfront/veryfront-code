@@ -17,8 +17,7 @@ export async function parseFrontmatter(content: string): Promise<ParsedContent> 
     };
   } catch {
     const manualResult = await parseManually(content);
-    if (manualResult) return manualResult;
-    return { frontmatter: {}, content };
+    return manualResult ?? { frontmatter: {}, content };
   }
 }
 
@@ -29,20 +28,20 @@ async function parseManually(content: string): Promise<ParsedContent | null> {
   const frontmatterText = match?.[1];
   if (!frontmatterText) return null;
 
+  const mdxBody = match?.[2];
+  if (!mdxBody) {
+    throw toError(
+      createError({
+        type: "build",
+        message: "MDX content missing after frontmatter",
+      }),
+    );
+  }
+
   try {
     const { parse } = await import("std/yaml/parse.ts");
     const parsed = parse(frontmatterText);
     const frontmatter = (parsed && typeof parsed === "object" ? parsed : {}) as MDXFrontmatter;
-
-    const mdxBody = match?.[2];
-    if (!mdxBody) {
-      throw toError(
-        createError({
-          type: "build",
-          message: "MDX content missing after frontmatter",
-        }),
-      );
-    }
 
     return { frontmatter, content: String(mdxBody) };
   } catch (error) {
@@ -51,7 +50,9 @@ async function parseManually(content: string): Promise<ParsedContent | null> {
   }
 }
 
-export function extractExports(content: string): { frontmatter: MDXFrontmatter; content: string } {
+export function extractExports(
+  content: string,
+): { frontmatter: MDXFrontmatter; content: string } {
   const frontmatter: MDXFrontmatter = {};
   const exportRegex = /^export\s+const\s+(\w+)\s*=\s*(.+)$/gm;
 

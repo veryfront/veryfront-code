@@ -12,7 +12,7 @@ import type { BuildCommandArgs } from "./types.ts";
 
 export async function handleBuildCommand(args: BuildCommandArgs): Promise<void> {
   const projectDir = cwd();
-  const outputDir = args.output || args.o;
+  const outputDir = args.output ?? args.o;
   const preset = args.preset ? String(args.preset).toLowerCase() : undefined;
 
   if (preset === "embedded") {

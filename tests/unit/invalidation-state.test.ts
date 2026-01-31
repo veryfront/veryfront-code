@@ -24,10 +24,8 @@ describe("Global Invalidation State", () => {
   });
 
   it("blocks cache reads for matching prefixes", () => {
-    // Adapter A adds invalidation (simulates POKE on old adapter)
     addPendingInvalidation("file:env:project:production:release-123:");
 
-    // Adapter B checks (simulates new adapter created for same project)
     assertEquals(
       isPrefixBeingInvalidated("file:env:project:production:release-123:/pages/index.tsx"),
       true,
@@ -77,17 +75,14 @@ describe("Global Invalidation State", () => {
   });
 
   it("supports bidirectional prefix matching", () => {
-    // This simulates the case where a broad prefix blocks specific file lookups
     addPendingInvalidation("file:env:project:production:");
 
-    // Specific file should be blocked
     assertEquals(
       isPrefixBeingInvalidated("file:env:project:production:rel1:/pages/index.tsx"),
       true,
       "Broad prefix should block specific file lookups",
     );
 
-    // Release-specific prefix should also be blocked
     assertEquals(
       isPrefixBeingInvalidated("file:env:project:production:rel1:"),
       true,
@@ -96,10 +91,8 @@ describe("Global Invalidation State", () => {
   });
 
   it("handles reverse prefix matching", () => {
-    // Add a specific file invalidation
     addPendingInvalidation("file:env:project:production:rel1:/pages/index.tsx");
 
-    // Broader prefix check should also match
     assertEquals(
       isPrefixBeingInvalidated("file:env:project:production:rel1:"),
       true,
@@ -126,17 +119,12 @@ describe("Global Invalidation State", () => {
     const prefix = "file:env:project:production:rel1:";
     addPendingInvalidation(prefix);
 
-    assertEquals(
-      isPrefixBeingInvalidated(prefix),
-      true,
-      "Exact prefix match should return true",
-    );
+    assertEquals(isPrefixBeingInvalidated(prefix), true, "Exact prefix match should return true");
   });
 
   it("does not match partial prefixes", () => {
     addPendingInvalidation("file:env:project:production:");
 
-    // Different project with similar name should not match
     assertEquals(
       isPrefixBeingInvalidated("file:env:project-extra:production:rel1:"),
       false,
@@ -160,7 +148,9 @@ describe("Global Invalidation State - Debug State", () => {
     assertEquals(state.entries.length, 1);
 
     const entry = state.entries[0];
-    if (!entry) throw new Error("Expected entry to exist");
+    if (!entry) {
+      throw new Error("Expected entry to exist");
+    }
 
     assertEquals(entry.prefix, "file:env:project:production:rel1:");
     assertEquals(entry.startedAt >= beforeAdd, true);
@@ -170,7 +160,6 @@ describe("Global Invalidation State - Debug State", () => {
   it("tracks total blocked reads", () => {
     addPendingInvalidation("file:env:project:production:");
 
-    // Trigger some blocked reads
     isPrefixBeingInvalidated("file:env:project:production:rel1:/a.tsx");
     isPrefixBeingInvalidated("file:env:project:production:rel1:/b.tsx");
     isPrefixBeingInvalidated("file:env:project:production:rel1:/c.tsx");
@@ -196,28 +185,15 @@ describe("Global Invalidation State - Race Condition Scenario", () => {
   });
 
   it("simulates the deployment race condition fix", () => {
-    // Timeline simulation:
-    // 1. POKE arrives on OLD adapter instance
-    // 2. OLD adapter starts cache deletion, adds pending invalidation
-    // 3. Request arrives with NEW releaseId
-    // 4. NEW adapter instance is created (would have empty state without fix)
-    // 5. NEW adapter checks cache - should see pending invalidation from OLD adapter
-
     const projectSlug = "my-project";
     const oldReleaseId = "release-old";
     const newReleaseId = "release-new";
 
-    // Step 1-2: POKE on old adapter adds pending invalidation
     const oldAdapterPrefix = `file:env:${projectSlug}:production:${oldReleaseId}:`;
     addPendingInvalidation(oldAdapterPrefix);
 
-    // Step 4-5: New adapter instance checks if cache should be skipped
-    // The new adapter would be checking for a different release, but the project
-    // prefix should still match because we're invalidating at the project level
     const newAdapterFileKey = `file:env:${projectSlug}:production:${newReleaseId}:/pages/index.tsx`;
 
-    // With broad project-level invalidation, new release should also be blocked
-    // This requires the invalidation to be at project level, not release level
     const broadProjectPrefix = `file:env:${projectSlug}:production:`;
     clearAllPendingInvalidations();
     addPendingInvalidation(broadProjectPrefix);
@@ -228,7 +204,6 @@ describe("Global Invalidation State - Race Condition Scenario", () => {
       "New adapter should see pending invalidation from old adapter when using broad prefix",
     );
 
-    // After invalidation completes
     removePendingInvalidation(broadProjectPrefix);
 
     assertEquals(
@@ -239,23 +214,12 @@ describe("Global Invalidation State - Race Condition Scenario", () => {
   });
 
   it("logs provide proof of fix working", () => {
-    // This test verifies the observability aspect
-    // In production, look for these log patterns:
-    // - INVALIDATION_STARTED
-    // - CACHE_READ_BLOCKED (this is the PROOF)
-    // - INVALIDATION_COMPLETED
-
     addPendingInvalidation("file:env:project:production:");
 
-    // This call should log CACHE_READ_BLOCKED
     const blocked = isPrefixBeingInvalidated("file:env:project:production:rel1:/pages/index.tsx");
     assertEquals(blocked, true);
 
     const state = getInvalidationDebugState();
-    assertEquals(
-      state.totalBlockedReads >= 1,
-      true,
-      "Should have at least one blocked read recorded",
-    );
+    assertEquals(state.totalBlockedReads >= 1, true, "Should have at least one blocked read recorded");
   });
 });

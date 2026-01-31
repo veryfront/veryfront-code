@@ -87,10 +87,9 @@ export function useCompletion(options: UseCompletionOptions): UseCompletionResul
 
         options.onResponse?.(response);
 
-        const body = response.body;
-        if (!body) return;
+        const reader = response.body?.getReader();
+        if (!reader) return;
 
-        const reader = body.getReader();
         const decoder = new TextDecoder();
         let accumulatedText = "";
 
@@ -103,10 +102,10 @@ export function useCompletion(options: UseCompletionOptions): UseCompletionResul
         }
 
         options.onFinish?.(accumulatedText);
-      } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return;
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return;
 
-        const nextError = error instanceof Error ? error : new Error(String(error));
+        const nextError = err instanceof Error ? err : new Error(String(err));
         setError(nextError);
         options.onError?.(nextError);
       } finally {

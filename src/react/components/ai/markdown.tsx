@@ -1,14 +1,3 @@
-/**
- * Markdown Component - Rich markdown renderer for chat messages
- *
- * Supports:
- * - GitHub Flavored Markdown (tables, strikethrough, etc.)
- * - Syntax highlighted code blocks
- * - Mermaid diagrams (lazy loaded, client-side only)
- *
- * Works in: Deno, Node.js, Bun (client-side React)
- */
-
 import * as React from "react";
 import { cn } from "./theme.ts";
 import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
@@ -167,6 +156,17 @@ function CodeBlock({
   );
 }
 
+function FallbackMarkdown({
+  children,
+  className,
+}: Pick<MarkdownProps, "children" | "className">): React.ReactElement {
+  return (
+    <div className={cn("prose prose-sm dark:prose-invert max-w-none", className)}>
+      <p className="whitespace-pre-wrap">{children}</p>
+    </div>
+  );
+}
+
 export function Markdown({
   children,
   className,
@@ -174,9 +174,10 @@ export function Markdown({
   renderCodeBlock,
 }: MarkdownProps): React.ReactElement {
   const [isLoaded, setIsLoaded] = React.useState(false);
-  const [, forceUpdate] = React.useReducer((x: number) => x + 1, 0);
 
   React.useEffect(() => {
+    let cancelled = false;
+
     async function load(): Promise<void> {
       if (!ReactMarkdown) {
         const [rmModule, gfmModule, highlightModule] = await Promise.all([
@@ -190,19 +191,19 @@ export function Markdown({
         rehypeHighlight = highlightModule.default;
       }
 
+      if (cancelled) return;
       setIsLoaded(true);
-      forceUpdate();
     }
 
     load();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (!isLoaded || !ReactMarkdown) {
-    return (
-      <div className={cn("prose prose-sm dark:prose-invert max-w-none", className)}>
-        <p className="whitespace-pre-wrap">{children}</p>
-      </div>
-    );
+    return <FallbackMarkdown className={className}>{children}</FallbackMarkdown>;
   }
 
   return (

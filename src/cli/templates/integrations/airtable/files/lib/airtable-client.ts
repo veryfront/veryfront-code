@@ -41,16 +41,14 @@ export interface AirtableRecord {
 
 function getTokenOrThrow(): string {
   const token = getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with Airtable. Please connect your account.");
-  }
-  return token;
+  if (token) return token;
+  throw new Error("Not authenticated with Airtable. Please connect your account.");
 }
 
 async function apiFetch<T>(
   baseUrl: string,
   endpoint: string,
-  options: RequestInit = {},
+  options: RequestInit,
   errorPrefix: string,
 ): Promise<T> {
   const token = getTokenOrThrow();
@@ -65,7 +63,7 @@ async function apiFetch<T>(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({} as any));
+    const error = await response.json().catch(() => ({}));
     throw new Error(
       `${errorPrefix}: ${response.status} ${error?.error?.message ?? response.statusText}`,
     );
@@ -74,11 +72,11 @@ async function apiFetch<T>(
   return response.json() as Promise<T>;
 }
 
-async function airtableFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+function airtableFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   return apiFetch<T>(AIRTABLE_BASE_URL, endpoint, options, "Airtable API error");
 }
 
-async function metaFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+function metaFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   return apiFetch<T>(AIRTABLE_META_BASE_URL, endpoint, options, "Airtable Meta API error");
 }
 
@@ -87,7 +85,7 @@ export async function listBases(): Promise<AirtableBase[]> {
   return response.bases ?? [];
 }
 
-export async function getBase(baseId: string): Promise<AirtableBaseSchema> {
+export function getBase(baseId: string): Promise<AirtableBaseSchema> {
   return metaFetch<AirtableBaseSchema>(`/bases/${baseId}/tables`);
 }
 
@@ -108,8 +106,8 @@ export async function listRecords(
 
   options?.fields?.forEach((field) => params.append("fields[]", field));
   if (options?.filterByFormula) params.append("filterByFormula", options.filterByFormula);
-  if (options?.maxRecords) params.append("maxRecords", options.maxRecords.toString());
-  if (options?.pageSize) params.append("pageSize", options.pageSize.toString());
+  if (options?.maxRecords) params.append("maxRecords", String(options.maxRecords));
+  if (options?.pageSize) params.append("pageSize", String(options.pageSize));
   options?.sort?.forEach((s, i) => {
     params.append(`sort[${i}][field]`, s.field);
     params.append(`sort[${i}][direction]`, s.direction);
@@ -124,10 +122,7 @@ export async function listRecords(
 
   const response = await airtableFetch<AirtableResponse<AirtableRecord>>(endpoint);
 
-  return {
-    records: response.records ?? [],
-    offset: response.offset,
-  };
+  return { records: response.records ?? [], offset: response.offset };
 }
 
 export function getRecord(
@@ -163,6 +158,7 @@ export async function createRecords(
       body: JSON.stringify({ records }),
     },
   );
+
   return response.records;
 }
 

@@ -14,15 +14,9 @@ export default tool({
       throw new Error("Cannot divide by zero");
     }
 
-    switch (operation) {
-      case "add":
-        return { result: a + b };
-      case "subtract":
-        return { result: a - b };
-      case "multiply":
-        return { result: a * b };
-      case "divide":
-        return { result: a / b };
-    }
+    if (operation === "add") return { result: a + b };
+    if (operation === "subtract") return { result: a - b };
+    if (operation === "multiply") return { result: a * b };
+    return { result: a / b };
   },
 });

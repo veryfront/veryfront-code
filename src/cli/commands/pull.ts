@@ -156,8 +156,8 @@ export async function listAllFiles(
       limit: "100",
       sort_by: "updated_at",
       sort_order: "desc",
-      ...(cursor ? { cursor } : {}),
     };
+    if (cursor) params.cursor = cursor;
 
     const response = await client.get<ListFilesResponse>(url, params);
     allFiles.push(...response.data);
@@ -246,21 +246,20 @@ async function writeFiles(
   let written = 0;
   let skipped = 0;
 
-  const results: Array<{ success: boolean; path: string; error?: Error }> = [];
   for (let i = 0; i < ops.length; i += CONCURRENCY) {
     const batch = ops.slice(i, i + CONCURRENCY);
-    results.push(
-      ...(await Promise.all(batch.map((op) => processFile(op, client, projectSlug, source, fs)))),
+    const results = await Promise.all(
+      batch.map((op) => processFile(op, client, projectSlug, source, fs)),
     );
-  }
 
-  for (const result of results) {
-    if (result.success) {
-      written++;
-      continue;
+    for (const result of results) {
+      if (result.success) {
+        written++;
+        continue;
+      }
+      cliLogger.error(`Failed to write ${result.path}:`, result.error);
+      skipped++;
     }
-    cliLogger.error(`Failed to write ${result.path}:`, result.error);
-    skipped++;
   }
 
   return { written, skipped };
@@ -308,16 +307,14 @@ async function pullSingleProject(
     return { written: 0, skipped: 0 };
   }
 
-  const writeOps: WriteOp[] = files
-    .map((file) => {
-      try {
-        return { path: validateFilePath(file.path, projectDir), relativePath: file.path };
-      } catch (error) {
-        if (!quiet) cliLogger.warn(`Skipping invalid file path: ${file.path}`, error);
-        return null;
-      }
-    })
-    .filter((op): op is WriteOp => op !== null);
+  const writeOps: WriteOp[] = [];
+  for (const file of files) {
+    try {
+      writeOps.push({ path: validateFilePath(file.path, projectDir), relativePath: file.path });
+    } catch (error) {
+      if (!quiet) cliLogger.warn(`Skipping invalid file path: ${file.path}`, error);
+    }
+  }
 
   if (!quiet) {
     cliLogger.info(
@@ -404,51 +401,59 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
 
       spinner.stop();
 
-      if (projects?.length) {
-        const fs = createFileSystem();
-        let totalWritten = 0;
-        let totalSkipped = 0;
-
-        for (const project of projects) {
-          const targetDir = join(projectDir, project);
-
-          if (!dryRun) await fs.mkdir(targetDir, { recursive: true });
-
-          if (!quiet) cliLogger.info(`\n--- Pulling ${project} into ${targetDir} ---`);
-
-          try {
-            const result = await pullSingleProject(
-              project,
-              targetDir,
-              source,
-              force,
-              dryRun,
-              config,
-              quiet,
-            );
-            totalWritten += result.written;
-            totalSkipped += result.skipped;
-          } catch (error) {
-            cliLogger.error(`Failed to pull ${project}:`, error);
-            totalSkipped++;
-          }
-        }
-
-        if (!quiet) {
-          cliLogger.info("");
-          if (dryRun) {
-            logInfo(
-              `Dry run complete. Would write ${totalWritten} files total across ${projects.length} projects.`,
-            );
-          } else {
-            logSuccess(`Pulled ${totalWritten} files total across ${projects.length} projects.`);
-            if (totalSkipped > 0) logWarning(`Skipped ${totalSkipped} files due to errors.`);
-          }
-        }
+      if (!projects?.length) {
+        await pullSingleProject(
+          config.projectSlug,
+          projectDir,
+          source,
+          force,
+          dryRun,
+          config,
+          quiet,
+        );
         return;
       }
 
-      await pullSingleProject(config.projectSlug, projectDir, source, force, dryRun, config, quiet);
+      const fs = createFileSystem();
+      let totalWritten = 0;
+      let totalSkipped = 0;
+
+      for (const project of projects) {
+        const targetDir = join(projectDir, project);
+
+        if (!dryRun) await fs.mkdir(targetDir, { recursive: true });
+
+        if (!quiet) cliLogger.info(`\n--- Pulling ${project} into ${targetDir} ---`);
+
+        try {
+          const result = await pullSingleProject(
+            project,
+            targetDir,
+            source,
+            force,
+            dryRun,
+            config,
+            quiet,
+          );
+          totalWritten += result.written;
+          totalSkipped += result.skipped;
+        } catch (error) {
+          cliLogger.error(`Failed to pull ${project}:`, error);
+          totalSkipped++;
+        }
+      }
+
+      if (!quiet) {
+        cliLogger.info("");
+        if (dryRun) {
+          logInfo(
+            `Dry run complete. Would write ${totalWritten} files total across ${projects.length} projects.`,
+          );
+        } else {
+          logSuccess(`Pulled ${totalWritten} files total across ${projects.length} projects.`);
+          if (totalSkipped > 0) logWarning(`Skipped ${totalSkipped} files due to errors.`);
+        }
+      }
     },
     { "cli.dryRun": options.dryRun ?? false, "cli.source_type": source.type },
   );

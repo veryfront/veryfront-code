@@ -19,9 +19,7 @@ export class EntryManager {
     const newSize = this.estimateSizeOf(value);
     const expiry = this.calculateExpiry(ttlMs, defaultTtlMs);
 
-    if (node.entry.tags?.length) {
-      this.cleanupTags(node.entry.tags, key, tagIndex);
-    }
+    if (node.entry.tags?.length) this.cleanupTags(node.entry.tags, key, tagIndex);
 
     node.entry = {
       value,
@@ -69,12 +67,9 @@ export class EntryManager {
     tagIndex: Map<string, Set<string>>,
   ): void {
     for (const tag of tags) {
-      let set = tagIndex.get(tag);
-      if (!set) {
-        set = new Set<string>();
-        tagIndex.set(tag, set);
-      }
+      const set = tagIndex.get(tag) ?? new Set<string>();
       set.add(key);
+      tagIndex.set(tag, set);
     }
   }
 
@@ -88,9 +83,7 @@ export class EntryManager {
       if (!set) continue;
 
       set.delete(key);
-      if (set.size === 0) {
-        tagIndex.delete(tag);
-      }
+      if (set.size === 0) tagIndex.delete(tag);
     }
   }
 
@@ -99,7 +92,7 @@ export class EntryManager {
     defaultTtlMs: number | undefined,
   ): number | undefined {
     if (typeof ttlMs === "number") return Date.now() + ttlMs;
-    if (defaultTtlMs) return Date.now() + defaultTtlMs;
+    if (typeof defaultTtlMs === "number") return Date.now() + defaultTtlMs;
     return undefined;
   }
 }

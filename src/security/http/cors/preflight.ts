@@ -29,12 +29,12 @@ export function handleCORSPreflight(options: CORSPreflightOptions): Promise<Resp
           error: validation.error,
         });
 
-        const errorMessage = validation.error || "CORS policy: Origin not allowed";
+        const errorMessage = validation.error ?? "CORS policy: Origin not allowed";
 
         return new Response(errorMessage, {
           status: HTTP_FORBIDDEN,
           headers: {
-            "X-CORS-Error": validation.error || "Origin not allowed",
+            "X-CORS-Error": validation.error ?? "Origin not allowed",
           },
         });
       }
@@ -48,13 +48,13 @@ export function handleCORSPreflight(options: CORSPreflightOptions): Promise<Resp
 
       const corsConfig = typeof config === "object" ? config : null;
 
-      const methods = allowMethods ||
+      const methods = allowMethods ??
         (corsConfig?.methods?.length ? corsConfig.methods.join(", ") : DEFAULT_METHODS.join(", "));
       headers.set("Access-Control-Allow-Methods", methods);
 
       const requestedHeaders = request.headers.get("access-control-request-headers");
-      const resolvedAllowedHeaders = allowHeaders ||
-        requestedHeaders ||
+      const resolvedAllowedHeaders = allowHeaders ??
+        requestedHeaders ??
         (corsConfig?.allowedHeaders?.length
           ? corsConfig.allowedHeaders.join(", ")
           : DEFAULT_HEADERS.join(", "));

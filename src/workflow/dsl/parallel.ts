@@ -27,14 +27,15 @@ export function parallel(
     throw new Error(`Parallel node "${id}" must have at least one child node`);
   }
 
+  const prefix = `${id}/`;
   const prefixedNodes = nodes.map((node, index) => {
     if (typeof node.id !== "string" || node.id.length === 0) {
-      throw new Error(`Child node at index ${index} in parallel "${id}" has invalid ID`);
+      throw new Error(
+        `Child node at index ${index} in parallel "${id}" has invalid ID`,
+      );
     }
 
-    const prefix = `${id}/`;
     const childId = node.id.startsWith(prefix) ? node.id : `${prefix}${node.id}`;
-
     return { ...node, id: childId };
   });
 

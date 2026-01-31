@@ -98,11 +98,16 @@ async function confluenceFetch<T>(endpoint: string, options: RequestInit = {}): 
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({} as { message?: string }));
+    const error = (await response.json().catch(() => ({}))) as { message?: string };
     throw new Error(`Confluence API error: ${response.status} ${error.message ?? response.statusText}`);
   }
 
-  return response.json();
+  return response.json() as Promise<T>;
+}
+
+function buildEndpoint(path: string, params?: URLSearchParams): string {
+  const query = params?.toString();
+  return `${path}${query ? `?${query}` : ""}`;
 }
 
 export async function listSpaces(options?: {
@@ -114,10 +119,10 @@ export async function listSpaces(options?: {
   if (options?.limit) params.set("limit", options.limit.toString());
   if (options?.type) params.set("type", options.type);
 
-  const query = params.toString();
-  const endpoint = `/wiki/rest/api/space${query ? `?${query}` : ""}`;
+  const response = await confluenceFetch<ConfluenceResponse<ConfluenceSpace>>(
+    buildEndpoint("/wiki/rest/api/space", params),
+  );
 
-  const response = await confluenceFetch<ConfluenceResponse<ConfluenceSpace>>(endpoint);
   return response.results ?? [];
 }
 
@@ -138,7 +143,7 @@ export async function searchContent(
   if (options?.limit) params.set("limit", options.limit.toString());
 
   const response = await confluenceFetch<ConfluenceResponse<ConfluenceSearchResult>>(
-    `/wiki/rest/api/search?${params.toString()}`,
+    buildEndpoint("/wiki/rest/api/search", params),
   );
 
   return response.results ?? [];
@@ -146,13 +151,9 @@ export async function searchContent(
 
 export function getPage(pageId: string, expand?: string[]): Promise<ConfluencePage> {
   const params = new URLSearchParams();
-
   if (expand?.length) params.set("expand", expand.join(","));
 
-  const query = params.toString();
-  const endpoint = `/wiki/rest/api/content/${pageId}${query ? `?${query}` : ""}`;
-
-  return confluenceFetch<ConfluencePage>(endpoint);
+  return confluenceFetch<ConfluencePage>(buildEndpoint(`/wiki/rest/api/content/${pageId}`, params));
 }
 
 export function getPageContent(pageId: string): Promise<ConfluencePage> {
@@ -236,7 +237,6 @@ export function extractPlainText(storageHtml: string): string {
 
 export function formatAsStorage(text: string): string {
   const paragraphs = text.split("\n\n").filter((p) => p.trim());
-
   return paragraphs.map((p) => `<p>${escapeHtml(p.trim())}</p>`).join("\n");
 }
 

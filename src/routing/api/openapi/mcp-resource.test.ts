@@ -13,20 +13,24 @@ function makeSpec(overrides: Partial<OpenAPISpec> = {}): OpenAPISpec {
   };
 }
 
+function createResource(spec: OpenAPISpec) {
+  return createOpenAPIResource(() => Promise.resolve(spec));
+}
+
 describe("routing/api/openapi/mcp-resource", () => {
   describe("createOpenAPIResource()", () => {
     it("should create a resource object", () => {
-      const resource = createOpenAPIResource(() => Promise.resolve(makeSpec()));
+      const resource = createResource(makeSpec());
       assertEquals(resource != null, true);
     });
 
     it("should return resource with correct pattern", () => {
-      const resource = createOpenAPIResource(() => Promise.resolve(makeSpec()));
+      const resource = createResource(makeSpec());
       assertEquals(resource.pattern, "openapi://spec");
     });
 
     it("should return resource with description", () => {
-      const resource = createOpenAPIResource(() => Promise.resolve(makeSpec()));
+      const resource = createResource(makeSpec());
       assertEquals(typeof resource.description, "string");
       assertEquals(resource.description.length > 0, true);
     });
@@ -45,7 +49,7 @@ describe("routing/api/openapi/mcp-resource", () => {
         tags: [{ name: "users" }],
       });
 
-      const resource = createOpenAPIResource(() => Promise.resolve(spec));
+      const resource = createResource(spec);
       const result = await resource.load({});
 
       assertEquals(result.spec, spec);
@@ -57,7 +61,7 @@ describe("routing/api/openapi/mcp-resource", () => {
 
     it("should handle spec with no tags", async () => {
       const spec = makeSpec({ tags: undefined });
-      const resource = createOpenAPIResource(() => Promise.resolve(spec));
+      const resource = createResource(spec);
       const result = await resource.load({});
 
       assertEquals(result.summary.tags, []);
@@ -65,7 +69,7 @@ describe("routing/api/openapi/mcp-resource", () => {
 
     it("should handle spec with empty paths", async () => {
       const spec = makeSpec({ paths: {} });
-      const resource = createOpenAPIResource(() => Promise.resolve(spec));
+      const resource = createResource(spec);
       const result = await resource.load({});
 
       assertEquals(result.summary.endpoints, 0);
@@ -80,14 +84,14 @@ describe("routing/api/openapi/mcp-resource", () => {
         },
       });
 
-      const resource = createOpenAPIResource(() => Promise.resolve(spec));
+      const resource = createResource(spec);
       const result = await resource.load({});
 
       assertEquals(result.summary.endpoints, 3);
     });
 
     it("should have MCP config enabled", () => {
-      const resource = createOpenAPIResource(() => Promise.resolve(makeSpec()));
+      const resource = createResource(makeSpec());
       assertEquals(resource.mcp?.enabled, true);
     });
   });

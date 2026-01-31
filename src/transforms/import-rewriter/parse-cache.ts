@@ -1,4 +1,4 @@
-/**
+/****
  * Parse cache for es-module-lexer.
  *
  * Single parse per file - reused across all strategies.
@@ -21,6 +21,7 @@ export async function initLexer(): Promise<void> {
       ? (anyInit as () => Promise<void>)()
       : (anyInit as Promise<void>);
   }
+
   await initPromise;
 }
 
@@ -36,22 +37,27 @@ function maskHttpUrls(code: string): UrlMaskResult {
   const urlMap = new Map<string, string>();
   let counter = 0;
 
-  const masked = code.replace(HTTP_URL_PATTERN, (_match, quote: string, url: string) => {
-    const placeholder = `__VFURL_${counter++}__`;
-    urlMap.set(placeholder, url);
-    return `${quote}${placeholder}${quote}`;
-  });
+  const masked = code.replace(
+    HTTP_URL_PATTERN,
+    (_match, quote: string, url: string) => {
+      const placeholder = `__VFURL_${counter++}__`;
+      urlMap.set(placeholder, url);
+      return `${quote}${placeholder}${quote}`;
+    },
+  );
 
   return { masked, urlMap };
 }
 
 function unmaskUrl(specifier: string, urlMap: Map<string, string>): string {
   if (urlMap.size === 0) return specifier;
+
   for (const [placeholder, url] of urlMap) {
     if (specifier.includes(placeholder)) {
       return specifier.replace(placeholder, url);
     }
   }
+
   return specifier;
 }
 
@@ -107,14 +113,12 @@ export function applyRewrites(
   parsed: ParsedImports,
   rewrites: Map<number, { specifier?: string | null; statement?: string }>,
 ): string {
-  // Work on masked code since positions are from the masked parse
   let result = parsed.maskedCode;
 
-  // Sort by start position descending to apply from end to start
   const sortedIndices = Array.from(rewrites.keys()).sort((a, b) => {
-    const impA = parsed.imports[a];
-    const impB = parsed.imports[b];
-    return (impB?.start ?? 0) - (impA?.start ?? 0);
+    const startA = parsed.imports[a]?.start ?? 0;
+    const startB = parsed.imports[b]?.start ?? 0;
+    return startB - startA;
   });
 
   for (const idx of sortedIndices) {
@@ -123,39 +127,37 @@ export function applyRewrites(
     if (!imp || !rewrite) continue;
 
     if (rewrite.statement !== undefined) {
-      // Replace entire statement
       result = result.substring(0, imp.statementStart) +
         rewrite.statement +
         result.substring(imp.statementEnd);
-    } else if (rewrite.specifier !== null && rewrite.specifier !== undefined) {
-      // Replace just the specifier
-      if (imp.isDynamic) {
-        // For dynamic imports, preserve the quote style
-        const quote = result[imp.start];
-        if (quote === '"' || quote === "'" || quote === "`") {
-          result = result.substring(0, imp.start) +
-            quote +
-            rewrite.specifier +
-            quote +
-            result.substring(imp.end);
-        } else {
-          result = result.substring(0, imp.start) +
-            rewrite.specifier +
-            result.substring(imp.end);
-        }
-      } else {
-        result = result.substring(0, imp.start) +
-          rewrite.specifier +
-          result.substring(imp.end);
-      }
+      continue;
     }
+
+    const specifier = rewrite.specifier;
+    if (specifier === null || specifier === undefined) continue;
+
+    if (!imp.isDynamic) {
+      result = result.substring(0, imp.start) + specifier + result.substring(imp.end);
+      continue;
+    }
+
+    const quote = result[imp.start];
+    if (quote === `"` || quote === `'` || quote === "`") {
+      result = result.substring(0, imp.start) +
+        quote +
+        specifier +
+        quote +
+        result.substring(imp.end);
+      continue;
+    }
+
+    result = result.substring(0, imp.start) + specifier + result.substring(imp.end);
   }
 
-  // Restore any remaining masked URLs that weren't rewritten
-  if (parsed.urlMap.size > 0) {
-    for (const [placeholder, url] of parsed.urlMap) {
-      result = result.replaceAll(placeholder, url);
-    }
+  if (parsed.urlMap.size === 0) return result;
+
+  for (const [placeholder, url] of parsed.urlMap) {
+    result = result.replaceAll(placeholder, url);
   }
 
   return result;
@@ -174,7 +176,12 @@ export async function replaceSpecifiers(
   for (let i = 0; i < parsed.imports.length; i++) {
     const imp = parsed.imports[i]!;
     const replacement = replacer(imp.specifier, imp.isDynamic);
-    if (replacement !== null && replacement !== undefined && replacement !== imp.specifier) {
+
+    if (
+      replacement !== null &&
+      replacement !== undefined &&
+      replacement !== imp.specifier
+    ) {
       rewrites.set(i, { specifier: replacement });
     }
   }

@@ -87,10 +87,7 @@ describe("lru-node", () => {
 
     it("should support entry with expiry", () => {
       const expiry = Date.now() + 5000;
-      const entry: LRUEntry<string> = {
-        ...createEntry("test", 4),
-        expiry,
-      };
+      const entry: LRUEntry<string> = { ...createEntry("test", 4), expiry };
       const node = new LRUNode("key", entry);
 
       expect(node.entry.expiry).toBe(expiry);
@@ -131,11 +128,8 @@ describe("lru-node", () => {
       node2.next = node3;
 
       const keys: string[] = [];
-      let current: LRUNode<string> | null = node1;
-
-      while (current) {
+      for (let current: LRUNode<string> | null = node1; current; current = current.next) {
         keys.push(current.key);
-        current = current.next;
       }
 
       expect(keys).toEqual(["key1", "key2", "key3"]);
@@ -150,11 +144,8 @@ describe("lru-node", () => {
       node2.prev = node1;
 
       const keys: string[] = [];
-      let current: LRUNode<string> | null = node3;
-
-      while (current) {
+      for (let current: LRUNode<string> | null = node3; current; current = current.prev) {
         keys.push(current.key);
-        current = current.prev;
       }
 
       expect(keys).toEqual(["key3", "key2", "key1"]);

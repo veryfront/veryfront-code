@@ -1,7 +1,3 @@
-/**
- * Service Worker Generation
- */
-
 import type { BuildManifest, ManifestChunkInfo } from "../build/production-build/manifest.ts";
 import { normalizeChunkPath } from "#veryfront/utils/chunk-utils.ts";
 
@@ -24,16 +20,17 @@ function buildManifestAssets(manifest: BuildManifest): string[] {
     "/sw.js",
   ]);
 
-  function addAsset(requestPath: string | null | undefined): void {
+  const addAsset = (requestPath: string | null | undefined): void => {
     if (!requestPath) return;
     assets.add(requestPath.startsWith("/") ? requestPath : `/${requestPath}`);
-  }
+  };
 
   const chunks = manifest.chunks;
   if (chunks) {
-    for (const chunk of Object.values(chunks.chunks ?? {}) as ManifestChunkInfo[]) {
+    const chunkList = Object.values(chunks.chunks ?? {}) as ManifestChunkInfo[];
+    for (const chunk of chunkList) {
       addAsset(normalizeChunkPath(chunk.file, "/_veryfront"));
-      addAsset(chunk.css ? normalizeChunkPath(chunk.css, "/_veryfront") : null);
+      if (chunk.css) addAsset(normalizeChunkPath(chunk.css, "/_veryfront"));
 
       for (const dependency of chunk.imports ?? []) {
         addAsset(normalizeChunkPath(dependency, "/_veryfront/chunks"));
@@ -56,9 +53,6 @@ function buildManifestAssets(manifest: BuildManifest): string[] {
   return Array.from(assets).sort();
 }
 
-/**
- * Generate service worker with advanced caching
- */
 export function generateServiceWorker(manifest: BuildManifest): string {
   const cacheVersion = buildCacheVersion(manifest);
   const staticAssets = buildManifestAssets(manifest);
@@ -113,13 +107,9 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Skip non-GET requests
   if (request.method !== 'GET') return;
-
-  // Skip Chrome extensions
   if (url.protocol === 'chrome-extension:') return;
 
-  // Determine cache strategy
   let strategy = 'networkFirst';
 
   for (const [strat, patterns] of Object.entries(CACHE_STRATEGIES)) {
@@ -139,9 +129,7 @@ async function handleRequest(request, strategy) {
     case 'networkFirst':
       try {
         const response = await fetch(request);
-        if (response.ok) {
-          cache.put(request, response.clone());
-        }
+        if (response.ok) cache.put(request, response.clone());
         return response;
       } catch {
         return cache.match(request);
@@ -152,18 +140,14 @@ async function handleRequest(request, strategy) {
       if (cached) return cached;
 
       const response = await fetch(request);
-      if (response.ok) {
-        cache.put(request, response.clone());
-      }
+      if (response.ok) cache.put(request, response.clone());
       return response;
     }
 
     case 'staleWhileRevalidate': {
       const cachedResponse = await cache.match(request);
       const fetchPromise = fetch(request).then(response => {
-        if (response.ok) {
-          cache.put(request, response.clone());
-        }
+        if (response.ok) cache.put(request, response.clone());
         return response;
       });
 
@@ -175,11 +159,8 @@ async function handleRequest(request, strategy) {
   }
 }
 
-// Handle messages from the client
 self.addEventListener('message', (event) => {
-  if (event.data.type === 'SKIP_WAITING') {
-    self.skipWaiting();
-  }
+  if (event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 `;
 }

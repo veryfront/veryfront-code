@@ -12,19 +12,20 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 // Pure-logic duplicates from http-cache.ts for isolated testing
 // ──────────────────────────────────────────────────────────────
 
-const distributedKey = (prefix: string, hash: string | number) => `${prefix}:${hash}`;
+function distributedKey(prefix: string, hash: string | number): string {
+  return `${prefix}:${hash}`;
+}
 
 function hasIncompatibleFilePaths(code: string, localCacheDir: string): boolean {
   const filePathPattern = /file:\/\/([^"'\s]+)/gi;
-  let match;
+
+  let match: RegExpExecArray | null;
   while ((match = filePathPattern.exec(code)) !== null) {
-    const path = match[1] as string;
-    if (path.includes("veryfront-http-bundle")) {
-      if (!path.startsWith(localCacheDir)) {
-        return true;
-      }
-    }
+    const path = match[1];
+    if (!path.includes("veryfront-http-bundle")) continue;
+    if (!path.startsWith(localCacheDir)) return true;
   }
+
   return false;
 }
 
@@ -41,9 +42,9 @@ function isReactCoreUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     if (!parsed.hostname.includes("esm.sh")) return false;
+
     const pathname = parsed.pathname.replace(/^\/(v\d+|stable)\//, "/");
-    const match = pathname.match(/^\/(react|react-dom)(@[\d.]+)?(?:\/|$|\?)/);
-    return match !== null;
+    return /^\/(react|react-dom)(@[\d.]+)?(?:\/|$|\?)/.test(pathname);
   } catch {
     return false;
   }
@@ -81,11 +82,11 @@ function normalizeEsmShUrl(url: URL): void {
   }
 
   const pathname = url.pathname.replace(/^\/+/, "");
-  const isBaseReact = /^react@[\d.]+(?:\?|$)/.test(pathname);
-  if (isBaseReact) return;
+  if (/^react@[\d.]+(?:\?|$)/.test(pathname)) return;
 
   const existing = url.searchParams.get("external");
   const externals = existing ? existing.split(",") : [];
+
   if (!externals.includes("react")) {
     externals.push("react");
     url.searchParams.set("external", externals.join(","));
@@ -375,9 +376,9 @@ describe("http-cache utilities", { sanitizeResources: false, sanitizeOps: false 
       const result = normalizeHttpUrl("https://esm.sh/pkg@1.0?z=1&a=2");
       const url = new URL(result);
       const keys = [...url.searchParams.keys()];
-      // After sort, params should be in alphabetical order
+
       for (let i = 1; i < keys.length; i++) {
-        assert(keys[i]! >= keys[i - 1]!);
+        assert(keys[i] >= keys[i - 1]);
       }
     });
 
@@ -395,7 +396,9 @@ describe("http-cache utilities", { sanitizeResources: false, sanitizeOps: false 
 
   // ── gzip detection patterns ──
   describe("gzip detection", () => {
-    const isGzipEncoded = (s: string) => s.startsWith("gz:") || s.startsWith("gzip:");
+    function isGzipEncoded(s: string): boolean {
+      return s.startsWith("gz:") || s.startsWith("gzip:");
+    }
 
     it("detects gz: prefix", () => {
       assertEquals(isGzipEncoded("gz:H4sIAA..."), true);

@@ -8,7 +8,7 @@ import { renderTree } from "./tree-processor.ts";
 export class RSCRenderer {
   private clientManifest: Map<string, ClientComponentMeta>;
   private mode: "development" | "production";
-  private clientRefs: Map<string, string> = new Map();
+  private clientRefs = new Map<string, string>();
 
   constructor(options: RSCRendererOptions) {
     this.clientManifest = options.clientManifest;

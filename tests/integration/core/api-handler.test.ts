@@ -10,7 +10,6 @@ import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { APIRouteHandler } from "@veryfront/routing/api/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-import { delay } from "@std/async";
 
 // Track all handlers to clean up after tests
 const handlers: APIRouteHandler[] = [];
@@ -19,6 +18,19 @@ function createHandler(projectDir: string, adapter?: RuntimeAdapter): APIRouteHa
   const handler = new APIRouteHandler(projectDir, adapter);
   handlers.push(handler);
   return handler;
+}
+
+async function setupPagesApiDir(projectDir: string, ...segments: string[]): Promise<void> {
+  await remove(join(projectDir, "app"), { recursive: true });
+  await mkdir(join(projectDir, "pages", "api", ...segments), { recursive: true });
+}
+
+async function writeApiFile(
+  projectDir: string,
+  filePathSegments: string[],
+  contents: string,
+): Promise<void> {
+  await writeTextFile(join(projectDir, "pages", "api", ...filePathSegments), contents);
 }
 
 // Wrap entire test suite in a describe block with sanitizers disabled
@@ -33,38 +45,29 @@ describe(
   () => {
     // Clean up all handlers after each test to prevent interval leaks
     afterEach(() => {
-      while (handlers.length > 0) {
-        const handler = handlers.pop();
-        handler?.destroy();
-      }
+      while (handlers.length) handlers.pop()?.destroy();
     });
 
     describe("APIRouteHandler", () => {
       describe("Basic routing", () => {
         it("handles simple GET request", async () => {
           await withTestContext("api-handler-get", async (context) => {
-            // Remove default app directory to use pages router
-            await remove(join(context.projectDir, "app"), { recursive: true });
-
-            // Create pages/api directory
-            await mkdir(join(context.projectDir, "pages", "api"), {
-              recursive: true,
-            });
+            await setupPagesApiDir(context.projectDir);
 
             const handler = createHandler(context.projectDir, await getAdapter());
 
-            // Create test API route
-            const apiFile = `
+            await writeApiFile(
+              context.projectDir,
+              ["hello.ts"],
+              `
           export const GET = (ctx) => {
             return new Response("Hello from API");
           };
-        `;
-            await writeTextFile(join(context.projectDir, "pages", "api", "hello.ts"), apiFile);
+        `,
+            );
 
-            // Initialize routes
             await handler.initialize();
 
-            // Test request
             const req = new Request("http://localhost/api/hello");
             const res = await handler.handle(req);
 
@@ -76,17 +79,14 @@ describe(
 
         it("handles multiple HTTP methods", async () => {
           await withTestContext("api-handler-methods", async (context) => {
-            // Remove default app directory to use pages router
-            await remove(join(context.projectDir, "app"), { recursive: true });
-
-            // Create pages/api directory
-            await mkdir(join(context.projectDir, "pages", "api"), {
-              recursive: true,
-            });
+            await setupPagesApiDir(context.projectDir);
 
             const handler = createHandler(context.projectDir, await getAdapter());
 
-            const apiFile = `
+            await writeApiFile(
+              context.projectDir,
+              ["resource.ts"],
+              `
           export const GET = (ctx) => {
             return Response.json({ method: "GET" });
           };
@@ -102,15 +102,11 @@ describe(
           export const DELETE = (ctx) => {
             return Response.json({ method: "DELETE" });
           };
-        `;
-            await writeTextFile(
-              join(context.projectDir, "pages", "api", "resource.ts"),
-              apiFile,
+        `,
             );
 
             await handler.initialize();
 
-            // Test each method
             for (const method of ["GET", "POST", "PUT", "DELETE"]) {
               const req = new Request("http://localhost/api/resource", { method });
               const res = await handler.handle(req);
@@ -125,32 +121,23 @@ describe(
 
         it("returns 405 for unsupported methods", async () => {
           await withTestContext("api-handler-405", async (context) => {
-            // Remove default app directory to use pages router
-            await remove(join(context.projectDir, "app"), { recursive: true });
-
-            // Create pages/api directory
-            await mkdir(join(context.projectDir, "pages", "api"), {
-              recursive: true,
-            });
+            await setupPagesApiDir(context.projectDir);
 
             const handler = createHandler(context.projectDir, await getAdapter());
 
-            const apiFile = `
+            await writeApiFile(
+              context.projectDir,
+              ["limited.ts"],
+              `
           export const GET = (ctx) => {
             return new Response("Only GET");
           };
-        `;
-            await writeTextFile(
-              join(context.projectDir, "pages", "api", "limited.ts"),
-              apiFile,
+        `,
             );
 
             await handler.initialize();
 
-            // Try unsupported method
-            const req = new Request("http://localhost/api/limited", {
-              method: "POST",
-            });
+            const req = new Request("http://localhost/api/limited", { method: "POST" });
             const res = await handler.handle(req);
 
             assertExists(res);
@@ -175,24 +162,18 @@ describe(
       describe("Dynamic routes", () => {
         it("handles single dynamic segment", async () => {
           await withTestContext("api-handler-dynamic-single", async (context) => {
-            // Remove default app directory to use pages router
-            await remove(join(context.projectDir, "app"), { recursive: true });
-
-            // Create pages/api directory
-            await mkdir(join(context.projectDir, "pages", "api", "users"), {
-              recursive: true,
-            });
+            await setupPagesApiDir(context.projectDir, "users");
 
             const handler = createHandler(context.projectDir, await getAdapter());
 
-            const apiFile = `
+            await writeApiFile(
+              context.projectDir,
+              ["users", "[id].ts"],
+              `
           export const GET = (ctx) => {
             return Response.json({ userId: ctx.params.id });
           };
-        `;
-            await writeTextFile(
-              join(context.projectDir, "pages", "api", "users", "[id].ts"),
-              apiFile,
+        `,
             );
 
             await handler.initialize();
@@ -209,38 +190,21 @@ describe(
 
         it("handles multiple dynamic segments", async () => {
           await withTestContext("api-handler-dynamic-multiple", async (context) => {
-            // Remove default app directory to use pages router
-            await remove(join(context.projectDir, "app"), { recursive: true });
-
-            // Create pages/api directory
-            await mkdir(
-              join(context.projectDir, "pages", "api", "posts", "[id]", "comments"),
-              {
-                recursive: true,
-              },
-            );
+            await setupPagesApiDir(context.projectDir, "posts", "[id]", "comments");
 
             const handler = createHandler(context.projectDir, await getAdapter());
 
-            const apiFile = `
+            await writeApiFile(
+              context.projectDir,
+              ["posts", "[id]", "comments", "[commentId].ts"],
+              `
           export const GET = (ctx) => {
             return Response.json({ 
               postId: ctx.params.id,
               commentId: ctx.params.commentId 
             });
           };
-        `;
-            await writeTextFile(
-              join(
-                context.projectDir,
-                "pages",
-                "api",
-                "posts",
-                "[id]",
-                "comments",
-                "[commentId].ts",
-              ),
-              apiFile,
+        `,
             );
 
             await handler.initialize();
@@ -258,24 +222,18 @@ describe(
 
         it("handles catch-all routes", async () => {
           await withTestContext("api-handler-catch-all", async (context) => {
-            // Remove default app directory to use pages router
-            await remove(join(context.projectDir, "app"), { recursive: true });
-
-            // Create pages/api directory
-            await mkdir(join(context.projectDir, "pages", "api"), {
-              recursive: true,
-            });
+            await setupPagesApiDir(context.projectDir);
 
             const handler = createHandler(context.projectDir, await getAdapter());
 
-            const apiFile = `
+            await writeApiFile(
+              context.projectDir,
+              ["[...slug].ts"],
+              `
           export const GET = (ctx) => {
             return Response.json({ path: ctx.params.slug });
           };
-        `;
-            await writeTextFile(
-              join(context.projectDir, "pages", "api", "[...slug].ts"),
-              apiFile,
+        `,
             );
 
             await handler.initialize();
@@ -295,24 +253,21 @@ describe(
       describe("Request context", () => {
         it("provides query parameters", async () => {
           await withTestContext("api-handler-query", async (context) => {
-            // Remove default app directory to use pages router
-            await remove(join(context.projectDir, "app"), { recursive: true });
-
-            // Create pages/api directory
-            await mkdir(join(context.projectDir, "pages", "api"), {
-              recursive: true,
-            });
+            await setupPagesApiDir(context.projectDir);
 
             const handler = createHandler(context.projectDir, await getAdapter());
 
-            const apiFile = `
+            await writeApiFile(
+              context.projectDir,
+              ["query.ts"],
+              `
           export const GET = (ctx) => {
             const name = ctx.query.get("name");
             const age = ctx.query.get("age");
             return Response.json({ name, age });
           };
-        `;
-            await writeTextFile(join(context.projectDir, "pages", "api", "query.ts"), apiFile);
+        `,
+            );
 
             await handler.initialize();
 
@@ -329,26 +284,20 @@ describe(
 
         it("provides request headers", async () => {
           await withTestContext("api-handler-headers", async (context) => {
-            // Remove default app directory to use pages router
-            await remove(join(context.projectDir, "app"), { recursive: true });
-
-            // Create pages/api directory
-            await mkdir(join(context.projectDir, "pages", "api"), {
-              recursive: true,
-            });
+            await setupPagesApiDir(context.projectDir);
 
             const handler = createHandler(context.projectDir, await getAdapter());
 
-            const apiFile = `
+            await writeApiFile(
+              context.projectDir,
+              ["headers.ts"],
+              `
           export const GET = (ctx) => {
             const auth = ctx.request.headers.get("authorization");
             const contentType = ctx.request.headers.get("content-type");
             return Response.json({ auth, contentType });
           };
-        `;
-            await writeTextFile(
-              join(context.projectDir, "pages", "api", "headers.ts"),
-              apiFile,
+        `,
             );
 
             await handler.initialize();
@@ -373,24 +322,18 @@ describe(
       describe("Response helpers", () => {
         it("handles json response helper", async () => {
           await withTestContext("api-handler-json-helper", async (context) => {
-            // Remove default app directory to use pages router
-            await remove(join(context.projectDir, "app"), { recursive: true });
-
-            // Create pages/api directory
-            await mkdir(join(context.projectDir, "pages", "api"), {
-              recursive: true,
-            });
+            await setupPagesApiDir(context.projectDir);
 
             const handler = createHandler(context.projectDir, await getAdapter());
 
-            const apiFile = `
+            await writeApiFile(
+              context.projectDir,
+              ["json-helper.ts"],
+              `
           export const GET = (ctx) => {
             return Response.json({ message: "Hello", timestamp: Date.now() });
           };
-        `;
-            await writeTextFile(
-              join(context.projectDir, "pages", "api", "json-helper.ts"),
-              apiFile,
+        `,
             );
 
             await handler.initialize();
@@ -400,13 +343,13 @@ describe(
 
             assertExists(res);
             assertEquals(res.status, 200);
-            // Content-type may have charset suffix depending on runtime
+
+            const contentType = res.headers.get("content-type");
             assert(
-              res.headers.get("content-type")?.startsWith("application/json"),
-              `Expected content-type to start with application/json, got ${
-                res.headers.get("content-type")
-              }`,
+              contentType?.startsWith("application/json"),
+              `Expected content-type to start with application/json, got ${contentType}`,
             );
+
             const data = await res.json();
             assertEquals(data.message, "Hello");
             assertExists(data.timestamp);
@@ -415,17 +358,14 @@ describe(
 
         it("handles error response helpers", async () => {
           await withTestContext("api-handler-error-helpers", async (context) => {
-            // Remove default app directory to use pages router
-            await remove(join(context.projectDir, "app"), { recursive: true });
-
-            // Create pages/api directory
-            await mkdir(join(context.projectDir, "pages", "api"), {
-              recursive: true,
-            });
+            await setupPagesApiDir(context.projectDir);
 
             const handler = createHandler(context.projectDir, await getAdapter());
 
-            const apiFile = `
+            await writeApiFile(
+              context.projectDir,
+              ["errors.ts"],
+              `
           export const GET = (ctx) => {
             const type = ctx.query.get("type");
             
@@ -438,15 +378,11 @@ describe(
               default: return new Response("Unknown type");
             }
           };
-        `;
-            await writeTextFile(
-              join(context.projectDir, "pages", "api", "errors.ts"),
-              apiFile,
+        `,
             );
 
             await handler.initialize();
 
-            // Test each error type
             const tests = [
               { type: "bad", status: 400, message: "Invalid input" },
               { type: "unauth", status: 401, message: "Not authenticated" },
@@ -469,27 +405,21 @@ describe(
 
         it("handles redirect helper", async () => {
           await withTestContext("api-handler-redirect", async (context) => {
-            // Remove default app directory to use pages router
-            await remove(join(context.projectDir, "app"), { recursive: true });
-
-            // Create pages/api directory
-            await mkdir(join(context.projectDir, "pages", "api"), {
-              recursive: true,
-            });
+            await setupPagesApiDir(context.projectDir);
 
             const handler = createHandler(context.projectDir, await getAdapter());
 
-            const apiFile = `
+            await writeApiFile(
+              context.projectDir,
+              ["redirect.ts"],
+              `
           export const GET = (ctx) => {
             return new Response(null, {
               status: 302,
               headers: { "location": "/new-location" }
             });
           };
-        `;
-            await writeTextFile(
-              join(context.projectDir, "pages", "api", "redirect.ts"),
-              apiFile,
+        `,
             );
 
             await handler.initialize();
@@ -507,22 +437,19 @@ describe(
       describe("Error handling", () => {
         it("handles route handler errors gracefully", async () => {
           await withTestContext("api-handler-error-handling", async (context) => {
-            // Remove default app directory to use pages router
-            await remove(join(context.projectDir, "app"), { recursive: true });
-
-            // Create pages/api directory
-            await mkdir(join(context.projectDir, "pages", "api"), {
-              recursive: true,
-            });
+            await setupPagesApiDir(context.projectDir);
 
             const handler = createHandler(context.projectDir, await getAdapter());
 
-            const apiFile = `
+            await writeApiFile(
+              context.projectDir,
+              ["error.ts"],
+              `
           export const GET = (ctx) => {
             throw new Error("Something went wrong");
           };
-        `;
-            await writeTextFile(join(context.projectDir, "pages", "api", "error.ts"), apiFile);
+        `,
+            );
 
             await handler.initialize();
 
@@ -531,42 +458,35 @@ describe(
 
             assertExists(res);
             assertEquals(res.status, 500);
-            // Response format depends on NODE_ENV
-            const contentType = res.headers.get("content-type") || "";
+
+            const contentType = res.headers.get("content-type") ?? "";
             if (contentType.includes("application/json")) {
-              // Development mode: returns JSON with error and stack
               const json = await res.json();
               assertEquals(json.error, "Something went wrong");
               assertExists(json.stack);
-            } else {
-              // Production mode: returns plain text error
-              const text = await res.text();
-              assertExists(text);
+              return;
             }
+
+            const text = await res.text();
+            assertExists(text);
           });
         });
 
         it("handles async errors", async () => {
           await withTestContext("api-handler-async-error", async (context) => {
-            // Remove default app directory to use pages router
-            await remove(join(context.projectDir, "app"), { recursive: true });
-
-            // Create pages/api directory
-            await mkdir(join(context.projectDir, "pages", "api"), {
-              recursive: true,
-            });
+            await setupPagesApiDir(context.projectDir);
 
             const handler = createHandler(context.projectDir, await getAdapter());
 
-            const apiFile = `
+            await writeApiFile(
+              context.projectDir,
+              ["async-error.ts"],
+              `
           export const GET = async (ctx) => {
             await delay(10);
             throw new Error("Async error");
           };
-        `;
-            await writeTextFile(
-              join(context.projectDir, "pages", "api", "async-error.ts"),
-              apiFile,
+        `,
             );
 
             await handler.initialize();

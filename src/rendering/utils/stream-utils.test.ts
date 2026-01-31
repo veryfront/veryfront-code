@@ -2,11 +2,14 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { StreamTimeoutError, streamToString } from "./stream-utils.ts";
 
-function createStream(chunks: Array<Uint8Array | null>, close = true): ReadableStream<Uint8Array> {
-  return new ReadableStream({
+function createStream(
+  chunks: Array<Uint8Array | null>,
+  close = true,
+): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
     start(controller) {
       for (const chunk of chunks) {
-        controller.enqueue(chunk as unknown as Uint8Array);
+        if (chunk) controller.enqueue(chunk);
       }
       if (close) controller.close();
     },

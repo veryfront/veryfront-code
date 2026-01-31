@@ -1,13 +1,19 @@
-// Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { APIContext } from "../context-builder.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { APIContext } from "../context-builder.ts";
 
 export interface AppRouteContext {
   params: Record<string, string>;
 }
 
-export type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
+export type HTTPMethod =
+  | "GET"
+  | "POST"
+  | "PUT"
+  | "DELETE"
+  | "PATCH"
+  | "HEAD"
+  | "OPTIONS";
 
 export type PagesRouteHandler = (ctx: APIContext) => Promise<Response> | Response;
 

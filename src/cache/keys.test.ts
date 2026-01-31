@@ -76,7 +76,6 @@ describe("cache/keys", () => {
   });
 
   describe("computeContentSourceId", () => {
-    // Local development cases
     it("should return local-{branch} for local dev", () => {
       assertEquals(computeContentSourceId(true, "preview", "feature-x", null), "local-feature-x");
     });
@@ -86,14 +85,9 @@ describe("cache/keys", () => {
     });
 
     it("should return local-{branch} for local dev even in production environment", () => {
-      // Local dev takes precedence over environment
-      assertEquals(
-        computeContentSourceId(true, "production", "main", "rel_123"),
-        "local-main",
-      );
+      assertEquals(computeContentSourceId(true, "production", "main", "rel_123"), "local-main");
     });
 
-    // Preview cases
     it("should return preview-{branch} for remote preview", () => {
       assertEquals(
         computeContentSourceId(false, "preview", "feature-branch", null),
@@ -105,7 +99,6 @@ describe("cache/keys", () => {
       assertEquals(computeContentSourceId(false, "preview", null, null), "preview-main");
     });
 
-    // Production cases
     it("should return release-{releaseId} for remote production", () => {
       assertEquals(
         computeContentSourceId(false, "production", "main", "rel_abc123"),

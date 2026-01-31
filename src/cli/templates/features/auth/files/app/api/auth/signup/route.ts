@@ -4,7 +4,10 @@ import { sign } from "../../../../lib/jwt.ts";
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const { email, password, name } = await req.json();
+    const body = await req.json();
+    const email = body?.email;
+    const password = body?.password;
+    const name = body?.name;
 
     if (!email || !password || !name) {
       return Response.json({ error: "Missing required fields" }, { status: 400 });

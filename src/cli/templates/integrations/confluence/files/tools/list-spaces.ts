@@ -23,13 +23,13 @@ export default tool({
       limit,
     });
 
-    return spaces.map((space) => ({
-      id: space.id,
-      key: space.key,
-      name: space.name,
-      type: space.type,
-      status: space.status,
-      url: space._links.webui,
+    return spaces.map(({ id, key, name, type, status, _links }) => ({
+      id,
+      key,
+      name,
+      type,
+      status,
+      url: _links.webui,
     }));
   },
 });

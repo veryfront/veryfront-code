@@ -128,11 +128,13 @@ async function figmaFetch<T>(endpoint: string, options: RequestInit = {}): Promi
     },
   });
 
-  if (response.ok) return response.json();
+  if (response.ok) {
+    return response.json() as Promise<T>;
+  }
 
-  const error = await response.json().catch(() => ({} as { message?: string; err?: string }));
+  const error = (await response.json().catch(() => ({}))) as { message?: string; err?: string };
   throw new Error(
-    `Figma API error: ${response.status} ${error.message || error.err || response.statusText}`,
+    `Figma API error: ${response.status} ${error.message ?? error.err ?? response.statusText}`,
   );
 }
 
@@ -155,13 +157,15 @@ export function getFile(
 
   if (options?.version) params.set("version", options.version);
   if (options?.ids?.length) params.set("ids", options.ids.join(","));
-  if (options?.depth) params.set("depth", options.depth.toString());
+  if (options?.depth) params.set("depth", String(options.depth));
   if (options?.geometry) params.set("geometry", options.geometry);
   if (options?.plugin_data) params.set("plugin_data", options.plugin_data);
   if (options?.branch_data) params.set("branch_data", "true");
 
   const query = params.toString();
-  return figmaFetch<FigmaFile>(`/files/${fileKey}${query ? `?${query}` : ""}`);
+  const url = query ? `/files/${fileKey}?${query}` : `/files/${fileKey}`;
+
+  return figmaFetch<FigmaFile>(url);
 }
 
 export function getFileNodes(
@@ -199,7 +203,7 @@ export function getFileImages(
     format: options?.format ?? "png",
   });
 
-  if (options?.scale) params.set("scale", options.scale.toString());
+  if (options?.scale) params.set("scale", String(options.scale));
   if (options?.svg_include_id) params.set("svg_include_id", "true");
   if (options?.svg_simplify_stroke) params.set("svg_simplify_stroke", "true");
   if (options?.use_absolute_bounds) params.set("use_absolute_bounds", "true");
@@ -297,7 +301,10 @@ export function extractStyles(file: FigmaFile): Array<{
 
 export function findNodesByType(node: FigmaNode, type: string): FigmaNode[] {
   const results: FigmaNode[] = [];
-  if (node.type === type) results.push(node);
+
+  if (node.type === type) {
+    results.push(node);
+  }
 
   for (const child of node.children ?? []) {
     results.push(...findNodesByType(child, type));

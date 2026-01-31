@@ -21,10 +21,6 @@ import {
   registerMapCache,
 } from "./registry.ts";
 
-// ---------------------------------------------------------------------------
-// MapCacheStore
-// ---------------------------------------------------------------------------
-
 describe("MapCacheStore", () => {
   it("should expose name", () => {
     const store = new MapCacheStore("test", new Map());
@@ -32,19 +28,29 @@ describe("MapCacheStore", () => {
   });
 
   it("should report size", () => {
-    const map = new Map<string, unknown>([["a", 1], ["b", 2]]);
+    const map = new Map<string, unknown>([
+      ["a", 1],
+      ["b", 2],
+    ]);
     const store = new MapCacheStore("test", map);
     assertEquals(store.size(), 2);
   });
 
   it("should iterate keys", () => {
-    const map = new Map<string, unknown>([["a", 1], ["b", 2]]);
+    const map = new Map<string, unknown>([
+      ["a", 1],
+      ["b", 2],
+    ]);
     const store = new MapCacheStore("test", map);
     assertEquals([...store.keys()].sort(), ["a", "b"]);
   });
 
   it("should delete matching keys", () => {
-    const map = new Map<string, unknown>([["proj1:a", 1], ["proj2:b", 2], ["proj1:c", 3]]);
+    const map = new Map<string, unknown>([
+      ["proj1:a", 1],
+      ["proj2:b", 2],
+      ["proj1:c", 3],
+    ]);
     const store = new MapCacheStore("test", map);
     const deleted = store.deleteWhere((key) => key.startsWith("proj1:"));
     assertEquals(deleted, 2);
@@ -60,13 +66,16 @@ describe("MapCacheStore", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// LRUCacheStore
-// ---------------------------------------------------------------------------
-
 describe("LRUCacheStore", () => {
-  function createMockLRU() {
+  function createMockLRU(): {
+    keys: () => IterableIterator<string>;
+    readonly size: number;
+    delete: (key: string) => boolean;
+    set: (key: string, value: unknown) => void;
+    _map: Map<string, unknown>;
+  } {
     const map = new Map<string, unknown>();
+
     return {
       keys: () => map.keys(),
       get size() {
@@ -89,6 +98,7 @@ describe("LRUCacheStore", () => {
     const lru = createMockLRU();
     lru.set("a", 1);
     lru.set("b", 2);
+
     const store = new LRUCacheStore("test", lru);
     assertEquals(store.size(), 2);
   });
@@ -97,16 +107,13 @@ describe("LRUCacheStore", () => {
     const lru = createMockLRU();
     lru.set("proj1:a", 1);
     lru.set("proj2:b", 2);
+
     const store = new LRUCacheStore("test", lru);
     const deleted = store.deleteWhere((key) => key.startsWith("proj1:"));
     assertEquals(deleted, 1);
     assertEquals(lru.size, 1);
   });
 });
-
-// ---------------------------------------------------------------------------
-// isKeyForProject
-// ---------------------------------------------------------------------------
 
 describe("isKeyForProject", () => {
   it("should match projectId at position 1", () => {
@@ -133,10 +140,6 @@ describe("isKeyForProject", () => {
     assertEquals(isKeyForProject("a::b", ""), true);
   });
 });
-
-// ---------------------------------------------------------------------------
-// isKeyForProjectEnvironment
-// ---------------------------------------------------------------------------
 
 describe("isKeyForProjectEnvironment", () => {
   // Render cache keys: {projectId}:{environment}:{releaseKey}:{version}
@@ -312,24 +315,16 @@ describe("isKeyForProjectEnvironment", () => {
   });
 
   it("should return false for non-project key", () => {
-    assertEquals(
-      isKeyForProjectEnvironment("other:data:stuff", "proj1", "production"),
-      false,
-    );
+    assertEquals(isKeyForProjectEnvironment("other:data:stuff", "proj1", "production"), false);
   });
 
   it("should return null environment for ambiguous key", () => {
-    // Key with no recognizable environment pattern
     assertEquals(
       isKeyForProjectEnvironment("a:proj1:unknown-prefix:data", "proj1", "production"),
       false,
     );
   });
 });
-
-// ---------------------------------------------------------------------------
-// extractProjectIdFromKey
-// ---------------------------------------------------------------------------
 
 describe("extractProjectIdFromKey", () => {
   it("should extract second part as projectId", () => {
@@ -345,18 +340,9 @@ describe("extractProjectIdFromKey", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// CacheRegistry instance operations
-// ---------------------------------------------------------------------------
-
 describe("CacheRegistry", () => {
-  beforeEach(() => {
-    cacheRegistry.clear();
-  });
-
-  afterEach(() => {
-    cacheRegistry.clear();
-  });
+  beforeEach(() => cacheRegistry.clear());
+  afterEach(() => cacheRegistry.clear());
 
   it("should register and retrieve a store by name", () => {
     registerMapCache("my-store", new Map());
@@ -368,6 +354,7 @@ describe("CacheRegistry", () => {
   it("should list registered store names", () => {
     registerMapCache("s1", new Map());
     registerMapCache("s2", new Map());
+
     const names = cacheRegistry.getStoreNames();
     assertEquals(names.includes("s1"), true);
     assertEquals(names.includes("s2"), true);
@@ -462,7 +449,7 @@ describe("CacheRegistry", () => {
     assertEquals(stats.length, 1);
     assertEquals(stats[0]!.name, "stats-store");
     assertEquals(stats[0]!.size, 10);
-    assertEquals(stats[0]!.sampleKeys.length, 5); // max 5 samples
+    assertEquals(stats[0]!.sampleKeys.length, 5);
   });
 
   it("should register LRU cache via helper", () => {
@@ -476,6 +463,7 @@ describe("CacheRegistry", () => {
         return true;
       },
     };
+
     registerLRUCache("lru-test", lru);
     const store = cacheRegistry.get("lru-test");
     assertExists(store);
@@ -485,6 +473,7 @@ describe("CacheRegistry", () => {
   it("should replace existing store on duplicate registration (no throw)", () => {
     registerMapCache("dup", new Map<string, unknown>([["old", 1]]));
     registerMapCache("dup", new Map<string, unknown>([["new", 2]]));
+
     const store = cacheRegistry.get("dup");
     assertExists(store);
     assertEquals([...store.keys()], ["new"]);
@@ -498,7 +487,6 @@ describe("CacheRegistry", () => {
   });
 
   it("should handle stores without deleteWhere gracefully", () => {
-    // A store that doesn't implement deleteWhere
     const minimalStore = {
       name: "minimal",
       keys: () => ["a:proj1:x"][Symbol.iterator](),
@@ -506,7 +494,6 @@ describe("CacheRegistry", () => {
     };
     cacheRegistry.register(minimalStore);
 
-    // Should not throw, returns 0 deleted
     const deleted = cacheRegistry.deleteKeysForProject("proj1");
     assertEquals(deleted, 0);
   });

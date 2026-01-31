@@ -33,17 +33,13 @@ export function createValidatedHandler<TBody = unknown, TQuery = unknown>(
 
       return await handler(request, validated);
     } catch (error) {
-      if (!(error instanceof ValidationError)) throw error;
+      if (!(error instanceof ValidationError)) {
+        throw error;
+      }
 
       return new Response(
-        JSON.stringify({
-          error: error.message,
-          details: error.details,
-        }),
-        {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        },
+        JSON.stringify({ error: error.message, details: error.details }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
       );
     }
   };

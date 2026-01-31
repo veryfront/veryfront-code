@@ -16,12 +16,9 @@ const DEFAULT_OPTIONS: PrefetchQueueOptions = {
 };
 
 function isAbortError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "name" in error &&
-    (error as { name?: string }).name === "AbortError"
-  );
+  if (typeof error !== "object" || error === null) return false;
+  if (!("name" in error)) return false;
+  return (error as { name?: string }).name === "AbortError";
 }
 
 export class PrefetchQueue {

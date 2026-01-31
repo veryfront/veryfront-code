@@ -1,4 +1,4 @@
-import * as React from "react";
+import type { ReactNode, JSX } from "react";
 import { AuthProvider } from "../components/AuthProvider.tsx";
 import { Toaster } from "../components/Toaster.tsx";
 
@@ -7,11 +7,7 @@ export const metadata = {
   description: "A full-stack app built with Veryfront",
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}): React.JSX.Element {
+export default function RootLayout({ children }: { children: ReactNode }): JSX.Element {
   return (
     <AuthProvider>
       <div className="min-h-screen bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 antialiased">

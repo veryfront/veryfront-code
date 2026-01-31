@@ -3,6 +3,8 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { DemoOptions } from "./demo.ts";
 import { DEMO_STEPS } from "./steps.ts";
 
+const LOGIN_METHODS = ["google", "github", "microsoft", "token"] as const;
+
 describe("DemoOptions interface", () => {
   it("should accept empty options", () => {
     const options: DemoOptions = {};
@@ -20,9 +22,7 @@ describe("DemoOptions interface", () => {
   });
 
   it("should accept loginMethod option", () => {
-    const methods = ["google", "github", "microsoft", "token"] as const;
-
-    for (const method of methods) {
+    for (const method of LOGIN_METHODS) {
       const options: DemoOptions = { loginMethod: method };
       assertEquals(options.loginMethod, method);
     }
@@ -88,9 +88,7 @@ describe("Demo steps for auto mode", () => {
 
 describe("Demo auto mode configuration", () => {
   it("should support all login methods for auto mode", () => {
-    const methods = ["google", "github", "microsoft", "token"] as const;
-
-    for (const method of methods) {
+    for (const method of LOGIN_METHODS) {
       const options: DemoOptions = { auto: true, loginMethod: method };
       assertEquals(options.loginMethod, method);
     }

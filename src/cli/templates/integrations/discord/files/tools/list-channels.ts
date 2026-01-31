@@ -13,23 +13,11 @@ export default tool({
   async execute({ guildId, includeCategories }) {
     const channels = await listChannels(guildId);
 
-    if (!includeCategories) {
-      return channels
-        .filter((channel) => channel.type !== 4)
-        .map((channel) => ({
-          id: channel.id,
-          name: channel.name,
-          type: getChannelTypeName(channel.type),
-          typeId: channel.type,
-          topic: channel.topic,
-          nsfw: channel.nsfw,
-          position: channel.position,
-          parentId: channel.parent_id,
-          lastMessageId: channel.last_message_id,
-        }));
-    }
+    const filteredChannels = includeCategories
+      ? channels
+      : channels.filter((channel) => channel.type !== 4);
 
-    return channels.map((channel) => ({
+    return filteredChannels.map((channel) => ({
       id: channel.id,
       name: channel.name,
       type: getChannelTypeName(channel.type),

@@ -4,6 +4,10 @@ import { getRendererScript } from "./renderer.ts";
 
 describe("hydration-script-builder/templates/renderer", () => {
   describe("getRendererScript", () => {
+    function assertIncludes(result: string, substring: string): void {
+      assertEquals(result.includes(substring), true);
+    }
+
     it("should return a non-empty string", () => {
       const result = getRendererScript();
       assertEquals(typeof result, "string");
@@ -11,124 +15,104 @@ describe("hydration-script-builder/templates/renderer", () => {
     });
 
     it("should define async renderPage function", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("async function renderPage(pathname)"), true);
+      assertIncludes(getRendererScript(), "async function renderPage(pathname)");
     });
 
     it("should look for veryfront-hydration-data script element", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("getElementById('veryfront-hydration-data')"), true);
+      assertIncludes(getRendererScript(), "getElementById('veryfront-hydration-data')");
     });
 
     it("should parse hydration data as JSON", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("JSON.parse"), true);
+      assertIncludes(getRendererScript(), "JSON.parse");
     });
 
     it("should handle studioEmbed flag", () => {
       const result = getRendererScript();
-      assertEquals(result.includes("data.studioEmbed"), true);
-      assertEquals(result.includes("__veryfrontSetStudioEmbed"), true);
+      assertIncludes(result, "data.studioEmbed");
+      assertIncludes(result, "__veryfrontSetStudioEmbed");
     });
 
     it("should use pathToModuleUrl for page loading", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("pathToModuleUrl(data.pagePath"), true);
+      assertIncludes(getRendererScript(), "pathToModuleUrl(data.pagePath");
     });
 
     it("should fallback to Pages Router pattern", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("Falling back to Pages Router pattern"), true);
+      assertIncludes(getRendererScript(), "Falling back to Pages Router pattern");
     });
 
     it("should handle root path in fallback", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("pathname === '/' ? 'index' : pathname.slice(1)"), true);
+      assertIncludes(getRendererScript(), "pathname === '/' ? 'index' : pathname.slice(1)");
     });
 
     it("should get PageComponent from default export", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("pageModule.default || pageModule"), true);
+      assertIncludes(getRendererScript(), "pageModule.default || pageModule");
     });
 
     it("should merge props with params", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("...(data.props || {}), params: data.params || {}"), true);
+      assertIncludes(getRendererScript(), "...(data.props || {}), params: data.params || {}");
     });
 
     it("should wrap with layouts from innermost to outermost", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("data.layouts.length - 1; i >= 0; i--"), true);
+      assertIncludes(getRendererScript(), "layouts.length - 1; i >= 0; i--");
     });
 
     it("should wrap with App component when appPath is provided", () => {
       const result = getRendererScript();
-      assertEquals(result.includes("data.appPath"), true);
-      assertEquals(result.includes("loadComponent(data.appPath)"), true);
+      assertIncludes(result, "data.appPath");
+      assertIncludes(result, "loadComponent(data.appPath)");
     });
 
     it("should build page context with slug, path, params, query, frontmatter, and headings", () => {
       const result = getRendererScript();
-      assertEquals(result.includes("slug: data.slug"), true);
-      assertEquals(result.includes("path: data.pagePath"), true);
-      assertEquals(result.includes("params: data.params"), true);
-      assertEquals(result.includes("frontmatter: data.frontmatter"), true);
-      assertEquals(result.includes("headings: headingsArray"), true);
+      assertIncludes(result, "slug: data.slug");
+      assertIncludes(result, "path: data.pagePath");
+      assertIncludes(result, "params: data.params");
+      assertIncludes(result, "frontmatter: data.frontmatter");
+      assertIncludes(result, "headings,");
     });
 
     it("should include mdxHeadings alias for backwards compatibility", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("mdxHeadings: headingsArray"), true);
+      assertIncludes(getRendererScript(), "mdxHeadings: headings");
     });
 
     it("should wrap with PageContextProvider", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("PageContextProvider"), true);
+      assertIncludes(getRendererScript(), "PageContextProvider");
     });
 
     it("should wrap with RouterProvider", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("RouterProvider"), true);
+      assertIncludes(getRendererScript(), "RouterProvider");
     });
 
     it("should use hydrateRoot for initial render", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("hydrateRoot"), true);
+      assertIncludes(getRendererScript(), "hydrateRoot");
     });
 
     it("should use identifierPrefix 'vf'", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("identifierPrefix: 'vf'"), true);
+      assertIncludes(getRendererScript(), "identifierPrefix: 'vf'");
     });
 
     it("should expose renderPage on window for HMR", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("window.__veryfrontRenderPage = renderPage"), true);
+      assertIncludes(getRendererScript(), "window.__veryfrontRenderPage = renderPage");
     });
 
     it("should store initial page data in history state", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("window.history.replaceState"), true);
+      assertIncludes(getRendererScript(), "window.history.replaceState");
     });
 
     it("should signal hydration complete", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("__veryfrontHydrationComplete"), true);
+      assertIncludes(getRendererScript(), "__veryfrontHydrationComplete");
     });
 
     it("should signal hydration failed", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("__veryfrontHydrationFailed"), true);
+      assertIncludes(getRendererScript(), "__veryfrontHydrationFailed");
     });
 
     it("should look for veryfront-content container", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("getElementById('veryfront-content')"), true);
+      assertIncludes(getRendererScript(), "getElementById('veryfront-content')");
     });
 
     it("should support re-rendering via __reactRoot", () => {
-      const result = getRendererScript();
-      assertEquals(result.includes("container.__reactRoot"), true);
+      assertIncludes(getRendererScript(), "container.__reactRoot");
     });
   });
 });

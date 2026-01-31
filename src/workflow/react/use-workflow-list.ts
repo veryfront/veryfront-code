@@ -79,25 +79,25 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
   }, []);
 
   const fetchRuns = useCallback(
-    async (append: boolean = false): Promise<void> => {
+    async (append = false): Promise<void> => {
       try {
         const queryString = buildQueryString(filter, append ? cursor : undefined);
         const response = await fetch(`${apiBase}/runs?${queryString}`);
 
         if (!response.ok) throw new Error(`Failed to fetch runs: ${response.status}`);
 
-        const data = await response.json();
-        const fetchedRuns = (data.runs ?? data) as WorkflowRun[];
-        const nextCursor = data.cursor as string | undefined;
-        const total = data.totalCount as number | undefined;
+        const data: any = await response.json();
+        const fetchedRuns: WorkflowRun[] = data.runs ?? data;
+        const nextCursor: string | undefined = data.cursor;
+        const total: number | undefined = data.totalCount;
 
         setRuns((prev) => (append ? [...prev, ...fetchedRuns] : fetchedRuns));
         setCursor(nextCursor);
         setHasMore(Boolean(nextCursor) || fetchedRuns.length === filter.limit);
         setTotalCount(total);
         setError(null);
-      } catch (error) {
-        setError(error instanceof Error ? error : new Error(String(error)));
+      } catch (err) {
+        setError(err instanceof Error ? err : new Error(String(err)));
       }
     },
     [apiBase, buildQueryString, cursor, filter],
@@ -145,7 +145,7 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
   }, [fetchRuns]);
 
   const setFilter = useCallback((newFilter: Partial<UseWorkflowListOptions>): void => {
-    setCursor(undefined); // Reset pagination
+    setCursor(undefined);
     setFilterState((prev) => ({
       ...prev,
       workflowId: newFilter.workflowId ?? prev.workflowId,

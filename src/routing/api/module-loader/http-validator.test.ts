@@ -9,19 +9,18 @@ describe("routing/api/module-loader/http-validator", () => {
     });
 
     it("should allow imports from allowed hosts", () => {
-      validateHTTPImports(
-        'import React from "https://esm.sh/react@18";',
-        ["https://esm.sh"],
-      );
+      validateHTTPImports('import React from "https://esm.sh/react@18";', [
+        "https://esm.sh",
+      ]);
     });
 
     it("should reject imports from non-allowed hosts", () => {
       assertThrows(
-        () =>
-          validateHTTPImports(
-            'import malware from "https://evil.com/bad.js";',
-            ["https://esm.sh"],
-          ),
+        () => {
+          validateHTTPImports('import malware from "https://evil.com/bad.js";', [
+            "https://esm.sh",
+          ]);
+        },
         Error,
         "Remote import blocked",
       );
@@ -29,11 +28,11 @@ describe("routing/api/module-loader/http-validator", () => {
 
     it("should check dynamic imports", () => {
       assertThrows(
-        () =>
-          validateHTTPImports(
-            'const mod = import("https://evil.com/mod.js");',
-            ["https://esm.sh"],
-          ),
+        () => {
+          validateHTTPImports('const mod = import("https://evil.com/mod.js");', [
+            "https://esm.sh",
+          ]);
+        },
         Error,
         "Remote import blocked",
       );

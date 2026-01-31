@@ -11,17 +11,17 @@ import {
 describe("issues/schema", () => {
   describe("ISSUE_PREFIXES", () => {
     it("should include ISSUE, TASK, PLAN", () => {
-      assertEquals(ISSUE_PREFIXES.includes("ISSUE"), true);
-      assertEquals(ISSUE_PREFIXES.includes("TASK"), true);
-      assertEquals(ISSUE_PREFIXES.includes("PLAN"), true);
+      for (const prefix of ["ISSUE", "TASK", "PLAN"] as const) {
+        assertEquals(ISSUE_PREFIXES.includes(prefix), true);
+      }
     });
   });
 
   describe("isValidIssueId", () => {
     it("should accept valid ISSUE IDs", () => {
-      assertEquals(isValidIssueId("ISSUE-001"), true);
-      assertEquals(isValidIssueId("ISSUE-042"), true);
-      assertEquals(isValidIssueId("ISSUE-1000"), true);
+      for (const id of ["ISSUE-001", "ISSUE-042", "ISSUE-1000"] as const) {
+        assertEquals(isValidIssueId(id), true);
+      }
     });
 
     it("should accept valid TASK IDs", () => {
@@ -33,11 +33,17 @@ describe("issues/schema", () => {
     });
 
     it("should reject invalid IDs", () => {
-      assertEquals(isValidIssueId("ISSUE-01"), false); // too few digits
-      assertEquals(isValidIssueId("BUG-001"), false); // wrong prefix
-      assertEquals(isValidIssueId("ISSUE001"), false); // missing dash
-      assertEquals(isValidIssueId("issue-001"), false); // lowercase
-      assertEquals(isValidIssueId(""), false);
+      const cases: Array<[string, boolean]> = [
+        ["ISSUE-01", false], // too few digits
+        ["BUG-001", false], // wrong prefix
+        ["ISSUE001", false], // missing dash
+        ["issue-001", false], // lowercase
+        ["", false],
+      ];
+
+      for (const [id, expected] of cases) {
+        assertEquals(isValidIssueId(id), expected);
+      }
     });
   });
 
@@ -55,8 +61,9 @@ describe("issues/schema", () => {
     });
 
     it("should return null for invalid IDs", () => {
-      assertEquals(parseIssueId("INVALID"), null);
-      assertEquals(parseIssueId("BUG-001"), null);
+      for (const id of ["INVALID", "BUG-001"] as const) {
+        assertEquals(parseIssueId(id), null);
+      }
     });
   });
 
@@ -91,10 +98,7 @@ describe("issues/schema", () => {
     });
 
     it("should handle numbers beyond 3 digits", () => {
-      assertEquals(
-        generateIssueId("ISSUE", ["ISSUE-999"]),
-        "ISSUE-1000",
-      );
+      assertEquals(generateIssueId("ISSUE", ["ISSUE-999"]), "ISSUE-1000");
     });
   });
 
@@ -104,8 +108,9 @@ describe("issues/schema", () => {
     });
 
     it("should parse open aliases", () => {
-      assertEquals(parseState("opened"), "open");
-      assertEquals(parseState("active"), "open");
+      for (const state of ["opened", "active"] as const) {
+        assertEquals(parseState(state), "open");
+      }
     });
 
     it("should parse closed state", () => {
@@ -113,10 +118,9 @@ describe("issues/schema", () => {
     });
 
     it("should parse closed aliases", () => {
-      assertEquals(parseState("close"), "closed");
-      assertEquals(parseState("done"), "closed");
-      assertEquals(parseState("resolved"), "closed");
-      assertEquals(parseState("completed"), "closed");
+      for (const state of ["close", "done", "resolved", "completed"] as const) {
+        assertEquals(parseState(state), "closed");
+      }
     });
 
     it("should be case-insensitive", () => {
@@ -129,8 +133,9 @@ describe("issues/schema", () => {
     });
 
     it("should return null for unknown states", () => {
-      assertEquals(parseState("unknown"), null);
-      assertEquals(parseState("pending"), null);
+      for (const state of ["unknown", "pending"] as const) {
+        assertEquals(parseState(state), null);
+      }
     });
   });
 });

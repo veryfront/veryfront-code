@@ -8,7 +8,9 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
     it("should add middleware and return this for chaining", () => {
       const pipeline = new MiddlewarePipeline();
       const mw: MiddlewareHandler = (_c, next) => next();
+
       const result = pipeline.use(mw);
+
       assert(result === pipeline);
     });
 
@@ -16,9 +18,10 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       const pipeline = new MiddlewarePipeline();
       const mw1: MiddlewareHandler = (_c, next) => next();
       const mw2: MiddlewareHandler = (_c, next) => next();
+
       pipeline.use(mw1).use(mw2);
-      const list = pipeline.getMiddleware();
-      assertEquals(list.length, 2);
+
+      assertEquals(pipeline.getMiddleware().length, 2);
     });
   });
 
@@ -26,7 +29,9 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
     it("should register scoped middleware and return this", () => {
       const pipeline = new MiddlewarePipeline();
       const mw: MiddlewareHandler = (_c, next) => next();
+
       const result = pipeline.useFor(/^\/api/, mw);
+
       assert(result === pipeline);
     });
 
@@ -47,12 +52,10 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       pipeline.use(globalMw);
       pipeline.useFor(/^\/api/, apiMw);
 
-      // Request matching /api
       const res1 = await pipeline.execute(new Request("http://localhost/api/users"));
-      assertEquals(res1.status, 404); // default not-found
+      assertEquals(res1.status, 404);
       assertEquals(order, ["global", "api"]);
 
-      // Request not matching /api
       order.length = 0;
       await pipeline.execute(new Request("http://localhost/home"));
       assertEquals(order, ["global"]);
@@ -65,6 +68,7 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       pipeline.use((_c, next) => next());
 
       const handler = pipeline.compose();
+
       assertEquals(typeof handler, "function");
     });
   });
@@ -72,9 +76,10 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
   describe("execute", () => {
     it("should execute the pipeline and return a response", async () => {
       const pipeline = new MiddlewarePipeline();
-      pipeline.use((_c) => new Response("Hello"));
+      pipeline.use(() => new Response("Hello"));
 
       const res = await pipeline.execute(new Request("http://localhost/"));
+
       assertEquals(res.status, 200);
       assertEquals(await res.text(), "Hello");
     });
@@ -84,6 +89,7 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       pipeline.use((_c, next) => next());
 
       const res = await pipeline.execute(new Request("http://localhost/"));
+
       assertEquals(res.status, 404);
     });
 
@@ -94,6 +100,7 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       });
 
       const res = await pipeline.execute(new Request("http://localhost/"));
+
       assertEquals(res.status, 500);
     });
 
@@ -108,6 +115,7 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
 
       const env = { MY_VAR: "test" };
       await pipeline.execute(new Request("http://localhost/"), env);
+
       assertEquals(capturedEnv?.MY_VAR, "test");
     });
 
@@ -130,6 +138,7 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       });
 
       await pipeline.execute(new Request("http://localhost/"));
+
       assertEquals(order, [1, 2, 3, 4]);
     });
   });
@@ -137,7 +146,9 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
   describe("onTeardown", () => {
     it("should register teardown callback and return this", () => {
       const pipeline = new MiddlewarePipeline();
+
       const result = pipeline.onTeardown(() => {});
+
       assert(result === pipeline);
     });
   });
@@ -155,6 +166,7 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       });
 
       await pipeline.teardown();
+
       assertEquals(called, [1, 2]);
     });
 
@@ -169,7 +181,6 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       await pipeline.teardown();
       assertEquals(count, 1);
 
-      // Second teardown should have no callbacks
       await pipeline.teardown();
       assertEquals(count, 1);
     });
@@ -184,6 +195,7 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       });
 
       await pipeline.teardown();
+
       assertEquals(cleaned, true);
     });
 
@@ -200,6 +212,7 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       });
 
       await pipeline.teardown();
+
       assertEquals(called, [1, 2]);
     });
   });
@@ -208,17 +221,17 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
     it("should return middleware info with names and order", () => {
       const pipeline = new MiddlewarePipeline();
 
-      function namedMiddleware(_c: unknown, next: () => unknown) {
-        return next();
-      }
+      const namedMiddleware: MiddlewareHandler = (_c, next) => next();
 
-      pipeline.use(namedMiddleware as unknown as MiddlewareHandler);
+      pipeline.use(namedMiddleware);
       pipeline.use((_c, next) => next());
 
       const list = pipeline.getMiddleware();
       assertEquals(list.length, 2);
+
       const first = list[0];
       const second = list[1];
+
       assertExists(first);
       assertExists(second);
       assertEquals(first.name, "namedMiddleware");

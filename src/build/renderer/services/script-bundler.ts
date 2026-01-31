@@ -117,7 +117,7 @@ function createResolvePlugin(fileCache: Map<string, string>, projectDir: string)
 
       build.onLoad({ filter: /.*/, namespace: "veryfront-cache" }, (args) => {
         const content = fileCache.get(args.path);
-        if (!content) return undefined;
+        if (content == null) return undefined;
 
         return {
           contents: content,

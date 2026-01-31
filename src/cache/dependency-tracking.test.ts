@@ -4,11 +4,16 @@ import { computeDepsHash } from "./dependency-graph.ts";
 import { computeConfigHash } from "./config-hash.ts";
 import { buildTransformCacheKey } from "./keys.ts";
 
+function createGetContent(files: Map<string, string>): (p: string) => Promise<string> {
+  return (p) => {
+    const content = files.get(p);
+    if (content == null) return Promise.reject(new Error(`not found: ${p}`));
+    return Promise.resolve(content);
+  };
+}
+
 describe("Dependency tracking cache invalidation", () => {
   describe("computeDepsHash", () => {
-    // Note: normalizeSpecifierToPath converts .ts/.tsx/.jsx → .js for cache key consistency
-    // So mock files must use .js extension keys for resolved paths
-
     it("should produce different hash when dependency content changes", async () => {
       const helperV1 = "export function helper() { return 'v1'; }\n";
       const helperV2 = "export function helper() { return 'v2'; }\n";
@@ -16,16 +21,13 @@ describe("Dependency tracking cache invalidation", () => {
         `import { helper } from "./helper.ts";\nexport default function() { return helper(); }\n`;
 
       const files1 = new Map<string, string>([
-        ["/project/pages/index.js", mainCode], // entry normalized to .js
-        ["/project/pages/helper.js", helperV1], // resolved import normalized to .js
+        ["/project/pages/index.js", mainCode],
+        ["/project/pages/helper.js", helperV1],
       ]);
 
       const hash1 = await computeDepsHash(
         "/project/pages/index.js",
-        (p) => {
-          const c = files1.get(p);
-          return c ? Promise.resolve(c) : Promise.reject(new Error(`not found: ${p}`));
-        },
+        createGetContent(files1),
         "/project",
       );
 
@@ -36,10 +38,7 @@ describe("Dependency tracking cache invalidation", () => {
 
       const hash2 = await computeDepsHash(
         "/project/pages/index.js",
-        (p) => {
-          const c = files2.get(p);
-          return c ? Promise.resolve(c) : Promise.reject(new Error(`not found: ${p}`));
-        },
+        createGetContent(files2),
         "/project",
       );
 
@@ -51,14 +50,12 @@ describe("Dependency tracking cache invalidation", () => {
         `import { helper } from "./helper.ts";\nexport default function() { return helper(); }\n`;
       const helperCode = "export function helper() { return 'stable'; }\n";
 
-      const getContent = (p: string) => {
-        const files: Record<string, string> = {
-          "/project/pages/index.js": mainCode,
-          "/project/pages/helper.js": helperCode,
-        };
-        const c = files[p];
-        return c ? Promise.resolve(c) : Promise.reject(new Error(`not found: ${p}`));
-      };
+      const files = new Map<string, string>([
+        ["/project/pages/index.js", mainCode],
+        ["/project/pages/helper.js", helperCode],
+      ]);
+
+      const getContent = createGetContent(files);
 
       const hash1 = await computeDepsHash("/project/pages/index.js", getContent, "/project");
       const hash2 = await computeDepsHash("/project/pages/index.js", getContent, "/project");
@@ -82,10 +79,7 @@ describe("Dependency tracking cache invalidation", () => {
 
       const hash1 = await computeDepsHash(
         "/project/pages/index.js",
-        (p) => {
-          const c = files1.get(p);
-          return c ? Promise.resolve(c) : Promise.reject(new Error(`not found: ${p}`));
-        },
+        createGetContent(files1),
         "/project",
       );
 
@@ -97,10 +91,7 @@ describe("Dependency tracking cache invalidation", () => {
 
       const hash2 = await computeDepsHash(
         "/project/pages/index.js",
-        (p) => {
-          const c = files2.get(p);
-          return c ? Promise.resolve(c) : Promise.reject(new Error(`not found: ${p}`));
-        },
+        createGetContent(files2),
         "/project",
       );
 

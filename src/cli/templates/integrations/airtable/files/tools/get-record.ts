@@ -11,7 +11,6 @@ export default tool({
     tableIdOrName: z.string().describe("The ID or name of the table"),
     recordId: z.string().describe('The ID of the record to retrieve (starts with "rec")'),
   }),
-  async execute({ baseId, tableIdOrName, recordId }) {
-    return getRecord(baseId, tableIdOrName, recordId);
-  },
+  execute: async ({ baseId, tableIdOrName, recordId }) =>
+    getRecord(baseId, tableIdOrName, recordId),
 });

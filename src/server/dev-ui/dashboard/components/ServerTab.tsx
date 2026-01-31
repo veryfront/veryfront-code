@@ -32,47 +32,67 @@ export function ServerTab(): React.ReactElement {
   const [subTab, setSubTab] = useState<SubTab>("handlers");
   const [handlers, setHandlers] = useState<Handler[]>([]);
   const [build, setBuild] = useState<BuildInfo | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setLoading(true);
+    let cancelled = false;
 
-    Promise.all([
-      fetch("/_dev/api/handlers").then((r) => r.json()),
-      fetch("/_dev/api/build").then((r) => r.json()),
-    ])
-      .then(([h, b]) => {
-        setHandlers(h.handlers ?? []);
-        setBuild(b);
+    async function load(): Promise<void> {
+      setLoading(true);
+
+      try {
+        const [handlersRes, buildRes] = await Promise.all([
+          fetch("/_dev/api/handlers").then((r) => r.json()),
+          fetch("/_dev/api/build").then((r) => r.json()),
+        ]);
+
+        if (cancelled) return;
+
+        setHandlers(handlersRes.handlers ?? []);
+        setBuild(buildRes);
         setError(null);
-      })
-      .catch((e) => setError((e as Error).message))
-      .finally(() => setLoading(false));
+      } catch (e) {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
+  const layout = (content: React.ReactNode): React.ReactElement => (
+    <PageLayout title="Server" description="Request handling and build pipeline">
+      {content}
+    </PageLayout>
+  );
+
   if (loading) {
-    return (
-      <PageLayout title="Server" description="Request handling and build pipeline">
-        <Card>
-          <LoadingState message="Loading server info..." />
-        </Card>
-      </PageLayout>
+    return layout(
+      <Card>
+        <LoadingState message="Loading server info..." />
+      </Card>,
     );
   }
 
   if (error) {
-    return (
-      <PageLayout title="Server" description="Request handling and build pipeline">
-        <Card>
-          <ErrorState error={error} />
-        </Card>
-      </PageLayout>
+    return layout(
+      <Card>
+        <ErrorState error={error} />
+      </Card>,
     );
   }
 
-  return (
-    <PageLayout title="Server" description="Request handling and build pipeline">
+  return layout(
+    <>
       <div className="flex gap-1 mb-6 border-b border-gray-200 pb-2">
         <TabButton
           active={subTab === "handlers"}
@@ -86,9 +106,9 @@ export function ServerTab(): React.ReactElement {
         />
       </div>
 
-      {subTab === "handlers" ? <HandlersSection handlers={handlers} /> : null}
-      {subTab === "build" && build ? <BuildSection build={build} /> : null}
-    </PageLayout>
+      {subTab === "handlers" && <HandlersSection handlers={handlers} />}
+      {subTab === "build" && build && <BuildSection build={build} />}
+    </>,
   );
 }
 

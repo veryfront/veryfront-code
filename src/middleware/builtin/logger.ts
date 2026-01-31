@@ -124,40 +124,25 @@ function formatLog(format: LogFormat, req: Request, status: number, duration: nu
   const timestamp = getTimestamp();
   const userAgent = req.headers.get("user-agent") ?? "-";
   const referer = req.headers.get("referer") ?? "-";
+  const durationText = formatDuration(duration);
 
-  if (format === "combined") {
-    return `${remoteAddr} - - [${timestamp}] "${method} ${pathname} HTTP/1.1" ${status} - "${referer}" "${userAgent}" ${
-      formatDuration(
-        duration,
-      )
-    }`;
+  switch (format) {
+    case "combined":
+      return `${remoteAddr} - - [${timestamp}] "${method} ${pathname} HTTP/1.1" ${status} - "${referer}" "${userAgent}" ${durationText}`;
+    case "common":
+      return `${remoteAddr} - - [${timestamp}] "${method} ${pathname} HTTP/1.1" ${status} - ${durationText}`;
+    case "dev": {
+      const statusColor = getStatusColor(status);
+      const methodColor = getMethodColor(method);
+      return `${methodColor}${method}${colors.reset} ${pathname} ${statusColor}${status}${colors.reset} ${colors.gray}${durationText}${colors.reset}`;
+    }
+    case "short":
+      return `${method} ${pathname} ${status} ${durationText} - ${remoteAddr}`;
+    case "tiny":
+      return `${method} ${pathname} ${status} ${durationText}`;
+    default:
+      return formatLog("dev", req, status, duration);
   }
-
-  if (format === "common") {
-    return `${remoteAddr} - - [${timestamp}] "${method} ${pathname} HTTP/1.1" ${status} - ${
-      formatDuration(duration)
-    }`;
-  }
-
-  if (format === "dev") {
-    const statusColor = getStatusColor(status);
-    const methodColor = getMethodColor(method);
-    return `${methodColor}${method}${colors.reset} ${pathname} ${statusColor}${status}${colors.reset} ${colors.gray}${
-      formatDuration(
-        duration,
-      )
-    }${colors.reset}`;
-  }
-
-  if (format === "short") {
-    return `${method} ${pathname} ${status} ${formatDuration(duration)} - ${remoteAddr}`;
-  }
-
-  if (format === "tiny") {
-    return `${method} ${pathname} ${status} ${formatDuration(duration)}`;
-  }
-
-  return formatLog("dev", req, status, duration);
 }
 
 export function logger(options?: LoggerOptions): Middleware {
@@ -172,28 +157,28 @@ export function logger(options?: LoggerOptions): Middleware {
       return;
     }
 
-    if (isJson) {
-      const { pathname } = new URL(req.url);
-      const requestId = req.headers.get("x-request-id") ?? undefined;
-      const traceId = req.headers.get("x-trace-id") ?? req.headers.get("traceparent") ?? undefined;
-      const projectSlug = req.headers.get("x-project-slug") ?? undefined;
-      const userAgent = req.headers.get("user-agent") ?? undefined;
-
-      serverLogger.info(`${req.method} ${pathname} ${status}`, {
-        requestId,
-        traceId,
-        project_slug: projectSlug,
-        request_url: pathname,
-        durationMs: Math.round(duration),
-        method: req.method,
-        statusCode: status,
-        remoteAddr: getRemoteAddr(req),
-        ...(userAgent ? { userAgent } : {}),
-      });
+    if (!isJson) {
+      serverLogger.info(formatLog(format, req, status, duration));
       return;
     }
 
-    serverLogger.info(formatLog(format, req, status, duration));
+    const { pathname } = new URL(req.url);
+    const requestId = req.headers.get("x-request-id") ?? undefined;
+    const traceId = req.headers.get("x-trace-id") ?? req.headers.get("traceparent") ?? undefined;
+    const projectSlug = req.headers.get("x-project-slug") ?? undefined;
+    const userAgent = req.headers.get("user-agent") ?? undefined;
+
+    serverLogger.info(`${req.method} ${pathname} ${status}`, {
+      requestId,
+      traceId,
+      project_slug: projectSlug,
+      request_url: pathname,
+      durationMs: Math.round(duration),
+      method: req.method,
+      statusCode: status,
+      remoteAddr: getRemoteAddr(req),
+      ...(userAgent ? { userAgent } : {}),
+    });
   }
 
   return async (ctx, next) => {
@@ -206,12 +191,7 @@ export function logger(options?: LoggerOptions): Middleware {
       const response = await next();
       const duration = performance.now() - start;
 
-      if (!response) {
-        logMessage(req, HTTP_SERVER_ERROR, duration);
-        return response;
-      }
-
-      logMessage(req, response.status, duration);
+      logMessage(req, response?.status ?? HTTP_SERVER_ERROR, duration);
       return response;
     } catch (error) {
       const duration = performance.now() - start;

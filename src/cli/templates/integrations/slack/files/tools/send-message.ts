@@ -16,22 +16,19 @@ export default tool({
       .describe("Thread timestamp to reply to (for threaded messages)"),
   }),
   execute: async ({ channel, text, threadTs }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = context?.userId ?? "current-user";
 
     try {
       const slack = createSlackClient(userId);
       const result = await slack.sendMessage(channel, text, { threadTs });
 
-      const message = threadTs
-        ? `Reply sent to thread in ${channel}.`
-        : `Message sent to ${channel}.`;
-
       return {
         success: true,
         messageTs: result.ts,
         channel: result.channel,
-        message,
+        message: threadTs
+          ? `Reply sent to thread in ${channel}.`
+          : `Message sent to ${channel}.`,
       };
     } catch (error) {
       if (error instanceof Error && error.message.includes("not connected")) {

@@ -146,21 +146,22 @@ function renderErrorPage(error: string): string {
 </html>`;
 }
 
-function createWaitForCallback(callbackPromise: Promise<CallbackResult>) {
+function createWaitForCallback(
+  callbackPromise: Promise<CallbackResult>,
+): (timeoutMs?: number) => Promise<CallbackResult> {
   return function waitForCallback(
     timeoutMs: number = DEFAULT_LOGIN_TIMEOUT_MS,
   ): Promise<CallbackResult> {
     const timeout = new Promise<CallbackResult>((_, reject) => {
       setTimeout(() => reject(new Error("Login timed out. Please try again.")), timeoutMs);
     });
+
     return Promise.race([callbackPromise, timeout]);
   };
 }
 
 async function findAvailablePort(startPort: number): Promise<number> {
-  let port = startPort;
-
-  for (let i = 0; i < MAX_PORT_ATTEMPTS; i++) {
+  for (let port = startPort, i = 0; i < MAX_PORT_ATTEMPTS; i++, port++) {
     try {
       if (isDeno) {
         // @ts-ignore - Deno global
@@ -172,11 +173,13 @@ async function findAvailablePort(startPort: number): Promise<number> {
       const net = await import("node:net");
       const available = await new Promise<boolean>((resolve) => {
         const server = net.createServer();
+
         server.once("error", () => resolve(false));
         server.once("listening", () => {
           server.close();
           resolve(true);
         });
+
         server.listen(port, "127.0.0.1");
       });
 
@@ -184,8 +187,6 @@ async function findAvailablePort(startPort: number): Promise<number> {
     } catch {
       // Port in use
     }
-
-    port++;
   }
 
   throw new Error("Could not find an available port");
@@ -203,7 +204,7 @@ function handleCallback(url: URL): { result: CallbackResult; html: string } {
 }
 
 function startDenoServer(port: number): CallbackServer {
-  let resolveCallback!: (result: CallbackResult) => void;
+  let resolveCallback: (result: CallbackResult) => void = () => {};
   const callbackPromise = new Promise<CallbackResult>((resolve) => {
     resolveCallback = resolve;
   });
@@ -231,7 +232,7 @@ function startDenoServer(port: number): CallbackServer {
   return {
     port,
     waitForCallback: createWaitForCallback(callbackPromise),
-    stop: async (): Promise<void> => {
+    stop: async function stop(): Promise<void> {
       await server.shutdown();
     },
   };
@@ -240,7 +241,7 @@ function startDenoServer(port: number): CallbackServer {
 async function startNodeServer(port: number): Promise<CallbackServer> {
   const http = await import("node:http");
 
-  let resolveCallback!: (result: CallbackResult) => void;
+  let resolveCallback: (result: CallbackResult) => void = () => {};
   const callbackPromise = new Promise<CallbackResult>((resolve) => {
     resolveCallback = resolve;
   });
@@ -266,7 +267,9 @@ async function startNodeServer(port: number): Promise<CallbackServer> {
   return {
     port,
     waitForCallback: createWaitForCallback(callbackPromise),
-    stop: (): Promise<void> => new Promise<void>((resolve) => server.close(() => resolve())),
+    stop: function stop(): Promise<void> {
+      return new Promise<void>((resolve) => server.close(() => resolve()));
+    },
   };
 }
 

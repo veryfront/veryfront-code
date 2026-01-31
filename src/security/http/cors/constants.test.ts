@@ -11,12 +11,9 @@ import {
 describe("CORS constants", () => {
   describe("DEFAULT_METHODS", () => {
     it("should include standard HTTP methods", () => {
-      assert(DEFAULT_METHODS.includes("GET"));
-      assert(DEFAULT_METHODS.includes("POST"));
-      assert(DEFAULT_METHODS.includes("PUT"));
-      assert(DEFAULT_METHODS.includes("PATCH"));
-      assert(DEFAULT_METHODS.includes("DELETE"));
-      assert(DEFAULT_METHODS.includes("OPTIONS"));
+      for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
+        assert(DEFAULT_METHODS.includes(method));
+      }
     });
 
     it("should have 6 methods", () => {
@@ -26,8 +23,9 @@ describe("CORS constants", () => {
 
   describe("DEFAULT_HEADERS", () => {
     it("should include Content-Type and Authorization", () => {
-      assert(DEFAULT_HEADERS.includes("Content-Type"));
-      assert(DEFAULT_HEADERS.includes("Authorization"));
+      for (const header of ["Content-Type", "Authorization"]) {
+        assert(DEFAULT_HEADERS.includes(header));
+      }
     });
   });
 

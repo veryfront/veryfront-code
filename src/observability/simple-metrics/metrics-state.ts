@@ -33,8 +33,6 @@ export function getSSRBoundaries(): number[] {
 }
 
 export function createSnapshot(): VeryfrontMetrics {
-  const rscStreamHistogram = state.rscStreamHistogram;
-
   return {
     requests: state.requests,
     jitHttpResolved: state.jitHttpResolved,
@@ -60,10 +58,12 @@ export function createSnapshot(): VeryfrontMetrics {
       boundaries: [...SSR_BOUNDARIES_MS],
       counts: [...state._ssrCounts],
     },
-    rscStreamHistogram: rscStreamHistogram && {
-      boundaries: [...rscStreamHistogram.boundaries],
-      counts: [...rscStreamHistogram.counts],
-    },
+    rscStreamHistogram: state.rscStreamHistogram
+      ? {
+        boundaries: [...state.rscStreamHistogram.boundaries],
+        counts: [...state.rscStreamHistogram.counts],
+      }
+      : undefined,
   };
 }
 

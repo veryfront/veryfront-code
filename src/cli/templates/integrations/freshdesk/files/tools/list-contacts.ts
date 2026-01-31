@@ -19,20 +19,24 @@ export default tool({
       .describe("Maximum number of contacts to return"),
   }),
   async execute({ email, phone, mobile, companyId, limit }) {
-    const contacts = await listContacts({ email, phone, mobile, companyId, perPage: limit });
+    const contacts = await listContacts({
+      email,
+      phone,
+      mobile,
+      companyId,
+      perPage: limit,
+    });
 
-    return contacts.map(
-      ({ id, name, email, phone, mobile, company_id, created_at, updated_at, tags }) => ({
-        id,
-        name,
-        email,
-        phone,
-        mobile,
-        companyId: company_id,
-        createdAt: created_at,
-        updatedAt: updated_at,
-        tags,
-      }),
-    );
+    return contacts.map((contact) => ({
+      id: contact.id,
+      name: contact.name,
+      email: contact.email,
+      phone: contact.phone,
+      mobile: contact.mobile,
+      companyId: contact.company_id,
+      createdAt: contact.created_at,
+      updatedAt: contact.updated_at,
+      tags: contact.tags,
+    }));
   },
 });

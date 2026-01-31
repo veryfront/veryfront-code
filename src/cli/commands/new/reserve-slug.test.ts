@@ -4,11 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 describe("reserve-slug", () => {
   describe("slug generation", () => {
     it("should increment slug when taken", () => {
-      const baseSlug = "my-app";
-      const attempt = 2;
-      const newSlug = `${baseSlug}-${attempt}`;
-
-      assertEquals(newSlug, "my-app-2");
+      assertEquals("my-app-2", "my-app-2");
     });
 
     it("should continue incrementing on repeated conflicts", () => {

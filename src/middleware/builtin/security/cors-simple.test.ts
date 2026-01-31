@@ -16,10 +16,7 @@ describe("corsSimple", () => {
       const middleware = corsSimple("*");
       const ctx = createContext("OPTIONS", "https://other.com");
 
-      const response = await middleware(
-        ctx,
-        () => Promise.resolve(new Response("Should not reach")),
-      );
+      const response = await middleware(ctx, () => Promise.resolve(new Response("OK")));
 
       assertEquals(response?.status, 204);
     });

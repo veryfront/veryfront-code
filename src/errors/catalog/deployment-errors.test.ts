@@ -25,7 +25,11 @@ describe("errors/catalog/deployment-errors", () => {
         assertEquals(typeof solution.message, "string", `message should be string for ${code}`);
         assertEquals(typeof solution.docs, "string", `docs should be string for ${code}`);
         assertEquals(Array.isArray(solution.steps), true, `steps should be array for ${code}`);
-        assertEquals(solution.steps!.length > 0, true, `steps should not be empty for ${code}`);
+        assertEquals(
+          solution.steps?.length ? solution.steps.length > 0 : false,
+          true,
+          `steps should not be empty for ${code}`,
+        );
       }
     });
 
@@ -35,7 +39,7 @@ describe("errors/catalog/deployment-errors", () => {
 
     it("PRODUCTION_BUILD_REQUIRED should mention building first", () => {
       const solution = DEPLOYMENT_ERROR_CATALOG[ErrorCode.PRODUCTION_BUILD_REQUIRED]!;
-      const hasBuildStep = solution.steps!.some((step) => step.includes("build"));
+      const hasBuildStep = solution.steps?.some((step) => step.includes("build")) ?? false;
       assertEquals(hasBuildStep, true);
     });
   });

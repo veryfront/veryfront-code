@@ -37,8 +37,11 @@ export class OpenAIProvider extends BaseProvider {
     };
 
     if (request.maxTokens) {
-      if (isReasoning) body.max_completion_tokens = request.maxTokens;
-      else body.max_tokens = request.maxTokens;
+      if (isReasoning) {
+        body.max_completion_tokens = request.maxTokens;
+      } else {
+        body.max_tokens = request.maxTokens;
+      }
     }
 
     if (!isReasoning) {
@@ -97,7 +100,8 @@ export class OpenAIProvider extends BaseProvider {
     };
 
     const choice = data.choices?.[0];
-    if (!choice?.message) {
+    const message = choice?.message;
+    if (!message) {
       throw toError(
         createError({
           type: "agent",
@@ -106,7 +110,7 @@ export class OpenAIProvider extends BaseProvider {
       );
     }
 
-    const toolCalls = choice.message.tool_calls?.map((tc) => {
+    const toolCalls = message.tool_calls?.map((tc) => {
       try {
         return {
           id: tc.id,
@@ -126,7 +130,7 @@ export class OpenAIProvider extends BaseProvider {
     });
 
     return {
-      text: choice.message.content ?? "",
+      text: message.content ?? "",
       toolCalls,
       usage: {
         promptTokens: data.usage?.prompt_tokens ?? 0,
@@ -137,7 +141,10 @@ export class OpenAIProvider extends BaseProvider {
     };
   }
 
-  private formatMessages(messages: CompletionRequest["messages"], system?: string) {
+  private formatMessages(
+    messages: CompletionRequest["messages"],
+    system?: string,
+  ): Array<Record<string, unknown>> {
     const formattedMessages = messages.map((msg) => {
       if (msg.tool_call_id) {
         return {

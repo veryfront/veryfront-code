@@ -246,6 +246,7 @@ export function createFileSystem(): FileSystem {
 }
 
 let _fs: FileSystem | null = null;
+
 function getFs(): FileSystem {
   _fs ??= createFileSystem();
   return _fs;

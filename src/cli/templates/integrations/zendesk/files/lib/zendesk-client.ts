@@ -5,6 +5,7 @@ function getEnv(name: string): string | undefined {
     // @ts-ignore: Deno global
     return Deno.env.get(name);
   }
+
   // @ts-ignore: Node process
   return globalThis.process?.env?.[name];
 }
@@ -133,7 +134,7 @@ export class ZendeskClient {
       endpoint,
     );
 
-    return response.tickets || response.results || [];
+    return response.tickets ?? response.results ?? [];
   }
 
   async getTicket(ticketId: number): Promise<ZendeskTicket> {
@@ -183,10 +184,9 @@ export class ZendeskClient {
     return response.ticket;
   }
 
-  async listUsers(options: {
-    limit?: number;
-    role?: string;
-  } = {}): Promise<ZendeskUser[]> {
+  async listUsers(options: { limit?: number; role?: string } = {}): Promise<
+    ZendeskUser[]
+  > {
     const params = new URLSearchParams();
     if (options.limit) params.set("per_page", String(options.limit));
     if (options.role) params.set("role", options.role);
@@ -197,7 +197,7 @@ export class ZendeskClient {
     const response = await this.request<ZendeskListResponse<ZendeskUser>>(
       endpoint,
     );
-    return response.users || [];
+    return response.users ?? [];
   }
 
   async getUser(userId: number): Promise<ZendeskUser> {
@@ -216,7 +216,7 @@ export class ZendeskClient {
     const response = await this.request<ZendeskListResponse<ZendeskTicket>>(
       `/search.json?${params}`,
     );
-    return response.results || [];
+    return response.results ?? [];
   }
 
   addComment(
@@ -231,6 +231,6 @@ export class ZendeskClient {
 let client: ZendeskClient | null = null;
 
 export function getZendeskClient(): ZendeskClient {
-  if (!client) client = new ZendeskClient();
+  client ??= new ZendeskClient();
   return client;
 }

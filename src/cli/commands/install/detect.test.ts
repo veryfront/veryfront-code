@@ -15,41 +15,40 @@ describe("detectAITools", () => {
   });
 
   async function detect(): Promise<string[]> {
-    return await detectAITools({ cwd: tempDir });
+    return detectAITools({ cwd: tempDir });
+  }
+
+  async function assertDetected(tool: string, expected: boolean): Promise<void> {
+    const detected = await detect();
+    assertEquals(detected.includes(tool), expected);
   }
 
   it("should detect cursor from .cursor directory", async () => {
     await mkdir(`${tempDir}/.cursor`);
-    const detected = await detect();
-    assertEquals(detected.includes("cursor"), true);
+    await assertDetected("cursor", true);
   });
 
   it("should detect claude-code from .claude directory", async () => {
     await mkdir(`${tempDir}/.claude`);
-    const detected = await detect();
-    assertEquals(detected.includes("claude-code"), true);
+    await assertDetected("claude-code", true);
   });
 
   it("should detect copilot from .github directory", async () => {
     await mkdir(`${tempDir}/.github`);
-    const detected = await detect();
-    assertEquals(detected.includes("copilot"), true);
+    await assertDetected("copilot", true);
   });
 
   it("should detect windsurf from .windsurfrules file", async () => {
     await writeTextFile(`${tempDir}/.windsurfrules`, "");
-    const detected = await detect();
-    assertEquals(detected.includes("windsurf"), true);
+    await assertDetected("windsurf", true);
   });
 
   it("should always include skill", async () => {
-    const detected = await detect();
-    assertEquals(detected.includes("skill"), true);
+    await assertDetected("skill", true);
   });
 
   it("should not auto-detect agents", async () => {
-    const detected = await detect();
-    assertEquals(detected.includes("agents"), false);
+    await assertDetected("agents", false);
   });
 
   it("should detect multiple tools", async () => {
@@ -72,18 +71,21 @@ describe("detectAITools", () => {
 
 describe("formatDetectionHint", () => {
   it("should show no detection message for skill only", () => {
-    const hint = formatDetectionHint(["skill"]);
-    assertEquals(hint, "No AI tools detected - select the ones you use");
+    assertEquals(
+      formatDetectionHint(["skill"]),
+      "No AI tools detected - select the ones you use",
+    );
   });
 
   it("should show single tool detection", () => {
-    const hint = formatDetectionHint(["cursor", "skill"]);
-    assertEquals(hint, "Auto-detected Cursor from project");
+    assertEquals(formatDetectionHint(["cursor", "skill"]), "Auto-detected Cursor from project");
   });
 
   it("should show multiple tool detection", () => {
-    const hint = formatDetectionHint(["cursor", "claude-code", "skill"]);
-    assertEquals(hint, "Auto-detected Cursor, Claude Code from project");
+    assertEquals(
+      formatDetectionHint(["cursor", "claude-code", "skill"]),
+      "Auto-detected Cursor, Claude Code from project",
+    );
   });
 
   it("should show all detected tools", () => {
@@ -95,7 +97,6 @@ describe("formatDetectionHint", () => {
   });
 
   it("should handle empty array", () => {
-    const hint = formatDetectionHint([]);
-    assertEquals(hint, "No AI tools detected - select the ones you use");
+    assertEquals(formatDetectionHint([]), "No AI tools detected - select the ones you use");
   });
 });

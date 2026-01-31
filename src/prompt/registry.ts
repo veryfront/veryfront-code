@@ -1,12 +1,3 @@
-/**
- * Prompt Registry
- *
- * Project-scoped registry for prompt templates. Each project has its own
- * isolated prompt namespace, preventing cross-project prompt access.
- *
- * @module
- */
-
 import type { Prompt } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/ai/registry-manager.ts";
@@ -31,7 +22,6 @@ class PromptRegistryClass {
 
   getContent(id: string, variables?: Record<string, unknown>): Promise<string> {
     const promptInstance = promptManager.get(id);
-
     if (!promptInstance) {
       throw toError(
         createError({
@@ -67,10 +57,9 @@ class PromptRegistryClass {
     promptManager.clearAll();
   }
 
-  getStats() {
+  getStats(): ReturnType<typeof promptManager.getStats> {
     return promptManager.getStats();
   }
 }
 
-// Singleton instance - maintains same interface but now project-scoped internally
 export const promptRegistry = new PromptRegistryClass();

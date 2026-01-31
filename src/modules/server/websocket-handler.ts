@@ -1,8 +1,8 @@
-import { serverLogger as logger } from "#veryfront/utils";
 import {
   HMR_CLOSE_MESSAGE_TOO_LARGE,
   HMR_CLOSE_NORMAL,
   HMR_CLOSE_RATE_LIMIT,
+  serverLogger as logger,
 } from "#veryfront/utils";
 import type { WebSocketContext } from "#veryfront/server/dev-server/hmr-types.ts";
 
@@ -14,6 +14,7 @@ export function setupWebSocketHandlers(
 
   function sendConnectedMessage(): void {
     logger.debug("HMR client connected", { totalClients: context.clients.size });
+
     try {
       socket.send(
         JSON.stringify({
@@ -30,6 +31,11 @@ export function setupWebSocketHandlers(
     sendConnectedMessage();
   } else {
     socket.onopen = sendConnectedMessage;
+  }
+
+  function cleanup(): void {
+    context.clients.delete(socket);
+    context.rateLimiter.cleanup(socket);
   }
 
   socket.onmessage = (event) => {
@@ -58,30 +64,27 @@ export function setupWebSocketHandlers(
         return;
       }
 
+      let message: any;
       try {
-        const message = JSON.parse(event.data);
-
-        if (message.type === "ping") {
-          socket.send(JSON.stringify({ type: "pong" }));
-          return;
-        }
-
-        logger.debug("Received HMR message from client", {
-          type: message.type,
-          data: event.data.slice(0, 100),
-        });
+        message = JSON.parse(event.data);
       } catch (parseError) {
         logger.warn("Failed to parse HMR message", { error: parseError });
+        return;
       }
+
+      if (message.type === "ping") {
+        socket.send(JSON.stringify({ type: "pong" }));
+        return;
+      }
+
+      logger.debug("Received HMR message from client", {
+        type: message.type,
+        data: event.data.slice(0, 100),
+      });
     } catch (error) {
       logger.error("Error processing HMR message", error);
     }
   };
-
-  function cleanup(): void {
-    context.clients.delete(socket);
-    context.rateLimiter.cleanup(socket);
-  }
 
   socket.onclose = () => {
     cleanup();

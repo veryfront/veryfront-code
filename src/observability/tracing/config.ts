@@ -1,6 +1,6 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { TracingConfig } from "./types.ts";
 import { getOtelTracingConfig } from "#veryfront/config/env.ts";
+import type { TracingConfig } from "./types.ts";
 
 const DEFAULT_CONFIG: TracingConfig = {
   enabled: false,
@@ -30,16 +30,15 @@ function applyEnvFromAdapter(
   config: TracingConfig,
   envAdapter: RuntimeAdapter["env"],
 ): void {
-  const otelEnabled = envAdapter.get("OTEL_TRACES_ENABLED");
-  const veryfrontOtel = envAdapter.get("VERYFRONT_OTEL");
-  const serviceName = envAdapter.get("OTEL_SERVICE_NAME");
+  config.enabled = envAdapter.get("OTEL_TRACES_ENABLED") === "true" ||
+    envAdapter.get("VERYFRONT_OTEL") === "1" ||
+    config.enabled;
 
-  config.enabled = otelEnabled === "true" || veryfrontOtel === "1" || config.enabled;
-  if (serviceName) config.serviceName = serviceName;
+  config.serviceName = envAdapter.get("OTEL_SERVICE_NAME") ?? config.serviceName;
 
-  const otlpEndpoint = envAdapter.get("OTEL_EXPORTER_OTLP_ENDPOINT");
-  const tracesEndpoint = envAdapter.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT");
-  config.endpoint = otlpEndpoint || tracesEndpoint || config.endpoint;
+  config.endpoint = envAdapter.get("OTEL_EXPORTER_OTLP_ENDPOINT") ??
+    envAdapter.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") ??
+    config.endpoint;
 
   const exporterType = envAdapter.get("OTEL_TRACES_EXPORTER");
   if (isValidExporter(exporterType)) config.exporter = exporterType;
@@ -53,8 +52,11 @@ function applyEnvFromDeno(config: TracingConfig): void {
       tracingConfig.veryfrontFlag === "1" ||
       config.enabled;
 
-    config.serviceName = tracingConfig.serviceName || config.serviceName;
-    config.endpoint = tracingConfig.endpoint || tracingConfig.tracesEndpoint || config.endpoint;
+    config.serviceName = tracingConfig.serviceName ?? config.serviceName;
+
+    config.endpoint = tracingConfig.endpoint ??
+      tracingConfig.tracesEndpoint ??
+      config.endpoint;
 
     const exporterType = tracingConfig.exporter;
     if (isValidExporter(exporterType)) config.exporter = exporterType;

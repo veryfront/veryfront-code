@@ -12,6 +12,26 @@ import { resolveModuleFile } from "./file-finder.ts";
 
 const mockAdapter = createMockAdapter();
 
+function createResolveFileTrackingAdapter(): {
+  adapter: typeof mockAdapter;
+  wasCalled: () => boolean;
+} {
+  let resolveFileCalled = false;
+
+  const adapter = {
+    ...mockAdapter,
+    fs: {
+      ...mockAdapter.fs,
+      resolveFile: (_path: string) => {
+        resolveFileCalled = true;
+        return null;
+      },
+    },
+  };
+
+  return { adapter, wasCalled: () => resolveFileCalled };
+}
+
 async function assertResolvedModuleFile(
   modulePath: string,
   expectedSuffix: string,
@@ -27,64 +47,45 @@ async function assertResolvedModuleFile(
   );
   assertExists(result.sourceCode, "Should have source code");
 
-  if (sourceIncludes) {
-    assertEquals(
-      result.sourceCode.includes(sourceIncludes),
-      true,
-      `Should contain ${sourceIncludes} export`,
-    );
-  }
+  if (!sourceIncludes) return;
+
+  assertEquals(
+    result.sourceCode.includes(sourceIncludes),
+    true,
+    `Should contain ${sourceIncludes} export`,
+  );
 }
 
 describe("resolveModuleFile", () => {
   it("does not call adapter.fs.resolveFile for framework paths", async () => {
-    let resolveFileCalled = false;
-    const trackingAdapter = {
-      ...mockAdapter,
-      fs: {
-        ...mockAdapter.fs,
-        resolveFile: (_path: string) => {
-          resolveFileCalled = true;
-          return null;
-        },
-      },
-    };
+    const { adapter, wasCalled } = createResolveFileTrackingAdapter();
 
     // Framework paths should skip the API adapter entirely
     const result = await resolveModuleFile(
       "_vf_modules/react/router/index.js",
-      trackingAdapter as any,
+      adapter as any,
       "/project",
     );
+
     assertExists(result, "Should resolve framework path locally");
     assertEquals(
-      resolveFileCalled,
+      wasCalled(),
       false,
       "Should NOT call adapter.fs.resolveFile for framework paths",
     );
   });
 
   it("calls adapter.fs.resolveFile for project paths", async () => {
-    let resolveFileCalled = false;
-    const trackingAdapter = {
-      ...mockAdapter,
-      fs: {
-        ...mockAdapter.fs,
-        resolveFile: (_path: string) => {
-          resolveFileCalled = true;
-          return null;
-        },
-      },
-    };
+    const { adapter, wasCalled } = createResolveFileTrackingAdapter();
 
-    await resolveModuleFile("_vf_modules/components/Button.js", trackingAdapter as any, "/project");
-    assertEquals(resolveFileCalled, true, "Should call adapter.fs.resolveFile for project paths");
+    await resolveModuleFile("_vf_modules/components/Button.js", adapter as any, "/project");
+    assertEquals(wasCalled(), true, "Should call adapter.fs.resolveFile for project paths");
   });
 
   it("resolves framework react/* files", async () => {
     await assertResolvedModuleFile(
       "_vf_modules/react/router/index.js",
-      "src/react/router/index.ts",
+      "src/react/router/index.tsx",
       "useRouter",
     );
   });
@@ -92,7 +93,7 @@ describe("resolveModuleFile", () => {
   it("resolves framework react/context files", async () => {
     await assertResolvedModuleFile(
       "_vf_modules/react/context/index.js",
-      "src/react/context/index.ts",
+      "src/react/context/index.tsx",
       "usePageContext",
     );
   });
@@ -106,17 +107,11 @@ describe("resolveModuleFile", () => {
   });
 
   it("resolves framework lib/* files", async () => {
-    await assertResolvedModuleFile(
-      "_vf_modules/lib/Router.js",
-      "src/lib/Router.tsx",
-    );
+    await assertResolvedModuleFile("_vf_modules/lib/Router.js", "src/lib/Router.tsx");
   });
 
   it("resolves framework react/fonts files", async () => {
-    await assertResolvedModuleFile(
-      "_vf_modules/react/fonts/index.js",
-      "src/react/fonts/index.ts",
-    );
+    await assertResolvedModuleFile("_vf_modules/react/fonts/index.js", "src/react/fonts/index.ts");
   });
 
   // === Production path format tests ===

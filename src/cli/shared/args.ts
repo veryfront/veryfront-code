@@ -32,14 +32,11 @@ function coerceValue(
   value: unknown,
   type: ArgSpec["type"],
 ): string | boolean | number {
-  switch (type) {
-    case "boolean":
-      return Boolean(value);
-    case "number":
-      return typeof value === "number" ? value : parseInt(String(value), 10);
-    case "string":
-      return String(value);
+  if (type === "boolean") return Boolean(value);
+  if (type === "number") {
+    return typeof value === "number" ? value : parseInt(String(value), 10);
   }
+  return String(value);
 }
 
 /**

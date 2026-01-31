@@ -27,7 +27,9 @@ export default tool({
         type: entry[".tag"],
       };
 
-      if (!isFile(entry)) return baseInfo;
+      if (!isFile(entry)) {
+        return baseInfo;
+      }
 
       return {
         ...baseInfo,

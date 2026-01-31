@@ -3,6 +3,14 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { specToYaml } from "./spec-generator.ts";
 import type { OpenAPISpec } from "./types.ts";
 
+function assertIncludes(haystack: string, needle: string): void {
+  assertEquals(haystack.includes(needle), true);
+}
+
+function assertNotIncludes(haystack: string, needle: string): void {
+  assertEquals(haystack.includes(needle), false);
+}
+
 describe("routing/api/openapi/spec-generator", () => {
   describe("specToYaml()", () => {
     it("should convert a minimal spec to YAML", () => {
@@ -16,10 +24,10 @@ describe("routing/api/openapi/spec-generator", () => {
       };
 
       const yaml = specToYaml(spec);
-      assertEquals(yaml.includes("openapi: 3.1.0"), true);
-      assertEquals(yaml.includes("title: Test API"), true);
-      assertEquals(yaml.includes("version: 1.0.0"), true);
-      assertEquals(yaml.includes("paths:{}"), true);
+      assertIncludes(yaml, "openapi: 3.1.0");
+      assertIncludes(yaml, "title: Test API");
+      assertIncludes(yaml, "version: 1.0.0");
+      assertIncludes(yaml, "paths:{}");
     });
 
     it("should handle spec with description", () => {
@@ -34,7 +42,7 @@ describe("routing/api/openapi/spec-generator", () => {
       };
 
       const yaml = specToYaml(spec);
-      assertEquals(yaml.includes("description: A test API"), true);
+      assertIncludes(yaml, "description: A test API");
     });
 
     it("should handle spec with tags", () => {
@@ -46,8 +54,8 @@ describe("routing/api/openapi/spec-generator", () => {
       };
 
       const yaml = specToYaml(spec);
-      assertEquals(yaml.includes("- name: users"), true);
-      assertEquals(yaml.includes("- name: posts"), true);
+      assertIncludes(yaml, "- name: users");
+      assertIncludes(yaml, "- name: posts");
     });
 
     it("should handle spec with servers", () => {
@@ -59,7 +67,7 @@ describe("routing/api/openapi/spec-generator", () => {
       };
 
       const yaml = specToYaml(spec);
-      assertEquals(yaml.includes("servers:"), true);
+      assertIncludes(yaml, "servers:");
     });
 
     it("should handle paths with operations", () => {
@@ -77,7 +85,7 @@ describe("routing/api/openapi/spec-generator", () => {
       };
 
       const yaml = specToYaml(spec);
-      assertEquals(yaml.includes("summary: List users"), true);
+      assertIncludes(yaml, "summary: List users");
     });
 
     it("should handle empty arrays as []", () => {
@@ -89,7 +97,7 @@ describe("routing/api/openapi/spec-generator", () => {
       };
 
       const yaml = specToYaml(spec);
-      assertEquals(yaml.includes("tags: []"), true);
+      assertIncludes(yaml, "tags: []");
     });
 
     it("should handle null values", () => {
@@ -100,8 +108,7 @@ describe("routing/api/openapi/spec-generator", () => {
       };
 
       const yaml = specToYaml(spec);
-      // undefined values should be filtered out
-      assertEquals(yaml.includes("description"), false);
+      assertNotIncludes(yaml, "description");
     });
 
     it("should quote strings containing colons", () => {
@@ -119,7 +126,7 @@ describe("routing/api/openapi/spec-generator", () => {
       };
 
       const yaml = specToYaml(spec);
-      assertEquals(yaml.includes('"key: value pair"'), true);
+      assertIncludes(yaml, '"key: value pair"');
     });
 
     it("should handle boolean values", () => {
@@ -137,7 +144,7 @@ describe("routing/api/openapi/spec-generator", () => {
       };
 
       const yaml = specToYaml(spec);
-      assertEquals(yaml.includes("deprecated: true"), true);
+      assertIncludes(yaml, "deprecated: true");
     });
 
     it("should handle number values", () => {
@@ -161,7 +168,7 @@ describe("routing/api/openapi/spec-generator", () => {
       };
 
       const yaml = specToYaml(spec);
-      assertEquals(yaml.includes("name: limit"), true);
+      assertIncludes(yaml, "name: limit");
     });
 
     it("should handle empty objects as {}", () => {
@@ -172,7 +179,7 @@ describe("routing/api/openapi/spec-generator", () => {
       };
 
       const yaml = specToYaml(spec);
-      assertEquals(yaml.includes("paths:{}"), true);
+      assertIncludes(yaml, "paths:{}");
     });
   });
 });

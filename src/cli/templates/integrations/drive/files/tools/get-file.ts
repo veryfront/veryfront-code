@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createDriveClient } from "../../lib/drive-client.ts";
 
 const DEFAULT_USER_ID = "demo-user";
+const FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 
 export default tool({
   id: "get-file",
@@ -27,7 +28,7 @@ export default tool({
       id: file.id,
       name: file.name,
       mimeType: file.mimeType,
-      isFolder: file.mimeType === "application/vnd.google-apps.folder",
+      isFolder: file.mimeType === FOLDER_MIME_TYPE,
       size: file.size,
       createdTime: file.createdTime,
       modifiedTime: file.modifiedTime,

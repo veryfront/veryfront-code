@@ -103,13 +103,11 @@ export class DirectoryOperations {
         tree.set("", { files: new Map(), dirs: new Set() });
 
         for (const file of allFiles) {
-          // Normalize path: remove leading and trailing slashes, filter empty parts
           let normalizedPath = file.path.replace(/^\/+/, "").replace(/\/+$/, "");
 
           // Handle paths that end with "/" (like "pages/") - treat as index file
           // The API sometimes returns "pages/" for the root page instead of "pages/index.mdx"
           if (file.path.endsWith("/")) {
-            // Determine extension from file type - default to .mdx for pages
             const ext = file.type === "page" ? ".mdx" : ".tsx";
             normalizedPath = `${normalizedPath}/index${ext}`;
             logger.debug("[DirectoryOperations] Normalized trailing slash path", {
@@ -132,6 +130,7 @@ export class DirectoryOperations {
               parentNode = { files: new Map(), dirs: new Set() };
               tree.set(parentPath, parentNode);
             }
+
             parentNode.dirs.add(part);
 
             if (!tree.has(currentPath)) {
@@ -145,6 +144,7 @@ export class DirectoryOperations {
             dirNode = { files: new Map(), dirs: new Set() };
             tree.set(dirPath, dirNode);
           }
+
           dirNode.files.set(fileName, file);
         }
 
@@ -167,11 +167,10 @@ export class DirectoryOperations {
       const skipPersistentCache =
         this.contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false;
 
-      // Use the adapter's cached file list (single source of truth)
-      // This avoids duplicate API calls - the adapter fetches the file list once during init
       const adapterFiles = !skipPersistentCache
         ? await this.contextProvider?.getFileList?.()
         : undefined;
+
       if (adapterFiles) {
         const cacheMs = Math.round(performance.now() - cacheStart);
         logger.debug("[DirectoryOperations] getAllFilesRaw - from adapter cache", {
@@ -181,10 +180,8 @@ export class DirectoryOperations {
         return adapterFiles as ProjectFile[];
       }
 
-      // Fallback: direct cache lookup (shouldn't normally happen if adapter is initialized)
       const cacheKey = buildFileListCacheKey(ctx);
 
-      // Use getAsync to support both memory and Redis cache backends
       if (skipPersistentCache) {
         logger.debug("[DirectoryOperations] getAllFilesRaw - skipping persistent cache", {
           cacheKey,
@@ -195,6 +192,7 @@ export class DirectoryOperations {
       const cached = skipPersistentCache
         ? undefined
         : await this.cache.getAsync<ProjectFile[]>(cacheKey);
+
       const cacheMs = Math.round(performance.now() - cacheStart);
       if (cached) {
         logger.debug("[DirectoryOperations] getAllFilesRaw - fallback cache HIT", {
@@ -210,7 +208,6 @@ export class DirectoryOperations {
         cacheMs,
       });
 
-      // Fetch based on source type
       const isPublished = ctx?.sourceType !== "branch";
       logger.debug("[DirectoryOperations] Fetching files from API", {
         sourceType: ctx?.sourceType,

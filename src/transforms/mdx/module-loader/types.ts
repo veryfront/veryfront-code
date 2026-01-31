@@ -1,10 +1,10 @@
 import type * as React from "react";
 
 export interface MDXComponentProps {
-  [key: string]: unknown;
   children?: React.ReactNode;
   className?: string;
   style?: React.CSSProperties;
+  [key: string]: unknown;
 }
 
 export interface MDXContentProps {
@@ -12,11 +12,17 @@ export interface MDXContentProps {
   [key: string]: unknown;
 }
 
+export interface Heading {
+  text: string;
+  level: number;
+  id?: string;
+}
+
 export interface FrontmatterMetadata {
   title?: string;
   description?: string;
   layout?: string | boolean;
-  headings?: Array<{ text: string; level: number; id?: string }>;
+  headings?: Heading[];
   tags?: string[];
   date?: string;
   draft?: boolean;
@@ -32,7 +38,7 @@ export interface MDXModule {
   title?: string;
   description?: string;
   layout?: string | boolean;
-  headings?: Array<{ text: string; level: number; id?: string }>;
+  headings?: Heading[];
   [key: string]: unknown;
 }
 

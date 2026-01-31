@@ -36,9 +36,11 @@ export async function collectAllRoutes(
 
   logger.info(`[BUILD] Collected routes: ${pages.length} pages, ${app.length} app`);
 
-  if (app.length) {
-    logger.info(`[BUILD] App routes: ${app.map((r) => r.path).join(", ")}`);
+  if (app.length === 0) {
+    return { pages, app };
   }
+
+  logger.info(`[BUILD] App routes: ${app.map((r) => r.path).join(", ")}`);
 
   return { pages, app };
 }

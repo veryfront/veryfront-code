@@ -10,14 +10,13 @@ export class RateLimiter {
     const now = Date.now();
     const record = this.messageCounts.get(socket);
 
-    if (!record || now > record.resetTime) {
-      this.messageCounts.set(socket, { count: 1, resetTime: now + this.windowMs });
+    if (record && now <= record.resetTime) {
+      if (record.count >= this.maxMessages) return false;
+      record.count++;
       return true;
     }
 
-    if (record.count >= this.maxMessages) return false;
-
-    record.count++;
+    this.messageCounts.set(socket, { count: 1, resetTime: now + this.windowMs });
     return true;
   }
 

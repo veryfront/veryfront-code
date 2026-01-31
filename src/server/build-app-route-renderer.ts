@@ -36,6 +36,21 @@ async function loadComponent(
   });
 }
 
+function getLayoutsForRoute(appRoot: string, routePath: string): string[] {
+  const segments = routePath === "/" ? [] : routePath.split("/").filter(Boolean);
+  const layouts: string[] = [];
+
+  let current = appRoot;
+  layouts.push(join(current, "layout.tsx"));
+
+  for (const seg of segments) {
+    current = join(current, seg);
+    layouts.push(join(current, "layout.tsx"));
+  }
+
+  return layouts;
+}
+
 /**
  * Render an App Router route to HTML
  */
@@ -50,18 +65,11 @@ export async function renderAppRouteToHTML(args: {
   const { adapter, projectDir, routePath, pageFile, contentSourceId, reactVersion } = args;
 
   const appRoot = join(projectDir, "app");
+  const layoutCandidates = getLayoutsForRoute(appRoot, routePath);
+
   const layouts: string[] = [];
-
-  const rootLayout = join(appRoot, "layout.tsx");
-  if (await fileExists(adapter, rootLayout)) layouts.push(rootLayout);
-
-  const segments = routePath === "/" ? [] : routePath.split("/").filter(Boolean);
-  let current = appRoot;
-
-  for (const seg of segments) {
-    current = join(current, seg);
-    const layoutFile = join(current, "layout.tsx");
-    if (await fileExists(adapter, layoutFile)) layouts.push(layoutFile);
+  for (const layoutPath of layoutCandidates) {
+    if (await fileExists(adapter, layoutPath)) layouts.push(layoutPath);
   }
 
   // Get React from the project's node_modules to ensure element symbols match
@@ -80,9 +88,9 @@ export async function renderAppRouteToHTML(args: {
 
     try {
       const Layout = await loadComponent(adapter, layoutPath, projectDir, contentSourceId);
-      if (typeof Layout === "function") {
-        element = React.createElement(Layout as ReactComponentLike, { children: element });
-      }
+      if (typeof Layout !== "function") continue;
+
+      element = React.createElement(Layout as ReactComponentLike, { children: element });
     } catch (error) {
       logger.debug(
         "[BuildAppRouteRenderer] Layout loading failed, continuing without layout",

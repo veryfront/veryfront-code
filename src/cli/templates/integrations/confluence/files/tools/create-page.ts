@@ -28,8 +28,8 @@ export default tool({
   async execute({ spaceKey, title, content, parentId, type }) {
     const trimmedContent = content.trim();
     const storageContent = trimmedContent.startsWith("<")
-      ? content
-      : formatAsStorage(content);
+      ? trimmedContent
+      : formatAsStorage(trimmedContent);
 
     const page = await createPage({
       spaceKey,

@@ -23,9 +23,9 @@ function upgradeWebSocketDeno(
   request: Request,
   options?: WebSocketUpgradeOptions,
 ): WebSocketUpgradeResult {
-  const denoOptions: Deno.UpgradeWebSocketOptions = options?.protocol
+  const denoOptions: Deno.UpgradeWebSocketOptions | undefined = options?.protocol
     ? { protocol: options.protocol }
-    : {};
+    : undefined;
 
   const { socket, response } = Deno.upgradeWebSocket(request, denoOptions);
   return { socket, response };

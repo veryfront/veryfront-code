@@ -40,9 +40,9 @@ export async function checkAIConfig(projectDir: string): Promise<DiagnosticResul
   ];
 
   const providers = config.ai.providers ?? {};
-  const providerNames = Object.keys(providers);
+  const providerEntries = Object.entries(providers);
 
-  if (providerNames.length === 0) {
+  if (providerEntries.length === 0) {
     results.push({
       status: "warn",
       name: "AI Providers",
@@ -51,8 +51,8 @@ export async function checkAIConfig(projectDir: string): Promise<DiagnosticResul
     return results;
   }
 
-  for (const name of providerNames) {
-    const apiKey = providers[name]?.apiKey;
+  for (const [name, provider] of providerEntries) {
+    const apiKey = provider?.apiKey;
 
     results.push({
       status: apiKey ? "pass" : "fail",

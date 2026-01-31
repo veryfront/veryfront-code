@@ -1,12 +1,3 @@
-/**
- * Portable @std/* shims for Node.js and Bun.
- *
- * This module provides compatibility shims for Deno's @std/* standard library
- * to work in Node.js and Bun environments.
- *
- * @module
- */
-
 export * as expect from "./expect.ts";
 export * as fs from "./fs.ts";
 export * as path from "./path.ts";

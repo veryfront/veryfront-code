@@ -74,7 +74,7 @@ export async function directoryExists(path: string): Promise<boolean> {
 }
 
 export async function fileExists(path: string): Promise<boolean> {
-  return await getFs().exists(path);
+  return getFs().exists(path);
 }
 
 export function toComponentName(slug: string): string {
@@ -163,8 +163,7 @@ export async function scanDirectory(
       const routeType = ROUTE_FILE_MAP[entry.name.toLowerCase()];
       if (!routeType) continue;
 
-      const routePath = baseRoute || "/";
-      const routeInfo: RouteInfo = { path: routePath, type: routeType, file: fullPath };
+      const routeInfo: RouteInfo = { path: baseRoute || "/", type: routeType, file: fullPath };
 
       if (routeType === "api") routeInfo.methods = await detectHttpMethods(fullPath, fs);
 

@@ -1,7 +1,3 @@
-/**
- * Tests for CSS Optimization Strategies
- */
-
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";

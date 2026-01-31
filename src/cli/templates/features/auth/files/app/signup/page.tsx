@@ -33,15 +33,15 @@ export default function SignupPage(): React.JSX.Element {
         body: JSON.stringify({ email, password, name }),
       });
 
-      const data: { error?: string } = await response.json();
+      const data = (await response.json()) as { error?: string };
 
       if (!response.ok) {
         throw new Error(data.error ?? "Failed to sign up");
       }
 
       globalThis.location.href = "/dashboard";
-    } catch (error) {
-      setError(error instanceof Error ? error.message : "Failed to sign up");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to sign up");
     } finally {
       setLoading(false);
     }
@@ -55,13 +55,11 @@ export default function SignupPage(): React.JSX.Element {
       </div>
 
       <div className="bg-white dark:bg-neutral-800 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-700">
-        {error
-          ? (
-            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm mb-4">
-              {error}
-            </div>
-          )
-          : null}
+        {error && (
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm mb-4">
+            {error}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>

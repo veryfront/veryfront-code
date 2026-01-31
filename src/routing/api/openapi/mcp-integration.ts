@@ -1,5 +1,4 @@
 import { registerResource, registerTool } from "#veryfront/mcp";
-import type { Resource } from "#veryfront/resource";
 import { logger } from "#veryfront/utils";
 import { createOpenAPIResource } from "./mcp-resource.ts";
 import { generateMCPToolsFromSpec } from "./mcp-tools.ts";
@@ -22,7 +21,7 @@ export async function registerOpenAPIMCP(
   if (config.resource !== false) {
     try {
       const resource = createOpenAPIResource(getSpec);
-      registerResource("openapi_spec", resource as Resource);
+      registerResource("openapi_spec", resource);
       result.resourceId = "openapi_spec";
       logger.debug("[OpenAPI MCP] Registered openapi://spec resource");
     } catch (error) {

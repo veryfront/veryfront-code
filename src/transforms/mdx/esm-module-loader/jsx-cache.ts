@@ -19,16 +19,20 @@ export async function ensureCachedJsxModulePatched(
   transformedPath: string,
   sourceFilePath: string,
 ): Promise<boolean> {
+  const fs = getLocalFs();
+
   try {
-    const cachedCode = await getLocalFs().readTextFile(transformedPath);
+    const cachedCode = await fs.readTextFile(transformedPath);
     const rewritten = rewriteDntImports(cachedCode, sourceFilePath);
-    if (rewritten !== cachedCode) {
-      await getLocalFs().writeTextFile(transformedPath, rewritten);
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} Rewrote cached JSX dnt imports`, {
-        sourceFilePath,
-        transformedPath,
-      });
-    }
+
+    if (rewritten === cachedCode) return true;
+
+    await fs.writeTextFile(transformedPath, rewritten);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Rewrote cached JSX dnt imports`, {
+      sourceFilePath,
+      transformedPath,
+    });
+
     return true;
   } catch (error) {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to read cached JSX module`, {

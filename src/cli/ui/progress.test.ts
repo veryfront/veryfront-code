@@ -82,9 +82,9 @@ describe("cli/ui/progress", () => {
         { label: "Deploy", status: "pending" },
       ];
       const result = renderSteps(steps);
-      assertEquals(result.includes("Build"), true);
-      assertEquals(result.includes("Test"), true);
-      assertEquals(result.includes("Deploy"), true);
+      for (const { label } of steps) {
+        assertEquals(result.includes(label), true);
+      }
     });
 
     it("should handle empty steps array", () => {
@@ -137,10 +137,8 @@ describe("cli/ui/progress", () => {
   describe("TaskList", () => {
     it("should add tasks and return indices", () => {
       const list = new TaskList();
-      const idx0 = list.add("First");
-      const idx1 = list.add("Second");
-      assertEquals(idx0, 0);
-      assertEquals(idx1, 1);
+      assertEquals(list.add("First"), 0);
+      assertEquals(list.add("Second"), 1);
     });
 
     it("should render added tasks", () => {
@@ -156,19 +154,13 @@ describe("cli/ui/progress", () => {
       const list = new TaskList();
       const idx = list.add("Build");
 
-      // Initially pending
-      let output = stripAnsi(list.render());
-      assertEquals(output.includes("Build"), true);
+      assertEquals(stripAnsi(list.render()).includes("Build"), true);
 
-      // Start it
       list.start(idx);
-      output = list.render();
-      assertEquals(output.includes("Build"), true);
+      assertEquals(list.render().includes("Build"), true);
 
-      // Complete it
       list.complete(idx);
-      output = list.render();
-      assertEquals(output.includes("Build"), true);
+      assertEquals(list.render().includes("Build"), true);
     });
 
     it("should handle fail status", () => {
@@ -176,13 +168,11 @@ describe("cli/ui/progress", () => {
       const idx = list.add("Test");
       list.start(idx);
       list.fail(idx);
-      const output = list.render();
-      assertEquals(output.includes("Test"), true);
+      assertEquals(list.render().includes("Test"), true);
     });
 
     it("should handle start/complete/fail on invalid index", () => {
       const list = new TaskList();
-      // Should not throw
       list.start(999);
       list.complete(999);
       list.fail(999);
@@ -199,7 +189,6 @@ describe("cli/ui/progress", () => {
 
     it("should handle stopAnimation when not started", () => {
       const list = new TaskList();
-      // Should not throw
       list.stopAnimation();
     });
   });

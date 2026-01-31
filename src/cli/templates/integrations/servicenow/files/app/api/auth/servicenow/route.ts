@@ -1,4 +1,4 @@
-const getEnv = (name: string): string | undefined => {
+function getEnv(name: string): string | undefined {
   if (typeof Deno !== "undefined") {
     // @ts-ignore: Deno global
     return Deno.env.get(name);
@@ -6,7 +6,7 @@ const getEnv = (name: string): string | undefined => {
 
   // @ts-ignore: Node process
   return globalThis.process?.env?.[name];
-};
+}
 
 export function GET(request: Request): Response {
   const instance = getEnv("SERVICENOW_INSTANCE");

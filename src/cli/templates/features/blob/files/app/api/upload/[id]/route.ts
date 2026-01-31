@@ -4,14 +4,13 @@ export async function GET(
   _req: Request,
   { params }: { params: { id: string } },
 ): Promise<Response> {
-  const { id } = params;
-  const ref = await getBlobRef(id);
+  const ref = await getBlobRef(params.id);
 
   if (!ref) {
     return Response.json({ error: "File not found" }, { status: 404 });
   }
 
-  const data = await getBlob(id);
+  const data = await getBlob(params.id);
 
   if (!data) {
     return Response.json({ error: "File data not found" }, { status: 404 });

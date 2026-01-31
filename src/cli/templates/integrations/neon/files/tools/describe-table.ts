@@ -8,12 +8,28 @@ export default tool({
     "Get detailed schema information for a specific table including column names, data types, nullability, defaults, and constraints.",
   inputSchema: z.object({
     tableName: z.string().describe("Name of the table to describe"),
-    schema: z.string().default("public").describe("Schema name where the table is located"),
+    schema: z
+      .string()
+      .default("public")
+      .describe("Schema name where the table is located"),
   }),
-  async execute({ tableName, schema }) {
+  async execute({ tableName, schema }): Promise<{
+    tableName: string;
+    schema: string;
+    rowCount: number | undefined;
+    columnCount: number;
+    columns: Array<{
+      name: string;
+      type: string;
+      nullable: boolean;
+      default: unknown;
+      maxLength: number | null;
+    }>;
+  }> {
     const tableInfo = await describeTable(tableName, schema);
-
-    const rowCount = await getTableRowCount(tableName, schema).catch(() => undefined);
+    const rowCount = await getTableRowCount(tableName, schema).catch(
+      () => undefined,
+    );
 
     return {
       tableName: tableInfo.tableName,

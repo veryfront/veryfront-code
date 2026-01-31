@@ -1,11 +1,9 @@
 export const getRouterScript = () => `
-    // Use current origin for module server (modules are served by main dev server at /_vf_modules/)
     const MODULE_SERVER_URL = window.location.origin + '/_vf_modules';
 
     // ============================================
     // Hydration state tracking
     // ============================================
-    // Track when initial hydration completes to prevent race conditions with SPA navigation
     let hydrationResolve;
     let hydrationReject;
     const hydrationPromise = new Promise((resolve, reject) => {
@@ -15,14 +13,12 @@ export const getRouterScript = () => `
     let hydrationCompleted = false;
     let hydrationFailed = false;
 
-    // Called by renderer.ts after successful hydration
     window.__veryfrontHydrationComplete = () => {
       hydrationCompleted = true;
       hydrationResolve();
       log('Hydration complete signal received');
     };
 
-    // Called by renderer.ts if hydration fails
     window.__veryfrontHydrationFailed = (error) => {
       hydrationFailed = true;
       hydrationReject(error);
@@ -32,14 +28,13 @@ export const getRouterScript = () => `
     // ============================================
     // Configuration
     // ============================================
-    // Enable debug via: ?vf_debug=1 or window.__VERYFRONT_DEBUG__ = true
     const DEBUG = window.__VERYFRONT_DEBUG__ || new URLSearchParams(window.location.search).has('vf_debug');
     const FETCH_TIMEOUT_MS = 10000;
     const MAX_RETRIES = 2;
     const MAX_CACHE_SIZE = 50;
-    const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+    const CACHE_TTL_MS = 5 * 60 * 1000;
     const PREFETCH_DELAY_MS = 100;
-    const MAX_PREFETCH_PATHS = 100; // Limit prefetched paths to prevent memory leaks
+    const MAX_PREFETCH_PATHS = 100;
 
     // ============================================
     // Debug logging (production-safe)
@@ -50,17 +45,15 @@ export const getRouterScript = () => `
     // ============================================
     // Version tracking for cache invalidation
     // ============================================
-    let clientBuildVersion = null; // Set on first page data fetch
+    let clientBuildVersion = null;
 
     function checkVersionMismatch(newVersion) {
       if (!clientBuildVersion) {
-        // First load - store the version
         clientBuildVersion = newVersion;
         log('Build version initialized:', newVersion);
         return false;
       }
 
-      // Check for server restart (serverStart changed)
       if (newVersion.serverStart !== clientBuildVersion.serverStart) {
         log('Server restarted, reloading...', {
           old: clientBuildVersion.serverStart,
@@ -69,7 +62,6 @@ export const getRouterScript = () => `
         return true;
       }
 
-      // Check for framework update
       if (newVersion.framework !== clientBuildVersion.framework) {
         log('Framework version changed, reloading...', {
           old: clientBuildVersion.framework,
@@ -78,7 +70,6 @@ export const getRouterScript = () => `
         return true;
       }
 
-      // Check for project content update (if available)
       if (
         newVersion.projectUpdated &&
         clientBuildVersion.projectUpdated &&
@@ -122,7 +113,7 @@ export const getRouterScript = () => `
     // ============================================
     // LRU Cache with TTL (single Map to prevent sync issues)
     // ============================================
-    const pageDataCache = new Map(); // Map<string, { data: object, timestamp: number }>
+    const pageDataCache = new Map();
 
     function getCachedPageData(path) {
       const entry = pageDataCache.get(path);
@@ -130,13 +121,11 @@ export const getRouterScript = () => `
 
       if (Date.now() - entry.timestamp < CACHE_TTL_MS) return entry.data;
 
-      // Expired - remove from cache
       pageDataCache.delete(path);
       return null;
     }
 
     function setCachedPageData(path, data) {
-      // LRU eviction if at capacity
       if (pageDataCache.size >= MAX_CACHE_SIZE) {
         const oldest = pageDataCache.keys().next().value;
         if (oldest) pageDataCache.delete(oldest);
@@ -152,7 +141,6 @@ export const getRouterScript = () => `
     const scrollPositions = new Map();
 
     function saveScrollPosition(path) {
-      // LRU eviction if at capacity
       if (scrollPositions.size >= MAX_SCROLL_POSITIONS) {
         const oldest = scrollPositions.keys().next().value;
         if (oldest) scrollPositions.delete(oldest);
@@ -186,9 +174,8 @@ export const getRouterScript = () => `
       progressBar.style.opacity = '1';
       progressBar.style.width = '30%';
 
-      // Animate to 70% over time
       progressTimeout = setTimeout(() => {
-        if (progressBar) progressBar.style.width = '70%';
+        progressBar?.style && (progressBar.style.width = '70%');
       }, 300);
 
       document.body.setAttribute('aria-busy', 'true');
@@ -235,23 +222,17 @@ export const getRouterScript = () => `
 
           if (response.ok) return response;
 
-          // Retry on 5xx errors
           if (response.status >= 500 && attempt < maxRetries) {
             log('Server error, retrying...', response.status);
-            await sleep(Math.pow(2, attempt) * 500); // 500ms, 1s, 2s
+            await sleep(Math.pow(2, attempt) * 500);
             continue;
           }
 
-          // Return 4xx as-is (don't retry client errors)
           return response;
         } catch (error) {
           clearTimeout(timeout);
 
-          // Don't retry if aborted by user navigation
-          if (error.name === 'AbortError' && options.signal?.aborted) {
-            throw error;
-          }
-
+          if (error.name === 'AbortError' && options.signal?.aborted) throw error;
           if (attempt === maxRetries) throw error;
 
           log('Fetch failed, retrying...', error.message);
@@ -288,11 +269,9 @@ export const getRouterScript = () => `
       perfEnd('parse:' + path);
       perfEnd('fetch:' + path);
 
-      // Check for version mismatch - only trigger reload during actual navigation
       if (triggerReloadOnVersionMismatch && data.buildVersion && checkVersionMismatch(data.buildVersion)) {
         log('Version mismatch detected, performing full page reload to:', path);
         window.location.href = path;
-        // Return a promise that never resolves since we're reloading
         return new Promise(() => {});
       }
 
@@ -300,23 +279,20 @@ export const getRouterScript = () => `
       return data;
     }
 
-    // Fetch for navigation (triggers reload on version mismatch)
     async function fetchPageDataForNavigation(path, signal) {
       const cached = getCachedPageData(path);
       if (cached) {
         log('Using cached page data:', path);
-        // Revalidate in background (no reload trigger)
-        fetchPageDataFresh(path, null).catch(() => { /* SILENT: background revalidation is best-effort */ });
+        fetchPageDataFresh(path, null).catch(() => {});
         return cached;
       }
 
       return fetchPageDataFresh(path, signal, { triggerReloadOnVersionMismatch: true });
     }
 
-    // Fetch for prefetch (no reload trigger - just cache the data)
     async function fetchPageDataForPrefetch(path) {
       if (getCachedPageData(path)) return;
-      return fetchPageDataFresh(path, null).catch(() => { /* SILENT: prefetch is best-effort */ });
+      return fetchPageDataFresh(path, null).catch(() => {});
     }
 
     // ============================================
@@ -329,14 +305,11 @@ export const getRouterScript = () => `
     // SPA navigation handler
     // ============================================
     async function navigateSPA(href, pushState = true, restoreScroll = false) {
-      // Cancel any pending navigation
       currentAbortController?.abort();
 
-      // Prevent concurrent navigations
       if (isNavigating) return;
       isNavigating = true;
 
-      // Create new abort controller for this navigation
       currentAbortController = new AbortController();
       const signal = currentAbortController.signal;
 
@@ -346,27 +319,21 @@ export const getRouterScript = () => `
       try {
         log('SPA navigating to:', href);
 
-        // Save current scroll position before navigating
         saveScrollPosition(currentPath);
 
-        // Parse href for path and hash
         const [path, hash] = href.split('#');
         const targetPath = path || currentPath;
 
-        // Fetch page data (triggers reload on version mismatch)
         perfStart('nav:fetchData:' + href);
         const pageData = await fetchPageDataForNavigation(targetPath, signal);
         perfEnd('nav:fetchData:' + href);
 
-        // Check if navigation was aborted
         if (signal.aborted) return;
 
-        // Update history
         if (pushState) {
           window.history.pushState({ pageData, scrollY: 0 }, '', href);
         }
 
-        // Load and render the new page
         perfStart('nav:render:' + href);
         await renderPageFromData(pageData, targetPath);
         perfEnd('nav:render:' + href);
@@ -375,18 +342,16 @@ export const getRouterScript = () => `
         window.__veryfrontRouter.pathname = targetPath;
         window.__veryfrontRouter.query = Object.fromEntries(new URLSearchParams(window.location.search));
 
-        // Handle scrolling
         if (restoreScroll) {
           restoreScrollPosition(targetPath);
         } else if (hash) {
-          // Scroll to hash target
           requestAnimationFrame(() => {
             const target = document.getElementById(hash);
             if (target) {
               target.scrollIntoView({ behavior: 'smooth' });
-            } else {
-              window.scrollTo(0, 0);
+              return;
             }
+            window.scrollTo(0, 0);
           });
         } else {
           window.scrollTo(0, 0);
@@ -398,7 +363,6 @@ export const getRouterScript = () => `
       } catch (error) {
         hideNavigationProgress();
 
-        // Ignore abort errors from user-initiated navigation cancellation
         if (error.name === 'AbortError') {
           log('Navigation aborted');
           return;
@@ -406,13 +370,10 @@ export const getRouterScript = () => `
 
         logError('SPA navigation failed:', error.message);
 
-        // For 404 errors, could show a custom error page
-        // For other errors, fallback to full page navigation
         if (error.status === 404) {
           logError('Page not found:', href);
         }
 
-        // Fallback to full page navigation
         window.location.href = href;
       } finally {
         isNavigating = false;
@@ -424,19 +385,16 @@ export const getRouterScript = () => `
     // Render page from page data
     // ============================================
     async function renderPageFromData(pageData, targetPath) {
-      // Load page, layouts, and app components in PARALLEL for faster cold start
       perfStart('render:loadAll');
       const layoutPaths = (pageData.layouts || []).map((l) => l.path);
       const allPaths = [pageData.pagePath, ...layoutPaths];
 
-      // Also load App component if available (contains QueryClientProvider, ThemeProvider, etc.)
       if (pageData.appPath) allPaths.push(pageData.appPath);
 
       const components = await Promise.all(allPaths.map((path) => loadComponent(path)));
       perfEnd('render:loadAll');
 
       const [PageComponent, ...rest] = components;
-      // Split off App component if we loaded it
       const AppComponent = pageData.appPath ? rest.pop() : null;
       const LayoutComponents = rest;
 
@@ -444,25 +402,20 @@ export const getRouterScript = () => `
         throw new Error('Failed to load page component: ' + pageData.pagePath);
       }
 
-      // Update document title
       if (pageData.frontmatter?.title) {
         document.title = pageData.frontmatter.title;
       }
 
-      // Update meta description if present
       if (pageData.frontmatter?.description) {
         const metaDesc = document.querySelector('meta[name="description"]');
         metaDesc?.setAttribute('content', pageData.frontmatter.description);
       }
 
-      // Inject CSS for the new page (ensures styles work without Tailwind CDN)
       if (pageData.css) {
         const existingStyle = document.getElementById('veryfront-spa-css');
         if (existingStyle) {
-          // Update existing style element content
           existingStyle.textContent = pageData.css;
         } else {
-          // Create new style element
           const styleEl = document.createElement('style');
           styleEl.id = 'veryfront-spa-css';
           styleEl.textContent = pageData.css;
@@ -471,13 +424,11 @@ export const getRouterScript = () => `
         log('Injected CSS for SPA navigation', { cssLength: pageData.css.length });
       }
 
-      // Build the component tree with layouts
       let tree = React.createElement(PageComponent, {
         ...pageData.props,
         params: pageData.params
       });
 
-      // Wrap with layouts (innermost to outermost) - components already loaded
       if (pageData.layouts?.length) {
         for (let i = pageData.layouts.length - 1; i >= 0; i--) {
           const layout = pageData.layouts[i];
@@ -489,13 +440,11 @@ export const getRouterScript = () => `
         }
       }
 
-      // Wrap with App component if available (contains QueryClientProvider, ThemeProvider, etc.)
       if (AppComponent) {
         tree = React.createElement(AppComponent, { children: tree });
         log('Wrapped with App component for SPA navigation');
       }
 
-      // Build page context for usePageContext() hook
       const headingsArray = pageData.headings || [];
       const pageContext = {
         slug: pageData.slug || '',
@@ -504,30 +453,23 @@ export const getRouterScript = () => `
         query: Object.fromEntries(new URLSearchParams(window.location.search)),
         frontmatter: pageData.frontmatter || {},
         headings: headingsArray,
-        mdxHeadings: headingsArray // Alias for backwards compatibility
+        mdxHeadings: headingsArray
       };
 
-      // Wrap with PageContextProvider so layout components can access frontmatter
       tree = React.createElement(PageContextProvider, { pageContext, children: tree });
-
-      // Wrap with providers - use imported RouterProvider with client router
       tree = React.createElement(RouterProvider, { router, children: tree });
 
-      // Get the container and render
       const container = document.getElementById('veryfront-content');
 
-      // Wait for hydration if it hasn't completed yet
       if (!hydrationCompleted && !hydrationFailed) {
         log('Waiting for hydration to complete before SPA render...');
         try {
-          // Wait up to 10 seconds for hydration
           await Promise.race([
             hydrationPromise,
             new Promise((_, reject) => setTimeout(() => reject(new Error('Hydration timeout')), 10000))
           ]);
         } catch (waitError) {
           log('Hydration wait failed:', waitError.message);
-          // Fall through to check container.__reactRoot below
         }
       }
 
@@ -540,7 +482,6 @@ export const getRouterScript = () => `
       }
 
       if (hydrationFailed) {
-        // Hydration failed, fall back to full page navigation
         throw new Error('React root not found - hydration failed, falling back to full page navigation');
       }
 
@@ -552,13 +493,11 @@ export const getRouterScript = () => `
     // ============================================
     let prefetchTimeout = null;
     const prefetchedPaths = new Set();
-    const inFlightPrefetches = new Set(); // Track in-flight prefetch requests
+    const inFlightPrefetches = new Set();
 
     function prefetchPage(href) {
-      // Skip if already prefetched, cached, or currently fetching
       if (prefetchedPaths.has(href) || getCachedPageData(href) || inFlightPrefetches.has(href)) return;
 
-      // LRU eviction if at capacity - clear oldest entries
       if (prefetchedPaths.size >= MAX_PREFETCH_PATHS) {
         const oldest = prefetchedPaths.values().next().value;
         if (oldest) prefetchedPaths.delete(oldest);
@@ -567,10 +506,8 @@ export const getRouterScript = () => `
       prefetchedPaths.add(href);
       inFlightPrefetches.add(href);
 
-      // Prefetch page data only (no reload on version mismatch)
       fetchPageDataForPrefetch(href)
         .catch(() => {
-          // Silently fail prefetch
           prefetchedPaths.delete(href);
         })
         .finally(() => {
@@ -613,22 +550,17 @@ export const getRouterScript = () => `
     // ============================================
     // Event handlers
     // ============================================
-
-    // Handle browser back/forward
     window.addEventListener('popstate', async (e) => {
       const path = window.location.pathname;
       log('Popstate:', path);
 
-      // Save scroll position of page we're leaving
       saveScrollPosition(currentPath);
 
       if (!e.state?.pageData) {
-        // Fetch fresh data with scroll restoration
         await navigateSPA(path, false, true);
         return;
       }
 
-      // Use cached page data from history state
       showNavigationProgress();
       try {
         await renderPageFromData(e.state.pageData, path);
@@ -636,7 +568,6 @@ export const getRouterScript = () => `
         window.__veryfrontRouter.pathname = path;
         window.__veryfrontRouter.query = Object.fromEntries(new URLSearchParams(window.location.search));
 
-        // Restore scroll position
         restoreScrollPosition(path);
         hideNavigationProgress();
       } catch (error) {
@@ -646,7 +577,6 @@ export const getRouterScript = () => `
       }
     });
 
-    // Intercept link clicks for SPA navigation
     document.addEventListener('click', (e) => {
       const link = e.target.closest('a[href]');
       if (!link) return;
@@ -654,7 +584,6 @@ export const getRouterScript = () => `
       const href = link.getAttribute('href');
       if (!href) return;
 
-      // Handle hash-only links (scroll to element on same page)
       if (href.startsWith('#')) {
         const target = document.getElementById(href.slice(1));
         if (!target) return;
@@ -665,7 +594,6 @@ export const getRouterScript = () => `
         return;
       }
 
-      // Skip: external links, new tab, download, modifier keys, non-path links
       if (
         link.target === '_blank' ||
         link.hasAttribute('download') ||
@@ -683,8 +611,6 @@ export const getRouterScript = () => `
       navigateSPA(href, true);
     });
 
-    // Prefetch on hover (with debounce)
-    // Track which link we're currently hovering to avoid duplicate work
     let currentHoverLink = null;
 
     document.addEventListener(
@@ -697,10 +623,8 @@ export const getRouterScript = () => `
         const href = link.getAttribute('href');
         if (!href?.startsWith('/') || href.startsWith('//')) return;
 
-        // If we're already tracking this link, don't restart the timeout
         if (currentHoverLink === link) return;
 
-        // Clear any existing timeout before setting a new one
         if (prefetchTimeout) {
           clearTimeout(prefetchTimeout);
           prefetchTimeout = null;
@@ -720,12 +644,9 @@ export const getRouterScript = () => `
       (e) => {
         if (!e.target || typeof e.target.closest !== 'function') return;
 
-        // Only clear timeout if we're actually leaving the link entirely
-        // Check if the mouse is moving to an element outside the current hover link
         const relatedTarget = e.relatedTarget;
         if (currentHoverLink && relatedTarget && currentHoverLink.contains(relatedTarget)) return;
 
-        // Actually leaving the link
         if (prefetchTimeout) {
           clearTimeout(prefetchTimeout);
           prefetchTimeout = null;
@@ -736,21 +657,13 @@ export const getRouterScript = () => `
     );
 
     // ============================================
-    // Router hooks - use imported RouterProvider from veryfront/router
-    // This ensures the same component instance is used for SSR and client hydration
+    // Router hooks
     // ============================================
-    // window.useRouter uses the imported hook but falls back to global router for non-React usage
     window.useRouter = () => {
       try {
-        // Try to use the React hook from the module (for React components)
         return useRouterFromModule();
       } catch {
-        // Fall back to global router for non-React contexts
         return window.__veryfrontRouter;
       }
     };
-
-    // RouterProvider is imported from 'veryfront/router' at the top of the script
-    // When using it, pass the client router via the 'router' prop:
-    //   React.createElement(RouterProvider, { router: router, children: tree })
 `;

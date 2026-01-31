@@ -10,22 +10,13 @@ export default tool({
   async execute() {
     const folders = await listFolders();
 
-    return folders.map(
-      ({
-        id,
-        displayName,
-        parentFolderId,
-        childFolderCount,
-        unreadItemCount,
-        totalItemCount,
-      }) => ({
-        id,
-        name: displayName,
-        parentFolderId,
-        childFolderCount,
-        unreadItemCount,
-        totalItemCount,
-      }),
-    );
+    return folders.map((folder) => ({
+      id: folder.id,
+      name: folder.displayName,
+      parentFolderId: folder.parentFolderId,
+      childFolderCount: folder.childFolderCount,
+      unreadItemCount: folder.unreadItemCount,
+      totalItemCount: folder.totalItemCount,
+    }));
   },
 });

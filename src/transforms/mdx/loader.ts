@@ -11,8 +11,7 @@ export function loadCompiledMDX(modulePath: string): Promise<MDXModule | null> {
     "transforms.mdx.loadCompiledMDX",
     async () => {
       try {
-        const module = await import(modulePath);
-        return module as MDXModule;
+        return (await import(modulePath)) as MDXModule;
       } catch (error) {
         logger.error(`Failed to load MDX module from ${modulePath}:`, error);
         return null;

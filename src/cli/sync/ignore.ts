@@ -70,18 +70,18 @@ export interface IgnoreChecker {
 export async function loadIgnorePatterns(projectPath: string): Promise<string[]> {
   const fs = createFileSystem();
   const ignorePath = join(projectPath, ".vfignore");
-
   const patterns = [...DEFAULT_IGNORE_PATTERNS];
 
   try {
-    if (await fs.exists(ignorePath)) {
-      const content = await fs.readTextFile(ignorePath);
-      const customPatterns = content
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line && !line.startsWith("#"));
-      patterns.push(...customPatterns);
-    }
+    if (!(await fs.exists(ignorePath))) return patterns;
+
+    const content = await fs.readTextFile(ignorePath);
+    const customPatterns = content
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"));
+
+    patterns.push(...customPatterns);
   } catch {
     // Ignore errors reading .vfignore
   }
@@ -93,40 +93,33 @@ export async function loadIgnorePatterns(projectPath: string): Promise<string[]>
  * Create an ignore checker with loaded patterns
  */
 export function createIgnoreChecker(patterns: string[]): IgnoreChecker {
-  // Convert glob patterns to regex
   const regexPatterns = patterns.map((pattern) => {
-    // Handle directory patterns (ending with /)
     if (pattern.endsWith("/")) {
       const dirName = pattern.slice(0, -1);
       return new RegExp(`(^|/)${escapeRegex(dirName)}(/|$)`);
     }
 
-    // Handle glob patterns
-    let regex = escapeRegex(pattern);
-    regex = regex.replace(/\\\*/g, ".*"); // * matches anything
-    regex = regex.replace(/\\\?/g, "."); // ? matches single char
+    const regex = escapeRegex(pattern)
+      .replace(/\\\*/g, ".*") // * matches anything
+      .replace(/\\\?/g, "."); // ? matches single char
 
-    // If pattern starts with *, match anywhere in filename
-    if (pattern.startsWith("*")) {
-      return new RegExp(`(^|/)${regex}$`);
-    }
+    if (pattern.startsWith("*")) return new RegExp(`(^|/)${regex}$`);
 
-    // Otherwise match as directory or exact path
     return new RegExp(`(^|/)${regex}(/|$)`);
   });
 
-  return {
-    isIgnored(relativePath: string): boolean {
-      const normalizedPath = relativePath.replace(/\\/g, "/");
-      return regexPatterns.some((regex) => regex.test(normalizedPath));
-    },
+  function isIgnored(relativePath: string): boolean {
+    const normalizedPath = relativePath.replace(/\\/g, "/");
+    return regexPatterns.some((regex) => regex.test(normalizedPath));
+  }
 
-    isSupportedExtension(filename: string): boolean {
-      const lastDot = filename.lastIndexOf(".");
-      if (lastDot === -1) return false;
-      return SUPPORTED_EXTENSIONS.has(filename.slice(lastDot).toLowerCase());
-    },
-  };
+  function isSupportedExtension(filename: string): boolean {
+    const lastDot = filename.lastIndexOf(".");
+    if (lastDot === -1) return false;
+    return SUPPORTED_EXTENSIONS.has(filename.slice(lastDot).toLowerCase());
+  }
+
+  return { isIgnored, isSupportedExtension };
 }
 
 /**

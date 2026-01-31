@@ -28,10 +28,6 @@ export function format(pathObject: PathObject): string {
 
   const { dir = "", base = "", name = "", ext = "" } = pathObject;
 
-  if (base) {
-    return dir ? join(dir, base) : base;
-  }
-
-  const fileName = name + ext;
+  const fileName = base || name + ext;
   return dir ? join(dir, fileName) : fileName;
 }

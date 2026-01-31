@@ -2,58 +2,68 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { transformFinalImports, transformImports } from "./import-transformer.ts";
 
+function expectTransformImports(input: string, output: string): void {
+  expect(transformImports(input)).toBe(output);
+}
+
+function expectTransformFinalImports(input: string, output: string): void {
+  expect(transformFinalImports(input)).toBe(output);
+}
+
 describe("import-transformer", () => {
   describe("transformImports", () => {
     it("should normalize React import with single quotes", () => {
-      expect(transformImports("import React from 'react'")).toBe(
-        'import React from "react"',
-      );
+      expectTransformImports("import React from 'react'", 'import React from "react"');
     });
 
     it("should normalize React import with double quotes", () => {
-      expect(transformImports('import React from "react"')).toBe(
-        'import React from "react"',
-      );
+      expectTransformImports('import React from "react"', 'import React from "react"');
     });
 
     it("should normalize jsx-runtime import with single quotes", () => {
-      expect(transformImports("import {jsx} from 'react/jsx-runtime'")).toBe(
+      expectTransformImports(
+        "import {jsx} from 'react/jsx-runtime'",
         'import {jsx} from "react/jsx-runtime"',
       );
     });
 
     it("should normalize jsx-runtime import with double quotes", () => {
-      expect(transformImports('import {jsx} from "react/jsx-runtime"')).toBe(
+      expectTransformImports(
+        'import {jsx} from "react/jsx-runtime"',
         'import {jsx} from "react/jsx-runtime"',
       );
     });
 
     it("should normalize jsx-dev-runtime import", () => {
-      expect(transformImports("import {jsxDEV} from 'react/jsx-dev-runtime'"))
-        .toBe('import {jsxDEV} from "react/jsx-dev-runtime"');
+      expectTransformImports(
+        "import {jsxDEV} from 'react/jsx-dev-runtime'",
+        'import {jsxDEV} from "react/jsx-dev-runtime"',
+      );
     });
 
     it("should handle multiple imports in jsx-runtime", () => {
-      expect(
-        transformImports("import {jsx, jsxs, Fragment} from 'react/jsx-runtime'"),
-      ).toBe('import {jsx, jsxs, Fragment} from "react/jsx-runtime"');
+      expectTransformImports(
+        "import {jsx, jsxs, Fragment} from 'react/jsx-runtime'",
+        'import {jsx, jsxs, Fragment} from "react/jsx-runtime"',
+      );
     });
 
     it("should handle imports with whitespace", () => {
-      expect(transformImports("import   React   from   'react'")).toBe(
+      expectTransformImports(
+        "import   React   from   'react'",
         'import React from "react"',
       );
     });
 
     it("should preserve import with spaces in braces", () => {
-      expect(transformImports("import { jsx, jsxs } from 'react/jsx-runtime'"))
-        .toBe('import { jsx, jsxs } from "react/jsx-runtime"');
+      expectTransformImports(
+        "import { jsx, jsxs } from 'react/jsx-runtime'",
+        'import { jsx, jsxs } from "react/jsx-runtime"',
+      );
     });
 
     it("should not modify other imports", () => {
-      expect(transformImports("import { foo } from 'bar'")).toBe(
-        "import { foo } from 'bar'",
-      );
+      expectTransformImports("import { foo } from 'bar'", "import { foo } from 'bar'");
     });
 
     it("should handle multiple React imports on different lines", () => {
@@ -65,54 +75,53 @@ import {jsx} from 'react/jsx-runtime'`);
     });
 
     it("should handle empty string", () => {
-      expect(transformImports("")).toBe("");
+      expectTransformImports("", "");
     });
 
     it("should preserve code without imports", () => {
       const code = "const x = 10; console.log(x);";
-      expect(transformImports(code)).toBe(code);
+      expectTransformImports(code, code);
     });
   });
 
   describe("transformFinalImports", () => {
     it("should normalize react import from clause", () => {
-      expect(transformFinalImports("import React from 'react'")).toBe(
-        'import React from "react"',
-      );
+      expectTransformFinalImports("import React from 'react'", 'import React from "react"');
     });
 
     it("should normalize jsx-runtime from clause", () => {
-      expect(transformFinalImports("import {jsx} from 'react/jsx-runtime'"))
-        .toBe('import {jsx} from "react/jsx-runtime"');
+      expectTransformFinalImports(
+        "import {jsx} from 'react/jsx-runtime'",
+        'import {jsx} from "react/jsx-runtime"',
+      );
     });
 
     it("should normalize jsx-dev-runtime from clause", () => {
-      expect(transformFinalImports("import {jsxDEV} from 'react/jsx-dev-runtime'"))
-        .toBe('import {jsxDEV} from "react/jsx-dev-runtime"');
+      expectTransformFinalImports(
+        "import {jsxDEV} from 'react/jsx-dev-runtime'",
+        'import {jsxDEV} from "react/jsx-dev-runtime"',
+      );
     });
 
     it("should normalize component imports", () => {
-      expect(
-        transformFinalImports(
-          "import MyComponent from '../shared/components/MyComponent.tsx'",
-        ),
-      ).toBe('import MyComponent from "../shared/components/MyComponent.tsx";');
+      expectTransformFinalImports(
+        "import MyComponent from '../shared/components/MyComponent.tsx'",
+        'import MyComponent from "../shared/components/MyComponent.tsx";',
+      );
     });
 
     it("should handle component imports without semicolon", () => {
-      expect(
-        transformFinalImports(
-          "import Button from '../shared/components/Button.tsx'",
-        ),
-      ).toBe('import Button from "../shared/components/Button.tsx";');
+      expectTransformFinalImports(
+        "import Button from '../shared/components/Button.tsx'",
+        'import Button from "../shared/components/Button.tsx";',
+      );
     });
 
     it("should handle component imports with semicolon", () => {
-      expect(
-        transformFinalImports(
-          "import Button from '../shared/components/Button.tsx';",
-        ),
-      ).toBe('import Button from "../shared/components/Button.tsx";');
+      expectTransformFinalImports(
+        "import Button from '../shared/components/Button.tsx';",
+        'import Button from "../shared/components/Button.tsx";',
+      );
     });
 
     it("should handle multiple component imports", () => {
@@ -134,17 +143,17 @@ import {jsxDEV} from 'react/jsx-dev-runtime'`);
     });
 
     it("should handle empty string", () => {
-      expect(transformFinalImports("")).toBe("");
+      expectTransformFinalImports("", "");
     });
 
     it("should preserve code without imports", () => {
       const code = "const x = 10; console.log(x);";
-      expect(transformFinalImports(code)).toBe(code);
+      expectTransformFinalImports(code, code);
     });
 
     it("should not modify non-matching imports", () => {
       const code = "import { foo } from 'bar'";
-      expect(transformFinalImports(code)).toBe(code);
+      expectTransformFinalImports(code, code);
     });
 
     it("should handle mixed import styles", () => {

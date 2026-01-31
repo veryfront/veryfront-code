@@ -1,9 +1,3 @@
-/**
- * Import rewriting strategies index.
- *
- * All strategies are exported here for use by UnifiedImportRewriter.
- */
-
 export { AliasStrategy, aliasStrategy } from "./alias-strategy.ts";
 export { BareStrategy, bareStrategy } from "./bare-strategy.ts";
 export { NodeBuiltinStrategy, nodeBuiltinStrategy } from "./node-builtin-strategy.ts";

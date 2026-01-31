@@ -10,6 +10,18 @@ import {
   isPseudoSelector,
 } from "./asset-utils.ts";
 
+function createMetadata(
+  overrides: Partial<OptimizedImageMetadata> = {},
+): OptimizedImageMetadata {
+  return {
+    original: "img.jpg",
+    defaultFormat: "webp",
+    aspectRatio: 4 / 3,
+    variants: [],
+    ...overrides,
+  };
+}
+
 describe("build/utils/asset-utils", () => {
   describe("isPseudoSelector", () => {
     it("should detect pseudo selectors", () => {
@@ -64,10 +76,8 @@ describe("build/utils/asset-utils", () => {
 
   describe("generateSrcSet", () => {
     it("should generate srcset string from variants", () => {
-      const metadata: OptimizedImageMetadata = {
+      const metadata = createMetadata({
         original: "hero.jpg",
-        defaultFormat: "webp",
-        aspectRatio: 4 / 3,
         variants: [
           {
             path: "hero-400w.webp",
@@ -94,17 +104,15 @@ describe("build/utils/asset-utils", () => {
             fileSize: 800,
           },
         ],
-      };
+      });
+
       const srcSet = generateSrcSet("hero.jpg", metadata, "assets");
       assertEquals(srcSet.includes("400w"), true);
       assertEquals(srcSet.includes("800w"), true);
     });
 
     it("should filter by specified format", () => {
-      const metadata: OptimizedImageMetadata = {
-        original: "img.jpg",
-        defaultFormat: "webp",
-        aspectRatio: 4 / 3,
+      const metadata = createMetadata({
         variants: [
           {
             path: "img-400w.webp",
@@ -123,7 +131,8 @@ describe("build/utils/asset-utils", () => {
             fileSize: 800,
           },
         ],
-      };
+      });
+
       const srcSet = generateSrcSet("img.jpg", metadata, "assets", "avif");
       assertEquals(srcSet.includes("avif"), true);
       assertEquals(srcSet.includes("webp"), false);
@@ -132,10 +141,7 @@ describe("build/utils/asset-utils", () => {
 
   describe("getImageDimensions", () => {
     it("should return dimensions of default format variant", () => {
-      const metadata: OptimizedImageMetadata = {
-        original: "img.jpg",
-        defaultFormat: "webp",
-        aspectRatio: 4 / 3,
+      const metadata = createMetadata({
         variants: [
           {
             path: "img-800w.webp",
@@ -154,17 +160,16 @@ describe("build/utils/asset-utils", () => {
             fileSize: 1000,
           },
         ],
-      };
+      });
+
       const dims = getImageDimensions(metadata);
       assertEquals(dims.width, 800);
       assertEquals(dims.height, 600);
     });
 
     it("should fallback to first variant", () => {
-      const metadata: OptimizedImageMetadata = {
-        original: "img.jpg",
+      const metadata = createMetadata({
         defaultFormat: "png",
-        aspectRatio: 4 / 3,
         variants: [
           {
             path: "img-400w.avif",
@@ -175,19 +180,15 @@ describe("build/utils/asset-utils", () => {
             fileSize: 800,
           },
         ],
-      };
+      });
+
       const dims = getImageDimensions(metadata);
       assertEquals(dims.width, 400);
       assertEquals(dims.height, 300);
     });
 
     it("should throw if no variants", () => {
-      const metadata: OptimizedImageMetadata = {
-        original: "img.jpg",
-        defaultFormat: "webp",
-        aspectRatio: 1,
-        variants: [],
-      };
+      const metadata = createMetadata({ aspectRatio: 1, variants: [] });
       assertThrows(() => getImageDimensions(metadata));
     });
   });

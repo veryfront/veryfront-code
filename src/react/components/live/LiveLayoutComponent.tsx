@@ -23,28 +23,26 @@ export function LiveLayoutComponent({
   const pageContext = usePageContext();
 
   const layoutName = pageContext.frontmatter?.layout;
-
-  let liveLayout: MdxBundle | undefined;
-
-  if (layoutName) {
-    for (const entity of data.entities.values()) {
-      if (!entity.isLayout || entity.slug !== layoutName) continue;
-
-      const liveEntity = entity as LiveEntity;
-      if (!liveEntity.compiledCode) continue;
-
-      liveLayout = {
-        compiledCode: liveEntity.compiledCode,
-        frontmatter: entity.frontmatter ?? {},
-        globals: liveEntity.globals,
-      };
-      break;
-    }
+  if (!layoutName) {
+    if (!layout) return <>{children}</>;
+    return <LayoutComponent mdxBundle={layout}>{children}</LayoutComponent>;
   }
 
-  const activeLayout = liveLayout ?? layout;
+  for (const entity of data.entities.values()) {
+    if (!entity.isLayout || entity.slug !== layoutName) continue;
 
-  if (!activeLayout) return <>{children}</>;
+    const liveEntity = entity as LiveEntity;
+    if (!liveEntity.compiledCode) continue;
 
-  return <LayoutComponent mdxBundle={activeLayout}>{children}</LayoutComponent>;
+    const liveLayout: MdxBundle = {
+      compiledCode: liveEntity.compiledCode,
+      frontmatter: entity.frontmatter ?? {},
+      globals: liveEntity.globals,
+    };
+
+    return <LayoutComponent mdxBundle={liveLayout}>{children}</LayoutComponent>;
+  }
+
+  if (!layout) return <>{children}</>;
+  return <LayoutComponent mdxBundle={layout}>{children}</LayoutComponent>;
 }

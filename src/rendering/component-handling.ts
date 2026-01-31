@@ -1,4 +1,4 @@
-/**
+/****
  * Component Page Handling (TSX/JSX files)
  */
 
@@ -53,7 +53,6 @@ export async function handleComponentPage(
     logger.debug(`Loading TSX/JSX file: ${pageInfo.entity.path}`);
 
     const rawFileContent = await adapter.fs.readFile(pageInfo.entity.path);
-
     const fileContent = options?.studioEmbed
       ? injectNodePositions(rawFileContent, { filePath: pageInfo.entity.path })
       : rawFileContent;
@@ -67,8 +66,7 @@ export async function handleComponentPage(
         options?.moduleServerUrl,
         options?.projectId,
         options?.reactVersion,
-      )) ??
-      undefined;
+      ));
 
     const { loadComponentFromSource } = await import("@veryfront/modules/react-loader/index.ts");
     const PageComponent = await loadComponentFromSource(
@@ -107,11 +105,9 @@ export async function handleComponentPage(
       globals: {},
       headings: [],
       nodeMap: new Map(),
-    } as PageBundle;
+    };
 
-    if (clientModuleCode) {
-      pageBundle.clientModuleCode = clientModuleCode;
-    }
+    if (clientModuleCode) pageBundle.clientModuleCode = clientModuleCode;
 
     logger.debug(`Successfully loaded TSX/JSX component for ${slug}`);
     return { pageElement, pageBundle };
@@ -171,6 +167,7 @@ async function bundleComponentForClient(
       });
       componentHydrationCache.clear();
     }
+
     componentHydrationCache.set(cacheKey, transformed);
     return transformed;
   } catch (error) {

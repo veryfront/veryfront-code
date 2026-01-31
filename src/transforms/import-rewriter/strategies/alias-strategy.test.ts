@@ -3,7 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
 import { aliasStrategy } from "./alias-strategy.ts";
 
-function makeCtx(overrides?: Partial<RewriteContext>): RewriteContext {
+function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
   return {
     filePath: "/project/pages/index.tsx",
     projectDir: "/project",
@@ -48,6 +48,7 @@ describe("AliasStrategy", () => {
         makeInfo("@/components/Button"),
         makeCtx({ filePath: "/project/pages/index.tsx" }),
       );
+
       assertEquals(result.specifier, "../components/Button.js");
     });
 
@@ -56,6 +57,7 @@ describe("AliasStrategy", () => {
         makeInfo("@/utils/helper"),
         makeCtx({ filePath: "/project/components/ui/Card.tsx" }),
       );
+
       assertEquals(result.specifier, "../../utils/helper.js");
     });
 
@@ -64,7 +66,8 @@ describe("AliasStrategy", () => {
         makeInfo("@/lib/data.js"),
         makeCtx({ filePath: "/project/pages/index.tsx" }),
       );
-      assertEquals(result.specifier!.endsWith(".js"), true);
+
+      assertEquals(result.specifier?.endsWith(".js"), true);
     });
 
     it("should add .js extension when no known extension", () => {
@@ -72,7 +75,8 @@ describe("AliasStrategy", () => {
         makeInfo("@/utils/math"),
         makeCtx({ filePath: "/project/pages/index.tsx" }),
       );
-      assertEquals(result.specifier!.endsWith(".js"), true);
+
+      assertEquals(result.specifier?.endsWith(".js"), true);
     });
   });
 });

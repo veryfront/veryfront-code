@@ -243,9 +243,8 @@ export function updateActiveList(
   updater: (list: ListSelectState<ProjectInfo>) => ListSelectState<ProjectInfo>,
 ): StateUpdater {
   return (state) => {
+    if (state.activeList === "remoteProjects") return state;
     const key = state.activeList;
-    // remoteProjects is not a ListSelectState, skip update
-    if (key === "remoteProjects") return state;
     return { ...state, [key]: updater(state[key]) };
   };
 }
@@ -263,9 +262,7 @@ export function selectProject(project: ProjectInfo | null): StateUpdater {
   };
 }
 
-export function updateWizard(
-  update: Partial<AppState["wizard"]>,
-): StateUpdater {
+export function updateWizard(update: Partial<AppState["wizard"]>): StateUpdater {
   return (state) => ({ ...state, wizard: { ...state.wizard, ...update } });
 }
 
@@ -322,7 +319,11 @@ export function endInput(): StateUpdater {
   });
 }
 
-export function addLog(level: LogEntry["level"], message: string, meta?: LogMeta): StateUpdater {
+export function addLog(
+  level: LogEntry["level"],
+  message: string,
+  meta?: LogMeta,
+): StateUpdater {
   return (state) => {
     const logs = [...state.logs, { time: new Date(), level, message, meta }];
     if (logs.length > state.maxLogs) logs.shift();
@@ -351,13 +352,8 @@ export function scrollLogs(direction: "up" | "down"): StateUpdater {
     if (!state.logsExpanded) return state;
 
     const maxScroll = Math.max(0, state.logs.length - 5);
-    let newScroll = state.logScroll;
-
-    if (direction === "up") {
-      newScroll = Math.min(maxScroll, state.logScroll + 1);
-    } else {
-      newScroll = Math.max(0, state.logScroll - 1);
-    }
+    const delta = direction === "up" ? 1 : -1;
+    const newScroll = Math.min(maxScroll, Math.max(0, state.logScroll + delta));
 
     return { ...state, logScroll: newScroll };
   };
@@ -366,18 +362,14 @@ export function scrollLogs(direction: "up" | "down"): StateUpdater {
 function shortenPath(path: string, env: RuntimeEnv = getRuntimeEnv()): string {
   // Prefer relative path to cwd
   const currentDir = cwd();
-  if (path.startsWith(currentDir + "/")) {
-    return "./" + path.slice(currentDir.length + 1);
-  }
-  if (path === currentDir) {
-    return "./";
-  }
+  const cwdPrefix = `${currentDir}/`;
+
+  if (path === currentDir) return "./";
+  if (path.startsWith(cwdPrefix)) return `./${path.slice(cwdPrefix.length)}`;
 
   // Fall back to ~ for home
   const home = env.homeDir ?? "";
-  if (home && path.startsWith(home)) {
-    return `~${path.slice(home.length)}`;
-  }
+  if (home && path.startsWith(home)) return `~${path.slice(home.length)}`;
 
   return path;
 }
@@ -385,7 +377,6 @@ function shortenPath(path: string, env: RuntimeEnv = getRuntimeEnv()): string {
 export function getActiveSelection(
   state: AppState,
 ): ListItem<ProjectInfo> | undefined {
-  // remoteProjects is not a ListSelectState
   if (state.activeList === "remoteProjects") return undefined;
   const list = state[state.activeList];
   return list.items[list.selectedIndex];

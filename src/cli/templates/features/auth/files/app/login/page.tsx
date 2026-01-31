@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
 
 export default function LoginPage(): React.JSX.Element {
   const [email, setEmail] = useState("");
@@ -20,15 +20,15 @@ export default function LoginPage(): React.JSX.Element {
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await response.json();
+      const data: { error?: string } = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Login failed");
+        throw new Error(data.error ?? "Login failed");
       }
 
       globalThis.location.href = "/dashboard";
-    } catch (error) {
-      setError(error instanceof Error ? error.message : "Failed to login");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to login");
     } finally {
       setLoading(false);
     }
@@ -42,13 +42,11 @@ export default function LoginPage(): React.JSX.Element {
       </div>
 
       <div className="bg-white dark:bg-neutral-800 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-700">
-        {error
-          ? (
-            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm mb-4">
-              {error}
-            </div>
-          )
-          : null}
+        {error && (
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm mb-4">
+            {error}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>

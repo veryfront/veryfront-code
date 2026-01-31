@@ -17,25 +17,33 @@ export default tool({
   async execute({ customerId, maxResults }) {
     const invoices = await listInvoices({ customerId, maxResults });
 
-    return invoices.map((invoice) => ({
-      id: invoice.Id,
-      docNumber: invoice.DocNumber,
-      txnDate: invoice.TxnDate,
-      dueDate: invoice.DueDate,
-      totalAmount: invoice.TotalAmt,
-      balance: invoice.Balance,
-      customer: {
-        id: invoice.CustomerRef.value,
-        name: invoice.CustomerRef.name,
-      },
-      status: invoice.TxnStatus,
-      emailStatus: invoice.EmailStatus,
-      lineItems: invoice.Line.map((line) => ({
-        description: line.Description,
-        amount: line.Amount,
-        quantity: line.SalesItemLineDetail?.Qty,
-        unitPrice: line.SalesItemLineDetail?.UnitPrice,
-      })),
-    }));
+    return invoices.map((invoice) => {
+      const customerRef = invoice.CustomerRef;
+
+      return {
+        id: invoice.Id,
+        docNumber: invoice.DocNumber,
+        txnDate: invoice.TxnDate,
+        dueDate: invoice.DueDate,
+        totalAmount: invoice.TotalAmt,
+        balance: invoice.Balance,
+        customer: {
+          id: customerRef.value,
+          name: customerRef.name,
+        },
+        status: invoice.TxnStatus,
+        emailStatus: invoice.EmailStatus,
+        lineItems: invoice.Line.map((line) => {
+          const detail = line.SalesItemLineDetail;
+
+          return {
+            description: line.Description,
+            amount: line.Amount,
+            quantity: detail?.Qty,
+            unitPrice: detail?.UnitPrice,
+          };
+        }),
+      };
+    });
   },
 });

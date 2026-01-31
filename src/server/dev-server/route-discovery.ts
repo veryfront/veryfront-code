@@ -100,30 +100,28 @@ export class RouteDiscovery {
       }
     }
 
-    if (results.length === 0 && preferredRouter === "app") {
-      const pagesFallback = this.useRelativePaths ? "pages" : join(this.projectDir, "pages");
-      if (await this.directoryExists(pagesFallback)) {
-        logger.warn('[SERVER] router="app" but app/ directory missing; falling back to pages/');
-        results.push({ type: "pages", path: pagesFallback });
-      }
-    }
+    if (results.length === 0) {
+      if (preferredRouter === "app") {
+        const pagesFallback = this.useRelativePaths ? "pages" : join(this.projectDir, "pages");
+        if (await this.directoryExists(pagesFallback)) {
+          logger.warn('[SERVER] router="app" but app/ directory missing; falling back to pages/');
+          results.push({ type: "pages", path: pagesFallback });
+        }
+      } else if (preferredRouter === "pages") {
+        const appFallback = this.useRelativePaths ? "app" : join(this.projectDir, "app");
+        if (await this.directoryExists(appFallback)) {
+          logger.warn('[SERVER] router="pages" but pages/ directory missing; using app/');
+          results.push({ type: "app", path: appFallback });
+        }
+      } else {
+        const fallbackDirs: RouteDirectory[] = [
+          { type: "app", path: this.useRelativePaths ? "app" : join(this.projectDir, "app") },
+          { type: "pages", path: this.useRelativePaths ? "pages" : join(this.projectDir, "pages") },
+        ];
 
-    if (results.length === 0 && preferredRouter === "pages") {
-      const appFallback = this.useRelativePaths ? "app" : join(this.projectDir, "app");
-      if (await this.directoryExists(appFallback)) {
-        logger.warn('[SERVER] router="pages" but pages/ directory missing; using app/');
-        results.push({ type: "app", path: appFallback });
-      }
-    }
-
-    if (results.length === 0 && preferredRouter === undefined) {
-      const fallbackDirs: RouteDirectory[] = [
-        { type: "app", path: this.useRelativePaths ? "app" : join(this.projectDir, "app") },
-        { type: "pages", path: this.useRelativePaths ? "pages" : join(this.projectDir, "pages") },
-      ];
-
-      for (const fallback of fallbackDirs) {
-        if (await this.directoryExists(fallback.path)) results.push(fallback);
+        for (const fallback of fallbackDirs) {
+          if (await this.directoryExists(fallback.path)) results.push(fallback);
+        }
       }
     }
 
@@ -137,18 +135,13 @@ export class RouteDiscovery {
         useRelativePaths: this.useRelativePaths,
       });
 
-      if (this.useRelativePaths) {
-        const stat = await this.adapter.fs.stat(path);
-        logger.debug("[SERVER] Directory stat result", { path, isDirectory: stat.isDirectory });
-        return stat.isDirectory;
-      }
-
-      const stat = await withFallback(
+      const stat = this.useRelativePaths ? await this.adapter.fs.stat(path) : await withFallback(
         () => this.adapter.fs.stat(path),
         () => createFileSystem().stat(path),
         { operationName: "stat:routeDiscovery:directoryExists", logError: false },
       );
 
+      logger.debug("[SERVER] Directory stat result", { path, isDirectory: stat.isDirectory });
       return stat.isDirectory;
     } catch (error) {
       logger.debug("[SERVER] Directory check failed", { path, error: String(error) });

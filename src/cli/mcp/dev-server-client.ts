@@ -20,17 +20,11 @@ export class DevServerClient {
     this.baseUrl = `http://localhost:${options.port}`;
   }
 
-  /**
-   * Fetch live errors from the ErrorCollector.
-   */
   getLiveErrors(type?: string): Promise<unknown> {
     const params = type ? `?type=${encodeURIComponent(type)}` : "";
     return this.pull(`/_dev/api/live-errors${params}`);
   }
 
-  /**
-   * Fetch live logs from the LogBuffer.
-   */
   getLiveLogs(options?: {
     level?: string;
     source?: string;
@@ -39,6 +33,7 @@ export class DevServerClient {
     since?: number;
   }): Promise<unknown> {
     const params = new URLSearchParams();
+
     if (options?.level) params.set("level", options.level);
     if (options?.source) params.set("source", options.source);
     if (options?.pattern) params.set("pattern", options.pattern);
@@ -49,16 +44,10 @@ export class DevServerClient {
     return this.pull(`/_dev/api/live-logs${qs ? `?${qs}` : ""}`);
   }
 
-  /**
-   * Fetch dev server stats.
-   */
   getStats(): Promise<unknown> {
     return this.pull("/_dev/api/stats");
   }
 
-  /**
-   * Trigger HMR reload.
-   */
   triggerHmr(path?: string): Promise<unknown> {
     return this.pull("/_dev/api/hmr-trigger", {
       method: "POST",
@@ -67,10 +56,6 @@ export class DevServerClient {
     });
   }
 
-  /**
-   * Fetch with retry and exponential backoff.
-   * Retries on connection refused / timeout (dev server may be starting up).
-   */
   private async pull(path: string, init?: RequestInit): Promise<unknown> {
     let lastError: unknown;
 
@@ -83,9 +68,10 @@ export class DevServerClient {
         return await response.json();
       } catch (error) {
         lastError = error;
-        if (attempt < MAX_RETRIES) {
-          await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
-        }
+
+        if (attempt >= MAX_RETRIES) break;
+
+        await new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
       }
     }
 

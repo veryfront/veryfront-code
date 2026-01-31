@@ -23,14 +23,14 @@ export const useAISDK = aiSDKModel;
 function getToolSchema(tool: Tool): JsonSchema {
   if (tool.inputSchemaJson) return tool.inputSchemaJson;
 
-  try {
-    const schema = tool.inputSchema as { _def?: { typeName?: string } } | undefined;
-    if (schema?._def?.typeName) return zodToJsonSchema(tool.inputSchema);
-  } catch {
-    // fall through to fallback
-  }
+  const schema = tool.inputSchema as { _def?: { typeName?: string } } | undefined;
+  if (!schema?._def?.typeName) return { type: "object", properties: {} };
 
-  return { type: "object", properties: {} };
+  try {
+    return zodToJsonSchema(tool.inputSchema);
+  } catch {
+    return { type: "object", properties: {} };
+  }
 }
 
 export function toAISDKTool(tool: Tool): {

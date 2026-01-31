@@ -51,7 +51,7 @@ export class CacheManager {
         manifest,
         (_key, value) => {
           if (typeof value !== "object" || value === null || !("content" in value)) return value;
-          const { content: _content, sourceMap: _sourceMap, ...rest } = value as CSSBundle;
+          const { content: _content, sourceMap: _sourceMap, ...rest } = value;
           return rest;
         },
         2,
@@ -78,9 +78,9 @@ export class CacheManager {
     let originalSize = 0;
     let minifiedSize = 0;
 
-    for (const { size, minifiedSize: bundleMinifiedSize } of this.bundles.values()) {
-      originalSize += size;
-      minifiedSize += bundleMinifiedSize;
+    for (const bundle of this.bundles.values()) {
+      originalSize += bundle.size;
+      minifiedSize += bundle.minifiedSize;
     }
 
     const totalSavings = originalSize - minifiedSize;

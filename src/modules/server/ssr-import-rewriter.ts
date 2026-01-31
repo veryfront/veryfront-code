@@ -18,9 +18,7 @@ export interface SSRRewriteOptions {
 function shouldKeepBareSpecifier(specifier: string): boolean {
   // npm: specifiers are only supported in Deno, not Node.js
   // In Node.js, we need to convert them to esm.sh URLs (handled in rewriteBareImports)
-  if (specifier.startsWith("npm:")) {
-    return isDeno;
-  }
+  if (specifier.startsWith("npm:")) return isDeno;
 
   if (
     specifier.startsWith("http://") ||
@@ -32,10 +30,6 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
   }
 
   if (specifier.startsWith("@/")) return true;
-
-  // React imports are handled by resolveReactForRuntime - don't keep as bare specifiers.
-  // On Node.js, esm.sh URLs will be cached to disk by cacheHttpImportsToLocal.
-
   if (specifier.startsWith("veryfront/")) return true;
 
   return false;
@@ -45,8 +39,7 @@ function resolveReactForRuntime(specifier: string, version?: string): string | n
   // For Bun: Use local React paths from veryfront's node_modules.
   // Bun handles CJS/ESM interop correctly with file:// URLs.
   if (!isDeno && !isNode) {
-    const localPaths = getLocalReactPaths();
-    const localPath = localPaths[specifier];
+    const localPath = getLocalReactPaths()[specifier];
     if (localPath) return localPath;
     // If not found in local paths, fall through to esm.sh for subpath imports
   }
@@ -55,12 +48,9 @@ function resolveReactForRuntime(specifier: string, version?: string): string | n
   // For Node.js: Use esm.sh URLs which will be cached to disk by cacheHttpImportsToLocal.
   // The cached bundles are ESM-compatible and can be imported via file:// URLs.
   const v = version ?? getReactVersion();
-  const reactMap = getReactImportMap(v);
-
-  const mapped = reactMap[specifier];
+  const mapped = getReactImportMap(v)[specifier];
   if (mapped) return mapped;
 
-  // Handle React subpath imports not in the map
   if (specifier.startsWith("react/")) {
     const subpath = specifier.slice("react/".length);
     return `https://esm.sh/react@${v}/${subpath}?external=react&target=es2022`;
@@ -76,15 +66,15 @@ function resolveReactForRuntime(specifier: string, version?: string): string | n
 
 function rewriteBareImports(code: string, version?: string): string {
   const v = version ?? getReactVersion();
+
   return code.replace(/from\s+["']([^"'./][^"']*)["']/g, (_match, specifier: string) => {
-    // Strip npm: prefix for resolution (npm: is Deno-specific)
     const bareSpecifier = specifier.startsWith("npm:") ? specifier.slice(4) : specifier;
 
     const reactUrl = resolveReactForRuntime(bareSpecifier, v);
     if (reactUrl) return `from "${reactUrl}"`;
+
     if (shouldKeepBareSpecifier(specifier)) return `from "${specifier}"`;
 
-    // For third-party packages: Use esm.sh with external=react
     return `from "https://esm.sh/${bareSpecifier}?external=react&target=es2022"`;
   });
 }
@@ -110,11 +100,9 @@ function rewriteRelativeImports(code: string, options: SSRRewriteOptions): strin
   const projectParam = projectSlug ? `&project=${projectSlug}` : "";
   const branchParam = branch ? `&branch=${branch}` : "";
 
-  return code.replace(
-    /from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
-    (_match, path: string) =>
-      `from "${path}?ssr=true${projectParam}${branchParam}&v=${cacheBuster}"`,
-  );
+  return code.replace(/from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g, (_match, path: string) => {
+    return `from "${path}?ssr=true${projectParam}${branchParam}&v=${cacheBuster}"`;
+  });
 }
 
 export function applySSRImportRewrites(code: string, options: SSRRewriteOptions = {}): string {

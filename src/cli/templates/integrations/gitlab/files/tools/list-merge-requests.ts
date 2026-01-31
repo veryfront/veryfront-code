@@ -34,7 +34,7 @@ export default tool({
       perPage: limit,
     });
 
-    if (!mergeRequests.length) {
+    if (mergeRequests.length === 0) {
       return {
         message: "No merge requests found matching the criteria.",
         count: 0,
@@ -47,7 +47,7 @@ export default tool({
       mergeRequests: mergeRequests.map((mr) => {
         const description = mr.description ?? "";
         const truncatedDescription =
-          description.substring(0, 200) + (description.length > 200 ? "..." : "");
+          description.length > 200 ? `${description.substring(0, 200)}...` : description;
 
         return {
           id: mr.id,

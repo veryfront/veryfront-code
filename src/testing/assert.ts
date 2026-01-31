@@ -50,9 +50,8 @@ function createNodeAssertImpl(): AssertImpl {
     if (!includes) return;
     if (!(error instanceof Error)) return;
 
-    if (!error.message.includes(includes)) {
-      throw new Error(`Expected error message to include "${includes}", got "${error.message}"`);
-    }
+    if (error.message.includes(includes)) return;
+    throw new Error(`Expected error message to include "${includes}", got "${error.message}"`);
   }
 
   function assertThrowsOrRejects(
@@ -77,6 +76,33 @@ function createNodeAssertImpl(): AssertImpl {
     }
 
     assertErrorMessageIncludes(error, msgIncludesOrMsg);
+  }
+
+  function assertObjectMatch(
+    actual: Record<string, any>,
+    expected: Record<string, any>,
+    msg?: string,
+  ): void {
+    for (const key of Object.keys(expected)) {
+      const actualVal = actual[key];
+      const expectedVal = expected[key];
+
+      if (typeof expectedVal === "object" && expectedVal !== null) {
+        if (typeof actualVal !== "object" || actualVal === null) {
+          throw new Error(msg || `Expected ${key} to be an object`);
+        }
+
+        assertObjectMatch(actualVal, expectedVal, msg);
+        continue;
+      }
+
+      if (actualVal === expectedVal) continue;
+
+      throw new Error(
+        msg ||
+          `Expected ${key} to be ${JSON.stringify(expectedVal)}, got ${JSON.stringify(actualVal)}`,
+      );
+    }
   }
 
   return {
@@ -183,39 +209,7 @@ function createNodeAssertImpl(): AssertImpl {
       throw new Error(msg || "Expected values to not be strictly equal");
     },
 
-    // deno-lint-ignore no-explicit-any
-    assertObjectMatch(
-      actual: Record<string, any>,
-      expected: Record<string, any>,
-      msg?: string,
-    ): void {
-      for (const key of Object.keys(expected)) {
-        const actualVal = actual[key];
-        const expectedVal = expected[key];
-
-        if (typeof expectedVal === "object" && expectedVal !== null) {
-          if (typeof actualVal !== "object" || actualVal === null) {
-            throw new Error(msg || `Expected ${key} to be an object`);
-          }
-
-          this.assertObjectMatch(
-            actualVal as Record<string, any>,
-            expectedVal as Record<string, any>,
-            msg,
-          );
-          continue;
-        }
-
-        if (actualVal === expectedVal) continue;
-
-        throw new Error(
-          msg ||
-            `Expected ${key} to be ${JSON.stringify(expectedVal)}, got ${
-              JSON.stringify(actualVal)
-            }`,
-        );
-      }
-    },
+    assertObjectMatch,
 
     assertGreater(actual: number, expected: number, msg?: string): void {
       if (actual > expected) return;

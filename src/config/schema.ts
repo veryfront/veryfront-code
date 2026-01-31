@@ -307,8 +307,7 @@ export const veryfrontConfigSchema = z
     tailwind: z
       .object({
         stylesheet: z.string().optional(),
-        plugins: z
-          .array(z.enum(["forms", "typography", "aspect-ratio", "container-queries"]))
+        plugins: z.array(z.enum(["forms", "typography", "aspect-ratio", "container-queries"]))
           .optional(),
         theme: z
           .object({
@@ -332,20 +331,21 @@ export function validateVeryfrontConfig(input: unknown): VeryfrontConfig {
   const first = parsed.error.issues[0];
   const path = first?.path?.length ? first.path.join(".") : "<root>";
   const expected = first?.message ?? String(first);
-  const hint = String(path).includes("security.cors")
+  const corsHint = path.includes("security.cors")
     ? " Expected boolean or { origin?: string }."
     : "";
+  const expectedWithHint = expected + corsHint;
 
   const context: ConfigContext = {
     field: path,
-    expected: expected + hint,
+    expected: expectedWithHint,
     value: input,
   };
 
   throw toError(
     createError({
       type: "config",
-      message: `Invalid veryfront.config at ${path}: ${expected}.${hint}`,
+      message: `Invalid veryfront.config at ${path}: ${expectedWithHint}.`,
       context,
     }),
   );

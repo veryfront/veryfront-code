@@ -21,13 +21,8 @@ export interface MapOptions extends Omit<BaseNodeConfig, "checkpoint"> {
 export function map(id: string, options: MapOptions): WorkflowNode {
   validateNodeId(id);
 
-  if (!options.items) {
-    throw new Error(`Map node "${id}" must have 'items' configured`);
-  }
-
-  if (!options.processor) {
-    throw new Error(`Map node "${id}" must have a 'processor' configured`);
-  }
+  if (!options.items) throw new Error(`Map node "${id}" must have 'items' configured`);
+  if (!options.processor) throw new Error(`Map node "${id}" must have a 'processor' configured`);
 
   const config: MapNodeConfig = {
     type: "map",

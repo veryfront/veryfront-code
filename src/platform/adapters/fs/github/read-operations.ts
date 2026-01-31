@@ -36,9 +36,7 @@ export class GitHubReadOperations {
     const normalizedPath = this.normalizePath(path);
     const cacheKey = buildGitHubContentCacheKey(this.config.ref, normalizedPath);
     const cached = this.cache.get<string>(cacheKey);
-    if (cached !== undefined) {
-      return cached;
-    }
+    if (cached !== undefined) return cached;
 
     logger.debug(`${LOG_PREFIX} Reading file`, { path: normalizedPath });
 
@@ -55,9 +53,7 @@ export class GitHubReadOperations {
     const normalizedPath = this.normalizePath(path);
     const cacheKey = buildGitHubBytesCacheKey(this.config.ref, normalizedPath);
     const cached = this.cache.get<Uint8Array>(cacheKey);
-    if (cached !== undefined) {
-      return cached;
-    }
+    if (cached !== undefined) return cached;
 
     logger.debug(`${LOG_PREFIX} Reading file as bytes`, { path: normalizedPath });
 
@@ -95,18 +91,16 @@ export class GitHubReadOperations {
         );
       }
 
-      const item = response;
-
-      if (item.type !== "file") {
+      if (response.type !== "file") {
         throw toError(
           createError({
             type: "file",
-            message: `Not a file: ${path} (type: ${item.type})`,
+            message: `Not a file: ${path} (type: ${response.type})`,
           }),
         );
       }
 
-      if (!item.content) {
+      if (!response.content) {
         throw toError(
           createError({
             type: "file",
@@ -115,9 +109,12 @@ export class GitHubReadOperations {
         );
       }
 
-      return item as GitHubContentItem & { content: string };
+      return response as GitHubContentItem & { content: string };
     } catch (error) {
-      if (error instanceof Error && (error as Error & { statusCode?: number }).statusCode === 404) {
+      const statusCode = error instanceof Error
+        ? (error as Error & { statusCode?: number }).statusCode
+        : undefined;
+      if (statusCode === 404) {
         throw toError(
           createError({
             type: "file",
@@ -133,9 +130,7 @@ export class GitHubReadOperations {
   private async readLargeFile(sha: string): Promise<string> {
     const blobCacheKey = `github:blob:${sha}`;
     const cachedBlob = this.cache.get<string>(blobCacheKey);
-    if (cachedBlob !== undefined) {
-      return cachedBlob;
-    }
+    if (cachedBlob !== undefined) return cachedBlob;
 
     logger.debug(`${LOG_PREFIX} Reading large file via Blob API`, { sha });
 
@@ -149,9 +144,7 @@ export class GitHubReadOperations {
   private async readLargeFileBytes(sha: string): Promise<Uint8Array> {
     const blobCacheKey = `github:blob:bytes:${sha}`;
     const cachedBlob = this.cache.get<Uint8Array>(blobCacheKey);
-    if (cachedBlob !== undefined) {
-      return cachedBlob;
-    }
+    if (cachedBlob !== undefined) return cachedBlob;
 
     logger.debug(`${LOG_PREFIX} Reading large file via Blob API`, { sha });
 
@@ -167,9 +160,11 @@ export class GitHubReadOperations {
   private decodeBase64ToBytes(content: string): Uint8Array {
     const binaryString = atob(content.replace(/\n/g, ""));
     const bytes = new Uint8Array(binaryString.length);
+
     for (let i = 0; i < binaryString.length; i++) {
       bytes[i] = binaryString.charCodeAt(i);
     }
+
     return bytes;
   }
 
@@ -179,9 +174,11 @@ export class GitHubReadOperations {
 
   private normalizePath(path: string): string {
     let normalized = path;
+
     if (this.projectDir && normalized.startsWith(this.projectDir)) {
       normalized = normalized.slice(this.projectDir.length);
     }
+
     return normalized.replace(/^\/+/, "").replace(/\/+$/, "").replace(/\/+/g, "/");
   }
 }

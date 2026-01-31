@@ -125,9 +125,9 @@ export class MemoryBackend implements WorkflowBackend {
 
   saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
     logger.debug("[MemoryBackend] Saving checkpoint", { checkpointId: checkpoint.id, runId });
-    const existing = this.checkpoints.get(runId) ?? [];
-    existing.push(structuredClone(checkpoint));
-    this.checkpoints.set(runId, existing);
+    const checkpoints = this.checkpoints.get(runId) ?? [];
+    checkpoints.push(structuredClone(checkpoint));
+    this.checkpoints.set(runId, checkpoints);
     return Promise.resolve();
   }
 
@@ -161,10 +161,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (!checkpoints) return Promise.resolve();
 
     const idsToDelete = new Set(checkpointIds);
-    this.checkpoints.set(
-      runId,
-      checkpoints.filter((c) => !idsToDelete.has(c.id)),
-    );
+    this.checkpoints.set(runId, checkpoints.filter((c) => !idsToDelete.has(c.id)));
 
     logger.debug("[MemoryBackend] Deleted checkpoints", { count: checkpointIds.length });
     return Promise.resolve();
@@ -176,9 +173,9 @@ export class MemoryBackend implements WorkflowBackend {
 
   savePendingApproval(runId: string, approval: PendingApproval): Promise<void> {
     logger.debug("[MemoryBackend] Saving approval", { approvalId: approval.id, runId });
-    const existing = this.approvals.get(runId) ?? [];
-    existing.push(structuredClone(approval));
-    this.approvals.set(runId, existing);
+    const approvals = this.approvals.get(runId) ?? [];
+    approvals.push(structuredClone(approval));
+    this.approvals.set(runId, approvals);
     return Promise.resolve();
   }
 
@@ -230,12 +227,14 @@ export class MemoryBackend implements WorkflowBackend {
         if (filter?.status === "pending" && approval.status !== "pending") continue;
 
         if (filter?.status === "expired") {
-          const isExpired = !!approval.expiresAt && new Date() > approval.expiresAt;
+          const isExpired = approval.expiresAt != null && new Date() > approval.expiresAt;
           if (!isExpired) continue;
         }
 
         if (
-          filter?.approver && approval.approvers && !approval.approvers.includes(filter.approver)
+          filter?.approver &&
+          approval.approvers &&
+          !approval.approvers.includes(filter.approver)
         ) {
           continue;
         }
@@ -267,10 +266,10 @@ export class MemoryBackend implements WorkflowBackend {
 
     if (insertIndex === -1) {
       this.queue.push(cloned);
-    } else {
-      this.queue.splice(insertIndex, 0, cloned);
+      return Promise.resolve();
     }
 
+    this.queue.splice(insertIndex, 0, cloned);
     return Promise.resolve();
   }
 
@@ -347,11 +346,7 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   destroy(): Promise<void> {
-    this.runs.clear();
-    this.checkpoints.clear();
-    this.approvals.clear();
-    this.queue = [];
-    this.locks.clear();
+    this.clear();
 
     logger.debug("[MemoryBackend] Destroyed");
     return Promise.resolve();

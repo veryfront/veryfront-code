@@ -46,25 +46,11 @@ function buildAdapterConfigFromEnv(): TokenStorageAdapterConfig {
 
   return {
     type: "veryfront-api",
-    veryfront: {
-      apiToken,
-      projectSlug,
-      baseUrl,
-    },
-  };
-}
-
-interface GlobalWithDenoEnv {
-  Deno?: {
-    env?: {
-      get(name: string): string | undefined;
-    };
+    veryfront: { apiToken, projectSlug, baseUrl },
   };
 }
 
 function getEnvVar(name: string): string | undefined {
-  return (
-    (globalThis as GlobalWithDenoEnv).Deno?.env?.get(name) ??
-      (typeof process !== "undefined" ? process.env?.[name] : undefined)
-  );
+  return globalThis.Deno?.env?.get(name) ??
+    (typeof process !== "undefined" ? process.env?.[name] : undefined);
 }

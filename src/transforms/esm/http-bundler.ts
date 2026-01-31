@@ -40,6 +40,7 @@ export function hasHttpImports(code: string): boolean {
 /** Strip Deno shim from esm.sh bundles (if present) */
 export function stripDenoShim(code: string): string {
   if (!isDeno) return code;
+
   return code.replace(
     /globalThis\.Deno\s*=\s*globalThis\.Deno\s*\|\|\s*\{[\s\S]*?env:\s*\{[\s\S]*?\}\s*\};?/g,
     "/* Deno shim stripped */",
@@ -83,12 +84,7 @@ export function createHTTPPlugin(): Plugin {
 
         if (isReactSpecifier(path)) return { path, external: true };
 
-        if (
-          path.startsWith("node:") ||
-          path.startsWith("bun:") ||
-          path.startsWith("data:") ||
-          path.startsWith("file:")
-        ) {
+        if (/^(node:|bun:|data:|file:)/.test(path)) {
           return { path, external: true };
         }
 
@@ -103,15 +99,15 @@ export function createHTTPPlugin(): Plugin {
         let requestUrl = args.path;
 
         try {
-          const u = new URL(args.path);
-          if (u.hostname === "esm.sh") {
-            if (u.pathname.includes("/denonext/")) {
-              u.pathname = u.pathname.replace("/denonext/", "/");
+          const url = new URL(args.path);
+          if (url.hostname === "esm.sh") {
+            if (url.pathname.includes("/denonext/")) {
+              url.pathname = url.pathname.replace("/denonext/", "/");
             }
-            if (!u.searchParams.has("target")) {
-              u.searchParams.set("target", "es2022");
+            if (!url.searchParams.has("target")) {
+              url.searchParams.set("target", "es2022");
             }
-            requestUrl = u.toString();
+            requestUrl = url.toString();
           }
         } catch (urlError) {
           logger.debug(`${LOG_PREFIX} URL parse error for ${args.path}:`, urlError);
@@ -137,10 +133,11 @@ export function createHTTPPlugin(): Plugin {
           // Validate response is JavaScript, not an HTML error page.
           // esm.sh can return HTTP 200 with HTML error pages when packages fail to build.
           const contentType = res.headers.get("content-type") || "";
+          const trimmed = contents.trimStart();
           const isHtmlContent = contentType.includes("text/html") ||
-            contents.trimStart().startsWith("<!DOCTYPE") ||
-            contents.trimStart().startsWith("<html") ||
-            contents.trimStart().startsWith("<HTML") ||
+            trimmed.startsWith("<!DOCTYPE") ||
+            trimmed.startsWith("<html") ||
+            trimmed.startsWith("<HTML") ||
             /<title>ESM[^<]*<\/title>/i.test(contents.slice(0, 500));
 
           if (isHtmlContent) {
@@ -157,15 +154,71 @@ export function createHTTPPlugin(): Plugin {
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           logger.warn(`${LOG_PREFIX} Network error fetching ${args.path}: ${errorMessage}`);
-          return {
-            errors: [{ text: `Network error fetching ${args.path}: ${errorMessage}` }],
-          };
+          return { errors: [{ text: `Network error fetching ${args.path}: ${errorMessage}` }] };
         } finally {
           clearTimeout(timeout);
         }
       });
     },
   };
+}
+
+function ensureEsmTarget(specifier: string): string | null {
+  if (specifier.includes("target=")) return null;
+  const joiner = specifier.includes("?") ? "&" : "?";
+  return `${specifier}${joiner}target=es2022`;
+}
+
+function ensureEsmExternalAndDeps(specifier: string, version: string): string | null {
+  const needsTarget = !specifier.includes("target=");
+  const needsDeps = !specifier.includes("deps=");
+
+  const hasExternal = specifier.includes("external=");
+  const hasReactExternal = specifier.includes("external=react") ||
+    /external=[^&]*\breact\b/.test(specifier);
+  const hasReactDomExternal = /external=[^&]*react-dom/.test(specifier);
+
+  if (hasExternal && (!hasReactExternal || !hasReactDomExternal)) {
+    try {
+      const url = new URL(specifier);
+      const existing = url.searchParams.get("external") || "";
+
+      if (!hasReactExternal) {
+        url.searchParams.set("external", `${existing},react,react-dom`);
+      } else if (!hasReactDomExternal) {
+        url.searchParams.set("external", `${existing},react-dom`);
+      }
+
+      if (needsTarget) url.searchParams.set("target", "es2022");
+      if (needsDeps) url.searchParams.set("deps", `react@${version},react-dom@${version}`);
+
+      const out = url.toString();
+      logger.debug(`${LOG_PREFIX} ${specifier} -> ${out}`);
+      return out;
+    } catch {
+      // Fallback: add as new param (may create duplicate)
+    }
+  }
+
+  const params: string[] = [];
+  if (needsTarget) params.push("target=es2022");
+
+  if (!hasExternal) {
+    params.push("external=react,react-dom");
+  } else if (!hasReactExternal) {
+    params.push("external=react,react-dom");
+  } else if (!hasReactDomExternal) {
+    params.push("external=react-dom");
+  }
+
+  if (needsDeps) params.push(`deps=react@${version},react-dom@${version}`);
+
+  if (params.length === 0) return null;
+
+  const joiner = specifier.includes("?") ? "&" : "?";
+  const out = `${specifier}${joiner}${params.join("&")}`;
+  logger.debug(`${LOG_PREFIX} ${specifier} -> ${out}`);
+  return out;
 }
 
 /**
@@ -207,22 +260,21 @@ export function bundleHttpImports(
       if (specifier.startsWith("/_vf_modules/")) return null;
 
       const fullUrl = `https://esm.sh${specifier}`;
-      // Recursively process as full URL (will add external params if needed)
       const isReactPackage = /^\/react(-dom)?(@|\/|\?|$)/.test(specifier);
+
       if (isReactPackage) {
-        // React packages - just ensure target and return full URL
-        if (!specifier.includes("target=")) {
-          const joiner = specifier.includes("?") ? "&" : "?";
-          return `${fullUrl}${joiner}target=es2022`;
-        }
-        return fullUrl;
+        if (specifier.includes("target=")) return fullUrl;
+        const joiner = specifier.includes("?") ? "&" : "?";
+        return `${fullUrl}${joiner}target=es2022`;
       }
-      // Non-React packages - add external params
+
       const params: string[] = [];
       if (!specifier.includes("target=")) params.push("target=es2022");
       if (!specifier.includes("external=")) params.push("external=react,react-dom");
       if (!specifier.includes("deps=")) params.push(`deps=react@${version},react-dom@${version}`);
+
       if (params.length === 0) return fullUrl;
+
       const joiner = specifier.includes("?") ? "&" : "?";
       return `${fullUrl}${joiner}${params.join("&")}`;
     }
@@ -234,82 +286,8 @@ export function bundleHttpImports(
 
     // Don't modify React/ReactDOM package URLs themselves
     const isReactPackage = /\/react(-dom)?(@|\/|$)/.test(specifier);
-    if (isReactPackage) {
-      // Just ensure target is set for React packages
-      if (!specifier.includes("target=")) {
-        const joiner = specifier.includes("?") ? "&" : "?";
-        return `${specifier}${joiner}target=es2022`;
-      }
-      return null;
-    }
+    if (isReactPackage) return ensureEsmTarget(specifier);
 
-    // For non-React packages: ensure external=react,react-dom and deps
-    const params: string[] = [];
-
-    if (!specifier.includes("target=")) {
-      params.push("target=es2022");
-    }
-
-    // Handle external param - ensure both react AND react-dom are externalized
-    const hasExternal = specifier.includes("external=");
-    const hasReactExternal = specifier.includes("external=react") ||
-      /external=[^&]*\breact\b/.test(specifier);
-    const hasReactDomExternal = /external=[^&]*react-dom/.test(specifier);
-
-    if (!hasExternal) {
-      // No external param - add both
-      params.push("external=react,react-dom");
-    } else if (!hasReactExternal) {
-      // Has external but no react - append react,react-dom
-      // This requires modifying existing param, so we'll use URL parsing
-      try {
-        const url = new URL(specifier);
-        const existing = url.searchParams.get("external") || "";
-        url.searchParams.set("external", `${existing},react,react-dom`);
-        // Return full modified URL and skip other param additions
-        if (!specifier.includes("target=")) {
-          url.searchParams.set("target", "es2022");
-        }
-        if (!specifier.includes("deps=")) {
-          url.searchParams.set("deps", `react@${version},react-dom@${version}`);
-        }
-        logger.debug(`${LOG_PREFIX} ${specifier} -> ${url.toString()}`);
-        return url.toString();
-      } catch {
-        // Fallback: just add as new param (may create duplicate)
-        params.push("external=react,react-dom");
-      }
-    } else if (!hasReactDomExternal) {
-      // Has react but not react-dom - append react-dom
-      try {
-        const url = new URL(specifier);
-        const existing = url.searchParams.get("external") || "";
-        url.searchParams.set("external", `${existing},react-dom`);
-        if (!specifier.includes("target=")) {
-          url.searchParams.set("target", "es2022");
-        }
-        if (!specifier.includes("deps=")) {
-          url.searchParams.set("deps", `react@${version},react-dom@${version}`);
-        }
-        logger.debug(`${LOG_PREFIX} ${specifier} -> ${url.toString()}`);
-        return url.toString();
-      } catch {
-        // Fallback
-        params.push("external=react-dom");
-      }
-    }
-    // else: has both react and react-dom - no external changes needed
-
-    if (!specifier.includes("deps=")) {
-      params.push(`deps=react@${version},react-dom@${version}`);
-    }
-
-    if (params.length === 0) return null;
-
-    const joiner = specifier.includes("?") ? "&" : "?";
-    const newSpec = `${specifier}${joiner}${params.join("&")}`;
-
-    logger.debug(`${LOG_PREFIX} ${specifier} -> ${newSpec}`);
-    return newSpec;
+    return ensureEsmExternalAndDeps(specifier, version);
   });
 }

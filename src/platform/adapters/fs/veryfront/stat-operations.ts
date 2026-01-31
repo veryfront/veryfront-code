@@ -214,8 +214,8 @@ export class StatOperations {
     const skipPersistentCache =
       this.contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false;
 
-    if (!skipPersistentCache && this.contextProvider?.getFileList) {
-      const files = await this.contextProvider.getFileList();
+    if (!skipPersistentCache) {
+      const files = await this.contextProvider?.getFileList?.();
       if (files) {
         const cacheMs = Math.round(performance.now() - cacheStart);
         logger.debug("[StatOperations] getAllFilesRaw - from adapter cache", {
@@ -319,32 +319,35 @@ export class StatOperations {
       ? normalizedPath.replace(/\.(mdx|md|tsx|jsx|ts|js)$/, "")
       : normalizedPath;
 
-    for (const ext of EXTENSION_PRIORITY) {
-      const pathWithExt = pathWithoutExt + ext;
-      if (!fileIdx.has(pathWithExt)) continue;
+    const tryResolve = (candidateBase: string): string | null => {
+      for (const ext of EXTENSION_PRIORITY) {
+        const candidate = candidateBase + ext;
+        if (fileIdx.has(candidate)) return candidate;
+      }
+      return null;
+    };
 
+    const resolvedDirect = tryResolve(pathWithoutExt);
+    if (resolvedDirect) {
       const totalMs = Math.round(performance.now() - resolveStart);
       logger.debug("[StatOperations] resolveFile found with extension", {
-        pathWithExt,
+        pathWithExt: resolvedDirect,
         indexMs,
         totalMs,
       });
-      return pathWithExt;
+      return resolvedDirect;
     }
 
     if (!pathWithoutExt.startsWith("pages/")) {
-      const pagesPath = `pages/${pathWithoutExt}`;
-      for (const ext of EXTENSION_PRIORITY) {
-        const pathWithExt = pagesPath + ext;
-        if (!fileIdx.has(pathWithExt)) continue;
-
+      const resolvedPages = tryResolve(`pages/${pathWithoutExt}`);
+      if (resolvedPages) {
         const totalMs = Math.round(performance.now() - resolveStart);
         logger.debug("[StatOperations] resolveFile found with pages prefix", {
-          pathWithExt,
+          pathWithExt: resolvedPages,
           indexMs,
           totalMs,
         });
-        return pathWithExt;
+        return resolvedPages;
       }
     }
 
@@ -369,9 +372,6 @@ export class StatOperations {
       return null;
     }
 
-    // Only skip pattern search if the original path had an extension.
-    // If no extension was provided (e.g., "lib/utils"), we must do pattern search
-    // to find the file with the correct extension (e.g., "lib/utils.ts").
     if (hasExtension && this.contextProvider?.getFileList) {
       const totalMs = Math.round(performance.now() - resolveStart);
       logger.debug("[StatOperations] resolveFile not found (complete index, specific extension)", {

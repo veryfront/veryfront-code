@@ -95,16 +95,18 @@ describe("validateOriginSync", () => {
   });
 
   describe("function origin (sync)", () => {
+    const endsWithExample = (o: string): boolean => o.endsWith(".example.com");
+
     it("should allow when function returns true", () => {
       const result = validateOriginSync("https://sub.example.com", {
-        origin: (o) => o.endsWith(".example.com"),
+        origin: endsWithExample,
       });
       assertEquals(result.allowedOrigin, "https://sub.example.com");
     });
 
     it("should deny when function returns false", () => {
       const result = validateOriginSync("https://evil.com", {
-        origin: (o) => o.endsWith(".example.com"),
+        origin: endsWithExample,
       });
       assertEquals(result.allowedOrigin, null);
       assertEquals(result.error, "Origin rejected by validation function");
@@ -137,22 +139,21 @@ describe("validateOrigin (async)", () => {
     assertEquals(result.allowedOrigin, "https://example.com");
   });
 
+  const asyncEqualsExample = async (o: string): Promise<boolean> => {
+    await Promise.resolve();
+    return o === "https://example.com";
+  };
+
   it("should support async validation functions", async () => {
     const result = await validateOrigin("https://example.com", {
-      origin: async (o) => {
-        await Promise.resolve();
-        return o === "https://example.com";
-      },
+      origin: asyncEqualsExample,
     });
     assertEquals(result.allowedOrigin, "https://example.com");
   });
 
   it("should handle rejected async validator", async () => {
     const result = await validateOrigin("https://evil.com", {
-      origin: async (o) => {
-        await Promise.resolve();
-        return o === "https://example.com";
-      },
+      origin: asyncEqualsExample,
     });
     assertEquals(result.allowedOrigin, null);
   });

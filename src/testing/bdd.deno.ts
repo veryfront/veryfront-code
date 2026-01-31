@@ -8,7 +8,7 @@ export {
   it as test,
 } from "@std/testing/bdd";
 
-type TestFn = () => void | Promise<void>;
+export type TestFn = () => void | Promise<void>;
 
 export interface TestOptions {
   sanitizeResources?: boolean;

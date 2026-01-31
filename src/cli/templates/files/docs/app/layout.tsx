@@ -1,5 +1,5 @@
-import { Sidebar } from "../components/Sidebar.tsx";
 import { Header } from "../components/Header.tsx";
+import { Sidebar } from "../components/Sidebar.tsx";
 
 export const metadata = {
   title: "My Docs",
@@ -16,8 +16,8 @@ export default function RootLayout({
       <Header />
       <div className="flex">
         <Sidebar />
-        <main className="flex-1 px-8 py-8 max-w-3xl">
-          <article className="prose prose-neutral dark:prose-invert max-w-none">
+        <main className="flex-1 max-w-3xl px-8 py-8">
+          <article className="prose prose-neutral max-w-none dark:prose-invert">
             {children}
           </article>
         </main>

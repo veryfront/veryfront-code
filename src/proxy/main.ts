@@ -33,17 +33,20 @@ import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
 
+function getLocalProjects(): Record<string, string> {
+  const raw = getEnv("LOCAL_PROJECTS");
+  return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+}
+
 // Configuration from environment variables
 const config: ProxyConfig = {
-  apiBaseUrl: getEnv("VERYFRONT_API_BASE_URL") ||
-    "http://api.lvh.me:4000",
+  apiBaseUrl: getEnv("VERYFRONT_API_BASE_URL") || "http://api.lvh.me:4000",
   clientId: getEnv("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY") || "",
   clientSecret: getEnv("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY") || "",
   // Preview uses same service account (scopes determine access)
   previewClientId: getEnv("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY") || "",
-  previewClientSecret: getEnv("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY") ||
-    "",
-  localProjects: getEnv("LOCAL_PROJECTS") ? JSON.parse(getEnv("LOCAL_PROJECTS")!) : {},
+  previewClientSecret: getEnv("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY") || "",
+  localProjects: getLocalProjects(),
 };
 
 const RENDERER_URL = getEnv("RENDERER_URL") || "http://localhost:3001";
@@ -90,12 +93,10 @@ function handleWebSocketUpgrade(req: Request): Response {
   const url = new URL(req.url);
   const host = req.headers.get("host") || "";
 
-  // Parse domain to extract project slug and environment
   const parsed = parseProjectDomain(host);
   const scope = parsed.environment === "preview" ? "preview" : "production";
   const projectSlug = parsed.slug || undefined;
 
-  // Build renderer WebSocket URL
   const rendererWsUrl = RENDERER_URL.replace(/^http/, "ws");
   const targetUrl = new URL(`${rendererWsUrl}${url.pathname}${url.search}`);
   targetUrl.searchParams.set("x-project-slug", projectSlug || "");
@@ -116,11 +117,10 @@ function handleWebSocketUpgrade(req: Request): Response {
   let connectTimeoutId: ReturnType<typeof setTimeout> | null = null;
   let timedOut = false;
 
-  const clearConnectTimeout = () => {
-    if (connectTimeoutId) {
-      clearTimeout(connectTimeoutId);
-      connectTimeoutId = null;
-    }
+  const clearConnectTimeout = (): void => {
+    if (!connectTimeoutId) return;
+    clearTimeout(connectTimeoutId);
+    connectTimeoutId = null;
   };
 
   clientSocket.onopen = () => {
@@ -220,10 +220,7 @@ function handleWebSocketUpgrade(req: Request): Response {
   return response;
 }
 
-function jsonErrorResponse(
-  status: number,
-  body: Record<string, unknown>,
-): Response {
+function jsonErrorResponse(status: number, body: Record<string, unknown>): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json" },
@@ -243,7 +240,6 @@ function forwardToRenderer(req: Request): Promise<Response> {
     try {
       const ctx = await proxyHandler.processRequest(req);
 
-      // Wrap all subsequent logging with request context
       return runWithProxyRequestContext(
         {
           requestId,
@@ -258,15 +254,9 @@ function forwardToRenderer(req: Request): Promise<Response> {
         async () => {
           if (ctx.error) {
             const ms = Math.round(performance.now() - startTime);
-            proxyLogger.error(
-              `${ctx.error.status} ${req.method} ${url.pathname}`,
-              {
-                ms,
-              },
-            );
+            proxyLogger.error(`${ctx.error.status} ${req.method} ${url.pathname}`, { ms });
             endSpan(spanInfo?.span, ctx.error.status);
 
-            // Handle redirect for protected environments
             if (ctx.error.redirectUrl) {
               return new Response(null, {
                 status: 302,
@@ -291,7 +281,6 @@ function forwardToRenderer(req: Request): Promise<Response> {
           newHeaders.set("x-environment", ctx.environment);
           newHeaders.set("x-forwarded-host", ctx.host);
           if (ctx.localPath) newHeaders.set("x-project-path", ctx.localPath);
-          // Forward project/release context for cache keying
           if (ctx.projectId) newHeaders.set("x-project-id", ctx.projectId);
           if (ctx.releaseId) newHeaders.set("x-release-id", ctx.releaseId);
           if (ctx.branchId) newHeaders.set("x-branch-id", ctx.branchId);
@@ -302,7 +291,6 @@ function forwardToRenderer(req: Request): Promise<Response> {
 
           const rendererUrl = new URL(url.pathname + url.search, RENDERER_URL);
 
-          // Create abort controller for timeout
           const abortController = new AbortController();
           const timeoutId = setTimeout(() => {
             abortController.abort();
@@ -333,7 +321,6 @@ function forwardToRenderer(req: Request): Promise<Response> {
             clearTimeout(timeoutId);
             const ms = Math.round(performance.now() - startTime);
 
-            // Handle timeout specifically
             if (error instanceof Error && error.name === "AbortError") {
               proxyLogger.error(`504 ${req.method} ${url.pathname}`, {
                 ms,
@@ -346,23 +333,18 @@ function forwardToRenderer(req: Request): Promise<Response> {
               });
             }
 
-            proxyLogger.error(
-              `502 ${req.method} ${url.pathname}`,
-              { ms },
-              error as Error,
-            );
+            proxyLogger.error(`502 ${req.method} ${url.pathname}`, { ms }, error as Error);
             endSpan(spanInfo?.span, 502, error as Error);
             return jsonErrorResponse(502, {
               error: "Proxy Error",
               message: error instanceof Error ? error.message : "Unknown error",
             });
+          } finally {
+            clearTimeout(timeoutId);
           }
-          clearTimeout(timeoutId);
 
           const ms = Math.round(performance.now() - startTime);
-          reqLogger.info(`${response.status} ${req.method} ${url.pathname}`, {
-            ms,
-          });
+          reqLogger.info(`${response.status} ${req.method} ${url.pathname}`, { ms });
 
           endSpan(spanInfo?.span, response.status);
 
@@ -374,13 +356,8 @@ function forwardToRenderer(req: Request): Promise<Response> {
         },
       );
     } catch (error) {
-      // Only catches if processRequest itself throws (no ctx available)
       const ms = Math.round(performance.now() - startTime);
-      proxyLogger.error(
-        `500 ${req.method} ${url.pathname}`,
-        { ms },
-        error as Error,
-      );
+      proxyLogger.error(`500 ${req.method} ${url.pathname}`, { ms }, error as Error);
       endSpan(spanInfo?.span, 500, error as Error);
       return jsonErrorResponse(500, {
         error: "Internal Proxy Error",
@@ -410,11 +387,8 @@ async function handleApiProxy(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
   const token = await proxyHandler.getTokenForApi(req);
-  if (!token) {
-    return jsonErrorResponse(401, { error: "No authentication token" });
-  }
+  if (!token) return jsonErrorResponse(401, { error: "No authentication token" });
 
-  // Strip /_vf/api prefix and forward to API
   const apiPath = url.pathname.replace(/^\/_vf\/api/, "");
   const apiUrl = `${config.apiBaseUrl}${apiPath}${url.search}`;
   const apiUrlObj = new URL(apiUrl);
@@ -428,8 +402,7 @@ async function handleApiProxy(req: Request): Promise<Response> {
           headers: {
             Authorization: `Bearer ${token}`,
             Accept: "application/json",
-            "Content-Type": req.headers.get("Content-Type") ||
-              "application/json",
+            "Content-Type": req.headers.get("Content-Type") || "application/json",
           },
           body: req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined,
         }),
@@ -446,8 +419,7 @@ async function handleApiProxy(req: Request): Promise<Response> {
       status: response.status,
       statusText: response.statusText,
       headers: {
-        "Content-Type": response.headers.get("Content-Type") ||
-          "application/json",
+        "Content-Type": response.headers.get("Content-Type") || "application/json",
         "Cache-Control": "no-cache",
       },
     });
@@ -465,26 +437,19 @@ async function handleApiProxy(req: Request): Promise<Response> {
 function router(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
-  // WebSocket upgrade
   if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
     return Promise.resolve(handleWebSocketUpgrade(req));
   }
 
-  // Proxy endpoints
-  if (url.pathname === "/_proxy/stats") {
-    return handleStats();
+  switch (url.pathname) {
+    case "/_proxy/stats":
+      return handleStats();
+    case "/_proxy/health":
+      return Promise.resolve(new Response("OK", { status: 200 }));
   }
 
-  if (url.pathname === "/_proxy/health") {
-    return Promise.resolve(new Response("OK", { status: 200 }));
-  }
+  if (url.pathname.startsWith("/_vf/api/")) return handleApiProxy(req);
 
-  // BFF: Proxy API requests directly to Veryfront API
-  if (url.pathname.startsWith("/_vf/api/")) {
-    return handleApiProxy(req);
-  }
-
-  // Forward all other requests to renderer
   return forwardToRenderer(req);
 }
 

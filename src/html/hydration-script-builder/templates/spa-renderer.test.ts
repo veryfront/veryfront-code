@@ -2,6 +2,10 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getSpaLoaderScript, getSpaRendererScript } from "./spa-renderer.ts";
 
+function assertIncludes(haystack: string, needle: string): void {
+  assertEquals(haystack.includes(needle), true);
+}
+
 describe("hydration-script-builder/templates/spa-renderer", () => {
   describe("getSpaRendererScript", () => {
     it("should return a non-empty string", () => {
@@ -11,85 +15,74 @@ describe("hydration-script-builder/templates/spa-renderer", () => {
     });
 
     it("should define async initSpaApp function", () => {
-      const result = getSpaRendererScript();
-      assertEquals(result.includes("async function initSpaApp()"), true);
+      assertIncludes(getSpaRendererScript(), "async function initSpaApp()");
     });
 
     it("should look for veryfront-hydration-data script element", () => {
-      const result = getSpaRendererScript();
-      assertEquals(result.includes("getElementById('veryfront-hydration-data')"), true);
+      assertIncludes(
+        getSpaRendererScript(),
+        "getElementById('veryfront-hydration-data')",
+      );
     });
 
     it("should parse hydration data as JSON", () => {
-      const result = getSpaRendererScript();
-      assertEquals(result.includes("JSON.parse(dataScript.textContent"), true);
+      assertIncludes(getSpaRendererScript(), "JSON.parse(dataScript.textContent");
     });
 
     it("should handle missing hydration data", () => {
-      const result = getSpaRendererScript();
-      assertEquals(result.includes("Hydration data not found"), true);
+      assertIncludes(getSpaRendererScript(), "Hydration data not found");
     });
 
     it("should handle JSON parse errors", () => {
-      const result = getSpaRendererScript();
-      assertEquals(result.includes("Failed to parse hydration data"), true);
+      assertIncludes(getSpaRendererScript(), "Failed to parse hydration data");
     });
 
     it("should set studioEmbed flag when present in data", () => {
       const result = getSpaRendererScript();
-      assertEquals(result.includes("initialData.studioEmbed"), true);
-      assertEquals(result.includes("__veryfrontSetStudioEmbed"), true);
+      assertIncludes(result, "initialData.studioEmbed");
+      assertIncludes(result, "__veryfrontSetStudioEmbed");
     });
 
     it("should load page component", () => {
-      const result = getSpaRendererScript();
-      assertEquals(result.includes("loadComponent(initialData.pagePath)"), true);
+      assertIncludes(getSpaRendererScript(), "loadComponent(initialData.pagePath)");
     });
 
     it("should load layout components", () => {
-      const result = getSpaRendererScript();
-      assertEquals(result.includes("initialData.layouts"), true);
+      assertIncludes(getSpaRendererScript(), "initialData.layouts");
     });
 
     it("should import ClientApp", () => {
-      const result = getSpaRendererScript();
-      assertEquals(result.includes("lib/spa/ClientApp.js"), true);
+      assertIncludes(getSpaRendererScript(), "lib/spa/ClientApp.js");
     });
 
     it("should look for veryfront-content container", () => {
-      const result = getSpaRendererScript();
-      assertEquals(result.includes("getElementById('veryfront-content')"), true);
+      assertIncludes(getSpaRendererScript(), "getElementById('veryfront-content')");
     });
 
     it("should handle hydration when container has content", () => {
       const result = getSpaRendererScript();
-      assertEquals(result.includes("container.innerHTML.trim()"), true);
-      assertEquals(result.includes("hydrateRoot"), true);
+      assertIncludes(result, "container.innerHTML.trim()");
+      assertIncludes(result, "hydrateRoot");
     });
 
     it("should use createRoot when container is empty", () => {
-      const result = getSpaRendererScript();
-      assertEquals(result.includes("createRoot(container)"), true);
+      assertIncludes(getSpaRendererScript(), "createRoot(container)");
     });
 
     it("should use identifierPrefix 'vf'", () => {
-      const result = getSpaRendererScript();
-      assertEquals(result.includes("identifierPrefix: 'vf'"), true);
+      assertIncludes(getSpaRendererScript(), "identifierPrefix: 'vf'");
     });
 
     it("should set __VERYFRONT_SPA_MODE__ on window", () => {
-      const result = getSpaRendererScript();
-      assertEquals(result.includes("window.__VERYFRONT_SPA_MODE__ = true"), true);
+      assertIncludes(getSpaRendererScript(), "window.__VERYFRONT_SPA_MODE__ = true");
     });
 
     it("should fallback to renderPage on error", () => {
-      const result = getSpaRendererScript();
-      assertEquals(result.includes("renderPage(window.location.pathname)"), true);
+      assertIncludes(getSpaRendererScript(), "renderPage(window.location.pathname)");
     });
 
     it("should call initSpaApp at the end", () => {
-      const result = getSpaRendererScript();
-      assertEquals(result.trimEnd().endsWith("initSpaApp();"), true);
+      assertEquals(getSpaRendererScript().trimEnd().endsWith("initSpaApp();"), true);
     });
   });
 
@@ -102,59 +95,53 @@ describe("hydration-script-builder/templates/spa-renderer", () => {
 
     it("should define componentCache and loadingPromises maps", () => {
       const result = getSpaLoaderScript();
-      assertEquals(result.includes("const componentCache = new Map()"), true);
-      assertEquals(result.includes("const loadingPromises = new Map()"), true);
+      assertIncludes(result, "const componentCache = new Map()");
+      assertIncludes(result, "const loadingPromises = new Map()");
     });
 
     it("should define async loadComponent function", () => {
-      const result = getSpaLoaderScript();
-      assertEquals(result.includes("async function loadComponent(path)"), true);
+      assertIncludes(getSpaLoaderScript(), "async function loadComponent(path)");
     });
 
     it("should return null for empty path", () => {
-      const result = getSpaLoaderScript();
-      assertEquals(result.includes("if (!path) return null"), true);
+      assertIncludes(getSpaLoaderScript(), "if (!path) return null");
     });
 
     it("should check cache before loading", () => {
-      const result = getSpaLoaderScript();
-      assertEquals(result.includes("componentCache.get(path)"), true);
+      assertIncludes(getSpaLoaderScript(), "componentCache.get(path)");
     });
 
     it("should deduplicate in-flight requests", () => {
-      const result = getSpaLoaderScript();
-      assertEquals(result.includes("loadingPromises.get(path)"), true);
+      assertIncludes(getSpaLoaderScript(), "loadingPromises.get(path)");
     });
 
     it("should use pathToModuleUrl for URL generation", () => {
-      const result = getSpaLoaderScript();
-      assertEquals(result.includes("pathToModuleUrl(path)"), true);
+      assertIncludes(getSpaLoaderScript(), "pathToModuleUrl(path)");
     });
 
     it("should get component from default export or module", () => {
-      const result = getSpaLoaderScript();
-      assertEquals(result.includes("module.default || module"), true);
+      assertIncludes(getSpaLoaderScript(), "module.default || module");
     });
 
     it("should store loaded component in cache", () => {
-      const result = getSpaLoaderScript();
-      assertEquals(result.includes("componentCache.set(path, Component)"), true);
+      assertIncludes(getSpaLoaderScript(), "componentCache.set(path, Component)");
     });
 
     it("should expose loadComponent on window", () => {
-      const result = getSpaLoaderScript();
-      assertEquals(result.includes("window.__VERYFRONT_LOAD_COMPONENT__ = loadComponent"), true);
+      assertIncludes(
+        getSpaLoaderScript(),
+        "window.__VERYFRONT_LOAD_COMPONENT__ = loadComponent",
+      );
     });
 
     it("should handle load errors gracefully", () => {
       const result = getSpaLoaderScript();
-      assertEquals(result.includes("Failed to load component"), true);
-      assertEquals(result.includes("return null"), true);
+      assertIncludes(result, "Failed to load component");
+      assertIncludes(result, "return null");
     });
 
     it("should clean up loadingPromises in finally block", () => {
-      const result = getSpaLoaderScript();
-      assertEquals(result.includes("loadingPromises.delete(path)"), true);
+      assertIncludes(getSpaLoaderScript(), "loadingPromises.delete(path)");
     });
   });
 });

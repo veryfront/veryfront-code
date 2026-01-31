@@ -19,7 +19,6 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     const session = await createSession(user);
-
     const secureFlag = getEnv("NODE_ENV") === "production" ? "; Secure" : "";
 
     return Response.json(

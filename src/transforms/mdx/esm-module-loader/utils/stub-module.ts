@@ -1,9 +1,9 @@
 import { join } from "#std/path.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
-import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
-import { getLocalFs } from "../cache/index.ts";
-import { hashString } from "./hash.ts";
 import { getErrorCollector } from "#veryfront/cli/mcp/error-collector.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { getLocalFs } from "../cache/index.ts";
+import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
+import { hashString } from "./hash.ts";
 
 export function extractNamedImports(
   code: string,
@@ -83,25 +83,23 @@ export async function createStubModule(
   try {
     await getLocalFs().writeTextFile(stubPath, stubCode);
 
-    // Report the missing module error to the error collector
-    const errorMessage = namedImports.length > 0
+    const errorMessage = namedImports.length
       ? `Missing module: ${modulePath} (imports: ${namedImports.join(", ")})`
       : `Missing module: ${modulePath}`;
 
     try {
-      getErrorCollector().addModuleError(
-        errorMessage,
-        modulePath,
-        { namedImports, importStatement },
-      );
+      getErrorCollector().addModuleError(errorMessage, modulePath, {
+        namedImports,
+        importStatement,
+      });
     } catch {
       // Error collector may not be initialized in all contexts
     }
 
-    logger.error(
-      `${LOG_PREFIX_MDX_LOADER} Missing module: ${modulePath}`,
-      { namedImports },
-    );
+    logger.error(`${LOG_PREFIX_MDX_LOADER} Missing module: ${modulePath}`, {
+      namedImports,
+    });
+
     return stubPath;
   } catch (error) {
     logger.error(

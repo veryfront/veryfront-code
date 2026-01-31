@@ -1,23 +1,23 @@
+import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
+import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { cors } from "#veryfront/security";
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
 import {
   type RequestContext,
   runWithRequestContextAsync,
 } from "#veryfront/utils/logger/request-context.ts";
-
-const logger = getBaseLogger("SERVER");
-import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
-import { cors } from "#veryfront/security";
-import type { VeryfrontConfig } from "#veryfront/config";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 
 type MiddlewareFunction = (
   c: { req: Request; var: Record<string, unknown> },
   next: () => Promise<Response | undefined> | Response,
 ) => Promise<Response | undefined> | Response | undefined;
+
+const logger = getBaseLogger("SERVER");
 
 export function createRequestLoggerMiddleware(): MiddlewareFunction {
   return async (c, next) => {
@@ -50,7 +50,6 @@ export function createRequestLoggerMiddleware(): MiddlewareFunction {
     c.var.requestId = requestId;
     c.var.logger = reqLogger;
 
-    // Create request context for AsyncLocalStorage propagation
     const requestContext: RequestContext = {
       logger: reqLogger,
       requestId,
@@ -59,9 +58,7 @@ export function createRequestLoggerMiddleware(): MiddlewareFunction {
       domain,
     };
 
-    // Run the entire request within the AsyncLocalStorage context
-    // This makes the request-scoped logger available to ALL code in the call stack
-    return await runWithRequestContextAsync(requestContext, async () => {
+    return runWithRequestContextAsync(requestContext, async () => {
       try {
         await enrichSpanWithRequestInfo(method, pathname, requestId);
         reqLogger.debug(`${method} ${pathname} started`);
@@ -97,8 +94,6 @@ export function createRequestLoggerMiddleware(): MiddlewareFunction {
     });
   };
 }
-
-// isVirtualFilesystem is now imported from the shared wrapper module
 
 async function loadMiddlewareFile(
   projectDir: string,
@@ -172,14 +167,21 @@ async function loadMiddlewareFromVirtualFS(
 }
 
 function normalizeMiddlewareExport(middlewareModule: unknown): MiddlewareFunction[] {
-  const mod = middlewareModule as { default?: unknown };
-  const exported = mod?.default ?? middlewareModule;
+  if (middlewareModule && typeof middlewareModule === "object" && "default" in middlewareModule) {
+    const exported = (middlewareModule as { default?: unknown }).default;
 
-  if (Array.isArray(exported)) {
-    return exported.filter((m): m is MiddlewareFunction => typeof m === "function");
+    if (Array.isArray(exported)) {
+      return exported.filter((m): m is MiddlewareFunction => typeof m === "function");
+    }
+
+    return typeof exported === "function" ? [exported as MiddlewareFunction] : [];
   }
 
-  return typeof exported === "function" ? [exported as MiddlewareFunction] : [];
+  if (Array.isArray(middlewareModule)) {
+    return middlewareModule.filter((m): m is MiddlewareFunction => typeof m === "function");
+  }
+
+  return typeof middlewareModule === "function" ? [middlewareModule as MiddlewareFunction] : [];
 }
 
 export async function setupMiddleware(
@@ -196,8 +198,7 @@ export async function setupMiddleware(
     pipeline.use(cors(corsConfig === true ? {} : corsConfig));
   }
 
-  const isProxyMode = config.fs?.veryfront?.proxyMode === true;
-  if (isProxyMode) {
+  if (config.fs?.veryfront?.proxyMode === true) {
     logger.debug("[MIDDLEWARE] Skipping file middleware in proxy mode");
   } else if (projectDir && adapter) {
     const fileMiddlewares = await loadMiddlewareFile(projectDir, adapter);

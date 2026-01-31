@@ -98,7 +98,8 @@ export async function getEnvironmentByName(
   let cursor: string | undefined;
 
   do {
-    const params: Record<string, string> = { limit: "100", ...(cursor ? { cursor } : {}) };
+    const params: Record<string, string> = { limit: "100" };
+    if (cursor) params.cursor = cursor;
 
     const response = await client.get<ListEnvironmentsResponse>(
       `/projects/${projectSlug}/environments`,
@@ -122,10 +123,9 @@ export function createRelease(
   projectSlug: string,
   options?: { name?: string; branch?: string },
 ): Promise<Release> {
-  const body: Record<string, string> = {
-    ...(options?.name ? { name: options.name } : {}),
-    ...(options?.branch ? { branch: options.branch } : {}),
-  };
+  const body: Record<string, string> = {};
+  if (options?.name) body.name = options.name;
+  if (options?.branch) body.branch = options.branch;
 
   return client.post<Release>(`/projects/${projectSlug}/releases`, body);
 }
@@ -148,23 +148,16 @@ export function createDeployment(
 function createNoopSpinner(): {
   start: () => void;
   stop: () => void;
-  update: (_msg: string) => void;
+  update: (msg: string) => void;
 } {
-  return { start: () => {}, stop: () => {}, update: (_msg: string) => {} };
+  return { start: () => {}, stop: () => {}, update: () => {} };
 }
 
 /**
  * Create a release and deploy to an environment
  */
 export async function deployCommand(options: DeployOptions): Promise<void> {
-  const {
-    branch = "main",
-    env = "production",
-    releaseName,
-    dryRun = false,
-    force = false,
-    quiet = false,
-  } = options;
+  const { branch, env, releaseName, dryRun, force, quiet } = options;
 
   const spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
   spinner.start();
@@ -193,7 +186,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
       true,
     );
     if (!confirmed) {
-      console.log("  " + muted("Deploy cancelled."));
+      console.log(`  ${muted("Deploy cancelled.")}`);
       return;
     }
   }

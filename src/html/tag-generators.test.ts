@@ -10,8 +10,7 @@ import {
 describe("tag-generators", () => {
   describe("generateMetaTags", () => {
     it("should always include charset meta tag", () => {
-      const result = generateMetaTags({});
-      assertStringIncludes(result, '<meta charset="UTF-8">');
+      assertStringIncludes(generateMetaTags({}), '<meta charset="UTF-8">');
     });
 
     it("should include default viewport when not specified", () => {
@@ -21,10 +20,12 @@ describe("tag-generators", () => {
     });
 
     it("should use custom viewport when specified", () => {
-      const result = generateMetaTags({
-        viewport: "width=device-width, initial-scale=1.0, maximum-scale=1.0",
-      });
-      assertStringIncludes(result, "maximum-scale=1.0");
+      assertStringIncludes(
+        generateMetaTags({
+          viewport: "width=device-width, initial-scale=1.0, maximum-scale=1.0",
+        }),
+        "maximum-scale=1.0",
+      );
     });
 
     it("should include description meta tag", () => {
@@ -75,31 +76,35 @@ describe("tag-generators", () => {
     });
 
     it("should add crossorigin for font preloads", () => {
-      const result = generateLinkTags({
-        links: [
-          {
-            rel: "preload",
-            as: "font",
-            href: "/font.woff2",
-            type: "font/woff2",
-          },
-        ],
-      });
-      assertStringIncludes(result, 'crossorigin="anonymous"');
+      assertStringIncludes(
+        generateLinkTags({
+          links: [
+            {
+              rel: "preload",
+              as: "font",
+              href: "/font.woff2",
+              type: "font/woff2",
+            },
+          ],
+        }),
+        'crossorigin="anonymous"',
+      );
     });
 
     it("should not override existing crossorigin", () => {
-      const result = generateLinkTags({
-        links: [
-          {
-            rel: "preload",
-            as: "font",
-            href: "/font.woff2",
-            crossorigin: "use-credentials",
-          },
-        ],
-      });
-      assertStringIncludes(result, 'crossorigin="use-credentials"');
+      assertStringIncludes(
+        generateLinkTags({
+          links: [
+            {
+              rel: "preload",
+              as: "font",
+              href: "/font.woff2",
+              crossorigin: "use-credentials",
+            },
+          ],
+        }),
+        'crossorigin="use-credentials"',
+      );
     });
 
     it("should generate icon tags", () => {
@@ -142,11 +147,10 @@ describe("tag-generators", () => {
     });
 
     it("should add nonce to inline scripts", () => {
-      const result = generateScriptTags(
-        { scripts: [{ content: "alert(1);" }] },
-        "abc123",
+      assertStringIncludes(
+        generateScriptTags({ scripts: [{ content: "alert(1);" }] }, "abc123"),
+        'nonce="abc123"',
       );
-      assertStringIncludes(result, 'nonce="abc123"');
     });
 
     it("should prioritize src over content", () => {
@@ -158,10 +162,12 @@ describe("tag-generators", () => {
     });
 
     it("should handle module scripts", () => {
-      const result = generateScriptTags({
-        scripts: [{ src: "/module.js", type: "module" }],
-      });
-      assertStringIncludes(result, 'type="module"');
+      assertStringIncludes(
+        generateScriptTags({
+          scripts: [{ src: "/module.js", type: "module" }],
+        }),
+        'type="module"',
+      );
     });
   });
 
@@ -187,18 +193,22 @@ describe("tag-generators", () => {
     });
 
     it("should add nonce to inline styles", () => {
-      const result = generateStyleTags(
-        { styles: [{ content: ".test { color: blue; }" }] },
-        "xyz789",
+      assertStringIncludes(
+        generateStyleTags(
+          { styles: [{ content: ".test { color: blue; }" }] },
+          "xyz789",
+        ),
+        'nonce="xyz789"',
       );
-      assertStringIncludes(result, 'nonce="xyz789"');
     });
 
     it("should handle media attribute", () => {
-      const result = generateStyleTags({
-        styles: [{ href: "/print.css", media: "print" }],
-      });
-      assertStringIncludes(result, 'media="print"');
+      assertStringIncludes(
+        generateStyleTags({
+          styles: [{ href: "/print.css", media: "print" }],
+        }),
+        'media="print"',
+      );
     });
   });
 });

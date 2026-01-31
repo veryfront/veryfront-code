@@ -24,11 +24,13 @@ export class NodeHandlerRegistry {
   ): INodeHandler<T> {
     const handler = this.getHandler(config);
 
-    if (validator(config)) return handler as INodeHandler<T>;
+    if (!validator(config)) {
+      throw new Error(
+        `Handler for "${config.type}" cannot handle the provided configuration.`,
+      );
+    }
 
-    throw new Error(
-      `Handler for "${config.type}" cannot handle the provided configuration.`,
-    );
+    return handler as INodeHandler<T>;
   }
 
   hasHandler(nodeType: WorkflowNodeType): boolean {

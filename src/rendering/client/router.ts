@@ -26,7 +26,6 @@ declare global {
   var __VERYFRONT_SPA_MODE__: boolean | undefined;
 }
 
-/** Global interface for router */
 interface GlobalWithRouter {
   veryFrontRouter?: VeryfrontRouter;
 }
@@ -126,7 +125,7 @@ export class VeryfrontRouter {
       return;
     }
 
-    const ReactDOMToUse = (globalThis as unknown as GlobalWithReactDOM).ReactDOM || ReactDOM;
+    const ReactDOMToUse = (globalThis as unknown as GlobalWithReactDOM).ReactDOM ?? ReactDOM;
     this.root = ReactDOMToUse.createRoot(rootElement);
 
     document.addEventListener("click", this.handleClick);
@@ -260,5 +259,5 @@ if (typeof window !== "undefined" && globalThis.document) {
     router.init();
   }
 
-  (globalThis as unknown as GlobalWithRouter).veryFrontRouter = router;
+  (globalThis as GlobalWithRouter).veryFrontRouter = router;
 }

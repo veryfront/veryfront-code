@@ -37,8 +37,21 @@ export default tool({
       .default(0)
       .describe("Number of rows to skip (for pagination)"),
   }),
-  async execute({ tableName, select, filter, orderBy, ascending, limit, offset }) {
-    const results = await queryTable(tableName, {
+  async execute({
+    tableName,
+    select,
+    filter,
+    orderBy,
+    ascending,
+    limit,
+    offset,
+  }): Promise<{
+    tableName: string;
+    count: number;
+    rows: unknown[];
+    pagination: { limit: number; offset: number; hasMore: boolean };
+  }> {
+    const rows = await queryTable(tableName, {
       select,
       filter,
       order: orderBy ? { column: orderBy, ascending } : undefined,
@@ -48,12 +61,12 @@ export default tool({
 
     return {
       tableName,
-      count: results.length,
-      rows: results,
+      count: rows.length,
+      rows,
       pagination: {
         limit,
         offset,
-        hasMore: results.length === limit,
+        hasMore: rows.length === limit,
       },
     };
   },

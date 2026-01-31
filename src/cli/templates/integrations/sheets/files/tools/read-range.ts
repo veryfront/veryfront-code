@@ -18,13 +18,16 @@ export default tool({
   }),
   async execute({ spreadsheetId, range }) {
     const client = createSheetsClient(DEFAULT_USER_ID);
-    const result = await client.readRange(spreadsheetId, range);
+    const { range: resultRange, values } = await client.readRange(
+      spreadsheetId,
+      range,
+    );
 
     return {
-      range: result.range,
-      values: result.values,
-      rowCount: result.values.length,
-      columnCount: result.values[0]?.length ?? 0,
+      range: resultRange,
+      values,
+      rowCount: values.length,
+      columnCount: values[0]?.length ?? 0,
     };
   },
 });

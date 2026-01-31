@@ -14,57 +14,46 @@ export interface ReactImportMap {
   "react-dom/server"?: string;
 }
 
-/**
- * Generate React import map appropriate for the current runtime.
- *
- * @param reactVersion - React version (default: "18.3.1")
- * @returns Import map with React dependencies
- */
-export function createReactImportMap(reactVersion = "18.3.1"): ReactImportMap {
+export function createReactImportMap(
+  reactVersion: string = "18.3.1",
+): ReactImportMap {
+  const baseUrl = `https://esm.sh`;
+  const target = `target=es2022`;
+  const externalReact = `external=react`;
+
   return {
-    react: `https://esm.sh/react@${reactVersion}?target=es2022`,
-    "react-dom": `https://esm.sh/react-dom@${reactVersion}?target=es2022&external=react`,
-    "react/jsx-runtime": `https://esm.sh/react@${reactVersion}/jsx-runtime?target=es2022`,
-    "react-dom/client":
-      `https://esm.sh/react-dom@${reactVersion}/client?target=es2022&external=react`,
-    "react-dom/server":
-      `https://esm.sh/react-dom@${reactVersion}/server?target=es2022&external=react`,
+    react: `${baseUrl}/react@${reactVersion}?${target}`,
+    "react-dom": `${baseUrl}/react-dom@${reactVersion}?${target}&${externalReact}`,
+    "react/jsx-runtime": `${baseUrl}/react@${reactVersion}/jsx-runtime?${target}`,
+    "react-dom/client": `${baseUrl}/react-dom@${reactVersion}/client?${target}&${externalReact}`,
+    "react-dom/server": `${baseUrl}/react-dom@${reactVersion}/server?${target}&${externalReact}`,
   };
 }
 
-/**
- * Generate a complete deno.json config for tests.
- *
- * @param reactVersion - React version (default: "18.3.1")
- * @returns JSON string for deno.json
- */
-export function createTestDenoConfig(reactVersion = "18.3.1"): string {
-  const importMap = createReactImportMap(reactVersion);
-
+export function createTestDenoConfig(
+  reactVersion: string = "18.3.1",
+): string {
   return JSON.stringify(
     {
       compilerOptions: {
         jsx: "react-jsx",
         jsxImportSource: "react",
       },
-      imports: importMap,
+      imports: createReactImportMap(reactVersion),
     },
     null,
     2,
   );
 }
 
-/**
- * Generate import map for RSC (React Server Components) tests.
- *
- * @param reactVersion - React version (default: "19.1.1" for RSC support)
- * @returns Import map with RSC dependencies
- */
-export function createRscImportMap(reactVersion = "19.1.1"): ReactImportMap & {
+export function createRscImportMap(
+  reactVersion: string = "19.1.1",
+): ReactImportMap & {
   "react-server-dom-webpack/client.browser"?: string;
   "react-server-dom-webpack/server.edge"?: string;
 } {
   const baseMap = createReactImportMap(reactVersion);
+
   return {
     ...baseMap,
     "react-server-dom-webpack/client.browser":

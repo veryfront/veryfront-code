@@ -21,12 +21,12 @@ describe("merge command integration", () => {
     ctx = await initVCRTest("merge");
 
     const branchName = isRecording() ? `test-merge-${Date.now()}` : "test-merge-vcr";
-    const branch = await ctx.client.post<{ id: string }>(
+    const { id } = await ctx.client.post<{ id: string }>(
       `/projects/${ctx.projectSlug}/branches`,
       { name: branchName },
     );
 
-    testBranchId = branch.id;
+    testBranchId = id;
   });
 
   afterAll(async () => {

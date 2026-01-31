@@ -7,8 +7,6 @@ import { isBun } from "#veryfront/platform/compat/runtime.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
-// React version is now passed per-request via TransformOptions.reactVersion
-// No longer using global singleton: import { setReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { buildConfigCacheKey } from "../cache/keys.ts";
 import { DEFAULT_PORT } from "./defaults.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -76,7 +74,7 @@ function createFreshDefaults(): Partial<VeryfrontConfig> {
       open: false,
     },
     resolve: {
-      importMap: getDefaultImportMapForConfig(), // Fresh per-request, not module-load-time
+      importMap: getDefaultImportMapForConfig(),
     },
     client: {
       moduleResolution: "cdn",
@@ -128,7 +126,6 @@ function validateConfigShape(userConfig: unknown): void {
 }
 
 function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontConfig {
-  // Create fresh defaults per-merge to prevent shared mutable state
   const defaults = createFreshDefaults();
 
   const merged = {
@@ -183,14 +180,6 @@ function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontConfig {
   return merged;
 }
 
-// isVirtualFilesystem is now imported from the shared wrapper module
-
-/**
- * Validate config and cache it.
- *
- * @param userConfig - Raw config object to validate
- * @param cacheKey - Cache key (projectDir for local, projectId:VERSION for API-backed)
- */
 function validateAndCacheConfig(userConfig: unknown, cacheKey: string): VeryfrontConfig {
   if (!userConfig || typeof userConfig !== "object" || Array.isArray(userConfig)) {
     throw new ConfigValidationError(
@@ -203,14 +192,36 @@ function validateAndCacheConfig(userConfig: unknown, cacheKey: string): Veryfron
 
   const merged = mergeConfigs(userConfig as Partial<VeryfrontConfig>);
 
-  // React version is now passed per-request via TransformOptions.reactVersion
-  // Config stores it at merged.react.version, accessed wherever needed
   if (merged.react?.version) {
     serverLogger.debug("[CONFIG] React version from config", { version: merged.react.version });
   }
 
   configCacheByProject.set(cacheKey, { revision: cacheRevision, config: merged });
   return merged;
+}
+
+function isConfigError(error: unknown): boolean {
+  if (error instanceof ConfigValidationError) return true;
+  return error instanceof Error && error.message.startsWith("Invalid veryfront.config");
+}
+
+async function loadConfigFromTempFile(
+  source: string,
+  configPath: string,
+  loadUrl: (tempFile: string) => string,
+): Promise<unknown> {
+  const fs = createFileSystem();
+  const extension = extname(configPath) || ".mjs";
+  const tempDir = await fs.makeTempDir({ prefix: "vf-config-" });
+  const tempFile = join(tempDir, `config${extension}`);
+
+  try {
+    await fs.writeTextFile(tempFile, source);
+    const configModule = await import(loadUrl(tempFile));
+    return configModule.default || configModule;
+  } finally {
+    await fs.remove(tempDir, { recursive: true });
+  }
 }
 
 /**
@@ -225,24 +236,16 @@ function loadConfigFromVirtualFS(
   return withSpan(
     SpanNames.CONFIG_LOAD_PROJECT,
     async () => {
-      const fs = createFileSystem();
-
       const content = await adapter.fs.readFile(configPath);
       const source = typeof content === "string" ? content : new TextDecoder().decode(content);
 
-      // Keep original extension - Deno handles TS/TSX natively
-      const extension = extname(configPath) || ".mjs";
-      const tempDir = await fs.makeTempDir({ prefix: "vf-config-" });
-      const tempFile = join(tempDir, `config${extension}`);
+      const userConfig = await loadConfigFromTempFile(
+        source,
+        configPath,
+        (tempFile) => `file://${tempFile}?v=${Date.now()}`,
+      );
 
-      try {
-        await fs.writeTextFile(tempFile, source);
-        const configModule = await import(`file://${tempFile}?v=${Date.now()}`);
-        const userConfig = configModule.default || configModule;
-        return validateAndCacheConfig(userConfig, cacheKey);
-      } finally {
-        await fs.remove(tempDir, { recursive: true });
-      }
+      return validateAndCacheConfig(userConfig, cacheKey);
     },
     { "config.path": configPath, "config.project_dir": cacheKey, "config.source": "virtual_fs" },
   );
@@ -258,34 +261,20 @@ async function loadAndMergeConfig(
   }
 
   if (isBun) {
-    // Bun caches file:// imports by path only (query params are ignored).
-    // Copy to a temp file each load to ensure we get fresh config content.
     const fs = createFileSystem();
-    const extension = extname(configPath) || ".mjs";
-    const tempDir = await fs.makeTempDir({ prefix: "vf-config-" });
-    const tempFile = join(tempDir, `config${extension}`);
+    const source = await fs.readTextFile(configPath);
 
-    try {
-      const source = await fs.readTextFile(configPath);
-      await fs.writeTextFile(tempFile, source);
-      const configModule = await import(`file://${tempFile}`);
-      const userConfig = configModule.default || configModule;
-      return validateAndCacheConfig(userConfig, cacheKey);
-    } finally {
-      await fs.remove(tempDir, { recursive: true });
-    }
+    const userConfig = await loadConfigFromTempFile(
+      source,
+      configPath,
+      (tempFile) => `file://${tempFile}`,
+    );
+    return validateAndCacheConfig(userConfig, cacheKey);
   }
 
   const configUrl = `file://${configPath}?t=${Date.now()}-${crypto.randomUUID()}`;
   const configModule = await import(configUrl);
-  const userConfig = configModule.default || configModule;
-
-  return validateAndCacheConfig(userConfig, cacheKey);
-}
-
-function isConfigError(error: unknown): boolean {
-  if (error instanceof ConfigValidationError) return true;
-  return error instanceof Error && error.message.startsWith("Invalid veryfront.config");
+  return validateAndCacheConfig(configModule.default || configModule, cacheKey);
 }
 
 /**
@@ -344,13 +333,10 @@ export function getConfig(
 
       for (const configFile of configFiles) {
         const configPath = join(projectDir, configFile);
-        const exists = await adapter.fs.exists(configPath);
-
-        if (!exists) continue;
+        if (!(await adapter.fs.exists(configPath))) continue;
 
         try {
-          const merged = await loadAndMergeConfig(configPath, effectiveCacheKey, adapter);
-          return merged;
+          return await loadAndMergeConfig(configPath, effectiveCacheKey, adapter);
         } catch (error) {
           if (isConfigError(error)) throw error;
 

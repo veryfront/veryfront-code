@@ -4,15 +4,8 @@ import * as React from "react";
 import { deepInspectElement, type InspectionOptions } from "./element-inspector.ts";
 
 describe("rendering/element-validator/element-inspector", () => {
-  const defaultOptions: InspectionOptions = {
-    maxDepth: 15,
-    debugMode: false,
-  };
-
-  const debugOptions: InspectionOptions = {
-    maxDepth: 15,
-    debugMode: true,
-  };
+  const defaultOptions: InspectionOptions = { maxDepth: 15, debugMode: false };
+  const debugOptions: InspectionOptions = { maxDepth: 15, debugMode: true };
 
   describe("deepInspectElement", () => {
     it("should accept null without throwing", () => {
@@ -36,8 +29,7 @@ describe("rendering/element-validator/element-inspector", () => {
     });
 
     it("should accept valid React elements", () => {
-      const element = React.createElement("div", null, "Hello");
-      deepInspectElement(element, "root", 0, defaultOptions);
+      deepInspectElement(React.createElement("div", null, "Hello"), "root", 0, defaultOptions);
     });
 
     it("should accept React elements with children", () => {
@@ -62,9 +54,8 @@ describe("rendering/element-validator/element-inspector", () => {
     });
 
     it("should throw for invalid plain objects used as children", () => {
-      const invalidObj = { foo: "bar", baz: 123 };
       assertThrows(
-        () => deepInspectElement(invalidObj, "root", 0, defaultOptions),
+        () => deepInspectElement({ foo: "bar", baz: 123 }, "root", 0, defaultOptions),
         Error,
         "Invalid React child",
       );
@@ -72,10 +63,7 @@ describe("rendering/element-validator/element-inspector", () => {
 
     it("should stop at max depth", () => {
       const shallowOptions: InspectionOptions = { maxDepth: 0, debugMode: false };
-      // At depth > maxDepth, function returns immediately without inspecting deeper
-      const invalidObj = { foo: "bar" };
-      // depth=1 > maxDepth=0 should not throw
-      deepInspectElement(invalidObj, "root", 1, shallowOptions);
+      deepInspectElement({ foo: "bar" }, "root", 1, shallowOptions);
     });
 
     it("should respect maxDepth and stop recursing", () => {
@@ -85,25 +73,21 @@ describe("rendering/element-validator/element-inspector", () => {
         null,
         React.createElement("span", null, "deep"),
       );
-      // Should not throw even with shallow depth
       deepInspectElement(nested, "root", 0, shallowOptions);
     });
 
     it("should not throw for object with React symbol", () => {
-      const reactLike = {
-        $$typeof: Symbol.for("react.element"),
-        type: "div",
-        props: {},
-        key: null,
-      };
-      deepInspectElement(reactLike, "root", 0, defaultOptions);
+      deepInspectElement(
+        { $$typeof: Symbol.for("react.element"), type: "div", props: {}, key: null },
+        "root",
+        0,
+        defaultOptions,
+      );
     });
 
     it("should inspect element props recursively", () => {
       const element = React.createElement("div", {
-        children: [
-          React.createElement("span", { key: "a" }, "text"),
-        ],
+        children: [React.createElement("span", { key: "a" }, "text")],
       });
       deepInspectElement(element, "root", 0, defaultOptions);
     });
@@ -111,17 +95,11 @@ describe("rendering/element-validator/element-inspector", () => {
     it("should work with debug mode enabled", () => {
       deepInspectElement("hello", "root", 0, debugOptions);
       deepInspectElement(null, "root", 0, debugOptions);
-      const element = React.createElement("div", null, "test");
-      deepInspectElement(element, "root", 0, debugOptions);
+      deepInspectElement(React.createElement("div", null, "test"), "root", 0, debugOptions);
     });
 
     it("should inspect mixed arrays (elements and primitives)", () => {
-      const mixed = [
-        "text",
-        React.createElement("br", { key: "br" }),
-        42,
-        null,
-      ];
+      const mixed = ["text", React.createElement("br", { key: "br" }), 42, null];
       deepInspectElement(mixed, "root", 0, defaultOptions);
     });
   });

@@ -34,10 +34,6 @@ class MockConsole {
     this.logs.push({ level: "error", args });
   }
 
-  clear(): void {
-    this.logs = [];
-  }
-
   getLogs(level: ConsoleLevel): Array<{ level: ConsoleLevel; args: unknown[] }> {
     return this.logs.filter((log) => log.level === level);
   }
@@ -57,14 +53,15 @@ function withMockConsole<T>(fn: (mockConsole: MockConsole) => T): T {
   }
 }
 
-function withWindow<T>(windowValue: any, fn: () => T): T {
-  const originalWindow = (globalThis as any).window;
-  (globalThis as any).window = windowValue;
+function withWindow<T>(windowValue: unknown, fn: () => T): T {
+  const globalWithWindow = globalThis as typeof globalThis & { window?: unknown };
+  const originalWindow = globalWithWindow.window;
+  globalWithWindow.window = windowValue;
 
   try {
     return fn();
   } finally {
-    (globalThis as any).window = originalWindow;
+    globalWithWindow.window = originalWindow;
   }
 }
 
@@ -157,36 +154,28 @@ describe("Browser Logger", () => {
   });
 
   describe("Exported Loggers", () => {
+    function assertLoggerShape(logger: unknown): void {
+      assertExists(logger);
+      assertEquals(typeof (logger as { debug: unknown }).debug, "function");
+      assertEquals(typeof (logger as { info: unknown }).info, "function");
+      assertEquals(typeof (logger as { warn: unknown }).warn, "function");
+      assertEquals(typeof (logger as { error: unknown }).error, "function");
+    }
+
     it("should export rscLogger", () => {
-      assertExists(rscLogger);
-      assertEquals(typeof rscLogger.debug, "function");
-      assertEquals(typeof rscLogger.info, "function");
-      assertEquals(typeof rscLogger.warn, "function");
-      assertEquals(typeof rscLogger.error, "function");
+      assertLoggerShape(rscLogger);
     });
 
     it("should export prefetchLogger", () => {
-      assertExists(prefetchLogger);
-      assertEquals(typeof prefetchLogger.debug, "function");
-      assertEquals(typeof prefetchLogger.info, "function");
-      assertEquals(typeof prefetchLogger.warn, "function");
-      assertEquals(typeof prefetchLogger.error, "function");
+      assertLoggerShape(prefetchLogger);
     });
 
     it("should export hydrateLogger", () => {
-      assertExists(hydrateLogger);
-      assertEquals(typeof hydrateLogger.debug, "function");
-      assertEquals(typeof hydrateLogger.info, "function");
-      assertEquals(typeof hydrateLogger.warn, "function");
-      assertEquals(typeof hydrateLogger.error, "function");
+      assertLoggerShape(hydrateLogger);
     });
 
     it("should export browserLogger", () => {
-      assertExists(browserLogger);
-      assertEquals(typeof browserLogger.debug, "function");
-      assertEquals(typeof browserLogger.info, "function");
-      assertEquals(typeof browserLogger.warn, "function");
-      assertEquals(typeof browserLogger.error, "function");
+      assertLoggerShape(browserLogger);
     });
   });
 
@@ -247,7 +236,6 @@ describe("Browser Logger", () => {
 
       try {
         const logger = new TestLogger("TEST", LogLevel.DEBUG);
-
         logger.debug("test");
         logger.info("test");
       } finally {

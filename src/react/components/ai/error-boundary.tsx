@@ -16,10 +16,7 @@ export class AIErrorBoundary extends React.Component<
   AIErrorBoundaryProps,
   AIErrorBoundaryState
 > {
-  constructor(props: AIErrorBoundaryProps) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
+  state: AIErrorBoundaryState = { hasError: false, error: null };
 
   static getDerivedStateFromError(error: Error): AIErrorBoundaryState {
     return { hasError: true, error };
@@ -38,9 +35,11 @@ export class AIErrorBoundary extends React.Component<
     const { hasError, error } = this.state;
     if (!hasError || !error) return this.props.children;
 
-    const { fallback } = this.props;
+    const { fallback, errorMessage } = this.props;
+
     if (fallback) {
-      return typeof fallback === "function" ? fallback(error, this.reset) : fallback;
+      if (typeof fallback === "function") return fallback(error, this.reset);
+      return fallback;
     }
 
     return (
@@ -67,7 +66,7 @@ export class AIErrorBoundary extends React.Component<
 
           <div className="flex-1 min-w-0">
             <h3 className="text-base font-semibold text-red-900 dark:text-red-100">
-              {this.props.errorMessage ?? "An error occurred in the AI component"}
+              {errorMessage ?? "An error occurred in the AI component"}
             </h3>
 
             <p className="mt-1.5 text-sm text-red-700 dark:text-red-300 leading-relaxed">

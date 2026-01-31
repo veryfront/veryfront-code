@@ -117,7 +117,7 @@ export function useVoiceInput(
   const isSupported = React.useMemo((): boolean => {
     if (typeof globalThis === "undefined") return false;
     const g = globalThis as unknown as GlobalWithSpeechRecognition;
-    return !!(g.SpeechRecognition || g.webkitSpeechRecognition);
+    return Boolean(g.SpeechRecognition ?? g.webkitSpeechRecognition);
   }, []);
 
   React.useEffect(() => {
@@ -141,16 +141,13 @@ export function useVoiceInput(
         const alt = result?.[0];
         if (!alt) continue;
 
-        if (result.isFinal) {
-          finalTranscript += alt.transcript;
-        } else {
-          interimTranscript += alt.transcript;
-        }
+        if (result.isFinal) finalTranscript += alt.transcript;
+        else interimTranscript += alt.transcript;
       }
 
       const currentTranscript = finalTranscript || interimTranscript;
       setTranscript(currentTranscript);
-      onTranscript?.(currentTranscript, !!finalTranscript);
+      onTranscript?.(currentTranscript, Boolean(finalTranscript));
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {

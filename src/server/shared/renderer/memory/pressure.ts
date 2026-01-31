@@ -20,34 +20,30 @@ import { getEnv } from "#veryfront/compat/process.ts";
 
 export type MemoryPressureLevel = "normal" | "warning" | "high" | "critical";
 
-/** Parse env var as number with fallback */
 function parseEnvThreshold(name: string, fallback: number): number {
   const value = getEnv(name);
   if (!value) return fallback;
+
   const parsed = parseInt(value, 10);
-  if (Number.isNaN(parsed) || parsed < 0 || parsed > 100) {
-    rendererLogger.warn(`[MemoryPressure] Invalid ${name}=${value}, using default ${fallback}`);
-    return fallback;
-  }
-  return parsed;
+  if (!Number.isNaN(parsed) && parsed >= 0 && parsed <= 100) return parsed;
+
+  rendererLogger.warn(`[MemoryPressure] Invalid ${name}=${value}, using default ${fallback}`);
+  return fallback;
 }
 
-/** Thresholds for progressive memory management (configurable via env vars) */
 const THRESHOLDS = {
   WARNING: parseEnvThreshold("MEMORY_WARNING_THRESHOLD", 65),
   HIGH: parseEnvThreshold("MEMORY_HIGH_THRESHOLD", 75),
   CRITICAL: parseEnvThreshold("MEMORY_CRITICAL_THRESHOLD", 80),
 };
 
-export function getMemoryPressure(): {
-  level: MemoryPressureLevel;
-  heapUsedPercent: number;
-} {
-  const heapUsedPercent = getHeapStats().heapUsedPercent;
+export function getMemoryPressure(): { level: MemoryPressureLevel; heapUsedPercent: number } {
+  const { heapUsedPercent } = getHeapStats();
 
   if (heapUsedPercent >= THRESHOLDS.CRITICAL) return { level: "critical", heapUsedPercent };
   if (heapUsedPercent >= THRESHOLDS.HIGH) return { level: "high", heapUsedPercent };
   if (heapUsedPercent >= THRESHOLDS.WARNING) return { level: "warning", heapUsedPercent };
+
   return { level: "normal", heapUsedPercent };
 }
 

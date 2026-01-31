@@ -150,14 +150,17 @@ export abstract class BaseProvider implements Provider {
       this.transformRequest({ ...request, stream: true }),
     );
 
-    if (response.body) return this.transformStream(response.body);
+    const body = response.body;
+    if (!body) {
+      throw toError(
+        createError({
+          type: "agent",
+          message: `${this.name}: No response body for streaming`,
+        }),
+      );
+    }
 
-    throw toError(
-      createError({
-        type: "agent",
-        message: `${this.name}: No response body for streaming`,
-      }),
-    );
+    return this.transformStream(body);
   }
 
   protected transformStream(stream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
@@ -214,45 +217,43 @@ export abstract class BaseProvider implements Provider {
                   );
                 }
 
-                if (delta.tool_calls) {
-                  for (const toolCall of delta.tool_calls) {
-                    const index = toolCall.index ?? 0;
-                    const tc = toolCalls.get(index) ?? { arguments: "" };
-                    toolCalls.set(index, tc);
+                for (const toolCall of delta.tool_calls ?? []) {
+                  const index = toolCall.index ?? 0;
+                  const tc = toolCalls.get(index) ?? { arguments: "" };
+                  toolCalls.set(index, tc);
 
-                    if (toolCall.id) tc.id = toolCall.id;
+                  if (toolCall.id) tc.id = toolCall.id;
 
-                    const toolName = toolCall.function?.name;
-                    if (toolName) {
-                      tc.name = toolName;
-                      controller.enqueue(
-                        encoder.encode(
-                          JSON.stringify({
-                            type: "tool_call_start",
-                            toolCall: {
-                              id: tc.id,
-                              name: tc.name,
-                              index,
-                            },
-                          }) + "\n",
-                        ),
-                      );
-                    }
-
-                    const argsDelta = toolCall.function?.arguments;
-                    if (argsDelta) {
-                      tc.arguments += argsDelta;
-                      controller.enqueue(
-                        encoder.encode(
-                          JSON.stringify({
-                            type: "tool_call_delta",
+                  const toolName = toolCall.function?.name;
+                  if (toolName) {
+                    tc.name = toolName;
+                    controller.enqueue(
+                      encoder.encode(
+                        JSON.stringify({
+                          type: "tool_call_start",
+                          toolCall: {
                             id: tc.id,
+                            name: tc.name,
                             index,
-                            arguments: argsDelta,
-                          }) + "\n",
-                        ),
-                      );
-                    }
+                          },
+                        }) + "\n",
+                      ),
+                    );
+                  }
+
+                  const argsDelta = toolCall.function?.arguments;
+                  if (argsDelta) {
+                    tc.arguments += argsDelta;
+                    controller.enqueue(
+                      encoder.encode(
+                        JSON.stringify({
+                          type: "tool_call_delta",
+                          id: tc.id,
+                          index,
+                          arguments: argsDelta,
+                        }) + "\n",
+                      ),
+                    );
                   }
                 }
 

@@ -157,13 +157,10 @@ describe("Path Validation - OWASP Attack Vectors", () => {
 
     for (const { name, path } of testCases) {
       it(`should handle: ${name}`, () => {
-        // Note: These may pass basic validation but fail at filesystem level
         const result = validatePathSync(path, { baseDir });
 
-        // Accept either rejection or canonicalization
-        if (result.valid) {
-          assertExists(result.canonicalPath);
-        }
+        if (!result.valid) return;
+        assertExists(result.canonicalPath);
       });
     }
   });
@@ -197,9 +194,7 @@ describe("Path Validation - OWASP Attack Vectors", () => {
       it(`should handle: ${name}`, () => {
         const result = validatePathSync(path, { baseDir });
 
-        // These should either be normalized or rejected
         if (result.valid) {
-          // Should not escape base directory after normalization
           assertExists(result.canonicalPath);
           return;
         }
@@ -337,7 +332,6 @@ describe("Path Validation - Helper Functions", () => {
 
     it("should handle relative paths", () => {
       const sanitized = sanitizePathForDisplay("app/page.tsx", "/project");
-      // If path doesn't start with base, return filename
       assertEquals(sanitized, "page.tsx");
     });
   });
@@ -543,7 +537,6 @@ describe("Path Validation - Performance", () => {
     const duration = performance.now() - start;
     const avgTime = duration / iterations;
 
-    // Should be fast - under 0.1ms per validation
     assertEquals(avgTime < 0.1, true, `Avg time: ${avgTime}ms`);
   });
 });
@@ -555,10 +548,9 @@ describe("Path Validation - Module Loading Context", () => {
     const allowedDirs: string[] = [];
 
     it("should allow imports from any directory in project", () => {
-      // No allowedDirs = empty array = no restrictions
       const result = validatePathSync("custom-folder/utils.ts", {
         baseDir,
-        allowedDirs, // Simulates module-loading context default
+        allowedDirs,
       });
       assertEquals(result.valid, true);
     });
@@ -636,10 +628,8 @@ describe("Path Validation - Module Loading Context", () => {
 
   describe("userInput preset should have expanded allowlist", () => {
     it("should include common user directories", () => {
-      const options = ValidationPresets.userInput(baseDir);
-      const allowedDirs = options.allowedDirs;
+      const allowedDirs = ValidationPresets.userInput(baseDir).allowedDirs;
 
-      // Verify expanded preset includes common directories
       assertEquals(allowedDirs?.includes("src"), true);
       assertEquals(allowedDirs?.includes("utils"), true);
       assertEquals(allowedDirs?.includes("hooks"), true);
@@ -648,8 +638,7 @@ describe("Path Validation - Module Loading Context", () => {
     });
 
     it("should still include framework directories", () => {
-      const options = ValidationPresets.userInput(baseDir);
-      const allowedDirs = options.allowedDirs;
+      const allowedDirs = ValidationPresets.userInput(baseDir).allowedDirs;
 
       assertEquals(allowedDirs?.includes("app"), true);
       assertEquals(allowedDirs?.includes("pages"), true);

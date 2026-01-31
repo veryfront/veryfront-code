@@ -9,9 +9,7 @@ export const ENV_VARS = {
 type EnvAccessor = { get(key: string): string | undefined };
 
 export function isTruthyEnvValue(value: string | undefined): boolean {
-  if (!value) return false;
-
-  const normalized = value.toLowerCase().trim();
+  const normalized = value?.toLowerCase().trim();
   return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 

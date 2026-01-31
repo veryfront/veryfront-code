@@ -24,7 +24,6 @@ function estimateSizeRecursive(value: unknown, depth: number, seen: WeakSet<obje
   if (typeof Blob !== "undefined" && value instanceof Blob) return value.size;
 
   if (depth >= MAX_ESTIMATION_DEPTH) return OBJECT_OVERHEAD_BYTES * 2;
-
   if (type !== "object") return 64;
 
   if (seen.has(value)) return 0;
@@ -69,7 +68,7 @@ export class LRUCacheAdapter implements CacheAdapter {
     this.defaultTtlMs = options.ttlMs;
     this.onEvict = options.onEvict;
 
-    const estimateSizeOf = options.estimateSizeOf || defaultSizeEstimator;
+    const estimateSizeOf = options.estimateSizeOf ?? defaultSizeEstimator;
 
     this.evictionManager = new EvictionManager({
       onEvict: this.onEvict,
@@ -152,6 +151,7 @@ export class LRUCacheAdapter implements CacheAdapter {
       this.delete(key);
       count++;
     }
+
     this.tagIndex.delete(tag);
     return count;
   }

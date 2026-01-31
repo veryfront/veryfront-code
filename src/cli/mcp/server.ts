@@ -16,10 +16,6 @@ import { getErrorCollector } from "./error-collector.ts";
 import { getLogBuffer } from "./log-buffer.ts";
 import { allTools, getTool, setServerStartTime } from "./tools.ts";
 
-// ============================================================================
-// Types
-// ============================================================================
-
 export interface MCPServerConfig {
   /** Enable stdio transport (for Claude Code, Cursor, etc.) */
   stdio?: boolean;
@@ -48,10 +44,6 @@ interface JSONRPCResponse {
     data?: unknown;
   };
 }
-
-// ============================================================================
-// MCP Server
-// ============================================================================
 
 export class MCPDevServer {
   private config: MCPServerConfig;
@@ -84,16 +76,28 @@ export class MCPDevServer {
     this.stdinReader?.releaseLock();
     this.stdinReader = null;
 
-    if (this.httpServer) {
-      await this.httpServer.close();
-      this.httpServer = null;
-    }
+    if (!this.httpServer) return;
+    await this.httpServer.close();
+    this.httpServer = null;
   }
 
   private startStdio(): void {
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
     this.stdinReader = getStdinReader();
+
+    const writeResponse = async (response: JSONRPCResponse): Promise<void> => {
+      await writeStdoutAsync(encoder.encode(`${JSON.stringify(response)}\n`));
+    };
+
+    const parseError = (e: unknown): JSONRPCResponse => ({
+      jsonrpc: "2.0",
+      error: {
+        code: -32700,
+        message: "Parse error",
+        data: e instanceof Error ? e.message : String(e),
+      },
+    });
 
     const readLoop = async (): Promise<void> => {
       let buffer = "";
@@ -106,28 +110,21 @@ export class MCPDevServer {
 
           buffer += decoder.decode(value, { stream: true });
 
-          let newlineIndex = buffer.indexOf("\n");
-          while (newlineIndex !== -1) {
+          while (true) {
+            const newlineIndex = buffer.indexOf("\n");
+            if (newlineIndex === -1) break;
+
             const line = buffer.slice(0, newlineIndex).trim();
             buffer = buffer.slice(newlineIndex + 1);
-            newlineIndex = buffer.indexOf("\n");
 
             if (!line) continue;
 
             try {
               const request = JSON.parse(line) as JSONRPCRequest;
               const response = await this.handleRequest(request);
-              await writeStdoutAsync(encoder.encode(`${JSON.stringify(response)}\n`));
+              await writeResponse(response);
             } catch (e) {
-              const errorResponse: JSONRPCResponse = {
-                jsonrpc: "2.0",
-                error: {
-                  code: -32700,
-                  message: "Parse error",
-                  data: e instanceof Error ? e.message : String(e),
-                },
-              };
-              await writeStdoutAsync(encoder.encode(`${JSON.stringify(errorResponse)}\n`));
+              await writeResponse(parseError(e));
             }
           }
         } catch {
@@ -141,6 +138,15 @@ export class MCPDevServer {
 
   private startHTTP(port: number): void {
     this.httpServer = createHttpServer();
+
+    const parseError = (e: unknown): JSONRPCResponse => ({
+      jsonrpc: "2.0",
+      error: {
+        code: -32700,
+        message: "Parse error",
+        data: e instanceof Error ? e.message : String(e),
+      },
+    });
 
     const handler = async (req: Request): Promise<Response> => {
       const url = new URL(req.url);
@@ -183,15 +189,7 @@ export class MCPDevServer {
         const response = await this.handleRequest(body);
         return new Response(JSON.stringify(response), { headers });
       } catch (e) {
-        const errorResponse: JSONRPCResponse = {
-          jsonrpc: "2.0",
-          error: {
-            code: -32700,
-            message: "Parse error",
-            data: e instanceof Error ? e.message : String(e),
-          },
-        };
-        return new Response(JSON.stringify(errorResponse), { status: 400, headers });
+        return new Response(JSON.stringify(parseError(e)), { status: 400, headers });
       }
     };
 
@@ -377,38 +375,36 @@ export class MCPDevServer {
           };
         }
 
-        if (uri.startsWith("issues://")) {
-          const manager = createIssuesManager(cwd());
+        if (!uri.startsWith("issues://")) throw new Error(`Unknown resource: ${uri}`);
 
-          if (uri === "issues://") {
-            const result = await manager.list({ state: "open" });
-            return {
-              contents: [
-                {
-                  uri,
-                  mimeType: "application/json",
-                  text: JSON.stringify(result, null, 2),
-                },
-              ],
-            };
-          }
+        const manager = createIssuesManager(cwd());
 
-          const id = uri.slice("issues://".length);
-          const issue = await manager.get(id);
-          if (!issue) throw new Error(`Issue not found: ${id}`);
-
+        if (uri === "issues://") {
+          const result = await manager.list({ state: "open" });
           return {
             contents: [
               {
                 uri,
                 mimeType: "application/json",
-                text: JSON.stringify(issue, null, 2),
+                text: JSON.stringify(result, null, 2),
               },
             ],
           };
         }
 
-        throw new Error(`Unknown resource: ${uri}`);
+        const id = uri.slice("issues://".length);
+        const issue = await manager.get(id);
+        if (!issue) throw new Error(`Issue not found: ${id}`);
+
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(issue, null, 2),
+            },
+          ],
+        };
       },
       { "mcp.resource.uri": uri },
     );
@@ -493,92 +489,84 @@ export class MCPDevServer {
     const zodSchema = schema as any;
     if (!zodSchema?._def) return { type: "object", properties: {} };
 
-    const def = zodSchema._def;
+    // deno-lint-ignore no-explicit-any
+    const def = zodSchema._def as any;
     const typeName = def.typeName;
 
-    if (typeName === "ZodObject") {
-      const shape = def.shape?.() ?? {};
-      const properties: Record<string, unknown> = {};
-      const required: string[] = [];
+    switch (typeName) {
+      case "ZodObject": {
+        const shape = def.shape?.() ?? {};
+        const properties: Record<string, unknown> = {};
+        const required: string[] = [];
 
-      for (const [key, value] of Object.entries(shape)) {
-        // deno-lint-ignore no-explicit-any
-        const fieldDef = (value as any)?._def;
-        const fieldSchema = this.zodToJsonSchema(value);
-
-        if (fieldDef?.description) {
+        for (const [key, value] of Object.entries(shape)) {
           // deno-lint-ignore no-explicit-any
-          (fieldSchema as any).description = fieldDef.description;
+          const fieldDef = (value as any)?._def as any;
+          const fieldSchema = this.zodToJsonSchema(value);
+
+          if (fieldDef?.description) {
+            // deno-lint-ignore no-explicit-any
+            (fieldSchema as any).description = fieldDef.description;
+          }
+
+          properties[key] = fieldSchema;
+
+          if (fieldDef?.typeName !== "ZodOptional" && fieldDef?.typeName !== "ZodDefault") {
+            required.push(key);
+          }
         }
 
-        properties[key] = fieldSchema;
-
-        if (fieldDef?.typeName !== "ZodOptional" && fieldDef?.typeName !== "ZodDefault") {
-          required.push(key);
-        }
+        return {
+          type: "object",
+          properties,
+          ...(required.length ? { required } : {}),
+        };
       }
 
-      return {
-        type: "object",
-        properties,
-        ...(required.length ? { required } : {}),
-      };
+      case "ZodString":
+        return { type: "string", ...(def.description ? { description: def.description } : {}) };
+
+      case "ZodNumber":
+        return { type: "number", ...(def.description ? { description: def.description } : {}) };
+
+      case "ZodBoolean":
+        return { type: "boolean", ...(def.description ? { description: def.description } : {}) };
+
+      case "ZodArray":
+        return {
+          type: "array",
+          items: this.zodToJsonSchema(def.type),
+          ...(def.description ? { description: def.description } : {}),
+        };
+
+      case "ZodEnum":
+        return {
+          type: "string",
+          enum: def.values,
+          ...(def.description ? { description: def.description } : {}),
+        };
+
+      case "ZodOptional":
+        return this.zodToJsonSchema(def.innerType);
+
+      case "ZodDefault": {
+        const innerSchema = this.zodToJsonSchema(def.innerType);
+        // deno-lint-ignore no-explicit-any
+        (innerSchema as any).default = def.defaultValue?.();
+        return innerSchema;
+      }
+
+      default:
+        return { type: "object" };
     }
-
-    if (typeName === "ZodString") {
-      return { type: "string", ...(def.description ? { description: def.description } : {}) };
-    }
-
-    if (typeName === "ZodNumber") {
-      return { type: "number", ...(def.description ? { description: def.description } : {}) };
-    }
-
-    if (typeName === "ZodBoolean") {
-      return { type: "boolean", ...(def.description ? { description: def.description } : {}) };
-    }
-
-    if (typeName === "ZodArray") {
-      return {
-        type: "array",
-        items: this.zodToJsonSchema(def.type),
-        ...(def.description ? { description: def.description } : {}),
-      };
-    }
-
-    if (typeName === "ZodEnum") {
-      return {
-        type: "string",
-        enum: def.values,
-        ...(def.description ? { description: def.description } : {}),
-      };
-    }
-
-    if (typeName === "ZodOptional") return this.zodToJsonSchema(def.innerType);
-
-    if (typeName === "ZodDefault") {
-      const innerSchema = this.zodToJsonSchema(def.innerType);
-      // deno-lint-ignore no-explicit-any
-      (innerSchema as any).default = def.defaultValue?.();
-      return innerSchema;
-    }
-
-    return { type: "object" };
   }
 }
-
-// ============================================================================
-// Factory
-// ============================================================================
 
 export function createMCPServer(config: MCPServerConfig): MCPDevServer {
   const server = new MCPDevServer(config);
   server.start();
   return server;
 }
-
-// ============================================================================
-// Index Exports
-// ============================================================================
 
 export * from "./error-collector.ts";
 export * from "./log-buffer.ts";

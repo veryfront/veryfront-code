@@ -5,10 +5,6 @@ import { useState } from 'react';
 export function Header(): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState('');
 
-  function handleSearchChange(e: React.ChangeEvent<HTMLInputElement>): void {
-    setSearchQuery(e.target.value);
-  }
-
   return (
     <header className="sticky top-0 z-50 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-lg border-b border-neutral-200 dark:border-neutral-800">
       <div className="px-6 h-14 flex items-center justify-between">
@@ -16,6 +12,7 @@ export function Header(): React.JSX.Element {
           <a href="/" className="text-lg font-semibold text-neutral-900 dark:text-white">
             Docs
           </a>
+
           <nav className="flex gap-6">
             <a
               href="/docs"
@@ -53,11 +50,12 @@ export function Header(): React.JSX.Element {
                 d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
               />
             </svg>
+
             <input
               type="search"
               placeholder="Search..."
               value={searchQuery}
-              onChange={handleSearchChange}
+              onChange={(e) => setSearchQuery(e.target.value)}
               className="w-48 pl-9 pr-4 py-2 bg-neutral-100 dark:bg-neutral-800 border-0 rounded-lg text-sm text-neutral-900 dark:text-white placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
             />
           </div>

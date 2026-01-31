@@ -6,6 +6,8 @@ export async function createPackageJson(
   projectDir: string,
   projectName?: string,
 ): Promise<void> {
+  const fs = createFileSystem();
+
   const packageJson = {
     name: projectName ?? "veryfront-project",
     version: "0.1.0",
@@ -23,7 +25,6 @@ export async function createPackageJson(
     },
   };
 
-  const fs = createFileSystem();
   await fs.writeTextFile(
     join(projectDir, "package.json"),
     JSON.stringify(packageJson, null, 2),

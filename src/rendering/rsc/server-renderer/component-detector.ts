@@ -38,7 +38,9 @@ export function registerClientRef(
 ): void {
   if (clientRefs.has(id)) return;
 
-  const meta = clientManifest.get(id);
-  const path = meta?.path ?? Component.__rsc_path ?? `/_veryfront/client/${id}.js`;
+  const path = clientManifest.get(id)?.path ??
+    Component.__rsc_path ??
+    `/_veryfront/client/${id}.js`;
+
   clientRefs.set(id, path);
 }

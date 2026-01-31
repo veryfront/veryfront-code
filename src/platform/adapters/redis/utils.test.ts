@@ -17,14 +17,11 @@ describe("platform/adapters/redis/utils", () => {
     });
 
     it("should skip entries with undefined values (odd-length arrays)", () => {
-      const result = arrayToObject(["a", "1", "b"]);
-      assertEquals(result, { a: "1" });
+      assertEquals(arrayToObject(["a", "1", "b"]), { a: "1" });
     });
 
     it("should handle empty string keys", () => {
-      const result = arrayToObject(["", "val"]);
-      // Empty string is falsy, so it gets skipped by the if (!key) check
-      assertEquals(result, {});
+      assertEquals(arrayToObject(["", "val"]), {});
     });
 
     it("should handle empty string values", () => {

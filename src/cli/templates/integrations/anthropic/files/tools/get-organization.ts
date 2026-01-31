@@ -18,14 +18,12 @@ export const getOrganization = tool({
         message: `Retrieved organization details for ${organization.display_name}`,
       };
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : 'Failed to retrieve organization details';
-
       return {
         success: false,
-        error: message,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to retrieve organization details',
         organization: null,
       };
     }

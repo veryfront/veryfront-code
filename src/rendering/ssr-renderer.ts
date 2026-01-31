@@ -1,10 +1,3 @@
-/**
- * SSR Renderer
- *
- * Handles server-side rendering of React elements using both streaming and string methods.
- * Provides React 18/19 streaming support with fallback to string rendering.
- */
-
 import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
@@ -19,20 +12,12 @@ import type * as React from "react";
 import { streamToString } from "./utils/index.ts";
 import { setupSSRGlobals } from "./ssr-globals.ts";
 
-/** Check if React version supports streaming/concurrent features (React 18+) */
 function supportsStreamingSSR(
   versionInfo: ReturnType<typeof getReactVersionInfo>,
 ): boolean {
   return versionInfo.isReact18 || versionInfo.isReact19;
 }
 
-/**
- * Convert Node.js pipeable stream to string
- *
- * renderToPipeableStream returns { pipe, abort } instead of a ReadableStream.
- * This function creates a PassThrough stream, pipes the content to it,
- * and collects the output as a string.
- */
 async function pipeToString(
   pipeFn: (writable: NodeJS.WritableStream) => void,
 ): Promise<string> {
@@ -55,12 +40,6 @@ async function pipeToString(
   });
 }
 
-/**
- * Convert Node.js pipeable stream to Web ReadableStream for true streaming SSR
- *
- * This enables immediate TTFB by returning a ReadableStream that can be
- * piped to the HTTP response before React finishes rendering.
- */
 function pipeToReadableStream(
   pipeFn: (writable: NodeJS.WritableStream) => void,
 ): ReadableStream<Uint8Array> {
@@ -69,9 +48,7 @@ function pipeToReadableStream(
       const { PassThrough } = await import("node:stream");
       const passThrough = new PassThrough();
 
-      passThrough.on("data", (chunk: Uint8Array) => {
-        controller.enqueue(new Uint8Array(chunk));
-      });
+      passThrough.on("data", (chunk: Uint8Array) => controller.enqueue(new Uint8Array(chunk)));
       passThrough.on("end", () => controller.close());
       passThrough.on("error", (err: Error) => controller.error(err));
 
@@ -110,13 +87,13 @@ export class SSRRenderer {
   private async getVersionInfo(): Promise<ReturnType<typeof getReactVersionInfo>> {
     if (this.versionInfo) return this.versionInfo;
 
-    if (this.projectDir) {
-      const { getReactVersionInfoForProject } = await import("#veryfront/react");
-      this.versionInfo = await getReactVersionInfoForProject(this.projectDir);
+    if (!this.projectDir) {
+      this.versionInfo = getReactVersionInfo();
       return this.versionInfo;
     }
 
-    this.versionInfo = getReactVersionInfo();
+    const { getReactVersionInfoForProject } = await import("#veryfront/react");
+    this.versionInfo = await getReactVersionInfoForProject(this.projectDir);
     return this.versionInfo;
   }
 
@@ -130,10 +107,6 @@ export class SSRRenderer {
     const wantsStreamingMode = this.mode === "production" || options.wantsStream;
     const compiledBinary = isCompiledBinary();
 
-    const useStreaming = !compiledBinary &&
-      wantsStreamingMode &&
-      supportsStreamingSSR(versionInfo);
-
     if (compiledBinary && wantsStreamingMode) {
       logger.debug(
         "Streaming SSR disabled in compiled binary (using string rendering)",
@@ -143,6 +116,10 @@ export class SSRRenderer {
         },
       );
     }
+
+    const useStreaming = !compiledBinary &&
+      wantsStreamingMode &&
+      supportsStreamingSSR(versionInfo);
 
     if (!useStreaming) {
       logger.debug("Using string SSR", {
@@ -183,7 +160,7 @@ export class SSRRenderer {
     if (renderResult.stream) {
       if (options.wantsStream) {
         logger.debug("True streaming SSR - returning stream without buffering");
-        return { html: "", stream: renderResult.stream as ReadableStream };
+        return { html: "", stream: renderResult.stream };
       }
 
       const html = await streamToString(renderResult.stream);
@@ -211,9 +188,7 @@ export class SSRRenderer {
       return { html, stream: null };
     }
 
-    if (renderResult.html) {
-      return { html: renderResult.html, stream: null };
-    }
+    if (renderResult.html) return { html: renderResult.html, stream: null };
 
     throw new VeryfrontError("SSR failed - no output", ErrorCode.RENDER_ERROR);
   }

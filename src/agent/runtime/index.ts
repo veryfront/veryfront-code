@@ -77,7 +77,7 @@ export class AgentRuntime {
     input: string | Message[],
     context?: Record<string, unknown>,
   ): Promise<AgentResponse> {
-    return await withSpan("agent.generate", async (span) => {
+    return withSpan("agent.generate", async (span) => {
       setSpanAttributes(span, {
         "agent.id": this.id,
         "agent.model": this.config.model,
@@ -99,7 +99,7 @@ export class AgentRuntime {
       };
 
       const chain = new MiddlewareChain(this.config.middleware);
-      return await chain.execute(
+      return chain.execute(
         agentContext,
         () => this.executeAgentLoop(provider, model, systemPrompt, messages),
       );
@@ -173,7 +173,7 @@ export class AgentRuntime {
     systemPrompt: string,
     messages: Message[],
   ): Promise<AgentResponse> {
-    return await withSpan("agent.execution_loop", async (loopSpan) => {
+    return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
       const maxSteps = this.computeMaxSteps(maxAgentSteps);
 
@@ -189,7 +189,7 @@ export class AgentRuntime {
 
         const response = await withSpan("agent.provider_complete", async (span) => {
           setSpanAttributes(span, { model, "messages.count": currentMessages.length });
-          return await provider.complete({
+          return provider.complete({
             model,
             system: systemPrompt,
             messages: currentMessages.map(convertMessageToProvider),
@@ -203,15 +203,14 @@ export class AgentRuntime {
 
         const assistantParts: MessagePart[] = [];
         if (response.text) assistantParts.push({ type: "text", text: response.text });
-        if (response.toolCalls?.length) {
-          for (const tc of response.toolCalls) {
-            assistantParts.push({
-              type: `tool-${tc.name}`,
-              toolCallId: tc.id,
-              toolName: tc.name,
-              args: tc.arguments,
-            });
-          }
+
+        for (const tc of response.toolCalls ?? []) {
+          assistantParts.push({
+            type: `tool-${tc.name}`,
+            toolCallId: tc.id,
+            toolName: tc.name,
+            args: tc.arguments,
+          });
         }
 
         const assistantMessage: Message = {
@@ -363,22 +362,20 @@ export class AgentRuntime {
       const streamParts: MessagePart[] = [];
       if (state.accumulatedText) streamParts.push({ type: "text", text: state.accumulatedText });
 
-      if (state.toolCalls.size) {
-        for (const tc of state.toolCalls.values()) {
-          const { args, error } = parseToolArgs(tc.arguments);
-          if (error) {
-            logger.warn("[AGENT] Failed to parse streamed tool arguments", {
-              toolCallId: tc.id,
-              error,
-            });
-          }
-          streamParts.push({
-            type: `tool-${tc.name}`,
+      for (const tc of state.toolCalls.values()) {
+        const { args, error } = parseToolArgs(tc.arguments);
+        if (error) {
+          logger.warn("[AGENT] Failed to parse streamed tool arguments", {
             toolCallId: tc.id,
-            toolName: tc.name,
-            args,
+            error,
           });
         }
+        streamParts.push({
+          type: `tool-${tc.name}`,
+          toolCallId: tc.id,
+          toolName: tc.name,
+          args,
+        });
       }
 
       const assistantMessage: Message = {
@@ -412,7 +409,7 @@ export class AgentRuntime {
             type: "tool-input-error",
             toolCallId: tc.id,
             errorText: `Invalid tool arguments: ${argError}`,
-            ...(dynamic && { dynamic: true }),
+            ...(dynamic ? { dynamic: true } : {}),
           });
 
           await this.recordToolError(
@@ -447,7 +444,7 @@ export class AgentRuntime {
             type: "tool-output-available",
             toolCallId: toolCall.id,
             output: result,
-            ...(dynamic && { dynamic: true }),
+            ...(dynamic ? { dynamic: true } : {}),
           });
 
           const toolResultMessage: Message = {
@@ -512,7 +509,7 @@ export class AgentRuntime {
       type: "tool-output-error",
       toolCallId: toolCall.id,
       errorText: errorStr,
-      ...(dynamic && { dynamic: true }),
+      ...(dynamic ? { dynamic: true } : {}),
     });
 
     const errorMessage: Message = {
@@ -538,7 +535,7 @@ export class AgentRuntime {
   private async resolveSystemPrompt(): Promise<string> {
     const { system } = this.config;
     if (typeof system === "string") return system;
-    if (typeof system === "function") return await system();
+    if (typeof system === "function") return system();
     return "You are a helpful AI assistant.";
   }
 
@@ -565,7 +562,7 @@ export class AgentRuntime {
     estimatedTokens: number;
     type: string;
   }> {
-    return await this.memory.getStats();
+    return this.memory.getStats();
   }
 
   /**

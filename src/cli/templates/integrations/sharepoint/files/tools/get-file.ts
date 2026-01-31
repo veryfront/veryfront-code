@@ -56,15 +56,13 @@ export default tool({
     const mimeType = file.file?.mimeType;
     if (!mimeType) return result;
 
-    const textMimeTypes = [
+    const isTextFile = [
       "text/",
       "application/json",
       "application/xml",
       "application/javascript",
       "application/typescript",
-    ];
-
-    const isTextFile = textMimeTypes.some((type) => mimeType.startsWith(type));
+    ].some((type) => mimeType.startsWith(type));
 
     if (!isTextFile) {
       result.contentError = "File is not a text-based file type";
@@ -81,13 +79,12 @@ export default tool({
       const truncated = content.length > contentMaxLength;
 
       result.content = truncated
-        ? content.substring(0, contentMaxLength) + "\n\n[Content truncated...]"
+        ? `${content.substring(0, contentMaxLength)}\n\n[Content truncated...]`
         : content;
       result.contentTruncated = truncated;
     } catch (error) {
-      result.contentError = `Failed to download content: ${
-        error instanceof Error ? error.message : "Unknown error"
-      }`;
+      const message = error instanceof Error ? error.message : "Unknown error";
+      result.contentError = `Failed to download content: ${message}`;
     }
 
     return result;

@@ -1,8 +1,5 @@
 export function normalizeSlug(slug: string): string {
-  return slug
-    .split("/")
-    .filter(Boolean)
-    .join("/");
+  return slug.split("/").filter(Boolean).join("/");
 }
 
 export function slugToPath(slug: string): string {
@@ -22,5 +19,7 @@ export function getSlugFromPath(filePath: string): string {
   if (slug !== "index" && slug !== "page") return slug;
 
   const parentDir = parts.at(-2) ?? "";
-  return parentDir === "pages" || parentDir === "app" ? "" : parentDir;
+  if (parentDir === "pages" || parentDir === "app") return "";
+
+  return parentDir;
 }

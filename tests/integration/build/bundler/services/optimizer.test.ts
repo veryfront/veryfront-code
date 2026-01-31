@@ -19,6 +19,17 @@ import type {
 } from "../../../../../src/build/renderer/types/bundler-types.ts";
 import { withTestContext } from "../../../../_helpers/context.ts";
 
+function createResult(
+  outputs: Array<[string, BundleResult["outputs"] extends Map<string, infer V> ? V : never]>,
+): BundleResult {
+  return {
+    outputs: new Map(outputs),
+    errors: [],
+    warnings: [],
+    dependencies: new Map(),
+  };
+}
+
 describe(
   "Bundle Optimizer",
   { sanitizeOps: false, sanitizeResources: false },
@@ -49,34 +60,24 @@ describe(
           export default helloWorld;
         `;
 
-        const result: BundleResult = {
-          outputs: new Map([
-            [
-              "/test/app.js",
-              {
-                path: "/test/app.js",
-                content: originalContent,
-                type: "js",
-              },
-            ],
-          ]),
-          errors: [],
-          warnings: [],
-          dependencies: new Map(),
-        };
+        const result = createResult([
+          [
+            "/test/app.js",
+            {
+              path: "/test/app.js",
+              content: originalContent,
+              type: "js",
+            },
+          ],
+        ]);
 
         await optimizeBundle(result, options);
 
         const output = result.outputs.get("/test/app.js")!;
         const optimized = output.content;
 
-        // Should be minified (length reduced)
         assertEquals(optimized.length < originalContent.length, true);
-
-        // Should remove comments
         assertEquals(optimized.includes("// This is a comment"), false);
-
-        // Should preserve functionality (minified code may rename but keep string)
         assertEquals(optimized.includes("Hello, World!"), true);
       });
     });
@@ -97,27 +98,20 @@ describe(
           mode: "development",
         };
 
-        const result: BundleResult = {
-          outputs: new Map([
-            [
-              "/test/app.js",
-              {
-                path: "/test/app.js",
-                content: originalCode,
-                type: "js",
-              },
-            ],
-          ]),
-          errors: [],
-          warnings: [],
-          dependencies: new Map(),
-        };
+        const result = createResult([
+          [
+            "/test/app.js",
+            {
+              path: "/test/app.js",
+              content: originalCode,
+              type: "js",
+            },
+          ],
+        ]);
 
         await optimizeBundle(result, options);
 
         const output = result.outputs.get("/test/app.js")!;
-
-        // Should be unchanged in dev mode
         assertEquals(output.content, originalCode);
       });
     });
@@ -133,39 +127,31 @@ describe(
           mode: "production",
         };
 
-        const result: BundleResult = {
-          outputs: new Map([
-            [
-              "/test/app.js",
-              {
-                path: "/test/app.js",
-                content: jsCode,
-                type: "js",
-              },
-            ],
-            [
-              "/test/styles.css",
-              {
-                path: "/test/styles.css",
-                content: cssCode,
-                type: "css",
-              },
-            ],
-          ]),
-          errors: [],
-          warnings: [],
-          dependencies: new Map(),
-        };
+        const result = createResult([
+          [
+            "/test/app.js",
+            {
+              path: "/test/app.js",
+              content: jsCode,
+              type: "js",
+            },
+          ],
+          [
+            "/test/styles.css",
+            {
+              path: "/test/styles.css",
+              content: cssCode,
+              type: "css",
+            },
+          ],
+        ]);
 
         await optimizeBundle(result, options);
 
         const jsOutput = result.outputs.get("/test/app.js")!;
         const cssOutput = result.outputs.get("/test/styles.css")!;
 
-        // JS should be optimized
         assertEquals(jsOutput.content !== jsCode, true);
-
-        // CSS should be unchanged
         assertEquals(cssOutput.content, cssCode);
       });
     });
@@ -178,37 +164,32 @@ describe(
           mode: "production",
         };
 
-        const result: BundleResult = {
-          outputs: new Map([
-            [
-              "/test/app.js",
-              {
-                path: "/test/app.js",
-                content: 'function app() { return "app"; }',
-                type: "js",
-              },
-            ],
-            [
-              "/test/utils.js",
-              {
-                path: "/test/utils.js",
-                content: 'function utils() { return "utils"; }',
-                type: "js",
-              },
-            ],
-            [
-              "/test/lib.js",
-              {
-                path: "/test/lib.js",
-                content: 'function lib() { return "lib"; }',
-                type: "js",
-              },
-            ],
-          ]),
-          errors: [],
-          warnings: [],
-          dependencies: new Map(),
-        };
+        const result = createResult([
+          [
+            "/test/app.js",
+            {
+              path: "/test/app.js",
+              content: 'function app() { return "app"; }',
+              type: "js",
+            },
+          ],
+          [
+            "/test/utils.js",
+            {
+              path: "/test/utils.js",
+              content: 'function utils() { return "utils"; }',
+              type: "js",
+            },
+          ],
+          [
+            "/test/lib.js",
+            {
+              path: "/test/lib.js",
+              content: 'function lib() { return "lib"; }',
+              type: "js",
+            },
+          ],
+        ]);
 
         const originalSizes = {
           app: result.outputs.get("/test/app.js")!.content.length,
@@ -218,14 +199,18 @@ describe(
 
         await optimizeBundle(result, options);
 
-        // All should be optimized
-        const appSize = result.outputs.get("/test/app.js")!.content.length;
-        const utilsSize = result.outputs.get("/test/utils.js")!.content.length;
-        const libSize = result.outputs.get("/test/lib.js")!.content.length;
-
-        assertEquals(appSize <= originalSizes.app, true);
-        assertEquals(utilsSize <= originalSizes.utils, true);
-        assertEquals(libSize <= originalSizes.lib, true);
+        assertEquals(
+          result.outputs.get("/test/app.js")!.content.length <= originalSizes.app,
+          true,
+        );
+        assertEquals(
+          result.outputs.get("/test/utils.js")!.content.length <= originalSizes.utils,
+          true,
+        );
+        assertEquals(
+          result.outputs.get("/test/lib.js")!.content.length <= originalSizes.lib,
+          true,
+        );
       });
     });
 
@@ -237,13 +222,12 @@ describe(
           mode: "production",
         };
 
-        const result: BundleResult = {
-          outputs: new Map([
-            [
-              "/test/modern.js",
-              {
-                path: "/test/modern.js",
-                content: `
+        const result = createResult([
+          [
+            "/test/modern.js",
+            {
+              path: "/test/modern.js",
+              content: `
                   // ES2020+ features
                   const data = { a: 1, b: 2 };
                   const merged = { ...data, c: 3 };
@@ -257,24 +241,17 @@ describe(
 
                   export { merged, optional, nullish, fetchData };
                 `,
-                type: "js",
-              },
-            ],
-          ]),
-          errors: [],
-          warnings: [],
-          dependencies: new Map(),
-        };
+              type: "js",
+            },
+          ],
+        ]);
 
         await optimizeBundle(result, options);
 
         const output = result.outputs.get("/test/modern.js")!;
 
-        // Should compile to es2020 target (modern features should work)
         assertExists(output.content);
         assertEquals(output.content.length > 0, true);
-
-        // Should preserve essential features (may be transformed)
         assertEquals(output.content.includes("fetch") || output.content.includes("async"), true);
       });
     });
@@ -293,26 +270,19 @@ describe(
           }
         `;
 
-        const result: BundleResult = {
-          outputs: new Map([
-            [
-              "/test/broken.js",
-              {
-                path: "/test/broken.js",
-                content: invalidCode,
-                type: "js",
-              },
-            ],
-          ]),
-          errors: [],
-          warnings: [],
-          dependencies: new Map(),
-        };
+        const result = createResult([
+          [
+            "/test/broken.js",
+            {
+              path: "/test/broken.js",
+              content: invalidCode,
+              type: "js",
+            },
+          ],
+        ]);
 
-        // Should not throw - errors are logged but optimization continues
         await optimizeBundle(result, options);
 
-        // Content should remain (optimizer failed but doesn't break build)
         assertExists(result.outputs.get("/test/broken.js"));
       });
     });
@@ -325,35 +295,27 @@ describe(
           mode: "production",
         };
 
-        const result: BundleResult = {
-          outputs: new Map([
-            [
-              "/test/arrows.js",
-              {
-                path: "/test/arrows.js",
-                content: `
+        const result = createResult([
+          [
+            "/test/arrows.js",
+            {
+              path: "/test/arrows.js",
+              content: `
                   const add = (a, b) => a + b;
                   const greet = name => \`Hello, \${name}!\`;
                   const numbers = [1, 2, 3].map(n => n * 2);
                   export { add, greet, numbers };
                 `,
-                type: "js",
-              },
-            ],
-          ]),
-          errors: [],
-          warnings: [],
-          dependencies: new Map(),
-        };
+              type: "js",
+            },
+          ],
+        ]);
 
         await optimizeBundle(result, options);
 
         const output = result.outputs.get("/test/arrows.js")!;
 
-        // Should be minified
         assertEquals(output.content.length < 150, true);
-
-        // Should preserve exports (in some form)
         assertExists(output.content);
       });
     });
@@ -366,14 +328,8 @@ describe(
           mode: "production",
         };
 
-        const result: BundleResult = {
-          outputs: new Map(),
-          errors: [],
-          warnings: [],
-          dependencies: new Map(),
-        };
+        const result = createResult([]);
 
-        // Should not throw
         await optimizeBundle(result, options);
 
         assertEquals(result.outputs.size, 0);
@@ -388,36 +344,28 @@ describe(
           mode: "production",
         };
 
-        const result: BundleResult = {
-          outputs: new Map([
-            [
-              "/test/page.js",
-              {
-                path: "/test/page.js",
-                content: 'function page() { return "page"; }',
-                type: "js",
-                meta: {
-                  title: "Test Page",
-                  description: "A test page",
-                },
+        const result = createResult([
+          [
+            "/test/page.js",
+            {
+              path: "/test/page.js",
+              content: 'function page() { return "page"; }',
+              type: "js",
+              meta: {
+                title: "Test Page",
+                description: "A test page",
               },
-            ],
-          ]),
-          errors: [],
-          warnings: [],
-          dependencies: new Map(),
-        };
+            },
+          ],
+        ]);
 
         await optimizeBundle(result, options);
 
         const output = result.outputs.get("/test/page.js")!;
 
-        // Should preserve metadata
         assertExists(output.meta);
         assertEquals(output.meta.title, "Test Page");
         assertEquals(output.meta.description, "A test page");
-
-        // Should preserve path and type
         assertEquals(output.path, "/test/page.js");
         assertEquals(output.type, "js");
       });
@@ -431,40 +379,32 @@ describe(
           mode: "production",
         };
 
-        // Generate a large file with repetitive code
-        const largeCode = Array.from({ length: 100 }, (_, i) => `
+        const largeCode = Array.from(
+          { length: 100 },
+          (_, i) => `
           function func${i}() {
             const value = ${i};
             const doubled = value * 2;
             return doubled;
           }
-        `).join("\n");
+        `,
+        ).join("\n");
 
-        const result: BundleResult = {
-          outputs: new Map([
-            [
-              "/test/large.js",
-              {
-                path: "/test/large.js",
-                content: largeCode,
-                type: "js",
-              },
-            ],
-          ]),
-          errors: [],
-          warnings: [],
-          dependencies: new Map(),
-        };
-
-        const originalSize = largeCode.length;
+        const result = createResult([
+          [
+            "/test/large.js",
+            {
+              path: "/test/large.js",
+              content: largeCode,
+              type: "js",
+            },
+          ],
+        ]);
 
         await optimizeBundle(result, options);
 
         const output = result.outputs.get("/test/large.js")!;
-        const optimizedSize = output.content.length;
-
-        // Should be significantly smaller
-        assertEquals(optimizedSize < originalSize * 0.7, true);
+        assertEquals(output.content.length < largeCode.length * 0.7, true);
       });
     });
   },

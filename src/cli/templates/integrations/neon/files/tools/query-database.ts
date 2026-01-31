@@ -17,10 +17,9 @@ export default tool({
   async execute({ sql, params, limit }) {
     const trimmedSql = sql.trim();
     const isSelectQuery = /^SELECT/i.test(trimmedSql);
+    const hasLimit = /LIMIT\s+\d+/i.test(trimmedSql);
 
-    const finalSql =
-      isSelectQuery && !/LIMIT\s+\d+/i.test(trimmedSql) ? `${trimmedSql} LIMIT ${limit}` : trimmedSql;
-
+    const finalSql = isSelectQuery && !hasLimit ? `${trimmedSql} LIMIT ${limit}` : trimmedSql;
     const result = await query(finalSql, params);
 
     return {

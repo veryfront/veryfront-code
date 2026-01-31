@@ -67,54 +67,59 @@ export async function handleRSCEndpoint(
       return handler.handleStream(sub.replace("stream/", ""), url.searchParams);
     }
 
-    switch (sub) {
-      case "probe":
-        return new Response(JSON.stringify({ ok: true, rsc: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-
-      case "action":
-        if (req.method !== "POST") {
-          return new Response("Method Not Allowed", { status: 405 });
-        }
-        metrics.recordRSC("action");
-        try {
-          return await handleActionRequest({ req, projectDir, adapter });
-        } catch (e) {
-          metrics.recordRSC("error");
-          return jsonErrorResponse(
-            HttpStatus.INTERNAL_SERVER_ERROR,
-            e instanceof Error ? e.message : String(e),
-          );
-        }
-
-      case "manifest":
-        metrics.recordRSC("manifest");
-        return handler.handleManifest();
-
-      case "payload":
-        metrics.recordRSC("page");
-        return handlePayloadEndpoint({ handler, searchParams: url.searchParams });
-
-      case "hydrator.js":
-      case "hydrate.js":
-        return handler.handleHydratorScript();
-
-      case "module":
-        return handleModuleEndpoint({ searchParams: url.searchParams, projectDir, adapter });
-
-      case "page":
-        metrics.recordRSC("page");
-        return handler.handlePage("/", url.searchParams);
-
-      case "stream":
-        metrics.recordRSC("stream");
-        return handleStreamEndpoint(url.searchParams);
-
-      default:
-        return null;
+    if (sub === "probe") {
+      return new Response(JSON.stringify({ ok: true, rsc: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
+
+    if (sub === "action") {
+      if (req.method !== "POST") {
+        return new Response("Method Not Allowed", { status: 405 });
+      }
+
+      metrics.recordRSC("action");
+      try {
+        return await handleActionRequest({ req, projectDir, adapter });
+      } catch (e) {
+        metrics.recordRSC("error");
+        return jsonErrorResponse(
+          HttpStatus.INTERNAL_SERVER_ERROR,
+          e instanceof Error ? e.message : String(e),
+        );
+      }
+    }
+
+    if (sub === "manifest") {
+      metrics.recordRSC("manifest");
+      return handler.handleManifest();
+    }
+
+    if (sub === "payload") {
+      metrics.recordRSC("page");
+      return handlePayloadEndpoint({ handler, searchParams: url.searchParams });
+    }
+
+    if (sub === "hydrator.js" || sub === "hydrate.js") {
+      return handler.handleHydratorScript();
+    }
+
+    if (sub === "module") {
+      return handleModuleEndpoint({ searchParams: url.searchParams, projectDir, adapter });
+    }
+
+    if (sub === "page") {
+      metrics.recordRSC("page");
+      return handler.handlePage("/", url.searchParams);
+    }
+
+    if (sub === "stream") {
+      metrics.recordRSC("stream");
+      return handleStreamEndpoint(url.searchParams);
+    }
+
+    return null;
   } catch (e) {
     if (e instanceof Error && e.message === "Component not found") {
       serverLogger.debug(

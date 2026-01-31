@@ -15,17 +15,11 @@ export function registerHttpLoader(): boolean {
 
   if (!isNode) return false;
 
-  try {
-    const nodeVersion = process.versions?.node;
-    if (!nodeVersion) return httpLoaderAvailable;
+  const nodeVersion = process.versions?.node;
+  if (!nodeVersion) return httpLoaderAvailable;
 
-    const major = Number(nodeVersion.split(".")[0]);
-    if (major >= 20) {
-      httpLoaderAvailable = false;
-    }
-  } catch {
-    // ignore
-  }
+  const major = Number(nodeVersion.split(".")[0]);
+  if (major >= 20) httpLoaderAvailable = false;
 
   return httpLoaderAvailable;
 }

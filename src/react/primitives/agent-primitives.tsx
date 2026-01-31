@@ -6,11 +6,13 @@ export interface AgentContainerProps extends React.HTMLAttributes<HTMLDivElement
 }
 
 export const AgentContainer = React.forwardRef<HTMLDivElement, AgentContainerProps>(
-  ({ className, children, ...props }, ref) => (
-    <div ref={ref} className={className} data-agent-container="" {...props}>
-      {children}
-    </div>
-  ),
+  ({ className, children, ...props }, ref) => {
+    return (
+      <div ref={ref} className={className} data-agent-container="" {...props}>
+        {children}
+      </div>
+    );
+  },
 );
 
 AgentContainer.displayName = "AgentContainer";
@@ -47,18 +49,20 @@ export interface ThinkingIndicatorProps extends React.HTMLAttributes<HTMLDivElem
 }
 
 export const ThinkingIndicator = React.forwardRef<HTMLDivElement, ThinkingIndicatorProps>(
-  ({ className, children, ...props }, ref) => (
-    <div
-      ref={ref}
-      className={className}
-      data-thinking-indicator=""
-      role="status"
-      aria-live="polite"
-      {...props}
-    >
-      {children}
-    </div>
-  ),
+  ({ className, children, ...props }, ref) => {
+    return (
+      <div
+        ref={ref}
+        className={className}
+        data-thinking-indicator=""
+        role="status"
+        aria-live="polite"
+        {...props}
+      >
+        {children}
+      </div>
+    );
+  },
 );
 
 ThinkingIndicator.displayName = "ThinkingIndicator";

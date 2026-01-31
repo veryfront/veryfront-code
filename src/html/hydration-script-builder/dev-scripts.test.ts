@@ -4,9 +4,7 @@ import { getDevScripts } from "./dev-scripts.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 
 describe("hydration-script-builder/dev-scripts", () => {
-  const baseConfig: VeryfrontConfig = {
-    dev: { hmr: true },
-  } as VeryfrontConfig;
+  const baseConfig: VeryfrontConfig = { dev: { hmr: true } };
 
   describe("getDevScripts", () => {
     it("should return a string containing script tags", () => {
@@ -42,9 +40,7 @@ describe("hydration-script-builder/dev-scripts", () => {
     });
 
     it("should not include HMR script when config.dev.hmr is false", () => {
-      const config: VeryfrontConfig = {
-        dev: { hmr: false },
-      } as VeryfrontConfig;
+      const config: VeryfrontConfig = { dev: { hmr: false } };
       const result = getDevScripts("page", config);
       assertEquals(result.includes("hmr.js"), false);
     });
@@ -58,8 +54,7 @@ describe("hydration-script-builder/dev-scripts", () => {
 
     it("should include nonce in all scripts when provided", () => {
       const result = getDevScripts("page", baseConfig, undefined, undefined, "test-nonce");
-      const nonceCount = (result.match(/nonce="test-nonce"/g) || []).length;
-      // Should appear in error logger, component manifest, client renderer, and HMR scripts
+      const nonceCount = (result.match(/nonce="test-nonce"/g) ?? []).length;
       assertEquals(nonceCount >= 3, true);
     });
 

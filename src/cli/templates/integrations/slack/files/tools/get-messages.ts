@@ -24,7 +24,6 @@ export default tool({
       .describe("Maximum number of messages to return"),
   }),
   execute: async ({ channel, limit }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = context?.userId ?? "current-user";
 
     try {

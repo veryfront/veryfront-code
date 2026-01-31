@@ -33,10 +33,7 @@ export function withCORS<T extends FluentMethodsContext>(
 }
 
 /** Apply CORS headers asynchronously */
-export function withCORSAsync<T extends FluentMethodsContext>(
-  this: T,
-  req: Request,
-): Promise<T> {
+export function withCORSAsync<T extends FluentMethodsContext>(this: T, req: Request): Promise<T> {
   return applyCORSHeaders({
     request: req,
     headers: this.headers,
@@ -62,15 +59,13 @@ export function withSecurity<T extends FluentMethodsContext>(
 }
 
 /** Apply cache control headers based on strategy */
-export function withCache<T extends FluentMethodsContext>(
-  this: T,
-  strategy: CacheStrategy,
-): T {
+export function withCache<T extends FluentMethodsContext>(this: T, strategy: CacheStrategy): T {
   this.headers.set("Cache-Control", buildCacheControl(strategy));
 
-  // Add legacy headers for better browser compatibility when preventing caching
   const isNoCacheStrategy = strategy === "no-cache" || strategy === "none" ||
     strategy === "no-store";
+
+  // Add legacy headers for better browser compatibility when preventing caching
   if (isNoCacheStrategy) {
     this.headers.set("Pragma", "no-cache");
     this.headers.set("Expires", "0");
@@ -90,7 +85,7 @@ export function withHeaders<T extends FluentMethodsContext>(
   this: T,
   headers: HeadersInit | Record<string, string>,
 ): T {
-  const entries = headers instanceof Headers || Array.isArray(headers)
+  const entries: Iterable<[string, string]> = headers instanceof Headers || Array.isArray(headers)
     ? headers
     : Object.entries(headers);
 
@@ -109,10 +104,8 @@ export function withStatus<T extends FluentMethodsContext>(this: T, status: numb
 
 /** Apply Client Hints headers for theme detection */
 export function withClientHints<T extends FluentMethodsContext>(this: T): T {
-  // Tell browser we accept color scheme hints
   this.headers.set("Accept-CH", "Sec-CH-Prefers-Color-Scheme");
 
-  // Vary response by color scheme for correct caching
   const existingVary = this.headers.get("Vary");
   this.headers.set(
     "Vary",

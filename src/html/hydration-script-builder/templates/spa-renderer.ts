@@ -1,4 +1,4 @@
-export const getSpaRendererScript = () => `
+export const getSpaRendererScript = (): string => `
     async function initSpaApp() {
       const dataScript = document.getElementById('veryfront-hydration-data');
       if (!dataScript) {
@@ -16,7 +16,6 @@ export const getSpaRendererScript = () => `
 
       log('Initial page data:', initialData);
 
-      // Set studioEmbed flag for module loading (affects query params)
       if (initialData.studioEmbed && window.__veryfrontSetStudioEmbed) {
         window.__veryfrontSetStudioEmbed(true);
       }
@@ -65,7 +64,7 @@ export const getSpaRendererScript = () => `
     initSpaApp();
 `;
 
-export const getSpaLoaderScript = () => `
+export const getSpaLoaderScript = (): string => `
     const componentCache = new Map();
     const loadingPromises = new Map();
 

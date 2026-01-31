@@ -5,7 +5,8 @@ import {
 } from "#veryfront/utils";
 
 export function validatePathSecurity(path: string): boolean {
-  if (path == null || path.length > MAX_PATH_LENGTH) return false;
+  if (path == null) return false;
+  if (path.length > MAX_PATH_LENGTH) return false;
 
   for (const pattern of FORBIDDEN_PATH_PATTERNS) {
     if (pattern.test(path)) return false;

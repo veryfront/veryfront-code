@@ -13,6 +13,26 @@ export default tool({
     const issue = await getIssue(issueKey);
     const { fields } = issue;
 
+    const priority = fields.priority
+      ? { name: fields.priority.name, iconUrl: fields.priority.iconUrl }
+      : null;
+
+    const assignee = fields.assignee
+      ? {
+          displayName: fields.assignee.displayName,
+          email: fields.assignee.emailAddress,
+          accountId: fields.assignee.accountId,
+        }
+      : null;
+
+    const reporter = fields.reporter
+      ? {
+          displayName: fields.reporter.displayName,
+          email: fields.reporter.emailAddress,
+          accountId: fields.reporter.accountId,
+        }
+      : null;
+
     return {
       key: issue.key,
       id: issue.id,
@@ -24,26 +44,9 @@ export default tool({
         name: fields.issuetype.name,
         iconUrl: fields.issuetype.iconUrl,
       },
-      priority: fields.priority
-        ? {
-            name: fields.priority.name,
-            iconUrl: fields.priority.iconUrl,
-          }
-        : null,
-      assignee: fields.assignee
-        ? {
-            displayName: fields.assignee.displayName,
-            email: fields.assignee.emailAddress,
-            accountId: fields.assignee.accountId,
-          }
-        : null,
-      reporter: fields.reporter
-        ? {
-            displayName: fields.reporter.displayName,
-            email: fields.reporter.emailAddress,
-            accountId: fields.reporter.accountId,
-          }
-        : null,
+      priority,
+      assignee,
+      reporter,
       project: {
         key: fields.project.key,
         name: fields.project.name,

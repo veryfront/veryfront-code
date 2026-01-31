@@ -60,7 +60,10 @@ export default tool({
       .default(20)
       .describe("Maximum number of issues to return"),
   }),
-  execute: async ({ workspace, repoSlug, state, kind, priority, limit }, context) => {
+  execute: async (
+    { workspace, repoSlug, state, kind, priority, limit },
+    context,
+  ) => {
     const userId = context?.userId ?? "current-user";
 
     try {
@@ -71,6 +74,8 @@ export default tool({
         priority,
         perPage: limit,
       });
+
+      const repository = `${workspace}/${repoSlug}`;
 
       return {
         issues: issues.map((issue: BitbucketIssue) => ({
@@ -95,13 +100,13 @@ export default tool({
           updatedOn: issue.updated_on,
         })),
         count: issues.length,
-        repository: `${workspace}/${repoSlug}`,
+        repository,
         filters: {
           state: state ?? "all",
           kind: kind ?? "all",
           priority: priority ?? "all",
         },
-        message: `Found ${issues.length} issue(s) in ${workspace}/${repoSlug}.`,
+        message: `Found ${issues.length} issue(s) in ${repository}.`,
       };
     } catch (error) {
       if (error instanceof Error && error.message.includes("not connected")) {

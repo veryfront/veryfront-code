@@ -13,13 +13,21 @@ export default tool({
   inputSchema: z.object({
     location: z.string().describe("The city and state, e.g. San Francisco, CA"),
   }),
-  execute: ({ location }: { location: string }) => {
-    const weather = mockWeather[location] ?? { temp: 70, condition: "Clear" };
+  execute: ({ location }: { location: string }): {
+    location: string;
+    temperature: number;
+    condition: string;
+    unit: "fahrenheit";
+  } => {
+    const { temp, condition } = mockWeather[location] ?? {
+      temp: 70,
+      condition: "Clear",
+    };
 
     return {
       location,
-      temperature: weather.temp,
-      condition: weather.condition,
+      temperature: temp,
+      condition,
       unit: "fahrenheit",
     };
   },

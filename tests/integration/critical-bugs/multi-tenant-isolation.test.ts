@@ -1,19 +1,3 @@
-/**
- * Test 2: Multi-Tenant Isolation Under Concurrency
- *
- * This test verifies that concurrent requests to different projects have ZERO data leakage.
- * In a multi-tenant environment, critical bugs can occur when:
- *
- * Bugs being tested:
- * - Head collector leakage: Project A's <Head> tags appearing in Project B's response
- * - React cache contamination: Project A's component state leaking to Project B
- * - Module cache sharing: Project A's compiled modules used for Project B
- * - AsyncLocalStorage context bleed: Request context crossing tenant boundaries
- *
- * The test spawns multiple concurrent renders across different "projects" and verifies
- * that each response contains ONLY its own project's data.
- */
-
 import {
   assert,
   assertEquals,
@@ -32,557 +16,473 @@ import {
   runWithHeadCollector,
 } from "../../../src/react/head-collector.ts";
 
-describe("Multi-Tenant Isolation Under Concurrency", {
-  sanitizeResources: false,
-  sanitizeOps: false,
-}, () => {
-  describe("Head Collector Isolation", () => {
-    /**
-     * CRITICAL BUG: The head collector uses module-level state (let collected = createEmpty()).
-     * Without proper request-scoped isolation, concurrent requests can corrupt each other's head data.
-     *
-     * NOTE: These tests are skipped because the HeadCollector currently uses module-level
-     * state without AsyncLocalStorage-based request isolation. This documents a known
-     * limitation that should be addressed for proper multi-tenant support.
-     */
-    it.ignore("isolates head collection between concurrent requests", async () => {
-      // Simulate two concurrent requests
-      const request1 = async () => {
-        resetHeadCollector();
-        collectHead({ title: "Project A - Homepage" });
-        collectHead({ metas: [{ name: "description", content: "Project A description" }] });
-        // Simulate async work (network, rendering, etc.)
-        await new Promise((resolve) => setTimeout(resolve, Math.random() * 10));
-        collectHead({ metas: [{ property: "og:title", content: "Project A OG Title" }] });
-        return flushHeadCollector();
-      };
+function delayRandom(maxMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, Math.random() * maxMs));
+}
 
-      const request2 = async () => {
-        resetHeadCollector();
-        collectHead({ title: "Project B - Dashboard" });
-        collectHead({ metas: [{ name: "description", content: "Project B description" }] });
-        // Simulate async work
-        await new Promise((resolve) => setTimeout(resolve, Math.random() * 10));
-        collectHead({ metas: [{ property: "og:title", content: "Project B OG Title" }] });
-        return flushHeadCollector();
-      };
+async function clearRendererState(renderer: unknown): Promise<void> {
+  if (
+    renderer &&
+    typeof renderer === "object" &&
+    "clearAllState" in renderer &&
+    typeof (renderer as { clearAllState?: unknown }).clearAllState === "function"
+  ) {
+    await (renderer as { clearAllState: () => Promise<void> }).clearAllState();
+  }
+}
 
-      // Run concurrently
-      const [result1, result2] = await Promise.all([request1(), request2()]);
+describe(
+  "Multi-Tenant Isolation Under Concurrency",
+  {
+    sanitizeResources: false,
+    sanitizeOps: false,
+  },
+  () => {
+    describe("Head Collector Isolation", () => {
+      it.ignore("isolates head collection between concurrent requests", async () => {
+        const request1 = async () => {
+          resetHeadCollector();
+          collectHead({ title: "Project A - Homepage" });
+          collectHead({ metas: [{ name: "description", content: "Project A description" }] });
+          await delayRandom(10);
+          collectHead({ metas: [{ property: "og:title", content: "Project A OG Title" }] });
+          return flushHeadCollector();
+        };
 
-      // BUG CHECK: Verify NO cross-contamination
-      // In a buggy implementation, result1 might contain "Project B" data
+        const request2 = async () => {
+          resetHeadCollector();
+          collectHead({ title: "Project B - Dashboard" });
+          collectHead({ metas: [{ name: "description", content: "Project B description" }] });
+          await delayRandom(10);
+          collectHead({ metas: [{ property: "og:title", content: "Project B OG Title" }] });
+          return flushHeadCollector();
+        };
 
-      // Note: Because the head collector uses global state, this test will likely
-      // demonstrate the bug by showing interleaved data
-      assert(
-        !result1.title?.includes("Project B") || result1.title === "Project A - Homepage",
-        `Project A result should not contain Project B data. Got title: ${result1.title}`,
-      );
+        const [result1, result2] = await Promise.all([request1(), request2()]);
 
-      assert(
-        !result2.title?.includes("Project A") || result2.title === "Project B - Dashboard",
-        `Project B result should not contain Project A data. Got title: ${result2.title}`,
-      );
-
-      // Verify descriptions are not mixed
-      const result1Desc = result1.metas.find((m) => m.name === "description");
-      const result2Desc = result2.metas.find((m) => m.name === "description");
-
-      if (result1Desc) {
         assert(
-          !result1Desc.content.includes("Project B"),
-          `Project A description should not reference Project B: ${result1Desc.content}`,
+          !result1.title?.includes("Project B") || result1.title === "Project A - Homepage",
+          `Project A result should not contain Project B data. Got title: ${result1.title}`,
         );
-      }
 
-      if (result2Desc) {
         assert(
-          !result2Desc.content.includes("Project A"),
-          `Project B description should not reference Project A: ${result2Desc.content}`,
+          !result2.title?.includes("Project A") || result2.title === "Project B - Dashboard",
+          `Project B result should not contain Project A data. Got title: ${result2.title}`,
         );
-      }
-    });
 
-    // NOTE: This test is skipped because the HeadCollector currently uses module-level
-    // state without AsyncLocalStorage-based request isolation. This documents a known
-    // limitation that should be addressed for proper multi-tenant support.
-    // The simpler "isolates head collection between concurrent requests" test above
-    // passes because it doesn't stress the isolation boundary as heavily.
-    it.ignore("maintains isolation under high concurrency stress", async () => {
-      const projectCount = 10;
-      const results: Map<string, { title?: string; metas: any[]; links: any[]; styles: string[] }> =
-        new Map();
-      const errors: string[] = [];
+        const result1Desc = result1.metas.find((m) => m.name === "description");
+        const result2Desc = result2.metas.find((m) => m.name === "description");
 
-      // Create project-specific request handlers
-      const createProjectRequest = (projectId: string) => async () => {
-        resetHeadCollector();
-        const uniqueTitle = `Project-${projectId}-Title-${crypto.randomUUID().slice(0, 8)}`;
-        const uniqueDesc = `Description-for-${projectId}`;
-
-        collectHead({ title: uniqueTitle });
-        // Random delays to interleave operations
-        await new Promise((resolve) => setTimeout(resolve, Math.random() * 20));
-        collectHead({ metas: [{ name: "description", content: uniqueDesc }] });
-        await new Promise((resolve) => setTimeout(resolve, Math.random() * 20));
-        collectHead({ metas: [{ name: `custom-${projectId}`, content: `value-${projectId}` }] });
-
-        const result = flushHeadCollector();
-        results.set(projectId, result);
-
-        // Validate immediately after flush
-        if (result.title && !result.title.includes(projectId)) {
-          errors.push(`Project ${projectId} has wrong title: ${result.title}`);
+        if (result1Desc) {
+          assert(
+            !result1Desc.content.includes("Project B"),
+            `Project A description should not reference Project B: ${result1Desc.content}`,
+          );
         }
 
-        const desc = result.metas.find((m) => m.name === "description");
-        if (desc && !desc.content.includes(projectId)) {
-          errors.push(`Project ${projectId} has wrong description: ${desc.content}`);
+        if (result2Desc) {
+          assert(
+            !result2Desc.content.includes("Project A"),
+            `Project B description should not reference Project A: ${result2Desc.content}`,
+          );
         }
+      });
 
-        return result;
-      };
+      it.ignore("maintains isolation under high concurrency stress", async () => {
+        const projectCount = 10;
+        const results = new Map<
+          string,
+          { title?: string; metas: any[]; links: any[]; styles: string[] }
+        >();
+        const errors: string[] = [];
 
-      // Launch all requests concurrently
-      const requests = Array.from(
-        { length: projectCount },
-        (_, i) => createProjectRequest(`proj-${i}`)(),
-      );
+        const createProjectRequest = (projectId: string) => async () => {
+          resetHeadCollector();
+          const uniqueTitle = `Project-${projectId}-Title-${crypto.randomUUID().slice(0, 8)}`;
+          const uniqueDesc = `Description-for-${projectId}`;
 
-      await Promise.all(requests);
+          collectHead({ title: uniqueTitle });
+          await delayRandom(20);
+          collectHead({ metas: [{ name: "description", content: uniqueDesc }] });
+          await delayRandom(20);
+          collectHead({ metas: [{ name: `custom-${projectId}`, content: `value-${projectId}` }] });
 
-      // Verify no cross-contamination occurred
-      assertEquals(
-        errors.length,
-        0,
-        `Found ${errors.length} isolation violations:\n${errors.join("\n")}`,
-      );
+          const result = flushHeadCollector();
+          results.set(projectId, result);
 
-      // Additional check: verify each project got its own unique data
-      for (const [projectId, result] of results.entries()) {
-        const customMeta = result.metas.find((m) => m.name === `custom-${projectId}`);
-        assert(customMeta, `Project ${projectId} should have its custom meta tag`);
+          if (result.title && !result.title.includes(projectId)) {
+            errors.push(`Project ${projectId} has wrong title: ${result.title}`);
+          }
+
+          const desc = result.metas.find((m) => m.name === "description");
+          if (desc && !desc.content.includes(projectId)) {
+            errors.push(`Project ${projectId} has wrong description: ${desc.content}`);
+          }
+
+          return result;
+        };
+
+        await Promise.all(
+          Array.from({ length: projectCount }, (_, i) => createProjectRequest(`proj-${i}`)()),
+        );
+
         assertEquals(
-          customMeta!.content,
-          `value-${projectId}`,
-          `Project ${projectId} custom meta should have correct value`,
+          errors.length,
+          0,
+          `Found ${errors.length} isolation violations:\n${errors.join("\n")}`,
         );
-      }
-    });
 
-    it("properly resets state between requests", async () => {
-      // First request (with AsyncLocalStorage context)
-      const { head: first } = await runWithHeadCollector(async () => {
-        collectHead({ title: "First Request Title" });
-        collectHead({ metas: [{ name: "first", content: "first-value" }] });
+        for (const [projectId, result] of results.entries()) {
+          const customMeta = result.metas.find((m) => m.name === `custom-${projectId}`);
+          assert(customMeta, `Project ${projectId} should have its custom meta tag`);
+          assertEquals(
+            customMeta.content,
+            `value-${projectId}`,
+            `Project ${projectId} custom meta should have correct value`,
+          );
+        }
       });
 
-      // Second request (fresh context)
-      const { head: second } = await runWithHeadCollector(async () => {
-        collectHead({ title: "Second Request Title" });
+      it("properly resets state between requests", async () => {
+        const { head: first } = await runWithHeadCollector(async () => {
+          collectHead({ title: "First Request Title" });
+          collectHead({ metas: [{ name: "first", content: "first-value" }] });
+        });
+
+        const { head: second } = await runWithHeadCollector(async () => {
+          collectHead({ title: "Second Request Title" });
+        });
+
+        assertEquals(second.title, "Second Request Title", "Second request should have its own title");
+        assertEquals(second.metas.length, 0, "Second request should not have first request's metas");
+
+        assertEquals(first.title, "First Request Title", "First result should be unchanged");
+        assertEquals(first.metas.length, 1, "First result should still have its metas");
       });
-
-      // Verify second request doesn't contain first request's data
-      assertEquals(
-        second.title,
-        "Second Request Title",
-        "Second request should have its own title",
-      );
-      assertEquals(second.metas.length, 0, "Second request should not have first request's metas");
-
-      // Verify first result is still intact (not mutated)
-      assertEquals(first.title, "First Request Title", "First result should be unchanged");
-      assertEquals(first.metas.length, 1, "First result should still have its metas");
     });
-  });
 
-  describe("React Cache Isolation", () => {
-    /**
-     * CRITICAL BUG: React's internal caches may not be properly scoped per request/project.
-     * This can cause:
-     * - Stale component state from previous requests
-     * - Wrong project's providers being used
-     * - Cache key collisions between projects
-     */
-    it("isolates React rendering state between projects", async () => {
-      await withTestContext("tenant-isolation-react-a", async (contextA) => {
-        await withTestContext("tenant-isolation-react-b", async (contextB) => {
-          // Create distinct pages for each project
-          await mkdir(join(contextA.projectDir, "app"), { recursive: true });
-          await mkdir(join(contextB.projectDir, "app"), { recursive: true });
+    describe("React Cache Isolation", () => {
+      it("isolates React rendering state between projects", async () => {
+        await withTestContext("tenant-isolation-react-a", async (contextA) => {
+          await withTestContext("tenant-isolation-react-b", async (contextB) => {
+            await mkdir(join(contextA.projectDir, "app"), { recursive: true });
+            await mkdir(join(contextB.projectDir, "app"), { recursive: true });
 
-          // Project A: Blue theme
-          await writeTextFile(
-            join(contextA.projectDir, "app", "layout.tsx"),
-            `export default function Layout({ children }) {
+            await writeTextFile(
+              join(contextA.projectDir, "app", "layout.tsx"),
+              `export default function Layout({ children }) {
               return <html><body className="theme-blue project-a">{children}</body></html>;
             }`,
-          );
-          await writeTextFile(
-            join(contextA.projectDir, "app", "page.tsx"),
-            `export default function Page() { return <div data-project="A">Project A Content</div>; }`,
-          );
+            );
+            await writeTextFile(
+              join(contextA.projectDir, "app", "page.tsx"),
+              `export default function Page() { return <div data-project="A">Project A Content</div>; }`,
+            );
 
-          // Project B: Red theme
-          await writeTextFile(
-            join(contextB.projectDir, "app", "layout.tsx"),
-            `export default function Layout({ children }) {
+            await writeTextFile(
+              join(contextB.projectDir, "app", "layout.tsx"),
+              `export default function Layout({ children }) {
               return <html><body className="theme-red project-b">{children}</body></html>;
             }`,
-          );
-          await writeTextFile(
-            join(contextB.projectDir, "app", "page.tsx"),
-            `export default function Page() { return <div data-project="B">Project B Content</div>; }`,
-          );
-
-          // Import renderer
-          const { createRenderer } = await import("../../../src/rendering/index.ts");
-          const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
-
-          try {
-            // Create renderers for both projects
-            const rendererA = await createRenderer({
-              projectDir: contextA.projectDir,
-              mode: "development",
-            });
-
-            const rendererB = await createRenderer({
-              projectDir: contextB.projectDir,
-              mode: "development",
-            });
-
-            // Render concurrently
-            const [resultA, resultB] = await Promise.all([
-              rendererA.renderPage("/"),
-              rendererB.renderPage("/"),
-            ]);
-
-            // Verify Project A's result
-            assertStringIncludes(
-              resultA.html,
-              "project-a",
-              "Project A should have project-a class",
             );
-            assertStringIncludes(resultA.html, "theme-blue", "Project A should have blue theme");
-            assertStringIncludes(
-              resultA.html,
-              'data-project="A"',
-              "Project A should have data-project A",
-            );
-            assert(!resultA.html.includes("project-b"), "Project A should NOT contain project-b");
-            assert(!resultA.html.includes("theme-red"), "Project A should NOT have red theme");
-
-            // Verify Project B's result
-            assertStringIncludes(
-              resultB.html,
-              "project-b",
-              "Project B should have project-b class",
-            );
-            assertStringIncludes(resultB.html, "theme-red", "Project B should have red theme");
-            assertStringIncludes(
-              resultB.html,
-              'data-project="B"',
-              "Project B should have data-project B",
-            );
-            assert(!resultB.html.includes("project-a"), "Project B should NOT contain project-a");
-            assert(!resultB.html.includes("theme-blue"), "Project B should NOT have blue theme");
-
-            // Cleanup renderers
-            if (rendererA && typeof rendererA.clearAllState === "function") {
-              await rendererA.clearAllState();
-            }
-            if (rendererB && typeof rendererB.clearAllState === "function") {
-              await rendererB.clearAllState();
-            }
-          } finally {
-            await cleanupBundler();
-          }
-        });
-      });
-    });
-
-    it("prevents cache key collisions when projects have same file names", async () => {
-      await withTestContext("tenant-collision-a", async (contextA) => {
-        await withTestContext("tenant-collision-b", async (contextB) => {
-          // Both projects have IDENTICAL file structure but different content
-          const createProject = async (
-            context: TestContext,
-            projectName: string,
-            uniqueId: string,
-          ) => {
-            await mkdir(join(context.projectDir, "app", "components"), { recursive: true });
-
-            // Same file path, different content
             await writeTextFile(
-              join(context.projectDir, "app", "layout.tsx"),
-              `export default function Layout({ children }) {
-                return <html><body data-tenant="${uniqueId}">{children}</body></html>;
-              }`,
+              join(contextB.projectDir, "app", "page.tsx"),
+              `export default function Page() { return <div data-project="B">Project B Content</div>; }`,
             );
 
-            // Identical file name "Button.tsx" in both projects
-            await writeTextFile(
-              join(context.projectDir, "app", "components", "Button.tsx"),
-              `export default function Button() { return <button className="btn-${uniqueId}">${projectName} Button</button>; }`,
-            );
+            const { createRenderer } = await import("../../../src/rendering/index.ts");
+            const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
 
-            await writeTextFile(
-              join(context.projectDir, "app", "page.tsx"),
-              `import Button from './components/Button';
-              export default function Page() { return <div><Button /></div>; }`,
-            );
-          };
+            let rendererA: any;
+            let rendererB: any;
 
-          const uniqueA = crypto.randomUUID().slice(0, 8);
-          const uniqueB = crypto.randomUUID().slice(0, 8);
+            try {
+              rendererA = await createRenderer({
+                projectDir: contextA.projectDir,
+                mode: "development",
+              });
 
-          await createProject(contextA, "ProjectA", uniqueA);
-          await createProject(contextB, "ProjectB", uniqueB);
+              rendererB = await createRenderer({
+                projectDir: contextB.projectDir,
+                mode: "development",
+              });
 
-          const { createRenderer } = await import("../../../src/rendering/index.ts");
-          const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
-
-          try {
-            const rendererA = await createRenderer({
-              projectDir: contextA.projectDir,
-              mode: "development",
-            });
-
-            const rendererB = await createRenderer({
-              projectDir: contextB.projectDir,
-              mode: "development",
-            });
-
-            // Render multiple times to exercise caching
-            const resultsA: string[] = [];
-            const resultsB: string[] = [];
-
-            for (let i = 0; i < 3; i++) {
-              const [rA, rB] = await Promise.all([
+              const [resultA, resultB] = await Promise.all([
                 rendererA.renderPage("/"),
                 rendererB.renderPage("/"),
               ]);
-              resultsA.push(rA.html);
-              resultsB.push(rB.html);
+
+              assertStringIncludes(resultA.html, "project-a", "Project A should have project-a class");
+              assertStringIncludes(resultA.html, "theme-blue", "Project A should have blue theme");
+              assertStringIncludes(
+                resultA.html,
+                'data-project="A"',
+                "Project A should have data-project A",
+              );
+              assert(!resultA.html.includes("project-b"), "Project A should NOT contain project-b");
+              assert(!resultA.html.includes("theme-red"), "Project A should NOT have red theme");
+
+              assertStringIncludes(resultB.html, "project-b", "Project B should have project-b class");
+              assertStringIncludes(resultB.html, "theme-red", "Project B should have red theme");
+              assertStringIncludes(
+                resultB.html,
+                'data-project="B"',
+                "Project B should have data-project B",
+              );
+              assert(!resultB.html.includes("project-a"), "Project B should NOT contain project-a");
+              assert(!resultB.html.includes("theme-blue"), "Project B should NOT have blue theme");
+
+              await clearRendererState(rendererA);
+              await clearRendererState(rendererB);
+            } finally {
+              await cleanupBundler();
             }
+          });
+        });
+      });
 
-            // Verify ALL renders for Project A contain correct tenant ID
-            for (let i = 0; i < resultsA.length; i++) {
-              const htmlA = resultsA[i];
-              assertExists(htmlA, `Project A render ${i} should exist`);
-              assertStringIncludes(
-                htmlA,
-                `data-tenant="${uniqueA}"`,
-                `Project A render ${i} should have correct tenant ID`,
-              );
-              assertStringIncludes(
-                htmlA,
-                `btn-${uniqueA}`,
-                `Project A render ${i} should have correct button class`,
-              );
-              assertStringIncludes(
-                htmlA,
-                "ProjectA Button",
-                `Project A render ${i} should have correct button text`,
-              );
+      it("prevents cache key collisions when projects have same file names", async () => {
+        await withTestContext("tenant-collision-a", async (contextA) => {
+          await withTestContext("tenant-collision-b", async (contextB) => {
+            const createProject = async (
+              context: TestContext,
+              projectName: string,
+              uniqueId: string,
+            ) => {
+              await mkdir(join(context.projectDir, "app", "components"), { recursive: true });
 
-              // Verify no contamination
-              assert(
-                !htmlA.includes(uniqueB),
-                `Project A render ${i} should NOT contain Project B's unique ID`,
-              );
-              assert(
-                !htmlA.includes("ProjectB"),
-                `Project A render ${i} should NOT contain Project B content`,
-              );
-            }
-
-            // Verify ALL renders for Project B contain correct tenant ID
-            for (let i = 0; i < resultsB.length; i++) {
-              const htmlB = resultsB[i];
-              assertExists(htmlB, `Project B render ${i} should exist`);
-              assertStringIncludes(
-                htmlB,
-                `data-tenant="${uniqueB}"`,
-                `Project B render ${i} should have correct tenant ID`,
-              );
-              assertStringIncludes(
-                htmlB,
-                `btn-${uniqueB}`,
-                `Project B render ${i} should have correct button class`,
-              );
-              assertStringIncludes(
-                htmlB,
-                "ProjectB Button",
-                `Project B render ${i} should have correct button text`,
+              await writeTextFile(
+                join(context.projectDir, "app", "layout.tsx"),
+                `export default function Layout({ children }) {
+                return <html><body data-tenant="${uniqueId}">{children}</body></html>;
+              }`,
               );
 
-              // Verify no contamination
-              assert(
-                !htmlB.includes(uniqueA),
-                `Project B render ${i} should NOT contain Project A's unique ID`,
+              await writeTextFile(
+                join(context.projectDir, "app", "components", "Button.tsx"),
+                `export default function Button() { return <button className="btn-${uniqueId}">${projectName} Button</button>; }`,
               );
-              assert(
-                !htmlB.includes("ProjectA"),
-                `Project B render ${i} should NOT contain Project A content`,
-              );
-            }
 
-            if (rendererA && typeof rendererA.clearAllState === "function") {
-              await rendererA.clearAllState();
+              await writeTextFile(
+                join(context.projectDir, "app", "page.tsx"),
+                `import Button from './components/Button';
+              export default function Page() { return <div><Button /></div>; }`,
+              );
+            };
+
+            const uniqueA = crypto.randomUUID().slice(0, 8);
+            const uniqueB = crypto.randomUUID().slice(0, 8);
+
+            await createProject(contextA, "ProjectA", uniqueA);
+            await createProject(contextB, "ProjectB", uniqueB);
+
+            const { createRenderer } = await import("../../../src/rendering/index.ts");
+            const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
+
+            let rendererA: any;
+            let rendererB: any;
+
+            try {
+              rendererA = await createRenderer({
+                projectDir: contextA.projectDir,
+                mode: "development",
+              });
+
+              rendererB = await createRenderer({
+                projectDir: contextB.projectDir,
+                mode: "development",
+              });
+
+              const resultsA: string[] = [];
+              const resultsB: string[] = [];
+
+              for (let i = 0; i < 3; i++) {
+                const [rA, rB] = await Promise.all([rendererA.renderPage("/"), rendererB.renderPage("/")]);
+                resultsA.push(rA.html);
+                resultsB.push(rB.html);
+              }
+
+              for (let i = 0; i < resultsA.length; i++) {
+                const htmlA = resultsA[i];
+                assertExists(htmlA, `Project A render ${i} should exist`);
+                assertStringIncludes(
+                  htmlA,
+                  `data-tenant="${uniqueA}"`,
+                  `Project A render ${i} should have correct tenant ID`,
+                );
+                assertStringIncludes(
+                  htmlA,
+                  `btn-${uniqueA}`,
+                  `Project A render ${i} should have correct button class`,
+                );
+                assertStringIncludes(
+                  htmlA,
+                  "ProjectA Button",
+                  `Project A render ${i} should have correct button text`,
+                );
+
+                assert(
+                  !htmlA.includes(uniqueB),
+                  `Project A render ${i} should NOT contain Project B's unique ID`,
+                );
+                assert(
+                  !htmlA.includes("ProjectB"),
+                  `Project A render ${i} should NOT contain Project B content`,
+                );
+              }
+
+              for (let i = 0; i < resultsB.length; i++) {
+                const htmlB = resultsB[i];
+                assertExists(htmlB, `Project B render ${i} should exist`);
+                assertStringIncludes(
+                  htmlB,
+                  `data-tenant="${uniqueB}"`,
+                  `Project B render ${i} should have correct tenant ID`,
+                );
+                assertStringIncludes(
+                  htmlB,
+                  `btn-${uniqueB}`,
+                  `Project B render ${i} should have correct button class`,
+                );
+                assertStringIncludes(
+                  htmlB,
+                  "ProjectB Button",
+                  `Project B render ${i} should have correct button text`,
+                );
+
+                assert(
+                  !htmlB.includes(uniqueA),
+                  `Project B render ${i} should NOT contain Project A's unique ID`,
+                );
+                assert(
+                  !htmlB.includes("ProjectA"),
+                  `Project B render ${i} should NOT contain Project A content`,
+                );
+              }
+
+              await clearRendererState(rendererA);
+              await clearRendererState(rendererB);
+            } finally {
+              await cleanupBundler();
             }
-            if (rendererB && typeof rendererB.clearAllState === "function") {
-              await rendererB.clearAllState();
-            }
-          } finally {
-            await cleanupBundler();
-          }
+          });
         });
       });
     });
-  });
 
-  describe("Module Cache Isolation", () => {
-    /**
-     * CRITICAL BUG: Compiled JavaScript modules may be cached globally
-     * and served to the wrong project if cache keys don't include projectId.
-     */
-    it("prevents module cache cross-contamination", async () => {
-      await withTestContext("module-cache-a", async (contextA) => {
-        await withTestContext("module-cache-b", async (contextB) => {
-          // Create a utility module with project-specific behavior
-          const createProjectFiles = async (context: TestContext, projectName: string) => {
-            await mkdir(join(context.projectDir, "app", "utils"), { recursive: true });
+    describe("Module Cache Isolation", () => {
+      it("prevents module cache cross-contamination", async () => {
+        await withTestContext("module-cache-a", async (contextA) => {
+          await withTestContext("module-cache-b", async (contextB) => {
+            const createProjectFiles = async (context: TestContext, projectName: string) => {
+              await mkdir(join(context.projectDir, "app", "utils"), { recursive: true });
 
-            // Same path "utils/config.ts" but different content
-            await writeTextFile(
-              join(context.projectDir, "app", "utils", "config.ts"),
-              `export const PROJECT_NAME = "${projectName}";
+              await writeTextFile(
+                join(context.projectDir, "app", "utils", "config.ts"),
+                `export const PROJECT_NAME = "${projectName}";
                export const getProjectId = () => "${context.projectId}";`,
-            );
+              );
 
-            await writeTextFile(
-              join(context.projectDir, "app", "layout.tsx"),
-              `export default function Layout({ children }) {
+              await writeTextFile(
+                join(context.projectDir, "app", "layout.tsx"),
+                `export default function Layout({ children }) {
                 return <html><body>{children}</body></html>;
               }`,
-            );
+              );
 
-            await writeTextFile(
-              join(context.projectDir, "app", "page.tsx"),
-              `import { PROJECT_NAME, getProjectId } from './utils/config';
+              await writeTextFile(
+                join(context.projectDir, "app", "page.tsx"),
+                `import { PROJECT_NAME, getProjectId } from './utils/config';
                export default function Page() {
                  return <div data-name={PROJECT_NAME} data-id={getProjectId()}>{PROJECT_NAME}</div>;
                }`,
-            );
-          };
+              );
+            };
 
-          await createProjectFiles(contextA, "Alpha");
-          await createProjectFiles(contextB, "Beta");
+            await createProjectFiles(contextA, "Alpha");
+            await createProjectFiles(contextB, "Beta");
 
-          const { createRenderer } = await import("../../../src/rendering/index.ts");
-          const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
+            const { createRenderer } = await import("../../../src/rendering/index.ts");
+            const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
 
-          try {
-            const rendererA = await createRenderer({
-              projectDir: contextA.projectDir,
-              mode: "development",
-            });
+            let rendererA: any;
+            let rendererB: any;
 
-            const rendererB = await createRenderer({
-              projectDir: contextB.projectDir,
-              mode: "development",
-            });
+            try {
+              rendererA = await createRenderer({
+                projectDir: contextA.projectDir,
+                mode: "development",
+              });
 
-            // Render A first, then B
-            const resultA1 = await rendererA.renderPage("/");
-            const resultB1 = await rendererB.renderPage("/");
+              rendererB = await createRenderer({
+                projectDir: contextB.projectDir,
+                mode: "development",
+              });
 
-            // Render B first, then A (reverse order)
-            const resultB2 = await rendererB.renderPage("/");
-            const resultA2 = await rendererA.renderPage("/");
+              const resultA1 = await rendererA.renderPage("/");
+              const resultB1 = await rendererB.renderPage("/");
 
-            // All A renders should have Alpha
-            assertStringIncludes(
-              resultA1.html,
-              'data-name="Alpha"',
-              "A render 1 should have Alpha",
-            );
-            assertStringIncludes(
-              resultA2.html,
-              'data-name="Alpha"',
-              "A render 2 should have Alpha",
-            );
+              const resultB2 = await rendererB.renderPage("/");
+              const resultA2 = await rendererA.renderPage("/");
 
-            // All B renders should have Beta
-            assertStringIncludes(resultB1.html, 'data-name="Beta"', "B render 1 should have Beta");
-            assertStringIncludes(resultB2.html, 'data-name="Beta"', "B render 2 should have Beta");
+              assertStringIncludes(resultA1.html, 'data-name="Alpha"', "A render 1 should have Alpha");
+              assertStringIncludes(resultA2.html, 'data-name="Alpha"', "A render 2 should have Alpha");
 
-            // Verify no cross-contamination
-            assert(!resultA1.html.includes("Beta"), "A render 1 should NOT have Beta");
-            assert(!resultA2.html.includes("Beta"), "A render 2 should NOT have Beta");
-            assert(!resultB1.html.includes("Alpha"), "B render 1 should NOT have Alpha");
-            assert(!resultB2.html.includes("Alpha"), "B render 2 should NOT have Alpha");
+              assertStringIncludes(resultB1.html, 'data-name="Beta"', "B render 1 should have Beta");
+              assertStringIncludes(resultB2.html, 'data-name="Beta"', "B render 2 should have Beta");
 
-            if (rendererA && typeof rendererA.clearAllState === "function") {
-              await rendererA.clearAllState();
+              assert(!resultA1.html.includes("Beta"), "A render 1 should NOT have Beta");
+              assert(!resultA2.html.includes("Beta"), "A render 2 should NOT have Beta");
+              assert(!resultB1.html.includes("Alpha"), "B render 1 should NOT have Alpha");
+              assert(!resultB2.html.includes("Alpha"), "B render 2 should NOT have Alpha");
+
+              await clearRendererState(rendererA);
+              await clearRendererState(rendererB);
+            } finally {
+              await cleanupBundler();
             }
-            if (rendererB && typeof rendererB.clearAllState === "function") {
-              await rendererB.clearAllState();
-            }
-          } finally {
-            await cleanupBundler();
-          }
+          });
         });
       });
     });
-  });
 
-  describe("Request Context Isolation", () => {
-    /**
-     * CRITICAL BUG: AsyncLocalStorage contexts may bleed between requests
-     * if not properly managed in middleware chains.
-     */
-    it("isolates request-specific data in AsyncLocalStorage", async () => {
-      // This tests the withTestContext isolation mechanism itself
-      const capturedContexts: string[] = [];
+    describe("Request Context Isolation", () => {
+      it("isolates request-specific data in AsyncLocalStorage", async () => {
+        const capturedContexts: string[] = [];
 
-      const task1 = withTestContext("als-test-1", async (context) => {
-        // Simulate some async work that might cause context switches
-        await new Promise((resolve) => setTimeout(resolve, Math.random() * 20));
-        capturedContexts.push(`task1-start:${context.projectId}`);
-        await new Promise((resolve) => setTimeout(resolve, Math.random() * 20));
-        capturedContexts.push(`task1-end:${context.projectId}`);
-        return context.projectId;
+        const task1 = withTestContext("als-test-1", async (context) => {
+          await delayRandom(20);
+          capturedContexts.push(`task1-start:${context.projectId}`);
+          await delayRandom(20);
+          capturedContexts.push(`task1-end:${context.projectId}`);
+          return context.projectId;
+        });
+
+        const task2 = withTestContext("als-test-2", async (context) => {
+          await delayRandom(20);
+          capturedContexts.push(`task2-start:${context.projectId}`);
+          await delayRandom(20);
+          capturedContexts.push(`task2-end:${context.projectId}`);
+          return context.projectId;
+        });
+
+        const [id1, id2] = await Promise.all([task1, task2]);
+
+        assertNotEquals(id1, id2, "Each context should have unique projectId");
+
+        const task1Entries = capturedContexts.filter((c) => c.startsWith("task1"));
+        const task2Entries = capturedContexts.filter((c) => c.startsWith("task2"));
+
+        for (const entry of task1Entries) {
+          assert(entry.includes(id1), `Task 1 entry should contain its own ID: ${entry}`);
+          assert(!entry.includes(id2), `Task 1 entry should NOT contain Task 2's ID: ${entry}`);
+        }
+
+        for (const entry of task2Entries) {
+          assert(entry.includes(id2), `Task 2 entry should contain its own ID: ${entry}`);
+          assert(!entry.includes(id1), `Task 2 entry should NOT contain Task 1's ID: ${entry}`);
+        }
       });
-
-      const task2 = withTestContext("als-test-2", async (context) => {
-        await new Promise((resolve) => setTimeout(resolve, Math.random() * 20));
-        capturedContexts.push(`task2-start:${context.projectId}`);
-        await new Promise((resolve) => setTimeout(resolve, Math.random() * 20));
-        capturedContexts.push(`task2-end:${context.projectId}`);
-        return context.projectId;
-      });
-
-      const [id1, id2] = await Promise.all([task1, task2]);
-
-      // Verify IDs are unique
-      assertNotEquals(id1, id2, "Each context should have unique projectId");
-
-      // Verify each task only captured its own context
-      const task1Entries = capturedContexts.filter((c) => c.startsWith("task1"));
-      const task2Entries = capturedContexts.filter((c) => c.startsWith("task2"));
-
-      for (const entry of task1Entries) {
-        assert(entry.includes(id1), `Task 1 entry should contain its own ID: ${entry}`);
-        assert(!entry.includes(id2), `Task 1 entry should NOT contain Task 2's ID: ${entry}`);
-      }
-
-      for (const entry of task2Entries) {
-        assert(entry.includes(id2), `Task 2 entry should contain its own ID: ${entry}`);
-        assert(!entry.includes(id1), `Task 2 entry should NOT contain Task 1's ID: ${entry}`);
-      }
     });
-  });
-});
+  },
+);

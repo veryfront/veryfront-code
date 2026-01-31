@@ -106,12 +106,10 @@ export class MCPServer {
     for (const [id, tool] of registry.tools.entries()) {
       if (tool.mcp?.enabled === false) continue;
 
-      const inputSchema = tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema);
-
       tools.push({
         name: id,
         description: tool.description,
-        inputSchema,
+        inputSchema: tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema),
       });
     }
 
@@ -273,16 +271,9 @@ export class MCPServer {
         if (!authorized) return new Response("Unauthorized", { status: 401 });
       }
 
+      let rpcRequest: JSONRPCRequest;
       try {
-        const rpcRequest: JSONRPCRequest = await request.json();
-        const rpcResponse = await this.handleRequest(rpcRequest);
-
-        return new Response(JSON.stringify(rpcResponse), {
-          headers: {
-            "Content-Type": "application/json",
-            ...this.getCORSHeaders(),
-          },
-        });
+        rpcRequest = await request.json();
       } catch {
         return new Response(
           JSON.stringify({
@@ -295,21 +286,31 @@ export class MCPServer {
           },
         );
       }
+
+      const rpcResponse = await this.handleRequest(rpcRequest);
+
+      return new Response(JSON.stringify(rpcResponse), {
+        headers: {
+          "Content-Type": "application/json",
+          ...this.getCORSHeaders(),
+        },
+      });
     };
   }
 
   private async validateAuth(request: Request): Promise<boolean> {
-    if (!this.config.auth || this.config.auth.type === "none") return true;
+    const auth = this.config.auth;
+    if (!auth || auth.type === "none") return true;
 
     const authHeader = request.headers.get("Authorization");
     if (!authHeader) return false;
 
-    if (this.config.auth.type !== "bearer") return false;
+    if (auth.type !== "bearer") return false;
 
     const token = authHeader.replace("Bearer ", "");
-    if (!this.config.auth.validate) return false;
+    if (!auth.validate) return false;
 
-    return await this.config.auth.validate(token);
+    return await auth.validate(token);
   }
 
   private handleCORS(): Response {
@@ -319,10 +320,10 @@ export class MCPServer {
   private getCORSHeaders(): Record<string, string> {
     if (!this.config.cors?.enabled) return {};
 
-    const origins = this.config.cors.origins ?? ["*"];
+    const origin = this.config.cors.origins?.[0] ?? "*";
 
     return {
-      "Access-Control-Allow-Origin": origins[0] ?? "*",
+      "Access-Control-Allow-Origin": origin,
       "Access-Control-Allow-Methods": "POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
     };

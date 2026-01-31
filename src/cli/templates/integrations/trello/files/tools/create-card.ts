@@ -46,7 +46,11 @@ export default tool({
         url: card.url,
         idList: card.idList,
         due: card.due,
-        labels: card.labels.map(({ id, name, color }) => ({ id, name, color })),
+        labels: card.labels.map((label) => ({
+          id: label.id,
+          name: label.name,
+          color: label.color,
+        })),
       },
     };
   },

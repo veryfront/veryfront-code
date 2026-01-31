@@ -84,7 +84,7 @@ async function parseErrorMessage(
   fallback: string,
 ): Promise<string> {
   const error = await response.json().catch(() => ({} as { message?: string }));
-  return `${fallback}: ${response.status} ${error.message || response.statusText}`;
+  return `${fallback}: ${response.status} ${error.message ?? response.statusText}`;
 }
 
 async function boxFetch<T>(
@@ -106,7 +106,7 @@ async function boxFetch<T>(
     throw new Error(await parseErrorMessage(response, "Box API error"));
   }
 
-  return response.json() as Promise<T>;
+  return (await response.json()) as T;
 }
 
 function toUploadBlob(fileContent: string | Buffer | Blob): Blob {
@@ -152,9 +152,7 @@ export async function getFile(
   itemId: string,
   itemType: "file" | "folder" = "file",
 ): Promise<BoxItem> {
-  const endpoint = itemType === "file"
-    ? `/files/${itemId}`
-    : `/folders/${itemId}`;
+  const endpoint = itemType === "file" ? `/files/${itemId}` : `/folders/${itemId}`;
 
   const params = new URLSearchParams({
     fields:
@@ -211,7 +209,6 @@ export async function downloadFile(fileId: string): Promise<{
   mimeType: string;
 }> {
   const token = await requireAccessToken();
-
   const fileInfo = (await getFile(fileId, "file")) as BoxFile;
 
   const response = await fetch(`${BOX_BASE_URL}/files/${fileId}/content`, {
@@ -225,8 +222,7 @@ export async function downloadFile(fileId: string): Promise<{
   }
 
   const content = await response.arrayBuffer();
-  const mimeType =
-    response.headers.get("content-type") ?? "application/octet-stream";
+  const mimeType = response.headers.get("content-type") ?? "application/octet-stream";
 
   return { content, fileName: fileInfo.name, mimeType };
 }

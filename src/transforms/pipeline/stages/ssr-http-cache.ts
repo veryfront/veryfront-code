@@ -20,11 +20,6 @@ const LOG_PREFIX = "[SSR-HTTP-CACHE]";
 export const ssrHttpCachePlugin: TransformPlugin = {
   name: "ssr-http-cache",
   stage: TransformStage.FINALIZE - 1, // Run just before finalize
-  // Run on ALL runtimes including Deno.
-  // While Deno supports HTTP imports natively, esm.sh modules with external=react
-  // have bare `react` imports. Import maps don't apply inside HTTPS modules,
-  // so bare specifiers can't resolve to our shared-*.ts files.
-  // By caching HTTP imports to file://, bare react imports resolve via import map.
   condition: () => true,
 
   async transform(ctx) {
@@ -35,21 +30,21 @@ export const ssrHttpCachePlugin: TransformPlugin = {
       ctx.metadata.set("importMap", importMap);
     }
 
-    const result = await cacheHttpImportsToLocal(ctx.code, {
+    const { code, bundleManifestId } = await cacheHttpImportsToLocal(ctx.code, {
       cacheDir: getHttpBundleCacheDir(),
       importMap,
       reactVersion: ctx.reactVersion,
     });
 
-    if (result.code !== ctx.code) {
+    if (code !== ctx.code) {
       logger.debug(`${LOG_PREFIX} Cached HTTP imports for ${ctx.filePath.slice(-40)}`);
     }
 
     // Store bundle manifest ID in context metadata for downstream consumers
-    if (result.bundleManifestId) {
-      ctx.metadata.set("bundleManifestId", result.bundleManifestId);
+    if (bundleManifestId) {
+      ctx.metadata.set("bundleManifestId", bundleManifestId);
     }
 
-    return result.code;
+    return code;
   },
 };

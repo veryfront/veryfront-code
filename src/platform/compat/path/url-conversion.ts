@@ -9,15 +9,17 @@ function getFileURLToPath(): ((url: string | URL) => string) | null {
 
   try {
     const nodeUrl = (globalThis as any).require?.("node:url");
-    if (nodeUrl?.fileURLToPath) {
-      _fileURLToPath = nodeUrl.fileURLToPath;
-      return _fileURLToPath;
-    }
-  } catch {
-    // Fallback to manual conversion
-  }
+    const fileURLToPath = nodeUrl?.fileURLToPath as
+      | ((url: string | URL) => string)
+      | undefined;
 
-  return null;
+    if (!fileURLToPath) return null;
+
+    _fileURLToPath = fileURLToPath;
+    return _fileURLToPath;
+  } catch {
+    return null;
+  }
 }
 
 export function fromFileUrl(url: string | URL): string {
@@ -45,8 +47,6 @@ export function fromFileUrl(url: string | URL): string {
 }
 
 export function toFileUrl(path: string): URL {
-  if (hasNodePath) return new URL(`file://${path}`);
-
-  const absolute = isAbsolute(path) ? path : resolve(path);
+  const absolute = hasNodePath ? path : isAbsolute(path) ? path : resolve(path);
   return new URL(`file://${absolute}`);
 }

@@ -5,11 +5,14 @@ export function validateRequestLimits(
   request: Request,
   limits: RequestLimits = {},
 ): void {
-  const config = { ...DEFAULT_LIMITS, ...limits };
+  const { maxUrlLength, maxBodySize, maxHeaderSize } = {
+    ...DEFAULT_LIMITS,
+    ...limits,
+  };
 
-  validateUrlLength(request.url, config.maxUrlLength);
-  validateContentLength(request, config.maxBodySize);
-  validateHeaderSize(request, config.maxHeaderSize);
+  validateUrlLength(request.url, maxUrlLength);
+  validateContentLength(request, maxBodySize);
+  validateHeaderSize(request, maxHeaderSize);
 }
 
 function validateUrlLength(url: string, maxLength: number): void {
@@ -26,10 +29,7 @@ function validateContentLength(request: Request, maxSize: number): void {
   if (!contentLength) return;
 
   const size = Number.parseInt(contentLength, 10);
-  if (Number.isNaN(size)) {
-    throw new ValidationError("Invalid Content-Length header");
-  }
-
+  if (Number.isNaN(size)) throw new ValidationError("Invalid Content-Length header");
   if (size <= maxSize) return;
 
   throw new ValidationError("Request body too large", {

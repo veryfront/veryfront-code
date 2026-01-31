@@ -19,8 +19,9 @@ describe("method-validator", () => {
       });
 
       const allowHeader = response.headers.get("Allow") ?? "";
-      assertEquals(allowHeader.includes("GET"), true);
-      assertEquals(allowHeader.includes("POST"), true);
+      for (const method of ["GET", "POST"]) {
+        assertEquals(allowHeader.includes(method), true);
+      }
     });
 
     it("should handle handler with no methods", () => {

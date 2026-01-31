@@ -24,14 +24,14 @@ export default tool({
       const properties: Record<string, string> = {};
 
       for (const [key, prop] of Object.entries(page.properties)) {
-        if (prop.type === "title") {
-          properties[key] = prop.title?.map((t) => t.plain_text).join("") ?? "";
-          continue;
-        }
+        if (prop.type !== "title" && prop.type !== "rich_text") continue;
 
-        if (prop.type === "rich_text") {
-          properties[key] = prop.rich_text?.map((t) => t.plain_text).join("") ?? "";
-        }
+        const text =
+          prop.type === "title"
+            ? prop.title?.map((t) => t.plain_text).join("") ?? ""
+            : prop.rich_text?.map((t) => t.plain_text).join("") ?? "";
+
+        properties[key] = text;
       }
 
       return {

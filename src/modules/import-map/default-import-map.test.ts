@@ -4,6 +4,12 @@ import { getDefaultImportMap } from "./default-import-map.ts";
 
 describe("modules/import-map/default-import-map", () => {
   describe("getDefaultImportMap", () => {
+    function getImports(): Record<string, string> {
+      const { imports } = getDefaultImportMap();
+      assertExists(imports);
+      return imports;
+    }
+
     it("should return an object with imports", () => {
       const map = getDefaultImportMap();
       assert(map.imports !== undefined, "imports should be defined");
@@ -11,18 +17,14 @@ describe("modules/import-map/default-import-map", () => {
     });
 
     it("should include React mappings", () => {
-      const map = getDefaultImportMap();
-      const imports = map.imports;
-      assertExists(imports);
+      const imports = getImports();
 
       assert("react" in imports, "should have 'react' mapping");
       assert("react-dom" in imports, "should have 'react-dom' mapping");
     });
 
     it("should include Veryfront framework mappings", () => {
-      const map = getDefaultImportMap();
-      const imports = map.imports;
-      assertExists(imports);
+      const imports = getImports();
 
       assert("veryfront/head" in imports, "should have 'veryfront/head' mapping");
       assert("veryfront/router" in imports, "should have 'veryfront/router' mapping");
@@ -31,9 +33,7 @@ describe("modules/import-map/default-import-map", () => {
     });
 
     it("should include veryfront/react/* alias mappings", () => {
-      const map = getDefaultImportMap();
-      const imports = map.imports;
-      assertExists(imports);
+      const imports = getImports();
 
       assert("veryfront/react/head" in imports, "should have 'veryfront/react/head'");
       assert("veryfront/react/router" in imports, "should have 'veryfront/react/router'");
@@ -42,9 +42,7 @@ describe("modules/import-map/default-import-map", () => {
     });
 
     it("should map veryfront aliases to module server URLs", () => {
-      const map = getDefaultImportMap();
-      const imports = map.imports;
-      assertExists(imports);
+      const imports = getImports();
 
       const headUrl = imports["veryfront/head"];
       assertExists(headUrl);
@@ -56,9 +54,7 @@ describe("modules/import-map/default-import-map", () => {
     });
 
     it("should map veryfront/head and veryfront/react/head to the same file", () => {
-      const map = getDefaultImportMap();
-      const imports = map.imports;
-      assertExists(imports);
+      const imports = getImports();
 
       assertEquals(imports["veryfront/head"], imports["veryfront/react/head"]);
       assertEquals(imports["veryfront/router"], imports["veryfront/react/router"]);
@@ -67,9 +63,7 @@ describe("modules/import-map/default-import-map", () => {
     });
 
     it("should map React to esm.sh URLs", () => {
-      const map = getDefaultImportMap();
-      const imports = map.imports;
-      assertExists(imports);
+      const imports = getImports();
 
       const reactUrl = imports["react"];
       assertExists(reactUrl);

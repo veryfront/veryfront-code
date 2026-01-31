@@ -1,35 +1,15 @@
-/**
- * DAG Graph Utilities
- *
- * Graph building, validation, and traversal utilities for DAG execution.
- *
- * @module ai/workflow/executor/dag/graph
- */
-
 import type { NodeState, WorkflowNode } from "../../types.ts";
 
-/**
- * Graph representation for DAG execution
- */
 export interface DAGGraph {
-  /** Adjacency list (node -> dependents) */
   adjList: Map<string, string[]>;
-  /** In-degree for each node (number of dependencies) */
   inDegree: Map<string, number>;
-  /** Map from node ID to node object */
   nodeMap: Map<string, WorkflowNode>;
 }
 
-/**
- * Check if any node explicitly depends on the given node
- */
 export function hasAnyDependents(nodes: WorkflowNode[], nodeId: string): boolean {
   return nodes.some((n) => n.dependsOn?.includes(nodeId));
 }
 
-/**
- * Build dependency graph from nodes
- */
 export function buildGraph(nodes: WorkflowNode[]): DAGGraph {
   const adjList = new Map<string, string[]>();
   const inDegree = new Map<string, number>();
@@ -58,7 +38,12 @@ export function buildGraph(nodes: WorkflowNode[]): DAGGraph {
   let prevNodeId: string | null = null;
 
   for (const node of nodes) {
-    if (node.dependsOn !== undefined || !prevNodeId) {
+    if (!prevNodeId) {
+      prevNodeId = node.id;
+      continue;
+    }
+
+    if (node.dependsOn !== undefined) {
       prevNodeId = node.id;
       continue;
     }
@@ -71,16 +56,12 @@ export function buildGraph(nodes: WorkflowNode[]): DAGGraph {
 
     adjList.get(prevNodeId)?.push(node.id);
     inDegree.set(node.id, currentInDegree + 1);
-
     prevNodeId = node.id;
   }
 
   return { adjList, inDegree, nodeMap };
 }
 
-/**
- * Get nodes that are ready to execute
- */
 export function getReadyNodes(
   inDegree: Map<string, number>,
   nodeStates: Record<string, NodeState>,
@@ -97,9 +78,6 @@ export function getReadyNodes(
   return ready;
 }
 
-/**
- * Check if DAG has cycles (using DFS)
- */
 export function hasCycle(
   nodes: WorkflowNode[],
   adjList: Map<string, string[]>,
@@ -107,7 +85,7 @@ export function hasCycle(
   const visited = new Set<string>();
   const recursionStack = new Set<string>();
 
-  const dfs = (nodeId: string): boolean => {
+  function dfs(nodeId: string): boolean {
     visited.add(nodeId);
     recursionStack.add(nodeId);
 
@@ -121,7 +99,7 @@ export function hasCycle(
 
     recursionStack.delete(nodeId);
     return false;
-  };
+  }
 
   for (const node of nodes) {
     if (!visited.has(node.id) && dfs(node.id)) return true;
@@ -130,10 +108,6 @@ export function hasCycle(
   return false;
 }
 
-/**
- * Update in-degrees for already completed nodes
- * Used when resuming from checkpoints
- */
 export function updateInDegreesForCompletedNodes(
   nodeStates: Record<string, NodeState>,
   adjList: Map<string, string[]>,

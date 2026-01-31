@@ -27,10 +27,10 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const buffer = await req.arrayBuffer();
-    const filename = req.headers.get("x-filename") ?? undefined;
-    const mimeType = contentType || undefined;
-
-    const ref = await uploadBlob(buffer, { filename, mimeType });
+    const ref = await uploadBlob(buffer, {
+      filename: req.headers.get("x-filename") ?? undefined,
+      mimeType: contentType || undefined,
+    });
 
     return Response.json({ success: true, file: ref });
   } catch (error) {

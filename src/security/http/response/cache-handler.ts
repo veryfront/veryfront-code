@@ -22,8 +22,13 @@ export function buildCacheControl(strategy: CacheStrategy): string {
     `max-age=${strategy.maxAge}`,
   ];
 
-  if (strategy.immutable) parts.push("immutable");
-  if (strategy.mustRevalidate) parts.push("must-revalidate");
+  if (strategy.immutable) {
+    parts.push("immutable");
+  }
+
+  if (strategy.mustRevalidate) {
+    parts.push("must-revalidate");
+  }
 
   return parts.join(", ");
 }

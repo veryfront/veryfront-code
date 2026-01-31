@@ -3,16 +3,19 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getAppRouteEntity } from "./app-route-resolver.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
-/** Create a mock adapter with an in-memory file system */
 function createMockAdapter(
   files: Map<string, string>,
   dirs: Set<string> = new Set(),
 ): RuntimeAdapter {
+  const allPaths = () => [...files.keys(), ...dirs];
+
   return {
     fs: {
       readFile: (path: string) => {
         const content = files.get(path);
-        if (content === undefined) return Promise.reject(new Error(`ENOENT: ${path}`));
+        if (content === undefined) {
+          return Promise.reject(new Error(`ENOENT: ${path}`));
+        }
         return Promise.resolve(content);
       },
       stat: (path: string) => {
@@ -22,29 +25,35 @@ function createMockAdapter(
         if (dirs.has(path)) {
           return Promise.resolve({ isFile: false, isDirectory: true });
         }
-        return Promise.reject(Object.assign(new Error(`Not found: ${path}`), { code: "ENOENT" }));
+        return Promise.reject(
+          Object.assign(new Error(`Not found: ${path}`), { code: "ENOENT" }),
+        );
       },
-      readDir: (path: string) => {
-        return (async function* () {
+      readDir: (path: string) =>
+        (async function* () {
           const prefix = path.endsWith("/") ? path : `${path}/`;
           const seen = new Set<string>();
-          for (const key of [...files.keys(), ...dirs]) {
+
+          for (const key of allPaths()) {
             if (!key.startsWith(prefix)) continue;
+
             const rest = key.slice(prefix.length);
             const name = rest.split("/")[0];
             if (!name || seen.has(name)) continue;
+
             seen.add(name);
-            const isDir = dirs.has(`${prefix}${name}`) ||
-              [...files.keys(), ...dirs].some((k) => k.startsWith(`${prefix}${name}/`));
+
+            const full = `${prefix}${name}`;
+            const isDir = dirs.has(full) || allPaths().some((k) => k.startsWith(`${full}/`));
+
             yield {
               name,
-              isFile: files.has(`${prefix}${name}`),
+              isFile: files.has(full),
               isDirectory: isDir,
               isSymlink: false,
             };
           }
-        })();
-      },
+        })(),
       exists: (path: string) => Promise.resolve(files.has(path) || dirs.has(path)),
       writeFile: () => Promise.resolve(),
       remove: () => Promise.resolve(),
@@ -64,8 +73,8 @@ describe("rendering/app-route-resolver", () => {
 
       const result = await getAppRouteEntity("/project", "", adapter);
       assertEquals(result !== null, true);
-      assertEquals(result!.entity.slug, "");
-      assertEquals(result!.entity.type, "page");
+      assertEquals(result?.entity.slug, "");
+      assertEquals(result?.entity.type, "page");
     });
 
     it("should resolve a nested page", async () => {
@@ -76,7 +85,7 @@ describe("rendering/app-route-resolver", () => {
 
       const result = await getAppRouteEntity("/project", "about", adapter);
       assertEquals(result !== null, true);
-      assertEquals(result!.entity.slug, "about");
+      assertEquals(result?.entity.slug, "about");
     });
 
     it("should resolve .tsx page files", async () => {
@@ -87,12 +96,11 @@ describe("rendering/app-route-resolver", () => {
 
       const result = await getAppRouteEntity("/project", "dashboard", adapter);
       assertEquals(result !== null, true);
-      assertEquals(result!.entity.slug, "dashboard");
+      assertEquals(result?.entity.slug, "dashboard");
     });
 
     it("should return null for non-existent routes", async () => {
-      const files = new Map<string, string>();
-      const adapter = createMockAdapter(files);
+      const adapter = createMockAdapter(new Map());
 
       const result = await getAppRouteEntity("/project", "nonexistent", adapter);
       assertEquals(result, null);
@@ -106,8 +114,8 @@ describe("rendering/app-route-resolver", () => {
 
       const result = await getAppRouteEntity("/project", "", adapter);
       assertEquals(result !== null, true);
-      assertEquals(result!.entity.frontmatter?.title, "My Page");
-      assertEquals(result!.entity.frontmatter?.description, "A test");
+      assertEquals(result?.entity.frontmatter?.title, "My Page");
+      assertEquals(result?.entity.frontmatter?.description, "A test");
     });
 
     it("should handle pages without frontmatter", async () => {
@@ -118,7 +126,7 @@ describe("rendering/app-route-resolver", () => {
 
       const result = await getAppRouteEntity("/project", "", adapter);
       assertEquals(result !== null, true);
-      assertEquals(result!.entity.content, "# No frontmatter here");
+      assertEquals(result?.entity.content, "# No frontmatter here");
     });
 
     it("should prefer page.mdx over page.tsx", async () => {
@@ -130,7 +138,7 @@ describe("rendering/app-route-resolver", () => {
 
       const result = await getAppRouteEntity("/project", "", adapter);
       assertEquals(result !== null, true);
-      assertEquals(result!.entity.path.endsWith("page.mdx"), true);
+      assertEquals(result?.entity.path.endsWith("page.mdx"), true);
     });
 
     it("should resolve dynamic route segments", async () => {
@@ -146,7 +154,7 @@ describe("rendering/app-route-resolver", () => {
 
       const result = await getAppRouteEntity("/project", "blog/hello-world", adapter);
       assertEquals(result !== null, true);
-      assertEquals(result!.entity.slug, "blog/hello-world");
+      assertEquals(result?.entity.slug, "blog/hello-world");
     });
 
     it("should convert boolean layout frontmatter to string", async () => {
@@ -157,7 +165,7 @@ describe("rendering/app-route-resolver", () => {
 
       const result = await getAppRouteEntity("/project", "", adapter);
       assertEquals(result !== null, true);
-      assertEquals(result!.entity.frontmatter?.layout, "default");
+      assertEquals(result?.entity.frontmatter?.layout, "default");
     });
 
     it("should convert false layout to 'false' string", async () => {
@@ -168,7 +176,7 @@ describe("rendering/app-route-resolver", () => {
 
       const result = await getAppRouteEntity("/project", "", adapter);
       assertEquals(result !== null, true);
-      assertEquals(result!.entity.frontmatter?.layout, "false");
+      assertEquals(result?.entity.frontmatter?.layout, "false");
     });
 
     it("should use custom appDirName", async () => {
@@ -188,7 +196,6 @@ describe("rendering/app-route-resolver", () => {
       const adapter = createMockAdapter(files);
 
       const result = await getAppRouteEntity("/project", "", adapter);
-      // Should still resolve, using raw content as fallback
       assertEquals(result !== null, true);
     });
 

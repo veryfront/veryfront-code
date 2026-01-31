@@ -2,9 +2,11 @@ import type { ErrorCodeType } from "../error-codes.ts";
 import { getErrorDocsUrl } from "../error-codes.ts";
 import type { ErrorSolution } from "./types.ts";
 
+type ErrorSolutionConfig = Omit<ErrorSolution, "code" | "docs"> & { docs?: string };
+
 export function createErrorSolution(
   code: ErrorCodeType,
-  config: Omit<ErrorSolution, "code" | "docs"> & { docs?: string },
+  config: ErrorSolutionConfig,
 ): ErrorSolution {
   return {
     ...config,

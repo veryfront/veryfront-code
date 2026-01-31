@@ -78,8 +78,7 @@ describe("html-generation/utils", () => {
   describe("getDefaultImportMap", () => {
     it("should return veryfront exports only (no React)", () => {
       const map = getDefaultImportMap().imports;
-      assert(map !== undefined);
-      if (!map) return;
+      assert(map);
 
       assert(map["veryfront/head"] !== undefined);
       assert(map["veryfront/router"] !== undefined);
@@ -89,8 +88,7 @@ describe("html-generation/utils", () => {
 
     it("should include React for SSR consistency", () => {
       const map = getDefaultImportMap().imports;
-      assert(map !== undefined);
-      if (!map) return;
+      assert(map);
 
       // React is now included in the import map for SSR consistency
       assert(map.react !== undefined);

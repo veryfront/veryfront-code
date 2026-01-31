@@ -14,7 +14,7 @@ export function generateHMRRuntimeScript(options: HMRRuntimeOptions): string {
   );
 
   return `// Veryfront HMR Runtime (Generated)
-(function() {
+(function () {
   ${clientCode}
 })();`;
 }

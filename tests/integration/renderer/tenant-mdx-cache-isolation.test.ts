@@ -1,9 +1,9 @@
 import { assert, assertStringIncludes } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
 import { writeTextFile } from "@veryfront/compat/fs.ts";
+import { join } from "@veryfront/compat/path";
 import { describe, it } from "@veryfront/testing/bdd";
-import { createRenderer } from "../../../src/rendering/index.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
+import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
 describe(
@@ -51,12 +51,8 @@ Content from tenant B`,
           const resultAAgain = await rendererA.renderPage("index", { projectId: "project-a" });
           assertStringIncludes(resultAAgain.html, "Project A");
 
-          if (rendererA && typeof rendererA.clearAllState === "function") {
-            await rendererA.clearAllState();
-          }
-          if (rendererB && typeof rendererB.clearAllState === "function") {
-            await rendererB.clearAllState();
-          }
+          await rendererA.clearAllState?.();
+          await rendererB.clearAllState?.();
 
           await cleanupBundler();
         });

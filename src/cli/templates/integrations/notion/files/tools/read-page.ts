@@ -8,7 +8,14 @@ export default tool({
   inputSchema: z.object({
     pageId: z.string().describe("The ID of the Notion page to read"),
   }),
-  async execute({ pageId }) {
+  async execute({ pageId }): Promise<{
+    id: string;
+    title: string;
+    url: string;
+    content: string;
+    lastEdited: string;
+    createdAt: string;
+  }> {
     const [page, blocks] = await Promise.all([getPage(pageId), getPageContent(pageId)]);
 
     return {

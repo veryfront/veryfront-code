@@ -25,7 +25,6 @@ export default tool({
       .describe("Sort order: 'recency' (default) or 'relevancy'"),
   }),
   execute: async ({ query, maxResults, sortOrder }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = context?.userId ?? "current-user";
 
     try {
@@ -36,6 +35,7 @@ export default tool({
       });
 
       const tweets = result.data ?? [];
+      const count = result.meta.result_count;
 
       if (tweets.length === 0) {
         return {
@@ -57,8 +57,8 @@ export default tool({
           hashtags: tweet.entities?.hashtags?.map((h) => h.tag),
           mentions: tweet.entities?.mentions?.map((m) => m.username),
         })),
-        count: result.meta.result_count,
-        message: `Found ${result.meta.result_count} tweets matching query: "${query}"`,
+        count,
+        message: `Found ${count} tweets matching query: "${query}"`,
       };
     } catch (error) {
       if (error instanceof Error && error.message.includes("not connected")) {

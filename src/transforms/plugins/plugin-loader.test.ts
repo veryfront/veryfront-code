@@ -10,6 +10,15 @@ function assertPluginArray(plugins: unknown): asserts plugins is unknown[] {
   assertEquals(Array.isArray(plugins), true);
 }
 
+async function withTempDir(fn: (tempDir: string) => Promise<void>): Promise<void> {
+  const tempDir = await makeTempDir();
+  try {
+    await fn(tempDir);
+  } finally {
+    await remove(tempDir, { recursive: true });
+  }
+}
+
 describe("plugin-loader", () => {
   describe("getRemarkPlugins", () => {
     it("returns array of plugins", async () => {
@@ -54,20 +63,14 @@ describe("plugin-loader", () => {
     });
 
     it("with valid config directory", async () => {
-      const tempDir = await makeTempDir();
-
-      try {
+      await withTempDir(async () => {
         const plugins = await getRemarkPlugins();
         assertPluginArray(plugins);
-      } finally {
-        await remove(tempDir, { recursive: true });
-      }
+      });
     });
 
     it("with config file containing MDX config", async () => {
-      const tempDir = await makeTempDir();
-
-      try {
+      await withTempDir(async (tempDir) => {
         const configPath = join(tempDir, "veryfront.config.js");
         await writeTextFile(
           configPath,
@@ -81,22 +84,16 @@ describe("plugin-loader", () => {
 
         const plugins = await getRemarkPlugins();
         assertPluginArray(plugins);
-      } finally {
-        await remove(tempDir, { recursive: true });
-      }
+      });
     });
 
     it("with empty project directory", async () => {
-      const tempDir = await makeTempDir();
-
-      try {
+      await withTempDir(async () => {
         const plugins = await getRemarkPlugins();
 
         assertPluginArray(plugins);
         assertEquals(plugins.length >= 5, true);
-      } finally {
-        await remove(tempDir, { recursive: true });
-      }
+      });
     });
   });
 
@@ -143,14 +140,10 @@ describe("plugin-loader", () => {
     });
 
     it("with valid config directory", async () => {
-      const tempDir = await makeTempDir();
-
-      try {
+      await withTempDir(async () => {
         const plugins = await getRehypePlugins();
         assertPluginArray(plugins);
-      } finally {
-        await remove(tempDir, { recursive: true });
-      }
+      });
     });
   });
 });

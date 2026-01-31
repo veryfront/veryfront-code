@@ -39,8 +39,7 @@ export async function setupBuildDirectories(
         ? (error as { code?: string }).code
         : undefined;
 
-      if (code === "EEXIST") continue;
-      throw error;
+      if (code !== "EEXIST") throw error;
     }
   }
 

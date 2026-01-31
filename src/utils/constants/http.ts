@@ -3,6 +3,8 @@ export { MS_PER_MINUTE, MS_PER_SECOND, SECONDS_PER_MINUTE } from "./cache.ts";
 export const KB_IN_BYTES = 1024;
 
 export const HTTP_MODULE_FETCH_TIMEOUT_MS = 2500;
+export const HTTP_FETCH_TIMEOUT_MS =
+  30000; /** Default timeout for HTTP module/bundle fetch operations (30 seconds) */
 
 export const HMR_RECONNECT_DELAY_MS = 1000;
 export const HMR_RELOAD_DELAY_MS = 1000;
@@ -12,9 +14,6 @@ export const HMR_KEEP_ALIVE_INTERVAL_MS = 30000;
 export const DASHBOARD_RECONNECT_DELAY_MS = 3000;
 
 export const SERVER_FUNCTION_DEFAULT_TIMEOUT_MS = 30000;
-
-/** Default timeout for HTTP module/bundle fetch operations (30 seconds) */
-export const HTTP_FETCH_TIMEOUT_MS = 30000;
 
 export const PREFETCH_MAX_SIZE_BYTES = 200 * KB_IN_BYTES;
 export const PREFETCH_DEFAULT_TIMEOUT_MS = 10000;

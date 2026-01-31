@@ -41,18 +41,15 @@ describe("step()", () => {
   });
 
   it("should default checkpoint to true for agent steps", () => {
-    const agentNode = step("agent-step", { agent: "test-agent" });
-    assertEquals(agentNode.config.checkpoint, true);
+    assertEquals(step("agent-step", { agent: "test-agent" }).config.checkpoint, true);
   });
 
   it("should default checkpoint to false for tool steps", () => {
-    const toolNode = step("tool-step", { tool: "test-tool" });
-    assertEquals(toolNode.config.checkpoint, false);
+    assertEquals(step("tool-step", { tool: "test-tool" }).config.checkpoint, false);
   });
 
   it("should allow explicit checkpoint setting", () => {
-    const node = step("explicit", { agent: "test", checkpoint: false });
-    assertEquals(node.config.checkpoint, false);
+    assertEquals(step("explicit", { agent: "test", checkpoint: false }).config.checkpoint, false);
   });
 
   it("should include retry config", () => {
@@ -66,12 +63,7 @@ describe("step()", () => {
   });
 
   it("should include timeout", () => {
-    const node = step("with-timeout", {
-      agent: "test",
-      timeout: "5m",
-    });
-
-    assertEquals(node.config.timeout, "5m");
+    assertEquals(step("with-timeout", { agent: "test", timeout: "5m" }).config.timeout, "5m");
   });
 
   it("should support dynamic input function", () => {

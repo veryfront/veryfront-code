@@ -19,6 +19,7 @@ type PageType = "mdx" | "tsx" | "jsx" | "ts" | "js";
 
 function inferPageType(pagePath?: string): PageType | undefined {
   if (!pagePath) return undefined;
+
   const ext = getExtensionName(pagePath);
   if (!ext) return undefined;
 
@@ -32,11 +33,20 @@ export function generateHydrationData(
   options: HTMLGenerationOptions,
 ): string {
   const layouts = (options.nestedLayouts ?? [])
-    .map((layout) => ({
-      kind: layout.kind as "mdx" | "tsx",
-      path: toProjectRelativePath(layout.path ?? layout.componentPath ?? "", options.projectDir),
-    }))
-    .filter((layout) => layout.path);
+    .map((layout) => {
+      const path = toProjectRelativePath(
+        layout.path ?? layout.componentPath ?? "",
+        options.projectDir,
+      );
+
+      if (!path) return null;
+
+      return {
+        kind: layout.kind as "mdx" | "tsx",
+        path,
+      };
+    })
+    .filter((layout): layout is NonNullable<typeof layout> => Boolean(layout));
 
   const data: HydrationDataStructure = {
     slug: slug || "",

@@ -86,19 +86,17 @@ export interface SharedLinkMetadata {
 
 async function requireAccessToken(): Promise<string> {
   const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with Dropbox. Please connect your account.");
-  }
-  return token;
+  if (token) return token;
+  throw new Error("Not authenticated with Dropbox. Please connect your account.");
 }
 
-async function parseDropboxError(response: Response): Promise<unknown> {
+async function parseDropboxError(response: Response): Promise<any> {
   return response.json().catch(() => ({}));
 }
 
-function throwDropboxError(response: Response, error: unknown): never {
+function throwDropboxError(response: Response, error: any): never {
   throw new Error(
-    `Dropbox API error: ${response.status} ${error?.error_summary || response.statusText}`,
+    `Dropbox API error: ${response.status} ${error?.error_summary ?? response.statusText}`,
   );
 }
 
@@ -118,8 +116,7 @@ async function dropboxRPC<T>(
   });
 
   if (!response.ok) {
-    const error = await parseDropboxError(response);
-    throwDropboxError(response, error);
+    throwDropboxError(response, await parseDropboxError(response));
   }
 
   return response.json();
@@ -137,20 +134,18 @@ async function dropboxContent<T>(
     "Dropbox-API-Arg": JSON.stringify(args),
   };
 
-  const body = content;
-  if (body != null) {
+  if (content != null) {
     headers["Content-Type"] = "application/octet-stream";
   }
 
   const response = await fetch(`${DROPBOX_CONTENT_URL}${endpoint}`, {
     method: "POST",
     headers,
-    body,
+    body: content,
   });
 
   if (!response.ok) {
-    const error = await parseDropboxError(response);
-    throwDropboxError(response, error);
+    throwDropboxError(response, await parseDropboxError(response));
   }
 
   return response.json();
@@ -215,8 +210,7 @@ export async function downloadFile(path: string): Promise<{
   });
 
   if (!response.ok) {
-    const error = await parseDropboxError(response);
-    throwDropboxError(response, error);
+    throwDropboxError(response, await parseDropboxError(response));
   }
 
   const content = await response.text();

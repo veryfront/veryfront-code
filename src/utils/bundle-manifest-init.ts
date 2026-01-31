@@ -47,16 +47,17 @@ export async function initializeBundleManifest(
 
 async function createStore(
   storeType: string,
-  manifestConfig: VeryfrontConfig["cache"],
+  cacheConfig: VeryfrontConfig["cache"],
   adapter?: RuntimeAdapter,
 ): Promise<BundleManifestStore> {
+  const bundleManifest = cacheConfig?.bundleManifest;
+
   if (storeType === "redis") {
     const { RedisBundleManifestStore } = await import("./bundle-manifest-redis.ts");
-    const bundleManifest = manifestConfig?.bundleManifest;
     const redisUrl = bundleManifest?.redisUrl ??
       adapter?.env.get("VERYFRONT_BUNDLE_MANIFEST_REDIS_URL");
 
-    const store: BundleManifestStore = new RedisBundleManifestStore(
+    const store = new RedisBundleManifestStore(
       {
         url: redisUrl,
         keyPrefix: bundleManifest?.keyPrefix,
@@ -64,8 +65,7 @@ async function createStore(
       adapter,
     );
 
-    const available = await store.isAvailable();
-    if (!available) {
+    if (!(await store.isAvailable())) {
       logger.warn("[bundle-manifest] Redis not available, falling back to in-memory");
       return new InMemoryBundleManifestStore();
     }
@@ -76,12 +76,11 @@ async function createStore(
 
   if (storeType === "kv") {
     const { KVBundleManifestStore } = await import("./bundle-manifest-kv.ts");
-    const store: BundleManifestStore = new KVBundleManifestStore({
-      keyPrefix: manifestConfig?.bundleManifest?.keyPrefix,
+    const store = new KVBundleManifestStore({
+      keyPrefix: bundleManifest?.keyPrefix,
     });
 
-    const available = await store.isAvailable();
-    if (!available) {
+    if (!(await store.isAvailable())) {
       logger.warn("[bundle-manifest] KV not available, falling back to in-memory");
       return new InMemoryBundleManifestStore();
     }
@@ -101,7 +100,8 @@ export function getBundleManifestTTL(
   const ttl = config.cache?.bundleManifest?.ttl;
   if (ttl) return ttl;
 
-  return mode === "production" ? BUNDLE_MANIFEST_PROD_TTL_MS : BUNDLE_MANIFEST_DEV_TTL_MS;
+  if (mode === "production") return BUNDLE_MANIFEST_PROD_TTL_MS;
+  return BUNDLE_MANIFEST_DEV_TTL_MS;
 }
 
 export async function warmupBundleManifest(

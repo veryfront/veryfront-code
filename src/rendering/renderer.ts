@@ -81,9 +81,6 @@ function getEnv(name: string): string | undefined {
   return g.Deno?.env?.get(name) ?? g.process?.env?.[name];
 }
 
-// contentSourceId is computed by the proxy and validated in enriched-context.
-// It's passed through the entire pipeline as ctx.contentSourceId.
-
 /**
  * Master timeout for entire render pipeline (must be less than REQUEST_TIMEOUT_MS).
  * Configurable via RENDER_TIMEOUT_MS env var for cold-start scenarios.
@@ -148,43 +145,30 @@ const LOCK_TIMEOUT_MS = 10_000;
 async function acquireProjectLock(projectId: string): Promise<() => void> {
   const startTime = Date.now();
 
-  // Retry loop to handle race conditions atomically
   while (true) {
-    // Check for timeout
     if (Date.now() - startTime > LOCK_TIMEOUT_MS) {
       throw new Error(`Lock acquisition timeout for project: ${projectId}`);
     }
 
-    // Get existing lock
     const existingLock = projectSlotLocks.get(projectId);
-
     if (existingLock) {
-      // Wait for existing lock to release
       await existingLock;
-      // After await, another thread might have taken the lock, so retry
       continue;
     }
 
-    // No existing lock - try to create one
-    let releaseLock: () => void;
+    let releaseLock!: () => void;
     const lockPromise = new Promise<void>((resolve) => {
       releaseLock = resolve;
     });
 
-    // Double-check that no lock was set while we were creating ours
-    // This is the critical section that prevents the race
     if (projectSlotLocks.has(projectId)) {
-      // Another thread beat us - retry
       continue;
     }
 
-    // Successfully acquired lock
     projectSlotLocks.set(projectId, lockPromise);
 
-    // Return release function that cleans up
     return () => {
-      releaseLock!();
-      // Only delete if this is still our lock
+      releaseLock();
       if (projectSlotLocks.get(projectId) === lockPromise) {
         projectSlotLocks.delete(projectId);
       }
@@ -202,9 +186,8 @@ async function acquireProjectSlot(projectId: string): Promise<boolean> {
   const release = await acquireProjectLock(projectId);
   try {
     const current = projectRenderCounts.get(projectId) ?? 0;
-    if (current >= RENDER_PER_PROJECT_LIMIT) {
-      return false;
-    }
+    if (current >= RENDER_PER_PROJECT_LIMIT) return false;
+
     projectRenderCounts.set(projectId, current + 1);
     return true;
   } finally {
@@ -223,9 +206,9 @@ async function releaseProjectSlot(projectId: string): Promise<void> {
     const current = projectRenderCounts.get(projectId) ?? 0;
     if (current <= 1) {
       projectRenderCounts.delete(projectId);
-    } else {
-      projectRenderCounts.set(projectId, current - 1);
+      return;
     }
+    projectRenderCounts.set(projectId, current - 1);
   } finally {
     release();
   }
@@ -274,6 +257,7 @@ export class Renderer {
   private cache: ContextAwareCacheCoordinator;
   private initialized = false;
   private initializationPromise: Promise<void> | null = null;
+
   /**
    * Singleflight for render deduplication. Caches HTML string results so
    * concurrent requests for the same page share the render work.
@@ -286,13 +270,8 @@ export class Renderer {
   }
 
   async initialize(options?: SharedServicesOptions): Promise<void> {
-    if (this.initialized) {
-      return;
-    }
-
-    if (this.initializationPromise) {
-      return this.initializationPromise;
-    }
+    if (this.initialized) return;
+    if (this.initializationPromise) return this.initializationPromise;
 
     this.initializationPromise = (async () => {
       const startTime = performance.now();
@@ -339,8 +318,6 @@ export class Renderer {
           return cacheResult.cachedResult;
         }
 
-        // Per-project cap: reject immediately if this project has too many concurrent renders.
-        // This prevents a single noisy tenant from monopolizing the global semaphore.
         if (!(await acquireProjectSlot(ctx.projectId))) {
           const activeCount = projectRenderCounts.get(ctx.projectId) ?? 0;
           logger.error("[Renderer] Per-project render limit reached", {
@@ -412,31 +389,22 @@ export class Renderer {
     options: RenderOptions | undefined,
     startTime: number,
   ): Promise<RenderResult> {
-    // Use Singleflight to deduplicate concurrent renders of the same page.
-    // Key insight: We cache the HTML string, not the stream. Each caller gets
-    // a fresh RenderResult with the same HTML but no stream.
     const flightKey = this.getSingleflightKey(slug, ctx, options?.colorScheme);
-
-    // Check if there's already an in-flight render for this key
     const isFollower = this.renderFlight.has(flightKey);
 
     const cachedData = await this.renderFlight.do(flightKey, async () => {
-      // Leader path: Actually perform the render
       const services = this.createServicesForContext(ctx, options?.colorScheme);
-      const contentSourceId = ctx.contentSourceId;
 
       let result: RenderResult;
       try {
-        // Force string delivery for Singleflight renders to ensure we have HTML to cache.
-        // Streaming would require each caller to get a unique stream, which defeats deduplication.
         result = await withTimeoutThrow(
           services.pipeline.renderPage(slug, {
             ...options,
-            delivery: "string", // Force string mode for deduplication
+            delivery: "string",
             projectId: ctx.projectId,
             projectSlug: ctx.projectSlug,
             environment: ctx.environment,
-            contentSourceId,
+            contentSourceId: ctx.contentSourceId,
             skipCacheCheck: true,
           }),
           RENDER_PIPELINE_TIMEOUT_MS,
@@ -453,7 +421,6 @@ export class Renderer {
         throw error;
       }
 
-      // Persist to cache (only leader does this)
       await this.cache.persistResult(result, slug, ctx, options?.colorScheme);
 
       logger.debug("[Renderer] Render complete (leader)", {
@@ -463,7 +430,6 @@ export class Renderer {
         htmlLength: result.html?.length ?? 0,
       });
 
-      // Return only serializable data (no stream) for sharing
       return {
         html: result.html,
         frontmatter: result.frontmatter,
@@ -473,7 +439,6 @@ export class Renderer {
       };
     });
 
-    // Log if this was a follower (deduplicated request)
     if (isFollower) {
       logger.debug("[Renderer] Render deduplicated (follower)", {
         slug,
@@ -483,14 +448,12 @@ export class Renderer {
       });
     }
 
-    // Return a fresh RenderResult for this caller (no stream for followers)
     return {
       html: cachedData.html,
       frontmatter: cachedData.frontmatter,
       headings: cachedData.headings,
       ssrHash: cachedData.ssrHash,
       pageModule: cachedData.pageModule,
-      // No stream - callers that need streaming should not use concurrent requests
       stream: null,
     };
   }
@@ -504,7 +467,6 @@ export class Renderer {
       throw new Error("Renderer not initialized. Call initialize() first.");
     }
 
-    const contentSourceId = ctx.contentSourceId;
     const services = this.createServicesForContext(ctx);
 
     return services.pipeline.resolvePageData(slug, {
@@ -512,7 +474,7 @@ export class Renderer {
       projectId: ctx.projectId,
       projectSlug: ctx.projectSlug,
       environment: ctx.environment,
-      contentSourceId,
+      contentSourceId: ctx.contentSourceId,
     });
   }
 
@@ -556,9 +518,7 @@ export class Renderer {
   private createServicesForContext(
     ctx: RenderContext,
     colorScheme?: "light" | "dark",
-  ): {
-    pipeline: RenderPipeline;
-  } {
+  ): { pipeline: RenderPipeline } {
     const shared = getSharedServices();
 
     const mdxCacheAdapter = new MDXCacheAdapter({
@@ -663,9 +623,7 @@ export function getRenderer(): Renderer {
 }
 
 export async function initializeRenderer(options?: RendererOptions): Promise<Renderer> {
-  if (renderer) {
-    return renderer;
-  }
+  if (renderer) return renderer;
 
   renderer = new Renderer(options);
   await renderer.initialize(options?.shared);
@@ -677,9 +635,8 @@ export function isRendererInitialized(): boolean {
 }
 
 export async function destroyRenderer(): Promise<void> {
-  if (!renderer) {
-    return;
-  }
+  if (!renderer) return;
+
   await renderer.destroy();
   renderer = null;
 }
@@ -691,7 +648,6 @@ export async function destroyRenderer(): Promise<void> {
  */
 export async function clearRendererCaches(): Promise<void> {
   logger.debug("[Renderer] clearRendererCaches called (global)", { hasRenderer: !!renderer });
-
   if (!renderer) {
     logger.debug("[Renderer] No renderer instance, skipping cache clear");
     return;

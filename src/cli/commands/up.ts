@@ -33,9 +33,7 @@ async function analyzeDirectory(projectDir: string): Promise<ProjectContext> {
   const fs = createFileSystem();
 
   const config = await readConfigFile(projectDir);
-  if (config?.projectSlug) {
-    return { type: "has-project", config };
-  }
+  if (config?.projectSlug) return { type: "has-project", config };
 
   const entries: string[] = [];
   for await (const entry of fs.readDir(projectDir)) {
@@ -43,20 +41,19 @@ async function analyzeDirectory(projectDir: string): Promise<ProjectContext> {
     entries.push(entry.name);
   }
 
-  const hasCode = entries.some((name) =>
-    name === "package.json" ||
-    name === "deno.json" ||
-    name === "app" ||
-    name === "src" ||
-    name.endsWith(".tsx") ||
-    name.endsWith(".ts") ||
-    name.endsWith(".jsx") ||
-    name.endsWith(".js")
+  const hasCode = entries.some(
+    (name) =>
+      name === "package.json" ||
+      name === "deno.json" ||
+      name === "app" ||
+      name === "src" ||
+      name.endsWith(".tsx") ||
+      name.endsWith(".ts") ||
+      name.endsWith(".jsx") ||
+      name.endsWith(".js"),
   );
 
-  if (!hasCode) {
-    return { type: "empty" };
-  }
+  if (!hasCode) return { type: "empty" };
 
   const dirName = projectDir.split(/[/\\]/).pop() || "my-app";
   const suggestedSlug = dirName.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
@@ -79,12 +76,11 @@ async function createProject(
       body: JSON.stringify({ slug }),
     });
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error((error as { message?: string }).message || `HTTP ${response.status}`);
-    }
+    if (response.ok) return await response.json();
 
-    return await response.json();
+    const error = await response.json().catch(() => ({}));
+    const message = (error as { message?: string }).message ?? `HTTP ${response.status}`;
+    throw new Error(message);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to create project: ${message}`);
@@ -93,7 +89,7 @@ async function createProject(
 
 async function saveConfig(projectDir: string, config: VeryfrontConfig): Promise<void> {
   const fs = createFileSystem();
-  await fs.writeTextFile(join(projectDir, ".veryfrontrc"), JSON.stringify(config, null, 2) + "\n");
+  await fs.writeTextFile(join(projectDir, ".veryfrontrc"), `${JSON.stringify(config, null, 2)}\n`);
 }
 
 export async function upCommand(
@@ -115,8 +111,6 @@ export async function upCommand(
   const context = await analyzeDirectory(projectDir);
   spinner.stop();
 
-  let projectSlug: string;
-
   if (context.type === "empty") {
     cliLogger.info("");
     cliLogger.info(c(yellow, "This folder is empty."));
@@ -126,6 +120,8 @@ export async function upCommand(
     cliLogger.info("");
     return;
   }
+
+  let projectSlug: string;
 
   if (context.type === "has-project") {
     projectSlug = context.config.projectSlug!;
@@ -140,9 +136,7 @@ export async function upCommand(
     if (isTTY() && !force) {
       const response = await promptUser(`Project name [${slug}]:`);
       const trimmed = response.trim();
-      if (trimmed) {
-        slug = trimmed.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
-      }
+      if (trimmed) slug = trimmed.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
     }
 
     if (dryRun) {
@@ -152,8 +146,8 @@ export async function upCommand(
       projectSpinner.start();
 
       try {
-        const apiUrl = env.apiUrl || "https://api.veryfront.com";
-        const resolvedToken = env.apiToken || (await readToken());
+        const apiUrl = env.apiUrl ?? "https://api.veryfront.com";
+        const resolvedToken = env.apiToken ?? (await readToken());
 
         if (!resolvedToken) {
           projectSpinner.stop();

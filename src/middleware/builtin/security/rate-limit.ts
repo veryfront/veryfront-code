@@ -34,15 +34,16 @@ export class MemoryRateLimitStore implements RateLimitStore {
 
   increment(key: string, windowMs: number): Promise<RateLimitEntry> {
     const now = Date.now();
-    let entry = this.counts.get(key);
+    const existing = this.counts.get(key);
 
-    if (!entry || entry.resetAt < now) {
-      entry = { count: 0, resetAt: now + windowMs };
+    if (!existing || existing.resetAt < now) {
+      const entry: RateLimitEntry = { count: 1, resetAt: now + windowMs };
       this.counts.set(key, entry);
+      return Promise.resolve(entry);
     }
 
-    entry.count++;
-    return Promise.resolve(entry);
+    existing.count++;
+    return Promise.resolve(existing);
   }
 
   reset(key: string): Promise<void> {
@@ -82,17 +83,15 @@ export function rateLimit(
     const key = keyGenerator(req);
     const entry = await store.increment(key, windowMs);
 
-    if (entry.count > maxRequests) {
-      const retryAfterSeconds = Math.ceil(
-        (entry.resetAt - Date.now()) / MS_PER_SECOND,
-      );
+    if (entry.count <= maxRequests) return next();
 
-      return new Response("Too Many Requests", {
-        status: HTTP_TOO_MANY_REQUESTS,
-        headers: { "Retry-After": String(retryAfterSeconds) },
-      });
-    }
+    const retryAfterSeconds = Math.ceil(
+      (entry.resetAt - Date.now()) / MS_PER_SECOND,
+    );
 
-    return next();
+    return new Response("Too Many Requests", {
+      status: HTTP_TOO_MANY_REQUESTS,
+      headers: { "Retry-After": String(retryAfterSeconds) },
+    });
   };
 }

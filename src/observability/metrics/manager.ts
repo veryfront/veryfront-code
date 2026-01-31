@@ -22,7 +22,7 @@ export class MetricsManager {
   private api: OpenTelemetryAPI | null = null;
   private instruments: MetricsInstruments = this.createEmptyInstruments();
   private runtimeState: RuntimeState = { cacheSize: 0, activeRequests: 0 };
-  private recorder: MetricsRecorder = new MetricsRecorder(this.instruments, this.runtimeState);
+  private recorder = new MetricsRecorder(this.instruments, this.runtimeState);
 
   private createEmptyInstruments(): MetricsInstruments {
     return {
@@ -68,9 +68,10 @@ export class MetricsManager {
 
     const finalConfig = loadConfig(config, adapter);
 
+    this.initialized = true;
+
     if (!finalConfig.enabled) {
       logger.debug("[metrics] Metrics collection disabled");
-      this.initialized = true;
       return;
     }
 
@@ -81,7 +82,6 @@ export class MetricsManager {
       this.instruments = await initializeInstruments(this.meter, finalConfig, this.runtimeState);
       this.recorder.instruments = this.instruments;
 
-      this.initialized = true;
       logger.info("[metrics] OpenTelemetry metrics initialized", {
         exporter: finalConfig.exporter,
         endpoint: finalConfig.endpoint,
@@ -89,7 +89,6 @@ export class MetricsManager {
       });
     } catch (error) {
       logger.warn("[metrics] Failed to initialize OpenTelemetry metrics", error);
-      this.initialized = true; // Mark as initialized to prevent retry loops
     }
   }
 

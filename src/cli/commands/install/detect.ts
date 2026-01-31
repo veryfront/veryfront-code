@@ -13,11 +13,11 @@ function createDetectionRules(
 ): Record<AIToolId, (cwd: string) => Promise<boolean>> {
   return {
     cursor: async (cwd) => (await exists(join(cwd, ".cursor"))) || Boolean(env.cursorSession),
-    "claude-code": async (cwd) => await exists(join(cwd, ".claude")),
-    skill: (_cwd) => Promise.resolve(true), // Always suggest - universal format
-    copilot: async (cwd) => await exists(join(cwd, ".github")),
-    windsurf: async (cwd) => await exists(join(cwd, ".windsurfrules")),
-    agents: (_cwd) => Promise.resolve(false), // Don't auto-detect
+    "claude-code": (cwd) => exists(join(cwd, ".claude")),
+    skill: async () => true, // Always suggest - universal format
+    copilot: (cwd) => exists(join(cwd, ".github")),
+    windsurf: (cwd) => exists(join(cwd, ".windsurfrules")),
+    agents: async () => false, // Don't auto-detect
   };
 }
 
@@ -27,8 +27,8 @@ export async function detectAITools(
 ): Promise<AIToolId[]> {
   const { cwd = getCwd() } = DetectOptionsSchema.parse(options);
   const rules = createDetectionRules(env);
-  const detected: AIToolId[] = [];
 
+  const detected: AIToolId[] = [];
   for (const toolId of Object.keys(rules) as AIToolId[]) {
     if (await rules[toolId](cwd)) detected.push(toolId);
   }

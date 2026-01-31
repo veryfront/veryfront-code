@@ -3,8 +3,7 @@ import { promptRegistry } from "veryfront/prompt";
 
 function getSystemPrompt(): string {
   const content = promptRegistry.get("assistant")?.getContent();
-  if (typeof content === "string") return content;
-  return "You answer weather questions for this template.";
+  return typeof content === "string" ? content : "You answer weather questions for this template.";
 }
 
 export default agent({

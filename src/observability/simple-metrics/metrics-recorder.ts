@@ -8,11 +8,11 @@ import { getObservabilityMetrics } from "./observability-loader.ts";
 import { getOtelInstruments, safeOtelOperation } from "./otel-instruments.ts";
 import type { RSCRequestKind } from "./types.ts";
 
-function recordObservability<T>(
+function recordObservability(
   fn: (obs: Awaited<ReturnType<typeof getObservabilityMetrics>>) => void,
 ): void {
   void getObservabilityMetrics()
-    .then((obs) => fn(obs))
+    .then(fn)
     .catch(() => {
       /* metrics recording failure - non-critical */
     });
@@ -142,8 +142,8 @@ export function recordSSR(durationMs: number): void {
 
   let idx = boundaries.findIndex((b) => d <= b);
   if (idx === -1) idx = state._ssrCounts.length - 1;
-  const currentCount = state._ssrCounts[idx];
-  if (currentCount !== undefined) state._ssrCounts[idx] = currentCount + 1;
+
+  state._ssrCounts[idx] = (state._ssrCounts[idx] ?? 0) + 1;
 
   recordObservability((obs) => obs?.recordRender(d));
 
@@ -165,17 +165,15 @@ export function recordRSCStreamDuration(durationMs: number): void {
   const boundaries = getSSRBoundaries();
   const d = Math.max(0, Math.floor(durationMs));
 
-  if (!state.rscStreamHistogram) {
-    state.rscStreamHistogram = {
-      boundaries: [...boundaries],
-      counts: Array.from({ length: boundaries.length + 1 }, () => 0),
-    };
-  }
+  state.rscStreamHistogram ??= {
+    boundaries: [...boundaries],
+    counts: Array.from({ length: boundaries.length + 1 }, () => 0),
+  };
 
   let idx = boundaries.findIndex((b) => d <= b);
   if (idx === -1) idx = state.rscStreamHistogram.counts.length - 1;
-  const rscCount = state.rscStreamHistogram.counts[idx];
-  if (rscCount !== undefined) state.rscStreamHistogram.counts[idx] = rscCount + 1;
+
+  state.rscStreamHistogram.counts[idx] = (state.rscStreamHistogram.counts[idx] ?? 0) + 1;
 
   recordObservability((obs) => obs?.recordRSCStream(d));
 }
@@ -211,9 +209,9 @@ const RSC_KIND_MAP: Record<
  * ```
  */
 export function recordRSC(kind: RSCRequestKind): void {
-  const mapping = RSC_KIND_MAP[kind];
-  state[mapping.prop]++;
-  if (mapping.obs) recordObservabilityRSC(mapping.obs);
+  const { prop, obs } = RSC_KIND_MAP[kind];
+  state[prop]++;
+  if (obs) recordObservabilityRSC(obs);
 }
 
 /**

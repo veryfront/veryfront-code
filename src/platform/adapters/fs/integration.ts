@@ -27,7 +27,7 @@ export function enhanceAdapterWithFS(
     return Promise.resolve(adapter);
   }
 
-  const fsType = config.fs!.type ?? "unknown";
+  const fsType = config.fs?.type ?? "unknown";
 
   return withSpan(
     "platform.fs.enhanceAdapterWithFS",
@@ -39,7 +39,7 @@ export function enhanceAdapterWithFS(
         });
 
         const fsAdapterConfig: FSAdapterConfig = {
-          ...(config.fs as FSAdapterConfig),
+          ...config.fs,
           projectDir,
         };
 
@@ -79,7 +79,7 @@ export function createFSAdapterFromConfig(
 ): Promise<FSAdapter | null> {
   if (isLocalFS(config)) return Promise.resolve(null);
 
-  const fsType = config.fs!.type ?? "unknown";
+  const fsType = config.fs?.type ?? "unknown";
 
   return withSpan(
     "platform.fs.createFSAdapterFromConfig",

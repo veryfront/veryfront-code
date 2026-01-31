@@ -108,7 +108,9 @@ export interface SpinnerController {
 
 export function createSpinner(text: string): SpinnerController {
   if (!isTTY()) {
-    const print = (prefix: string, msg: string) => console.log(`  ${prefix} ${msg}`);
+    const print = (prefix: string, msg: string): void => {
+      console.log(`  ${prefix} ${msg}`);
+    };
 
     print(muted("○"), text);
 
@@ -125,8 +127,12 @@ export function createSpinner(text: string): SpinnerController {
   let running = true;
 
   const render = (): void => {
-    const spinner = getSpinnerFrame(frame);
-    write(`${screen.clearLineReturn}  ${brand(spinner)} ${currentText}`);
+    write(`${screen.clearLineReturn}  ${brand(getSpinnerFrame(frame))} ${currentText}`);
+  };
+
+  const stopInterval = (interval: ReturnType<typeof setInterval>): void => {
+    running = false;
+    clearInterval(interval);
   };
 
   render();
@@ -137,26 +143,21 @@ export function createSpinner(text: string): SpinnerController {
     render();
   }, SPINNER_INTERVAL_MS);
 
-  const stopInterval = (): void => {
-    running = false;
-    clearInterval(interval);
-  };
-
   return {
     update(newText: string) {
       currentText = newText;
       render();
     },
     success(finalText?: string) {
-      stopInterval();
+      stopInterval(interval);
       write(`${screen.clearLineReturn}  ${success("✓")} ${finalText ?? currentText}\n`);
     },
     error(finalText?: string) {
-      stopInterval();
+      stopInterval(interval);
       write(`${screen.clearLineReturn}  ${error("✗")} ${finalText ?? currentText}\n`);
     },
     stop() {
-      stopInterval();
+      stopInterval(interval);
       write(`${screen.clearLineReturn}`);
     },
   };
@@ -169,7 +170,7 @@ export function inlineSpinner(text: string, frame = 0): string {
 export class TaskList {
   private tasks: Array<Step & { startTime?: number }> = [];
   private frame = 0;
-  private interval: number | null = null;
+  private interval: ReturnType<typeof setInterval> | null = null;
 
   add(label: string): number {
     const index = this.tasks.length;
@@ -215,7 +216,7 @@ export class TaskList {
   }
 
   stopAnimation(): void {
-    if (this.interval === null) return;
+    if (!this.interval) return;
     clearInterval(this.interval);
     this.interval = null;
   }

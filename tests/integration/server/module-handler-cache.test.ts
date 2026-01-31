@@ -24,8 +24,34 @@ function createBuilder(ctx: HandlerContext): ResponseBuilder {
   });
 }
 
-const respond = (response: Response) => ({ response, continue: false });
-const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+function respond(response: Response): { response: Response; continue: false } {
+  return { response, continue: false };
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function createHandlerContext(projectDir: string): Promise<HandlerContext> {
+  const adapter = await getAdapter();
+  const config = await getConfig(projectDir, adapter);
+
+  return {
+    projectDir,
+    adapter,
+    moduleServerUrl: undefined,
+    securityConfig: null,
+    cspUserHeader: null,
+    debug: false,
+    config,
+  };
+}
+
+async function cleanupProject(projectDir: string): Promise<void> {
+  await cleanupBundler();
+  const adapter = await getAdapter();
+  await adapter.fs.remove(projectDir, { recursive: true });
+}
 
 describe("Module Handler Cache Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   afterAll(async () => {
@@ -37,17 +63,7 @@ describe("Module Handler Cache Tests", { sanitizeOps: false, sanitizeResources: 
       const projectDir = await setupProject();
 
       try {
-        const config = await getConfig(projectDir, await getAdapter());
-
-        const handlerContext: HandlerContext = {
-          projectDir,
-          adapter: await getAdapter(),
-          moduleServerUrl: undefined,
-          securityConfig: null,
-          cspUserHeader: null,
-          debug: false,
-          config,
-        };
+        const handlerContext = await createHandlerContext(projectDir);
 
         const { handlePageModule } = await import(
           "../../../src/server/handlers/request/module/page-module-handler.ts"
@@ -65,8 +81,10 @@ describe("Module Handler Cache Tests", { sanitizeOps: false, sanitizeResources: 
 
         if (!res1) throw new Error("Expected response for first module request");
         assertEquals(res1.status, 200);
+
         const text = await res1.text();
         assertMatch(text, /export default/);
+
         const etag = res1.headers.get("etag");
         if (!etag) throw new Error("ETag missing from module response");
 
@@ -86,8 +104,7 @@ describe("Module Handler Cache Tests", { sanitizeOps: false, sanitizeResources: 
         assertEquals(res2.status, 304);
         await res2.body?.cancel();
       } finally {
-        await cleanupBundler();
-        await (await getAdapter()).fs.remove(projectDir, { recursive: true });
+        await cleanupProject(projectDir);
       }
     });
   });
@@ -97,17 +114,7 @@ describe("Module Handler Cache Tests", { sanitizeOps: false, sanitizeResources: 
       const projectDir = await setupProject();
 
       try {
-        const config = await getConfig(projectDir, await getAdapter());
-
-        const handlerContext: HandlerContext = {
-          projectDir,
-          adapter: await getAdapter(),
-          moduleServerUrl: undefined,
-          securityConfig: null,
-          cspUserHeader: null,
-          debug: false,
-          config,
-        };
+        const handlerContext = await createHandlerContext(projectDir);
 
         const { handleDataEndpoint } = await import(
           "../../../src/server/handlers/request/module/data-endpoint-handler.ts"
@@ -125,6 +132,7 @@ describe("Module Handler Cache Tests", { sanitizeOps: false, sanitizeResources: 
 
         if (!res1) throw new Error("Expected data response");
         assertEquals(res1.status, 200);
+
         const etag = res1.headers.get("etag");
         if (!etag) throw new Error("ETag missing from data response");
         await res1.body?.cancel();
@@ -145,8 +153,7 @@ describe("Module Handler Cache Tests", { sanitizeOps: false, sanitizeResources: 
         assertEquals(res2.status, 304);
         await res2.body?.cancel();
       } finally {
-        await cleanupBundler();
-        await (await getAdapter()).fs.remove(projectDir, { recursive: true });
+        await cleanupProject(projectDir);
       }
     });
   });

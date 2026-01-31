@@ -28,7 +28,7 @@ export class StreamHandler {
     if (!response.ok) return FALLBACK_HTML;
 
     try {
-      const payload: RSCPayload = await response.json();
+      const payload = (await response.json()) as RSCPayload;
       return payload.html ?? FALLBACK_HTML;
     } catch (error) {
       logger.warn("[RSC][dev] failed to parse final HTML payload", error);
@@ -45,12 +45,7 @@ export class StreamHandler {
         const encoder = new TextEncoder();
 
         try {
-          enqueueSlot(controller, encoder, {
-            type: "slot",
-            id: "root",
-            html: "<p>Loading...</p>",
-          });
-
+          enqueueSlot(controller, encoder, { type: "slot", id: "root", html: "<p>Loading...</p>" });
           enqueueSlot(controller, encoder, {
             type: "slot",
             id: "sidebar",
@@ -71,11 +66,7 @@ export class StreamHandler {
 
           await sleep(STREAM_DELAY_MS);
 
-          enqueueSlot(controller, encoder, {
-            type: "slot",
-            id: "root",
-            html: finalHtml,
-          });
+          enqueueSlot(controller, encoder, { type: "slot", id: "root", html: finalHtml });
 
           controller.close();
         } catch (error) {

@@ -32,14 +32,13 @@ describe("modules/import-map/resolver", () => {
 
     it("should resolve esm.sh URLs by package name", () => {
       const map = { imports: { react: "https://esm.sh/react@19" } };
-      assertEquals(
-        resolveImport("https://esm.sh/react@18", map),
-        "https://esm.sh/react@19",
-      );
+      assertEquals(resolveImport("https://esm.sh/react@18", map), "https://esm.sh/react@19");
     });
 
     it("should resolve esm.sh URLs with subpath", () => {
-      const map = { imports: { "react/jsx-runtime": "https://esm.sh/react@19/jsx-runtime" } };
+      const map = {
+        imports: { "react/jsx-runtime": "https://esm.sh/react@19/jsx-runtime" },
+      };
       assertEquals(
         resolveImport("https://esm.sh/react@18/jsx-runtime", map),
         "https://esm.sh/react@19/jsx-runtime",

@@ -81,22 +81,25 @@ let _runtimeEnv: RuntimeEnv | null = null;
 
 function parseNumber(value: string | undefined, defaultVal: number): number {
   if (!value) return defaultVal;
+
   const parsed = parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : defaultVal;
 }
 
 function readEnvSnapshot(): RuntimeEnv {
-  const nodeEnv = getEnv("NODE_ENV") || getEnv("DENO_ENV") || "development";
-  const veryfrontEnv = getEnv("VERYFRONT_ENV") || nodeEnv;
+  const nodeEnv = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
+  const veryfrontEnv = getEnv("VERYFRONT_ENV") ?? nodeEnv;
 
   const requestTimeoutRaw = getEnv("REQUEST_TIMEOUT_MS");
   const httpFetchTimeoutRaw = getEnv("VF_HTTP_FETCH_TIMEOUT");
   const v8MaxOldSpaceSizeRaw = getEnv("V8_MAX_OLD_SPACE_SIZE");
 
+  const apiUrl = getEnv("VERYFRONT_API_URL") || undefined;
+
   return {
     nodeEnv,
     veryfrontEnv,
-    veryfrontMode: getEnv("VERYFRONT_MODE") || "development",
+    veryfrontMode: getEnv("VERYFRONT_MODE") ?? "development",
 
     debug: isTruthyEnvValue(getEnv("VERYFRONT_DEBUG")),
     ci: getEnv("CI") === "1",
@@ -104,9 +107,9 @@ function readEnvSnapshot(): RuntimeEnv {
     perfEnabled: getEnv("VERYFRONT_PERF") === "1",
 
     apiBaseUrl: getEnv("VERYFRONT_API_BASE_URL") ||
-      getEnv("VERYFRONT_API_URL")?.replace("/graphql", "/api") ||
+      apiUrl?.replace("/graphql", "/api") ||
       DEFAULTS.apiBaseUrl,
-    apiUrl: getEnv("VERYFRONT_API_URL") || undefined,
+    apiUrl,
     apiToken: getEnv("VERYFRONT_API_TOKEN") || undefined,
     projectSlug: getEnv("VERYFRONT_PROJECT_SLUG") || undefined,
 
@@ -174,6 +177,7 @@ function readEnvSnapshot(): RuntimeEnv {
 
 export function initRuntimeEnv(): RuntimeEnv {
   if (_runtimeEnv) return _runtimeEnv;
+
   _runtimeEnv = Object.freeze(readEnvSnapshot());
   return _runtimeEnv;
 }
@@ -188,6 +192,7 @@ export function isRuntimeEnvInitialized(): boolean {
 
 export function createTestRuntimeEnv(overrides: Partial<RuntimeEnv> = {}): RuntimeEnv {
   const base = _runtimeEnv ?? readEnvSnapshot();
+
   return {
     ...base,
     nodeEnv: "test",

@@ -7,9 +7,8 @@ function isEnvironment(value: unknown): value is Environment {
 }
 
 export function getEnvironment(): Environment {
-  const veryfrontEnv = getEnvironmentFromEnv();
-  if (isEnvironment(veryfrontEnv)) return veryfrontEnv;
-  return "development";
+  const env = getEnvironmentFromEnv();
+  return isEnvironment(env) ? env : "development";
 }
 
 export function isDevelopment(): boolean {

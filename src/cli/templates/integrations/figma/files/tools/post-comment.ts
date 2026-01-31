@@ -18,11 +18,11 @@ export default tool({
     y: z.number().optional().describe("Y coordinate for comment placement (0-1, relative to canvas)"),
   }),
   async execute({ fileKey, message, parentId, nodeId, x, y }) {
-    const clientMeta: { x?: number; y?: number; node_id?: string[] } = {
-      ...(x !== undefined ? { x } : {}),
-      ...(y !== undefined ? { y } : {}),
-      ...(nodeId ? { node_id: [nodeId] } : {}),
-    };
+    const clientMeta: { x?: number; y?: number; node_id?: string[] } = {};
+
+    if (x !== undefined) clientMeta.x = x;
+    if (y !== undefined) clientMeta.y = y;
+    if (nodeId) clientMeta.node_id = [nodeId];
 
     const comment = await postComment(fileKey, message, {
       client_meta: Object.keys(clientMeta).length ? clientMeta : undefined,

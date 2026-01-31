@@ -2,12 +2,13 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { loadConfig } from "./config.ts";
 
-// Mock adapter with empty env to isolate tests from real environment
-const emptyEnvAdapter = {
-  env: {
-    get: () => undefined,
-  },
-} as unknown as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
+type RuntimeAdapter = import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
+
+function createAdapter(envGet: (key: string) => string | undefined): RuntimeAdapter {
+  return { env: { get: envGet } } as RuntimeAdapter;
+}
+
+const emptyEnvAdapter = createAdapter(() => undefined);
 
 describe("observability/tracing/config", () => {
   describe("loadConfig", () => {
@@ -28,23 +29,14 @@ describe("observability/tracing/config", () => {
     });
 
     it("should apply env from adapter", () => {
-      const mockEnv = {
-        get: (key: string) => {
-          const vars: Record<string, string> = {
-            OTEL_TRACES_ENABLED: "true",
-            OTEL_SERVICE_NAME: "test-svc",
-            OTEL_EXPORTER_OTLP_ENDPOINT: "http://localhost:4318",
-            OTEL_TRACES_EXPORTER: "otlp",
-          };
-          return vars[key];
-        },
+      const vars: Record<string, string> = {
+        OTEL_TRACES_ENABLED: "true",
+        OTEL_SERVICE_NAME: "test-svc",
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://localhost:4318",
+        OTEL_TRACES_EXPORTER: "otlp",
       };
-      const result = loadConfig(
-        {},
-        {
-          env: mockEnv,
-        } as unknown as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
-      );
+
+      const result = loadConfig({}, createAdapter((key) => vars[key]));
       assertEquals(result.enabled, true);
       assertEquals(result.serviceName, "test-svc");
       assertEquals(result.endpoint, "http://localhost:4318");
@@ -52,27 +44,17 @@ describe("observability/tracing/config", () => {
     });
 
     it("should enable via VERYFRONT_OTEL=1", () => {
-      const mockEnv = {
-        get: (key: string) => (key === "VERYFRONT_OTEL" ? "1" : undefined),
-      };
       const result = loadConfig(
         {},
-        {
-          env: mockEnv,
-        } as unknown as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
+        createAdapter((key) => (key === "VERYFRONT_OTEL" ? "1" : undefined)),
       );
       assertEquals(result.enabled, true);
     });
 
     it("should ignore invalid exporter values", () => {
-      const mockEnv = {
-        get: (key: string) => (key === "OTEL_TRACES_EXPORTER" ? "invalid" : undefined),
-      };
       const result = loadConfig(
         {},
-        {
-          env: mockEnv,
-        } as unknown as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
+        createAdapter((key) => (key === "OTEL_TRACES_EXPORTER" ? "invalid" : undefined)),
       );
       assertEquals(result.exporter, "console");
     });

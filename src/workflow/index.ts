@@ -185,9 +185,6 @@ export type { WorkflowClientConfig } from "./api/index.ts";
 export { getAllWorkflowIds, getWorkflow, registerWorkflow, workflowRegistry } from "./registry.ts";
 export type { WorkflowMetadata } from "./registry.ts";
 
-// Stub workflow backends (Temporal, Inngest, Cloudflare) removed — zero consumers.
-// See P2-2 Dead Export Audit.
-
 // =============================================================================
 // React Hooks (re-exported for convenience)
 // Note: For tree-shaking, prefer importing from 'veryfront/workflow/react'

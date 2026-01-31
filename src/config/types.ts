@@ -2,30 +2,38 @@ export interface VeryfrontConfig {
   projectSlug?: string;
   title?: string;
   description?: string;
+
   /** React configuration */
   react?: {
     /** React version to use (e.g., "18.3.1", "19.1.1"). Defaults to auto-detect from package.json or 19.1.1 */
     version?: string;
   };
+
   directories?: {
     app?: string;
     pages?: string;
     components?: string[];
     ai?: string;
   };
+
   experimental?: {
     esmLayouts?: boolean;
     precompileMDX?: boolean;
     rsc?: boolean;
   };
+
   router?: "app" | "pages";
+
   /** Path to the layout component (e.g., 'components/layout.tsx'), or false to disable */
   layout?: string | false;
+
   /** Path to the app wrapper component (e.g., 'components/app.tsx'), or false to disable */
   app?: string | false;
+
   theme?: {
     colors?: Record<string, string>;
   };
+
   build?: {
     outDir?: string;
     trailingSlash?: boolean;
@@ -34,6 +42,7 @@ export interface VeryfrontConfig {
       worker?: boolean;
     };
   };
+
   cache?: {
     dir?: string;
     bundleManifest?: {
@@ -52,6 +61,7 @@ export interface VeryfrontConfig {
       redisKeyPrefix?: string;
     };
   };
+
   dev?: {
     port?: number;
     host?: string;
@@ -61,12 +71,14 @@ export interface VeryfrontConfig {
     components?: string[];
     moduleServerUrl?: string;
   };
+
   resolve?: {
     importMap?: {
       imports?: Record<string, string>;
       scopes?: Record<string, Record<string, string>>;
     };
   };
+
   security?: {
     /**
      * Authentication configuration (basic or bearer).
@@ -96,6 +108,7 @@ export interface VeryfrontConfig {
      */
     allowedImportDirs?: string[];
   };
+
   middleware?: {
     custom?: Array<
       (
@@ -104,10 +117,12 @@ export interface VeryfrontConfig {
       ) => Promise<Response | undefined> | Response | undefined
     >;
   };
+
   theming?: {
     brandName?: string; // shown on default 404/500
     logoHtml?: string; // small HTML snippet injected into the footer area
   };
+
   assetPipeline?: {
     images?: {
       enabled?: boolean;
@@ -131,6 +146,7 @@ export interface VeryfrontConfig {
       sourceMap?: boolean;
     };
   };
+
   observability?: {
     tracing?: {
       enabled?: boolean;
@@ -147,6 +163,7 @@ export interface VeryfrontConfig {
       collectInterval?: number;
     };
   };
+
   fs?: {
     type?: "local" | "veryfront-api" | "memory" | "github";
     local?: {
@@ -198,11 +215,17 @@ export interface VeryfrontConfig {
       };
     };
   };
+
   ai?: {
     enabled?: boolean;
     providers?: Record<
       string,
-      { apiKey?: string; baseURL?: string; defaultModel?: string; organization?: string }
+      {
+        apiKey?: string;
+        baseURL?: string;
+        defaultModel?: string;
+        organization?: string;
+      }
     >;
     tools?: {
       discovery?: {
@@ -222,6 +245,7 @@ export interface VeryfrontConfig {
       expose?: string[];
     };
   };
+
   client?: {
     /** How to resolve veryfront client modules in browser */
     moduleResolution?: "cdn" | "self-hosted" | "bundled";
@@ -232,11 +256,13 @@ export interface VeryfrontConfig {
       versions?: "auto" | { react?: string; veryfront?: string };
     };
   };
+
   /** CLI generate command preferences */
   generate?: {
     /** Preferred router for generated pages */
     preferredRouter?: "app-router" | "pages-router";
   };
+
   tailwind?: {
     /** Path to the global stylesheet (default: "globals.css") */
     stylesheet?: string;
@@ -261,6 +287,7 @@ export interface VeryfrontConfig {
     /** Custom CSS content to add (for @layer, @apply directives, etc.) */
     customCSS?: string;
   };
+
   /** Semantic search configuration */
   search?: {
     /** Enable semantic search indexing (default: false) */
@@ -292,6 +319,7 @@ export interface VeryfrontConfig {
     /** Auto-index on file changes (default: false in dev, true in production) */
     autoIndex?: boolean;
   };
+
   /** OpenAPI documentation configuration */
   openapi?: {
     /** Enable OpenAPI endpoint (default: true) */

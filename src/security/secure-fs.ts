@@ -94,13 +94,23 @@ export class SecureFs {
       ...config,
     };
 
-    const contextValidationOptions = getContextValidationOptions(
+    this.validationOptions = this.buildValidationOptions(
       this.config.context,
-      this.config.baseDir,
       this.config.contextOptions,
     );
+  }
 
-    this.validationOptions = {
+  private buildValidationOptions(
+    context: SecurityContext,
+    contextOptions?: ContextOptions,
+  ): ValidationOptions {
+    const contextValidationOptions = getContextValidationOptions(
+      context,
+      this.config.baseDir,
+      contextOptions,
+    );
+
+    return {
       ...contextValidationOptions,
       ...this.config.validationOptions,
       baseDir: this.config.baseDir,
@@ -147,7 +157,10 @@ export class SecureFs {
     return result;
   }
 
-  private validatePathSync(path: string, operation: string): ValidationResult {
+  private validatePathForOperationSync(
+    path: string,
+    operation: string,
+  ): ValidationResult {
     const result = validatePathSync(path, this.validationOptions);
     this.emitValidationEvent(result, operation, path);
     this.throwIfInvalid(result, operation, path);
@@ -179,9 +192,7 @@ export class SecureFs {
     const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
 
     const reader = this.config.adapter.fs.readFileBytes;
-    if (reader) {
-      return await reader.call(this.config.adapter.fs, canonicalPath);
-    }
+    if (reader) return await reader.call(this.config.adapter.fs, canonicalPath);
 
     const content = await this.config.adapter.fs.readFile(canonicalPath);
     return new TextEncoder().encode(content);
@@ -224,7 +235,7 @@ export class SecureFs {
   }
 
   readDir(path: string): AsyncIterable<DirEntry> {
-    const validation = this.validatePathSync(path, "readDir");
+    const validation = this.validatePathForOperationSync(path, "readDir");
     const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
     return this.config.adapter.fs.readDir(canonicalPath);
   }
@@ -241,24 +252,22 @@ export class SecureFs {
     const validatedPaths: string[] = [];
 
     for (const path of pathArray) {
-      const validation = this.validatePathSync(path, "watch");
-
+      const validation = this.validatePathForOperationSync(path, "watch");
       if (validation.valid && validation.canonicalPath) {
         validatedPaths.push(validation.canonicalPath);
-        continue;
-      }
-
-      if (this.config.throwOnError) {
-        throw new SecurityError("Invalid path", validation.code, path);
       }
     }
 
     if (validatedPaths.length === 0) {
-      throw new SecurityError(
-        "No valid paths to watch",
-        "NO_VALID_PATHS",
-        paths.toString(),
-      );
+      if (this.config.throwOnError) {
+        throw new SecurityError(
+          "No valid paths to watch",
+          "NO_VALID_PATHS",
+          paths.toString(),
+        );
+      }
+
+      return this.config.adapter.fs.watch([], options);
     }
 
     const pathArg: string | string[] = validatedPaths.length === 1
@@ -278,14 +287,7 @@ export class SecureFs {
   }
 
   setContext(context: SecurityContext): void {
-    const contextOptions = getContextValidationOptions(context, this.config.baseDir);
-
-    this.validationOptions = {
-      ...contextOptions,
-      ...this.config.validationOptions,
-      adapter: this.config.adapter,
-    };
-
+    this.validationOptions = this.buildValidationOptions(context);
     this.config.context = context;
   }
 }

@@ -27,6 +27,16 @@ async function fetchWithTimeout(
   }
 }
 
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function getHashFromManifest(json: unknown): string | null {
+  if (!json || typeof json !== "object" || !("hash" in json)) return null;
+  const hash = (json as { hash?: unknown }).hash;
+  return typeof hash === "string" ? hash : null;
+}
+
 export async function checkRSCFlag(): Promise<DiagnosticResult> {
   try {
     const { isRscExperimentalEnabled } = await import("#veryfront/config/env.ts");
@@ -41,7 +51,7 @@ export async function checkRSCFlag(): Promise<DiagnosticResult> {
     return {
       name: "RSC Flag",
       status: "warn",
-      message: `env read failed: ${error instanceof Error ? error.message : String(error)}`,
+      message: `env read failed: ${formatError(error)}`,
     };
   }
 }
@@ -58,13 +68,8 @@ export async function checkRSCEndpoints(): Promise<DiagnosticResult[]> {
     if (manifest?.ok) {
       let msg = `200 (${dm}ms)`;
       try {
-        const json: unknown = await manifest.json();
-        if (
-          json && typeof json === "object" && "hash" in json &&
-          typeof (json as { hash?: unknown }).hash === "string"
-        ) {
-          msg = `200 (hash:${(json as { hash: string }).hash}, ${dm}ms)`;
-        }
+        const hash = getHashFromManifest(await manifest.json());
+        if (hash) msg = `200 (hash:${hash}, ${dm}ms)`;
       } catch (error) {
         cliLogger.debug("Failed to parse RSC manifest JSON:", error);
       }
@@ -103,7 +108,7 @@ export async function checkRSCEndpoints(): Promise<DiagnosticResult[]> {
     results.push({
       name: "RSC manifest",
       status: "warn",
-      message: `probe failed: ${error instanceof Error ? error.message : String(error)}`,
+      message: `probe failed: ${formatError(error)}`,
     });
   }
 

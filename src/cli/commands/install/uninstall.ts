@@ -36,15 +36,16 @@ function clearLines(n: number): void {
 }
 
 async function multiSelect(options: MultiSelectOption[]): Promise<AIToolId[] | null> {
-  if (!isTTY()) {
-    return options.filter((o) => o.selected).map((o) => o.value as AIToolId);
-  }
+  const initialSelected = options
+    .filter((o) => o.selected)
+    .map((o) => o.value)
+    .filter((v): v is AIToolId => isValidToolId(v));
+
+  if (!isTTY()) return initialSelected;
 
   let idx = 0;
   let lines = 0;
-  const selected = new Set<AIToolId>(
-    options.filter((o) => o.selected).map((o) => o.value as AIToolId),
-  );
+  const selected = new Set<AIToolId>(initialSelected);
 
   function draw(): void {
     if (lines > 0) clearLines(lines);
@@ -61,21 +62,17 @@ async function multiSelect(options: MultiSelectOption[]): Promise<AIToolId[] | n
     for (let i = 0; i < options.length; i++) {
       const opt = options[i]!;
       const isCurrent = i === idx;
-      const isSelected = selected.has(opt.value as AIToolId);
+      const isSelected = isValidToolId(opt.value) && selected.has(opt.value);
       const pointer = isCurrent ? brand("❯") : " ";
       const checkbox = isSelected ? success("[✓]") : dim("[ ]");
       const label = isCurrent ? brand(opt.label) : opt.label;
 
-      console.log(
-        `  ${pointer} ${checkbox} ${label.padEnd(24)} ${muted(opt.description)}`,
-      );
+      console.log(`  ${pointer} ${checkbox} ${label.padEnd(24)} ${muted(opt.description)}`);
       lines++;
     }
 
     console.log();
-    console.log(
-      "  " + muted("↑↓ navigate · space toggle · enter confirm · a all · n none"),
-    );
+    console.log("  " + muted("↑↓ navigate · space toggle · enter confirm · a all · n none"));
     lines += 2;
   }
 
@@ -106,9 +103,10 @@ async function multiSelect(options: MultiSelectOption[]): Promise<AIToolId[] | n
 
       if (key === " ") {
         const opt = options[idx]!;
-        const value = opt.value as AIToolId;
-        if (selected.has(value)) selected.delete(value);
-        else selected.add(value);
+        if (isValidToolId(opt.value)) {
+          if (selected.has(opt.value)) selected.delete(opt.value);
+          else selected.add(opt.value);
+        }
         draw();
         continue;
       }
@@ -126,7 +124,9 @@ async function multiSelect(options: MultiSelectOption[]): Promise<AIToolId[] | n
       }
 
       if (key === "a" || key === "A") {
-        for (const o of options) selected.add(o.value as AIToolId);
+        for (const o of options) {
+          if (isValidToolId(o.value)) selected.add(o.value);
+        }
         draw();
         continue;
       }
@@ -248,14 +248,15 @@ export async function uninstallCommand(options: UninstallOptions = {}): Promise<
     return;
   }
 
-  const selectOptions: MultiSelectOption[] = AI_TOOLS
-    .filter((tool) => installed.includes(tool.id))
-    .map((tool) => ({
-      label: tool.label,
-      value: tool.id,
-      description: tool.file,
-      selected: true,
-    }));
+  const selectOptions: MultiSelectOption[] = AI_TOOLS.filter((tool) => installed.includes(tool.id))
+    .map(
+      (tool) => ({
+        label: tool.label,
+        value: tool.id,
+        description: tool.file,
+        selected: true,
+      }),
+    );
 
   const selected = await multiSelect(selectOptions);
   if (!selected?.length) {

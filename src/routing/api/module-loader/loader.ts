@@ -48,20 +48,16 @@ function loadModule(args: {
 }): Promise<APIRoute> {
   const { modulePath, projectDir, adapter, fs, config } = args;
 
-  if (modulePath.endsWith(".js")) {
-    return loadJSModule(modulePath);
-  }
+  if (modulePath.endsWith(".js")) return loadJSModule(modulePath);
 
-  if (isDeno) {
-    return fs.exists(modulePath).then((fileExistsLocally) => {
-      if (fileExistsLocally) return loadTSModuleDirect(modulePath);
+  if (!isDeno) return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
 
-      logger.debug(`[API] File not local, using adapter-based loading: ${modulePath}`);
-      return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
-    });
-  }
+  return fs.exists(modulePath).then((fileExistsLocally) => {
+    if (fileExistsLocally) return loadTSModuleDirect(modulePath);
 
-  return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+    logger.debug(`[API] File not local, using adapter-based loading: ${modulePath}`);
+    return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+  });
 }
 
 /**
@@ -91,9 +87,7 @@ function createImportMapPlugin(
   const importMap = config?.resolve?.importMap?.imports ?? {};
   const importMapEntries = Object.keys(importMap);
 
-  if (importMapEntries.length === 0) {
-    return { name: "import-map", setup() {} };
-  }
+  if (importMapEntries.length === 0) return { name: "import-map", setup() {} };
 
   logger.info(`[API] Using import map with ${importMapEntries.length} entries`);
 
@@ -199,14 +193,7 @@ function loadAndTranspileModule(
       const { filePath: resolvedPath, contents: source } = await readFileWithExtensions(
         adapter,
         modulePath,
-        [
-          "",
-          ".ts",
-          ".tsx",
-          ".js",
-          ".jsx",
-          ".mjs",
-        ],
+        ["", ".ts", ".tsx", ".js", ".jsx", ".mjs"],
       );
 
       if (!source) {
@@ -402,7 +389,7 @@ async function rewriteExternalImports(
       try {
         const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
         exportsMap = pkgJson.exports || {};
-      } catch (_error) {
+      } catch {
         logger.debug(`[API] Could not read veryfront package.json: `);
       }
 
@@ -508,9 +495,7 @@ function extractAPIRouteHandlers(module: unknown): APIRoute {
 
   for (const method of methods) {
     const fn = mod[method];
-    if (typeof fn === "function") {
-      handler[method] = fn as APIRoute[typeof method];
-    }
+    if (typeof fn === "function") handler[method] = fn as APIRoute[typeof method];
   }
 
   return handler;

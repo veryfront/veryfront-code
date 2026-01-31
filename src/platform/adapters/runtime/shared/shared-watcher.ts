@@ -28,8 +28,10 @@ export async function setupNodeFsWatcher(
 
     if (!exists) return;
 
+    const isClosed = (): boolean => options.closed() || options.signal?.aborted === true;
+
     const watcher = fs.watch(path, { recursive: options.recursive }, (eventType, filename) => {
-      if (options.closed() || options.signal?.aborted) return;
+      if (isClosed()) return;
 
       const kind: FileChangeKind = eventType === "change" ? "modify" : "any";
       const fullPath = filename ? join(path, filename) : path;
@@ -43,7 +45,7 @@ export async function setupNodeFsWatcher(
     });
 
     watcher.on("error", (error: Error) => {
-      if (options.closed() || options.signal?.aborted) return;
+      if (isClosed()) return;
       options.onError(error, path);
     });
 

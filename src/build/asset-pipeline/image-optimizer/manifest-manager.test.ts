@@ -32,10 +32,13 @@ describe("manifest-manager", () => {
     await writeManifest(manifest, tmpDir);
 
     const manifestPath = join(tmpDir, "image-manifest.json");
-    const parsed = JSON.parse(await readTextFile(manifestPath));
+    const parsed = JSON.parse(await readTextFile(manifestPath)) as Record<
+      string,
+      OptimizedImageMetadata
+    >;
 
     assertEquals(parsed.logo, undefined);
-    assertEquals(parsed["logo.png"].defaultFormat, "webp");
+    assertEquals(parsed["logo.png"]?.defaultFormat, "webp");
 
     const loaded = await loadManifest(tmpDir);
     assertEquals(loaded.size, 1);

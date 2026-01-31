@@ -5,20 +5,13 @@
  *        Component Loading Edge Cases, Integration Tests
  */
 
-import {
-  assert,
-  assertEquals,
-  assertExists,
-  assertRejects,
-  assertStringIncludes,
-} from "@veryfront/testing/assert";
+import { assert, assertEquals, assertExists, assertRejects, assertStringIncludes } from "@veryfront/testing/assert";
 import { join } from "@veryfront/compat/path";
 import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
 import { describe, it } from "@veryfront/testing/bdd";
 
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-import type { VeryfrontRenderer as _VeryfrontRenderer } from "../../../src/rendering/orchestrator/ssr.ts";
 
 // Skip tests on non-Deno runtimes (SSR uses URL-based imports)
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
@@ -58,7 +51,6 @@ describe(
             mode: "development",
           });
 
-          // Should handle any manifest errors gracefully
           const bundle = await renderer.compileMDX("# Test", {});
           assertExists(bundle);
         });
@@ -251,7 +243,6 @@ title: Page B
             mode: "development",
           });
 
-          // Render concurrently
           const [resultA, resultB] = await Promise.all([
             renderer.renderPage("page-a"),
             renderer.renderPage("page-b"),
@@ -301,10 +292,7 @@ title: Page B
         await withTestContext("renderer-core-rapid-renders", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "test.mdx"),
-            `# Test`,
-          );
+          await writeTextFile(join(context.projectDir, "pages", "test.mdx"), `# Test`);
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -313,12 +301,10 @@ title: Page B
 
           // Render same page concurrently - Singleflight deduplication ensures
           // only one write happens, preventing race conditions on cache files
-          const promises = [];
-          for (let i = 0; i < 5; i++) {
-            promises.push(renderer.renderPage("test"));
-          }
+          const results = await Promise.all(
+            Array.from({ length: 5 }, () => renderer.renderPage("test")),
+          );
 
-          const results = await Promise.all(promises);
           assertEquals(results.length, 5);
           results.forEach((result) => assertExists(result));
         });
@@ -330,10 +316,7 @@ title: Page B
         await withTestContext("renderer-core-special-slug", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "my-page.mdx"),
-            `# My Page`,
-          );
+          await writeTextFile(join(context.projectDir, "pages", "my-page.mdx"), `# My Page`);
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -349,10 +332,7 @@ title: Page B
         await withTestContext("renderer-core-index-route", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "index.mdx"),
-            `# Home Page`,
-          );
+          await writeTextFile(join(context.projectDir, "pages", "index.mdx"), `# Home Page`);
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -388,17 +368,13 @@ title: Page B
         await withTestContext("renderer-core-trailing-slash", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "about.mdx"),
-            `# About`,
-          );
+          await writeTextFile(join(context.projectDir, "pages", "about.mdx"), `# About`);
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
             mode: "development",
           });
 
-          // Should handle with or without trailing slash
           const result = await renderer.renderPage("about");
           assertExists(result);
         });
@@ -461,11 +437,7 @@ export default function Page() {
             mode: "development",
           });
 
-          // Import errors should propagate during module evaluation/loading
-          await assertRejects(
-            async () => await renderer.renderPage("broken-import"),
-            Error,
-          );
+          await assertRejects(async () => await renderer.renderPage("broken-import"), Error);
         });
       });
 
@@ -485,13 +457,10 @@ export default function Page() {
             mode: "development",
           });
 
-          // May or may not reject depending on how the system handles missing default exports
           try {
             const result = await renderer.renderPage("no-default");
-            // If it succeeds, it should still return a valid result
             assertExists(result);
           } catch (error) {
-            // If it fails, it should be an error
             assert(error instanceof Error);
           }
         });
@@ -531,7 +500,6 @@ export default function Page() {
             mode: "development",
           });
 
-          // May succeed or fail depending on module system - test it handles gracefully
           try {
             await renderer.renderPage("circular");
           } catch (error) {
@@ -546,7 +514,6 @@ export default function Page() {
         await withTestContext("renderer-core-app-complex", async (context) => {
           await mkdir(join(context.projectDir, "app", "dashboard"), { recursive: true });
 
-          // Root layout
           await writeTextFile(
             join(context.projectDir, "app", "layout.tsx"),
             `export default function RootLayout({ children }) {
@@ -554,7 +521,6 @@ export default function Page() {
             }`,
           );
 
-          // Loading component
           await writeTextFile(
             join(context.projectDir, "app", "loading.tsx"),
             `export default function Loading() {
@@ -562,7 +528,6 @@ export default function Page() {
             }`,
           );
 
-          // Error component
           await writeTextFile(
             join(context.projectDir, "app", "error.tsx"),
             `export default function Error() {
@@ -570,7 +535,6 @@ export default function Page() {
             }`,
           );
 
-          // Dashboard layout
           await writeTextFile(
             join(context.projectDir, "app", "dashboard", "layout.tsx"),
             `export default function DashboardLayout({ children }) {
@@ -578,7 +542,6 @@ export default function Page() {
             }`,
           );
 
-          // Dashboard page
           await writeTextFile(
             join(context.projectDir, "app", "dashboard", "page.mdx"),
             `# Dashboard

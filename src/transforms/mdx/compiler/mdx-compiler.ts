@@ -32,18 +32,17 @@ export function compileMDXRuntime(
           frontmatter,
         );
 
-        const bodyBeforeLength = extractedBody.length;
-
-        const shouldRewriteImports = !!filePath && (target === "browser" || target === "server");
+        const shouldRewriteImports = Boolean(filePath) &&
+          (target === "browser" || target === "server");
         const body = shouldRewriteImports
-          ? rewriteBodyImports(extractedBody, { filePath, target, baseUrl, projectDir })
+          ? rewriteBodyImports(extractedBody, { filePath: filePath!, target, baseUrl, projectDir })
           : extractedBody;
 
         logger.debug("[MDX Compiler] Body metrics:", {
           filePath,
           target,
           contentLength: content.length,
-          bodyBeforeLength,
+          bodyBeforeLength: extractedBody.length,
           bodyAfterLength: body.length,
           hasImport: body.includes("import"),
           importMatch: body.match(/^import\s+/m)?.[0] ?? "none",
@@ -67,9 +66,15 @@ export function compileMDXRuntime(
         logger.debug("Extracted frontmatter:", extractedFrontmatter);
         logger.debug("Extracted headings count:", headings.length);
 
+        const compiledString = String(compiled);
         const compiledCode = shouldRewriteImports
-          ? rewriteCompiledImports(String(compiled), { filePath, target, baseUrl, projectDir })
-          : String(compiled);
+          ? rewriteCompiledImports(compiledString, {
+            filePath: filePath!,
+            target,
+            baseUrl,
+            projectDir,
+          })
+          : compiledString;
 
         return {
           compiledCode,

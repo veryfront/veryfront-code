@@ -52,15 +52,11 @@ export class AuthHandler extends BaseHandler {
 
     if (req.method.toUpperCase() === "OPTIONS") return Promise.resolve(this.continue());
 
-    if (this.shouldUseBasic()) {
-      const result = this.checkBasicAuth(req);
-      if (result) return Promise.resolve(result);
-    }
+    const basicResult = this.shouldUseBasic() ? this.checkBasicAuth(req) : null;
+    if (basicResult) return Promise.resolve(basicResult);
 
-    if (this.shouldUseBearer()) {
-      const result = this.checkBearerAuth(req);
-      if (result) return Promise.resolve(result);
-    }
+    const bearerResult = this.shouldUseBearer() ? this.checkBearerAuth(req) : null;
+    if (bearerResult) return Promise.resolve(bearerResult);
 
     return Promise.resolve(this.continue());
   }
@@ -86,12 +82,11 @@ export class AuthHandler extends BaseHandler {
       return;
     }
 
-    const isTestEnv = (globalThis as Record<string, unknown>).__vfTestEnv === true;
-    if (isTestEnv) return;
+    if ((globalThis as Record<string, unknown>).__vfTestEnv === true) return;
 
-    this.basicUser = ctx.adapter.env.get("VERYFRONT_BASIC_USER") || "";
-    this.basicPass = ctx.adapter.env.get("VERYFRONT_BASIC_PASS") || "";
-    this.bearerToken = ctx.adapter.env.get("VERYFRONT_BEARER_TOKEN") || "";
+    this.basicUser = ctx.adapter.env.get("VERYFRONT_BASIC_USER") ?? "";
+    this.basicPass = ctx.adapter.env.get("VERYFRONT_BASIC_PASS") ?? "";
+    this.bearerToken = ctx.adapter.env.get("VERYFRONT_BEARER_TOKEN") ?? "";
   }
 
   private shouldUseBasic(): boolean {
@@ -104,7 +99,7 @@ export class AuthHandler extends BaseHandler {
 
   private checkBasicAuth(req: Request): HandlerResult | null {
     const expected = `Basic ${encodeBase64(`${this.basicUser}:${this.basicPass}`)}`;
-    const auth = req.headers.get("authorization") || "";
+    const auth = req.headers.get("authorization") ?? "";
 
     if (constantTimeEqual(auth, expected)) return null;
 
@@ -117,12 +112,9 @@ export class AuthHandler extends BaseHandler {
   }
 
   private checkBearerAuth(req: Request): HandlerResult | null {
-    const auth = req.headers.get("authorization") || "";
+    const auth = req.headers.get("authorization") ?? "";
 
-    if (
-      auth.startsWith("Bearer ") &&
-      constantTimeEqual(auth.slice(7), this.bearerToken ?? "")
-    ) {
+    if (auth.startsWith("Bearer ") && constantTimeEqual(auth.slice(7), this.bearerToken ?? "")) {
       return null;
     }
 

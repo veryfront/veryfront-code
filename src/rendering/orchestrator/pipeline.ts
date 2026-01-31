@@ -66,9 +66,7 @@ let injectedCssCacheRepo: CacheRepository<string> | null = null;
  * Inject a CacheRepository for CSS cache testing.
  * Call with null to restore default Map-based caching.
  */
-export function __injectCssCacheForTests(
-  cacheRepo: CacheRepository<string> | null,
-): void {
+export function __injectCssCacheForTests(cacheRepo: CacheRepository<string> | null): void {
   injectedCssCacheRepo = cacheRepo;
 }
 
@@ -84,13 +82,13 @@ function getPageCssCacheKey(
   }`;
 }
 
-/** Get cached CSS for a page (if available) - async to support injected repo */
-async function _getCachedPageCssAsync(cacheKey: string): Promise<string | undefined> {
-  if (injectedCssCacheRepo) {
-    const cached = await injectedCssCacheRepo.get(cacheKey);
-    return cached ?? undefined;
+/** Cache CSS for a page - internal implementation */
+function cachePageCssInternal(cacheKey: string, css: string): void {
+  if (pageCssCache.size >= PAGE_CSS_CACHE_MAX_SIZE && !pageCssCache.has(cacheKey)) {
+    const firstKey = pageCssCache.keys().next().value as string | undefined;
+    if (firstKey) pageCssCache.delete(firstKey);
   }
-  return pageCssCache.get(cacheKey);
+  pageCssCache.set(cacheKey, css);
 }
 
 /** Get cached CSS for a page (if available) - sync for backward compatibility */
@@ -107,15 +105,6 @@ async function cachePageCssAsync(cacheKey: string, css: string): Promise<void> {
     return;
   }
   cachePageCssInternal(cacheKey, css);
-}
-
-/** Cache CSS for a page - internal implementation */
-function cachePageCssInternal(cacheKey: string, css: string): void {
-  if (pageCssCache.size >= PAGE_CSS_CACHE_MAX_SIZE && !pageCssCache.has(cacheKey)) {
-    const firstKey = pageCssCache.keys().next().value as string | undefined;
-    if (firstKey) pageCssCache.delete(firstKey);
-  }
-  pageCssCache.set(cacheKey, css);
 }
 
 /** Cache CSS for a page - sync for backward compatibility */
@@ -177,12 +166,6 @@ export interface RenderPipelineConfig {
   projectDir: string;
 }
 
-/**
- * Orchestrates the complete page rendering process through 10 stages:
- * 1. Page Resolution - 2. Layout/Provider Collection - 3. Speculative Cache Check
- * 4. Route Params - 5. Two-Phase Data Fetching - 6. Await Cache Check
- * 7. Bundle Preparation - 8. Layout Application - 9. SSR Rendering - 10. Result Assembly
- */
 export class RenderPipeline {
   private config: RenderPipelineConfig;
   private dataFetcher: DataFetcher;
@@ -214,9 +197,6 @@ export class RenderPipeline {
     return loadModule(filePath, this.moduleLoaderConfig);
   }
 
-  /**
-   * Collect modules that need data fetching from page and layouts.
-   */
   private collectModulesToLoad(
     pagePath: string,
     isComponentPage: boolean,
@@ -266,32 +246,29 @@ export class RenderPipeline {
         continue;
       }
 
-      if (result.error) {
-        const errorMessage = result.error.message;
+      if (!result.error) continue;
 
-        // Page modules are critical - collect failures to throw after processing all
-        if (result.type === "page") {
-          criticalFailures.push({ path: result.path, error: errorMessage });
-          logger.error("[renderPage] Critical page module failed to load", {
-            path: result.path,
-            error: errorMessage,
-          });
-        } else {
-          // Layout modules are non-critical - warn and continue
-          logger.warn("[renderPage] Layout module failed to load (non-critical)", {
-            path: result.path,
-            error: errorMessage,
-          });
-        }
+      const errorMessage = result.error.message;
+
+      if (result.type === "page") {
+        criticalFailures.push({ path: result.path, error: errorMessage });
+        logger.error("[renderPage] Critical page module failed to load", {
+          path: result.path,
+          error: errorMessage,
+        });
+        continue;
       }
+
+      logger.warn("[renderPage] Layout module failed to load (non-critical)", {
+        path: result.path,
+        error: errorMessage,
+      });
     }
 
-    // Fail fast if any critical page modules failed to load
     if (criticalFailures.length > 0) {
       const failedPaths = criticalFailures.map((f) => f.path).join(", ");
       throw new VeryfrontError(
-        `Critical page module(s) failed to load: ${failedPaths}. ` +
-          `This would result in missing props and a broken page.`,
+        `Critical page module(s) failed to load: ${failedPaths}. This would result in missing props and a broken page.`,
         ErrorCode.RENDER_ERROR,
         {
           criticalFailures,
@@ -304,9 +281,6 @@ export class RenderPipeline {
     return loaded;
   }
 
-  /**
-   * Check if module has data fetching function (getServerData or getStaticData).
-   */
   private hasDataFetchingFunction(mod: unknown): boolean {
     if (!mod || typeof mod !== "object") return false;
     const m = mod as Record<string, unknown>;
@@ -342,7 +316,7 @@ export class RenderPipeline {
       clearSSRModuleCacheForProject(projectId);
     }
 
-    return await withSpan(
+    return withSpan(
       "render.page",
       async () => {
         const pageResolveStart = performance.now();
@@ -354,6 +328,7 @@ export class RenderPipeline {
         timing.pageResolve = Math.round(performance.now() - pageResolveStart);
 
         const skipLayouts = isDotPath(slug, pageInfo.entity.path);
+
         const layoutCollectStart = performance.now();
         const layoutResult = skipLayouts ? EMPTY_LAYOUT_RESULT : await withSpan(
           "render.collect_layouts",
@@ -452,7 +427,10 @@ export class RenderPipeline {
                     throw new VeryfrontError(
                       "Page/Layout returned notFound",
                       ErrorCode.FILE_NOT_FOUND,
-                      { slug, component: id },
+                      {
+                        slug,
+                        component: id,
+                      },
                     );
                   }
 
@@ -523,6 +501,7 @@ export class RenderPipeline {
         const headings = (pageBundle as PageBundle).headings || [];
 
         await layoutPreloadPromise;
+
         const layoutApplyStart = performance.now();
         const wrappedElement = await withSpan(
           "render.apply_layouts",

@@ -9,6 +9,7 @@ describe("modules/import-map/merger", () => {
         { imports: { react: "https://esm.sh/react@18" } },
         { imports: { lodash: "https://esm.sh/lodash" } },
       );
+
       assertEquals(result.imports?.react, "https://esm.sh/react@18");
       assertEquals(result.imports?.lodash, "https://esm.sh/lodash");
     });
@@ -18,6 +19,7 @@ describe("modules/import-map/merger", () => {
         { imports: { react: "https://esm.sh/react@17" } },
         { imports: { react: "https://esm.sh/react@18" } },
       );
+
       assertEquals(result.imports?.react, "https://esm.sh/react@18");
     });
 
@@ -26,6 +28,7 @@ describe("modules/import-map/merger", () => {
         { imports: {}, scopes: { "/app/": { lodash: "v1" } } },
         { imports: {}, scopes: { "/app/": { react: "v2" } } },
       );
+
       assertEquals(result.scopes?.["/app/"]?.lodash, "v1");
       assertEquals(result.scopes?.["/app/"]?.react, "v2");
     });
@@ -40,6 +43,7 @@ describe("modules/import-map/merger", () => {
         { imports: { a: "b" } },
         { imports: { c: "d" } },
       );
+
       assertEquals(Object.keys(result.scopes ?? {}).length, 0);
     });
 

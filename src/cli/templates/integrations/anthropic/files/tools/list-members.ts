@@ -12,26 +12,15 @@ export const listMembers = tool({
       const client = getAnthropicAdminClient();
       const { members } = await client.listMembers();
 
-      const membersByRole = members.reduce<Record<string, number>>(
-        (acc, member) => {
-          acc[member.role] = (acc[member.role] ?? 0) + 1;
-          return acc;
-        },
-        {}
-      );
-
-      const membersByStatus = members.reduce<Record<string, number>>(
-        (acc, member) => {
-          acc[member.status] = (acc[member.status] ?? 0) + 1;
-          return acc;
-        },
-        {}
-      );
-
+      const membersByRole: Record<string, number> = {};
+      const membersByStatus: Record<string, number> = {};
       let active = 0;
       let pending = 0;
 
       for (const member of members) {
+        membersByRole[member.role] = (membersByRole[member.role] ?? 0) + 1;
+        membersByStatus[member.status] = (membersByStatus[member.status] ?? 0) + 1;
+
         if (member.status === 'active') active += 1;
         if (member.status === 'pending') pending += 1;
       }

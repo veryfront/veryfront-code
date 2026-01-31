@@ -18,45 +18,58 @@ describe("build/bundler/code-splitter/build-context", () => {
       "veryfront/primitives",
     ];
 
+    function assertIncludesAll(
+      result: string[],
+      expected: string[],
+      messagePrefix: string,
+    ): void {
+      for (const item of expected) {
+        assertEquals(result.includes(item), true, `${messagePrefix}: ${item}`);
+      }
+    }
+
+    function assertExcludesAll(
+      result: string[],
+      expected: string[],
+      messagePrefix: string,
+    ): void {
+      for (const item of expected) {
+        assertEquals(result.includes(item), false, `${messagePrefix}: ${item}`);
+      }
+    }
+
     it("should include React externals by default", () => {
       const result = getExternalDependencies();
-      for (const ext of REACT_EXTERNALS) {
-        assertEquals(result.includes(ext), true, `Missing React external: ${ext}`);
-      }
+      assertIncludesAll(result, REACT_EXTERNALS, "Missing React external");
     });
 
     it("should include Veryfront client modules for cdn mode (default)", () => {
       const result = getExternalDependencies([], "cdn");
-      for (const mod of VERYFRONT_CLIENT_MODULES) {
-        assertEquals(result.includes(mod), true, `Missing Veryfront module: ${mod}`);
-      }
+      assertIncludesAll(result, VERYFRONT_CLIENT_MODULES, "Missing Veryfront module");
     });
 
     it("should include Veryfront client modules for self-hosted mode", () => {
       const result = getExternalDependencies([], "self-hosted");
-      for (const mod of VERYFRONT_CLIENT_MODULES) {
-        assertEquals(result.includes(mod), true, `Missing Veryfront module: ${mod}`);
-      }
+      assertIncludesAll(result, VERYFRONT_CLIENT_MODULES, "Missing Veryfront module");
     });
 
     it("should exclude Veryfront client modules for bundled mode", () => {
       const result = getExternalDependencies([], "bundled");
-      for (const mod of VERYFRONT_CLIENT_MODULES) {
-        assertEquals(result.includes(mod), false, `Should not include: ${mod}`);
-      }
+      assertExcludesAll(result, VERYFRONT_CLIENT_MODULES, "Should not include");
     });
 
     it("should append custom external dependencies", () => {
       const result = getExternalDependencies(["lodash", "axios"]);
-      assertEquals(result.includes("lodash"), true);
-      assertEquals(result.includes("axios"), true);
+      assertIncludesAll(result, ["lodash", "axios"], "Missing custom external");
     });
 
     it("should combine React, Veryfront, and custom externals for cdn mode", () => {
       const result = getExternalDependencies(["custom-lib"], "cdn");
-      assertEquals(result.includes("react"), true);
-      assertEquals(result.includes("veryfront/primitives"), true);
-      assertEquals(result.includes("custom-lib"), true);
+      assertIncludesAll(
+        result,
+        ["react", "veryfront/primitives", "custom-lib"],
+        "Missing external",
+      );
     });
   });
 });

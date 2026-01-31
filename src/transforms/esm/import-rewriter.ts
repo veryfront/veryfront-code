@@ -1,8 +1,8 @@
 import { parseImports, replaceSpecifiers, rewriteImports } from "./lexer.ts";
+import { getReactImportMap } from "./package-registry.ts";
 import { REACT_DEFAULT_VERSION, TAILWIND_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { getReactImportMap } from "./package-registry.ts";
 
 export function addHMRTimestamps(code: string, timestamp: string | number): Promise<string> {
   return withSpan(
@@ -15,8 +15,8 @@ export function addHMRTimestamps(code: string, timestamp: string | number): Prom
           specifier.startsWith("@/");
 
         if (!isLocalImport) return null;
-        if (specifier.includes("?t=") || specifier.includes("&t=")) return null;
         if (specifier.startsWith("http://") || specifier.startsWith("https://")) return null;
+        if (specifier.includes("?t=") || specifier.includes("&t=")) return null;
 
         const separator = specifier.includes("?") ? "&" : "?";
         return `${specifier}${separator}t=${timestamp}`;
@@ -38,12 +38,10 @@ function hasVersionSpecifier(specifier: string): boolean {
 }
 
 function warnUnversionedImport(specifier: string, projectId?: string): void {
-  // Scope warnings by project to prevent cross-tenant warning suppression
   const key = projectId ? `${projectId}:${specifier}` : specifier;
   if (unversionedImportsWarned.has(key)) return;
-  if (unversionedImportsWarned.size >= MAX_WARNED_ENTRIES) {
-    unversionedImportsWarned.clear();
-  }
+
+  if (unversionedImportsWarned.size >= MAX_WARNED_ENTRIES) unversionedImportsWarned.clear();
   unversionedImportsWarned.add(key);
 
   const isScoped = specifier.startsWith("@");
@@ -81,7 +79,6 @@ export function rewriteBareImports(
   reactVersion?: string,
   projectId?: string,
 ): Promise<string> {
-  // Get React import map for the specified version (uses centralized URL builder)
   const reactImportMap = getReactImportMap(reactVersion ?? REACT_DEFAULT_VERSION);
 
   return withSpan(
@@ -106,7 +103,7 @@ export function rewriteBareImports(
       }),
     {
       "transforms.code_length": code.length,
-      ...(projectId && { "transforms.project_id": projectId }),
+      ...(projectId ? { "transforms.project_id": projectId } : {}),
     },
   );
 }

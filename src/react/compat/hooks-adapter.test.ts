@@ -15,10 +15,11 @@ import { getReactVersionInfo, hasFeature } from "./version-detector/index.ts";
 // React 19 SSR doesn't allow optimistic state updates - these tests only work in client context.
 // Use a runtime check to avoid SSR stub leakage across test files.
 function isSSREnvironment(): boolean {
-  const globalAny = globalThis as unknown as {
+  const globalAny = globalThis as {
     window?: Window & { __veryfrontSSRStub?: boolean };
     document?: Document & { __veryfrontSSRStub?: boolean };
   };
+
   return typeof window === "undefined" ||
     globalAny.window?.__veryfrontSSRStub === true ||
     globalAny.document?.__veryfrontSSRStub === true;
@@ -147,10 +148,11 @@ describe("hooks-adapter", () => {
       if (info.major >= 18) {
         assertEquals(info.features.renderToPipeableStream, true);
         assertEquals(info.features.renderToReadableStream, true);
-      } else {
-        assertEquals(info.features.renderToPipeableStream, false);
-        assertEquals(info.features.renderToReadableStream, false);
+        return;
       }
+
+      assertEquals(info.features.renderToPipeableStream, false);
+      assertEquals(info.features.renderToReadableStream, false);
     });
 
     it("caching works correctly", () => {

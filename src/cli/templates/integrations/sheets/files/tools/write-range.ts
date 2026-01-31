@@ -29,14 +29,6 @@ export default tool({
   }),
   async execute({ spreadsheetId, range, values, valueInputOption }) {
     const client = createSheetsClient(DEFAULT_USER_ID);
-    const { updatedRange, updatedRows, updatedColumns, updatedCells } =
-      await client.writeRange({
-        spreadsheetId,
-        range,
-        values,
-        valueInputOption,
-      });
-
-    return { updatedRange, updatedRows, updatedColumns, updatedCells };
+    return client.writeRange({ spreadsheetId, range, values, valueInputOption });
   },
 });

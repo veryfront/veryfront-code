@@ -1,4 +1,4 @@
-import * as React from "react";
+import type * as React from "react";
 import { getReactVersionInfo } from "../version-detector/index.ts";
 import { wrapInHTML } from "./html-wrapper.ts";
 import { renderToStreamAdapter } from "./stream-renderer.ts";
@@ -24,21 +24,21 @@ export async function createSSRResponse(
     return new Response(result.stream, { status: 200, headers });
   }
 
-  if (result.html) {
-    const fullHtml = wrapInHTML(result.html, {
-      title: options.title ?? "Veryfront App",
-      meta: options.meta ?? {},
-      links: options.links ?? [],
-      scripts: options.scripts ?? [],
-      bootstrapScripts: options.bootstrapScripts ?? [],
-      nonce: options.nonce,
+  if (!result.html) {
+    return new Response("Failed to render", {
+      status: 500,
+      headers: { "Content-Type": "text/plain" },
     });
-
-    return new Response(fullHtml, { status: 200, headers });
   }
 
-  return new Response("Failed to render", {
-    status: 500,
-    headers: { "Content-Type": "text/plain" },
+  const fullHtml = wrapInHTML(result.html, {
+    title: options.title ?? "Veryfront App",
+    meta: options.meta ?? {},
+    links: options.links ?? [],
+    scripts: options.scripts ?? [],
+    bootstrapScripts: options.bootstrapScripts ?? [],
+    nonce: options.nonce,
   });
+
+  return new Response(fullHtml, { status: 200, headers });
 }

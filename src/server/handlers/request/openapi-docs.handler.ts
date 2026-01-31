@@ -46,9 +46,7 @@ export class OpenAPIDocsHandler extends BaseHandler {
   private generateDocsPage(ctx: HandlerContext): string {
     const specUrl = ctx.config?.openapi?.paths?.json ?? DEFAULT_JSON_PATH;
     const title = escapeHtml(ctx.config?.openapi?.title ?? "API Documentation");
-    const description = ctx.config?.openapi?.description
-      ? escapeHtml(ctx.config.openapi.description)
-      : "";
+    const description = escapeHtml(ctx.config?.openapi?.description ?? "");
 
     const configuration = JSON.stringify({
       theme: "purple",

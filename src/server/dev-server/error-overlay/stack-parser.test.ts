@@ -146,13 +146,13 @@ describe("stack-parser", () => {
 
     it("should return false for error without stack", () => {
       const error = new Error("Test");
-      delete (error as { stack?: string }).stack;
+      delete error.stack;
       expect(hasStackTrace(error)).toBe(false);
     });
 
     it("should return false for error with empty stack", () => {
       const error = new Error("Test");
-      (error as { stack?: string }).stack = "";
+      error.stack = "";
       expect(hasStackTrace(error)).toBe(false);
     });
 
@@ -169,7 +169,7 @@ describe("stack-parser", () => {
 
     it("should return false for manually set falsy stack", () => {
       const error = new Error("Test");
-      (error as { stack?: string }).stack = undefined;
+      error.stack = undefined;
       expect(hasStackTrace(error)).toBe(false);
     });
 

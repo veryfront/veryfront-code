@@ -1,7 +1,3 @@
-/**
- * Tests for CSS Cache Manager
- */
-
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
@@ -20,19 +16,31 @@ async function cleanupTestDir(): Promise<void> {
   }
 }
 
+function createBundle(
+  file: string,
+  size: number,
+  minifiedSize: number,
+  content: string,
+  sourceMap?: string,
+): CSSBundle {
+  return {
+    file,
+    content,
+    sourceMap,
+    size,
+    minifiedSize,
+    savings: 50,
+  };
+}
+
 describe("CacheManager", () => {
   it("addBundle and getBundle", () => {
     const cache = new CacheManager();
 
-    const bundle: CSSBundle = {
-      file: "test.css",
-      content: ".test { color: red; }",
-      size: 100,
-      minifiedSize: 50,
-      savings: 50,
-    };
-
-    cache.addBundle("test.css", bundle);
+    cache.addBundle(
+      "test.css",
+      createBundle("test.css", 100, 50, ".test { color: red; }"),
+    );
 
     const retrieved = cache.getBundle("test.css");
     assertExists(retrieved);
@@ -43,21 +51,8 @@ describe("CacheManager", () => {
   it("getAllBundles", () => {
     const cache = new CacheManager();
 
-    cache.addBundle("a.css", {
-      file: "a.css",
-      content: ".a {}",
-      size: 10,
-      minifiedSize: 5,
-      savings: 50,
-    });
-
-    cache.addBundle("b.css", {
-      file: "b.css",
-      content: ".b {}",
-      size: 20,
-      minifiedSize: 10,
-      savings: 50,
-    });
+    cache.addBundle("a.css", createBundle("a.css", 10, 5, ".a {}"));
+    cache.addBundle("b.css", createBundle("b.css", 20, 10, ".b {}"));
 
     const bundles = cache.getAllBundles();
     assertEquals(bundles.size, 2);
@@ -66,13 +61,7 @@ describe("CacheManager", () => {
   it("clear", () => {
     const cache = new CacheManager();
 
-    cache.addBundle("test.css", {
-      file: "test.css",
-      content: ".test {}",
-      size: 10,
-      minifiedSize: 5,
-      savings: 50,
-    });
+    cache.addBundle("test.css", createBundle("test.css", 10, 5, ".test {}"));
 
     assertEquals(cache.size(), 1);
 
@@ -83,13 +72,7 @@ describe("CacheManager", () => {
   it("getStats", () => {
     const cache = new CacheManager();
 
-    cache.addBundle("test.css", {
-      file: "test.css",
-      content: ".test {}",
-      size: 1000,
-      minifiedSize: 500,
-      savings: 50,
-    });
+    cache.addBundle("test.css", createBundle("test.css", 1000, 500, ".test {}"));
 
     const stats = cache.getStats();
 
@@ -103,21 +86,8 @@ describe("CacheManager", () => {
   it("getStats with multiple bundles", () => {
     const cache = new CacheManager();
 
-    cache.addBundle("a.css", {
-      file: "a.css",
-      content: ".a {}",
-      size: 1000,
-      minifiedSize: 500,
-      savings: 50,
-    });
-
-    cache.addBundle("b.css", {
-      file: "b.css",
-      content: ".b {}",
-      size: 2000,
-      minifiedSize: 1000,
-      savings: 50,
-    });
+    cache.addBundle("a.css", createBundle("a.css", 1000, 500, ".a {}"));
+    cache.addBundle("b.css", createBundle("b.css", 2000, 1000, ".b {}"));
 
     const stats = cache.getStats();
 
@@ -133,14 +103,16 @@ describe("CacheManager", () => {
 
     const cache = new CacheManager();
 
-    cache.addBundle("test.css", {
-      file: "test.css",
-      content: ".test { color: red; }",
-      sourceMap: "source-map-content",
-      size: 100,
-      minifiedSize: 50,
-      savings: 50,
-    });
+    cache.addBundle(
+      "test.css",
+      createBundle(
+        "test.css",
+        100,
+        50,
+        ".test { color: red; }",
+        "source-map-content",
+      ),
+    );
 
     await cache.writeManifest(TEST_DIR);
 
@@ -161,13 +133,7 @@ describe("CacheManager", () => {
   it("getTotalSavings format", () => {
     const cache = new CacheManager();
 
-    cache.addBundle("test.css", {
-      file: "test.css",
-      content: ".test {}",
-      size: 10240, // 10KB
-      minifiedSize: 5120, // 5KB
-      savings: 50,
-    });
+    cache.addBundle("test.css", createBundle("test.css", 10240, 5120, ".test {}"));
 
     const savings = cache.getTotalSavings();
 

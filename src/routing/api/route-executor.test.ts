@@ -6,6 +6,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 function makeAdapter(mode = "development"): RuntimeAdapter {
   const envMap = new Map<string, string>([["MODE", mode]]);
+
   return {
     env: { get: (key: string) => envMap.get(key) },
     fs: {
@@ -24,9 +25,12 @@ function makeAdapter(mode = "development"): RuntimeAdapter {
       mkdir: () => Promise.resolve(),
       remove: () => Promise.resolve(),
       makeTempDir: () => Promise.resolve("/tmp/mock"),
-      watch: () => ({ close: () => {}, [Symbol.asyncIterator]: async function* () {} }),
+      watch: () => ({
+        close: () => {},
+        [Symbol.asyncIterator]: async function* () {},
+      }),
     },
-  } as unknown as RuntimeAdapter;
+  };
 }
 
 function makeMatch(
@@ -107,7 +111,6 @@ describe("routing/api/route-executor", () => {
       );
 
       assertEquals(response.status, 200);
-      // HEAD response should have null body
       assertEquals(await response.text(), "");
     });
 
@@ -149,6 +152,7 @@ describe("routing/api/route-executor", () => {
 
     it("should pass route params to handler context", async () => {
       let capturedCtx: { params: Record<string, string> } | undefined;
+
       const handler = {
         GET: (_req: Request, ctx: { params: Record<string, string> }) => {
           capturedCtx = ctx;
@@ -165,6 +169,7 @@ describe("routing/api/route-executor", () => {
 
     it("should normalize catch-all params to slash-separated strings", async () => {
       let capturedCtx: { params: Record<string, string> } | undefined;
+
       const handler = {
         GET: (_req: Request, ctx: { params: Record<string, string> }) => {
           capturedCtx = ctx;

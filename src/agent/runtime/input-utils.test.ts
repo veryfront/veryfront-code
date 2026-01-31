@@ -7,14 +7,16 @@ describe("input-utils", () => {
     it("wraps a plain string into a user message array", () => {
       const result = normalizeInput("hello");
       assertEquals(result.length, 1);
+
       const message = result[0];
       assertExists(message);
       assertEquals(message.role, "user");
       assertEquals(message.parts.length, 1);
+
       const part = message.parts[0];
       assertExists(part);
       assertEquals(part.type, "text");
-      assertEquals((part as { text: string }).text, "hello");
+      assertEquals(part.text, "hello");
     });
 
     it("preserves existing message array with ids", () => {
@@ -28,6 +30,7 @@ describe("input-utils", () => {
       ];
       const result = normalizeInput(messages);
       assertEquals(result.length, 1);
+
       const message = result[0];
       assertExists(message);
       assertEquals(message.id, "msg_1");
@@ -43,6 +46,7 @@ describe("input-utils", () => {
       ];
       const result = normalizeInput(messages as Parameters<typeof normalizeInput>[0]);
       assertEquals(result.length, 1);
+
       const message = result[0];
       assertExists(message);
       assertEquals(typeof message.id, "string");
@@ -73,6 +77,7 @@ describe("input-utils", () => {
         },
       ];
       const result = normalizeInput(messages as Parameters<typeof normalizeInput>[0]);
+
       const message = result[0];
       assertExists(message);
       assertExists(message.timestamp);

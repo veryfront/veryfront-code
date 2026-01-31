@@ -90,7 +90,10 @@ export const COMMON_BLOCKED_PATTERNS = {
  */
 const PII_REPLACEMENTS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, label: "[EMAIL]" },
-  { pattern: /\b(\+\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, label: "[PHONE]" },
+  {
+    pattern: /\b(\+\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g,
+    label: "[PHONE]",
+  },
   { pattern: /\b\d{3}-\d{2}-\d{4}\b/g, label: "[SSN]" },
   { pattern: /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g, label: "[CREDIT_CARD]" },
 ];
@@ -116,30 +119,28 @@ export class InputValidator {
     const violations: SecurityViolation[] = [];
 
     const maxLength = this.config.maxLength;
-    if (maxLength && input.length > maxLength) {
+    if (maxLength != null && input.length > maxLength) {
       violations.push({
         type: "input",
         reason: `Input exceeds maximum length of ${maxLength}`,
-        content: input.substring(0, 100) + "...",
+        content: `${input.substring(0, 100)}...`,
       });
     }
 
-    const blockedPatterns = this.config.blockedPatterns;
-    if (blockedPatterns) {
-      for (const pattern of blockedPatterns) {
-        if (!pattern.test(input)) continue;
-        violations.push({
-          type: "input",
-          reason: "Input matches blocked pattern",
-          content: input,
-          pattern,
-        });
-      }
+    for (const pattern of this.config.blockedPatterns ?? []) {
+      if (!pattern.test(input)) continue;
+
+      violations.push({
+        type: "input",
+        reason: "Input matches blocked pattern",
+        content: input,
+        pattern,
+      });
     }
 
-    const validate = this.config.validate;
-    if (validate) {
-      const customValid = await validate(input);
+    const customValidate = this.config.validate;
+    if (customValidate) {
+      const customValid = await customValidate(input);
       if (!customValid) {
         violations.push({
           type: "input",
@@ -196,20 +197,17 @@ export class OutputFilter {
     const violations: SecurityViolation[] = [];
     let filtered = output;
 
-    const blockedPatterns = this.config.blockedPatterns;
-    if (blockedPatterns) {
-      for (const pattern of blockedPatterns) {
-        if (!pattern.test(filtered)) continue;
+    for (const pattern of this.config.blockedPatterns ?? []) {
+      if (!pattern.test(filtered)) continue;
 
-        violations.push({
-          type: "output",
-          reason: "Output contains blocked pattern",
-          content: filtered,
-          pattern,
-        });
+      violations.push({
+        type: "output",
+        reason: "Output contains blocked pattern",
+        content: filtered,
+        pattern,
+      });
 
-        filtered = filtered.replace(pattern, "[REDACTED]");
-      }
+      filtered = filtered.replace(pattern, "[REDACTED]");
     }
 
     if (this.config.filterPII) {
@@ -249,10 +247,9 @@ function reportViolations(
 /**
  * Create security middleware for agents
  */
-export function securityMiddleware(config: SecurityConfig): (
-  context: AgentContext,
-  next: () => Promise<AgentResponse>,
-) => Promise<AgentResponse> {
+export function securityMiddleware(
+  config: SecurityConfig,
+): (context: AgentContext, next: () => Promise<AgentResponse>) => Promise<AgentResponse> {
   const inputValidator = new InputValidator(config.input);
   const outputFilter = new OutputFilter(config.output);
 
@@ -277,7 +274,7 @@ export function securityMiddleware(config: SecurityConfig): (
       );
     }
 
-    if (inputValidation.sanitized) {
+    if (inputValidation.sanitized != null) {
       context.input = inputValidation.sanitized;
     }
 

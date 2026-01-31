@@ -1,4 +1,4 @@
-/**
+/****
  * Consolidated asset utility functions for build pipeline
  * Merges CSS, Image, and Tailwind processor utilities
  */
@@ -132,10 +132,12 @@ export function getImageDimensions(metadata: OptimizedImageMetadata): {
     metadata.variants[0];
 
   if (!original) {
-    throw toError(createError({
-      type: "build",
-      message: "No image variants found in metadata",
-    }));
+    throw toError(
+      createError({
+        type: "build",
+        message: "No image variants found in metadata",
+      }),
+    );
   }
 
   return { width: original.width, height: original.height };

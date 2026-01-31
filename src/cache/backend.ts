@@ -1,16 +1,3 @@
-/**
- * Cache Backend Abstraction
- *
- * Unified interface for cache backends:
- * - Memory: Local in-memory cache (fallback)
- * - Redis: Direct Redis access (local dev / open source)
- * - API: Centralized cache via veryfront-api (production)
- *
- * Performance features:
- * - Circuit breaker on API backend to prevent cascade failures
- * - Configurable limits for high-traffic scaling
- */
-
 import { logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -22,9 +9,6 @@ import { getRuntimeEnv, isRuntimeEnvInitialized, type RuntimeEnv } from "../conf
 import { CircuitBreakerOpen, getCircuitBreaker } from "../utils/circuit-breaker.ts";
 import { MEMORY_CACHE_MAX_ENTRIES } from "../utils/constants/cache.ts";
 
-// Lazy-loaded via global to avoid circular dependency
-// (multi-project-adapter → proxy-manager → veryfront/index → adapter → file-cache → backend)
-// The multi-project-adapter registers itself at __vf_multi_project_adapter when loaded
 function getCurrentRequestContext(): { token?: string } | null {
   // deno-lint-ignore no-explicit-any
   const mod = (globalThis as any).__vf_multi_project_adapter;
@@ -36,7 +20,6 @@ const ENV_KEY_MAP: Record<string, keyof RuntimeEnv | undefined> = {
   VERYFRONT_API_TOKEN: "apiToken",
 };
 
-/** Runtime-agnostic environment variable getter with RuntimeEnv support. */
 function getEnvValue(key: string, env?: RuntimeEnv): string | undefined {
   const runtimeEnv = env ?? (isRuntimeEnvInitialized() ? getRuntimeEnv() : null);
   if (runtimeEnv) {
@@ -44,7 +27,6 @@ function getEnvValue(key: string, env?: RuntimeEnv): string | undefined {
     return prop ? (runtimeEnv[prop] as string | undefined) : undefined;
   }
 
-  // Fallback for bootstrap scenarios before RuntimeEnv is initialized
   if (runtime.isInitialized()) return runtime.getSync().env.get(key);
 
   // deno-lint-ignore no-explicit-any
@@ -52,34 +34,17 @@ function getEnvValue(key: string, env?: RuntimeEnv): string | undefined {
   return g.Deno?.env?.get(key) ?? g.process?.env?.[key];
 }
 
-/** Cache backend interface. */
 export interface CacheBackend {
-  /** Backend type identifier */
   readonly type: "memory" | "redis" | "api";
-
-  /** Get a value from cache */
   get(key: string): Promise<string | null>;
-
-  /** Get multiple values from cache (batch operation) */
   getBatch?(keys: string[]): Promise<Map<string, string | null>>;
-
-  /** Set a value in cache with optional TTL (seconds) */
   set(key: string, value: string, ttlSeconds?: number): Promise<void>;
-
-  /** Set multiple values in cache (batch operation) */
   setBatch?(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void>;
-
-  /** Delete a key from cache */
   del(key: string): Promise<void>;
-
-  /** Delete multiple keys matching a pattern */
   delByPattern?(pattern: string): Promise<number>;
-
-  /** Current entry count (only available for memory backend) */
   readonly size?: number;
 }
 
-/** Memory cache backend with TTL support. */
 export class MemoryCacheBackend implements CacheBackend {
   readonly type = "memory" as const;
   private store = new Map<string, { value: string; expiresAt: number }>();
@@ -191,7 +156,6 @@ export class MemoryCacheBackend implements CacheBackend {
   }
 }
 
-/** Redis cache backend for local development and open source deployments. */
 export class RedisCacheBackend implements CacheBackend {
   readonly type = "redis" as const;
   private client: RedisClient | null = null;
@@ -238,11 +202,12 @@ export class RedisCacheBackend implements CacheBackend {
 
   async getBatch(keys: string[]): Promise<Map<string, string | null>> {
     const results = new Map<string, string | null>();
+    if (keys.length === 0) return results;
+
     if (!this.client) {
       for (const key of keys) results.set(key, null);
       return results;
     }
-    if (keys.length === 0) return results;
 
     try {
       const fetched = await Promise.all(
@@ -310,11 +275,6 @@ export class RedisCacheBackend implements CacheBackend {
   }
 }
 
-/**
- * API cache backend for production.
- * Uses veryfront-api for centralized, project-scoped cache management.
- * Includes circuit breaker to prevent cascade failures when API is degraded.
- */
 export class ApiCacheBackend implements CacheBackend {
   readonly type = "api" as const;
   private apiBaseUrl: string;
@@ -323,15 +283,15 @@ export class ApiCacheBackend implements CacheBackend {
   private env?: RuntimeEnv;
   private circuitBreaker;
 
-  constructor(options: {
-    apiBaseUrl?: string;
-    keyPrefix?: string;
-    timeoutMs?: number;
-    /** Optional RuntimeEnv for test isolation */
-    env?: RuntimeEnv;
-    /** Circuit breaker name - allows isolation between different cache types */
-    circuitBreakerName?: string;
-  } = {}) {
+  constructor(
+    options: {
+      apiBaseUrl?: string;
+      keyPrefix?: string;
+      timeoutMs?: number;
+      env?: RuntimeEnv;
+      circuitBreakerName?: string;
+    } = {},
+  ) {
     this.env = options.env;
     this.apiBaseUrl = options.apiBaseUrl ??
       getEnvValue("VERYFRONT_API_BASE_URL", this.env) ??
@@ -339,8 +299,6 @@ export class ApiCacheBackend implements CacheBackend {
     this.keyPrefix = options.keyPrefix ?? "";
     this.timeoutMs = options.timeoutMs ?? 10000;
 
-    // Use separate circuit breakers for different cache types to prevent
-    // cascade failures from blocking critical recovery operations
     const breakerName = options.circuitBreakerName ?? "api-cache";
     this.circuitBreaker = getCircuitBreaker(breakerName, {
       failureThreshold: 10,
@@ -354,10 +312,8 @@ export class ApiCacheBackend implements CacheBackend {
   }
 
   private getAuthToken(): string | null {
-    const envToken = getEnvValue("VERYFRONT_API_TOKEN", this.env);
-    if (envToken) return envToken;
-
-    return getCurrentRequestContext()?.token ?? null;
+    return getEnvValue("VERYFRONT_API_TOKEN", this.env) ?? getCurrentRequestContext()?.token ??
+      null;
   }
 
   private getProjectSlug(): string | null {
@@ -406,12 +362,15 @@ export class ApiCacheBackend implements CacheBackend {
           );
 
           if (!response.ok) {
-            let body = "";
+            let responseBody = "";
             try {
-              body = await response.text();
-            } catch { /* ignore body read errors */ }
-            throw new Error(`HTTP ${response.status}: ${body.slice(0, 500)}`);
+              responseBody = await response.text();
+            } catch {
+              // ignore body read errors
+            }
+            throw new Error(`HTTP ${response.status}: ${responseBody.slice(0, 500)}`);
           }
+
           return (await response.json()) as T;
         } finally {
           clearTimeout(timeoutId);
@@ -456,24 +415,22 @@ export class ApiCacheBackend implements CacheBackend {
       { keys: prefixedKeys },
     );
 
-    if (response?.values) {
-      for (let i = 0; i < keys.length; i++) {
-        const originalKey = keys[i] as string;
-        const prefixedKey = prefixedKeys[i] as string;
-        results.set(originalKey, response.values[prefixedKey] ?? null);
-      }
-      return results;
+    if (!response?.values) {
+      logger.debug("[ApiCacheBackend] Batch endpoint failed, falling back to individual gets", {
+        keyCount: keys.length,
+      });
+      return this.getIndividually(keys);
     }
 
-    // Batch endpoint failed - fall back to individual gets
-    // This handles deployment rollouts where batch endpoint isn't available yet
-    logger.debug("[ApiCacheBackend] Batch endpoint failed, falling back to individual gets", {
-      keyCount: keys.length,
-    });
-    return this.getIndividually(keys);
+    for (let i = 0; i < keys.length; i++) {
+      const originalKey = keys[i] as string;
+      const prefixedKey = prefixedKeys[i] as string;
+      results.set(originalKey, response.values[prefixedKey] ?? null);
+    }
+
+    return results;
   }
 
-  /** Helper to fetch keys individually (used as fallback when batch fails). */
   private async getIndividually(keys: string[]): Promise<Map<string, string | null>> {
     const results = await Promise.all(keys.map(async (key) => [key, await this.get(key)] as const));
     return new Map(results);
@@ -511,23 +468,15 @@ export class ApiCacheBackend implements CacheBackend {
   }
 }
 
-/** Cache backend configuration. */
 export interface CacheBackendConfig {
-  /** Key prefix for namespacing */
   keyPrefix?: string;
-  /** Max entries for memory backend */
   memoryMaxEntries?: number;
-  /** Preferred backend type (auto-detected if not specified) */
   preferredBackend?: "api" | "redis" | "memory";
-  /** API base URL for API backend */
   apiBaseUrl?: string;
-  /** Optional RuntimeEnv for test isolation */
   env?: RuntimeEnv;
-  /** Circuit breaker name for API backend isolation */
   circuitBreakerName?: string;
 }
 
-/** Check if API cache backend is available (production environment with API URL). */
 export function isApiCacheAvailable(env?: RuntimeEnv): boolean {
   // deno-lint-ignore no-explicit-any
   const g = globalThis as any;
@@ -544,10 +493,6 @@ export function isApiCacheAvailable(env?: RuntimeEnv): boolean {
   return isProduction && !!apiUrl;
 }
 
-/**
- * Create cache backend based on environment.
- * Preference: API (production) > Redis (local/OSS) > Memory (fallback)
- */
 export function createCacheBackend(config: CacheBackendConfig = {}): Promise<CacheBackend> {
   const {
     keyPrefix = "",
@@ -591,39 +536,22 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
   );
 }
 
-/**
- * Check if a cache backend supports distributed (cross-pod) caching.
- *
- * Use this instead of checking `backend.type === "memory"` directly,
- * which is a leaky abstraction that exposes implementation details.
- */
 export function isDistributedBackend(backend: CacheBackend): boolean {
   return backend.type !== "memory";
 }
 
-/** Retry interval for distributed cache initialization failures (30 seconds). */
 const DISTRIBUTED_CACHE_RETRY_MS = 30_000;
 
-/**
- * Create a lazy-initialized distributed cache accessor.
- *
- * This encapsulates the common pattern of:
- * 1. Lazy-init a cache backend via Singleflight
- * 2. Skip if memory-only (not useful for cross-pod sharing)
- * 3. Return null if init fails, but retry after DISTRIBUTED_CACHE_RETRY_MS
- *
- * @param factory - Function that creates the cache backend
- * @param name - Log prefix for debug messages
- * @returns A function that returns the distributed cache backend or null
- */
 export function createDistributedCacheAccessor(
   factory: () => Promise<CacheBackend>,
   name: string,
 ): () => Promise<CacheBackend | null> {
   let backend: CacheBackend | null | undefined;
   let lastFailureTime = 0;
+
   const singleflight = new (class {
     private promise: Promise<CacheBackend | null> | null = null;
+
     do(fn: () => Promise<CacheBackend | null>): Promise<CacheBackend | null> {
       if (!this.promise) {
         this.promise = fn().finally(() => {
@@ -636,13 +564,14 @@ export function createDistributedCacheAccessor(
 
   return () => {
     if (backend !== undefined) {
-      // If backend is null (previous failure), check if enough time has passed to retry
-      if (backend === null && lastFailureTime > 0) {
-        if (Date.now() - lastFailureTime >= DISTRIBUTED_CACHE_RETRY_MS) {
-          backend = undefined;
-          logger.debug(`[${name}] Retrying distributed cache initialization after failure`);
-        }
+      if (
+        backend === null && lastFailureTime > 0 &&
+        Date.now() - lastFailureTime >= DISTRIBUTED_CACHE_RETRY_MS
+      ) {
+        backend = undefined;
+        logger.debug(`[${name}] Retrying distributed cache initialization after failure`);
       }
+
       if (backend !== undefined) return Promise.resolve(backend);
     }
 
@@ -651,10 +580,11 @@ export function createDistributedCacheAccessor(
         const b = await factory();
         if (!isDistributedBackend(b)) {
           backend = null;
-          lastFailureTime = 0; // Not a failure, just memory-only — no retry needed
+          lastFailureTime = 0;
           logger.debug(`[${name}] No distributed cache available (memory only)`);
           return null;
         }
+
         backend = b;
         lastFailureTime = 0;
         logger.debug(`[${name}] Distributed cache initialized`, { type: b.type });
@@ -669,31 +599,14 @@ export function createDistributedCacheAccessor(
   };
 }
 
-/** Convenience wrappers for common cache patterns. */
 export const CacheBackends = {
-  /** Transform cache for compiled code. */
   transform: () => createCacheBackend({ keyPrefix: "transform" }),
-
-  /** File cache for file content. Keys already include "file:" prefix from buildFileCacheKeyPrefix. */
   file: () => createCacheBackend(),
-
-  /** Module cache for SSR modules. */
   module: () => createCacheBackend({ keyPrefix: "module" }),
-
-  /** Render cache for rendered pages. */
   render: () => createCacheBackend({ keyPrefix: "render" }),
-
-  /** User KV store - always uses API backend. */
   userKv: () => createCacheBackend({ keyPrefix: "kv", preferredBackend: "api" }),
-
-  /** HTTP module cache for ESM.sh modules (cross-pod sharing).
-   * Uses separate circuit breaker to prevent cascade failures from blocking recovery. */
   httpModule: () =>
     createCacheBackend({ keyPrefix: "http-module", circuitBreakerName: "api-cache-http" }),
-
-  /** SSR module cache for React loader (cross-pod sharing). */
   ssrModule: () => createCacheBackend({ keyPrefix: "ssr-module" }),
-
-  /** Project CSS cache for Tailwind CSS output (cross-pod sharing). */
   projectCSS: () => createCacheBackend({ keyPrefix: "project-css" }),
 };

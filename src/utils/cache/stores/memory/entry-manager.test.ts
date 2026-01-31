@@ -8,12 +8,21 @@ function createEntryManager(): EntryManager {
   return new EntryManager(() => 100); // Fixed size estimate
 }
 
+function createListAndStore(): {
+  list: LRUListManager<unknown>;
+  store: Map<string, LRUNode<unknown>>;
+} {
+  return {
+    list: new LRUListManager<unknown>(),
+    store: new Map<string, LRUNode<unknown>>(),
+  };
+}
+
 describe("EntryManager", () => {
   describe("createNewEntry", () => {
     it("should create a node and add to store and list", () => {
       const em = createEntryManager();
-      const list = new LRUListManager<unknown>();
-      const store = new Map<string, LRUNode<unknown>>();
+      const { list, store } = createListAndStore();
 
       const [node, size] = em.createNewEntry(
         "key1",
@@ -34,11 +43,18 @@ describe("EntryManager", () => {
 
     it("should set expiry from explicit TTL", () => {
       const em = createEntryManager();
-      const list = new LRUListManager<unknown>();
-      const store = new Map<string, LRUNode<unknown>>();
+      const { list, store } = createListAndStore();
       const before = Date.now();
 
-      const [node] = em.createNewEntry("key1", "value1", 5000, undefined, undefined, list, store);
+      const [node] = em.createNewEntry(
+        "key1",
+        "value1",
+        5000,
+        undefined,
+        undefined,
+        list,
+        store,
+      );
 
       assertEquals(typeof node.entry.expiry, "number");
       assertEquals(node.entry.expiry! >= before + 5000, true);
@@ -46,11 +62,18 @@ describe("EntryManager", () => {
 
     it("should set expiry from default TTL when no explicit TTL", () => {
       const em = createEntryManager();
-      const list = new LRUListManager<unknown>();
-      const store = new Map<string, LRUNode<unknown>>();
+      const { list, store } = createListAndStore();
       const before = Date.now();
 
-      const [node] = em.createNewEntry("key1", "value1", undefined, undefined, 3000, list, store);
+      const [node] = em.createNewEntry(
+        "key1",
+        "value1",
+        undefined,
+        undefined,
+        3000,
+        list,
+        store,
+      );
 
       assertEquals(typeof node.entry.expiry, "number");
       assertEquals(node.entry.expiry! >= before + 3000, true);
@@ -58,8 +81,7 @@ describe("EntryManager", () => {
 
     it("should not set expiry when neither TTL is provided", () => {
       const em = createEntryManager();
-      const list = new LRUListManager<unknown>();
-      const store = new Map<string, LRUNode<unknown>>();
+      const { list, store } = createListAndStore();
 
       const [node] = em.createNewEntry(
         "key1",
@@ -76,8 +98,7 @@ describe("EntryManager", () => {
 
     it("should store tags on entry", () => {
       const em = createEntryManager();
-      const list = new LRUListManager<unknown>();
-      const store = new Map<string, LRUNode<unknown>>();
+      const { list, store } = createListAndStore();
 
       const [node] = em.createNewEntry(
         "key1",
@@ -141,7 +162,6 @@ describe("EntryManager", () => {
       const em = createEntryManager();
       const tagIndex = new Map<string, Set<string>>();
 
-      // Should not throw
       em.cleanupTags(["nonexistent"], "key1", tagIndex);
     });
   });
@@ -149,8 +169,7 @@ describe("EntryManager", () => {
   describe("updateExistingEntry", () => {
     it("should update value and return size delta", () => {
       const em = createEntryManager();
-      const list = new LRUListManager<unknown>();
-      const store = new Map<string, LRUNode<unknown>>();
+      const { list, store } = createListAndStore();
       const tagIndex = new Map<string, Set<string>>();
 
       const [node] = em.createNewEntry(
@@ -162,7 +181,7 @@ describe("EntryManager", () => {
         list,
         store,
       );
-      // Node size is 100 (fixed estimator), new value also 100 → delta = 0
+
       const delta = em.updateExistingEntry(
         node,
         "new-value",
@@ -180,8 +199,7 @@ describe("EntryManager", () => {
 
     it("should cleanup old tags on update", () => {
       const em = createEntryManager();
-      const list = new LRUListManager<unknown>();
-      const store = new Map<string, LRUNode<unknown>>();
+      const { list, store } = createListAndStore();
       const tagIndex = new Map<string, Set<string>>();
 
       const [node] = em.createNewEntry(

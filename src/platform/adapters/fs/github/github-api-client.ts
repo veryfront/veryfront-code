@@ -23,12 +23,9 @@ type APIError = Error & { statusCode?: number; endpoint?: string; repo?: string 
 
 export class GitHubAPIClient {
   private readonly baseUrl = "https://api.github.com";
-  private readonly config: ResolvedGitHubConfig;
   private rateLimitInfo: RateLimitInfo | null = null;
 
-  constructor(config: ResolvedGitHubConfig) {
-    this.config = config;
-  }
+  constructor(private readonly config: ResolvedGitHubConfig) {}
 
   get repoId(): string {
     return `${this.config.owner}/${this.config.repo}`;
@@ -154,29 +151,35 @@ export class GitHubAPIClient {
     let errorType: "config" | "file" | "network" = "network";
 
     switch (status) {
-      case 401:
+      case 401: {
         errorType = "config";
         message = "GitHub API authentication failed. Check your GITHUB_TOKEN is valid.";
         break;
-      case 403:
+      }
+      case 403: {
         if (this.rateLimitInfo?.remaining === 0) {
           message =
             `GitHub API rate limit exceeded. Resets at ${this.rateLimitInfo.reset.toISOString()}`;
-        } else {
-          errorType = "config";
-          message = "GitHub API access forbidden. Check token permissions for this repository.";
+          break;
         }
+
+        errorType = "config";
+        message = "GitHub API access forbidden. Check token permissions for this repository.";
         break;
-      case 404:
+      }
+      case 404: {
         errorType = "file";
         message = `Not found: ${endpoint}`;
         break;
-      case 422:
+      }
+      case 422: {
         errorType = "config";
         message = `Invalid request to GitHub API: ${body}`;
         break;
-      default:
+      }
+      default: {
         message = `GitHub API error (${status}): ${body}`;
+      }
     }
 
     const error = toError(

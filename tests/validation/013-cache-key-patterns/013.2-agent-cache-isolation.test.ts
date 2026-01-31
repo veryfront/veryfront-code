@@ -13,13 +13,21 @@ import { assertEquals, assertNotEquals } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
 import { createCache } from "../../../src/agent/middleware/cache/cache.ts";
 
-const makeResponse = (text: string) => ({
-  text,
-  messages: [],
-  toolCalls: [],
-  status: "completed" as const,
-  metadata: {},
-});
+function makeResponse(text: string): {
+  text: string;
+  messages: never[];
+  toolCalls: never[];
+  status: "completed";
+  metadata: Record<string, never>;
+} {
+  return {
+    text,
+    messages: [],
+    toolCalls: [],
+    status: "completed",
+    metadata: {},
+  };
+}
 
 describe("013.2 Agent Cache Project Isolation", () => {
   describe("Default Key Generator", () => {
@@ -30,14 +38,14 @@ describe("013.2 Agent Cache Project Isolation", () => {
       const contextA = { projectId: "project-a" };
       const contextB = { projectId: "project-b" };
 
-      // Set response for project A
       cache.set(input, makeResponse("Response for A"), contextA);
 
-      // Project B should not see project A's cached response
-      const cachedForB = cache.get(input, contextB);
-      assertEquals(cachedForB, null, "Project B should not get Project A's cache");
+      assertEquals(
+        cache.get(input, contextB),
+        null,
+        "Project B should not get Project A's cache",
+      );
 
-      // Project A should still see its own response
       const cachedForA = cache.get(input, contextA);
       assertNotEquals(cachedForA, null, "Project A should get its own cache");
       assertEquals(cachedForA?.text, "Response for A");
@@ -73,22 +81,17 @@ describe("013.2 Agent Cache Project Isolation", () => {
       const cache = createCache({ strategy: "memory" });
 
       const input = "Hello";
-      const contextEmpty = {};
+      cache.set(input, makeResponse("No project"), {});
 
-      cache.set(input, makeResponse("No project"), contextEmpty);
-
-      // Same input without project context should hit cache
-      const cached = cache.get(input, {});
-      assertEquals(cached?.text, "No project");
+      assertEquals(cache.get(input, {})?.text, "No project");
     });
   });
 
   describe("Custom Key Generator Override", () => {
     it("should allow custom key generator to override default behavior", () => {
-      const customKeyGenerator = (input: string) => `custom_${input}`;
       const cache = createCache({
         strategy: "memory",
-        keyGenerator: customKeyGenerator,
+        keyGenerator: (input: string) => `custom_${input}`,
       });
 
       const input = "test";
@@ -97,10 +100,8 @@ describe("013.2 Agent Cache Project Isolation", () => {
 
       cache.set(input, makeResponse("Custom"), contextA);
 
-      // Custom key generator ignores projectId, so both projects share cache
-      const cachedForB = cache.get(input, contextB);
       assertEquals(
-        cachedForB?.text,
+        cache.get(input, contextB)?.text,
         "Custom",
         "Custom key generator can override isolation",
       );

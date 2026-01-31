@@ -18,27 +18,25 @@ const KNOWN_EXT_PATTERN = /\.(tsx|ts|jsx|mdx|js|mjs)$/;
 const SOURCE_EXT_REPLACE_PATTERN = /\.(tsx|ts|jsx|mdx)$/;
 
 export function getModuleServerUrl(): string {
-  const moduleServerUrl = typeof window !== "undefined"
-    ? (window as { MODULE_SERVER_URL?: string }).MODULE_SERVER_URL
-    : undefined;
-
-  return moduleServerUrl ?? "/_vf_modules";
+  if (typeof window === "undefined") return "/_vf_modules";
+  return globalThis.MODULE_SERVER_URL ?? "/_vf_modules";
 }
 
 export function pathToModuleUrl(path: string, baseUrl?: string): string {
   const base = baseUrl ?? getModuleServerUrl();
 
   const absoluteMatch = path.match(new RegExp(`/${SOURCE_PATH_PATTERN.source}`));
-  const relativeMatch = absoluteMatch ?? path.match(new RegExp(`^${SOURCE_PATH_PATTERN.source}`));
+  const match = absoluteMatch ?? path.match(new RegExp(`^${SOURCE_PATH_PATTERN.source}`));
 
-  if (!relativeMatch) {
-    if (KNOWN_EXT_PATTERN.test(path)) {
-      return `${base}/${path.replace(SOURCE_EXT_REPLACE_PATTERN, ".js")}`;
-    }
-    return `${base}/${path}.js`;
+  if (match) {
+    return `${base}/${match[1]}/${match[2]}.js`;
   }
 
-  return `${base}/${relativeMatch[1]}/${relativeMatch[2]}.js`;
+  if (KNOWN_EXT_PATTERN.test(path)) {
+    return `${base}/${path.replace(SOURCE_EXT_REPLACE_PATTERN, ".js")}`;
+  }
+
+  return `${base}/${path}.js`;
 }
 
 export function getPathToModuleUrlScript(): string {

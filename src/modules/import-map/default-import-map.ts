@@ -1,30 +1,14 @@
 import type { ImportMapConfig } from "./types.ts";
 import { getReactImportMap } from "#veryfront/transforms/esm/package-registry.ts";
 
-/**
- * Get the veryfront framework import map for SSR.
- *
- * Uses module server URLs (/_vf_modules/_veryfront/...) which are then resolved
- * by the SSR pipeline's ssr-vf-modules stage to actual framework source files.
- * This ensures framework code goes through the same SSR transform pipeline as user code,
- * with React imports rewritten to cached file:// paths - preventing dual React instances.
- *
- * Flow:
- * 1. Import map rewrites "veryfront/head" → "/_vf_modules/_veryfront/react/components/Head.js?ssr=true"
- * 2. ssr-vf-modules stage resolves this to FRAMEWORK_ROOT/src/react/components/Head.tsx
- * 3. Framework file goes through SSR transform (React → cached esm.sh bundles)
- * 4. Import is rewritten to file:// path pointing to cached transformed code
- */
 function getVeryfrontSsrImportMap(): Record<string, string> {
-  // Use module server URLs so framework code goes through SSR transform.
-  // This ensures React imports in framework components (like Head.tsx) get
-  // rewritten to the same cached esm.sh bundles as user code - single React instance.
   const base = "/_vf_modules/_veryfront";
+  const ssr = "?ssr=true";
 
-  const head = `${base}/react/components/Head.js?ssr=true`;
-  const router = `${base}/react/router/index.js?ssr=true`;
-  const context = `${base}/react/context/index.js?ssr=true`;
-  const fonts = `${base}/react/fonts/index.js?ssr=true`;
+  const head = `${base}/react/components/Head.js${ssr}`;
+  const router = `${base}/react/router/index.js${ssr}`;
+  const context = `${base}/react/context/index.js${ssr}`;
+  const fonts = `${base}/react/fonts/index.js${ssr}`;
 
   return {
     "veryfront/head": head,
@@ -38,15 +22,8 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
   };
 }
 
-/**
- * Get the default import map for SSR transforms.
- * Uses esm.sh URLs consistently (NO npm: specifiers per plan requirements).
- */
 export function getDefaultImportMap(): ImportMapConfig {
-  const reactMap = getReactImportMap();
-  const veryfrontMap = getVeryfrontSsrImportMap();
-
   return {
-    imports: { ...veryfrontMap, ...reactMap },
+    imports: { ...getVeryfrontSsrImportMap(), ...getReactImportMap() },
   };
 }

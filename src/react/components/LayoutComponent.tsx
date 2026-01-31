@@ -18,11 +18,10 @@ function useStableObject<T>(obj: T): T {
   const prevSerialized = useRef(JSON.stringify(obj));
 
   const serialized = JSON.stringify(obj);
-  if (prevSerialized.current !== serialized) {
-    ref.current = obj;
-    prevSerialized.current = serialized;
-  }
+  if (prevSerialized.current === serialized) return ref.current;
 
+  ref.current = obj;
+  prevSerialized.current = serialized;
   return ref.current;
 }
 

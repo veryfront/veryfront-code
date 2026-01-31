@@ -4,6 +4,11 @@ import { metricsManager } from "./manager.ts";
 export type { MemoryUsage, MetricsConfig } from "./types.ts";
 export { getMemoryUsage, loadConfig } from "./config.ts";
 export { MetricsRecorder } from "./recorder.ts";
+export { MetricsManager, metricsManager } from "./manager.ts";
+
+function getRecorder(): ReturnType<typeof metricsManager.getRecorder> {
+  return metricsManager.getRecorder();
+}
 
 export async function initMetrics(
   config: Parameters<typeof metricsManager.initialize>[0] = {},
@@ -22,10 +27,6 @@ export async function shutdownMetrics(): Promise<void> {
 
 export function getMetricsState(): ReturnType<typeof metricsManager.getState> {
   return metricsManager.getState();
-}
-
-function getRecorder(): ReturnType<typeof metricsManager.getRecorder> {
-  return metricsManager.getRecorder();
 }
 
 export function recordHttpRequest(attributes?: Record<string, string>): void {
@@ -129,6 +130,3 @@ export function recordCorsRejection(attributes?: Record<string, string>): void {
 export function recordSecurityHeaders(attributes?: Record<string, string>): void {
   getRecorder()?.recordSecurityHeaders?.(attributes);
 }
-
-export { metricsManager } from "./manager.ts";
-export { MetricsManager } from "./manager.ts";

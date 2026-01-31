@@ -17,11 +17,13 @@ export function extractImports(code: string): string[] {
   let match: RegExpExecArray | null;
 
   while ((match = importRegex.exec(code)) !== null) {
-    if (match[1]) imports.push(match[1]);
+    const path = match[1];
+    if (path) imports.push(path);
   }
 
   while ((match = dynamicImportRegex.exec(code)) !== null) {
-    if (match[1]) imports.push(match[1]);
+    const path = match[1];
+    if (path) imports.push(path);
   }
 
   return [...new Set(imports)];

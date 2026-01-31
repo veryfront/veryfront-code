@@ -11,11 +11,12 @@ export function generateCsrfToken(options?: { cookieName?: string; ttlSec?: numb
   setCookie: string;
 } {
   const cookieName = options?.cookieName ?? "vf_csrf";
+  const maxAge = options?.ttlSec ?? SERVER_ACTION_DEFAULT_TTL_SEC;
+
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
 
   const token = base64url(bytes);
-  const maxAge = options?.ttlSec ?? SERVER_ACTION_DEFAULT_TTL_SEC;
   const setCookie = `${cookieName}=${token}; Path=/; Max-Age=${maxAge}; SameSite=Lax; HttpOnly`;
 
   return { token, setCookie };
@@ -29,8 +30,7 @@ export function validateCsrf(
   const cookieName = options?.cookieName ?? "vf_csrf";
   const headerName = options?.headerName ?? "x-csrf-token";
 
-  const cookies = parseCookies(req.headers);
-  const cookieToken = cookies[cookieName];
+  const cookieToken = parseCookies(req.headers)[cookieName];
   if (!cookieToken) return false;
 
   return cookieToken === (req.headers.get(headerName) ?? "");
@@ -45,11 +45,11 @@ export function getSessionFromJwt(
   const token = parseCookies(req.headers)[cookieName];
   if (!token) return null;
 
-  const parts = token.split(".");
-  if (parts.length < 2) return null;
+  const [, payload] = token.split(".");
+  if (!payload) return null;
 
   try {
-    const bytes = Uint8Array.from(atob(parts[1] ?? ""), (c) => c.charCodeAt(0));
+    const bytes = Uint8Array.from(atob(payload), (c) => c.charCodeAt(0));
     return JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
   } catch {
     return null;

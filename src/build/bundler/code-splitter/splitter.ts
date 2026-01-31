@@ -33,7 +33,8 @@ export class CodeSplitter {
         const result = await buildContext.rebuild();
         await buildContext.dispose();
 
-        if (!result.metafile?.outputs) {
+        const metafile = result.metafile;
+        if (!metafile?.outputs) {
           throw toError(
             createError({
               type: "build",
@@ -42,10 +43,10 @@ export class CodeSplitter {
           );
         }
 
-        const manifest = await buildManifest(result.metafile, routeMap, this.options.outDir);
+        const manifest = await buildManifest(metafile, routeMap, this.options.outDir);
         await writeManifest(manifest, this.options.outDir);
 
-        const { entries, shared } = await this.processOutputs(result.metafile.outputs);
+        const { entries, shared } = await this.processOutputs(metafile.outputs);
 
         logger.info("Code splitting complete", {
           entries: entries.size,
@@ -62,10 +63,9 @@ export class CodeSplitter {
     );
   }
 
-  private async processOutputs(outputs: Metafile["outputs"]): Promise<{
-    entries: Map<string, ChunkInfo>;
-    shared: Map<string, ChunkInfo>;
-  }> {
+  private async processOutputs(
+    outputs: Metafile["outputs"],
+  ): Promise<{ entries: Map<string, ChunkInfo>; shared: Map<string, ChunkInfo> }> {
     const entries = new Map<string, ChunkInfo>();
     const shared = new Map<string, ChunkInfo>();
 
@@ -75,10 +75,9 @@ export class CodeSplitter {
 
       if (info.entryPoint) {
         entries.set(relativePath, chunkInfo);
-        continue;
+      } else {
+        shared.set(relativePath, chunkInfo);
       }
-
-      shared.set(relativePath, chunkInfo);
     }
 
     return { entries, shared };
@@ -93,7 +92,7 @@ export class CodeSplitter {
 
   private sumChunkSizes(chunks: Map<string, ChunkInfo>): number {
     let total = 0;
-    for (const chunk of chunks.values()) total += chunk.size;
+    for (const { size } of chunks.values()) total += size;
     return total;
   }
 }

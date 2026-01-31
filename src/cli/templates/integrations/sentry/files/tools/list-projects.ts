@@ -10,34 +10,23 @@ export default tool({
   async execute() {
     const projects = await listProjects();
 
-    return projects.map(
-      ({
-        id,
-        slug,
-        name,
-        platform,
-        status,
-        dateCreated,
-        firstEvent,
-        isBookmarked,
-        isMember,
-        hasAccess,
-        teams,
-        features,
-      }) => ({
-        id,
-        slug,
-        name,
-        platform,
-        status,
-        dateCreated,
-        firstEvent,
-        isBookmarked,
-        isMember,
-        hasAccess,
-        teams: teams.map(({ id, name, slug }) => ({ id, name, slug })),
-        features,
-      }),
-    );
+    return projects.map((project) => ({
+      id: project.id,
+      slug: project.slug,
+      name: project.name,
+      platform: project.platform,
+      status: project.status,
+      dateCreated: project.dateCreated,
+      firstEvent: project.firstEvent,
+      isBookmarked: project.isBookmarked,
+      isMember: project.isMember,
+      hasAccess: project.hasAccess,
+      teams: project.teams.map((team) => ({
+        id: team.id,
+        name: team.name,
+        slug: team.slug,
+      })),
+      features: project.features,
+    }));
   },
 });

@@ -77,16 +77,15 @@ export interface VeryfrontTokenConfig {
 function requireVeryfrontConfig(
   config: TokenStorageAdapterConfig,
 ): NonNullable<TokenStorageAdapterConfig["veryfront"]> {
-  if (!config.veryfront) {
-    throw toError(
-      createError({
-        type: "config",
-        message: "Veryfront token adapter requires veryfront configuration",
-      }),
-    );
-  }
+  const veryfront = config.veryfront;
+  if (veryfront) return veryfront;
 
-  return config.veryfront;
+  throw toError(
+    createError({
+      type: "config",
+      message: "Veryfront token adapter requires veryfront configuration",
+    }),
+  );
 }
 
 /**
@@ -95,7 +94,8 @@ function requireVeryfrontConfig(
 export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontTokenConfig {
   const veryfront = requireVeryfrontConfig(config);
 
-  if (!veryfront.apiToken) {
+  const apiToken = veryfront.apiToken;
+  if (!apiToken) {
     throw toError(
       createError({
         type: "config",
@@ -104,7 +104,8 @@ export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontT
     );
   }
 
-  if (!veryfront.projectSlug) {
+  const projectSlug = veryfront.projectSlug;
+  if (!projectSlug) {
     throw toError(
       createError({
         type: "config",
@@ -113,14 +114,16 @@ export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontT
     );
   }
 
+  const retry = veryfront.retry;
+
   return {
-    apiBaseUrl: veryfront.baseUrl || "https://api.veryfront.com",
-    apiToken: veryfront.apiToken,
-    projectSlug: veryfront.projectSlug,
+    apiBaseUrl: veryfront.baseUrl ?? "https://api.veryfront.com",
+    apiToken,
+    projectSlug,
     retry: {
-      maxRetries: veryfront.retry?.maxRetries ?? 3,
-      initialDelay: veryfront.retry?.initialDelay ?? 1000,
-      maxDelay: veryfront.retry?.maxDelay ?? 10000,
+      maxRetries: retry?.maxRetries ?? 3,
+      initialDelay: retry?.initialDelay ?? 1000,
+      maxDelay: retry?.maxDelay ?? 10000,
     },
   };
 }
@@ -129,12 +132,13 @@ export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontT
  * Error thrown by token storage operations
  */
 export class TokenStorageError extends Error {
-  constructor(
-    message: string,
-    public readonly statusCode?: number,
-    public readonly details?: Record<string, unknown>,
-  ) {
+  public readonly statusCode?: number;
+  public readonly details?: Record<string, unknown>;
+
+  constructor(message: string, statusCode?: number, details?: Record<string, unknown>) {
     super(message);
     this.name = "TokenStorageError";
+    this.statusCode = statusCode;
+    this.details = details;
   }
 }

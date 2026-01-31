@@ -31,7 +31,9 @@ export class NodeHttpServer implements HttpServer {
   }
 
   async serve(handler: Handler, options: ServeOptions = {}): Promise<void> {
-    if (!this.http || !this.url) await this.initNodeModules();
+    if (!this.http || !this.url) {
+      await this.initNodeModules();
+    }
 
     const { port = 8000, hostname = LOCALHOST.IPV4 } = options;
     const http = this.http!;
@@ -56,7 +58,8 @@ export class NodeHttpServer implements HttpServer {
 
           if (response.body) {
             const reader = response.body.getReader();
-            for (;;) {
+
+            while (true) {
               const { done, value } = await reader.read();
               if (done) break;
               res.write(value);
@@ -88,10 +91,11 @@ export class NodeHttpServer implements HttpServer {
   }
 
   close(): Promise<void> {
-    if (!this.server) return Promise.resolve();
+    const server = this.server;
+    if (!server) return Promise.resolve();
 
     return new Promise((resolve) => {
-      this.server?.close(() => resolve());
+      server.close(() => resolve());
     });
   }
 }

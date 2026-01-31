@@ -18,24 +18,14 @@ export default tool({
   async execute({ teamId, limit }) {
     const channels = await listChannels(teamId, { limit });
 
-    return channels.map(
-      ({
-        id,
-        displayName,
-        description,
-        email,
-        webUrl,
-        membershipType,
-        createdDateTime,
-      }) => ({
-        id,
-        name: displayName,
-        description,
-        email,
-        webUrl,
-        membershipType,
-        createdAt: createdDateTime,
-      }),
-    );
+    return channels.map((channel) => ({
+      id: channel.id,
+      name: channel.displayName,
+      description: channel.description,
+      email: channel.email,
+      webUrl: channel.webUrl,
+      membershipType: channel.membershipType,
+      createdAt: channel.createdDateTime,
+    }));
   },
 });

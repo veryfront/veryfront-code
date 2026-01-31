@@ -1,8 +1,11 @@
 import denoConfig from "../../deno.json" with { type: "json" };
-import { getVeryfrontVersion } from "#veryfront/config/env.ts";
 
-export const VERSION: string = getVeryfrontVersion() ??
-  (typeof denoConfig.version === "string" ? denoConfig.version : "0.0.0");
+function getVersionFromDeno(): string {
+  return typeof denoConfig.version === "string" ? denoConfig.version : "0.0.0";
+}
+
+// Use deno.json version directly to avoid env access at module load
+export const VERSION: string = getVersionFromDeno();
 
 export const SERVER_START_TIME: number = Date.now();
 

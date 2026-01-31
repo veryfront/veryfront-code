@@ -18,9 +18,9 @@ import { isKeyForProject, registerMapCache } from "#veryfront/cache/keys.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import {
-  MAX_CONCURRENT_TRANSFORMS,
+  getMaxConcurrentTransforms,
+  getTransformPerProjectLimit,
   SSR_TMP_DIRS_MAX_ENTRIES,
-  TRANSFORM_PER_PROJECT_LIMIT,
 } from "../constants.ts";
 import { Semaphore } from "../concurrency/semaphore.ts";
 import { verifiedHttpBundlePaths } from "../http-bundle-helpers.ts";
@@ -45,7 +45,13 @@ export const globalTmpDirs = new LRUCache<string, string>({
 
 export const failedComponents = new Map<string, FailureRecord>();
 
-export const transformSemaphore = new Semaphore(MAX_CONCURRENT_TRANSFORMS);
+let _transformSemaphore: Semaphore | undefined;
+export function getTransformSemaphore(): Semaphore {
+  if (!_transformSemaphore) {
+    _transformSemaphore = new Semaphore(getMaxConcurrentTransforms());
+  }
+  return _transformSemaphore;
+}
 
 /**
  * Per-project active transform counter. Prevents a single noisy tenant from
@@ -68,11 +74,13 @@ const RATE_LIMIT_BYPASS_PROJECTS = new Set(["__single__"]);
  * rate limiting since there's no noisy-neighbor concern in single-project mode.
  */
 export function acquireTransformSlot(projectId: string): boolean {
-  if (TRANSFORM_PER_PROJECT_LIMIT <= 0) return true;
-  // Bypass rate limiting for local/test mode (no multi-tenancy concern)
+  const limit = getTransformPerProjectLimit();
+  if (limit <= 0) return true;
   if (RATE_LIMIT_BYPASS_PROJECTS.has(projectId)) return true;
+
   const current = projectTransformCounts.get(projectId) ?? 0;
-  if (current >= TRANSFORM_PER_PROJECT_LIMIT) return false;
+  if (current >= limit) return false;
+
   projectTransformCounts.set(projectId, current + 1);
   return true;
 }
@@ -89,15 +97,14 @@ export async function tryAcquireTransformSlot(
   projectId: string,
   timeoutMs: number,
 ): Promise<boolean> {
-  // Try immediate acquisition first
   if (acquireTransformSlot(projectId)) return true;
 
-  // Retry with backoff until timeout
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, PROJECT_SLOT_RETRY_INTERVAL_MS));
+    await new Promise<void>((resolve) => setTimeout(resolve, PROJECT_SLOT_RETRY_INTERVAL_MS));
     if (acquireTransformSlot(projectId)) return true;
   }
+
   return false;
 }
 
@@ -105,13 +112,15 @@ export async function tryAcquireTransformSlot(
  * Release a project-level transform slot.
  */
 export function releaseTransformSlot(projectId: string): void {
-  if (TRANSFORM_PER_PROJECT_LIMIT <= 0) return;
+  if (getTransformPerProjectLimit() <= 0) return;
+
   const current = projectTransformCounts.get(projectId) ?? 0;
   if (current <= 1) {
     projectTransformCounts.delete(projectId);
-  } else {
-    projectTransformCounts.set(projectId, current - 1);
+    return;
   }
+
+  projectTransformCounts.set(projectId, current - 1);
 }
 
 /**
@@ -124,9 +133,9 @@ export function getTransformStats(): {
   activeProjects: Map<string, number>;
 } {
   return {
-    globalAvailable: transformSemaphore.available,
-    globalWaiting: transformSemaphore.waiting,
-    perProjectLimit: TRANSFORM_PER_PROJECT_LIMIT,
+    globalAvailable: getTransformSemaphore().available,
+    globalWaiting: getTransformSemaphore().waiting,
+    perProjectLimit: getTransformPerProjectLimit(),
     activeProjects: new Map(projectTransformCounts),
   };
 }
@@ -144,37 +153,37 @@ registerCache("ssr-tmp-dirs", () => ({
   maxEntries: SSR_TMP_DIRS_MAX_ENTRIES,
 }));
 
-registerCache("ssr-transform-semaphore", () => ({
-  name: "ssr-transform-semaphore",
-  entries: MAX_CONCURRENT_TRANSFORMS - transformSemaphore.available,
-  maxEntries: MAX_CONCURRENT_TRANSFORMS,
-  waiting: transformSemaphore.waiting,
-  perProjectLimit: TRANSFORM_PER_PROJECT_LIMIT,
-  activeProjects: Object.fromEntries(projectTransformCounts),
-}));
+registerCache("ssr-transform-semaphore", () => {
+  const semaphore = getTransformSemaphore();
+  const maxConcurrent = getMaxConcurrentTransforms();
+  return {
+    name: "ssr-transform-semaphore",
+    entries: maxConcurrent - semaphore.available,
+    maxEntries: maxConcurrent,
+    waiting: semaphore.waiting,
+    perProjectLimit: getTransformPerProjectLimit(),
+    activeProjects: Object.fromEntries(projectTransformCounts),
+  };
+});
 
-function createCacheRegistryWrapper<T>(cache: LRUCache<string, T>) {
+function createCacheRegistryWrapper<T>(
+  cache: LRUCache<string, T>,
+): Map<string, unknown> {
   return {
     keys: () => cache.keys(),
     get size() {
       return cache.size;
     },
     delete: (key: string) => cache.delete(key),
-  };
+  } as unknown as Map<string, unknown>;
 }
 
-registerMapCache(
-  "ssr-module-cache",
-  createCacheRegistryWrapper(globalModuleCache) as unknown as Map<string, unknown>,
-);
+registerMapCache("ssr-module-cache", createCacheRegistryWrapper(globalModuleCache));
 registerMapCache(
   "ssr-cross-project-cache",
-  createCacheRegistryWrapper(globalCrossProjectCache) as unknown as Map<string, unknown>,
+  createCacheRegistryWrapper(globalCrossProjectCache),
 );
-registerMapCache(
-  "ssr-tmp-dirs",
-  createCacheRegistryWrapper(globalTmpDirs) as unknown as Map<string, unknown>,
-);
+registerMapCache("ssr-tmp-dirs", createCacheRegistryWrapper(globalTmpDirs));
 registerMapCache("ssr-in-progress", globalInProgress);
 registerMapCache("ssr-failed-components", failedComponents);
 
@@ -224,7 +233,6 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
     globalTmpDirs.delete(key);
   }
 
-  // Clear project's transform slot count
   projectTransformCounts.delete(projectId);
 
   // Clear verified HTTP bundle paths — keys are tempPath:contentHash (not project-scoped),

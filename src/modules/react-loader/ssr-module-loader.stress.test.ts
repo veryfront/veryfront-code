@@ -64,7 +64,7 @@ function createRealAdapter(_projectDir: string): RuntimeAdapter {
     },
     serve: () => Promise.resolve({ stop: () => Promise.resolve() }),
     exit: () => {},
-  } as unknown as RuntimeAdapter;
+  };
 }
 
 function generateComponent(name: string, deps: string[]): string {
@@ -95,6 +95,15 @@ function hasErrorResult(value: unknown): value is { error: Error } {
 
 async function removeDir(dir: string): Promise<void> {
   await createFileSystem().remove(dir, { recursive: true });
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error("TIMEOUT - possible deadlock")), timeoutMs)
+    ),
+  ]);
 }
 
 describe("SSRModuleLoader Stress Tests", {
@@ -187,12 +196,7 @@ describe("SSRModuleLoader Stress Tests", {
       const appSource = files[appPath]!;
 
       const promises = loaders.map((loader) =>
-        Promise.race([
-          loader.loadModule(appPath, appSource),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("TIMEOUT - possible deadlock")), timeout)
-          ),
-        ]).catch((error) => ({ error }))
+        withTimeout(loader.loadModule(appPath, appSource), timeout).catch((error) => ({ error }))
       );
 
       const results = await Promise.all(promises);

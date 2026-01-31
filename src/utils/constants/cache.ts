@@ -12,6 +12,7 @@ function getEnvString(key: string): string | undefined {
     Deno?: { env?: { get?: (k: string) => string | undefined } };
     process?: { env?: Record<string, string | undefined> };
   };
+
   try {
     return g.Deno?.env?.get?.(key) ?? g.process?.env?.[key];
   } catch {
@@ -25,13 +26,17 @@ function getEnvNumber(key: string, fallback: number): number {
   if (value == null) return fallback;
 
   const parsed = Number.parseInt(value, 10);
-  return Number.isNaN(parsed) ? fallback : parsed;
+  if (Number.isNaN(parsed)) return fallback;
+
+  return parsed;
 }
 
 function isProductionMode(): boolean {
-  return getEnvString("PROXY_MODE") === "1" ||
+  return (
+    getEnvString("PROXY_MODE") === "1" ||
     getEnvString("NODE_ENV") === "production" ||
-    getEnvString("PRODUCTION_MODE") === "1";
+    getEnvString("PRODUCTION_MODE") === "1"
+  );
 }
 
 // Cache entry limits (override via env vars)
@@ -110,20 +115,23 @@ export function getDistributedCacheTTL(
   cacheType: "ssr-module" | "transform" | "file" | "css",
   isProduction: boolean = isProductionMode(),
 ): number {
-  switch (cacheType) {
-    case "ssr-module":
-      return isProduction
-        ? DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC
-        : DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC;
-    case "transform":
-      return isProduction
-        ? DISTRIBUTED_TRANSFORM_TTL_PRODUCTION_SEC
-        : DISTRIBUTED_TRANSFORM_TTL_PREVIEW_SEC;
-    case "file":
-      return isProduction ? DISTRIBUTED_FILE_TTL_PRODUCTION_SEC : DISTRIBUTED_FILE_TTL_PREVIEW_SEC;
-    case "css":
-      return isProduction ? DISTRIBUTED_CSS_TTL_PRODUCTION_SEC : DISTRIBUTED_CSS_TTL_PREVIEW_SEC;
+  if (cacheType === "ssr-module") {
+    return isProduction
+      ? DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC
+      : DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC;
   }
+
+  if (cacheType === "transform") {
+    return isProduction
+      ? DISTRIBUTED_TRANSFORM_TTL_PRODUCTION_SEC
+      : DISTRIBUTED_TRANSFORM_TTL_PREVIEW_SEC;
+  }
+
+  if (cacheType === "file") {
+    return isProduction ? DISTRIBUTED_FILE_TTL_PRODUCTION_SEC : DISTRIBUTED_FILE_TTL_PREVIEW_SEC;
+  }
+
+  return isProduction ? DISTRIBUTED_CSS_TTL_PRODUCTION_SEC : DISTRIBUTED_CSS_TTL_PREVIEW_SEC;
 }
 
 // Size limits (override via env vars)

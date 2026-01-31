@@ -49,7 +49,7 @@ export function OptimizedImage({
     ...style,
     ...(placeholder === "blur" && blurDataURL
       ? { backgroundImage: `url(${blurDataURL})`, backgroundSize: "cover" }
-      : undefined),
+      : {}),
   };
 
   return (
@@ -58,7 +58,7 @@ export function OptimizedImage({
         <source
           key={format}
           type={`image/${format}`}
-          srcSet={generateSrcSet(src, format, [...DEFAULT_SIZES], quality)}
+          srcSet={generateSrcSet(src, format, DEFAULT_SIZES, quality)}
           sizes={sizes}
         />
       ))}

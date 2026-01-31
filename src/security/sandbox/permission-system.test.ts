@@ -144,7 +144,7 @@ describe("Permission System", () => {
         { name: "run" },
       ];
 
-      const results = await Promise.all(requests.map((req) => requestPermission(req)));
+      const results = await Promise.all(requests.map((request) => requestPermission(request)));
 
       assertEquals(results.length, 4);
       for (const result of results) {

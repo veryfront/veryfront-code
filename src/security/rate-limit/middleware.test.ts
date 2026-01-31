@@ -1,7 +1,3 @@
-/**
- * Rate Limiting Middleware Tests
- */
-
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createRateLimiter, RateLimitPresets } from "./middleware.ts";
@@ -15,10 +11,18 @@ function createRequest(headers?: HeadersInit): Request {
   return new Request("http://localhost/test", headers ? { headers } : undefined);
 }
 
+async function withStore(test: (store: MemoryRateLimitStore) => Promise<void>): Promise<void> {
+  const store = new MemoryRateLimitStore();
+  try {
+    await test(store);
+  } finally {
+    store.destroy();
+  }
+}
+
 describe("Rate Limiting Middleware", () => {
   it("should allow requests within limit", async () => {
-    const store = new MemoryRateLimitStore();
-    try {
+    await withStore(async (store) => {
       const limiter = createRateLimiter({
         maxRequests: 5,
         windowMs: 60000,
@@ -34,14 +38,11 @@ describe("Rate Limiting Middleware", () => {
         assertEquals(response.status, 200);
         assertExists(response.headers.get("X-RateLimit-Limit"));
       }
-    } finally {
-      store.destroy();
-    }
+    });
   });
 
   it("should block requests exceeding limit", async () => {
-    const store = new MemoryRateLimitStore();
-    try {
+    await withStore(async (store) => {
       const limiter = createRateLimiter({
         maxRequests: 3,
         windowMs: 60000,
@@ -61,36 +62,27 @@ describe("Rate Limiting Middleware", () => {
       assertEquals(blockedResponse.status, 429);
       assertExists(blockedResponse.headers.get("X-RateLimit-Limit"));
       assertExists(blockedResponse.headers.get("Retry-After"));
-    } finally {
-      store.destroy();
-    }
+    });
   });
 
   it("should add rate limit headers", async () => {
-    const store = new MemoryRateLimitStore();
-    try {
+    await withStore(async (store) => {
       const limiter = createRateLimiter({
         maxRequests: 10,
         windowMs: 60000,
         store,
       });
 
-      const request = createRequest();
-      const next = createNext();
-
-      const response = await limiter(request, next);
+      const response = await limiter(createRequest(), createNext());
 
       assertEquals(response.headers.get("X-RateLimit-Limit"), "10");
       assertExists(response.headers.get("X-RateLimit-Remaining"));
       assertExists(response.headers.get("X-RateLimit-Reset"));
-    } finally {
-      store.destroy();
-    }
+    });
   });
 
   it("should skip rate limiting when skip function returns true", async () => {
-    const store = new MemoryRateLimitStore();
-    try {
+    await withStore(async (store) => {
       const limiter = createRateLimiter({
         maxRequests: 1,
         windowMs: 60000,
@@ -105,14 +97,11 @@ describe("Rate Limiting Middleware", () => {
         const response = await limiter(request, next);
         assertEquals(response.status, 200);
       }
-    } finally {
-      store.destroy();
-    }
+    });
   });
 
   it("should use custom key generator", async () => {
-    const store = new MemoryRateLimitStore();
-    try {
+    await withStore(async (store) => {
       const limiter = createRateLimiter({
         maxRequests: 2,
         windowMs: 60000,
@@ -132,23 +121,16 @@ describe("Rate Limiting Middleware", () => {
       const req2 = createRequest({ "x-api-key": "user2" });
       const response2 = await limiter(req2, next);
       assertEquals(response2.status, 200);
-    } finally {
-      store.destroy();
-    }
+    });
   });
 
   it("should work with preset configurations", async () => {
-    const store = new MemoryRateLimitStore();
-    try {
+    await withStore(async (store) => {
       const limiter = RateLimitPresets.strict(store);
-      const request = createRequest();
-      const next = createNext();
+      const response = await limiter(createRequest(), createNext());
 
-      const response = await limiter(request, next);
       assertEquals(response.status, 200);
       assertEquals(response.headers.get("X-RateLimit-Limit"), "10");
-    } finally {
-      store.destroy();
-    }
+    });
   });
 });

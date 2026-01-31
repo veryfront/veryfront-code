@@ -3,12 +3,41 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ErrorCode, VeryfrontError } from "./types.ts";
 import { RenderError, RuntimeError } from "./runtime-errors.ts";
 
+function assertBaseError(
+  err: VeryfrontError,
+  {
+    message,
+    name,
+    code,
+    context,
+  }: {
+    message: string;
+    name: string;
+    code: ErrorCode;
+    context?: unknown;
+  },
+): void {
+  assertEquals(err.message, message);
+  assertEquals(err.name, name);
+  assertEquals(err.code, code);
+
+  if (context !== undefined) {
+    assertEquals(err.context, context);
+  }
+
+  assertEquals(err instanceof VeryfrontError, true);
+  assertEquals(err instanceof Error, true);
+}
+
 describe("errors/runtime-errors", () => {
   describe("RuntimeError", () => {
     it("should set message and name", () => {
       const err = new RuntimeError("something broke");
-      assertEquals(err.message, "something broke");
-      assertEquals(err.name, "RuntimeError");
+      assertBaseError(err, {
+        message: "something broke",
+        name: "RuntimeError",
+        code: ErrorCode.RENDER_ERROR,
+      });
     });
 
     it("should use RENDER_ERROR code", () => {
@@ -32,8 +61,11 @@ describe("errors/runtime-errors", () => {
   describe("RenderError", () => {
     it("should set message and name", () => {
       const err = new RenderError("render failed");
-      assertEquals(err.message, "render failed");
-      assertEquals(err.name, "RenderError");
+      assertBaseError(err, {
+        message: "render failed",
+        name: "RenderError",
+        code: ErrorCode.RENDER_ERROR,
+      });
     });
 
     it("should use RENDER_ERROR code", () => {

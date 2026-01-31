@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Header } from "./components/Header.tsx";
-import { SearchInput } from "./components/SearchInput.tsx";
-import { ProjectCard } from "./components/ProjectCard.tsx";
 import { EmptyState } from "./components/EmptyState.tsx";
+import { Header } from "./components/Header.tsx";
+import { ProjectCard } from "./components/ProjectCard.tsx";
+import { SearchInput } from "./components/SearchInput.tsx";
 
 interface Project {
   id: string;
@@ -35,7 +35,8 @@ export function App(): React.JSX.Element {
 
   const fetchProjects = useCallback(async (searchQuery: string): Promise<void> => {
     abortControllerRef.current?.abort();
-    abortControllerRef.current = new AbortController();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     setLoading(true);
     setError(null);
@@ -50,7 +51,7 @@ export function App(): React.JSX.Element {
       if (searchQuery) params.set("search", searchQuery);
 
       const response = await fetch(`/_vf/api/projects?${params}`, {
-        signal: abortControllerRef.current.signal,
+        signal: controller.signal,
       });
 
       const data = await response.json();
@@ -81,7 +82,7 @@ export function App(): React.JSX.Element {
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [search, fetchProjects]);
+  }, [fetchProjects, search]);
 
   function getProjectUrl(slug: string): string {
     if (!config) return "#";
@@ -118,12 +119,12 @@ export function App(): React.JSX.Element {
     }
 
     if (projects.length === 0) {
-      return (
-        <EmptyState
-          title={search ? "No projects found" : "No projects yet"}
-          description={search ? "Try a different search term" : "Create a project to get started"}
-        />
-      );
+      const title = search ? "No projects found" : "No projects yet";
+      const description = search
+        ? "Try a different search term"
+        : "Create a project to get started";
+
+      return <EmptyState title={title} description={description} />;
     }
 
     return (

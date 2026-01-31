@@ -1,13 +1,3 @@
-/**
- * Redis-backed bundle manifest store
- *
- * This is a placeholder implementation. To enable Redis support:
- * 1. Install a Redis client (e.g., npm:redis or npm:ioredis)
- * 2. Implement the actual Redis operations
- *
- * For now, isAvailable() returns false, which triggers fallback to in-memory store.
- */
-
 import type { BundleCode, BundleManifestStore, BundleMetadata } from "./bundle-manifest.ts";
 
 export interface RedisBundleManifestStoreOptions {
@@ -15,51 +5,43 @@ export interface RedisBundleManifestStoreOptions {
   keyPrefix?: string;
 }
 
+function notImplemented(): Promise<never> {
+  return Promise.reject(new Error("Redis bundle manifest store not implemented"));
+}
+
 export class RedisBundleManifestStore implements BundleManifestStore {
-  constructor(_options: RedisBundleManifestStoreOptions, _adapter?: unknown) {
-    // Redis client initialization would go here
-  }
+  constructor(_options: RedisBundleManifestStoreOptions, _adapter?: unknown) {}
 
   isAvailable(): Promise<boolean> {
-    // Return false to trigger fallback to in-memory store
-    // When Redis support is implemented, this should test the connection
     return Promise.resolve(false);
   }
 
   getBundleMetadata(_key: string): Promise<BundleMetadata | undefined> {
-    return Promise.reject(new Error("Redis bundle manifest store not implemented"));
+    return notImplemented();
   }
 
-  setBundleMetadata(
-    _key: string,
-    _metadata: BundleMetadata,
-    _ttlMs?: number,
-  ): Promise<void> {
-    return Promise.reject(new Error("Redis bundle manifest store not implemented"));
+  setBundleMetadata(_key: string, _metadata: BundleMetadata, _ttlMs?: number): Promise<void> {
+    return notImplemented();
   }
 
   getBundleCode(_hash: string): Promise<BundleCode | undefined> {
-    return Promise.reject(new Error("Redis bundle manifest store not implemented"));
+    return notImplemented();
   }
 
-  setBundleCode(
-    _hash: string,
-    _code: BundleCode,
-    _ttlMs?: number,
-  ): Promise<void> {
-    return Promise.reject(new Error("Redis bundle manifest store not implemented"));
+  setBundleCode(_hash: string, _code: BundleCode, _ttlMs?: number): Promise<void> {
+    return notImplemented();
   }
 
   deleteBundle(_key: string): Promise<void> {
-    return Promise.reject(new Error("Redis bundle manifest store not implemented"));
+    return notImplemented();
   }
 
   invalidateSource(_source: string): Promise<number> {
-    return Promise.reject(new Error("Redis bundle manifest store not implemented"));
+    return notImplemented();
   }
 
   clear(): Promise<void> {
-    return Promise.reject(new Error("Redis bundle manifest store not implemented"));
+    return notImplemented();
   }
 
   getStats(): Promise<{
@@ -68,6 +50,6 @@ export class RedisBundleManifestStore implements BundleManifestStore {
     oldestBundle?: number;
     newestBundle?: number;
   }> {
-    return Promise.reject(new Error("Redis bundle manifest store not implemented"));
+    return notImplemented();
   }
 }

@@ -19,10 +19,7 @@ describe("cache/content-source-id isolation", () => {
     });
 
     it("local development with null branch defaults to main", () => {
-      assertEquals(
-        computeContentSourceId(true, "preview", null, null),
-        "local-main",
-      );
+      assertEquals(computeContentSourceId(true, "preview", null, null), "local-main");
     });
 
     it("local development with undefined branch defaults to main", () => {
@@ -40,10 +37,7 @@ describe("cache/content-source-id isolation", () => {
     });
 
     it("preview with null branch defaults to main", () => {
-      assertEquals(
-        computeContentSourceId(false, "preview", null, null),
-        "preview-main",
-      );
+      assertEquals(computeContentSourceId(false, "preview", null, null), "preview-main");
     });
 
     it("production release: release-{releaseId}", () => {
@@ -91,7 +85,12 @@ describe("cache/content-source-id isolation", () => {
 
     it("preview vs production produce different IDs", () => {
       const preview = computeContentSourceId(false, "preview", "main", null);
-      const production = computeContentSourceId(false, "production", "main", "rel_123");
+      const production = computeContentSourceId(
+        false,
+        "production",
+        "main",
+        "rel_123",
+      );
 
       assertEquals(preview, "preview-main");
       assertEquals(production, "release-rel_123");
@@ -99,8 +98,18 @@ describe("cache/content-source-id isolation", () => {
     });
 
     it("different releases produce different IDs", () => {
-      const release1 = computeContentSourceId(false, "production", "main", "rel_v1.0");
-      const release2 = computeContentSourceId(false, "production", "main", "rel_v2.0");
+      const release1 = computeContentSourceId(
+        false,
+        "production",
+        "main",
+        "rel_v1.0",
+      );
+      const release2 = computeContentSourceId(
+        false,
+        "production",
+        "main",
+        "rel_v2.0",
+      );
 
       assertEquals(release1, "release-rel_v1.0");
       assertEquals(release2, "release-rel_v2.0");
@@ -109,7 +118,12 @@ describe("cache/content-source-id isolation", () => {
 
     it("local dev ignores environment and releaseId", () => {
       const localPreview = computeContentSourceId(true, "preview", "main", null);
-      const localProd = computeContentSourceId(true, "production", "main", "rel_123");
+      const localProd = computeContentSourceId(
+        true,
+        "production",
+        "main",
+        "rel_123",
+      );
 
       // Both should be local-main regardless of environment
       assertEquals(localPreview, "local-main");
@@ -120,8 +134,18 @@ describe("cache/content-source-id isolation", () => {
 
   describe("deployment invalidation", () => {
     it("new release changes content source ID", () => {
-      const beforeDeploy = computeContentSourceId(false, "production", "main", "rel_old");
-      const afterDeploy = computeContentSourceId(false, "production", "main", "rel_new");
+      const beforeDeploy = computeContentSourceId(
+        false,
+        "production",
+        "main",
+        "rel_old",
+      );
+      const afterDeploy = computeContentSourceId(
+        false,
+        "production",
+        "main",
+        "rel_new",
+      );
 
       assertEquals(beforeDeploy !== afterDeploy, true);
     });

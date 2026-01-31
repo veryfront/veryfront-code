@@ -3,9 +3,7 @@ import type { FileWatcherMetrics } from "./types.ts";
 
 export class OptimizedFileWatcher {
   private readonly changeQueue = new Set<string>();
-  private debounceTimer?: number;
-  private readonly debounceMs: number;
-  private readonly processCallback: (changes: string[]) => Promise<void>;
+  private debounceTimer?: ReturnType<typeof setTimeout>;
   private readonly metrics = {
     totalEvents: 0,
     batchedOperations: 0,
@@ -14,12 +12,9 @@ export class OptimizedFileWatcher {
   };
 
   constructor(
-    debounceMs: number,
-    processCallback: (changes: string[]) => Promise<void>,
-  ) {
-    this.debounceMs = debounceMs;
-    this.processCallback = processCallback;
-  }
+    private readonly debounceMs: number,
+    private readonly processCallback: (changes: string[]) => Promise<void>,
+  ) {}
 
   handleChange(paths: string[]): void {
     this.metrics.totalEvents += paths.length;
@@ -32,13 +27,13 @@ export class OptimizedFileWatcher {
   }
 
   private debounceChanges(): void {
-    if (this.debounceTimer !== undefined) {
+    if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }
 
     this.debounceTimer = setTimeout(() => {
       void this.processChanges();
-    }, this.debounceMs) as unknown as number;
+    }, this.debounceMs);
   }
 
   private async processChanges(): Promise<void> {
@@ -72,13 +67,11 @@ export class OptimizedFileWatcher {
   }
 
   cleanup(): void {
-    if (this.debounceTimer === undefined) {
-      this.changeQueue.clear();
-      return;
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = undefined;
     }
 
-    clearTimeout(this.debounceTimer);
-    this.debounceTimer = undefined;
     this.changeQueue.clear();
   }
 

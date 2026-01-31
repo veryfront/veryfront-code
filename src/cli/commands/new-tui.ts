@@ -1,5 +1,5 @@
 import { writeStdout } from "#veryfront/platform/compat/process.ts";
-import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
+import { getStdinReader, setRawMode, type StdinReader } from "#veryfront/platform/compat/stdin.ts";
 import type { InitTemplate } from "./init/types.ts";
 import type { IntegrationName } from "../templates/types.ts";
 
@@ -64,6 +64,18 @@ function isDown(key: string): boolean {
   return key === "\x1b[B" || key === "j";
 }
 
+async function readKey(reader: StdinReader): Promise<string | null> {
+  const { value, done } = await reader.read();
+  if (done) return null;
+  return new TextDecoder().decode(value);
+}
+
+function handleCancel(lines: number): void {
+  setRawMode(false);
+  write(show);
+  clear(lines);
+}
+
 async function select<T extends string>(
   label: string,
   options: { id: T; label: string }[],
@@ -92,20 +104,15 @@ async function select<T extends string>(
 
   setRawMode(true);
   const reader = getStdinReader();
-  const dec = new TextDecoder();
 
   try {
     while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-
-      const key = dec.decode(value);
+      const key = await readKey(reader);
+      if (key === null) break;
 
       if (key === "\x03") {
         reader.releaseLock();
-        setRawMode(false);
-        write(show);
-        clear(lines);
+        handleCancel(lines);
         return null;
       }
 
@@ -168,20 +175,15 @@ async function multiSelect<T extends string>(
 
   setRawMode(true);
   const reader = getStdinReader();
-  const dec = new TextDecoder();
 
   try {
     while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-
-      const key = dec.decode(value);
+      const key = await readKey(reader);
+      if (key === null) break;
 
       if (key === "\x03") {
         reader.releaseLock();
-        setRawMode(false);
-        write(show);
-        clear(lines);
+        handleCancel(lines);
         return null;
       }
 

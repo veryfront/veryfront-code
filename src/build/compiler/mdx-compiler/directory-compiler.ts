@@ -1,10 +1,10 @@
 import { bundlerLogger as logger } from "#veryfront/utils";
 import { join } from "#veryfront/platform/compat/path/index.ts";
-import type { CompileOptions, CompileResult } from "./types.ts";
-import { pathExists } from "./validator.ts";
-import { compileMDXFile } from "./compiler.ts";
 import { discoverFiles } from "#veryfront/utils/file-discovery.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
+import { compileMDXFile } from "./compiler.ts";
+import type { CompileOptions, CompileResult } from "./types.ts";
+import { pathExists } from "./validator.ts";
 
 export async function compileAllMDX(options: CompileOptions): Promise<Map<string, CompileResult>> {
   const results = new Map<string, CompileResult>();
@@ -30,7 +30,8 @@ export async function compileMDXDirectory(
   for await (const file of discoverFiles({ baseDir: dir, extensions: [".mdx"], adapter })) {
     try {
       const content = await adapter.fs.readFile(file.path);
-      results.set(file.path, await compileMDXFile(file.path, content, options));
+      const result = await compileMDXFile(file.path, content, options);
+      results.set(file.path, result);
     } catch (error) {
       logger.error(`Failed to compile ${file.path}:`, error);
     }

@@ -26,7 +26,7 @@ export default tool({
       emailStatus: invoice.EmailStatus,
       billEmail: invoice.BillEmail?.Address,
       lineItems: invoice.Line.map((line) => {
-        const salesItemLineDetail = line.SalesItemLineDetail;
+        const detail = line.SalesItemLineDetail;
 
         return {
           id: line.Id,
@@ -34,11 +34,11 @@ export default tool({
           description: line.Description,
           amount: line.Amount,
           detailType: line.DetailType,
-          salesItemLineDetail: salesItemLineDetail
+          salesItemLineDetail: detail
             ? {
-                itemName: salesItemLineDetail.ItemRef.name,
-                quantity: salesItemLineDetail.Qty,
-                unitPrice: salesItemLineDetail.UnitPrice,
+                itemName: detail.ItemRef.name,
+                quantity: detail.Qty,
+                unitPrice: detail.UnitPrice,
               }
             : undefined,
         };

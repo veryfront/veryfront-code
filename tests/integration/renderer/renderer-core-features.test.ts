@@ -19,7 +19,6 @@ import { describe, it } from "@veryfront/testing/bdd";
 
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-import type { VeryfrontRenderer as _VeryfrontRenderer } from "../../../src/rendering/orchestrator/ssr.ts";
 
 // Skip tests on non-Deno runtimes (SSR uses URL-based imports)
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
@@ -43,10 +42,7 @@ describe(
             }`,
           );
 
-          await writeTextFile(
-            join(context.projectDir, "app", "test", "page.mdx"),
-            `# Test Page`,
-          );
+          await writeTextFile(join(context.projectDir, "app", "test", "page.mdx"), `# Test Page`);
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -55,7 +51,6 @@ describe(
 
           const result = await renderer.renderPage("test");
           assertExists(result);
-          // Loading component wrapped in Suspense
         });
       });
 
@@ -70,10 +65,7 @@ describe(
             }`,
           );
 
-          await writeTextFile(
-            join(context.projectDir, "app", "test", "page.mdx"),
-            `# Test Page`,
-          );
+          await writeTextFile(join(context.projectDir, "app", "test", "page.mdx"), `# Test Page`);
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -82,7 +74,6 @@ describe(
 
           const result = await renderer.renderPage("test");
           assertExists(result);
-          // Error boundary should be applied
         });
       });
 
@@ -258,7 +249,7 @@ export const metadata = {
 
           const vms = renderer.getVirtualModuleSystem();
           assertExists(vms);
-          assert(typeof (vms as any).register === "function");
+          assert(typeof (vms as { register?: unknown }).register === "function");
         });
       });
     });
@@ -283,10 +274,7 @@ title: Broken
             mode: "development",
           });
 
-          await assertRejects(
-            async () => await renderer.renderPage("broken"),
-            Error,
-          );
+          await assertRejects(async () => await renderer.renderPage("broken"), Error);
         });
       });
 
@@ -306,11 +294,7 @@ title: Broken
             mode: "development",
           });
 
-          // Should handle the error during rendering
-          await assertRejects(
-            async () => await renderer.renderPage("error-page"),
-            Error,
-          );
+          await assertRejects(async () => await renderer.renderPage("error-page"), Error);
         });
       });
     });
@@ -376,7 +360,6 @@ description: Test description
 
           const result = await renderer.renderPage("validation-test-page");
 
-          // Validate required fields
           assertEquals(typeof result.html, "string");
           assertExists(result.frontmatter);
           assertEquals(typeof result.frontmatter, "object");
@@ -392,10 +375,7 @@ description: Test description
         await withTestContext("renderer-core-empty-frontmatter", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "no-frontmatter.mdx"),
-            `# Just Content`,
-          );
+          await writeTextFile(join(context.projectDir, "pages", "no-frontmatter.mdx"), `# Just Content`);
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -438,10 +418,7 @@ layout: true
         await withTestContext("renderer-core-css-field", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "test.mdx"),
-            `# Test`,
-          );
+          await writeTextFile(join(context.projectDir, "pages", "test.mdx"), `# Test`);
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -464,7 +441,6 @@ layout: true
             mode: "development",
           });
 
-          // Create multiple pages (not hitting full limit to keep test fast)
           const pageCount = 10;
           for (let i = 0; i < pageCount; i++) {
             await writeTextFile(
@@ -478,13 +454,11 @@ title: Page ${i}
             );
           }
 
-          // Render all pages
           for (let i = 0; i < pageCount; i++) {
             const result = await renderer.renderPage(`page-${i}`);
             assertExists(result);
           }
 
-          // Verify cache is working
           const result = await renderer.renderPage("page-0");
           assertEquals(result.frontmatter.title, "Page 0");
         });
@@ -499,20 +473,12 @@ title: Page ${i}
             mode: "development",
           });
 
-          // Create test pages
-          await writeTextFile(
-            join(context.projectDir, "pages", "first.mdx"),
-            `# First Page`,
-          );
-          await writeTextFile(
-            join(context.projectDir, "pages", "second.mdx"),
-            `# Second Page`,
-          );
+          await writeTextFile(join(context.projectDir, "pages", "first.mdx"), `# First Page`);
+          await writeTextFile(join(context.projectDir, "pages", "second.mdx"), `# Second Page`);
 
           await renderer.renderPage("first");
           await renderer.renderPage("second");
 
-          // Both should be renderable
           const result1 = await renderer.renderPage("first");
           const result2 = await renderer.renderPage("second");
           assertExists(result1);
@@ -524,25 +490,19 @@ title: Page ${i}
         await withTestContext("renderer-core-memory-cleanup", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "test.mdx"),
-            `# Test`,
-          );
+          await writeTextFile(join(context.projectDir, "pages", "test.mdx"), `# Test`);
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
             mode: "development",
           });
 
-          // Render multiple times
           for (let i = 0; i < 5; i++) {
             await renderer.renderPage("test");
           }
 
-          // Clear cache
           renderer.clearCache();
 
-          // Should still work after clearing
           const result = await renderer.renderPage("test");
           assertExists(result);
         });
@@ -554,27 +514,21 @@ title: Page ${i}
         await withTestContext("renderer-core-stream-fallback", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "test.mdx"),
-            `# Stream Test`,
-          );
+          await writeTextFile(join(context.projectDir, "pages", "test.mdx"), `# Stream Test`);
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
-            mode: "production", // Production uses streaming
+            mode: "production",
           });
 
-          const result = await renderer.renderPage("test", {
-            delivery: "stream",
-          });
+          const result = await renderer.renderPage("test", { delivery: "stream" });
 
-          // When streaming succeeds, content goes to result.stream, not result.html
           assertExists(result.stream, "Stream should exist when streaming delivery is requested");
 
-          // Consume the stream to verify content
           const reader = result.stream.getReader();
           const decoder = new TextDecoder();
           let fullContent = "";
+
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -608,10 +562,7 @@ export default function SuspensePage() {
             mode: "production",
           });
 
-          const result = await renderer.renderPage("suspense", {
-            delivery: "stream",
-          });
-
+          const result = await renderer.renderPage("suspense", { delivery: "stream" });
           assertExists(result.html);
         });
       });
@@ -620,10 +571,7 @@ export default function SuspensePage() {
         await withTestContext("renderer-core-null-stream", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "test.mdx"),
-            `# Test`,
-          );
+          await writeTextFile(join(context.projectDir, "pages", "test.mdx"), `# Test`);
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -668,10 +616,7 @@ layout: broken
             mode: "development",
           });
 
-          await assertRejects(
-            async () => await renderer.renderPage("test"),
-            Error,
-          );
+          await assertRejects(async () => await renderer.renderPage("test"), Error);
         });
       });
 
@@ -694,7 +639,6 @@ layout: nonexistent
             mode: "development",
           });
 
-          // Should error when layout is explicitly specified but not found
           await assertRejects(
             async () => await renderer.renderPage("test"),
             Error,
@@ -736,11 +680,7 @@ layout: runtime-error
             mode: "development",
           });
 
-          // Runtime errors during React rendering should propagate through renderToString
-          await assertRejects(
-            async () => await renderer.renderPage("test"),
-            Error,
-          );
+          await assertRejects(async () => await renderer.renderPage("test"), Error);
         });
       });
     });

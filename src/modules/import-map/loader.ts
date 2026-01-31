@@ -28,9 +28,7 @@ function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConf
     ? Object.fromEntries(
       Object.entries(importMap.scopes).map(([scope, mappings]) => [
         scope,
-        Object.fromEntries(
-          Object.entries(mappings).map(([k, v]) => [k, normalizeValue(v)]),
-        ),
+        Object.fromEntries(Object.entries(mappings).map(([k, v]) => [k, normalizeValue(v)])),
       ]),
     )
     : undefined;
@@ -46,13 +44,63 @@ function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConf
   return { imports, scopes };
 }
 
-function mergeWithDefault(
-  importMap: { imports?: Record<string, string>; scopes?: Record<string, Record<string, string>> },
-): ImportMapConfig {
-  return mergeImportMaps(getDefaultImportMap(), {
-    imports: importMap.imports ?? {},
-    scopes: importMap.scopes ?? {},
-  });
+async function getRuntimeAdapter(adapter?: RuntimeAdapter): Promise<RuntimeAdapter> {
+  if (adapter) return adapter;
+
+  const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+  return runtime.get();
+}
+
+/**
+ * Filter out relative paths from import map entries.
+ *
+ * Relative paths (./foo, ../bar) in deno.json are for Deno's native module resolution.
+ * They can't work in the browser/SSR context where we serve modules via /_vf_modules/.
+ * The default import map has correct absolute paths like /_vf_modules/_veryfront/...
+ */
+function filterRelativePaths(imports: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(imports).filter(([, value]) =>
+      !value.startsWith("./") && !value.startsWith("../")
+    ),
+  );
+}
+
+async function loadDenoJsonImportMap(
+  startPath: string,
+  adapter: RuntimeAdapter,
+): Promise<ImportMapConfig | null> {
+  let currentPath = startPath;
+
+  while (currentPath !== "/" && currentPath !== "") {
+    const denoJsonPath = join(currentPath, "deno.json");
+
+    try {
+      const content = await adapter.fs.readFile(denoJsonPath);
+      const config = JSON.parse(content);
+
+      if (config.imports || config.scopes) {
+        logger.debug(`Loaded import map from ${denoJsonPath}`);
+        const imports = config.imports ? filterRelativePaths(config.imports) : {};
+        const scopes = config.scopes
+          ? Object.fromEntries(
+            Object.entries(config.scopes as Record<string, Record<string, string>>).map(
+              ([scope, mappings]) => [scope, filterRelativePaths(mappings)],
+            ),
+          )
+          : {};
+        return { imports, scopes };
+      }
+    } catch {
+      // deno.json not found in this directory, continue searching
+    }
+
+    const parent = dirname(currentPath);
+    if (parent === currentPath) break;
+    currentPath = parent;
+  }
+
+  return null;
 }
 
 export function loadImportMap(
@@ -62,46 +110,36 @@ export function loadImportMap(
   return withSpan(
     "modules.importMap.load",
     async () => {
-      const runtimeAdapter = adapter ??
-        (await (async () => {
-          const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
-          return runtime.get();
-        })());
+      const runtimeAdapter = await getRuntimeAdapter(adapter);
 
+      // First, load import map from deno.json (if exists)
+      const denoJsonMap = await loadDenoJsonImportMap(startPath, runtimeAdapter);
+
+      // Then, try to get config's import map
+      let configMap: ImportMapConfig | null = null;
       try {
         const cfg = await getConfig(startPath, runtimeAdapter);
         const importMap = cfg?.resolve?.importMap;
-
         if (importMap && typeof importMap === "object") {
-          return normalizeImportMapForRuntime(mergeWithDefault(importMap));
+          configMap = {
+            imports: importMap.imports ?? {},
+            scopes: importMap.scopes ?? {},
+          };
         }
       } catch {
-        // Config not found or invalid, fall through to file-based discovery
+        // Config not found or invalid, continue without it
       }
 
-      let currentPath = startPath;
+      // Merge: defaults < deno.json < config
+      // If both deno.json and config have import maps, config takes precedence for overlapping keys
+      // but deno.json's unique keys (especially scopes) are preserved
+      const merged = mergeImportMaps(
+        getDefaultImportMap(),
+        denoJsonMap ?? { imports: {}, scopes: {} },
+        configMap ?? { imports: {}, scopes: {} },
+      );
 
-      while (currentPath !== "/" && currentPath !== "") {
-        const denoJsonPath = join(currentPath, "deno.json");
-
-        try {
-          const content = await runtimeAdapter.fs.readFile(denoJsonPath);
-          const config = JSON.parse(content);
-
-          if (config.imports || config.scopes) {
-            logger.debug(`Loaded import map from ${denoJsonPath}`);
-            return normalizeImportMapForRuntime(mergeWithDefault(config));
-          }
-        } catch {
-          // deno.json not found in this directory, continue searching
-        }
-
-        const parent = dirname(currentPath);
-        if (parent === currentPath) break;
-        currentPath = parent;
-      }
-
-      return normalizeImportMapForRuntime(getDefaultImportMap());
+      return normalizeImportMapForRuntime(merged);
     },
     { "importMap.startPath": startPath },
   );

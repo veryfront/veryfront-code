@@ -4,5 +4,9 @@ import { NodeHttpServer } from "./node-server.ts";
 import type { HttpServer } from "./types.ts";
 
 export function createHttpServer(): HttpServer {
-  return isDeno ? new DenoHttpServer() : new NodeHttpServer();
+  if (isDeno) {
+    return new DenoHttpServer();
+  }
+
+  return new NodeHttpServer();
 }

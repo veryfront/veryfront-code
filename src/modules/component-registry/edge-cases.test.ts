@@ -126,7 +126,10 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
         `${projectDir}/components/Button.tsx`,
         "export default function Button() {}",
       );
-      adapter.fs.files.set(`${projectDir}/components/index.tsx`, "export { Button }");
+      adapter.fs.files.set(
+        `${projectDir}/components/index.tsx`,
+        "export { Button }",
+      );
 
       const registry = new ComponentRegistry({ projectDir, adapter });
 
@@ -172,8 +175,14 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
         `${projectDir}/components/AlsoValid.jsx`,
         "export default function() {}",
       );
-      adapter.fs.files.set(`${projectDir}/components/Invalid.ts`, "export default {}");
-      adapter.fs.files.set(`${projectDir}/components/AlsoInvalid.js`, "export default {}");
+      adapter.fs.files.set(
+        `${projectDir}/components/Invalid.ts`,
+        "export default {}",
+      );
+      adapter.fs.files.set(
+        `${projectDir}/components/AlsoInvalid.js`,
+        "export default {}",
+      );
       adapter.fs.files.set(`${projectDir}/components/NotCode.txt`, "text file");
 
       const registry = new ComponentRegistry({ projectDir, adapter });
@@ -209,7 +218,9 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
 
       const originalReadFile = adapter.fs.readFile.bind(adapter.fs);
       adapter.fs.readFile = async (path: string) => {
-        if (path.includes("Error.tsx")) throw new Error("Permission denied");
+        if (path.includes("Error.tsx")) {
+          throw new Error("Permission denied");
+        }
         return await originalReadFile(path);
       };
 
@@ -381,7 +392,9 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
 
       const originalStat = adapter.fs.stat.bind(adapter.fs);
       adapter.fs.stat = async (path: string) => {
-        if (path.includes("Button.tsx")) throw new Error("Stat failed");
+        if (path.includes("Button.tsx")) {
+          throw new Error("Stat failed");
+        }
         return await originalStat(path);
       };
 
@@ -489,7 +502,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
 
       await discoverPromise;
 
-      assertExists(component !== undefined ? component : "timing-dependent");
+      assertExists(component ?? "timing-dependent");
     });
 
     it("should handle loadComponent before discover", async () => {

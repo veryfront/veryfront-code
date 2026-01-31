@@ -10,12 +10,20 @@
 
 import { assertEquals, assertExists } from "@std/assert";
 
+async function importBackend(): Promise<typeof import("./backend.ts")> {
+  return await import("./backend.ts");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 Deno.test({
   name: "backend.ts imports without circular dependency",
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
-    const mod = await import("./backend.ts");
+    const mod = await importBackend();
 
     assertExists(mod.MemoryCacheBackend);
     assertExists(mod.RedisCacheBackend);
@@ -27,7 +35,7 @@ Deno.test({
 });
 
 Deno.test("MemoryCacheBackend basic operations", async () => {
-  const { MemoryCacheBackend } = await import("./backend.ts");
+  const { MemoryCacheBackend } = await importBackend();
 
   const cache = new MemoryCacheBackend(10);
   assertEquals(cache.type, "memory");
@@ -47,20 +55,20 @@ Deno.test("MemoryCacheBackend basic operations", async () => {
 });
 
 Deno.test("MemoryCacheBackend TTL expiration", async () => {
-  const { MemoryCacheBackend } = await import("./backend.ts");
+  const { MemoryCacheBackend } = await importBackend();
 
   const cache = new MemoryCacheBackend(10);
 
   await cache.set("expires", "soon", 1);
   assertEquals(await cache.get("expires"), "soon");
 
-  await new Promise((resolve) => setTimeout(resolve, 1100));
+  await sleep(1100);
 
   assertEquals(await cache.get("expires"), null);
 });
 
 Deno.test("MemoryCacheBackend evicts oldest on capacity", async () => {
-  const { MemoryCacheBackend } = await import("./backend.ts");
+  const { MemoryCacheBackend } = await importBackend();
 
   const cache = new MemoryCacheBackend(3);
 
@@ -76,7 +84,7 @@ Deno.test("MemoryCacheBackend evicts oldest on capacity", async () => {
 });
 
 Deno.test("MemoryCacheBackend delByPattern", async () => {
-  const { MemoryCacheBackend } = await import("./backend.ts");
+  const { MemoryCacheBackend } = await importBackend();
 
   const cache = new MemoryCacheBackend(10);
 
@@ -91,7 +99,7 @@ Deno.test("MemoryCacheBackend delByPattern", async () => {
 });
 
 Deno.test("MemoryCacheBackend getBatch returns all requested keys", async () => {
-  const { MemoryCacheBackend } = await import("./backend.ts");
+  const { MemoryCacheBackend } = await importBackend();
 
   const cache = new MemoryCacheBackend(10);
   await cache.set("k1", "v1");
@@ -104,20 +112,20 @@ Deno.test("MemoryCacheBackend getBatch returns all requested keys", async () => 
 });
 
 Deno.test("MemoryCacheBackend getBatch handles expired entries", async () => {
-  const { MemoryCacheBackend } = await import("./backend.ts");
+  const { MemoryCacheBackend } = await importBackend();
 
   const cache = new MemoryCacheBackend(10);
   await cache.set("exp", "val", 0); // TTL of 0 means expires immediately
 
   // Slight delay to ensure expiration
-  await new Promise((r) => setTimeout(r, 10));
+  await sleep(10);
 
   const results = await cache.getBatch(["exp"]);
   assertEquals(results.get("exp"), null);
 });
 
 Deno.test("MemoryCacheBackend setBatch sets multiple entries", async () => {
-  const { MemoryCacheBackend } = await import("./backend.ts");
+  const { MemoryCacheBackend } = await importBackend();
 
   const cache = new MemoryCacheBackend(10);
   await cache.setBatch([
@@ -133,7 +141,7 @@ Deno.test("MemoryCacheBackend setBatch sets multiple entries", async () => {
 });
 
 Deno.test("MemoryCacheBackend setBatch evicts when at capacity", async () => {
-  const { MemoryCacheBackend } = await import("./backend.ts");
+  const { MemoryCacheBackend } = await importBackend();
 
   const cache = new MemoryCacheBackend(2);
   await cache.set("existing", "old");
@@ -147,7 +155,7 @@ Deno.test("MemoryCacheBackend setBatch evicts when at capacity", async () => {
 });
 
 Deno.test("MemoryCacheBackend delByPattern uses regex cache", async () => {
-  const { MemoryCacheBackend } = await import("./backend.ts");
+  const { MemoryCacheBackend } = await importBackend();
 
   const cache = new MemoryCacheBackend(20);
   await cache.set("prefix:a", "1");
@@ -165,7 +173,7 @@ Deno.test("MemoryCacheBackend delByPattern uses regex cache", async () => {
 });
 
 Deno.test("MemoryCacheBackend delByPattern with ? wildcard", async () => {
-  const { MemoryCacheBackend } = await import("./backend.ts");
+  const { MemoryCacheBackend } = await importBackend();
 
   const cache = new MemoryCacheBackend(10);
   await cache.set("key-a", "1");
@@ -177,7 +185,7 @@ Deno.test("MemoryCacheBackend delByPattern with ? wildcard", async () => {
 });
 
 Deno.test("MemoryCacheBackend set overwrites existing entry without eviction", async () => {
-  const { MemoryCacheBackend } = await import("./backend.ts");
+  const { MemoryCacheBackend } = await importBackend();
 
   const cache = new MemoryCacheBackend(2);
   await cache.set("a", "1");
@@ -191,42 +199,42 @@ Deno.test("MemoryCacheBackend set overwrites existing entry without eviction", a
 });
 
 Deno.test("ApiCacheBackend requires auth and project context", async () => {
-  const { ApiCacheBackend } = await import("./backend.ts");
+  const { ApiCacheBackend } = await importBackend();
 
   const cache = new ApiCacheBackend({});
   assertEquals(await cache.get("test-key"), null);
 });
 
 Deno.test("ApiCacheBackend type property", async () => {
-  const { ApiCacheBackend } = await import("./backend.ts");
+  const { ApiCacheBackend } = await importBackend();
 
   const cache = new ApiCacheBackend({});
   assertEquals(cache.type, "api");
 });
 
 Deno.test("ApiCacheBackend set returns without auth context", async () => {
-  const { ApiCacheBackend } = await import("./backend.ts");
+  const { ApiCacheBackend } = await importBackend();
 
   const cache = new ApiCacheBackend({});
   await cache.set("key", "value"); // Should not throw
 });
 
 Deno.test("ApiCacheBackend del returns without auth context", async () => {
-  const { ApiCacheBackend } = await import("./backend.ts");
+  const { ApiCacheBackend } = await importBackend();
 
   const cache = new ApiCacheBackend({});
   await cache.del("key"); // Should not throw
 });
 
 Deno.test("ApiCacheBackend delByPattern returns 0 without auth context", async () => {
-  const { ApiCacheBackend } = await import("./backend.ts");
+  const { ApiCacheBackend } = await importBackend();
 
   const cache = new ApiCacheBackend({});
   assertEquals(await cache.delByPattern("prefix:*"), 0);
 });
 
 Deno.test("ApiCacheBackend getBatch returns nulls without auth context", async () => {
-  const { ApiCacheBackend } = await import("./backend.ts");
+  const { ApiCacheBackend } = await importBackend();
 
   const cache = new ApiCacheBackend({});
   const results = await cache.getBatch(["k1", "k2"]);
@@ -235,7 +243,7 @@ Deno.test("ApiCacheBackend getBatch returns nulls without auth context", async (
 });
 
 Deno.test("ApiCacheBackend getBatch returns empty map for empty keys", async () => {
-  const { ApiCacheBackend } = await import("./backend.ts");
+  const { ApiCacheBackend } = await importBackend();
 
   const cache = new ApiCacheBackend({});
   const results = await cache.getBatch([]);
@@ -243,21 +251,21 @@ Deno.test("ApiCacheBackend getBatch returns empty map for empty keys", async () 
 });
 
 Deno.test("ApiCacheBackend setBatch returns without auth context", async () => {
-  const { ApiCacheBackend } = await import("./backend.ts");
+  const { ApiCacheBackend } = await importBackend();
 
   const cache = new ApiCacheBackend({});
   await cache.setBatch([{ key: "k", value: "v" }]); // Should not throw
 });
 
 Deno.test("ApiCacheBackend setBatch returns for empty entries", async () => {
-  const { ApiCacheBackend } = await import("./backend.ts");
+  const { ApiCacheBackend } = await importBackend();
 
   const cache = new ApiCacheBackend({});
   await cache.setBatch([]); // Should not throw
 });
 
 Deno.test("ApiCacheBackend uses custom keyPrefix", async () => {
-  const { ApiCacheBackend } = await import("./backend.ts");
+  const { ApiCacheBackend } = await importBackend();
 
   // Just verify it can be constructed with a prefix
   const cache = new ApiCacheBackend({ keyPrefix: "custom-prefix" });
@@ -266,42 +274,42 @@ Deno.test("ApiCacheBackend uses custom keyPrefix", async () => {
 });
 
 Deno.test("RedisCacheBackend type property", async () => {
-  const { RedisCacheBackend } = await import("./backend.ts");
+  const { RedisCacheBackend } = await importBackend();
 
   const cache = new RedisCacheBackend();
   assertEquals(cache.type, "redis");
 });
 
 Deno.test("RedisCacheBackend returns null without client", async () => {
-  const { RedisCacheBackend } = await import("./backend.ts");
+  const { RedisCacheBackend } = await importBackend();
 
   const cache = new RedisCacheBackend();
   assertEquals(await cache.get("any-key"), null);
 });
 
 Deno.test("RedisCacheBackend set is no-op without client", async () => {
-  const { RedisCacheBackend } = await import("./backend.ts");
+  const { RedisCacheBackend } = await importBackend();
 
   const cache = new RedisCacheBackend();
   await cache.set("key", "value"); // Should not throw
 });
 
 Deno.test("RedisCacheBackend del is no-op without client", async () => {
-  const { RedisCacheBackend } = await import("./backend.ts");
+  const { RedisCacheBackend } = await importBackend();
 
   const cache = new RedisCacheBackend();
   await cache.del("key"); // Should not throw
 });
 
 Deno.test("RedisCacheBackend delByPattern returns 0 without client", async () => {
-  const { RedisCacheBackend } = await import("./backend.ts");
+  const { RedisCacheBackend } = await importBackend();
 
   const cache = new RedisCacheBackend();
   assertEquals(await cache.delByPattern("*"), 0);
 });
 
 Deno.test("RedisCacheBackend getBatch returns nulls without client", async () => {
-  const { RedisCacheBackend } = await import("./backend.ts");
+  const { RedisCacheBackend } = await importBackend();
 
   const cache = new RedisCacheBackend();
   const results = await cache.getBatch(["k1", "k2"]);
@@ -310,7 +318,7 @@ Deno.test("RedisCacheBackend getBatch returns nulls without client", async () =>
 });
 
 Deno.test("RedisCacheBackend getBatch returns empty map for empty keys", async () => {
-  const { RedisCacheBackend } = await import("./backend.ts");
+  const { RedisCacheBackend } = await importBackend();
 
   const cache = new RedisCacheBackend();
   const results = await cache.getBatch([]);
@@ -318,21 +326,21 @@ Deno.test("RedisCacheBackend getBatch returns empty map for empty keys", async (
 });
 
 Deno.test("RedisCacheBackend setBatch is no-op without client", async () => {
-  const { RedisCacheBackend } = await import("./backend.ts");
+  const { RedisCacheBackend } = await importBackend();
 
   const cache = new RedisCacheBackend();
   await cache.setBatch([{ key: "k", value: "v" }]); // Should not throw
 });
 
 Deno.test("RedisCacheBackend setBatch is no-op for empty entries", async () => {
-  const { RedisCacheBackend } = await import("./backend.ts");
+  const { RedisCacheBackend } = await importBackend();
 
   const cache = new RedisCacheBackend();
   await cache.setBatch([]); // Should not throw
 });
 
 Deno.test("CacheBackends factory functions exist", async () => {
-  const { CacheBackends } = await import("./backend.ts");
+  const { CacheBackends } = await importBackend();
 
   assertEquals(typeof CacheBackends.transform, "function");
   assertEquals(typeof CacheBackends.file, "function");
@@ -345,7 +353,7 @@ Deno.test("CacheBackends factory functions exist", async () => {
 });
 
 Deno.test("http-cache.ts can import CacheBackends without circular dependency", async () => {
-  const { CacheBackends, createCacheBackend } = await import("./backend.ts");
+  const { CacheBackends, createCacheBackend } = await importBackend();
 
   assertExists(CacheBackends);
   assertExists(createCacheBackend);
@@ -360,7 +368,7 @@ Deno.test({
   sanitizeResources: false,
   fn: async () => {
     const { isDistributedBackend, MemoryCacheBackend, RedisCacheBackend, ApiCacheBackend } =
-      await import("./backend.ts");
+      await importBackend();
 
     assertEquals(isDistributedBackend(new MemoryCacheBackend()), false);
     assertEquals(isDistributedBackend(new RedisCacheBackend()), true);
@@ -373,15 +381,14 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
-    const { createDistributedCacheAccessor, MemoryCacheBackend } = await import("./backend.ts");
+    const { createDistributedCacheAccessor, MemoryCacheBackend } = await importBackend();
 
     const accessor = createDistributedCacheAccessor(
       () => Promise.resolve(new MemoryCacheBackend()),
       "test",
     );
 
-    const result = await accessor();
-    assertEquals(result, null);
+    assertEquals(await accessor(), null);
   },
 });
 
@@ -390,7 +397,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
-    const { createDistributedCacheAccessor, MemoryCacheBackend } = await import("./backend.ts");
+    const { createDistributedCacheAccessor, MemoryCacheBackend } = await importBackend();
 
     let callCount = 0;
     const accessor = createDistributedCacheAccessor(
@@ -413,17 +420,14 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
-    const { createDistributedCacheAccessor } = await import("./backend.ts");
+    const { createDistributedCacheAccessor } = await importBackend();
 
     const accessor = createDistributedCacheAccessor(
-      () => {
-        return Promise.reject(new Error("Init failed"));
-      },
+      () => Promise.reject(new Error("Init failed")),
       "test-fail",
     );
 
-    const result = await accessor();
-    assertEquals(result, null);
+    assertEquals(await accessor(), null);
   },
 });
 
@@ -432,7 +436,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
-    const { createDistributedCacheAccessor, ApiCacheBackend } = await import("./backend.ts");
+    const { createDistributedCacheAccessor, ApiCacheBackend } = await importBackend();
 
     let callCount = 0;
     const apiBackend = new ApiCacheBackend({});
@@ -440,34 +444,27 @@ Deno.test({
     const accessor = createDistributedCacheAccessor(
       () => {
         callCount++;
-        if (callCount === 1) {
-          return Promise.reject(new Error("Init failed"));
-        }
+        if (callCount === 1) return Promise.reject(new Error("Init failed"));
         return Promise.resolve(apiBackend);
       },
       "test-retry",
     );
 
     // First call fails
-    const result1 = await accessor();
-    assertEquals(result1, null);
+    assertEquals(await accessor(), null);
     assertEquals(callCount, 1);
 
     // Immediate second call returns cached null (no retry yet)
-    const result2 = await accessor();
-    assertEquals(result2, null);
+    assertEquals(await accessor(), null);
     assertEquals(callCount, 1);
 
-    // Simulate time passing by manipulating the internal state via a fresh accessor
-    // We test the retry mechanism by creating a new accessor with a patched Date.now
     const originalDateNow = Date.now;
     try {
       // Advance time by 31 seconds
       Date.now = () => originalDateNow() + 31_000;
 
       // Now it should retry since enough time has passed
-      const result3 = await accessor();
-      assertEquals(result3, apiBackend);
+      assertEquals(await accessor(), apiBackend);
       assertEquals(callCount, 2);
     } finally {
       Date.now = originalDateNow;
@@ -480,7 +477,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
-    const { createDistributedCacheAccessor, MemoryCacheBackend } = await import("./backend.ts");
+    const { createDistributedCacheAccessor, MemoryCacheBackend } = await importBackend();
 
     let callCount = 0;
     const accessor = createDistributedCacheAccessor(
@@ -491,16 +488,14 @@ Deno.test({
       "test-no-retry-memory",
     );
 
-    const result1 = await accessor();
-    assertEquals(result1, null);
+    assertEquals(await accessor(), null);
     assertEquals(callCount, 1);
 
     // Even after time passes, memory-only result should not retry
     const originalDateNow = Date.now;
     try {
       Date.now = () => originalDateNow() + 60_000;
-      const result2 = await accessor();
-      assertEquals(result2, null);
+      assertEquals(await accessor(), null);
       assertEquals(callCount, 1);
     } finally {
       Date.now = originalDateNow;
@@ -513,7 +508,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
-    const { createCacheBackend } = await import("./backend.ts");
+    const { createCacheBackend } = await importBackend();
 
     const backend = await createCacheBackend({
       preferredBackend: "memory",
@@ -529,7 +524,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
-    const { createCacheBackend } = await import("./backend.ts");
+    const { createCacheBackend } = await importBackend();
 
     const backend = await createCacheBackend({ preferredBackend: "api" });
     assertEquals(backend.type, "api");

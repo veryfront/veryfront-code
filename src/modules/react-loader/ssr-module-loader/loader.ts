@@ -29,8 +29,8 @@ import { extractComponent } from "../extract-component.ts";
 import {
   CIRCUIT_BREAKER_RESET_MS,
   CIRCUIT_BREAKER_THRESHOLD,
+  getMaxConcurrentTransforms,
   IN_PROGRESS_WAIT_TIMEOUT_MS,
-  MAX_CONCURRENT_TRANSFORMS,
   MAX_TRANSFORM_DEPTH,
   TRANSFORM_ACQUIRE_TIMEOUT_MS,
   TRANSFORM_BATCH_SIZE,
@@ -39,6 +39,7 @@ import { withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 import {
   failedComponents,
   getFromRedis,
+  getTransformSemaphore,
   globalCrossProjectCache,
   globalInProgress,
   globalModuleCache,
@@ -46,7 +47,6 @@ import {
   isSSRDistributedCacheEnabled,
   releaseTransformSlot,
   setInRedis,
-  transformSemaphore,
   tryAcquireTransformSlot,
 } from "./cache/index.ts";
 import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
@@ -85,9 +85,6 @@ export class SSRModuleLoader {
     return this.cachedConfigHash;
   }
 
-  /**
-   * Load and transform a module for SSR.
-   */
   loadModule(
     filePath: string,
     source: string,
@@ -123,17 +120,17 @@ export class SSRModuleLoader {
 
           let mod: Record<string, unknown>;
           try {
-            mod = await withSpan(
+            mod = (await withSpan(
               SpanNames.SSR_DYNAMIC_IMPORT,
               () => import(`file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}`),
               { "ssr.file": fileName },
-            ) as Record<string, unknown>;
+            )) as Record<string, unknown>;
           } catch (importError) {
-            // If import fails due to missing HTTP bundle, try to recover and retry once
             const errorMsg = importError instanceof Error
               ? importError.message
               : String(importError);
             const bundleMatch = errorMsg.match(/veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/);
+
             if (bundleMatch) {
               const hash = bundleMatch[1]!;
               const cacheDir = getHttpBundleCacheDir();
@@ -151,22 +148,22 @@ export class SSRModuleLoader {
                 "#veryfront/transforms/esm/http-cache.ts"
               );
               const recovered = await recoverHttpBundleByHash(hash, cacheDir);
+
               if (recovered) {
                 logger.info("[SSR-MODULE-LOADER] HTTP bundle recovered, retrying import", {
                   hash,
                   file: filePath.slice(-40),
                 });
-                mod = await import(
+                mod = (await import(
                   `file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}&retry=1`
-                ) as Record<string, unknown>;
+                )) as Record<string, unknown>;
               } else {
-                // Recovery failed — invalidate cache so the next request triggers
-                // a fresh transform instead of hitting the same broken entry.
                 const cacheKey = this.getCacheKey(filePath);
                 globalModuleCache.delete(cacheKey);
-                // Also clear the verification cache for this entry
+
                 const verifyKey = `${cacheEntry.tempPath}:${cacheEntry.contentHash}`;
                 verifiedHttpBundlePaths.delete(verifyKey);
+
                 logger.error("[SSR-MODULE-LOADER] HTTP bundle recovery failed, cache invalidated", {
                   hash,
                   file: filePath.slice(-40),
@@ -176,13 +173,9 @@ export class SSRModuleLoader {
                 });
                 throw importError;
               }
-            } else if (
-              errorMsg.includes("Cannot find module") ||
-              errorMsg.includes("Module not found")
-            ) {
-              // Missing non-HTTP-bundle dependency — cache entry is corrupted.
-              // Invalidate so the next request triggers a fresh transform instead
-              // of hitting the same broken cache entry repeatedly.
+            }
+
+            if (errorMsg.includes("Cannot find module") || errorMsg.includes("Module not found")) {
               const cacheKey = this.getCacheKey(filePath);
               logger.error(
                 "[SSR-MODULE-LOADER] Cached module has missing dependency, invalidating cache",
@@ -193,13 +186,14 @@ export class SSRModuleLoader {
                 },
               );
               globalModuleCache.delete(cacheKey);
-              // Also clear the verification cache for this entry
+
               const verifyKey = `${cacheEntry.tempPath}:${cacheEntry.contentHash}`;
               verifiedHttpBundlePaths.delete(verifyKey);
-              throw importError;
-            } else {
+
               throw importError;
             }
+
+            throw importError;
           }
 
           failedComponents.delete(circuitKey);
@@ -236,9 +230,7 @@ export class SSRModuleLoader {
           type: "build",
           message:
             `Component ${filePath} is temporarily blocked due to repeated failures. Will retry in ${
-              Math.ceil(
-                (CIRCUIT_BREAKER_RESET_MS - timeSinceFailure) / 1000,
-              )
+              Math.ceil((CIRCUIT_BREAKER_RESET_MS - timeSinceFailure) / 1000)
             }s.`,
           context: {
             file: filePath,
@@ -284,9 +276,10 @@ export class SSRModuleLoader {
         `Missing contentSourceId for SSR module cache (project: ${this.options.projectId}, file: ${filePath})`,
       );
     }
-    // Include reactVersion and config hash to ensure different configs don't share cached modules
+
     const reactVersion = this.options.reactVersion ?? "default";
     const configHash = this.getConfigHash();
+
     return buildSSRModuleCacheKey(
       VERSION,
       this.options.projectId,
@@ -296,15 +289,12 @@ export class SSRModuleLoader {
 
   private isProductionContentSource(): boolean {
     const sourceId = this.options.contentSourceId;
-    if (!sourceId) {
-      return !this.options.dev;
-    }
+    if (!sourceId) return !this.options.dev;
 
-    if (
-      sourceId.startsWith("preview-") || sourceId === "preview" || sourceId === "preview-draft"
-    ) {
+    if (sourceId.startsWith("preview-") || sourceId === "preview" || sourceId === "preview-draft") {
       return false;
     }
+
     if (
       sourceId.startsWith("release-") ||
       sourceId.startsWith("production-") ||
@@ -322,16 +312,11 @@ export class SSRModuleLoader {
     return apiBaseUrl.replace(/\/api\/?$/, "");
   }
 
-  /**
-   * Fetch and transform a cross-project import.
-   */
   private async transformCrossProjectImport(
     crossProjectImport: CrossProjectImport,
   ): Promise<string> {
     const { specifier, projectSlug, version, path } = crossProjectImport;
-    // Include consuming project's context in cache key to prevent cross-project pollution.
-    // Different projects may use different React versions or JSX configs, so the same
-    // specifier can produce different transforms depending on the consumer.
+
     const reactVersion = this.options.reactVersion ?? "default";
     const cacheKey = `${specifier}:${this.options.projectId}:${reactVersion}`;
 
@@ -373,11 +358,10 @@ export class SSRModuleLoader {
       const tempPath = await this.getTempPath(syntheticFilePath, contentHash);
       await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), { recursive: true });
 
-      const useSemaphore = MAX_CONCURRENT_TRANSFORMS > 0;
+      const useSemaphore = getMaxConcurrentTransforms() > 0;
       const projectId = this.options.projectId;
       let projectSlotAcquired = false;
 
-      // Per-project fairness check (with short retry window for burst handling)
       if (!await tryAcquireTransformSlot(projectId, TRANSFORM_ACQUIRE_TIMEOUT_MS)) {
         throw new Error(
           `Project ${projectId} at transform capacity. Consider reducing page complexity or request rate.`,
@@ -386,12 +370,12 @@ export class SSRModuleLoader {
       projectSlotAcquired = true;
 
       if (useSemaphore) {
-        const acquired = await transformSemaphore.tryAcquire(TRANSFORM_ACQUIRE_TIMEOUT_MS);
+        const acquired = await getTransformSemaphore().tryAcquire(TRANSFORM_ACQUIRE_TIMEOUT_MS);
         if (!acquired) {
           releaseTransformSlot(projectId);
           projectSlotAcquired = false;
           throw new Error(
-            `Transform capacity exceeded (${transformSemaphore.waiting} waiting). Service is overloaded.`,
+            `Transform capacity exceeded (${getTransformSemaphore().waiting} waiting). Service is overloaded.`,
           );
         }
       }
@@ -428,7 +412,7 @@ export class SSRModuleLoader {
 
         return tempPath;
       } finally {
-        if (useSemaphore) transformSemaphore.release();
+        if (useSemaphore) getTransformSemaphore().release();
         if (projectSlotAcquired) releaseTransformSlot(projectId);
       }
     } catch (error) {
@@ -484,18 +468,16 @@ export class SSRModuleLoader {
     const contentHash = await this.hashContentAsync(code);
     const contentCacheKey = this.getCacheKey(`${filePath}:${contentHash}`);
     const filePathCacheKey = this.getCacheKey(filePath);
-    // Use content hash in inProgressKey to prevent race condition where
-    // different content versions wait for each other's transforms
     const inProgressKey = contentCacheKey;
 
     const cachedEntry = globalModuleCache.get(contentCacheKey);
     if (cachedEntry) {
-      // Verify HTTP bundles exist for in-memory cached transforms (once per path+content)
       const verifyKey = `${cachedEntry.tempPath}:${cachedEntry.contentHash}`;
       if (!verifiedHttpBundlePaths.get(verifyKey)) {
         try {
           const cachedCode = await this.fs.readTextFile(cachedEntry.tempPath);
           const bundlePaths = extractHttpBundlePaths(cachedCode);
+
           if (bundlePaths.length > 0) {
             const cacheDir = getHttpBundleCacheDir();
             const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
@@ -509,9 +491,7 @@ export class SSRModuleLoader {
               });
               globalModuleCache.delete(contentCacheKey);
               globalModuleCache.delete(filePathCacheKey);
-              // Also clear the verification cache so re-verification happens after re-transform
               verifiedHttpBundlePaths.delete(verifyKey);
-              // Fall through to Redis or fresh transform
             } else {
               verifiedHttpBundlePaths.set(verifyKey, true);
             }
@@ -519,15 +499,12 @@ export class SSRModuleLoader {
             verifiedHttpBundlePaths.set(verifyKey, true);
           }
         } catch {
-          // File doesn't exist or unreadable, invalidate cache
           globalModuleCache.delete(contentCacheKey);
           globalModuleCache.delete(filePathCacheKey);
-          // Also clear the verification cache so re-verification happens after re-transform
           verifiedHttpBundlePaths.delete(verifyKey);
         }
       }
 
-      // Re-check after potential invalidation
       if (globalModuleCache.has(contentCacheKey)) {
         globalModuleCache.set(filePathCacheKey, cachedEntry);
         await this.ensureDependenciesExist(code, filePath, depth);
@@ -538,21 +515,14 @@ export class SSRModuleLoader {
     if (isSSRDistributedCacheEnabled()) {
       const redisCode = await getFromRedis(contentCacheKey);
       if (redisCode) {
-        // Check for esm.sh URLs that reference /_vf_modules/ paths - these are invalid
-        // and indicate a cached transform from before the fix was deployed
         if (/esm\.sh\/_?vf_modules\//.test(redisCode)) {
           logger.warn(
             "[SSR-MODULE-LOADER] Redis cache has invalid esm.sh/_vf_modules URL, re-transforming",
-            {
-              file: filePath.slice(-40),
-            },
+            { file: filePath.slice(-40) },
           );
-          // Fall through to re-transform
         } else {
-          // Proactively ensure HTTP bundles exist before using cached transform.
-          // The cached code may reference file:// paths to HTTP bundles that were
-          // created on a different pod and may not exist locally.
           let allPathsOk = true;
+
           const bundlePaths = extractHttpBundlePaths(redisCode);
           if (bundlePaths.length > 0) {
             const cacheDir = getHttpBundleCacheDir();
@@ -569,9 +539,6 @@ export class SSRModuleLoader {
             }
           }
 
-          // Validate ALL file:// paths in cached code (including local imports).
-          // Redis may return cached transforms from other pods with different temp directories.
-          // If any local import paths are missing, we must re-transform.
           if (allPathsOk) {
             const allPaths = extractAllFilePaths(redisCode);
             for (const path of allPaths) {
@@ -582,7 +549,6 @@ export class SSRModuleLoader {
                   break;
                 }
               } catch {
-                // Path doesn't exist locally
                 logger.debug(
                   "[SSR-MODULE-LOADER] Redis cache has invalid local path, re-transforming",
                   {
@@ -597,10 +563,6 @@ export class SSRModuleLoader {
           }
 
           if (allPathsOk) {
-            // CRITICAL: Use transformedHash (hash of the transformed code) for temp path,
-            // NOT contentHash (hash of source). Other modules importing this file use
-            // transformedHash in their import paths (set during fresh transform at line 703).
-            // Using contentHash here would create a path mismatch and "Module not found" errors.
             const transformedHash = await this.hashContentAsync(redisCode);
             const tempPath = await this.getTempPath(filePath, transformedHash);
             await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), {
@@ -618,15 +580,12 @@ export class SSRModuleLoader {
             await this.ensureDependenciesExist(code, filePath, depth);
             return;
           }
-          // Fall through to re-transform, which will create HTTP bundles locally
         }
       }
     }
 
-    // Check MDX-ESM cache to share modules with MDX loader and avoid duplicate React contexts
     if (this.options.projectId && this.options.contentSourceId) {
       const baseCacheDir = getMdxEsmCacheDir();
-      // Use projectId consistently for stable cache keys (matches MDX loader)
       const projectKey = encodeURIComponent(this.options.projectId);
       const sourceKey = this.options.contentSourceId;
       const mdxCacheDir = join(baseCacheDir, projectKey, sourceKey);
@@ -637,6 +596,7 @@ export class SSRModuleLoader {
         this.options.projectDir,
         contentHash,
       );
+
       if (mdxCacheResult.status === "hit") {
         const entry: ModuleCacheEntry = { tempPath: mdxCacheResult.path, contentHash };
         globalModuleCache.set(contentCacheKey, entry);
@@ -649,7 +609,9 @@ export class SSRModuleLoader {
 
         await this.ensureDependenciesExist(code, filePath, depth);
         return;
-      } else if (mdxCacheResult.status === "corrupted") {
+      }
+
+      if (mdxCacheResult.status === "corrupted") {
         logger.warn("[SSR-MODULE-LOADER] MDX-ESM cache corrupted, re-transforming", {
           file: filePath.slice(-40),
           reason: mdxCacheResult.reason,
@@ -700,20 +662,17 @@ export class SSRModuleLoader {
         this.missingDependencies.push(...parseResult.missing);
       }
 
-      // P2: Pre-flight validation — check local import paths exist before
-      // starting expensive recursive transforms. Only validates local filesystem
-      // paths (startsWith "/"); remote adapter paths are validated by the adapter.
-      // Files that disappeared between parseLocalImports and now are demoted to
-      // missing deps (not transform rejections) to avoid dangling promises.
       if (parseResult.imports.length > 0) {
         const preflightFs = createFileSystem();
         const preflightMissing: MissingImport[] = [];
-        const validImports = [];
+        const validImports: typeof parseResult.imports = [];
+
         for (const imp of parseResult.imports) {
           if (!imp.absolutePath.startsWith("/")) {
             validImports.push(imp);
             continue;
           }
+
           try {
             const stat = await preflightFs.stat(imp.absolutePath);
             if (stat?.isFile) {
@@ -733,6 +692,7 @@ export class SSRModuleLoader {
             });
           }
         }
+
         if (preflightMissing.length > 0) {
           logger.warn("[SSR-MODULE-LOADER] Pre-flight: some dependencies missing, skipping them", {
             file: filePath.slice(-40),
@@ -740,8 +700,6 @@ export class SSRModuleLoader {
             depth,
           });
           this.missingDependencies.push(...preflightMissing);
-          // Continue with only valid imports — the transform can still proceed
-          // and the missing deps will be reported via throwMissingDependencies
           parseResult = { ...parseResult, imports: validImports };
         }
       }
@@ -776,11 +734,10 @@ export class SSRModuleLoader {
         );
       }
 
-      const useSemaphore = MAX_CONCURRENT_TRANSFORMS > 0;
+      const useSemaphore = getMaxConcurrentTransforms() > 0;
       const projectId = this.options.projectId;
       let projectSlotAcquired = false;
 
-      // Per-project fairness check (with short retry window for burst handling)
       if (!await tryAcquireTransformSlot(projectId, TRANSFORM_ACQUIRE_TIMEOUT_MS)) {
         throw toError(
           createError({
@@ -794,7 +751,7 @@ export class SSRModuleLoader {
       projectSlotAcquired = true;
 
       if (useSemaphore) {
-        const acquired = await transformSemaphore.tryAcquire(TRANSFORM_ACQUIRE_TIMEOUT_MS);
+        const acquired = await getTransformSemaphore().tryAcquire(TRANSFORM_ACQUIRE_TIMEOUT_MS);
         if (!acquired) {
           releaseTransformSlot(projectId);
           projectSlotAcquired = false;
@@ -802,7 +759,7 @@ export class SSRModuleLoader {
             createError({
               type: "build",
               message:
-                `Transform capacity exceeded (${transformSemaphore.waiting} waiting). Service is overloaded.`,
+                `Transform capacity exceeded (${getTransformSemaphore().waiting} waiting). Service is overloaded.`,
               context: { file: filePath, phase: "transform" },
             }),
           );
@@ -835,8 +792,6 @@ export class SSRModuleLoader {
           transformed = rewriteCrossProjectImport(transformed, specifier, tempPath);
         }
 
-        // Rewrite local imports to use hashed temp paths
-        // This ensures that each content version uses its own cached module
         transformed = rewriteLocalImports(
           transformed,
           localImportPaths,
@@ -844,7 +799,6 @@ export class SSRModuleLoader {
           this.options.projectDir,
         );
 
-        // Ensure HTTP bundles exist for this transform (handles nested bundle deps)
         const bundlePaths = extractHttpBundlePaths(transformed);
         if (bundlePaths.length > 0) {
           const cacheDir = getHttpBundleCacheDir();
@@ -872,8 +826,6 @@ export class SSRModuleLoader {
           }
         }
 
-        // Hash the TRANSFORMED content (after import rewrites) for cache busting
-        // This ensures Deno's module cache is invalidated when dependencies change
         const transformedHash = await this.hashContentAsync(transformed);
 
         let tempPath: string;
@@ -884,21 +836,17 @@ export class SSRModuleLoader {
           });
           await this.fs.writeTextFile(tempPath, transformed);
         } catch (writeError) {
-          // Cache directory may have been removed during test cleanup or pod shutdown.
-          // Log and continue - the module will be re-transformed on next request.
-          // Catches ENOENT (directory not found) and EINVAL (os error 22, parent deleted
-          // mid-mkdir on macOS/Deno).
-          if (
-            (writeError as { code?: string })?.code === "ENOENT" ||
-            (writeError instanceof Deno.errors.NotFound) ||
-            (writeError instanceof TypeError &&
-              String(writeError.message).includes("os error 22"))
-          ) {
+          const code = (writeError as { code?: string } | null | undefined)?.code;
+          const isOsError22 = writeError instanceof TypeError &&
+            String(writeError.message).includes("os error 22");
+
+          if (code === "ENOENT" || writeError instanceof Deno.errors.NotFound || isOsError22) {
             logger.debug("[SSR-MODULE-LOADER] Cache write skipped (directory removed)", {
               filePath,
             });
             return;
           }
+
           throw writeError;
         }
 
@@ -913,12 +861,11 @@ export class SSRModuleLoader {
           });
         }
 
-        // Use transformedHash for cache busting in dynamic imports
         const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
         globalModuleCache.set(contentCacheKey, entry);
         globalModuleCache.set(filePathCacheKey, entry);
       } finally {
-        if (useSemaphore) transformSemaphore.release();
+        if (useSemaphore) getTransformSemaphore().release();
         if (projectSlotAcquired) releaseTransformSlot(projectId);
       }
 
@@ -931,10 +878,6 @@ export class SSRModuleLoader {
     }
   }
 
-  /**
-   * Process local imports and return a map of specifier -> hashed temp path
-   * This allows the parent file to have its imports rewritten to the correct hashed paths.
-   */
   private async processLocalImports(
     imports: Array<{ absolutePath: string; specifier: string }>,
     fromFilePath: string,
@@ -948,14 +891,12 @@ export class SSRModuleLoader {
       await Promise.all(
         batch.map(async (imp) => {
           try {
-            const useLocalFs = imp.absolutePath.startsWith("/");
-            const depSource = useLocalFs
+            const depSource = imp.absolutePath.startsWith("/")
               ? await localFs.readTextFile(imp.absolutePath)
               : await this.options.adapter.fs.readFile(imp.absolutePath);
 
             await this.transformWithDependencies(imp.absolutePath, depSource, depth + 1);
 
-            // After transforming, get the cache entry to find the hashed temp path
             const depCacheKey = this.getCacheKey(imp.absolutePath);
             const depEntry = globalModuleCache.get(depCacheKey);
             if (depEntry) {
@@ -1019,10 +960,6 @@ export class SSRModuleLoader {
     }
   }
 
-  /**
-   * Async hash for large content using Web Crypto API.
-   * Falls back to sync hash for small files.
-   */
   private async hashContentAsync(content: string): Promise<string> {
     if (content.length < 10000) return hashCodeHex(content);
 
@@ -1047,11 +984,7 @@ export class SSRModuleLoader {
       ? filePath.substring(projectDir.length)
       : filePath;
 
-    // Include VERSION and content hash in filename to ensure cache invalidation:
-    // - VERSION: Invalidates when framework code changes (e.g., transform bug fixes)
-    // - contentHash: Invalidates when source content changes
-    // This prevents Deno's module cache from returning stale modules
-    const versionPrefix = VERSION.replace(/\./g, "-"); // e.g., "0-1-3-rc-113"
+    const versionPrefix = VERSION.replace(/\./g, "-");
     const hashSuffix = contentHash
       ? `.v${versionPrefix}.${contentHash.slice(0, 8)}`
       : `.v${versionPrefix}`;
@@ -1071,10 +1004,7 @@ export class SSRModuleLoader {
       throw new Error(`Missing contentSourceId for SSR temp directory (project: ${projectId})`);
     }
 
-    // Use the same cache directory as MDX-ESM loader to share module instances.
-    // This prevents issues like React context being created twice in separate files.
     const baseCacheDir = getMdxEsmCacheDir();
-    // Use projectId consistently for stable cache keys (matches MDX loader)
     const projectKey = encodeURIComponent(projectId);
     const sourceKey = contentSourceId;
     const cacheKey = `${baseCacheDir}|${projectKey}|${sourceKey}`;

@@ -6,9 +6,7 @@ export async function GET(
 ): Promise<Response> {
   const job = await getJob(params.id);
 
-  if (!job) {
-    return Response.json({ error: "Job not found" }, { status: 404 });
-  }
+  if (!job) return Response.json({ error: "Job not found" }, { status: 404 });
 
   return Response.json({ job });
 }

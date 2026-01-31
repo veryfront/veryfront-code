@@ -1,9 +1,3 @@
-/**
- * GitHub FS Adapter Types
- *
- * Re-exports API response types from schemas.ts and defines config types.
- */
-
 import { createError, toError } from "#veryfront/errors";
 
 export type { DirectoryEntry } from "../shared-types.ts";
@@ -88,24 +82,21 @@ export function createGitHubConfig(config: GitHubConfig): ResolvedGitHubConfig {
     );
   }
 
-  const cache = config.cache;
-  const retry = config.retry;
-
   return {
     token: config.token,
     owner: config.owner,
     repo: config.repo,
     ref: config.ref ?? "main",
     cache: {
-      enabled: cache?.enabled ?? true,
-      ttl: cache?.ttl ?? 60_000,
-      maxSize: cache?.maxSize ?? 1000,
-      maxMemory: cache?.maxMemory ?? 100 * 1024 * 1024,
+      enabled: config.cache?.enabled ?? true,
+      ttl: config.cache?.ttl ?? 60_000,
+      maxSize: config.cache?.maxSize ?? 1000,
+      maxMemory: config.cache?.maxMemory ?? 100 * 1024 * 1024,
     },
     retry: {
-      maxRetries: retry?.maxRetries ?? 3,
-      initialDelay: retry?.initialDelay ?? 1000,
-      maxDelay: retry?.maxDelay ?? 10_000,
+      maxRetries: config.retry?.maxRetries ?? 3,
+      initialDelay: config.retry?.initialDelay ?? 1000,
+      maxDelay: config.retry?.maxDelay ?? 10_000,
     },
   };
 }

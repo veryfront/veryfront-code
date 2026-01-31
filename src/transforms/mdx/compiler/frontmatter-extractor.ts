@@ -7,9 +7,7 @@ export interface FrontmatterExtractionResult {
 }
 
 function extractYamlFrontmatter(content: string): FrontmatterExtractionResult {
-  if (!content.trim().startsWith("---")) {
-    return { body: content, frontmatter: {} };
-  }
+  if (!content.trim().startsWith("---")) return { body: content, frontmatter: {} };
 
   const extracted = extract(content);
 
@@ -29,28 +27,20 @@ function parseExportValue(rawValue: string): unknown {
 }
 
 function extractExportConstants(body: string): { body: string; exports: Record<string, unknown> } {
-  // Only match simple single-line exports with string, number, or boolean values
-  // Avoid matching complex exports like arrays, objects, or functions
   const exportRegex =
     /^export\s+const\s+(\w+)\s*=\s*(['"`][^'"`\n]*['"`]|\d+(?:\.\d+)?|true|false|null)\s*;?\s*$/gm;
 
   const exports: Record<string, unknown> = {};
-  const linesToRemove: string[] = [];
+  let cleanedBody = body;
   let match: RegExpExecArray | null;
 
   while ((match = exportRegex.exec(body)) !== null) {
     const key = match[1];
     const rawValue = match[2];
-
     if (!key || !rawValue) continue;
 
-    linesToRemove.push(match[0]);
     exports[key] = parseExportValue(rawValue);
-  }
-
-  let cleanedBody = body;
-  for (const line of linesToRemove) {
-    cleanedBody = cleanedBody.replace(line, "");
+    cleanedBody = cleanedBody.replace(match[0], "");
   }
 
   return { body: cleanedBody, exports };
@@ -60,17 +50,15 @@ export function extractFrontmatter(
   content: string,
   providedFrontmatter?: Record<string, unknown>,
 ): FrontmatterExtractionResult {
-  const yamlResult = extractYamlFrontmatter(content);
-  let body = yamlResult.body;
+  const { body: yamlBody, frontmatter: yamlFrontmatter } = extractYamlFrontmatter(content);
 
-  let frontmatter: Record<string, unknown> = {
-    ...yamlResult.frontmatter,
+  const { body, exports } = extractExportConstants(yamlBody);
+
+  const frontmatter: Record<string, unknown> = {
+    ...yamlFrontmatter,
     ...(providedFrontmatter ?? {}),
+    ...exports,
   };
-
-  const exportResult = extractExportConstants(body);
-  body = exportResult.body;
-  frontmatter = { ...frontmatter, ...exportResult.exports };
 
   logger.debug("Extracted frontmatter:", frontmatter);
 

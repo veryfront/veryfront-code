@@ -18,11 +18,11 @@ export function LiveDependenciesProvider({
     errors: new Map(),
   });
 
-  useEffect(() => {
+  useEffect((): () => void => {
     function handleMessage(event: MessageEvent): void {
       if (event.data?.type !== "studio:load-dependency") return;
 
-      const { url } = event.data;
+      const url: string = event.data.url;
 
       setDeps((prev) => ({ ...prev, loading: true }));
 
@@ -30,23 +30,17 @@ export function LiveDependenciesProvider({
       script.src = url;
       script.type = "module";
 
-      script.onload = () => {
+      script.onload = (): void => {
         setDeps((prev) => ({
           ...prev,
           loading: false,
           loaded: new Set(prev.loaded).add(url),
         }));
 
-        globalThis.parent.postMessage(
-          {
-            type: "app:dependency-loaded",
-            url,
-          },
-          "*",
-        );
+        globalThis.parent.postMessage({ type: "app:dependency-loaded", url }, "*");
       };
 
-      script.onerror = () => {
+      script.onerror = (): void => {
         const error = new Error(`Failed to load dependency: ${url}`);
 
         setDeps((prev) => ({
@@ -56,11 +50,7 @@ export function LiveDependenciesProvider({
         }));
 
         globalThis.parent.postMessage(
-          {
-            type: "app:dependency-error",
-            url,
-            error: error.message,
-          },
+          { type: "app:dependency-error", url, error: error.message },
           "*",
         );
       };
@@ -69,7 +59,7 @@ export function LiveDependenciesProvider({
     }
 
     globalThis.addEventListener("message", handleMessage);
-    return () => globalThis.removeEventListener("message", handleMessage);
+    return (): void => globalThis.removeEventListener("message", handleMessage);
   }, []);
 
   return <>{children}</>;

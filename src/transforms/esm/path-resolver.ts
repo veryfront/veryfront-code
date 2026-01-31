@@ -12,24 +12,24 @@ const CROSS_PROJECT_VERSIONED_PATTERN = /^([a-z0-9-]+)@([\d^~x][\d.x^~-]*)\/@\/(
 const CROSS_PROJECT_LATEST_PATTERN = /^([a-z0-9-]+)\/@\/(.+)$/;
 
 export function isCrossProjectImport(specifier: string): boolean {
-  return CROSS_PROJECT_VERSIONED_PATTERN.test(specifier) ||
-    CROSS_PROJECT_LATEST_PATTERN.test(specifier);
+  return (
+    CROSS_PROJECT_VERSIONED_PATTERN.test(specifier) ||
+    CROSS_PROJECT_LATEST_PATTERN.test(specifier)
+  );
 }
 
 export function parseCrossProjectImport(
   specifier: string,
 ): { projectSlug: string; version: string; path: string } | null {
   const versionedMatch = specifier.match(CROSS_PROJECT_VERSIONED_PATTERN);
-  if (versionedMatch) {
-    const [, projectSlug, version, path] = versionedMatch;
-    return { projectSlug: projectSlug!, version: version!, path: path! };
+  if (versionedMatch && versionedMatch[1] && versionedMatch[2] && versionedMatch[3]) {
+    return { projectSlug: versionedMatch[1], version: versionedMatch[2], path: versionedMatch[3] };
   }
 
   const latestMatch = specifier.match(CROSS_PROJECT_LATEST_PATTERN);
-  if (!latestMatch) return null;
+  if (!latestMatch || !latestMatch[1] || !latestMatch[2]) return null;
 
-  const [, projectSlug, path] = latestMatch;
-  return { projectSlug: projectSlug!, version: "latest", path: path! };
+  return { projectSlug: latestMatch[1], version: "latest", path: latestMatch[2] };
 }
 
 export interface CrossProjectImportOptions {
@@ -45,8 +45,7 @@ export function resolveCrossProjectImports(
     withSpanSync(
       "transforms.esm.resolveCrossProjectImports",
       () => {
-        const ssr = options.ssr ?? false;
-        if (ssr) return code;
+        if (options.ssr ?? false) return code;
 
         return replaceSpecifiers(code, (specifier) => {
           const parsed = parseCrossProjectImport(specifier);
@@ -87,10 +86,7 @@ export function resolveVeryfrontImports(code: string): Promise<string> {
   );
 }
 
-export function resolveVeryfrontSubpathImports(
-  code: string,
-  ssr = false,
-): Promise<string> {
+export function resolveVeryfrontSubpathImports(code: string, ssr = false): Promise<string> {
   if (ssr) return Promise.resolve(code);
 
   return Promise.resolve(
@@ -149,9 +145,7 @@ export function resolvePathAliases(
             return `${relativePath}.js`;
           }
 
-          if (ssr) {
-            return relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
-          }
+          if (ssr) return relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
 
           return relativePath;
         });
@@ -201,8 +195,12 @@ function resolvePath(baseParts: string[], relativePath: string): string[] {
   const resolvedParts = [...baseParts];
 
   for (const part of relativePath.split("/").filter(Boolean)) {
-    if (part === "..") resolvedParts.pop();
-    else if (part !== ".") resolvedParts.push(part);
+    if (part === "..") {
+      resolvedParts.pop();
+      continue;
+    }
+    if (part === ".") continue;
+    resolvedParts.push(part);
   }
 
   return resolvedParts;
@@ -213,27 +211,31 @@ export function resolveRelativeImportsToAbsolute(
   filePath: string,
   _projectDir: string,
 ): Promise<string> {
-  return withSpan("transforms.esm.resolveRelativeImportsToAbsolute", async () => {
-    const normalizedFilePath = filePath.replace(/\\/g, "/");
-    const fileDir = normalizedFilePath.substring(0, normalizedFilePath.lastIndexOf("/"));
+  return withSpan(
+    "transforms.esm.resolveRelativeImportsToAbsolute",
+    async () => {
+      const normalizedFilePath = filePath.replace(/\\/g, "/");
+      const fileDir = normalizedFilePath.substring(0, normalizedFilePath.lastIndexOf("/"));
 
-    const specifiersToResolve: string[] = [];
-    await replaceSpecifiers(code, (specifier) => {
-      if (specifier.startsWith("./") || specifier.startsWith("../")) {
-        specifiersToResolve.push(specifier);
+      const specifiersToResolve: string[] = [];
+      await replaceSpecifiers(code, (specifier) => {
+        if (specifier.startsWith("./") || specifier.startsWith("../")) {
+          specifiersToResolve.push(specifier);
+        }
+        return null;
+      });
+
+      const resolvedImports = new Map<string, string>();
+      for (const specifier of specifiersToResolve) {
+        const absolutePath = resolveAbsolutePath(fileDir, specifier);
+        const resolvedPath = await findFileWithExtension(absolutePath);
+        resolvedImports.set(specifier, `file://${resolvedPath}`);
       }
-      return null;
-    });
 
-    const resolvedImports = new Map<string, string>();
-    for (const specifier of specifiersToResolve) {
-      const absolutePath = resolveAbsolutePath(fileDir, specifier);
-      const resolvedPath = await findFileWithExtension(absolutePath);
-      resolvedImports.set(specifier, `file://${resolvedPath}`);
-    }
-
-    return replaceSpecifiers(code, (specifier) => resolvedImports.get(specifier) ?? null);
-  }, { "transforms.specifiers_count": 0 });
+      return replaceSpecifiers(code, (specifier) => resolvedImports.get(specifier) ?? null);
+    },
+    { "transforms.specifiers_count": 0 },
+  );
 }
 
 async function findFileWithExtension(basePath: string): Promise<string> {

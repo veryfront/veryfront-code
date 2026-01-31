@@ -54,7 +54,9 @@ const nodeColors = {
   reset: (str: string) => `\x1b[0m${str}\x1b[0m`,
 } satisfies Record<string, ColorFn>;
 
-const colors = isDeno ? await import("#std/fmt/colors.ts") : nodeColors;
+const colors: Record<string, ColorFn> = isDeno
+  ? ((await import("#std/fmt/colors.ts")) as unknown as Record<string, ColorFn>)
+  : nodeColors;
 
 export const {
   red,
@@ -89,4 +91,4 @@ export const {
   hidden,
   strikethrough,
   reset,
-}: Record<string, ColorFn> = colors;
+} = colors;

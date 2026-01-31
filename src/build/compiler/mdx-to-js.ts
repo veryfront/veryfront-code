@@ -41,9 +41,7 @@ async function extractFrontmatter(
     logger.warn("Failed to extract frontmatter with gray-matter:", error);
   }
 
-  if (!mdxContent.startsWith("---")) {
-    return { frontmatter: {}, content: mdxContent };
-  }
+  if (!mdxContent.startsWith("---")) return { frontmatter: {}, content: mdxContent };
 
   const match = mdxContent.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
   if (!match?.[1]) return { frontmatter: {}, content: mdxContent };
@@ -81,9 +79,8 @@ export async function compileMDXToJS(
 
   const importRegex = /import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g;
   const imports: Array<{ name: string; path: string }> = [];
-  let match: RegExpExecArray | null;
 
-  while ((match = importRegex.exec(content)) !== null) {
+  for (let match: RegExpExecArray | null; (match = importRegex.exec(content)) !== null;) {
     const name = match[1];
     const path = match[2];
     if (name && path) imports.push({ name, path });
@@ -119,7 +116,7 @@ export async function compileMDXToJS(
     })
     .join("\n  ");
 
-  const componentList = imports.length > 0 ? `${imports.map((imp) => imp.name).join(", ")}, ` : "";
+  const componentList = imports.length ? `${imports.map((imp) => imp.name).join(", ")}, ` : "";
 
   const moduleCode = `
 // Generated from ${mdxPath}
@@ -188,9 +185,8 @@ export async function compileProjectMDX(
 
   try {
     for await (const entry of fs.readDir(componentsDir)) {
-      if (entry.isFile && /\.(jsx?|tsx?)$/.test(entry.name)) {
-        components.push(entry.name.replace(/\.(jsx?|tsx?)$/, ""));
-      }
+      if (!entry.isFile || !/\.(jsx?|tsx?)$/.test(entry.name)) continue;
+      components.push(entry.name.replace(/\.(jsx?|tsx?)$/, ""));
     }
   } catch {
     // Components directory might not exist
@@ -220,7 +216,6 @@ export async function compileProjectMDX(
         }
 
         if (!entry.isDirectory || entry.name === "node_modules") continue;
-
         if (entry.name.startsWith(".") && entry.name !== ".veryfront") continue;
         if (dir.includes(".veryfront") && VERYFRONT_EXCLUDED_DIRS.has(entry.name)) continue;
 

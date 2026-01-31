@@ -114,13 +114,12 @@ export async function StatsGrid({ userId }: StatsGridProps): Promise<JSX.Element
               <div
                 className={`w-12 h-12 rounded-xl ${item.bgColor} flex items-center justify-center group-hover:scale-110 transition-transform duration-300 ${item.shadowColor} shadow-lg`}
               >
-                <item.Icon
-                  className={`w-6 h-6 bg-gradient-to-r ${item.color}`}
-                  style={{ stroke: "currentColor" }}
-                />
+                <item.Icon className={`w-6 h-6 bg-gradient-to-r ${item.color}`} style={{ stroke: "currentColor" }} />
               </div>
 
-              <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${trendClassName}`}>
+              <div
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${trendClassName}`}
+              >
                 <TrendIcon className="w-3 h-3" />
                 {item.change}
               </div>

@@ -1,15 +1,3 @@
-/**
- * SSR Rendering Service
- *
- * Business logic for server-side rendering, extracted from SSRHandler.
- * This service handles rendering logic independent of HTTP concerns.
- *
- * Supports optional CacheRepository injection for render result caching
- * and dependency injection in tests.
- *
- * @module server/services/rendering/ssr-service
- */
-
 import type { HandlerContext } from "../../handlers/types.ts";
 import {
   getRendererForProject,
@@ -17,8 +5,7 @@ import {
   shouldRejectDueToMemory,
 } from "../../shared/renderer-factory.ts";
 import { getHeapStats } from "#veryfront/utils/memory/index.ts";
-import { serverLogger as logger } from "#veryfront/utils";
-import { timeAsync } from "#veryfront/utils";
+import { serverLogger as logger, timeAsync } from "#veryfront/utils";
 import { computeSSRETag } from "../../handlers/request/ssr/etag-handler.ts";
 import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
 import { getColorSchemeFromRequest } from "#veryfront/security/http/client-hints.ts";
@@ -38,59 +25,31 @@ import {
 } from "#veryfront/utils/constants/index.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
 
-/**
- * Result of an SSR render operation
- */
 export interface SSRRenderResult {
-  /** HTTP status code */
   status: number;
-  /** HTML content (for non-streaming) */
   html?: string;
-  /** Stream content (for streaming) */
   stream?: ReadableStream<Uint8Array>;
-  /** Whether this is a true streaming response */
   isStreaming: boolean;
-  /** ETag for caching */
   etag?: string;
-  /** Cache strategy to use */
   cacheStrategy: "no-cache" | "short";
-  /** Error that occurred during rendering */
   error?: Error;
-  /** Error type for dev overlay */
   errorType?: "not-found" | "undeployed" | "server-error" | "runtime";
-  /** Whether to show dev error overlay */
   showDevOverlay?: boolean;
-  /** Original slug that was requested */
   slug: string;
 }
 
-/**
- * Options for SSR rendering
- */
 export interface SSRRenderOptions {
-  /** Request object */
   request: Request;
-  /** Parsed URL */
   url: URL;
-  /** Page slug */
   slug: string;
-  /** Security nonce for inline scripts */
   nonce: string;
-  /** Whether this is a studio embed */
   studioEmbed: boolean;
-  /** Project ID */
   projectId?: string;
-  /** Page ID */
   pageId?: string;
-  /** Whether to disable HMR */
   noHmr: boolean;
-  /** Whether to use no-cache headers */
   useNoCache: boolean;
 }
 
-/**
- * Memory status for render decisions
- */
 export interface MemoryStatus {
   shouldReject: boolean;
   heapUsedMB: number;
@@ -98,82 +57,35 @@ export interface MemoryStatus {
   heapUsedPercent: number;
 }
 
-/**
- * SSR Rendering Service
- *
- * Handles the business logic of server-side rendering:
- * - Memory pressure monitoring
- * - Renderer lifecycle management
- * - Page rendering
- * - Error classification
- *
- * Supports optional CacheRepository injection for testing and
- * future render result caching.
- *
- * @example
- * ```typescript
- * // Default usage
- * const service = new SSRService();
- * const result = await service.renderPage(ctx, options);
- *
- * // With injected cache (for testing or custom caching)
- * const mockCache = new MockCacheRepository({ context });
- * const service = new SSRService({ cacheRepo: mockCache });
- * ```
- */
 export class SSRService {
-  /**
-   * Optional cache repository for render result caching.
-   * Reserved for future use - currently rendering delegates to RendererAdapter.
-   */
   private readonly cacheRepo?: CacheRepository<string>;
 
-  /**
-   * Create an SSRService.
-   *
-   * @param options - Optional configuration
-   * @param options.cacheRepo - Cache repository for render results (reserved for future use)
-   */
   constructor(options?: { cacheRepo?: CacheRepository<string> }) {
     this.cacheRepo = options?.cacheRepo;
   }
 
-  /**
-   * Check if the request should be rejected due to memory pressure
-   */
   checkMemoryPressure(): MemoryStatus {
-    const shouldReject = shouldRejectDueToMemory();
     const stats = getHeapStats();
 
     return {
-      shouldReject,
+      shouldReject: shouldRejectDueToMemory(),
       heapUsedMB: stats.usedHeapSizeMB,
       heapLimitMB: stats.heapSizeLimitMB,
       heapUsedPercent: stats.heapUsedPercent,
     };
   }
 
-  /**
-   * Get or create a renderer for the given context
-   */
   async getRenderer(ctx: HandlerContext): Promise<RendererAdapter> {
-    return await timeAsync("renderer-init", () => getRendererForProject(ctx));
+    return timeAsync("renderer-init", () => getRendererForProject(ctx));
   }
 
-  /**
-   * Render a page with full context
-   */
-  async renderPage(
-    ctx: HandlerContext,
-    options: SSRRenderOptions,
-  ): Promise<SSRRenderResult> {
+  async renderPage(ctx: HandlerContext, options: SSRRenderOptions): Promise<SSRRenderResult> {
     const { request, url, slug, nonce, studioEmbed, projectId, pageId, noHmr, useNoCache } =
       options;
 
     const renderSessionId = `${ctx.projectSlug || "default"}-${slug || "index"}-${Date.now()}`;
     const preRenderHeap = getHeapStats();
 
-    // Log pre-render memory if significant
     if (preRenderHeap.heapUsedPercent > 30) {
       logger.debug("[SSRService] Pre-render memory", {
         projectSlug: ctx.projectSlug,
@@ -226,9 +138,9 @@ export class SSRService {
 
       endRenderSession(renderSessionId);
 
-      // Log post-render memory if significant growth
       const postRenderHeap = getHeapStats();
       const heapGrowthMB = postRenderHeap.usedHeapSizeMB - preRenderHeap.usedHeapSizeMB;
+
       if (heapGrowthMB > 50 || postRenderHeap.heapUsedPercent > 50) {
         logger.debug("[SSRService] Post-render memory", {
           projectSlug: ctx.projectSlug,
@@ -259,9 +171,6 @@ export class SSRService {
     }
   }
 
-  /**
-   * Classify and handle render errors
-   */
   private handleRenderError(
     error: unknown,
     ctx: HandlerContext,
@@ -271,7 +180,6 @@ export class SSRService {
     const errorObj = error instanceof Error ? error : new Error(String(error));
     const isDev = ctx.requestContext?.isLocalDev || ctx.requestContext?.mode === "preview";
 
-    // Handle not found errors
     if (error instanceof VeryfrontError && error.code === ErrorCode.FILE_NOT_FOUND) {
       logger.debug("[SSRService] Page not found", { slug, error: errorObj.message });
       return {
@@ -284,10 +192,8 @@ export class SSRService {
       };
     }
 
-    // Handle API 404 errors (undeployed project)
     if (error instanceof VeryfrontAPIError && error.status === 404) {
-      const errorDetails = error.details as { url?: string } | undefined;
-      const apiUrl = errorDetails?.url || "";
+      const apiUrl = ((error.details as { url?: string } | undefined)?.url ?? "").toString();
 
       const isFileListRequest = apiUrl.includes("/files") &&
         !apiUrl.includes("/files/") &&
@@ -309,7 +215,6 @@ export class SSRService {
       }
     }
 
-    // Log the error
     logger.error("[SSRService] Render failed", {
       slug,
       error: errorObj.message,
@@ -317,7 +222,6 @@ export class SSRService {
       projectSlug: ctx.projectSlug,
     });
 
-    // Capture for MCP flywheel in dev mode
     if (isDev) {
       getErrorCollector().addRuntimeError(errorObj.message, errorObj.stack, {
         source: "ssr-service",
@@ -337,7 +241,6 @@ export class SSRService {
       };
     }
 
-    // Production error
     return {
       status: HTTP_INTERNAL_SERVER_ERROR,
       html: ErrorPages.serverError(),
@@ -349,9 +252,6 @@ export class SSRService {
     };
   }
 
-  /**
-   * Create a memory pressure error result
-   */
   createMemoryPressureResult(slug: string): SSRRenderResult {
     return {
       status: HTTP_UNAVAILABLE,

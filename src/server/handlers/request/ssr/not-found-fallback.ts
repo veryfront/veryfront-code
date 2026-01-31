@@ -33,6 +33,7 @@ export async function tryNotFoundFallback(
         ctx.requestContext?.branch ?? null,
         ctx.releaseId,
       );
+
     const NotFoundComp = await tryLoadReservedInDirs(
       dirs,
       "notFound",
@@ -51,7 +52,7 @@ export async function tryNotFoundFallback(
     );
 
     const element = React.createElement(NotFoundComp, {});
-    let inner = "";
+    let inner: string;
 
     try {
       inner = await renderToStringAdapter(element);
@@ -76,23 +77,24 @@ async function extractNotFoundText(
   dirs: string[],
   ctx: HandlerContext,
 ): Promise<string | null> {
-  const candidates: string[] = [];
-
   for (const dir of dirs) {
-    candidates.push(joinPath(dir, "not-found.tsx"), joinPath(dir, "not-found.jsx"));
-  }
+    for (
+      const file of [
+        joinPath(dir, "not-found.tsx"),
+        joinPath(dir, "not-found.jsx"),
+      ]
+    ) {
+      try {
+        const st = await ctx.adapter.fs.stat(file);
+        if (!st.isFile) continue;
 
-  for (const file of candidates) {
-    try {
-      const st = await ctx.adapter.fs.stat(file);
-      if (!st.isFile) continue;
+        const src = await ctx.adapter.fs.readFile(file);
+        const match = src.match(/>\s*([^<]+?)\s*</);
 
-      const src = await ctx.adapter.fs.readFile(file);
-      const match = src.match(/>\s*([^<]+?)\s*</);
-
-      if (match?.[1]) return `<p>${match[1]}</p>`;
-    } catch {
-      // try next
+        if (match?.[1]) return `<p>${match[1]}</p>`;
+      } catch {
+        // try next
+      }
     }
   }
 

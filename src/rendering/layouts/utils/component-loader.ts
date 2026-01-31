@@ -75,12 +75,7 @@ export async function loadTSXComponent(
 ): Promise<BundledReact.ComponentType> {
   const source = await adapter.fs.readFile(componentPath);
   const hash = await computeHash(source);
-  const cacheKey = buildLayoutComponentCacheKey(
-    projectId,
-    componentPath,
-    hash,
-    contentSourceId,
-  );
+  const cacheKey = buildLayoutComponentCacheKey(projectId, componentPath, hash, contentSourceId);
 
   const cached = cache.get(cacheKey);
   if (cached) return cached;
@@ -124,15 +119,9 @@ export function loadMDXLayout(
         hasPreloadedImportMap: !!preloadedImportMap,
       });
 
-      // Use preloaded import map if available, otherwise load it
-      let map: ImportMapConfig;
+      const map = preloadedImportMap ?? (await preloadImportMap(projectDir, adapter));
       if (preloadedImportMap) {
-        map = preloadedImportMap;
         logger.debug("[loadMDXLayout] Using preloaded import map", { projectSlug });
-      } else {
-        logger.debug("[loadMDXLayout] loadImportMap START", { projectSlug });
-        map = await preloadImportMap(projectDir, adapter);
-        logger.debug("[loadMDXLayout] loadImportMap DONE", { projectSlug });
       }
 
       const code = transformImportsWithMap(bundle.compiledCode, map);
@@ -174,7 +163,6 @@ export async function preloadMDXLayoutModule(
   projectSlug: string,
   contentSourceId: string,
 ): Promise<void> {
-  // Just call loadMDXLayout - the module loader will cache the result
   await loadMDXLayout(bundle, projectDir, adapter, projectId, projectSlug, contentSourceId);
 }
 

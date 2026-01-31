@@ -11,13 +11,13 @@ export function contentType(path: string): string | undefined {
 }
 
 export function extension(type: string): string | undefined {
-  return mime.extension(type) || undefined;
+  return mime.extension(type) ?? undefined;
 }
 
 export function lookup(path: string): string | undefined {
-  return mime.lookup(path) || undefined;
+  return mime.lookup(path) ?? undefined;
 }
 
 export function charset(type: string): string | undefined {
-  return mime.charset(type) || undefined;
+  return mime.charset(type) ?? undefined;
 }

@@ -48,8 +48,7 @@ export async function getCachedWithBatching(
   const ctx = asyncLocalStorage.getStore();
   if (!ctx) return backend.get(key);
 
-  const cached = ctx.cache.get(key);
-  if (cached !== undefined || ctx.cache.has(key)) return cached ?? null;
+  if (ctx.cache.has(key)) return ctx.cache.get(key) ?? null;
 
   const existingPending = ctx.pending.get(key);
   if (existingPending) return existingPending;

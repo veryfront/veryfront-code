@@ -2,8 +2,6 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { discoverComponentsLayoutPath, type FileExistenceChecker } from "./layout-collector.ts";
 
-// ---- Inline reimplementations of non-exported helpers ----
-
 function getLayoutKind(path: string): "mdx" | "tsx" {
   return path.endsWith(".mdx") || path.endsWith(".md") ? "mdx" : "tsx";
 }
@@ -18,18 +16,18 @@ interface LayoutItem {
 
 function createLayoutItem(layoutPath: string, bundle?: unknown): LayoutItem {
   const kind = getLayoutKind(layoutPath);
+
   if (kind === "mdx") {
-    return { kind: "mdx", bundle, path: layoutPath };
+    return { kind, bundle, path: layoutPath };
   }
+
   return {
-    kind: "tsx",
+    kind,
     component: undefined,
     componentPath: layoutPath,
     path: layoutPath,
   };
 }
-
-// ---- Tests ----
 
 describe("LayoutCollector", () => {
   describe("getLayoutKind", () => {
@@ -94,9 +92,7 @@ describe("LayoutCollector", () => {
 
   describe("discoverComponentsLayoutPath", () => {
     it("should find the first matching layout file", async () => {
-      const existingFiles = new Set([
-        "/project/components/layout.mdx",
-      ]);
+      const existingFiles = new Set(["/project/components/layout.mdx"]);
       const checker: FileExistenceChecker = {
         exists: (path: string) => Promise.resolve(existingFiles.has(path)),
       };
@@ -124,15 +120,11 @@ describe("LayoutCollector", () => {
       };
 
       const result = await discoverComponentsLayoutPath("/project", checker);
-      // LAYOUT_EXTENSIONS = ["mdx", "md", "tsx", "jsx", "ts", "js"]
-      // So mdx is checked first
       assertEquals(result, "/project/components/layout.mdx");
     });
 
     it("should find tsx layout when no mdx/md exists", async () => {
-      const existingFiles = new Set([
-        "/project/components/layout.tsx",
-      ]);
+      const existingFiles = new Set(["/project/components/layout.tsx"]);
       const checker: FileExistenceChecker = {
         exists: (path: string) => Promise.resolve(existingFiles.has(path)),
       };
@@ -142,9 +134,7 @@ describe("LayoutCollector", () => {
     });
 
     it("should find .js layout as last resort", async () => {
-      const existingFiles = new Set([
-        "/project/components/layout.js",
-      ]);
+      const existingFiles = new Set(["/project/components/layout.js"]);
       const checker: FileExistenceChecker = {
         exists: (path: string) => Promise.resolve(existingFiles.has(path)),
       };
@@ -163,8 +153,8 @@ describe("LayoutCollector", () => {
       };
 
       await discoverComponentsLayoutPath("/my-project", checker);
-      // Should check all extension variants
-      assertEquals(checkedPaths.length, 6); // mdx, md, tsx, jsx, ts, js
+
+      assertEquals(checkedPaths.length, 6);
       assertEquals(checkedPaths[0], "/my-project/components/layout.mdx");
       assertEquals(checkedPaths[1], "/my-project/components/layout.md");
       assertEquals(checkedPaths[2], "/my-project/components/layout.tsx");
@@ -175,9 +165,10 @@ describe("LayoutCollector", () => {
   });
 
   describe("layout frontmatter handling", () => {
-    const isLayoutDisabled = (value: string | boolean | undefined) =>
+    const isLayoutDisabled = (value: string | boolean | undefined): boolean =>
       value === false || value === "false";
-    const hasExplicitLayout = (value: string | boolean | undefined) =>
+
+    const hasExplicitLayout = (value: string | boolean | undefined): boolean =>
       typeof value === "string" && value.length > 0;
 
     it("should treat layout:false as disabled", () => {
@@ -206,16 +197,16 @@ describe("LayoutCollector", () => {
   });
 
   describe(".veryfront path detection", () => {
+    const isVeryfrontPath = (path: string): boolean =>
+      path.includes("/.veryfront/") || path.includes(".veryfront/");
+
     it("should detect .veryfront paths", () => {
-      const path1 = "/project/.veryfront/chat/page.tsx";
-      const path2 = "/project/pages/.veryfront/index.tsx";
-      assertEquals(path1.includes("/.veryfront/") || path1.includes(".veryfront/"), true);
-      assertEquals(path2.includes("/.veryfront/") || path2.includes(".veryfront/"), true);
+      assertEquals(isVeryfrontPath("/project/.veryfront/chat/page.tsx"), true);
+      assertEquals(isVeryfrontPath("/project/pages/.veryfront/index.tsx"), true);
     });
 
     it("should not flag non-.veryfront paths", () => {
-      const path = "/project/pages/about.tsx";
-      assertEquals(path.includes("/.veryfront/") || path.includes(".veryfront/"), false);
+      assertEquals(isVeryfrontPath("/project/pages/about.tsx"), false);
     });
   });
 });

@@ -28,9 +28,8 @@ describe("cli/discovery/index", () => {
 
   describe("DiscoveryConfig type", () => {
     it("should accept minimal config", () => {
-      const config: DiscoveryConfig = {
-        baseDir: "/tmp/project",
-      };
+      const config: DiscoveryConfig = { baseDir: "/tmp/project" };
+
       assertEquals(config.baseDir, "/tmp/project");
       assertEquals(config.toolDirs, undefined);
       assertEquals(config.agentDirs, undefined);
@@ -46,6 +45,7 @@ describe("cli/discovery/index", () => {
         workflowDirs: ["workflows"],
         verbose: true,
       };
+
       assertEquals(config.toolDirs?.length, 2);
       assertEquals(config.verbose, true);
     });
@@ -61,6 +61,7 @@ describe("cli/discovery/index", () => {
         workflows: new Map(),
         errors: [],
       };
+
       assertEquals(result.tools.size, 0);
       assertEquals(result.agents.size, 0);
       assertEquals(result.resources.size, 0);

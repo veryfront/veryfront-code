@@ -4,7 +4,7 @@ export default function Counter(): JSX.Element {
   const [count, setCount] = useState(0);
 
   function increment(): void {
-    setCount(count + 1);
+    setCount((prev) => prev + 1);
   }
 
   return (

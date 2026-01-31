@@ -61,7 +61,7 @@ export class ClientLogHandler extends BaseHandler {
   } as const;
 
   private getLogPrefix(level: string): string {
-    return ClientLogHandler.LOG_PREFIXES[level] ?? ClientLogHandler.LOG_PREFIXES.info!;
+    return ClientLogHandler.LOG_PREFIXES[level] ?? ClientLogHandler.LOG_PREFIXES.info ?? "[CLIENT]";
   }
 
   private handleParseError(e: unknown, body: string): void {
@@ -80,8 +80,7 @@ export class ClientLogHandler extends BaseHandler {
       return;
     }
 
-    const match = e.message.match(/position (\d+)/);
-    const posStr = match?.[1];
+    const posStr = e.message.match(/position (\d+)/)?.[1];
     if (!posStr) {
       return;
     }

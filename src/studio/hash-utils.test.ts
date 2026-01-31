@@ -10,15 +10,12 @@ describe("studio/hash-utils", () => {
     });
 
     it("should be deterministic", () => {
-      const a = computeSourceHash("const x = 1;");
-      const b = computeSourceHash("const x = 1;");
-      assertEquals(a, b);
+      const input = "const x = 1;";
+      assertEquals(computeSourceHash(input), computeSourceHash(input));
     });
 
     it("should differ for different inputs", () => {
-      const a = computeSourceHash("const x = 1;");
-      const b = computeSourceHash("const x = 2;");
-      assertNotEquals(a, b);
+      assertNotEquals(computeSourceHash("const x = 1;"), computeSourceHash("const x = 2;"));
     });
 
     it("should handle empty string", () => {
@@ -33,9 +30,7 @@ describe("studio/hash-utils", () => {
     });
 
     it("should produce different hashes for whitespace differences", () => {
-      const a = computeSourceHash("a b");
-      const b = computeSourceHash("a  b");
-      assertNotEquals(a, b);
+      assertNotEquals(computeSourceHash("a b"), computeSourceHash("a  b"));
     });
   });
 });

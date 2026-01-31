@@ -24,8 +24,7 @@ const EXTENSION_LOADERS: Record<string, Loader> = {
 };
 
 export function getLoaderFromPath(filePath: string): Loader {
-  const extIndex = filePath.lastIndexOf(".");
-  const ext = extIndex === -1 ? "" : filePath.slice(extIndex);
+  const ext = filePath.slice(filePath.lastIndexOf("."));
   return EXTENSION_LOADERS[ext] ?? "tsx";
 }
 

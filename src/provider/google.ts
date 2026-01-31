@@ -106,13 +106,17 @@ export class GoogleProvider extends BaseProvider {
 
     return {
       text: message.content ?? "",
-      toolCalls: message.tool_calls?.map((tc) => ({
-        id: tc.id,
-        name: tc.function.name,
-        arguments: typeof tc.function.arguments === "string"
+      toolCalls: message.tool_calls?.map((tc) => {
+        const args = typeof tc.function.arguments === "string"
           ? JSON.parse(tc.function.arguments)
-          : tc.function.arguments,
-      })),
+          : tc.function.arguments;
+
+        return {
+          id: tc.id,
+          name: tc.function.name,
+          arguments: args,
+        };
+      }),
       usage: {
         promptTokens: usage?.prompt_tokens ?? 0,
         completionTokens: usage?.completion_tokens ?? 0,

@@ -36,22 +36,26 @@ describe("CloudflareAdapter", () => {
 
     it("should have capabilities", () => {
       const adapter = new CloudflareAdapter(mockEnv);
-      assertExists(adapter.capabilities);
-      assertEquals(adapter.capabilities.typescript, false);
-      assertEquals(adapter.capabilities.jsx, false);
-      assertEquals(adapter.capabilities.http2, true);
-      assertEquals(adapter.capabilities.websocket, true);
-      assertEquals(adapter.capabilities.workers, false);
-      assertEquals(adapter.capabilities.fileWatching, false);
-      assertEquals(adapter.capabilities.shell, false);
-      assertEquals(adapter.capabilities.kvStore, true);
-      assertEquals(adapter.capabilities.writableFs, false);
+      const { capabilities } = adapter;
+
+      assertExists(capabilities);
+      assertEquals(capabilities.typescript, false);
+      assertEquals(capabilities.jsx, false);
+      assertEquals(capabilities.http2, true);
+      assertEquals(capabilities.websocket, true);
+      assertEquals(capabilities.workers, false);
+      assertEquals(capabilities.fileWatching, false);
+      assertEquals(capabilities.shell, false);
+      assertEquals(capabilities.kvStore, true);
+      assertEquals(capabilities.writableFs, false);
     });
 
     it("should have serve and shutdown methods", () => {
       const adapter = new CloudflareAdapter(mockEnv);
+
       assertExists(adapter.serve);
       assertEquals(typeof adapter.serve, "function");
+
       assertExists(adapter.shutdown);
       assertEquals(typeof adapter.shutdown, "function");
     });

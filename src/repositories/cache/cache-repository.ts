@@ -19,36 +19,11 @@ import type {
   RepositoryContext,
 } from "../types.ts";
 
-/**
- * Build a project-scoped cache key
- *
- * @example
- * buildScopedKey({ projectId: "proj123", environment: "preview", versionId: "v1" }, "manifest.json")
- * // Returns: "proj123:preview:v1:manifest.json"
- */
 export function buildScopedKey(context: RepositoryContext, key: string): string {
   const { projectId, environment, versionId } = context;
   return `${projectId}:${environment}:${versionId}:${key}`;
 }
 
-/**
- * Memory Cache Repository
- *
- * LRU-based in-memory cache with project-scoped keys.
- * Ideal for testing and local development.
- *
- * @example
- * ```typescript
- * const cache = new MemoryCacheRepository({
- *   context: { projectId: "my-project", environment: "preview", versionId: "v1" },
- *   maxEntries: 1000,
- *   defaultTtlSeconds: 300,
- * });
- *
- * await cache.set("manifest.json", data);
- * const value = await cache.get("manifest.json");
- * ```
- */
 export class MemoryCacheRepository<T = string> implements CacheRepository<T> {
   readonly context: RepositoryContext;
   private readonly store = new Map<string, { value: T; expiresAt: number }>();
@@ -81,11 +56,12 @@ export class MemoryCacheRepository<T = string> implements CacheRepository<T> {
   }
 
   private updateHitRate(): void {
-    this.stats.hitRate = this.stats.gets > 0 ? this.stats.hits / this.stats.gets : 0;
+    this.stats.hitRate = this.stats.gets ? this.stats.hits / this.stats.gets : 0;
   }
 
   async get(key: string): Promise<T | null> {
     this.stats.gets++;
+
     const scopedKey = this.getScopedKey(key);
     const entry = this.store.get(scopedKey);
 
@@ -109,25 +85,22 @@ export class MemoryCacheRepository<T = string> implements CacheRepository<T> {
 
   async set(key: string, value: T, ttlSeconds?: number): Promise<void> {
     this.stats.sets++;
+
     const scopedKey = this.getScopedKey(key);
     const ttl = ttlSeconds ?? this.defaultTtlSeconds;
 
     // LRU eviction: remove oldest entry if at capacity
     if (this.store.size >= this.maxEntries && !this.store.has(scopedKey)) {
-      const oldest = this.store.keys().next().value as string | undefined;
+      const oldest = this.store.keys().next().value;
       if (oldest) this.store.delete(oldest);
     }
 
-    this.store.set(scopedKey, {
-      value,
-      expiresAt: Date.now() + ttl * 1000,
-    });
+    this.store.set(scopedKey, { value, expiresAt: Date.now() + ttl * 1000 });
   }
 
   async delete(key: string): Promise<void> {
     this.stats.deletes++;
-    const scopedKey = this.getScopedKey(key);
-    this.store.delete(scopedKey);
+    this.store.delete(this.getScopedKey(key));
   }
 
   async deleteByPrefix(prefix: string): Promise<number> {
@@ -135,11 +108,10 @@ export class MemoryCacheRepository<T = string> implements CacheRepository<T> {
     let deleted = 0;
 
     for (const key of this.store.keys()) {
-      if (key.startsWith(scopedPrefix)) {
-        this.store.delete(key);
-        deleted++;
-        this.stats.deletes++;
-      }
+      if (!key.startsWith(scopedPrefix)) continue;
+      this.store.delete(key);
+      deleted++;
+      this.stats.deletes++;
     }
 
     return deleted;
@@ -150,6 +122,7 @@ export class MemoryCacheRepository<T = string> implements CacheRepository<T> {
     const entry = this.store.get(scopedKey);
 
     if (!entry) return false;
+
     if (Date.now() > entry.expiresAt) {
       this.store.delete(scopedKey);
       return false;
@@ -159,14 +132,13 @@ export class MemoryCacheRepository<T = string> implements CacheRepository<T> {
   }
 
   async clear(): Promise<void> {
-    // Only clear entries for this project scope
     const prefix =
       `${this.context.projectId}:${this.context.environment}:${this.context.versionId}:`;
+
     for (const key of this.store.keys()) {
-      if (key.startsWith(prefix)) {
-        this.store.delete(key);
-        this.stats.deletes++;
-      }
+      if (!key.startsWith(prefix)) continue;
+      this.store.delete(key);
+      this.stats.deletes++;
     }
   }
 
@@ -180,9 +152,6 @@ export class MemoryCacheRepository<T = string> implements CacheRepository<T> {
   }
 }
 
-/**
- * Adapter to wrap CacheBackend as a CacheTier for MultiTierCache
- */
 class BackendTierAdapter implements CacheTier<string> {
   constructor(
     readonly name: string,
@@ -190,7 +159,7 @@ class BackendTierAdapter implements CacheTier<string> {
   ) {}
 
   async get(key: string): Promise<string | null> {
-    return await this.backend.get(key);
+    return this.backend.get(key);
   }
 
   async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
@@ -202,27 +171,6 @@ class BackendTierAdapter implements CacheTier<string> {
   }
 }
 
-/**
- * Multi-Tier Cache Repository
- *
- * Uses L1 memory cache + L3 distributed backend for production use.
- * Provides automatic backfill from L3 to L1 for performance.
- *
- * @example
- * ```typescript
- * const backend = await createCacheBackend({ keyPrefix: "manifest" });
- * const cache = new MultiTierCacheRepository({
- *   context: { projectId: "my-project", environment: "production", versionId: "v1" },
- *   backend,
- *   defaultTtlSeconds: 3600,
- * });
- *
- * await cache.set("manifest.json", data);
- * const value = await cache.get("manifest.json");
- * // First call hits L3 and backfills L1
- * // Subsequent calls hit L1 directly
- * ```
- */
 export class MultiTierCacheRepository implements CacheRepository<string> {
   readonly context: RepositoryContext;
   private readonly cache: MultiTierCache<string>;
@@ -241,13 +189,9 @@ export class MultiTierCacheRepository implements CacheRepository<string> {
     this.backend = options.backend;
     this.name = options.name ?? "multi-tier-cache";
 
-    // Create L1 memory tier
     const l1 = new MemoryTier(options.maxL1Entries ?? 500);
-
-    // Create L3 backend tier
     const l3 = new BackendTierAdapter("l3-distributed", options.backend);
 
-    // Create multi-tier cache
     this.cache = new MultiTierCache({
       name: this.name,
       l1,
@@ -263,48 +207,44 @@ export class MultiTierCacheRepository implements CacheRepository<string> {
   }
 
   async get(key: string): Promise<string | null> {
-    const scopedKey = this.getScopedKey(key);
-    return await this.cache.get(scopedKey);
+    return this.cache.get(this.getScopedKey(key));
   }
 
   async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
-    const scopedKey = this.getScopedKey(key);
-    await this.cache.set(scopedKey, value, ttlSeconds);
+    await this.cache.set(this.getScopedKey(key), value, ttlSeconds);
   }
 
   async delete(key: string): Promise<void> {
     this.localStats.deletes++;
-    const scopedKey = this.getScopedKey(key);
-    await this.cache.delete(scopedKey);
+    await this.cache.delete(this.getScopedKey(key));
   }
 
   async deleteByPrefix(prefix: string): Promise<number> {
     const scopedPrefix = this.getScopedKey(prefix);
-    if (this.backend.delByPattern) {
-      const deleted = await this.backend.delByPattern(`${scopedPrefix}*`);
-      this.localStats.deletes += deleted;
-      return deleted;
+
+    if (!this.backend.delByPattern) {
+      logger.debug(`[${this.name}] deleteByPrefix not supported by backend`, { prefix });
+      return 0;
     }
-    logger.debug(`[${this.name}] deleteByPrefix not supported by backend`, { prefix });
-    return 0;
+
+    const deleted = await this.backend.delByPattern(`${scopedPrefix}*`);
+    this.localStats.deletes += deleted;
+    return deleted;
   }
 
   async has(key: string): Promise<boolean> {
-    const value = await this.get(key);
-    return value !== null;
+    return (await this.get(key)) !== null;
   }
 
   async clear(): Promise<void> {
-    // Clear all entries for this project scope
     const prefix =
       `${this.context.projectId}:${this.context.environment}:${this.context.versionId}:`;
-    if (this.backend.delByPattern) {
-      await this.backend.delByPattern(`${prefix}*`);
-    }
+    await this.backend.delByPattern?.(`${prefix}*`);
   }
 
   getStats(): CacheStats {
     const multiTierStats = this.cache.getStats();
+
     return {
       gets: multiTierStats.gets,
       hits: multiTierStats.l1Hits + multiTierStats.l2Hits + multiTierStats.l3Hits,
@@ -316,9 +256,6 @@ export class MultiTierCacheRepository implements CacheRepository<string> {
   }
 }
 
-/**
- * Simple memory tier for L1 caching in MultiTierCache
- */
 class MemoryTier implements CacheTier<string> {
   readonly name = "l1-memory";
   private readonly store = new Map<string, { value: string; expiresAt: number }>();
@@ -342,14 +279,11 @@ class MemoryTier implements CacheTier<string> {
 
   async set(key: string, value: string, ttlSeconds = 300): Promise<void> {
     if (this.store.size >= this.maxEntries && !this.store.has(key)) {
-      const oldest = this.store.keys().next().value as string | undefined;
+      const oldest = this.store.keys().next().value;
       if (oldest) this.store.delete(oldest);
     }
 
-    this.store.set(key, {
-      value,
-      expiresAt: Date.now() + ttlSeconds * 1000,
-    });
+    this.store.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 });
   }
 
   async delete(key: string): Promise<void> {
@@ -357,9 +291,6 @@ class MemoryTier implements CacheTier<string> {
   }
 }
 
-/**
- * Create a memory cache repository
- */
 export function createMemoryCacheRepository<T = string>(
   context: RepositoryContext,
   options?: CacheRepositoryOptions,
@@ -372,9 +303,6 @@ export function createMemoryCacheRepository<T = string>(
   });
 }
 
-/**
- * Create a multi-tier cache repository with the given backend
- */
 export function createMultiTierCacheRepository(
   context: RepositoryContext,
   backend: CacheBackend,

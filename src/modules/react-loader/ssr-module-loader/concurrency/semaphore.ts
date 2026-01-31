@@ -15,7 +15,7 @@ export class Semaphore {
     return new Promise<boolean>((resolve) => {
       let settled = false;
 
-      const onAcquire = () => {
+      const onAcquire = (): void => {
         if (settled) return;
         settled = true;
         clearTimeout(timeoutId);
@@ -42,6 +42,7 @@ export class Semaphore {
       next.resolve();
       return;
     }
+
     this.permits++;
   }
 

@@ -44,15 +44,9 @@ export function timeout(options?: TimeoutOptions): Middleware {
     });
 
     try {
-      const result = await Promise.race([next(), timeoutPromise]);
-      if (timeoutId) clearTimeout(timeoutId);
-      return result;
+      return await Promise.race([next(), timeoutPromise]);
     } catch (error) {
-      if (timeoutId) clearTimeout(timeoutId);
-
-      if (error !== TIMEOUT_SENTINEL) {
-        throw error;
-      }
+      if (error !== TIMEOUT_SENTINEL) throw error;
 
       serverLogger.warn("[timeout] Request timed out", {
         path: pathname,
@@ -71,6 +65,8 @@ export function timeout(options?: TimeoutOptions): Middleware {
           headers: { "Content-Type": "application/json" },
         },
       );
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
     }
   };
 }
@@ -82,8 +78,7 @@ export function timeout(options?: TimeoutOptions): Middleware {
  */
 export function getTimeoutFromEnv(env: RuntimeEnv = getRuntimeEnv()): number {
   const timeoutMs = env.requestTimeoutMs;
-  if (timeoutMs && timeoutMs > 0) return timeoutMs;
-  return DEFAULT_TIMEOUT_MS;
+  return timeoutMs && timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS;
 }
 
 /**

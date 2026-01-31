@@ -20,7 +20,7 @@ export const listLambdaFunctionsTool = tool({
       const functions = await client.listLambdaFunctions(region);
       const regionMessage = region ? ` in region "${region}"` : '';
 
-      if (functions.length === 0) {
+      if (!functions.length) {
         return {
           success: true,
           message: `No Lambda functions found${regionMessage}.`,

@@ -21,17 +21,15 @@ export function withStableIds(
 ): { client: Entry[]; server: Entry[] } {
   const appRoot = join(projectDir, "app");
 
-  function mapEntry(path: string): Entry {
+  const mapEntry = (path: string): Entry => {
     const rel = path.startsWith(appRoot) ? path.slice(appRoot.length) || "/" : path;
     return { id: computeStableId(rel), path, rel };
-  }
+  };
 
-  function byRel(a: Entry, b: Entry): number {
-    return a.rel.localeCompare(b.rel);
-  }
+  const byRel = (a: Entry, b: Entry): number => a.rel.localeCompare(b.rel);
 
   return {
-    client: graph.client.map((e) => mapEntry(e.path)).sort(byRel),
-    server: graph.server.map((e) => mapEntry(e.path)).sort(byRel),
+    client: graph.client.map(({ path }) => mapEntry(path)).sort(byRel),
+    server: graph.server.map(({ path }) => mapEntry(path)).sort(byRel),
   };
 }

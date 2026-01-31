@@ -16,7 +16,6 @@ function getVeryfrontModulePaths(): Record<string, string> {
   };
 }
 
-// deno-lint-ignore require-await
 export async function resolveReactImports(
   code: string,
   forSSR: boolean = false,
@@ -28,16 +27,9 @@ export async function resolveReactImports(
     return replaceSpecifiers(code, (specifier) => reactImports[specifier] ?? null);
   }
 
-  // For SSR: Handle React imports differently per runtime.
-  // - Node.js: Use esm.sh URLs, which will be cached to disk by cacheHttpImportsToLocal.
-  //   The cached bundles are ESM-compatible and can be imported via file:// URLs.
-  //   Bare specifiers don't work because React isn't in the cache directory's node_modules.
-  // - Deno: Use esm.sh URLs (Deno supports HTTP imports natively).
-  // - Bun: Use local file:// paths (Bun handles CJS/ESM interop with file:// URLs).
-  const localReactPaths = getLocalReactPaths();
   const ssrReactImports = isDeno || isNode
-    ? reactImports // esm.sh URLs for Deno and Node.js (Node.js will cache them)
-    : { ...reactImports, ...localReactPaths }; // file:// paths for Bun
+    ? reactImports
+    : { ...reactImports, ...getLocalReactPaths() };
 
   const ssrImports: Record<string, string> = {
     ...getVeryfrontModulePaths(),

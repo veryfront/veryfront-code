@@ -78,7 +78,9 @@ describe("cli/shared/args", () => {
         force: { keys: ["force", "f"], type: "boolean" as const },
         branch: { keys: ["branch", "b"], type: "string" as const },
       };
+
       const result = extractArgs(args, argMap);
+
       assertEquals(result.force, true);
       assertEquals(result.branch, "main");
     });
@@ -88,7 +90,9 @@ describe("cli/shared/args", () => {
       const argMap = {
         force: { keys: ["force"], type: "boolean" as const },
       };
+
       const result = extractArgs(args, argMap);
+
       assertEquals(Object.keys(result).length, 0);
     });
   });
@@ -109,10 +113,10 @@ describe("cli/shared/args", () => {
       const result = parse(args);
 
       assertEquals(result.success, true);
-      if (result.success) {
-        assertEquals(result.data.force, true);
-        assertEquals(result.data.branch, "main");
-      }
+      if (!result.success) return;
+
+      assertEquals(result.data.force, true);
+      assertEquals(result.data.branch, "main");
     });
 
     it("should apply default values from schema", () => {
@@ -128,9 +132,9 @@ describe("cli/shared/args", () => {
       const result = parse(args);
 
       assertEquals(result.success, true);
-      if (result.success) {
-        assertEquals(result.data.force, false);
-      }
+      if (!result.success) return;
+
+      assertEquals(result.data.force, false);
     });
 
     it("should return error for invalid data", () => {

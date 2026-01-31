@@ -4,7 +4,7 @@ import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 export function parseVersion(versionString: string): ParsedVersion {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(versionString);
 
-  if (!match) {
+  if (!match || !match[1] || !match[2] || !match[3]) {
     throw toError(
       createError({
         type: "config",
@@ -13,14 +13,10 @@ export function parseVersion(versionString: string): ParsedVersion {
     );
   }
 
-  const major = match[1]!;
-  const minor = match[2]!;
-  const patch = match[3]!;
-
   return {
-    major: parseInt(major, 10),
-    minor: parseInt(minor, 10),
-    patch: parseInt(patch, 10),
+    major: parseInt(match[1], 10),
+    minor: parseInt(match[2], 10),
+    patch: parseInt(match[3], 10),
   };
 }
 

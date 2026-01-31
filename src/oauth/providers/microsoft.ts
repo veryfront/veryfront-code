@@ -1,5 +1,7 @@
 import type { OAuthServiceConfig } from "../types.ts";
 
+const graphApiBaseUrl = "https://graph.microsoft.com/v1.0";
+
 const microsoftBase = {
   providerId: "microsoft",
   displayName: "Microsoft",
@@ -12,8 +14,6 @@ const microsoftBase = {
     response_mode: "query",
   },
 } satisfies Omit<OAuthServiceConfig, "serviceId" | "apiBaseUrl" | "defaultScopes">;
-
-const graphApiBaseUrl = "https://graph.microsoft.com/v1.0";
 
 export const outlookConfig: OAuthServiceConfig = {
   ...microsoftBase,

@@ -11,124 +11,102 @@ import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
 import { join } from "@veryfront/compat/path";
 import { makeTempDir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
 
-// Helper to write config files to temp directory for testing
+type SetupResult = {
+  projectDir: string;
+  adapter: any;
+  cleanup: () => Promise<void>;
+};
+
 async function setupConfigTest(
   configs: { content: string; filename?: string }[] | string,
   options?: { useAdapter?: boolean },
-): Promise<{ projectDir: string; adapter: any; cleanup: () => Promise<void> }> {
+): Promise<SetupResult> {
   const tempDir = await makeTempDir({ prefix: "veryfront-test-" });
-  const adapter = options?.useAdapter !== false ? createMockAdapter() : null;
-
+  const adapter = options?.useAdapter === false ? null : createMockAdapter();
   const configArray = typeof configs === "string" ? [{ content: configs }] : configs;
 
-  // Write actual files to disk so they can be imported
   for (const { content, filename = "veryfront.config.js" } of configArray) {
     const configPath = join(tempDir, filename);
     await writeTextFile(configPath, content);
-    if (adapter) {
-      await adapter.fs.writeFile(configPath, content);
-    }
+    await adapter?.fs.writeFile(configPath, content);
   }
 
   return {
     projectDir: tempDir,
-    adapter: adapter || createMockAdapter(),
+    adapter: adapter ?? createMockAdapter(),
     cleanup: async () => {
-      try {
-        await remove(tempDir, { recursive: true });
-      } catch {
-        // Ignore errors during cleanup
-      }
+      await remove(tempDir, { recursive: true }).catch(() => {});
     },
   };
+}
+
+async function withConfigTest(
+  configs: { content: string; filename?: string }[] | string,
+  fn: (ctx: { projectDir: string; adapter: any }) => Promise<void>,
+  options?: { useAdapter?: boolean },
+): Promise<void> {
+  const { projectDir, adapter, cleanup } = await setupConfigTest(configs, options);
+
+  try {
+    await fn({ projectDir, adapter });
+  } finally {
+    await cleanup();
+    clearConfigCache();
+  }
 }
 
 describe("Config Loader - Edge Cases and Error Handling", () => {
   describe("Invalid config structure", () => {
     it("should reject non-object config exports", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(
-        `export default "not an object";`,
-      );
-
-      try {
-        // Should throw for invalid config
+      await withConfigTest(`export default "not an object";`, async ({ projectDir, adapter }) => {
         await assertRejects(
           () => getConfig(projectDir, adapter),
           Error,
           "Expected object, received string",
         );
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      });
     });
 
     it("should reject null config export", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest("export default null;");
-
-      try {
-        // null export results in { default: null } which has unknown key "default"
-        await assertRejects(
-          () => getConfig(projectDir, adapter),
-          Error,
-          "Unknown config keys",
-        );
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      await withConfigTest("export default null;", async ({ projectDir, adapter }) => {
+        await assertRejects(() => getConfig(projectDir, adapter), Error, "Unknown config keys");
+      });
     });
 
     it("should reject undefined config export", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest("export default undefined;");
-
-      try {
-        // undefined export results in { default: undefined } which has unknown key "default"
-        await assertRejects(
-          () => getConfig(projectDir, adapter),
-          Error,
-          "Unknown config keys",
-        );
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      await withConfigTest("export default undefined;", async ({ projectDir, adapter }) => {
+        await assertRejects(() => getConfig(projectDir, adapter), Error, "Unknown config keys");
+      });
     });
 
     it("should handle config with syntax errors", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(
+      await withConfigTest(
         `export default { invalid syntax here`,
+        async ({ projectDir, adapter }) => {
+          const config = await getConfig(projectDir, adapter);
+          assertExists(config);
+        },
       );
-
-      try {
-        // Should fall back to defaults
-        const config = await getConfig(projectDir, adapter);
-        assertExists(config);
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
     });
 
     it("should handle config with runtime errors", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         throw new Error('Runtime error');
         export default {};
-      `);
-
-      try {
-        const config = await getConfig(projectDir, adapter);
-        assertExists(config);
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      `,
+        async ({ projectDir, adapter }) => {
+          const config = await getConfig(projectDir, adapter);
+          assertExists(config);
+        },
+      );
     });
   });
 
   describe("Invalid CORS configuration", () => {
     it("should reject invalid cors.origin type", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         export default {
           security: {
             cors: {
@@ -136,18 +114,16 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
             }
           }
         };
-      `);
-
-      try {
-        await assertRejects(() => getConfig(projectDir, adapter), Error, "security.cors.origin");
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      `,
+        async ({ projectDir, adapter }) => {
+          await assertRejects(() => getConfig(projectDir, adapter), Error, "security.cors.origin");
+        },
+      );
     });
 
     it("should reject array as cors.origin", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         export default {
           security: {
             cors: {
@@ -155,20 +131,16 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
             }
           }
         };
-      `);
-
-      try {
-        // Arrays are not strings, so validation should throw
-        // origin is defined and is not a string -> error
-        await assertRejects(() => getConfig(projectDir, adapter), Error, "security.cors.origin");
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      `,
+        async ({ projectDir, adapter }) => {
+          await assertRejects(() => getConfig(projectDir, adapter), Error, "security.cors.origin");
+        },
+      );
     });
 
     it("should reject object as cors.origin", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         export default {
           security: {
             cors: {
@@ -176,20 +148,16 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
             }
           }
         };
-      `);
-
-      try {
-        // Objects are not strings, so validation should throw
-        // origin is defined and is not a string -> error
-        await assertRejects(() => getConfig(projectDir, adapter), Error, "security.cors.origin");
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      `,
+        async ({ projectDir, adapter }) => {
+          await assertRejects(() => getConfig(projectDir, adapter), Error, "security.cors.origin");
+        },
+      );
     });
 
     it("should accept valid cors.origin string", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         export default {
           security: {
             cors: {
@@ -197,102 +165,75 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
             }
           }
         };
-      `);
-
-      try {
-        // Config loads without error - security config is not deeply merged so it won't be preserved
-        const config = await getConfig(projectDir, adapter);
-        assertExists(config);
-        // Note: security is not deeply merged in mergeConfigs, so it will be undefined
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      `,
+        async ({ projectDir, adapter }) => {
+          const config = await getConfig(projectDir, adapter);
+          assertExists(config);
+        },
+      );
     });
 
     it("should handle cors as array (invalid)", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         export default {
           security: {
             cors: ['http://localhost:3000']
           }
         };
-      `);
-
-      try {
-        // Should throw for invalid cors type (array not allowed)
-        await assertRejects(
-          () => getConfig(projectDir, adapter),
-          Error,
-          "Invalid input",
-        );
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      `,
+        async ({ projectDir, adapter }) => {
+          await assertRejects(() => getConfig(projectDir, adapter), Error, "Invalid input");
+        },
+      );
     });
 
     it("should handle cors as non-object", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         export default {
           security: {
             cors: true
           }
         };
-      `);
-
-      try {
-        // Should be silently ignored (validation returns early for non-object cors)
-        const config = await getConfig(projectDir, adapter);
-        assertExists(config);
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      `,
+        async ({ projectDir, adapter }) => {
+          const config = await getConfig(projectDir, adapter);
+          assertExists(config);
+        },
+      );
     });
   });
 
   describe("Unknown config keys", () => {
     it("should reject unknown top-level keys", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         export default {
           title: 'My App',
           unknownKey1: 'value',
           unknownKey2: 123,
           validKey: 'experimental'
         };
-      `);
-
-      try {
-        await assertRejects(
-          () => getConfig(projectDir, adapter),
-          Error,
-          "Unknown config keys",
-        );
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      `,
+        async ({ projectDir, adapter }) => {
+          await assertRejects(() => getConfig(projectDir, adapter), Error, "Unknown config keys");
+        },
+      );
     });
 
     it("should reject config with only unknown keys", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         export default {
           unknownKey1: 'value',
           unknownKey2: 123
         };
-      `);
-
-      try {
-        await assertRejects(
-          () => getConfig(projectDir, adapter),
-          Error,
-          "Unknown config keys",
-        );
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      `,
+        async ({ projectDir, adapter }) => {
+          await assertRejects(() => getConfig(projectDir, adapter), Error, "Unknown config keys");
+        },
+      );
     });
   });
 
@@ -302,7 +243,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       const adapter = createMockAdapter();
 
       try {
-        // No config files exist
         const config = await getConfig(tempDir, adapter);
 
         assertExists(config);
@@ -316,59 +256,52 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
     });
 
     it("should try all config file variants", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest([
-        { content: 'export default { title: "From MJS" };', filename: "veryfront.config.mjs" },
-      ]);
-
-      try {
-        const config = await getConfig(projectDir, adapter);
-        assertEquals(config.title, "From MJS");
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      await withConfigTest(
+        [{ content: 'export default { title: "From MJS" };', filename: "veryfront.config.mjs" }],
+        async ({ projectDir, adapter }) => {
+          const config = await getConfig(projectDir, adapter);
+          assertEquals(config.title, "From MJS");
+        },
+      );
     });
 
     it("should prioritize .js over .ts and .mjs", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest([
-        { content: 'export default { title: "JS" };', filename: "veryfront.config.js" },
-        { content: 'export default { title: "TS" };', filename: "veryfront.config.ts" },
-        { content: 'export default { title: "MJS" };', filename: "veryfront.config.mjs" },
-      ]);
-
-      try {
-        const config = await getConfig(projectDir, adapter);
-        assertEquals(config.title, "JS");
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      await withConfigTest(
+        [
+          { content: 'export default { title: "JS" };', filename: "veryfront.config.js" },
+          { content: 'export default { title: "TS" };', filename: "veryfront.config.ts" },
+          { content: 'export default { title: "MJS" };', filename: "veryfront.config.mjs" },
+        ],
+        async ({ projectDir, adapter }) => {
+          const config = await getConfig(projectDir, adapter);
+          assertEquals(config.title, "JS");
+        },
+      );
     });
   });
 
   describe("Config merging edge cases", () => {
     it("should deep merge nested config objects", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         export default {
           dev: {
             port: 4000
             // host not specified, should use default
           }
         };
-      `);
-
-      try {
-        const config = await getConfig(projectDir, adapter);
-        assertEquals(config.dev?.port, 4000);
-        assertEquals(config.dev?.host, "localhost"); // From defaults
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      `,
+        async ({ projectDir, adapter }) => {
+          const config = await getConfig(projectDir, adapter);
+          assertEquals(config.dev?.port, 4000);
+          assertEquals(config.dev?.host, "localhost");
+        },
+      );
     });
 
     it("should merge import maps correctly", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         export default {
           resolve: {
             importMap: {
@@ -378,60 +311,51 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
             }
           }
         };
-      `);
+      `,
+        async ({ projectDir, adapter }) => {
+          const config = await getConfig(projectDir, adapter);
+          const imports = config.resolve?.importMap?.imports;
 
-      try {
-        const config = await getConfig(projectDir, adapter);
-        assertExists(config.resolve?.importMap?.imports);
-
-        const imports = (config.resolve?.importMap as any)?.imports;
-        assertEquals(imports["custom-lib"], "https://cdn.example.com/custom-lib.js");
-        // Should also have defaults like 'react'
-        assertExists(imports["react"]);
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+          assertExists(imports);
+          assertEquals(imports["custom-lib"], "https://cdn.example.com/custom-lib.js");
+          assertExists(imports["react"]);
+        },
+      );
     });
 
     it("should handle undefined nested properties", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         export default {
           dev: undefined,
           build: {
             outDir: undefined
           }
         };
-      `);
-
-      try {
-        const config = await getConfig(projectDir, adapter);
-        assertExists(config);
-        assertExists(config.dev); // Should have defaults
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      `,
+        async ({ projectDir, adapter }) => {
+          const config = await getConfig(projectDir, adapter);
+          assertExists(config);
+          assertExists(config.dev);
+        },
+      );
     });
 
     it("should handle null nested properties", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         export default {
           theme: null
         };
-      `);
-
-      try {
-        // Should throw for null theme property (expects object)
-        await assertRejects(
-          () => getConfig(projectDir, adapter),
-          Error,
-          "Expected object, received null",
-        );
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      `,
+        async ({ projectDir, adapter }) => {
+          await assertRejects(
+            () => getConfig(projectDir, adapter),
+            Error,
+            "Expected object, received null",
+          );
+        },
+      );
     });
   });
 
@@ -442,22 +366,14 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       const adapter = createMockAdapter();
 
       try {
-        await writeTextFile(
-          join(tempDir1, "veryfront.config.js"),
-          'export default { title: "Project 1" };',
-        );
-        await adapter.fs.writeFile(
-          join(tempDir1, "veryfront.config.js"),
-          'export default { title: "Project 1" };',
-        );
-        await writeTextFile(
-          join(tempDir2, "veryfront.config.js"),
-          'export default { title: "Project 2" };',
-        );
-        await adapter.fs.writeFile(
-          join(tempDir2, "veryfront.config.js"),
-          'export default { title: "Project 2" };',
-        );
+        const configPath1 = join(tempDir1, "veryfront.config.js");
+        const configPath2 = join(tempDir2, "veryfront.config.js");
+
+        await writeTextFile(configPath1, 'export default { title: "Project 1" };');
+        await adapter.fs.writeFile(configPath1, 'export default { title: "Project 1" };');
+
+        await writeTextFile(configPath2, 'export default { title: "Project 2" };');
+        await adapter.fs.writeFile(configPath2, 'export default { title: "Project 2" };');
 
         const config1 = await getConfig(tempDir1, adapter);
         const config2 = await getConfig(tempDir2, adapter);
@@ -465,7 +381,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         assertEquals(config1.title, "Project 1");
         assertEquals(config2.title, "Project 2");
 
-        // Second calls should use cache
         const config1Cached = await getConfig(tempDir1, adapter);
         const config2Cached = await getConfig(tempDir2, adapter);
 
@@ -492,7 +407,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
 
         clearConfigCache();
 
-        // Update config file
         await writeTextFile(configPath, 'export default { title: "Updated" };');
         await adapter.fs.writeFile(configPath, 'export default { title: "Updated" };');
 
@@ -505,11 +419,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
     });
 
     it("should handle concurrent config loads", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(
-        'export default { title: "Concurrent" };',
-      );
-
-      try {
+      await withConfigTest('export default { title: "Concurrent" };', async ({ projectDir, adapter }) => {
         const [config1, config2, config3] = await Promise.all([
           getConfig(projectDir, adapter),
           getConfig(projectDir, adapter),
@@ -519,10 +429,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         assertEquals(config1.title, "Concurrent");
         assertEquals(config2.title, "Concurrent");
         assertEquals(config3.title, "Concurrent");
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      });
     });
   });
 
@@ -533,44 +440,41 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         largeTheme[`color${i}`] = `#${i.toString(16).padStart(6, "0")}`;
       }
 
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         export default {
           theme: {
             colors: ${JSON.stringify(largeTheme)}
           }
         };
-      `);
-
-      try {
-        const config = await getConfig(projectDir, adapter);
-        assertExists(config.theme?.colors);
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      `,
+        async ({ projectDir, adapter }) => {
+          const config = await getConfig(projectDir, adapter);
+          assertExists(config.theme?.colors);
+        },
+      );
     });
 
     it("should reject config with circular references containing unknown keys", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         const config = { title: 'Circular' };
         config.self = config;
         export default config;
-      `);
-
-      try {
-        await assertRejects(
-          () => getConfig(projectDir, adapter),
-          Error,
-          "Unknown config keys: self",
-        );
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      `,
+        async ({ projectDir, adapter }) => {
+          await assertRejects(
+            () => getConfig(projectDir, adapter),
+            Error,
+            "Unknown config keys: self",
+          );
+        },
+      );
     });
 
     it("should reject config with unknown function keys", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         export default {
           title: 'Functions',
           onBuild: () => console.log('build'),
@@ -578,71 +482,54 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
             (config) => config
           ]
         };
-      `);
-
-      try {
-        await assertRejects(
-          () => getConfig(projectDir, adapter),
-          Error,
-          "Unknown config keys",
-        );
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      `,
+        async ({ projectDir, adapter }) => {
+          await assertRejects(() => getConfig(projectDir, adapter), Error, "Unknown config keys");
+        },
+      );
     });
 
     it("should handle config with special characters", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         export default {
           title: 'Test \\n\\t\\r\u{1F600}',
           description: 'With "quotes" and \\'escapes\\''
         };
-      `);
-
-      try {
-        const config = await getConfig(projectDir, adapter);
-        assertStringIncludes(config.title || "", "Test");
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      `,
+        async ({ projectDir, adapter }) => {
+          const config = await getConfig(projectDir, adapter);
+          assertStringIncludes(config.title || "", "Test");
+        },
+      );
     });
 
     it("should handle empty config object", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest("export default {};");
-
-      try {
+      await withConfigTest("export default {};", async ({ projectDir, adapter }) => {
         const config = await getConfig(projectDir, adapter);
         assertExists(config);
-        // Should have all defaults
         assertExists(config.title);
         assertExists(config.build);
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      });
     });
 
     it("should handle config export as named export", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(`
+      await withConfigTest(
+        `
         export const config = { title: 'Named' };
         export default config;
-      `);
-
-      try {
-        const config = await getConfig(projectDir, adapter);
-        assertEquals(config.title, "Named");
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
+      `,
+        async ({ projectDir, adapter }) => {
+          const config = await getConfig(projectDir, adapter);
+          assertEquals(config.title, "Named");
+        },
+      );
     });
   });
 
   describe("TypeScript config handling", () => {
     it("should load TypeScript config files", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(
+      await withConfigTest(
         [
           {
             content: `
@@ -654,19 +541,15 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
             filename: "veryfront.config.ts",
           },
         ],
+        async ({ projectDir, adapter }) => {
+          const config = await getConfig(projectDir, adapter);
+          assertEquals(config.title, "TypeScript Config");
+        },
       );
-
-      try {
-        const config = await getConfig(projectDir, adapter);
-        assertEquals(config.title, "TypeScript Config");
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
     });
 
     it("should reject TS config with unknown keys", async () => {
-      const { projectDir, adapter, cleanup } = await setupConfigTest(
+      await withConfigTest(
         [
           {
             content: `
@@ -679,18 +562,14 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
             filename: "veryfront.config.ts",
           },
         ],
+        async ({ projectDir, adapter }) => {
+          await assertRejects(
+            () => getConfig(projectDir, adapter),
+            Error,
+            "Unknown config keys: port",
+          );
+        },
       );
-
-      try {
-        await assertRejects(
-          () => getConfig(projectDir, adapter),
-          Error,
-          "Unknown config keys: port",
-        );
-      } finally {
-        await cleanup();
-        clearConfigCache();
-      }
     });
   });
 });

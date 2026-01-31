@@ -25,7 +25,13 @@ export function processMetadata(meta: RenderMetadata): ProcessedMetadata {
     meta.layoutFrontmatter ?? {},
   );
 
-  const effectiveTitle = meta.frontmatter?.title ?? meta.title ?? metadata.title ?? "Veryfront App";
+  const effectiveTitle = meta.frontmatter?.title ??
+    meta.title ??
+    metadata.title ??
+    "Veryfront App";
+
+  const lang = typeof metadata.lang === "string" ? metadata.lang : "en";
+  const bodyClass = typeof metadata.bodyClass === "string" ? metadata.bodyClass : "";
 
   return {
     metadata,
@@ -34,7 +40,7 @@ export function processMetadata(meta: RenderMetadata): ProcessedMetadata {
     linkTags: generateLinkTags(metadata),
     scriptTags: generateScriptTags(metadata),
     styleTags: generateStyleTags(metadata),
-    lang: typeof metadata.lang === "string" ? metadata.lang : "en",
-    bodyClass: typeof metadata.bodyClass === "string" ? metadata.bodyClass : "",
+    lang,
+    bodyClass,
   };
 }

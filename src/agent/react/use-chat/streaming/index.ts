@@ -1,7 +1,3 @@
-/**
- * Streaming Module Exports
- */
-
 export { handleStreamingResponse } from "./handler.ts";
 export type {
   OrderedReasoning,

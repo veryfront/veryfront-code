@@ -55,10 +55,7 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
       await this.analyzeContent(options.purgeContent);
     }
 
-    return {
-      code: this.purgeUnusedCSS(content),
-      sourceMap: undefined,
-    };
+    return { code: this.purgeUnusedCSS(content), sourceMap: undefined };
   }
 
   private purgeUnusedCSS(css: string): string {
@@ -70,16 +67,16 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
     for (const line of lines) {
       currentRule += `${line}\n`;
 
-      const selectorMatch = line.match(/^([^{]+)\s*\{/);
-      if (selectorMatch?.[1]) {
-        keepRule = shouldKeepSelector(selectorMatch[1].trim(), this.usedSelectors);
+      const selector = line.match(/^([^{]+)\s*\{/)?.[1]?.trim();
+      if (selector) {
+        keepRule = shouldKeepSelector(selector, this.usedSelectors);
       }
 
-      if (line.includes("}")) {
-        if (keepRule) kept.push(currentRule);
-        currentRule = "";
-        keepRule = false;
-      }
+      if (!line.includes("}")) continue;
+
+      if (keepRule) kept.push(currentRule);
+      currentRule = "";
+      keepRule = false;
     }
 
     return kept.join("");

@@ -42,10 +42,9 @@ import { getFreePort } from "./utils.ts";
 let esbuildInitialized = false;
 try {
   const { initialize } = await import("esbuild");
-  await initialize({
-    worker: false,
-  });
+  await initialize({ worker: false });
   esbuildInitialized = true;
+
   // Set global flag so cleanupBundler knows to skip stopping esbuild
   // This prevents "child process started before test but closed during test" errors
   (globalThis as Record<string, unknown>).__vfTestPreserveEsbuild = true;
@@ -53,17 +52,16 @@ try {
   // Ignore if already initialized or module missing
 }
 
-// Export for cleanup decision
 export { esbuildInitialized };
 
 function safeSetEnv(key: string, value: string | undefined): void {
   try {
     if (value === undefined) {
       delete process.env[key];
-    } else {
-      process.env[key] = value;
+      return;
     }
-  } catch (_error) {
+    process.env[key] = value;
+  } catch {
     // ignore if env access is restricted
   }
 }
@@ -80,9 +78,7 @@ class PortAllocator {
   private usedPorts = new Set<number>();
 
   static getInstance(): PortAllocator {
-    if (!PortAllocator.instance) {
-      PortAllocator.instance = new PortAllocator();
-    }
+    PortAllocator.instance ??= new PortAllocator();
     return PortAllocator.instance;
   }
 
@@ -124,11 +120,13 @@ export class TestContext {
     try {
       this.originalDisableLru = process.env["VF_DISABLE_LRU_INTERVAL"];
       process.env["VF_DISABLE_LRU_INTERVAL"] = "1";
-    } catch (_error) {
+    } catch {
       // Environment modifications may be disallowed in some contexts
     }
-    this.originalDisableLruGlobal = (globalThis as Record<string, unknown>).__vfDisableLruInterval;
-    (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
+
+    const globalRecord = globalThis as Record<string, unknown>;
+    this.originalDisableLruGlobal = globalRecord.__vfDisableLruInterval;
+    globalRecord.__vfDisableLruInterval = true;
   }
 
   /**
@@ -136,7 +134,6 @@ export class TestContext {
    * Must be called before any other operations
    */
   async setup(): Promise<void> {
-    // Create isolated temp directory
     const prefix = `veryfront_test_${this.testName}_`;
     this.tempDir = await makeTempDir({ prefix });
 
@@ -147,9 +144,9 @@ export class TestContext {
     // Generate a unique short projectId for cache isolation
     // Use test name + random suffix to avoid collisions
     const randomSuffix = Math.random().toString(36).substring(2, 10);
-    this._projectId = `test_${
-      this.testName.replace(/[^a-zA-Z0-9]/g, "_").substring(0, 20)
-    }_${randomSuffix}`;
+    this._projectId = `test_${this.testName
+      .replace(/[^a-zA-Z0-9]/g, "_")
+      .substring(0, 20)}_${randomSuffix}`;
 
     // NOTE: We intentionally do NOT set VF_CACHE_DIR env var here anymore.
     // Setting a global env var causes race conditions in parallel tests.
@@ -157,7 +154,6 @@ export class TestContext {
     // Save original for any code that might read it (legacy behavior)
     this.originalCacheDir = getEnv("VF_CACHE_DIR");
 
-    // Set up standard project structure
     await this.createProjectStructure();
   }
 
@@ -165,9 +161,7 @@ export class TestContext {
    * Gets the test project directory
    */
   get projectDir(): string {
-    if (!this.tempDir) {
-      throw new Error("TestContext not set up. Call setup() first.");
-    }
+    if (!this.tempDir) throw new Error("TestContext not set up. Call setup() first.");
     return this.tempDir;
   }
 
@@ -175,9 +169,7 @@ export class TestContext {
    * Gets the test cache directory (for AsyncLocalStorage isolation)
    */
   get testCacheDir(): string {
-    if (!this.cacheDir) {
-      throw new Error("TestContext not set up. Call setup() first.");
-    }
+    if (!this.cacheDir) throw new Error("TestContext not set up. Call setup() first.");
     return this.cacheDir;
   }
 
@@ -186,9 +178,7 @@ export class TestContext {
    * Use this instead of projectDir when a short identifier is needed
    */
   get projectId(): string {
-    if (!this._projectId) {
-      throw new Error("TestContext not set up. Call setup() first.");
-    }
+    if (!this._projectId) throw new Error("TestContext not set up. Call setup() first.");
     return this._projectId;
   }
 
@@ -211,11 +201,8 @@ export class TestContext {
   setTestEnv(vars: Record<string, string>): void {
     for (const [key, value] of Object.entries(vars)) {
       if (!this.originalEnv.has(key)) {
-        // Store original value using portable env getter
-        const originalValue = getEnv(key);
-        this.originalEnv.set(key, originalValue);
+        this.originalEnv.set(key, getEnv(key));
       }
-      // Set using portable env setter (handles both Deno and Node/Bun)
       setEnv(key, value);
     }
   }
@@ -236,29 +223,26 @@ export class TestContext {
     fileWatcherDebounceMs?: number;
     signal?: AbortSignal;
   } = {}): Promise<TestServer> {
-    const port = options.port || (await this.allocatePort());
-    // Allocate a separate HMR port to avoid port+1 collision with ephemeral ports
-    const hmrPort = (options.enableHMR ?? false) ? await this.allocatePort() : undefined;
+    const port = options.port ?? (await this.allocatePort());
+    const enableHMR = options.enableHMR ?? false;
+    const hmrPort = enableHMR ? await this.allocatePort() : undefined;
 
     const server = await createDevServer({
       projectDir: this.projectDir,
       port,
       hmrPort,
-      enableHMR: options.enableHMR ?? false,
+      enableHMR,
       fileWatcherDebounceMs: options.fileWatcherDebounceMs,
       signal: options.signal,
     });
 
-    // Add to tracked servers
     const testServer = server as TestServer;
     testServer.port = port;
     // Use 127.0.0.1 explicitly to avoid IPv6 resolution issues with localhost
     testServer.hostname = "127.0.0.1";
     this.servers.push(testServer);
 
-    // Wait for server to be ready
     await this.waitForServerReady(testServer);
-
     return testServer;
   }
 
@@ -268,10 +252,9 @@ export class TestContext {
   async createProductionServer(
     options: { port?: number; hostname?: string } = {},
   ): Promise<TestServer> {
-    const port = options.port || (await this.allocatePort());
-    const hostname = options.hostname || "127.0.0.1";
+    const port = options.port ?? (await this.allocatePort());
+    const hostname = options.hostname ?? "127.0.0.1";
 
-    // Create AbortController for proper cleanup
     const controller = new AbortController();
     this.serverControllers.push(controller);
 
@@ -285,15 +268,12 @@ export class TestContext {
       defaultProjectId: this.projectId,
     });
 
-    // Add to tracked servers
     const testServer = server as TestServer;
     testServer.port = port;
     testServer.hostname = hostname;
     this.servers.push(testServer);
 
-    // Wait for server to be ready
     await this.waitForServerReady(testServer);
-
     return testServer;
   }
 
@@ -301,7 +281,9 @@ export class TestContext {
    * Adds a cleanup handler to be run during cleanup
    */
   addCleanup(handler: () => Promise<void> | void): void {
-    this.cleanupHandlers.push(async () => await handler());
+    this.cleanupHandlers.push(async () => {
+      await handler();
+    });
   }
 
   /**
@@ -313,11 +295,11 @@ export class TestContext {
   ): T {
     this.addCleanup(async () => {
       try {
-        if (resource.stop) await resource.stop();
-        if (resource.close) await resource.close();
-        if (resource.terminate) await resource.terminate();
+        await resource.stop?.();
+        await resource.close?.();
+        await resource.terminate?.();
       } catch (error) {
-        console.error(`Failed to cleanup resource ${name || "unknown"}:`, error);
+        console.error(`Failed to cleanup resource ${name ?? "unknown"}:`, error);
       }
     });
     return resource;
@@ -330,7 +312,6 @@ export class TestContext {
   async cleanup(): Promise<void> {
     const errors: Error[] = [];
 
-    // Run custom cleanup handlers
     for (const handler of this.cleanupHandlers) {
       try {
         await handler();
@@ -339,7 +320,6 @@ export class TestContext {
       }
     }
 
-    // Abort all server controllers first to signal shutdown
     for (const controller of this.serverControllers) {
       try {
         controller.abort();
@@ -348,7 +328,6 @@ export class TestContext {
       }
     }
 
-    // Stop all servers
     for (const server of this.servers) {
       try {
         await server.stop();
@@ -358,11 +337,9 @@ export class TestContext {
       }
     }
 
-    // Clear the arrays to prevent double cleanup
     this.serverControllers.length = 0;
     this.servers.length = 0;
 
-    // Clean up renderers and caches to prevent resource leaks
     try {
       const { cleanupBundler } = await import("../../src/rendering/cleanup.ts");
       await cleanupBundler();
@@ -376,19 +353,12 @@ export class TestContext {
       errors.push(error as Error);
     }
 
-    // Release all ports
     const portAllocator = PortAllocator.getInstance();
-    for (const port of this.allocatedPorts) {
-      portAllocator.release(port);
-    }
+    for (const port of this.allocatedPorts) portAllocator.release(port);
 
-    // Restore environment variables using portable env functions
     for (const [key, originalValue] of this.originalEnv) {
-      if (originalValue === undefined) {
-        deleteEnv(key);
-      } else {
-        setEnv(key, originalValue);
-      }
+      if (originalValue === undefined) deleteEnv(key);
+      else setEnv(key, originalValue);
     }
 
     try {
@@ -397,43 +367,33 @@ export class TestContext {
       } else {
         process.env["VF_DISABLE_LRU_INTERVAL"] = this.originalDisableLru;
       }
-    } catch (_error) {
+    } catch {
       // ignore if env cannot be restored
     }
 
+    const globalRecord = globalThis as Record<string, unknown>;
     if (this.originalDisableLruGlobal === undefined) {
-      delete (globalThis as Record<string, unknown>).__vfDisableLruInterval;
+      delete globalRecord.__vfDisableLruInterval;
     } else {
-      (globalThis as Record<string, unknown>).__vfDisableLruInterval =
-        this.originalDisableLruGlobal;
+      globalRecord.__vfDisableLruInterval = this.originalDisableLruGlobal;
     }
 
-    // Note: VF_CACHE_DIR is no longer set in setup() to avoid race conditions.
-    // We rely on AsyncLocalStorage (runWithCacheDir) for cache isolation instead.
-
-    // Remove cache directory
     if (this.cacheDir) {
       try {
         await remove(this.cacheDir, { recursive: true });
       } catch (error) {
-        if (!isNotFoundError(error)) {
-          errors.push(error as Error);
-        }
+        if (!isNotFoundError(error)) errors.push(error as Error);
       }
     }
 
-    // Remove temp directory
     if (this.tempDir) {
       try {
         await remove(this.tempDir, { recursive: true });
       } catch (error) {
-        if (!isNotFoundError(error)) {
-          errors.push(error as Error);
-        }
+        if (!isNotFoundError(error)) errors.push(error as Error);
       }
     }
 
-    // Report any cleanup errors
     if (errors.length > 0) {
       console.error(`[TestContext] Cleanup errors for ${this.testName}:`, errors);
     }
@@ -453,11 +413,11 @@ export class TestContext {
       "src/components",
       "src/islands",
     ];
+
     for (const dir of dirs) {
       await mkdir(join(this.projectDir, dir), { recursive: true });
     }
 
-    // Create default config
     await writeTextFile(
       join(this.projectDir, "veryfront.config.js"),
       `export default {
@@ -475,76 +435,45 @@ export class TestContext {
     const baseDelay = 100;
     const maxDelay = 2000;
 
-    // First, wait for the ready promise if available
     if (server.ready && typeof server.ready.then === "function") {
       let timeoutId: number | undefined;
-      const timeout = new Promise((_, reject) => {
+
+      const timeout = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => reject(new Error("Server ready timeout")), 10000);
       });
 
       try {
         await Promise.race([server.ready, timeout]);
       } finally {
-        if (timeoutId !== undefined) {
-          clearTimeout(timeoutId);
-        }
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
       }
     }
 
-    // Then verify with HTTP requests
     const port = server.port || 3000;
     const hostname = server.hostname || "localhost";
     const url = `http://${hostname}:${port}/`;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      let response: Response | null = null;
       try {
-        response = await fetch(url, {
-          signal: AbortSignal.timeout(2000),
-        });
+        const response = await fetch(url, { signal: AbortSignal.timeout(2000) });
+        await response.body?.cancel();
 
         if (response.status >= 200 && response.status < 600) {
-          // Consume the response body
-          await response.body?.cancel();
-          response = null; // Mark as consumed
-
-          // Verify with one more request
-          let verify: Response | null = null;
           try {
-            verify = await fetch(url, {
-              signal: AbortSignal.timeout(2000),
-            });
-
-            if (verify.status >= 200 && verify.status < 600) {
-              // Consume the verify response body
-              await verify.body?.cancel();
-              return;
-            }
-            // Consume body if verification failed
+            const verify = await fetch(url, { signal: AbortSignal.timeout(2000) });
             await verify.body?.cancel();
-            verify = null;
+
+            if (verify.status >= 200 && verify.status < 600) return;
           } catch {
-            // Verification request failed, ensure body is consumed
-            await verify?.body?.cancel();
+            // ignore; will retry
           }
-        } else {
-          // Consume body if status check failed
-          await response.body?.cancel();
-          response = null;
         }
       } catch {
-        // Server not ready yet, ensure body is consumed if fetch succeeded
-        await response?.body?.cancel();
+        // ignore; will retry
       }
 
-      // Exponential backoff with jitter
       const delay = Math.min(baseDelay * 1.5 ** attempt + Math.random() * 100, maxDelay);
-
-      await new Promise<void>((resolve) => {
-        const timeoutId = setTimeout(resolve, delay);
-        // Clear immediately after resolution
-        Promise.resolve().then(() => clearTimeout(timeoutId));
-      });
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
     }
 
     throw new Error(`Server at ${url} not ready after ${maxAttempts} attempts`);
@@ -562,17 +491,12 @@ export class TestContext {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         const response = await fetch(url, { signal: AbortSignal.timeout(100) });
-        // Consume the response body
         await response.body?.cancel();
-        // If fetch succeeds, server is still running, wait before next attempt
         await new Promise<void>((resolve) => setTimeout(resolve, 100));
       } catch {
-        // Server has stopped
         return;
       }
     }
-
-    // Server might still be running, but we've waited enough
   }
 }
 
@@ -589,8 +513,6 @@ export async function withTestContext<T>(
   await context.setup();
 
   try {
-    // Run with isolated cache directory using AsyncLocalStorage
-    // This ensures all cache operations within this test use the test's temp cache
     return await runWithCacheDir(context.testCacheDir, async () => {
       // Clear MDX renderer cache at the START of each test to ensure
       // the singleton picks up this test's cache dir (via AsyncLocalStorage),
@@ -614,9 +536,7 @@ export async function withTestContext<T>(
 
       // Reset compat hooks context to prevent React instance conflicts
       try {
-        const { resetCompatHooksContext } = await import(
-          "../../src/react/compat/hooks-adapter.ts"
-        );
+        const { resetCompatHooksContext } = await import("../../src/react/compat/hooks-adapter.ts");
         resetCompatHooksContext();
       } catch {
         // May fail if module not loaded yet, which is fine

@@ -83,9 +83,7 @@ export async function createVCRClient(
   const usedIndices = new Set<number>();
 
   if (recording) {
-    if (!projectSlug) {
-      throw new Error("projectSlug required for VCR=record mode");
-    }
+    if (!projectSlug) throw new Error("projectSlug required for VCR=record mode");
     cassette.meta = { projectSlug, recordedAt: new Date().toISOString() };
   } else {
     try {
@@ -93,16 +91,16 @@ export async function createVCRClient(
       const parsed = parseCassette(JSON.parse(content));
       if (parsed) cassette = parsed;
     } catch {
-      throw new Error(
-        `Cassette not found: ${cassettePath}\nRun with VCR=record to create it.`,
-      );
+      throw new Error(`Cassette not found: ${cassettePath}\nRun with VCR=record to create it.`);
     }
   }
 
   function findEntry(method: string, url: string): VCREntry | undefined {
     for (let i = 0; i < cassette.entries.length; i++) {
+      if (usedIndices.has(i)) continue;
+
       const entry = cassette.entries[i];
-      if (!entry || usedIndices.has(i)) continue;
+      if (!entry) continue;
       if (entry.method !== method || entry.url !== url) continue;
 
       usedIndices.add(i);
@@ -129,21 +127,26 @@ export async function createVCRClient(
     return entry.response as T;
   }
 
+  function requireRealClient(): ApiClient {
+    if (!realClient) throw new Error("Real client required for VCR=record mode");
+    return realClient;
+  }
+
   const client: ApiClient = {
     get<T>(url: string, params?: Record<string, string>): Promise<T> {
-      return recordOrReplay("get", url, params, () => realClient!.get<T>(url, params));
+      return recordOrReplay("get", url, params, () => requireRealClient().get<T>(url, params));
     },
     post<T>(url: string, body?: unknown): Promise<T> {
-      return recordOrReplay("post", url, body, () => realClient!.post<T>(url, body));
+      return recordOrReplay("post", url, body, () => requireRealClient().post<T>(url, body));
     },
     put<T>(url: string, body?: unknown): Promise<T> {
-      return recordOrReplay("put", url, body, () => realClient!.put<T>(url, body));
+      return recordOrReplay("put", url, body, () => requireRealClient().put<T>(url, body));
     },
     patch<T>(url: string, body?: unknown): Promise<T> {
-      return recordOrReplay("patch", url, body, () => realClient!.patch<T>(url, body));
+      return recordOrReplay("patch", url, body, () => requireRealClient().patch<T>(url, body));
     },
     delete<T>(url: string): Promise<T> {
-      return recordOrReplay("delete", url, undefined, () => realClient!.delete<T>(url));
+      return recordOrReplay("delete", url, undefined, () => requireRealClient().delete<T>(url));
     },
   };
 
@@ -189,9 +192,7 @@ export async function initVCRTest(
     return { client: vcr.client, projectSlug: vcr.projectSlug, save: vcr.save };
   }
 
-  if (!env.projectSlug) {
-    throw new Error("VCR=record requires VERYFRONT_PROJECT_SLUG");
-  }
+  if (!env.projectSlug) throw new Error("VCR=record requires VERYFRONT_PROJECT_SLUG");
 
   // Dynamic import to avoid loading config module in playback mode
   const { createApiClient, resolveConfig } = await import("../shared/config.ts");

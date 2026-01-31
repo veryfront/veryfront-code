@@ -49,16 +49,15 @@ export function initializeInstruments(
   };
 
   try {
-    Object.assign(
-      instruments,
-      createHttpInstruments(meter, config),
-      createCacheInstruments(meter, config, runtimeState),
-      createRenderInstruments(meter, config),
-      createRscInstruments(meter, config),
-      createBuildInstruments(meter, config),
-      createDataInstruments(meter, config),
-      createMemoryInstruments(meter, config),
-    );
+    Object.assign(instruments, {
+      ...createHttpInstruments(meter, config),
+      ...createCacheInstruments(meter, config, runtimeState),
+      ...createRenderInstruments(meter, config),
+      ...createRscInstruments(meter, config),
+      ...createBuildInstruments(meter, config),
+      ...createDataInstruments(meter, config),
+      ...createMemoryInstruments(meter, config),
+    });
   } catch (error) {
     logger.warn("[metrics] Failed to initialize metric instruments", error);
   }

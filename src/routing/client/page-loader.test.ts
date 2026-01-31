@@ -7,7 +7,7 @@ function makeRouteData(overrides: Partial<RouteData> = {}): RouteData {
   return {
     html: "<div>test</div>",
     ...overrides,
-  } as RouteData;
+  };
 }
 
 function makeSpaPageData(overrides: Partial<SpaPageData> = {}): SpaPageData {
@@ -90,19 +90,14 @@ describe("routing/client/page-loader", () => {
     it("should evict oldest entry when cache is full", () => {
       const loader = new PageLoader();
 
-      // MAX_CACHE_SIZE is 50, fill it up
       for (let i = 0; i < 50; i++) {
         loader.setCache(`/page-${i}`, makeRouteData({ html: `<div>${i}</div>` }));
       }
 
-      // Adding one more should evict the first entry
       loader.setCache("/page-new", makeRouteData({ html: "<div>new</div>" }));
 
-      // First entry should be evicted
       assertEquals(loader.isCached("/page-0"), false);
-      // New entry should exist
       assertEquals(loader.isCached("/page-new"), true);
-      // Second entry should still exist
       assertEquals(loader.isCached("/page-1"), true);
     });
 
@@ -148,7 +143,6 @@ describe("routing/client/page-loader", () => {
       const loader = new PageLoader();
       const data = makeRouteData({ html: "<div>deduplicated</div>" });
 
-      // Override fetchPageData to simulate async fetch
       let fetchCount = 0;
       // deno-lint-ignore no-explicit-any
       (loader as any).fetchPageData = async () => {
@@ -157,7 +151,6 @@ describe("routing/client/page-loader", () => {
         return data;
       };
 
-      // Fire two concurrent requests for the same path
       const [result1, result2] = await Promise.all([
         loader.loadPage("/dedup"),
         loader.loadPage("/dedup"),
@@ -165,8 +158,6 @@ describe("routing/client/page-loader", () => {
 
       assertEquals(result1, data);
       assertEquals(result2, data);
-      // The second request should reuse the pending request, so fetchCount is 1
-      // But since loadPage caches after the first call, we check for at most 1
       assertEquals(fetchCount <= 2, true);
     });
   });

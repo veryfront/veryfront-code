@@ -7,6 +7,7 @@ describe("studio/element-selector-injector", () => {
     it("should inject data-vf-selector into elements", () => {
       const html = `<div id="root"><p>Hello</p></div>`;
       const result = injectElementSelectors(html);
+
       assertEquals(result.includes('data-vf-selector="vf-div-1"'), true);
       assertEquals(result.includes('data-vf-selector="vf-p-2"'), true);
     });
@@ -14,41 +15,42 @@ describe("studio/element-selector-injector", () => {
     it("should skip script elements", () => {
       const html = `<div id="root"><script>alert(1)</script></div>`;
       const result = injectElementSelectors(html);
+
       assertEquals(result.includes('data-vf-selector="vf-script'), false);
     });
 
     it("should skip style elements", () => {
       const html = `<div id="root"><style>body{}</style></div>`;
       const result = injectElementSelectors(html);
+
       assertEquals(result.includes('data-vf-selector="vf-style'), false);
     });
 
     it("should use custom prefix", () => {
       const html = `<div id="root"><span>Hi</span></div>`;
       const result = injectElementSelectors(html, { prefix: "test" });
+
       assertEquals(result.includes('data-vf-selector="test-'), true);
     });
 
     it("should skip elements with data-vf-ignore", () => {
       const html = `<div id="root"><div data-vf-ignore>skip</div></div>`;
       const result = injectElementSelectors(html);
-      // The inner div with data-vf-ignore should not get a new selector
-      assertEquals(
-        (result.match(/data-vf-selector/g) || []).length,
-        1, // only the root div gets a selector
-      );
+
+      assertEquals((result.match(/data-vf-selector/g) ?? []).length, 1);
     });
 
     it("should handle void elements", () => {
       const html = `<div id="root"><img src="test.png"><br></div>`;
       const result = injectElementSelectors(html);
+
       assertEquals(result.includes('data-vf-selector="vf-img-'), true);
     });
 
     it("should skip custom elements", () => {
       const html = `<div id="root"><div>content</div></div>`;
       const result = injectElementSelectors(html, { skipElements: ["div"] });
-      // Both divs should be skipped
+
       assertEquals(result.includes("data-vf-selector"), false);
     });
   });

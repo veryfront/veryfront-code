@@ -3,6 +3,14 @@ import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { MemoryCache } from "./memory-cache.ts";
 import type { TokenCacheEntry } from "./types.ts";
 
+function createEntry(token: string, expiresInMs = 60000): TokenCacheEntry {
+  return {
+    token,
+    expiresAt: Date.now() + expiresInMs,
+    scope: "production",
+  };
+}
+
 describe("MemoryCache", () => {
   let cache: MemoryCache;
 
@@ -14,32 +22,22 @@ describe("MemoryCache", () => {
     await cache.close();
   });
 
-  const createEntry = (token: string, expiresInMs = 60000): TokenCacheEntry => ({
-    token,
-    expiresAt: Date.now() + expiresInMs,
-    scope: "production",
-  });
-
   describe("get/set", () => {
     it("stores and retrieves entries", async () => {
-      const entry = createEntry("token-1");
-      await cache.set("key1", entry);
+      await cache.set("key1", createEntry("token-1"));
 
       const result = await cache.get("key1");
       assertEquals(result?.token, "token-1");
     });
 
     it("returns null for missing keys", async () => {
-      const result = await cache.get("nonexistent");
-      assertEquals(result, null);
+      assertEquals(await cache.get("nonexistent"), null);
     });
 
     it("returns null for expired entries", async () => {
-      const entry = createEntry("expired", -1000); // Already expired
-      await cache.set("expired-key", entry);
+      await cache.set("expired-key", createEntry("expired", -1000));
 
-      const result = await cache.get("expired-key");
-      assertEquals(result, null);
+      assertEquals(await cache.get("expired-key"), null);
     });
   });
 
@@ -48,8 +46,7 @@ describe("MemoryCache", () => {
       await cache.set("key1", createEntry("token-1"));
       await cache.delete("key1");
 
-      const result = await cache.get("key1");
-      assertEquals(result, null);
+      assertEquals(await cache.get("key1"), null);
     });
   });
 
@@ -94,9 +91,9 @@ describe("MemoryCache", () => {
     it("tracks hits and misses", async () => {
       await cache.set("key1", createEntry("token-1"));
 
-      await cache.get("key1"); // hit
-      await cache.get("key1"); // hit
-      await cache.get("missing"); // miss
+      await cache.get("key1");
+      await cache.get("key1");
+      await cache.get("missing");
 
       const stats = await cache.stats();
       assertEquals(stats.hits, 2);
@@ -113,7 +110,7 @@ describe("MemoryCache", () => {
       try {
         await smallCache.set("key1", createEntry("token-1"));
         await smallCache.set("key2", createEntry("token-2"));
-        await smallCache.set("key3", createEntry("token-3")); // Should evict key1
+        await smallCache.set("key3", createEntry("token-3"));
 
         assertEquals(await smallCache.has("key1"), false);
         assertEquals(await smallCache.has("key2"), true);

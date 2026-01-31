@@ -29,7 +29,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
   }
 
   function restoreXdgConfigHome(): void {
-    if (originalXdgConfig !== undefined) {
+    if (originalXdgConfig != null) {
       setEnv("XDG_CONFIG_HOME", originalXdgConfig);
       return;
     }
@@ -58,16 +58,14 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
   describe("Token validation", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should detect invalid token format", async () => {
       const { validateToken } = await import("./login.ts");
-      const result = await validateToken("");
-      assertEquals(result, null);
+      assertEquals(await validateToken(""), null);
     });
   });
 
   describe("User info from token", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should return null for invalid JWT", async () => {
       const { validateToken } = await import("./login.ts");
-      const result = await validateToken("invalid-token");
-      assertEquals(result, null);
+      assertEquals(await validateToken("invalid-token"), null);
     });
   });
 
@@ -82,11 +80,8 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         assertExists(ensureAuthenticated);
         assertEquals(typeof ensureAuthenticated, "function");
       } finally {
-        if (originalToken) {
-          setEnv("VERYFRONT_API_TOKEN", originalToken);
-        } else {
-          deleteEnv("VERYFRONT_API_TOKEN");
-        }
+        if (originalToken) setEnv("VERYFRONT_API_TOKEN", originalToken);
+        else deleteEnv("VERYFRONT_API_TOKEN");
       }
     });
   });
@@ -94,15 +89,12 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
   describe("logout", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should clear stored token", async () => {
       await saveToken("test-token");
-
-      let token = await readToken();
-      assertEquals(token, "test-token");
+      assertEquals(await readToken(), "test-token");
 
       const { logout } = await import("./login.ts");
       await logout();
 
-      token = await readToken();
-      assertEquals(token, null);
+      assertEquals(await readToken(), null);
     });
   });
 

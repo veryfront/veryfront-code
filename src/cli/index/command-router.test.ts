@@ -1,11 +1,43 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-
-// The command-router module exports routeCommand and uses several private helpers.
-// We test the command-definitions data integrity and re-implement the helper
-// logic in tests to verify the patterns used.
-
 import { COMMANDS } from "../help/command-definitions.ts";
+
+function resolveProjectDir(
+  args: Record<string, unknown>,
+  keys: string[],
+  cwdVal: string,
+): string {
+  const raw = keys.map((k) => args[k]).find((v) => v != null);
+  if (!raw) return cwdVal;
+
+  const dir = String(raw);
+  if (dir.startsWith("/")) return dir;
+
+  return `${cwdVal}/${dir}`;
+}
+
+function parseCsvArg(value: unknown): string[] | undefined {
+  if (!value) return undefined;
+
+  return String(value)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function parseLoginMethod(
+  args: Record<string, boolean | undefined>,
+): "google" | "github" | "microsoft" | "token" | undefined {
+  if (args.google) return "google";
+  if (args.github) return "github";
+  if (args.microsoft) return "microsoft";
+  if (args.token) return "token";
+  return undefined;
+}
+
+function formatIssues(issues: Array<{ path: string[]; message: string }>): string {
+  return issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`).join("\n");
+}
 
 describe("cli/index/command-definitions integrity", () => {
   it("should have all expected commands", () => {
@@ -36,6 +68,7 @@ describe("cli/index/command-definitions integrity", () => {
       "analyze-chunks",
       "issues",
     ];
+
     for (const cmd of expectedCommands) {
       assertEquals(cmd in COMMANDS, true, `Missing command: ${cmd}`);
     }
@@ -67,8 +100,7 @@ describe("cli/index/command-definitions integrity", () => {
 
   it("should have examples for each command", () => {
     for (const [key, cmd] of Object.entries(COMMANDS)) {
-      const examples = cmd.examples ?? [];
-      assertEquals(examples.length > 0, true, `No examples for ${key}`);
+      assertEquals((cmd.examples ?? []).length > 0, true, `No examples for ${key}`);
     }
   });
 
@@ -89,69 +121,48 @@ describe("cli/index/command-definitions integrity", () => {
 
 describe("cli/index/command-router helpers", () => {
   describe("resolveProjectDir pattern", () => {
-    // Re-implements the private resolveProjectDir logic
-    function resolveProjectDir(
-      args: Record<string, unknown>,
-      keys: string[],
-      cwdVal: string,
-    ): string {
-      const raw = keys.map((k) => args[k]).find((v) => v != null);
-      if (!raw) return cwdVal;
-      const dir = String(raw);
-      return dir.startsWith("/") ? dir : `${cwdVal}/${dir}`;
-    }
-
     it("should return cwd when no matching key found", () => {
-      const result = resolveProjectDir({}, ["dir", "d"], "/home/user");
-      assertEquals(result, "/home/user");
+      assertEquals(resolveProjectDir({}, ["dir", "d"], "/home/user"), "/home/user");
     });
 
     it("should return absolute path as-is", () => {
-      const result = resolveProjectDir(
-        { dir: "/absolute/path" },
-        ["dir", "d"],
-        "/home/user",
+      assertEquals(
+        resolveProjectDir({ dir: "/absolute/path" }, ["dir", "d"], "/home/user"),
+        "/absolute/path",
       );
-      assertEquals(result, "/absolute/path");
     });
 
     it("should resolve relative path from cwd", () => {
-      const result = resolveProjectDir(
-        { dir: "my-project" },
-        ["dir", "d"],
-        "/home/user",
+      assertEquals(
+        resolveProjectDir({ dir: "my-project" }, ["dir", "d"], "/home/user"),
+        "/home/user/my-project",
       );
-      assertEquals(result, "/home/user/my-project");
     });
 
     it("should prefer first matching key", () => {
-      const result = resolveProjectDir(
-        { "project-dir": "/first", dir: "/second" },
-        ["project-dir", "dir", "d"],
-        "/home/user",
+      assertEquals(
+        resolveProjectDir(
+          { "project-dir": "/first", dir: "/second" },
+          ["project-dir", "dir", "d"],
+          "/home/user",
+        ),
+        "/first",
       );
-      assertEquals(result, "/first");
     });
 
     it("should skip null/undefined keys", () => {
-      const result = resolveProjectDir(
-        { "project-dir": undefined, dir: "resolved" },
-        ["project-dir", "dir"],
-        "/home/user",
+      assertEquals(
+        resolveProjectDir(
+          { "project-dir": undefined, dir: "resolved" },
+          ["project-dir", "dir"],
+          "/home/user",
+        ),
+        "/home/user/resolved",
       );
-      assertEquals(result, "/home/user/resolved");
     });
   });
 
   describe("parseCsvArg pattern", () => {
-    function parseCsvArg(value: unknown): string[] | undefined {
-      if (!value) return undefined;
-      return String(value)
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-    }
-
     it("should return undefined for falsy value", () => {
       assertEquals(parseCsvArg(undefined), undefined);
       assertEquals(parseCsvArg(null), undefined);
@@ -181,16 +192,6 @@ describe("cli/index/command-router helpers", () => {
   });
 
   describe("parseLoginMethod pattern", () => {
-    function parseLoginMethod(
-      args: Record<string, boolean | undefined>,
-    ): "google" | "github" | "microsoft" | "token" | undefined {
-      if (args.google) return "google";
-      if (args.github) return "github";
-      if (args.microsoft) return "microsoft";
-      if (args.token) return "token";
-      return undefined;
-    }
-
     it("should return undefined when no method specified", () => {
       assertEquals(parseLoginMethod({}), undefined);
     });
@@ -212,17 +213,11 @@ describe("cli/index/command-router helpers", () => {
     });
 
     it("should prioritize google over others", () => {
-      assertEquals(
-        parseLoginMethod({ google: true, github: true }),
-        "google",
-      );
+      assertEquals(parseLoginMethod({ google: true, github: true }), "google");
     });
 
     it("should prioritize github over microsoft", () => {
-      assertEquals(
-        parseLoginMethod({ github: true, microsoft: true }),
-        "github",
-      );
+      assertEquals(parseLoginMethod({ github: true, microsoft: true }), "github");
     });
 
     it("should skip false values", () => {
@@ -234,23 +229,21 @@ describe("cli/index/command-router helpers", () => {
   });
 
   describe("handleValidationError pattern", () => {
-    // The handleValidationError function formats zod errors and looks up
-    // command usage. We test the formatting pattern.
     it("should format zod issues into string", () => {
       const issues = [
         { path: ["branch"], message: "Required" },
         { path: ["env"], message: "Invalid enum value" },
       ];
-      const formatted = issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`).join("\n");
+      const formatted = formatIssues(issues);
+
       assertEquals(formatted.includes("branch: Required"), true);
       assertEquals(formatted.includes("env: Invalid enum value"), true);
     });
 
     it("should handle nested paths", () => {
-      const issues = [
-        { path: ["config", "port"], message: "Expected number" },
-      ];
-      const formatted = issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`).join("\n");
+      const issues = [{ path: ["config", "port"], message: "Expected number" }];
+      const formatted = formatIssues(issues);
+
       assertEquals(formatted.includes("config.port: Expected number"), true);
     });
 
@@ -305,13 +298,11 @@ describe("cli/index/command-router helpers", () => {
 
   describe("command extraction from args", () => {
     it("should extract first positional as command", () => {
-      const args = { _: ["dev"] };
-      assertEquals(args._[0], "dev");
+      assertEquals(({ _: ["dev"] } as const)._[0], "dev");
     });
 
     it("should handle undefined command", () => {
-      const args = { _: [] };
-      assertEquals(args._[0], undefined);
+      assertEquals(({ _: [] } as const)._[0], undefined);
     });
 
     it("should extract subcommand as second positional", () => {

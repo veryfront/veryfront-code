@@ -17,26 +17,32 @@ export default tool({
   async execute({ query, limit, includeArchived }) {
     const issues = await searchIssues(query, { limit, includeArchived });
 
-    return issues.map((issue) => ({
-      id: issue.id,
-      identifier: issue.identifier,
-      title: issue.title,
-      description: issue.description,
-      priority: issue.priorityLabel,
-      status: issue.state.name,
-      statusType: issue.state.type,
-      assignee: issue.assignee
+    return issues.map((issue) => {
+      const assignee = issue.assignee
         ? { name: issue.assignee.name, email: issue.assignee.email }
-        : null,
-      team: { name: issue.team.name, key: issue.team.key },
-      project: issue.project ? { name: issue.project.name } : null,
-      labels: issue.labels.nodes.map((label) => ({
-        name: label.name,
-        color: label.color,
-      })),
-      url: issue.url,
-      createdAt: issue.createdAt,
-      updatedAt: issue.updatedAt,
-    }));
+        : null;
+
+      const project = issue.project ? { name: issue.project.name } : null;
+
+      return {
+        id: issue.id,
+        identifier: issue.identifier,
+        title: issue.title,
+        description: issue.description,
+        priority: issue.priorityLabel,
+        status: issue.state.name,
+        statusType: issue.state.type,
+        assignee,
+        team: { name: issue.team.name, key: issue.team.key },
+        project,
+        labels: issue.labels.nodes.map((label) => ({
+          name: label.name,
+          color: label.color,
+        })),
+        url: issue.url,
+        createdAt: issue.createdAt,
+        updatedAt: issue.updatedAt,
+      };
+    });
   },
 });

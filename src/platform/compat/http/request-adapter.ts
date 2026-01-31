@@ -6,9 +6,11 @@ export function convertNodeRequestToWebRequest(
 ): Request {
   const method = req.method;
 
+  const body = method !== "GET" && method !== "HEAD" ? (req as unknown as BodyInit) : undefined;
+
   return new Request(url, {
     method,
     headers: req.headers as HeadersInit,
-    body: method !== "GET" && method !== "HEAD" ? (req as unknown as BodyInit) : undefined,
+    body,
   });
 }

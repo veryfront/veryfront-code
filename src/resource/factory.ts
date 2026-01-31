@@ -33,7 +33,7 @@ export function resource<TParams = unknown, TData = unknown>(
         );
       }
 
-      return await config.load(params);
+      return config.load(params);
     },
     subscribe: config.subscribe,
     mcp: config.mcp,

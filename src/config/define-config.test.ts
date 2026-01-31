@@ -55,9 +55,10 @@ describe("define-config", () => {
     it("should allow environment-specific configuration", () => {
       const testEnv = createTestRuntimeEnv({ nodeEnv: "production" });
       const result = defineConfigWithEnv(
-        (env) => ({
-          dev: { port: env === "production" ? 8080 : 3002 },
-        }),
+        (env) => {
+          if (env === "production") return { dev: { port: 8080 } };
+          return { dev: { port: 3002 } };
+        },
         testEnv,
       );
       expect(result.dev?.port).toBe(8080);
@@ -66,9 +67,10 @@ describe("define-config", () => {
     it("should work with development environment", () => {
       const testEnv = createTestRuntimeEnv({ nodeEnv: "development" });
       const result = defineConfigWithEnv(
-        (env) => ({
-          dev: { port: env === "production" ? 8080 : 3002 },
-        }),
+        (env) => {
+          if (env === "production") return { dev: { port: 8080 } };
+          return { dev: { port: 3002 } };
+        },
         testEnv,
       );
       expect(result.dev?.port).toBe(3002);

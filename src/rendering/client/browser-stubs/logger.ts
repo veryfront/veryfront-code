@@ -1,15 +1,11 @@
-/**
- * Browser-compatible logger stub for @veryfront/internal
- * Provides console-based logging for client-side bundles
- */
-
 function noop(): void {}
 
-export const rendererLogger = {
+const logger = {
   debug: noop,
   info: console.log.bind(console),
   warn: console.warn.bind(console),
   error: console.error.bind(console),
 };
 
-export const serverLogger = rendererLogger;
+export const rendererLogger = logger;
+export const serverLogger = logger;

@@ -42,7 +42,7 @@ const issuesCreate: MCPTool<IssuesCreateInput, Issue> = {
   inputSchema: issuesCreateInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
-    return await manager.create({
+    return manager.create({
       title: input.title,
       body: input.body,
       labels: input.labels,
@@ -70,7 +70,7 @@ const issuesGet: MCPTool<IssuesGetInput, Issue | null> = {
   inputSchema: issuesGetInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
-    return await manager.get(input.id);
+    return manager.get(input.id);
   },
 };
 
@@ -99,20 +99,19 @@ const issuesUpdate: MCPTool<IssuesUpdateInput, Issue | null> = {
   execute: async (input) => {
     const manager = getManager(input.projectDir);
 
-    const updates: Parameters<typeof manager.update>[1] = {
-      ...(input.title !== undefined ? { title: input.title } : {}),
-      ...(input.body !== undefined ? { body: input.body } : {}),
-      ...(input.labels !== undefined ? { labels: input.labels } : {}),
-      ...(input.milestone !== undefined ? { milestone: input.milestone } : {}),
-      ...(input.assignees !== undefined ? { assignees: input.assignees } : {}),
-    };
+    const updates: Parameters<typeof manager.update>[1] = {};
+    if (input.title !== undefined) updates.title = input.title;
+    if (input.body !== undefined) updates.body = input.body;
+    if (input.labels !== undefined) updates.labels = input.labels;
+    if (input.milestone !== undefined) updates.milestone = input.milestone;
+    if (input.assignees !== undefined) updates.assignees = input.assignees;
 
     if (input.state !== undefined) {
       const state = parseState(input.state);
       if (state) updates.state = state;
     }
 
-    return await manager.update(input.id, updates);
+    return manager.update(input.id, updates);
   },
 };
 
@@ -146,7 +145,7 @@ const issuesList: MCPTool<IssuesListInput, IssuesListOutput> = {
   inputSchema: issuesListInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
-    return await manager.list({
+    return manager.list({
       state: input.state,
       labels: input.labels,
       milestone: input.milestone,
@@ -176,7 +175,7 @@ const issuesClose: MCPTool<IssuesCloseInput, Issue | null> = {
   inputSchema: issuesCloseInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
-    return await manager.close(input.id);
+    return manager.close(input.id);
   },
 };
 

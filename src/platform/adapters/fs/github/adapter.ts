@@ -33,14 +33,14 @@ export class GitHubFSAdapter implements FSAdapter {
       throw new Error("GitHub adapter requires github configuration");
     }
 
-    this.projectDir = adapterConfig.projectDir || "";
+    this.projectDir = adapterConfig.projectDir ?? "";
 
     const envConfig = getGithubEnvConfig();
     const rawConfig: GitHubConfig = {
-      token: githubConfig.token || envConfig.token || "",
-      owner: githubConfig.owner || envConfig.owner || "",
-      repo: githubConfig.repo || envConfig.repo || "",
-      ref: githubConfig.ref || envConfig.ref || "main",
+      token: githubConfig.token ?? envConfig.token ?? "",
+      owner: githubConfig.owner ?? envConfig.owner ?? "",
+      repo: githubConfig.repo ?? envConfig.repo ?? "",
+      ref: githubConfig.ref ?? envConfig.ref ?? "main",
       cache: githubConfig.cache,
       retry: githubConfig.retry,
     };
@@ -48,12 +48,7 @@ export class GitHubFSAdapter implements FSAdapter {
     this.config = createGitHubConfig(rawConfig);
     this.client = new GitHubAPIClient(this.config);
 
-    this.cache = new FileCache({
-      enabled: this.config.cache.enabled,
-      ttl: this.config.cache.ttl,
-      maxSize: this.config.cache.maxSize,
-      maxMemory: this.config.cache.maxMemory,
-    });
+    this.cache = new FileCache(this.config.cache);
 
     this.statOps = new GitHubStatOperations(this.config, this.client, this.cache, this.projectDir);
     this.readOps = new GitHubReadOperations(
@@ -134,8 +129,7 @@ export class GitHubFSAdapter implements FSAdapter {
       hitRate: number;
     };
   } {
-    const { size, memoryUsed, hits, misses, hitRate } = this.cache.stats();
-    return { cache: { size, memoryUsed, hits, misses, hitRate } };
+    return { cache: this.cache.stats() };
   }
 
   getRateLimitInfo(): { limit: number; remaining: number; reset: Date } | null {

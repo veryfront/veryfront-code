@@ -1,11 +1,3 @@
-/**
- * WebSocket manager for real-time poke notifications and cache invalidation.
- *
- * Handles WebSocket connection lifecycle (connect, heartbeat, reconnect),
- * poke message processing with environment scoping, and both full and
- * selective cache invalidation with debouncing.
- */
-
 import { logger } from "#veryfront/utils";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
@@ -27,10 +19,6 @@ const WS_RECONNECT_DELAY_MS = 5000;
 const WS_HEARTBEAT_INTERVAL_MS = 60000;
 const WS_HEARTBEAT_TIMEOUT_MS = 300000;
 
-/**
- * Dependencies injected by the adapter for the WebSocket manager to
- * interact with caches, the API client, and the adapter's internal state.
- */
 export interface WebSocketDeps {
   apiBaseUrl: string;
   apiToken: string;
@@ -39,17 +27,11 @@ export interface WebSocketDeps {
   client: VeryfrontAPIClient;
   invalidationCallbacks: InvalidationCallbacks;
 
-  /** Returns the current content context (may change over lifetime). */
   getContentContext: () => ResolvedContentContext | null;
-  /** Returns the static content source configuration. */
   getContentSource: () => ContentSource;
-  /** Returns the project directory from the path normalizer. */
   getProjectDir: () => string | undefined;
-  /** Clears all in-memory operation caches (file list index, stat index, dir tree). */
   clearMemoryCaches: () => void;
-  /** Clears and rebuilds the file list index after cache update. */
   clearFileListIndex: () => void;
-  /** Sets a new file list in the async cache. */
   setFileListCache: (
     cacheKey: string,
     files: Array<{ path: string; content?: string }>,
@@ -65,9 +47,7 @@ export class WebSocketManager {
   private selectiveInvalidationTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingChangedPaths = new Set<string>();
 
-  /** WebSocket connection identity for observability */
   private wsConnectionId: string | null = null;
-  /** Poke notification metrics for observability */
   private pokeMetrics = {
     received: 0,
     invalidationsTriggered: 0,
@@ -127,10 +107,7 @@ export class WebSocketManager {
         });
         this.wsConnectionId = null;
         this.cleanupTimers();
-        this.wsReconnectTimer = setTimeout(
-          () => this.connect(projectId),
-          WS_RECONNECT_DELAY_MS,
-        );
+        this.wsReconnectTimer = setTimeout(() => this.connect(projectId), WS_RECONNECT_DELAY_MS);
       };
 
       this.ws.onerror = (error) => {
@@ -138,10 +115,7 @@ export class WebSocketManager {
       };
     } catch (error) {
       logger.warn("[WebSocketManager] Failed to connect WebSocket", { error });
-      this.wsReconnectTimer = setTimeout(
-        () => this.connect(projectId),
-        WS_RECONNECT_DELAY_MS,
-      );
+      this.wsReconnectTimer = setTimeout(() => this.connect(projectId), WS_RECONNECT_DELAY_MS);
     }
   }
 
@@ -152,37 +126,35 @@ export class WebSocketManager {
       clearTimeout(this.invalidationTimer);
       this.invalidationTimer = null;
     }
+
     if (this.selectiveInvalidationTimer) {
       clearTimeout(this.selectiveInvalidationTimer);
       this.selectiveInvalidationTimer = null;
     }
 
-    if (this.ws) {
-      try {
-        this.ws.close();
-      } catch (error) {
-        logger.warn("[WebSocketManager] Error closing WebSocket", { error });
-      }
+    if (!this.ws) return;
+
+    try {
+      this.ws.close();
+    } catch (error) {
+      logger.warn("[WebSocketManager] Error closing WebSocket", { error });
+    } finally {
       this.ws = null;
     }
   }
 
-  // ===========================================================================
-  // Poke Message Processing
-  // ===========================================================================
-
   private handlePokeMessage(event: MessageEvent): void {
     try {
       const data = JSON.parse(event.data as string);
-      const changedPaths = data.data?.changedPaths as string[] | undefined;
       const isPoke = data.type === "poke" || data.type === "entity_updated";
       if (!isPoke) return;
 
+      const changedPaths = data.data?.changedPaths as string[] | undefined;
       const contentContext = this.deps.getContentContext();
 
-      // Extract branch scope from poke to determine environment matching
       const pokeBranchId = data.data?.branchId as string | null | undefined;
       const pokeBranchName = data.data?.branchName as string | null | undefined;
+
       const normalizedBranchId = typeof pokeBranchId === "string" && pokeBranchId.length > 0
         ? pokeBranchId
         : null;
@@ -197,7 +169,6 @@ export class WebSocketManager {
       this.pokeMetrics.received++;
       this.pokeMetrics.lastPokeTime = Date.now();
 
-      // Environment-scoped invalidation: only process pokes relevant to our mode
       const isProductionMode = contentContext?.sourceType !== "branch";
       const currentBranch = contentContext?.branch ?? null;
       const hasBranchScope = !!normalizedBranchName || !!normalizedBranchId;
@@ -233,18 +204,18 @@ export class WebSocketManager {
       }
 
       if (!isProductionMode) {
-        if (normalizedBranchName) {
-          if (normalizedBranchName !== currentBranch) {
-            logger.debug(
-              "[WebSocketManager] POKE SKIPPED - different branch name in preview mode",
-              {
-                pokeBranchName: normalizedBranchName,
-                currentBranch,
-              },
-            );
-            return;
-          }
-        } else if (normalizedBranchId) {
+        if (normalizedBranchName && normalizedBranchName !== currentBranch) {
+          logger.debug(
+            "[WebSocketManager] POKE SKIPPED - different branch name in preview mode",
+            {
+              pokeBranchName: normalizedBranchName,
+              currentBranch,
+            },
+          );
+          return;
+        }
+
+        if (!normalizedBranchName && normalizedBranchId) {
           if (currentBranch === null) {
             logger.debug(
               "[WebSocketManager] POKE SKIPPED - branchId-only poke for main preview",
@@ -252,11 +223,17 @@ export class WebSocketManager {
             );
             return;
           }
+
           logger.debug(
             "[WebSocketManager] POKE ACCEPTED - branchId-only fallback in preview mode",
             { pokeBranchId: normalizedBranchId, currentBranch },
           );
-        } else if (currentBranch !== null && currentBranch !== "main") {
+        }
+
+        if (
+          !normalizedBranchName && !normalizedBranchId && currentBranch !== null &&
+          currentBranch !== "main"
+        ) {
           // Unscoped pokes (no branchId/branchName) are for main branch edits.
           // Skip only if we're on a named branch (not main).
           logger.debug(
@@ -267,19 +244,19 @@ export class WebSocketManager {
         }
       }
 
-      // Extract deployment-specific data for targeted cache invalidation
       const pokeReleaseId = data.data?.releaseId as string | null | undefined;
       const normalizedPokeReleaseId = typeof pokeReleaseId === "string" && pokeReleaseId.length > 0
         ? pokeReleaseId
         : null;
+
       const isDeploymentPoke = data.data?.entityType === "deployment";
       const isPublishPoke = isDeploymentPoke || (isProductionMode && !changedPaths?.length);
+
       const pokeEnvironmentName = data.data?.environmentName as string | null | undefined;
       const normalizedPokeEnvironment =
         typeof pokeEnvironmentName === "string" && pokeEnvironmentName.length > 0
           ? pokeEnvironmentName
-          : contentContext?.environmentName ??
-            (isProductionMode ? "production" : undefined);
+          : contentContext?.environmentName ?? (isProductionMode ? "production" : undefined);
 
       logger.info("[WebSocketManager] POKE ACCEPTED - triggering cache invalidation", {
         changedPathsCount: changedPaths?.length || 0,
@@ -292,17 +269,12 @@ export class WebSocketManager {
         pokeEnvironmentName: normalizedPokeEnvironment,
       });
 
-      // Clear in-memory caches immediately (before debounce) for fresh data
       this.deps.invalidationCallbacks.clearDomainCache?.();
       this.deps.clearMemoryCaches();
       logger.debug("[WebSocketManager] All in-memory caches cleared immediately on POKE");
 
-      // Clear persistent cache for publish/deployment pokes to prevent stale hits
       if (isPublishPoke && this.deps.projectSlug) {
-        this.clearPersistentCacheForPublish(
-          normalizedPokeReleaseId,
-          normalizedPokeEnvironment,
-        );
+        this.clearPersistentCacheForPublish(normalizedPokeReleaseId, normalizedPokeEnvironment);
       }
 
       if (changedPaths?.length) {
@@ -317,10 +289,6 @@ export class WebSocketManager {
     }
   }
 
-  // ===========================================================================
-  // Persistent Cache Clearing (Publish/Deployment Pokes)
-  // ===========================================================================
-
   private clearPersistentCacheForPublish(
     releaseId: string | null,
     environmentName: string | undefined,
@@ -328,36 +296,26 @@ export class WebSocketManager {
     const deletionPrefixes = new Set<string>();
     const pendingPrefixes = new Set<string>();
 
+    const addPrefixes = (prefixes: string[]): void => {
+      for (const prefix of prefixes) {
+        deletionPrefixes.add(prefix);
+        pendingPrefixes.add(prefix);
+      }
+    };
+
     const addContextPrefixes = (ctx: ResolvedContentContext): void => {
-      const filePrefix = buildFileCacheKeyPrefix(ctx);
-      const statPrefix = buildStatCacheKeyPrefix(ctx);
-      const dirPrefix = buildDirCacheKeyPrefix(ctx);
-      const filesPrefix = buildFileListCacheKey(ctx);
-
-      deletionPrefixes.add(filePrefix);
-      deletionPrefixes.add(statPrefix);
-      deletionPrefixes.add(dirPrefix);
-      deletionPrefixes.add(filesPrefix);
-
-      pendingPrefixes.add(filePrefix);
-      pendingPrefixes.add(statPrefix);
-      pendingPrefixes.add(dirPrefix);
-      pendingPrefixes.add(filesPrefix);
+      addPrefixes([
+        buildFileCacheKeyPrefix(ctx),
+        buildStatCacheKeyPrefix(ctx),
+        buildDirCacheKeyPrefix(ctx),
+        buildFileListCacheKey(ctx),
+      ]);
     };
 
     const addBroadPrefixes = (sourceType: "release" | "environment"): void => {
       const sourceKey = sourceType === "release" ? "release" : "env";
       const base = `${sourceKey}:${this.deps.projectSlug}:`;
-
-      deletionPrefixes.add(`file:${base}`);
-      deletionPrefixes.add(`stat:${base}`);
-      deletionPrefixes.add(`dir:${base}`);
-      deletionPrefixes.add(`files:${base}`);
-
-      pendingPrefixes.add(`file:${base}`);
-      pendingPrefixes.add(`stat:${base}`);
-      pendingPrefixes.add(`dir:${base}`);
-      pendingPrefixes.add(`files:${base}`);
+      addPrefixes([`file:${base}`, `stat:${base}`, `dir:${base}`, `files:${base}`]);
     };
 
     if (releaseId) {
@@ -380,21 +338,16 @@ export class WebSocketManager {
       addBroadPrefixes("environment");
     }
 
-    for (const prefix of pendingPrefixes) {
-      addPendingInvalidation(prefix);
-    }
+    for (const prefix of pendingPrefixes) addPendingInvalidation(prefix);
 
-    logger.info(
-      "[WebSocketManager] PUBLISH POKE - clearing persistent cache",
-      {
-        projectSlug: this.deps.projectSlug,
-        releaseId,
-        environmentName,
-        deletionPrefixes: Array.from(deletionPrefixes),
-        pendingPrefixes: Array.from(pendingPrefixes),
-        pendingInvalidations: getPendingInvalidationsCount(),
-      },
-    );
+    logger.info("[WebSocketManager] PUBLISH POKE - clearing persistent cache", {
+      projectSlug: this.deps.projectSlug,
+      releaseId,
+      environmentName,
+      deletionPrefixes: Array.from(deletionPrefixes),
+      pendingPrefixes: Array.from(pendingPrefixes),
+      pendingInvalidations: getPendingInvalidationsCount(),
+    });
 
     void (async () => {
       try {
@@ -402,43 +355,30 @@ export class WebSocketManager {
           Array.from(deletionPrefixes).map((prefix) => this.deps.cache.deleteByPrefixAsync(prefix)),
         );
         const totalDeleted = results.reduce((sum, count) => sum + count, 0);
-        logger.info(
-          "[WebSocketManager] PUBLISH POKE - persistent cache cleared",
-          {
-            projectSlug: this.deps.projectSlug,
-            releaseId,
-            environmentName,
-            totalDeleted,
-          },
-        );
+
+        logger.info("[WebSocketManager] PUBLISH POKE - persistent cache cleared", {
+          projectSlug: this.deps.projectSlug,
+          releaseId,
+          environmentName,
+          totalDeleted,
+        });
       } catch (error) {
-        logger.warn(
-          "[WebSocketManager] PUBLISH POKE - failed to clear persistent cache",
-          {
-            projectSlug: this.deps.projectSlug,
-            releaseId,
-            environmentName,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        );
+        logger.warn("[WebSocketManager] PUBLISH POKE - failed to clear persistent cache", {
+          projectSlug: this.deps.projectSlug,
+          releaseId,
+          environmentName,
+          error: error instanceof Error ? error.message : String(error),
+        });
       } finally {
-        for (const prefix of pendingPrefixes) {
-          removePendingInvalidation(prefix);
-        }
-        logger.debug(
-          "[WebSocketManager] PUBLISH POKE - cache invalidation complete",
-          {
-            projectSlug: this.deps.projectSlug,
-            pendingInvalidations: getPendingInvalidationsCount(),
-          },
-        );
+        for (const prefix of pendingPrefixes) removePendingInvalidation(prefix);
+
+        logger.debug("[WebSocketManager] PUBLISH POKE - cache invalidation complete", {
+          projectSlug: this.deps.projectSlug,
+          pendingInvalidations: getPendingInvalidationsCount(),
+        });
       }
     })();
   }
-
-  // ===========================================================================
-  // Invalidation Scheduling
-  // ===========================================================================
 
   private scheduleInvalidation(): void {
     if (this.invalidationTimer) clearTimeout(this.invalidationTimer);
@@ -470,14 +410,11 @@ export class WebSocketManager {
     }, INVALIDATION_DEBOUNCE_MS);
   }
 
-  // ===========================================================================
-  // Invalidation Execution
-  // ===========================================================================
-
   private async performSelectiveInvalidation(): Promise<void> {
     const startTime = Date.now();
     const changedPaths = Array.from(this.pendingChangedPaths);
     this.pendingChangedPaths.clear();
+
     const contentContext = this.deps.getContentContext();
 
     logger.debug("[WebSocketManager] Performing selective invalidation", {
@@ -535,13 +472,10 @@ export class WebSocketManager {
       this.deps.invalidationCallbacks.clearSSRModuleCache?.();
     }
 
-    // Await renderer cache clear to prevent race condition with HMR
     if (this.deps.invalidationCallbacks.clearRendererCacheForProject && projectId) {
       await this.deps.invalidationCallbacks.clearRendererCacheForProject(projectId);
     }
-    // No global fallback — clearRendererCache is deprecated due to multi-tenant blast radius.
 
-    // Invalidate project CSS cache when source files change
     if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
       this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
     }
@@ -661,13 +595,10 @@ export class WebSocketManager {
       this.deps.invalidationCallbacks.clearSnippetCache?.();
     }
 
-    // Await renderer cache clear to prevent race condition with HMR
     if (this.deps.invalidationCallbacks.clearRendererCacheForProject && projectId) {
       await this.deps.invalidationCallbacks.clearRendererCacheForProject(projectId);
     }
-    // No global fallback — clearRendererCache is deprecated due to multi-tenant blast radius.
 
-    // Invalidate project CSS cache on full cache clear
     if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
       this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
     }
@@ -701,11 +632,13 @@ export class WebSocketManager {
     }
 
     this.pokeMetrics.invalidationsTriggered++;
+
     logger.info("[WebSocketManager] TRIGGERING FULL BROWSER RELOAD via ReloadNotifier", {
       projectSlug: this.deps.projectSlug,
       projectId: this.deps.client.getProjectId(),
       hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
     });
+
     const environment: "preview" | "production" = contentContext?.sourceType === "branch"
       ? "preview"
       : "production";
@@ -731,10 +664,6 @@ export class WebSocketManager {
     this.sendPokeAck("full");
   }
 
-  // ===========================================================================
-  // Heartbeat & Timer Management
-  // ===========================================================================
-
   private startHeartbeat(projectId: string): void {
     this.wsHeartbeatTimer = setInterval(() => {
       const timeSinceLastPong = Date.now() - this.wsLastPong;
@@ -744,13 +673,12 @@ export class WebSocketManager {
         timeSinceLastPong,
       });
 
-      if (this.ws) {
-        try {
-          this.ws.close();
-        } catch {
-          // Ignore close errors
-        }
+      try {
+        this.ws?.close();
+      } catch {
+        // Ignore close errors
       }
+
       this.cleanupTimers();
       this.connect(projectId);
     }, WS_HEARTBEAT_INTERVAL_MS);
@@ -761,30 +689,30 @@ export class WebSocketManager {
       clearInterval(this.wsHeartbeatTimer);
       this.wsHeartbeatTimer = null;
     }
+
     if (this.wsReconnectTimer) {
       clearTimeout(this.wsReconnectTimer);
       this.wsReconnectTimer = null;
     }
   }
 
-  // ===========================================================================
-  // Poke Acknowledgment
-  // ===========================================================================
-
   private sendPokeAck(type: "selective" | "full", changedPaths?: string[]): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
     try {
-      this.ws.send(JSON.stringify({
-        type: "poke_ack",
-        data: {
-          invalidationType: type,
-          changedPaths: changedPaths ?? [],
-          timestamp: Date.now(),
-          connectionId: this.wsConnectionId,
-          totalInvalidations: this.pokeMetrics.invalidationsTriggered,
-        },
-      }));
+      this.ws.send(
+        JSON.stringify({
+          type: "poke_ack",
+          data: {
+            invalidationType: type,
+            changedPaths: changedPaths ?? [],
+            timestamp: Date.now(),
+            connectionId: this.wsConnectionId,
+            totalInvalidations: this.pokeMetrics.invalidationsTriggered,
+          },
+        }),
+      );
+
       logger.debug("[WebSocketManager] Poke acknowledgment sent", {
         type,
         changedPathsCount: changedPaths?.length ?? 0,

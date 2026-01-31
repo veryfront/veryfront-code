@@ -2,10 +2,12 @@ import { assertEquals } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 
+function isWebSocketUpgrade(req: Request): boolean {
+  return req.headers.get("upgrade")?.toLowerCase() === "websocket";
+}
+
 describe("Proxy WebSocket Handler Tests", () => {
   describe("parseProjectDomain Import", () => {
-    // This test verifies the ES module import works correctly
-    // Previously used require() which fails in Deno (ReferenceError: require is not defined)
     it("parseProjectDomain is available as ES module import", () => {
       assertEquals(typeof parseProjectDomain, "function");
     });
@@ -37,15 +39,12 @@ describe("Proxy WebSocket Handler Tests", () => {
         },
       });
 
-      const isWebSocket = req.headers.get("upgrade")?.toLowerCase() === "websocket";
-      assertEquals(isWebSocket, true);
+      assertEquals(isWebSocketUpgrade(req), true);
     });
 
     it("ignores non-WebSocket requests", () => {
       const req = new Request("http://localhost:8080/_ws");
-
-      const isWebSocket = req.headers.get("upgrade")?.toLowerCase() === "websocket";
-      assertEquals(isWebSocket, false);
+      assertEquals(isWebSocketUpgrade(req), false);
     });
 
     it("handles case-insensitive upgrade header", () => {
@@ -56,8 +55,11 @@ describe("Proxy WebSocket Handler Tests", () => {
           headers: { upgrade: variant },
         });
 
-        const isWebSocket = req.headers.get("upgrade")?.toLowerCase() === "websocket";
-        assertEquals(isWebSocket, true, `Should detect '${variant}' as WebSocket upgrade`);
+        assertEquals(
+          isWebSocketUpgrade(req),
+          true,
+          `Should detect '${variant}' as WebSocket upgrade`,
+        );
       }
     });
   });
@@ -117,27 +119,17 @@ describe("Proxy WebSocket Handler Tests", () => {
 
   describe("Domain Parsing for WebSocket", () => {
     it("extracts project slug from preview domain", () => {
-      // This simulates what parseProjectDomain would return
       const host = "myproject.preview.veryfront.com";
-      const parts = host.split(".");
-
-      // For preview domains: slug.preview.veryfront.com
-      const slug = parts[0];
-      const isPreview = parts[1] === "preview";
+      const [slug, env] = host.split(".");
 
       assertEquals(slug, "myproject");
-      assertEquals(isPreview, true);
+      assertEquals(env === "preview", true);
     });
 
     it("extracts branch from preview domain with branch", () => {
       const host = "myproject--feature-branch.preview.veryfront.com";
-      const parts = host.split(".");
-
-      // For branch preview: slug--branch.preview.veryfront.com
-      const firstPart = parts[0] ?? "";
-      const slugAndBranch = firstPart.split("--");
-      const slug = slugAndBranch[0];
-      const branch = slugAndBranch[1];
+      const [firstPart = ""] = host.split(".");
+      const [slug, branch] = firstPart.split("--");
 
       assertEquals(slug, "myproject");
       assertEquals(branch, "feature-branch");

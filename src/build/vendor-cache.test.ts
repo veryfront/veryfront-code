@@ -19,38 +19,42 @@ describe("build/vendor-cache", () => {
 
     it("should be deterministic", async () => {
       const deps = { lodash: "4.17.21", axios: "1.6.0" };
-      const key1 = await generateVendorCacheKey("p", "18.3.1", deps);
-      const key2 = await generateVendorCacheKey("p", "18.3.1", deps);
+      const [key1, key2] = await Promise.all([
+        generateVendorCacheKey("p", "18.3.1", deps),
+        generateVendorCacheKey("p", "18.3.1", deps),
+      ]);
       assertEquals(key1, key2);
     });
 
     it("should differ for different react versions", async () => {
-      const key1 = await generateVendorCacheKey("p", "18.3.1", {});
-      const key2 = await generateVendorCacheKey("p", "19.0.0", {});
+      const [key1, key2] = await Promise.all([
+        generateVendorCacheKey("p", "18.3.1", {}),
+        generateVendorCacheKey("p", "19.0.0", {}),
+      ]);
       assertEquals(key1 !== key2, true);
     });
 
     it("should differ for different dependencies", async () => {
-      const key1 = await generateVendorCacheKey("p", "18.3.1", { a: "1.0" });
-      const key2 = await generateVendorCacheKey("p", "18.3.1", { b: "2.0" });
+      const [key1, key2] = await Promise.all([
+        generateVendorCacheKey("p", "18.3.1", { a: "1.0" }),
+        generateVendorCacheKey("p", "18.3.1", { b: "2.0" }),
+      ]);
       assertEquals(key1 !== key2, true);
     });
 
     it("should be order-independent for dependencies", async () => {
-      const key1 = await generateVendorCacheKey("p", "18.3.1", {
-        a: "1.0",
-        b: "2.0",
-      });
-      const key2 = await generateVendorCacheKey("p", "18.3.1", {
-        b: "2.0",
-        a: "1.0",
-      });
+      const [key1, key2] = await Promise.all([
+        generateVendorCacheKey("p", "18.3.1", { a: "1.0", b: "2.0" }),
+        generateVendorCacheKey("p", "18.3.1", { b: "2.0", a: "1.0" }),
+      ]);
       assertEquals(key1, key2);
     });
 
     it("should differ for different project ids", async () => {
-      const key1 = await generateVendorCacheKey("proj1", "18.3.1", {});
-      const key2 = await generateVendorCacheKey("proj2", "18.3.1", {});
+      const [key1, key2] = await Promise.all([
+        generateVendorCacheKey("proj1", "18.3.1", {}),
+        generateVendorCacheKey("proj2", "18.3.1", {}),
+      ]);
       assertEquals(key1 !== key2, true);
     });
   });

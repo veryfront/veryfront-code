@@ -88,9 +88,11 @@ export class PageRenderer {
     if (extension === "tsx" || extension === "jsx") {
       return { type: "component", extension };
     }
+
     if (extension === "ts" || extension === "js") {
       return { type: "script", extension };
     }
+
     return { type: "mdx", extension };
   }
 
@@ -131,12 +133,6 @@ export class PageRenderer {
           return { collectedMetadata: {}, scriptResult };
         }
 
-        let pageElement: React.ReactElement | undefined;
-        let pageBundle: PageBundle | undefined;
-        let clientModuleCode: string | undefined = cachedModule?.code;
-        let pageModuleType: "mdx" | "component" | undefined = cachedModule?.type;
-        let collectedMetadata: Record<string, unknown> = {};
-
         if (pageType.type === "component") {
           let params = options?.params;
           if (!params || Object.keys(params).length === 0) {
@@ -172,17 +168,12 @@ export class PageRenderer {
             { "render.component_path": pageInfo.entity.path },
           );
 
-          pageElement = result.pageElement;
-          pageBundle = result.pageBundle;
-          clientModuleCode = result.pageBundle.clientModuleCode ?? clientModuleCode;
-          pageModuleType = "component";
-
           return {
-            pageElement,
-            pageBundle,
-            clientModuleCode,
-            pageModuleType,
-            collectedMetadata,
+            pageElement: result.pageElement,
+            pageBundle: result.pageBundle,
+            clientModuleCode: result.pageBundle.clientModuleCode ?? cachedModule?.code,
+            pageModuleType: "component",
+            collectedMetadata: {},
           };
         }
 
@@ -208,18 +199,12 @@ export class PageRenderer {
           { "render.mdx_path": pageInfo.entity.path },
         );
 
-        pageElement = mdxResult.pageElement;
-        pageBundle = mdxResult.pageBundle;
-        collectedMetadata = mdxResult.collectedMetadata;
-        clientModuleCode = mdxResult.pageBundle.clientModuleCode;
-        pageModuleType = "mdx";
-
         return {
-          pageElement,
-          pageBundle,
-          clientModuleCode,
-          pageModuleType,
-          collectedMetadata,
+          pageElement: mdxResult.pageElement,
+          pageBundle: mdxResult.pageBundle,
+          clientModuleCode: mdxResult.pageBundle.clientModuleCode,
+          pageModuleType: "mdx",
+          collectedMetadata: mdxResult.collectedMetadata,
         };
       },
       {
@@ -249,7 +234,6 @@ export class PageRenderer {
 
   validatePageBundle(result: PageBundleResult, slug: string): void {
     if (result.scriptResult) return;
-
     if (result.pageElement && result.pageBundle) return;
 
     throw new VeryfrontError("Failed to prepare page bundle", ErrorCode.RENDER_ERROR, {

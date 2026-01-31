@@ -54,19 +54,13 @@ export class CircuitBreaker {
   /** Execute operation through circuit breaker. Throws CircuitBreakerOpen if open. */
   async execute<T>(operation: () => Promise<T>): Promise<T> {
     if (this.state === "OPEN") {
-      const elapsed = Date.now() - this.lastFailureTime;
-      const remaining = this.resetTimeoutMs - elapsed;
-
-      if (remaining > 0) {
-        throw new CircuitBreakerOpen(this.breakerName, remaining);
-      }
-
+      const remaining = this.resetTimeoutMs - (Date.now() - this.lastFailureTime);
+      if (remaining > 0) throw new CircuitBreakerOpen(this.breakerName, remaining);
       this.transitionTo("HALF_OPEN");
     }
 
     if (this.state === "HALF_OPEN") {
       if (this.halfOpenAttempts >= 3) {
-        // Too many half-open attempts failed - transition back to OPEN
         this.transitionTo("OPEN");
         this.lastFailureTime = Date.now();
         throw new CircuitBreakerOpen(this.breakerName, this.resetTimeoutMs);
@@ -104,7 +98,7 @@ export class CircuitBreaker {
       return;
     }
 
-    if (this.state === "CLOSED" && this.failureCount >= this.failureThreshold) {
+    if (this.failureCount >= this.failureThreshold) {
       this.transitionTo("OPEN");
     }
   }
@@ -117,7 +111,9 @@ export class CircuitBreaker {
       this.successCount = 0;
       this.halfOpenAttempts = 0;
       this.failureCount = 0;
-    } else if (newState === "HALF_OPEN") {
+    }
+
+    if (newState === "HALF_OPEN") {
       this.successCount = 0;
       this.halfOpenAttempts = 0;
     }
@@ -136,10 +132,8 @@ export class CircuitBreaker {
 
   /** Update last activity time on use */
   touch(): void {
-    if (this.state === "CLOSED" && this.failureCount === 0) {
-      // Only update for healthy breakers to track activity
-      this.lastFailureTime = Date.now();
-    }
+    if (this.state !== "CLOSED" || this.failureCount !== 0) return;
+    this.lastFailureTime = Date.now();
   }
 }
 
@@ -161,12 +155,8 @@ function evictStaleBreakers(): void {
   if (breakers.size <= MAX_BREAKERS) return;
 
   const now = Date.now();
-  const entries = Array.from(breakers.entries());
+  const entries = Array.from(breakers.entries()).sort((a, b) => a[1].lastUsed - b[1].lastUsed);
 
-  // Sort by last used time (oldest first)
-  entries.sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-
-  // Evict oldest entries that are past minimum age, keeping at most MAX_BREAKERS
   const toEvict = entries.length - MAX_BREAKERS;
   let evicted = 0;
 
@@ -174,14 +164,14 @@ function evictStaleBreakers(): void {
     if (evicted >= toEvict) break;
 
     const age = now - entry.lastUsed;
-    // Only evict if idle for at least MIN_EVICTION_AGE_MS and in CLOSED state
-    if (age >= MIN_EVICTION_AGE_MS && entry.breaker.getState() === "CLOSED") {
-      breakers.delete(name);
-      evicted++;
-      logger.debug(`[CircuitBreaker] Evicted stale breaker: ${name}`, {
-        age: Math.round(age / 1000),
-      });
-    }
+    if (age < MIN_EVICTION_AGE_MS) continue;
+    if (entry.breaker.getState() !== "CLOSED") continue;
+
+    breakers.delete(name);
+    evicted++;
+    logger.debug(`[CircuitBreaker] Evicted stale breaker: ${name}`, {
+      age: Math.round(age / 1000),
+    });
   }
 
   if (evicted > 0) {
@@ -199,7 +189,6 @@ export function getCircuitBreaker(
     return existing.breaker;
   }
 
-  // Evict stale breakers before adding new one
   evictStaleBreakers();
 
   const breaker = new CircuitBreaker({ ...options, name });
@@ -218,18 +207,11 @@ export function getCircuitBreakerStats(): {
   let halfOpen = 0;
   let closed = 0;
 
-  for (const entry of breakers.values()) {
-    switch (entry.breaker.getState()) {
-      case "OPEN":
-        open++;
-        break;
-      case "HALF_OPEN":
-        halfOpen++;
-        break;
-      case "CLOSED":
-        closed++;
-        break;
-    }
+  for (const { breaker } of breakers.values()) {
+    const state = breaker.getState();
+    if (state === "OPEN") open++;
+    else if (state === "HALF_OPEN") halfOpen++;
+    else closed++;
   }
 
   return { total: breakers.size, open, halfOpen, closed };

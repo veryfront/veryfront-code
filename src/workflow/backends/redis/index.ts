@@ -257,7 +257,7 @@ export class RedisBackend implements WorkflowBackend {
     if (patch.startedAt !== undefined) fields.startedAt = patch.startedAt.toISOString();
     if (patch.completedAt !== undefined) fields.completedAt = patch.completedAt.toISOString();
 
-    if (Object.keys(fields).length) await client.hset(this.runKey(runId), fields);
+    if (Object.keys(fields).length > 0) await client.hset(this.runKey(runId), fields);
 
     if (patch.status && oldStatus && patch.status !== oldStatus) {
       await client.srem(this.statusIndexKey(oldStatus), runId);
@@ -278,22 +278,21 @@ export class RedisBackend implements WorkflowBackend {
 
   async listRuns(filter: RunFilter): Promise<WorkflowRun[]> {
     const client = await this.ensureClient();
-    let runIds: string[] = [];
 
+    const statuses = filter.status
+      ? Array.isArray(filter.status) ? filter.status : [filter.status]
+      : null;
+
+    let runIds: string[] = [];
     if (filter.workflowId) {
       runIds = await client.smembers(this.workflowIndexKey(filter.workflowId));
-    } else if (filter.status) {
-      const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
+    } else if (statuses) {
       const all = await Promise.all(statuses.map((s) => client.smembers(this.statusIndexKey(s))));
       runIds = [...new Set(all.flat())];
     } else {
       const keys = await client.keys(`${this.config.prefix}run:*`);
       runIds = keys.map((k) => k.replace(`${this.config.prefix}run:`, ""));
     }
-
-    const statuses = filter.status
-      ? Array.isArray(filter.status) ? filter.status : [filter.status]
-      : null;
 
     const runs: WorkflowRun[] = [];
     for (const runId of runIds) {
@@ -374,7 +373,7 @@ export class RedisBackend implements WorkflowBackend {
       requestedAt: new Date(data.requestedAt),
       expiresAt: data.expiresAt ? new Date(data.expiresAt) : undefined,
       decidedAt: data.decidedAt ? new Date(data.decidedAt) : undefined,
-    } as PendingApproval;
+    };
   }
 
   async getPendingApprovals(runId: string): Promise<PendingApproval[]> {
@@ -398,21 +397,17 @@ export class RedisBackend implements WorkflowBackend {
 
     const rawList = await client.lrange(key, 0, -1);
 
-    let targetIndex = -1;
-    for (let i = 0; i < rawList.length; i++) {
-      const rawItem = rawList[i];
-      if (!rawItem) continue;
-      const data = JSON.parse(rawItem);
-      if (data.id === approvalId) {
-        targetIndex = i;
-        break;
-      }
-    }
+    const targetIndex = rawList.findIndex((raw) => {
+      if (!raw) return false;
+      const data = JSON.parse(raw);
+      return data.id === approvalId;
+    });
 
     if (targetIndex === -1) throw new Error(`Approval not found: ${approvalId}`);
 
     const rawTarget = rawList[targetIndex];
     if (!rawTarget) throw new Error(`Approval data not found: ${approvalId}`);
+
     const data = JSON.parse(rawTarget);
     data.status = decision.approved ? "approved" : "rejected";
     data.decidedBy = decision.approver;

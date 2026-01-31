@@ -13,13 +13,27 @@ import {
   V_LOGO_POSITIONS,
 } from "./dot-matrix.ts";
 
+function countLitDots(grid: number[][]): number {
+  let count = 0;
+  for (const row of grid) {
+    for (const cell of row) {
+      if (cell === 1) count++;
+    }
+  }
+  return count;
+}
+
+function assertIs7x7Grid(grid: number[][]): void {
+  assertEquals(grid.length, 7);
+  for (const row of grid) {
+    assertEquals(row.length, 7);
+  }
+}
+
 describe("cli/ui/dot-matrix", () => {
   describe("AGENT_FACE", () => {
     it("should be a 7x7 grid", () => {
-      assertEquals(AGENT_FACE.length, 7);
-      for (const row of AGENT_FACE) {
-        assertEquals(row.length, 7);
-      }
+      assertIs7x7Grid(AGENT_FACE);
     });
 
     it("should only contain 0s and 1s", () => {
@@ -39,7 +53,7 @@ describe("cli/ui/dot-matrix", () => {
     it("should have positions that match lit dots in AGENT_FACE", () => {
       for (const [row, col] of V_LOGO_POSITIONS) {
         assertEquals(
-          AGENT_FACE[row]![col],
+          AGENT_FACE[row]?.[col],
           1,
           `Position [${row},${col}] should be lit in AGENT_FACE`,
         );
@@ -47,10 +61,10 @@ describe("cli/ui/dot-matrix", () => {
     });
 
     it("should contain tuples of [row, col]", () => {
-      for (const pos of V_LOGO_POSITIONS) {
-        assertEquals(pos.length, 2);
-        assertEquals(pos[0]! >= 0 && pos[0]! < 7, true);
-        assertEquals(pos[1]! >= 0 && pos[1]! < 7, true);
+      for (const [row, col] of V_LOGO_POSITIONS) {
+        assertEquals([row, col].length, 2);
+        assertEquals(row >= 0 && row < 7, true);
+        assertEquals(col >= 0 && col < 7, true);
       }
     });
   });
@@ -58,13 +72,15 @@ describe("cli/ui/dot-matrix", () => {
   describe("renderDotMatrix", () => {
     it("should render a pattern as a multi-line string", () => {
       const result = renderDotMatrix(AGENT_FACE);
-      const lines = result.split("\n");
-      assertEquals(lines.length, 7);
+      assertEquals(result.split("\n").length, 7);
     });
 
     it("should use custom lit and off characters", () => {
       const result = renderDotMatrix(
-        [[1, 0], [0, 1]],
+        [
+          [1, 0],
+          [0, 1],
+        ],
         { litChar: "X", offChar: ".", litColor: "", offColor: "" },
       );
       assertEquals(result.includes("X"), true);
@@ -80,57 +96,35 @@ describe("cli/ui/dot-matrix", () => {
 
   describe("generateSpinnerFrame", () => {
     it("should return a 7x7 grid", () => {
-      const frame = generateSpinnerFrame(0);
-      assertEquals(frame.length, 7);
-      for (const row of frame) {
-        assertEquals(row.length, 7);
-      }
+      assertIs7x7Grid(generateSpinnerFrame(0));
     });
 
     it("should have exactly tailLength lit dots", () => {
       const tailLength = 3;
       const frame = generateSpinnerFrame(0, tailLength);
-      let litCount = 0;
-      for (const row of frame) {
-        for (const cell of row) {
-          if (cell === 1) litCount++;
-        }
-      }
-      assertEquals(litCount, tailLength);
+      assertEquals(countLitDots(frame), tailLength);
     });
 
     it("should wrap around at the end of positions", () => {
       const frame = generateSpinnerFrame(V_LOGO_POSITIONS.length);
-      // Should be same as frame 0
       const frame0 = generateSpinnerFrame(0);
       assertEquals(JSON.stringify(frame), JSON.stringify(frame0));
     });
 
     it("should use custom tail length", () => {
       const frame = generateSpinnerFrame(5, 5);
-      let litCount = 0;
-      for (const row of frame) {
-        for (const cell of row) {
-          if (cell === 1) litCount++;
-        }
-      }
-      assertEquals(litCount, 5);
+      assertEquals(countLitDots(frame), 5);
     });
   });
 
   describe("generateSpinnerFrames", () => {
     it("should return frames equal to number of positions", () => {
-      const frames = generateSpinnerFrames();
-      assertEquals(frames.length, V_LOGO_POSITIONS.length);
+      assertEquals(generateSpinnerFrames().length, V_LOGO_POSITIONS.length);
     });
 
     it("should return valid 7x7 grids for each frame", () => {
-      const frames = generateSpinnerFrames();
-      for (const frame of frames) {
-        assertEquals(frame.length, 7);
-        for (const row of frame) {
-          assertEquals(row.length, 7);
-        }
+      for (const frame of generateSpinnerFrames()) {
+        assertIs7x7Grid(frame);
       }
     });
   });
@@ -159,8 +153,7 @@ describe("cli/ui/dot-matrix", () => {
 
   describe("agentSays", () => {
     it("should include the message", () => {
-      const result = agentSays("Testing!");
-      assertEquals(result.includes("Testing!"), true);
+      assertEquals(agentSays("Testing!").includes("Testing!"), true);
     });
   });
 
@@ -174,34 +167,32 @@ describe("cli/ui/dot-matrix", () => {
 
   describe("AnimatedDotMatrix", () => {
     it("should create an instance", () => {
-      const anim = new AnimatedDotMatrix();
-      assertEquals(anim.spinning, false);
+      assertEquals(new AnimatedDotMatrix().spinning, false);
     });
 
     it("should render the face", () => {
-      const anim = new AnimatedDotMatrix();
-      const result = anim.render();
+      const result = new AnimatedDotMatrix().render();
       assertEquals(typeof result, "string");
       assertEquals(result.length > 0, true);
     });
 
     it("should render with text", () => {
-      const anim = new AnimatedDotMatrix();
-      const result = anim.renderWithText(["Test"]);
+      const result = new AnimatedDotMatrix().renderWithText(["Test"]);
       assertEquals(result.includes("Test"), true);
     });
 
     it("should return height of 7", () => {
-      const anim = new AnimatedDotMatrix();
-      assertEquals(anim.getHeight(), 7);
+      assertEquals(new AnimatedDotMatrix().getHeight(), 7);
     });
 
     it("should start and stop spinner", () => {
       const anim = new AnimatedDotMatrix();
       const frames: string[] = [];
+
       anim.startSpinner((frame) => frames.push(frame));
       assertEquals(anim.spinning, true);
       assertEquals(frames.length >= 1, true);
+
       anim.stop();
       assertEquals(anim.spinning, false);
     });
@@ -215,11 +206,11 @@ describe("cli/ui/dot-matrix", () => {
 
     it("should set custom pattern", () => {
       const anim = new AnimatedDotMatrix();
-      const custom = [[0, 1], [1, 0]];
-      anim.setPattern(custom);
-      // Should render without error
-      const result = anim.render();
-      assertEquals(typeof result, "string");
+      anim.setPattern([
+        [0, 1],
+        [1, 0],
+      ]);
+      assertEquals(typeof anim.render(), "string");
     });
   });
 });

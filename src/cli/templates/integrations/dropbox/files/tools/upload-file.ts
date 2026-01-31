@@ -32,6 +32,11 @@ export default tool({
     const result = await uploadFile(path, content, { mode, autorename, mute: false });
     const displayPath = result.path_display ?? result.path_lower ?? "";
 
+    let message = `File updated successfully at ${result.path_display}`;
+    if (mode === "add") {
+      message = `File created successfully at ${result.path_display}`;
+    }
+
     return {
       success: true,
       name: result.name,
@@ -41,10 +46,7 @@ export default tool({
       sizeFormatted: formatFileSize(result.size),
       modified: result.server_modified,
       rev: result.rev,
-      message:
-        mode === "add"
-          ? `File created successfully at ${result.path_display}`
-          : `File updated successfully at ${result.path_display}`,
+      message,
     };
   },
 });

@@ -3,11 +3,12 @@ import type { FrontmatterData, PageData } from "./types.ts";
 
 export function isInternalLink(target: HTMLAnchorElement): boolean {
   const href = target.getAttribute("href");
-
   if (!href) return false;
-  if (href.startsWith("http") || href.startsWith("mailto:")) return false;
-  if (href.startsWith("#")) return false;
-  if (target.getAttribute("target") === "_blank" || target.getAttribute("download")) return false;
+
+  if (href.startsWith("http") || href.startsWith("mailto:") || href.startsWith("#")) return false;
+
+  const linkTarget = target.getAttribute("target");
+  if (linkTarget === "_blank" || target.hasAttribute("download")) return false;
 
   return true;
 }
@@ -146,11 +147,9 @@ export function parsePageDataFromHTML(html: string): { content: string; pageData
   const doc = new DOMParser().parseFromString(html, "text/html");
 
   const root = doc.getElementById("root");
-  const content = root?.innerHTML || "";
+  if (!root) logger.warn("[Veryfront] No root element found in HTML");
 
-  if (!root) {
-    logger.warn("[Veryfront] No root element found in HTML");
-  }
+  const content = root?.innerHTML ?? "";
 
   const pageDataScript = doc.querySelector("script[data-veryfront-page]");
   let pageData: PageData = {};

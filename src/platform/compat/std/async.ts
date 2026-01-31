@@ -10,6 +10,6 @@ export let delay: (ms: number) => Promise<void>;
 if (!isDeno) {
   delay = nodeDelay;
 } else {
-  const stdAsync = await import("#std/async.ts");
-  delay = (ms: number) => stdAsync.delay(scaleMs(ms));
+  const { delay: stdDelay } = await import("#std/async.ts");
+  delay = (ms: number) => stdDelay(scaleMs(ms));
 }

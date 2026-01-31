@@ -21,9 +21,6 @@ import { TestDataFactory } from "../../fixtures/test-data-factory.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 
-// Wrap entire test suite in a describe block with sanitizers disabled
-// This is required because esbuild WASM runtime and server lifecycle
-// creates internal timers/resources that cannot be cleaned up from user code
 describe(
   "ProductionServer",
   {
@@ -31,7 +28,6 @@ describe(
     sanitizeOps: false,
   },
   () => {
-    // Clean up renderer intervals and restore console methods to prevent resource leaks
     afterAll(async () => {
       await cleanupBundler();
       restoreLogs();
@@ -43,10 +39,8 @@ describe(
       () => {
         it("serves static files with correct headers", async () => {
           await withTestContext("prod-static-assets", async (context) => {
-            // Enable cache closing for tests
             context.setEnv({ VF_CACHE_ALLOW_CLOSE: "1" });
 
-            // Arrange
             await writeTextFile(
               join(context.projectDir, "public", "test.txt"),
               "This is a test static file",
@@ -56,7 +50,6 @@ describe(
               "body { margin: 0; }",
             );
 
-            // Build first for production
             await buildProduction({
               projectDir: context.projectDir,
               outputDir: join(context.projectDir, "dist"),
@@ -65,18 +58,14 @@ describe(
               enablePrefetch: false,
             });
 
-            // Act
             const server = await context.createProductionServer();
 
-            // Test text file
             const txtResponse = await fetch(`http://127.0.0.1:${server.port}/test.txt`);
             const txtContent = await txtResponse.text();
 
-            // Assert text file
             assertEquals(txtResponse.status, 200, "Should serve text files");
             assertEquals(txtContent, "This is a test static file", "Should serve correct content");
-            // In standalone test mode (no proxy/releaseId), we run in preview environment
-            // which uses no-cache headers for better debugging
+
             const cacheControl = txtResponse.headers.get("cache-control");
             assert(
               cacheControl === "public, max-age=3600" ||
@@ -84,11 +73,9 @@ describe(
               `Should include cache control header, got: ${cacheControl}`,
             );
 
-            // Test CSS file
             const cssResponse = await fetch(`http://127.0.0.1:${server.port}/styles.css`);
             const cssContent = await cssResponse.text();
 
-            // Assert CSS file
             assertEquals(cssResponse.status, 200, "Should serve CSS files");
             assertEquals(cssContent, "body { margin: 0; }", "Should serve correct CSS");
             assertEquals(
@@ -111,7 +98,6 @@ describe(
 
         it("handles concurrent requests efficiently", async () => {
           await withTestContext("prod-concurrent", async (context) => {
-            // Create multiple assets
             for (let i = 0; i < 5; i++) {
               await writeTextFile(
                 join(context.projectDir, "public", `file${i}.txt`),
@@ -121,21 +107,22 @@ describe(
 
             const server = await context.createProductionServer();
 
-            // Make concurrent requests
             const start = performance.now();
-            const requests = Array.from(
-              { length: 5 },
-              (_, i) => fetch(`http://127.0.0.1:${server.port}/file${i}.txt`),
+            const responses = await Promise.all(
+              Array.from(
+                { length: 5 },
+                (_, i) => fetch(`http://127.0.0.1:${server.port}/file${i}.txt`),
+              ),
             );
-
-            const responses = await Promise.all(requests);
             const duration = performance.now() - start;
 
-            // Verify all succeeded
             for (const [i, response] of responses.entries()) {
               assertEquals(response.status, 200, `Request ${i} should succeed`);
-              const content = await response.text();
-              assertEquals(content, `Content ${i}`, `Should return correct content for file ${i}`);
+              assertEquals(
+                await response.text(),
+                `Content ${i}`,
+                `Should return correct content for file ${i}`,
+              );
             }
 
             assert(
@@ -153,10 +140,8 @@ describe(
       () => {
         it("serves App Router pages with layouts", async () => {
           await withTestContext("prod-app-router", async (context) => {
-            // Enable cache closing for tests
             context.setEnv({ VF_CACHE_ALLOW_CLOSE: "1" });
 
-            // Create App Router structure
             await mkdir(join(context.projectDir, "app"), { recursive: true });
             await writeTextFile(
               join(context.projectDir, "app", "layout.tsx"),
@@ -169,7 +154,6 @@ describe(
         }`,
             );
 
-            // Build production assets before starting server
             await buildProduction({
               projectDir: context.projectDir,
               outputDir: join(context.projectDir, "dist"),
@@ -196,7 +180,6 @@ describe(
       () => {
         it("handles API routes", async () => {
           await withTestContext("production-basic-api", async (context) => {
-            // Create an App Router API route
             await mkdir(join(context.projectDir, "app", "api", "hello"), { recursive: true });
             await writeTextFile(
               join(context.projectDir, "app", "api", "hello", "route.ts"),
@@ -209,8 +192,7 @@ describe(
 
             const res = await fetch(`http://127.0.0.1:${server.port}/api/hello`);
             assertEquals(res.status, 200);
-            const data = await res.json();
-            assertEquals(data.message, "Hello API");
+            assertEquals((await res.json()).message, "Hello API");
           });
         });
       },
@@ -222,7 +204,6 @@ describe(
       () => {
         it("does not set CSP by default (allows user content)", async () => {
           await withTestContext("prod-csp-nonce", async (context) => {
-            // Create a simple page so the server has something to serve
             await writeTextFile(
               join(context.projectDir, "pages", "index.tsx"),
               `export default function Home() { return <h1>CSP Test</h1>; }`,
@@ -232,16 +213,17 @@ describe(
 
             const res = await fetch(`http://127.0.0.1:${server.port}/`);
             assertEquals(res.status, 200, "Should serve the page");
-            // CSP is not set by default to allow user-generated content
-            const csp = res.headers.get("content-security-policy");
-            assertEquals(csp, null, "CSP should not be set by default");
+            assertEquals(
+              res.headers.get("content-security-policy"),
+              null,
+              "CSP should not be set by default",
+            );
             await res.text();
           });
         });
 
         it("sets security headers", async () => {
           await withTestContext("production-basic-security", async (context) => {
-            // Create a simple App Router page
             await writeTextFile(
               join(context.projectDir, "app", "page.tsx"),
               `export default function Page() { return <div>Security Test</div>; }`,
@@ -251,10 +233,7 @@ describe(
 
             const res = await fetch(`http://127.0.0.1:${server.port}/`);
             assertEquals(res.status, 200);
-
-            // Check security headers
             assertEquals(res.headers.get("x-content-type-options"), "nosniff");
-
             await res.text();
           });
         });
@@ -264,7 +243,6 @@ describe(
             const server = await context.createProductionServer();
             const response = await fetch(`http://127.0.0.1:${server.port}/`);
 
-            // Basic security headers are set by default
             assertEquals(
               response.headers.get("x-content-type-options"),
               "nosniff",
@@ -275,8 +253,6 @@ describe(
               "DENY",
               "Should prevent framing by default",
             );
-
-            // CSP is NOT set by default to allow user-generated content
             assertEquals(
               response.headers.get("content-security-policy"),
               null,
@@ -289,10 +265,7 @@ describe(
 
         it("handles CORS preflight requests", async () => {
           await withTestContext("prod-cors-preflight", async (context) => {
-            // Create an API route
-            await mkdir(join(context.projectDir, "pages", "api"), {
-              recursive: true,
-            });
+            await mkdir(join(context.projectDir, "pages", "api"), { recursive: true });
             await writeTextFile(
               join(context.projectDir, "pages", "api", "hello.ts"),
               `export const GET = () => Response.json({ message: "Hello" });`,
@@ -320,14 +293,7 @@ describe(
       { sanitizeResources: false, sanitizeOps: false },
       () => {
         it("renders MDX pages with frontmatter", async () => {
-          /**
-           * Tests MDX processing including:
-           * - Frontmatter extraction
-           * - Markdown rendering
-           * - Component integration
-           */
           await withTestContext("prod-mdx-rendering", async (context) => {
-            // Arrange
             const mdxContent = TestDataFactory.createMDXPage({
               title: "Test Page",
               content: "This is a **test** page with *emphasis*.",
@@ -341,12 +307,9 @@ describe(
 
             const server = await context.createProductionServer();
 
-            // Act
-            // URL /test maps to pages/test.mdx (pages/ is the routing root, not part of URL)
             const response = await fetch(`http://127.0.0.1:${server.port}/test`);
             const html = await response.text();
 
-            // Assert
             assertEquals(response.status, 200, "Should render MDX page");
             assert(html.includes("Test Page") || html.includes("<h1>"), "Should render page title");
           });
@@ -359,19 +322,14 @@ describe(
       { sanitizeResources: false, sanitizeOps: false },
       () => {
         it("returns 404 page for non-existent routes", async () => {
-          // Production servers need at least one page to initialize properly
-          // This test creates a simple index page and then tests 404 handling for other routes
           await withTestContext("prod-404-page", async (context) => {
-            // Enable cache closing for tests
             context.setEnv({ VF_CACHE_ALLOW_CLOSE: "1" });
 
-            // Create a minimal index page
             await writeTextFile(
               join(context.projectDir, "pages", "index.tsx"),
               `export default function Home() { return <h1>Home</h1>; }`,
             );
 
-            // Build production assets before starting server
             await buildProduction({
               projectDir: context.projectDir,
               outputDir: join(context.projectDir, "dist"),
@@ -382,7 +340,6 @@ describe(
 
             const server = await context.createProductionServer();
 
-            // Test that a non-existent page returns 404
             const response = await fetch(`http://127.0.0.1:${server.port}/non-existent-page`);
             const html = await response.text();
 
@@ -400,35 +357,21 @@ describe(
 
         it("handles errors securely in production mode", async () => {
           await withTestContext("prod-error-security", async (context) => {
-            // Enable cache closing for tests
             context.setEnv({ VF_CACHE_ALLOW_CLOSE: "1", NODE_ENV: "production" });
 
-            // Create a page that throws during render
             await writeTextFile(
               join(context.projectDir, "pages", "error.mdx"),
               `# Error Page\n\n<UndefinedComponent />`,
             );
 
-            // Start server without pre-building - this forces dynamic SSR
             const server = await context.createProductionServer();
             const response = await fetch(`http://127.0.0.1:${server.port}/error`);
-            const html = await response.text();
+            await response.text();
 
-            // SSR errors may return 404 or 500 depending on server configuration
             assert(
               response.status === 404 || response.status === 500,
               `Should return error status (got ${response.status})`,
             );
-
-            // In standalone test mode (no proxy/releaseId), we run in preview environment
-            // where showing error details is acceptable for debugging. In real production
-            // (with proxy and releaseId), error details would be hidden.
-            // The main thing we verify here is that the server returns an error status
-            // and doesn't crash.
-
-            // Note: In true production mode (via proxy), these assertions would be stricter:
-            // - !html.includes("UndefinedComponent") - no component names
-            // - !html.includes("_missingMdxReference") - no stack traces
           });
         });
       },

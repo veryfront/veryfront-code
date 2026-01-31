@@ -3,13 +3,13 @@ export {
   clearSSRModuleCache,
   clearSSRModuleCacheForProject,
   failedComponents,
+  getTransformSemaphore,
   getTransformStats,
   globalCrossProjectCache,
   globalInProgress,
   globalModuleCache,
   globalTmpDirs,
   releaseTransformSlot,
-  transformSemaphore,
   tryAcquireTransformSlot,
 } from "./memory.ts";
 

@@ -5,76 +5,87 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 // causing resource leak detection failures. Instead, we test the pure logic helpers
 // by inlining them here.
 
-// ---- Inline reimplementations of key logic ----
+type SkipEntryResult = { skip: boolean; reason?: string };
 
-/** Error fallback component factory (simplified) */
-function createErrorFallbackComponent(componentName: string, error: string) {
-  const displayName = `ErrorFallback(${componentName})`;
-  return { displayName, componentName, error };
+function createErrorFallbackComponent(
+  componentName: string,
+  error: string,
+): { displayName: string; componentName: string; error: string } {
+  return {
+    displayName: `ErrorFallback(${componentName})`,
+    componentName,
+    error,
+  };
 }
 
-/** Component name extraction from file name */
 function extractComponentName(fileName: string): string {
   return fileName.replace(/\.(tsx|jsx|ts|js)$/, "");
 }
 
-/** Check if entry should be skipped during directory scan */
 function shouldSkipEntry(
   entryName: string,
   isDirectory: boolean,
   parentDir: string,
-): { skip: boolean; reason?: string } {
+): SkipEntryResult {
   if (entryName === "node_modules") return { skip: true, reason: "node_modules" };
+
   if (entryName.startsWith(".") && entryName !== ".veryfront") {
     return { skip: true, reason: "hidden directory" };
   }
 
-  if (isDirectory) {
-    // Skip .veryfront system subdirs
-    const vfSystemDirs = ["cache", "compiled", "tmp", "temp", "output", "optimized-images", "css"];
-    if (parentDir.includes(".veryfront") && vfSystemDirs.includes(entryName)) {
-      return { skip: true, reason: ".veryfront system dir" };
-    }
+  if (!isDirectory) return { skip: false };
+
+  const vfSystemDirs = new Set([
+    "cache",
+    "compiled",
+    "tmp",
+    "temp",
+    "output",
+    "optimized-images",
+    "css",
+  ]);
+
+  if (parentDir.includes(".veryfront") && vfSystemDirs.has(entryName)) {
+    return { skip: true, reason: ".veryfront system dir" };
   }
 
   return { skip: false };
 }
 
-/** Check if a file is a valid component file */
 function isComponentFile(fileName: string): boolean {
   return /\.(tsx|jsx|ts|js)$/.test(fileName);
 }
 
-/** Check if file should be excluded (index files) */
 function isIndexFile(fileName: string): boolean {
   return extractComponentName(fileName) === "index";
 }
 
-/** Determine project root from directory path */
 function resolveProjectRoot(dir: string): string {
-  return dir.endsWith("/components") || dir.endsWith("\\components")
-    ? dir.replace(/[/\\]components$/, "")
-    : dir;
+  if (!dir.endsWith("/components") && !dir.endsWith("\\components")) return dir;
+  return dir.replace(/[/\\]components$/, "");
 }
 
-/** Loader options builder */
 function getLoaderOptions(
   projectRoot: string,
   projectId?: string,
   moduleServerUrl?: string,
   vendorBundleHash?: string,
   contentSourceId?: string,
-) {
+): {
+  projectId: string;
+  dev: true;
+  moduleServerUrl?: string;
+  vendorBundleHash?: string;
+  contentSourceId?: string;
+} {
   return {
     projectId: projectId ?? projectRoot,
-    dev: true as const,
+    dev: true,
     moduleServerUrl,
     vendorBundleHash,
     contentSourceId,
   };
 }
-
-// ---- Tests ----
 
 describe("ComponentRegistry logic", () => {
   describe("createErrorFallbackComponent", () => {
@@ -134,13 +145,19 @@ describe("ComponentRegistry logic", () => {
     });
 
     it("should skip .veryfront system subdirs", () => {
-      assertEquals(shouldSkipEntry("cache", true, "/project/.veryfront").skip, true);
-      assertEquals(shouldSkipEntry("compiled", true, "/project/.veryfront").skip, true);
-      assertEquals(shouldSkipEntry("tmp", true, "/project/.veryfront").skip, true);
-      assertEquals(shouldSkipEntry("temp", true, "/project/.veryfront").skip, true);
-      assertEquals(shouldSkipEntry("output", true, "/project/.veryfront").skip, true);
-      assertEquals(shouldSkipEntry("optimized-images", true, "/project/.veryfront").skip, true);
-      assertEquals(shouldSkipEntry("css", true, "/project/.veryfront").skip, true);
+      const systemDirs = [
+        "cache",
+        "compiled",
+        "tmp",
+        "temp",
+        "output",
+        "optimized-images",
+        "css",
+      ];
+
+      for (const dir of systemDirs) {
+        assertEquals(shouldSkipEntry(dir, true, "/project/.veryfront").skip, true);
+      }
     });
 
     it("should not skip regular directories inside .veryfront", () => {
@@ -170,10 +187,10 @@ describe("ComponentRegistry logic", () => {
     });
 
     it("should reject non-component files", () => {
-      assertEquals(isComponentFile("style.css"), false);
-      assertEquals(isComponentFile("readme.md"), false);
-      assertEquals(isComponentFile("data.json"), false);
-      assertEquals(isComponentFile("image.png"), false);
+      const nonComponentFiles = ["style.css", "readme.md", "data.json", "image.png"];
+      for (const file of nonComponentFiles) {
+        assertEquals(isComponentFile(file), false);
+      }
     });
   });
 
@@ -251,20 +268,24 @@ describe("ComponentRegistry logic", () => {
     it("should store and retrieve components", () => {
       const components = new Map<string, unknown>();
       const mockComponent = () => null;
+
       components.set("Button", mockComponent);
+
       assertEquals(components.has("Button"), true);
       assertEquals(components.get("Button"), mockComponent);
     });
 
     it("should track failed components separately", () => {
       const failed = new Map<string, { name: string; error: string; timestamp: number }>();
+
       failed.set("BrokenComponent", {
         name: "BrokenComponent",
         error: "Syntax error",
         timestamp: Date.now(),
       });
+
       assertEquals(failed.has("BrokenComponent"), true);
-      assertEquals(failed.get("BrokenComponent")!.error, "Syntax error");
+      assertEquals(failed.get("BrokenComponent")?.error, "Syntax error");
     });
 
     it("should clear all state", () => {

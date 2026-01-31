@@ -25,7 +25,7 @@ describe("errors/catalog/dev-errors", () => {
         assertEquals(typeof solution.message, "string", `message should be string for ${code}`);
         assertEquals(typeof solution.docs, "string", `docs should be string for ${code}`);
         assertEquals(Array.isArray(solution.steps), true, `steps should be array for ${code}`);
-        assertEquals(solution.steps!.length > 0, true, `steps should not be empty for ${code}`);
+        assertEquals(solution.steps.length > 0, true, `steps should not be empty for ${code}`);
       }
     });
 

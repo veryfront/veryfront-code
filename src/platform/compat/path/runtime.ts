@@ -10,7 +10,9 @@ let nodePath: NodePathModule | null = null;
 if (hasNodeApis) {
   try {
     const nodeRequire = typeof require !== "undefined" ? require : null;
-    if (nodeRequire) nodePath = nodeRequire("node:path") as NodePathModule;
+    if (nodeRequire) {
+      nodePath = nodeRequire("node:path") as NodePathModule;
+    }
   } catch {
     // ignore
   }

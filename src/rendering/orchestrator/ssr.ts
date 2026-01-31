@@ -1,6 +1,7 @@
 import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ConfigurationManager } from "./config.ts";
 import { RendererLifecycle, type RendererServices } from "./lifecycle.ts";
 import { MDXCompiler } from "./mdx.ts";
@@ -10,7 +11,6 @@ import { HTMLGenerator } from "./html.ts";
 import { RenderPipeline } from "./pipeline.ts";
 import { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { PageDataResponse, RendererOptions, RenderOptions, RenderResult } from "./types.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 // Re-export types for backward compatibility
 export type { PageDataResponse, RendererOptions, RenderOptions, RenderResult } from "./types.ts";
@@ -41,6 +41,7 @@ export class VeryfrontRenderer {
     this.port = options.port ?? DEFAULT_DASHBOARD_PORT;
     this.moduleServerUrl = options.moduleServerUrl;
     this.preloadedConfig = options.config;
+
     // Generate a short projectId if not provided - use hash of projectDir to avoid
     // issues with long paths being URL-encoded in cache directories
     this.projectId = options.projectId ?? this.hashProjectDir(options.projectDir);
@@ -55,8 +56,8 @@ export class VeryfrontRenderer {
     let hash = 0;
     for (let i = 0; i < path.length; i++) {
       const char = path.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32-bit integer
+      hash = (hash << 5) - hash + char;
+      hash &= hash; // Convert to 32-bit integer
     }
     // Convert to base36 and make positive
     return `proj_${Math.abs(hash).toString(36)}`;
@@ -153,14 +154,17 @@ export class VeryfrontRenderer {
     });
   }
 
-  renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
-    // Inject instance-level context values into render options
-    const mergedOptions: RenderOptions = {
+  private mergeRenderOptions(options?: RenderOptions): RenderOptions {
+    return {
       ...options,
       projectId: options?.projectId ?? this.projectId,
       projectSlug: options?.projectSlug ?? this.projectSlug,
       contentSourceId: options?.contentSourceId ?? this.contentSourceId,
     };
+  }
+
+  renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
+    const mergedOptions = this.mergeRenderOptions(options);
     return withSpan(
       "renderer.renderPage",
       () => this.renderPipeline.renderPage(slug, mergedOptions),
@@ -171,17 +175,13 @@ export class VeryfrontRenderer {
   }
 
   resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
-    // Inject instance-level context values into render options
-    const mergedOptions: RenderOptions = {
-      ...options,
-      projectId: options?.projectId ?? this.projectId,
-      projectSlug: options?.projectSlug ?? this.projectSlug,
-      contentSourceId: options?.contentSourceId ?? this.contentSourceId,
-    };
+    const mergedOptions = this.mergeRenderOptions(options);
     return withSpan(
       "renderer.resolvePageData",
       () => this.renderPipeline.resolvePageData(slug, mergedOptions),
-      { "renderer.slug": slug },
+      {
+        "renderer.slug": slug,
+      },
     );
   }
 
@@ -195,8 +195,7 @@ export class VeryfrontRenderer {
       return;
     }
 
-    this.lifecycle.clearAllCaches();
-    this.layoutOrchestrator.clearCache();
+    this.clearAllState();
   }
 
   clearAllState(): void {

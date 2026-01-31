@@ -15,25 +15,26 @@
  * @see plans/architecture-audit/003.3-multitenancy-cache-isolation.md
  */
 
-import { assertEquals, assert } from "@veryfront/testing/assert";
+import { assert, assertEquals } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
 
 describe("003.1 & 003.3 Cache Behavior Fixes", () => {
   describe("003.1 - File Path Extraction", () => {
-    // Test the extractAllFilePaths pattern
     const ALL_FILE_PATHS_PATTERN = /file:\/\/([^"'\s]+\.(?:mjs|js))/gi;
 
     function extractAllFilePaths(code: string): string[] {
       const paths: string[] = [];
       const seen = new Set<string>();
-      let match;
+
+      let match: RegExpExecArray | null;
       while ((match = ALL_FILE_PATHS_PATTERN.exec(code)) !== null) {
-        const path = match[1] as string;
-        if (!seen.has(path)) {
-          seen.add(path);
-          paths.push(path);
-        }
+        const path = match[1];
+        if (seen.has(path)) continue;
+
+        seen.add(path);
+        paths.push(path);
       }
+
       ALL_FILE_PATHS_PATTERN.lastIndex = 0;
       return paths;
     }
@@ -96,7 +97,6 @@ describe("003.1 & 003.3 Cache Behavior Fixes", () => {
   });
 
   describe("003.3 - Cross-Project Cache Key", () => {
-    // Test the cache key format includes project context
     function buildCrossProjectCacheKey(
       specifier: string,
       projectId: string,

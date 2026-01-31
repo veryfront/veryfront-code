@@ -80,7 +80,7 @@ export function useStreaming(options: UseStreamingOptions): UseStreamingResult {
         const decoder = new TextDecoder();
         let accumulatedData = "";
 
-        while (true) {
+        for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
 

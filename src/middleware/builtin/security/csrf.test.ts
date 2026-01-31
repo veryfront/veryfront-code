@@ -2,13 +2,17 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { csrfProtection } from "./csrf.ts";
 
-function makeCtx(method: string, headers: Record<string, string> = {}) {
+function makeCtx(method: string, headers: Record<string, string> = {}): {
+  request: Request;
+} {
   return {
     request: new Request("http://localhost/api/data", { method, headers }),
   };
 }
 
-const nextOk = () => Promise.resolve(new Response("ok", { status: 200 }));
+function nextOk(): Promise<Response> {
+  return Promise.resolve(new Response("ok", { status: 200 }));
+}
 
 describe("middleware/builtin/security/csrf", () => {
   describe("csrfProtection", () => {

@@ -24,15 +24,15 @@ export class HydratorHandler {
     }
   }
 
-  private readHydratorFile(path: string): Promise<string> {
-    return this.fsAdapter ? this.fsAdapter.readFile(path) : compatFs.readTextFile(path);
+  private readHydratorFile(filePath: string): Promise<string> {
+    return this.fsAdapter?.readFile(filePath) ?? compatFs.readTextFile(filePath);
   }
 
-  private async bundleHydrator(path: string): Promise<string> {
+  private async bundleHydrator(filePath: string): Promise<string> {
     const { build, stop } = await import("esbuild");
 
     try {
-      const source = await this.readHydratorFile(path);
+      const source = await this.readHydratorFile(filePath);
 
       const result = await build({
         bundle: true,
@@ -43,8 +43,8 @@ export class HydratorHandler {
         stdin: {
           contents: source,
           loader: "ts",
-          resolveDir: pathHelper.dirname(path),
-          sourcefile: path,
+          resolveDir: pathHelper.dirname(filePath),
+          sourcefile: filePath,
         },
         external: [
           "react",
@@ -59,7 +59,7 @@ export class HydratorHandler {
       });
 
       const outputText = result.outputFiles?.[0]?.text;
-      if (!outputText) {
+      if (outputText == null) {
         throw toError(
           createError({
             type: "config",
@@ -69,18 +69,17 @@ export class HydratorHandler {
       }
 
       logger.debug("[RSC] Hydrator bundled successfully", { size: outputText.length });
-
       return outputText;
     } finally {
-      if (!(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) {
+      if (!("__vfTestPreserveEsbuild" in globalThis)) {
         await stop();
       }
     }
   }
 
-  private async fallbackToSource(path: string): Promise<Response> {
+  private async fallbackToSource(filePath: string): Promise<Response> {
     try {
-      const source = await this.readHydratorFile(path);
+      const source = await this.readHydratorFile(filePath);
       return this.createJavaScriptResponse(source);
     } catch (readError) {
       logger.error("[RSC] Failed to read hydrator file:", readError);

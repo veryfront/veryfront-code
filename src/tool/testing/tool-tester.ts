@@ -100,16 +100,9 @@ async function runToolTest(
       };
     }
 
+    let passed: boolean;
     try {
-      const passed = await testCase.validate(result);
-
-      return {
-        name: testCase.name,
-        passed,
-        result,
-        error: passed ? undefined : "Custom validation failed",
-        executionTime,
-      };
+      passed = await testCase.validate(result);
     } catch (error) {
       return {
         name: testCase.name,
@@ -119,6 +112,14 @@ async function runToolTest(
         executionTime,
       };
     }
+
+    return {
+      name: testCase.name,
+      passed,
+      result,
+      error: passed ? undefined : "Custom validation failed",
+      executionTime,
+    };
   } catch (error) {
     const executionTime = Date.now() - startTime;
     const errorMessage = error instanceof Error ? error.message : String(error);

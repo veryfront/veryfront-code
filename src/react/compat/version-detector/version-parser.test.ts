@@ -5,32 +5,23 @@ import { isReact17, isReact18, isReact19, parseVersion } from "./version-parser.
 describe("version-parser", () => {
   describe("parseVersion", () => {
     it("parses a standard semver string", () => {
-      const result = parseVersion("18.2.0");
-      assertEquals(result, { major: 18, minor: 2, patch: 0 });
+      assertEquals(parseVersion("18.2.0"), { major: 18, minor: 2, patch: 0 });
     });
 
     it("parses React 19 RC version", () => {
-      const result = parseVersion("19.0.0-rc.1");
-      assertEquals(result, { major: 19, minor: 0, patch: 0 });
+      assertEquals(parseVersion("19.0.0-rc.1"), { major: 19, minor: 0, patch: 0 });
     });
 
     it("parses React 17", () => {
-      const result = parseVersion("17.0.2");
-      assertEquals(result, { major: 17, minor: 0, patch: 2 });
+      assertEquals(parseVersion("17.0.2"), { major: 17, minor: 0, patch: 2 });
     });
 
     it("throws on invalid version string", () => {
-      assertThrows(
-        () => parseVersion("invalid"),
-        Error,
-      );
+      assertThrows(() => parseVersion("invalid"), Error);
     });
 
     it("throws on empty string", () => {
-      assertThrows(
-        () => parseVersion(""),
-        Error,
-      );
+      assertThrows(() => parseVersion(""), Error);
     });
   });
 

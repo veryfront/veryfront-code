@@ -38,9 +38,10 @@ function validateEarly(
 
 function validateStaticOrigin(requestOrigin: string, corsConfig: CORSConfig): CORSValidationResult {
   const credentials = corsConfig.credentials ?? false;
+  const { origin } = corsConfig;
 
-  if (Array.isArray(corsConfig.origin)) {
-    const allowed = corsConfig.origin.includes(requestOrigin);
+  if (Array.isArray(origin)) {
+    const allowed = origin.includes(requestOrigin);
 
     if (!allowed) {
       recordCorsRejection();
@@ -55,16 +56,13 @@ function validateStaticOrigin(requestOrigin: string, corsConfig: CORSConfig): CO
     };
   }
 
-  if (typeof corsConfig.origin === "string") {
-    const allowed = corsConfig.origin === requestOrigin;
+  if (typeof origin === "string") {
+    const allowed = origin === requestOrigin;
 
     if (!allowed) {
       recordCorsRejection();
       // Log at debug level - this is expected in dev when CORS config doesn't match request origin
-      serverLogger.debug("[CORS] Origin does not match", {
-        requestOrigin,
-        expectedOrigin: corsConfig.origin,
-      });
+      serverLogger.debug("[CORS] Origin does not match", { requestOrigin, expectedOrigin: origin });
     }
 
     return {
@@ -74,11 +72,7 @@ function validateStaticOrigin(requestOrigin: string, corsConfig: CORSConfig): CO
     };
   }
 
-  return {
-    allowedOrigin: null,
-    allowCredentials: false,
-    error: "Invalid origin configuration",
-  };
+  return { allowedOrigin: null, allowCredentials: false, error: "Invalid origin configuration" };
 }
 
 function processFunctionResult(
@@ -106,23 +100,25 @@ export function validateOrigin(
 ): Promise<CORSValidationResult> {
   return withSpan(
     "security.cors.validateOrigin",
-    async () => {
+    async (): Promise<CORSValidationResult> => {
       const earlyResult = validateEarly(requestOrigin, config);
       if (earlyResult) return earlyResult;
 
       const corsConfig = config as CORSConfig;
+      const origin = requestOrigin as string;
+      const credentials = corsConfig.credentials ?? false;
 
       if (typeof corsConfig.origin === "function") {
         try {
-          const result = await corsConfig.origin(requestOrigin!);
-          return processFunctionResult(result, requestOrigin!, corsConfig.credentials ?? false);
+          const result = await corsConfig.origin(origin);
+          return processFunctionResult(result, origin, credentials);
         } catch (error) {
           serverLogger.error("[CORS] Origin validation function error", error);
           return { allowedOrigin: null, allowCredentials: false, error: "Origin validation error" };
         }
       }
 
-      return validateStaticOrigin(requestOrigin!, corsConfig);
+      return validateStaticOrigin(origin, corsConfig);
     },
     { "cors.origin": requestOrigin ?? "null" },
   );
@@ -137,30 +133,30 @@ export function validateOriginSync(
   if (earlyResult) return earlyResult;
 
   const corsConfig = config as CORSConfig;
+  const origin = requestOrigin as string;
+  const credentials = corsConfig.credentials ?? false;
 
-  if (typeof corsConfig.origin === "function") {
-    try {
-      const result = corsConfig.origin(requestOrigin!);
-
-      if (result instanceof Promise) {
-        serverLogger.warn(
-          "[CORS] Async origin validators are not supported in synchronous contexts",
-        );
-        return {
-          allowedOrigin: null,
-          allowCredentials: false,
-          error: "Async origin validators not supported",
-        };
-      }
-
-      return processFunctionResult(result, requestOrigin!, corsConfig.credentials ?? false);
-    } catch (error) {
-      serverLogger.error("[CORS] Origin validation function error", error);
-      return { allowedOrigin: null, allowCredentials: false, error: "Origin validation error" };
-    }
+  if (typeof corsConfig.origin !== "function") {
+    return validateStaticOrigin(origin, corsConfig);
   }
 
-  return validateStaticOrigin(requestOrigin!, corsConfig);
+  try {
+    const result = corsConfig.origin(origin);
+
+    if (result instanceof Promise) {
+      serverLogger.warn("[CORS] Async origin validators are not supported in synchronous contexts");
+      return {
+        allowedOrigin: null,
+        allowCredentials: false,
+        error: "Async origin validators not supported",
+      };
+    }
+
+    return processFunctionResult(result, origin, credentials);
+  } catch (error) {
+    serverLogger.error("[CORS] Origin validation function error", error);
+    return { allowedOrigin: null, allowCredentials: false, error: "Origin validation error" };
+  }
 }
 
 /** Validate CORS configuration for security issues */
@@ -169,17 +165,14 @@ export function validateCORSConfig(
 ): { valid: boolean; error?: string } {
   if (!config || config === true) return { valid: true };
 
-  // Cannot use credentials with wildcard origin
   if (config.origin === "*" && config.credentials) {
     return { valid: false, error: "Cannot use credentials with wildcard origin (*)" };
   }
 
-  // Validate methods array if provided
   if (config.methods?.length === 0) {
     return { valid: false, error: "methods array cannot be empty" };
   }
 
-  // Validate headers arrays
   if (config.allowedHeaders?.length === 0) {
     return { valid: false, error: "allowedHeaders array cannot be empty" };
   }
@@ -188,7 +181,6 @@ export function validateCORSConfig(
     return { valid: false, error: "exposedHeaders array cannot be empty" };
   }
 
-  // Validate maxAge is positive
   if (config.maxAge !== undefined && config.maxAge < 0) {
     return { valid: false, error: "maxAge must be a positive number" };
   }

@@ -16,19 +16,33 @@ describe("flags", () => {
     });
 
     it("config.experimental.rsc takes precedence over env", () => {
-      const env = createTestRuntimeEnv({ experimentalRsc: true });
-      assertEquals(isRSCEnabled({ experimental: { rsc: false } }, env), false);
+      assertEquals(
+        isRSCEnabled(
+          { experimental: { rsc: false } },
+          createTestRuntimeEnv({ experimentalRsc: true }),
+        ),
+        false,
+      );
 
-      const env2 = createTestRuntimeEnv({ experimentalRsc: false });
-      assertEquals(isRSCEnabled({ experimental: { rsc: true } }, env2), true);
+      assertEquals(
+        isRSCEnabled(
+          { experimental: { rsc: true } },
+          createTestRuntimeEnv({ experimentalRsc: false }),
+        ),
+        true,
+      );
     });
 
     it("falls back to env when config is not provided", () => {
-      const envEnabled = createTestRuntimeEnv({ experimentalRsc: true });
-      assertEquals(isRSCEnabled({}, envEnabled), true);
+      assertEquals(
+        isRSCEnabled({}, createTestRuntimeEnv({ experimentalRsc: true })),
+        true,
+      );
 
-      const envDisabled = createTestRuntimeEnv({ experimentalRsc: false });
-      assertEquals(isRSCEnabled({}, envDisabled), false);
+      assertEquals(
+        isRSCEnabled({}, createTestRuntimeEnv({ experimentalRsc: false })),
+        false,
+      );
     });
   });
 });

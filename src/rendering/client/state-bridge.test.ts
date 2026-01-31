@@ -278,7 +278,7 @@ describe("State Bridge", () => {
       const stored = (globalThis as any).sessionStorage.getItem("veryfront-state");
       assertExists(stored);
 
-      const parsed = JSON.parse(stored!);
+      const parsed = JSON.parse(stored);
       assertEquals(parsed.key, "value");
     });
 
@@ -290,7 +290,7 @@ describe("State Bridge", () => {
 
       const stored = (globalThis as any).sessionStorage.getItem("veryfront-state");
       assertExists(stored);
-      assertEquals(JSON.parse(stored!).key, "value");
+      assertEquals(JSON.parse(stored).key, "value");
     });
 
     it("should persist multiple keys", () => {
@@ -500,12 +500,11 @@ describe("State Bridge", () => {
       bridge.set("key1", "value1");
       bridge.persist("key1");
 
-      const event = new Event("beforeunload");
-      globalThis.dispatchEvent(event);
+      globalThis.dispatchEvent(new Event("beforeunload"));
 
       const stored = (globalThis as any).sessionStorage.getItem("veryfront-state");
       assertExists(stored);
-      assertEquals(JSON.parse(stored!).key1, "value1");
+      assertEquals(JSON.parse(stored).key1, "value1");
     });
   });
 

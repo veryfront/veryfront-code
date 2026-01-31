@@ -2,9 +2,9 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ProjectFile, VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
+import type { ContentContextProvider } from "./read-operations.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { StatOperations } from "./stat-operations.ts";
-import type { ContentContextProvider } from "./read-operations.ts";
 
 // deno-lint-ignore no-explicit-any
 function createMockClient(overrides: Record<string, any> = {}): VeryfrontAPIClient {
@@ -17,10 +17,7 @@ function createMockClient(overrides: Record<string, any> = {}): VeryfrontAPIClie
   } as unknown as VeryfrontAPIClient;
 }
 
-function makeFile(
-  path: string,
-  opts: Partial<ProjectFile> = {},
-): ProjectFile {
+function makeFile(path: string, opts: Partial<ProjectFile> = {}): ProjectFile {
   return {
     path,
     size: opts.size ?? 100,
@@ -30,9 +27,7 @@ function makeFile(
   } as ProjectFile;
 }
 
-function createBranchContextWithFiles(
-  files: ProjectFile[],
-): ContentContextProvider {
+function createBranchContextWithFiles(files: ProjectFile[]): ContentContextProvider {
   return {
     isProductionMode: () => false,
     getReleaseId: () => null,
@@ -46,6 +41,19 @@ function createBranchContextWithFiles(
   };
 }
 
+function createStatOps(
+  client: VeryfrontAPIClient = createMockClient(),
+  pathNormalizer: PathNormalizer = new PathNormalizer(),
+  contextProvider?: ContentContextProvider,
+): StatOperations {
+  return new StatOperations(
+    client,
+    new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
+    pathNormalizer,
+    contextProvider,
+  );
+}
+
 describe("StatOperations", () => {
   describe("class", () => {
     it("should export StatOperations class", () => {
@@ -56,30 +64,17 @@ describe("StatOperations", () => {
 
   describe("instance", () => {
     it("should be instantiable without context provider", () => {
-      const statOps = new StatOperations(
-        createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-      );
-      assertExists(statOps);
+      assertExists(createStatOps());
     });
 
     it("should be instantiable with context provider", () => {
-      const statOps = new StatOperations(
-        createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-        createBranchContextWithFiles([]),
+      assertExists(
+        createStatOps(createMockClient(), new PathNormalizer(), createBranchContextWithFiles([])),
       );
-      assertExists(statOps);
     });
 
     it("should have all required methods", () => {
-      const statOps = new StatOperations(
-        createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-      );
+      const statOps = createStatOps();
       assertEquals(typeof statOps.stat, "function");
       assertEquals(typeof statOps.exists, "function");
       assertEquals(typeof statOps.resolveFile, "function");
@@ -90,20 +85,12 @@ describe("StatOperations", () => {
 
   describe("getOriginalApiPath", () => {
     it("should return input path when no mapping exists", () => {
-      const statOps = new StatOperations(
-        createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-      );
+      const statOps = createStatOps();
       assertEquals(statOps.getOriginalApiPath("test/path.ts"), "test/path.ts");
     });
 
     it("should return input path for unmapped paths", () => {
-      const statOps = new StatOperations(
-        createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-      );
+      const statOps = createStatOps();
       assertEquals(statOps.getOriginalApiPath("pages/index.tsx"), "pages/index.tsx");
       assertEquals(statOps.getOriginalApiPath("components/Header.tsx"), "components/Header.tsx");
     });
@@ -111,20 +98,12 @@ describe("StatOperations", () => {
 
   describe("clearIndex", () => {
     it("should clear without error", () => {
-      const statOps = new StatOperations(
-        createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-      );
+      const statOps = createStatOps();
       statOps.clearIndex();
     });
 
     it("should allow clearing multiple times", () => {
-      const statOps = new StatOperations(
-        createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-      );
+      const statOps = createStatOps();
       statOps.clearIndex();
       statOps.clearIndex();
     });
@@ -137,9 +116,8 @@ describe("StatOperations", () => {
         makeFile("pages/about.tsx", { size: 180 }),
       ];
 
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
         createBranchContextWithFiles(files),
       );
@@ -153,14 +131,9 @@ describe("StatOperations", () => {
     });
 
     it("should stat a directory from the index", async () => {
-      const files = [
-        makeFile("pages/index.tsx"),
-        makeFile("pages/about.tsx"),
-      ];
-
-      const statOps = new StatOperations(
+      const files = [makeFile("pages/index.tsx"), makeFile("pages/about.tsx")];
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
         createBranchContextWithFiles(files),
       );
@@ -172,13 +145,10 @@ describe("StatOperations", () => {
     });
 
     it("should throw for non-existent path", async () => {
-      const files = [makeFile("pages/index.tsx")];
-
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
-        createBranchContextWithFiles(files),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
       );
 
       try {
@@ -190,13 +160,10 @@ describe("StatOperations", () => {
     });
 
     it("should normalize paths with project dir", async () => {
-      const files = [makeFile("pages/index.tsx", { size: 100 })];
-
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer("/project/root/"),
-        createBranchContextWithFiles(files),
+        createBranchContextWithFiles([makeFile("pages/index.tsx", { size: 100 })]),
       );
 
       const info = await statOps.stat("/project/root/pages/index.tsx");
@@ -205,18 +172,12 @@ describe("StatOperations", () => {
     });
 
     it("should handle deeply nested directories", async () => {
-      const files = [
-        makeFile("src/components/ui/buttons/PrimaryButton.tsx"),
-      ];
-
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
-        createBranchContextWithFiles(files),
+        createBranchContextWithFiles([makeFile("src/components/ui/buttons/PrimaryButton.tsx")]),
       );
 
-      // All parent directories should exist
       const srcInfo = await statOps.stat("src");
       assertEquals(srcInfo.isDirectory, true);
 
@@ -231,77 +192,54 @@ describe("StatOperations", () => {
     });
 
     it("should handle trailing slash paths by normalizing to index file", async () => {
-      const files = [
-        makeFile("pages/blog/", { type: "page" }),
-      ];
-
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
-        createBranchContextWithFiles(files),
+        createBranchContextWithFiles([makeFile("pages/blog/", { type: "page" })]),
       );
 
-      // The trailing slash path is normalized to pages/blog/index.mdx for page type
       const info = await statOps.stat("pages/blog/index.mdx");
       assertEquals(info.isFile, true);
     });
 
     it("should map trailing slash path to original for getOriginalApiPath", async () => {
-      const files = [
-        makeFile("pages/blog/", { type: "page" }),
-      ];
-
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
-        createBranchContextWithFiles(files),
+        createBranchContextWithFiles([makeFile("pages/blog/", { type: "page" })]),
       );
 
-      // Build the index by calling stat
       await statOps.stat("pages/blog/index.mdx");
-
-      // The normalized path should map back to the original trailing-slash path
       assertEquals(statOps.getOriginalApiPath("pages/blog/index.mdx"), "pages/blog/");
     });
   });
 
   describe("exists", () => {
     it("should return true for existing file", async () => {
-      const files = [makeFile("pages/index.tsx")];
-
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
-        createBranchContextWithFiles(files),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
       );
 
       assertEquals(await statOps.exists("pages/index.tsx"), true);
     });
 
     it("should return true for existing directory", async () => {
-      const files = [makeFile("pages/index.tsx")];
-
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
-        createBranchContextWithFiles(files),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
       );
 
       assertEquals(await statOps.exists("pages"), true);
     });
 
     it("should return false for non-existent path", async () => {
-      const files = [makeFile("pages/index.tsx")];
-
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
-        createBranchContextWithFiles(files),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
       );
 
       assertEquals(await statOps.exists("nonexistent.tsx"), false);
@@ -310,71 +248,50 @@ describe("StatOperations", () => {
 
   describe("resolveFile", () => {
     it("should resolve exact path match", async () => {
-      const files = [makeFile("pages/index.tsx")];
-
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
-        createBranchContextWithFiles(files),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
       );
 
       assertEquals(await statOps.resolveFile("pages/index.tsx"), "pages/index.tsx");
     });
 
     it("should resolve with extension fallback", async () => {
-      const files = [makeFile("pages/index.tsx")];
-
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
-        createBranchContextWithFiles(files),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
       );
 
-      // Requesting without extension should find .tsx version
       assertEquals(await statOps.resolveFile("pages/index"), "pages/index.tsx");
     });
 
     it("should resolve with extension priority order", async () => {
-      // Both .mdx and .tsx exist - .mdx should win based on EXTENSION_PRIORITY
-      const files = [
-        makeFile("pages/index.mdx"),
-        makeFile("pages/index.tsx"),
-      ];
-
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
-        createBranchContextWithFiles(files),
+        createBranchContextWithFiles([makeFile("pages/index.mdx"), makeFile("pages/index.tsx")]),
       );
 
-      // .mdx is first in EXTENSION_PRIORITY for StatOperations
       assertEquals(await statOps.resolveFile("pages/index"), "pages/index.mdx");
     });
 
     it("should resolve index file in directory", async () => {
-      const files = [makeFile("components/index.tsx")];
-
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
-        createBranchContextWithFiles(files),
+        createBranchContextWithFiles([makeFile("components/index.tsx")]),
       );
 
       assertEquals(await statOps.resolveFile("components"), "components/index.tsx");
     });
 
     it("should return null for non-existent file with complete index", async () => {
-      const files = [makeFile("pages/index.tsx")];
-
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
-        createBranchContextWithFiles(files),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
       );
 
       assertEquals(await statOps.resolveFile("nonexistent"), null);
@@ -390,22 +307,16 @@ describe("StatOperations", () => {
         },
       });
 
-      const statOps = new StatOperations(
-        client,
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-        // No getFileList so it falls through to API search path
-        {
-          isProductionMode: () => false,
-          getReleaseId: () => null,
-          getContentContext: () => ({
-            sourceType: "branch" as const,
-            projectSlug: "test",
-            branch: "main",
-          }),
-          isPersistentCacheInvalidated: () => false,
-        },
-      );
+      const statOps = createStatOps(client, new PathNormalizer(), {
+        isProductionMode: () => false,
+        getReleaseId: () => null,
+        getContentContext: () => ({
+          sourceType: "branch" as const,
+          projectSlug: "test",
+          branch: "main",
+        }),
+        isPersistentCacheInvalidated: () => false,
+      });
 
       await statOps.resolveFile("exports/something");
       assertEquals(searchCalled, false);
@@ -418,45 +329,32 @@ describe("StatOperations", () => {
     });
 
     it("should try pages/ prefix for non-pages paths", async () => {
-      const files = [makeFile("pages/about.tsx")];
-
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
-        createBranchContextWithFiles(files),
+        createBranchContextWithFiles([makeFile("pages/about.tsx")]),
       );
 
-      // Requesting "about" should find "pages/about.tsx"
       assertEquals(await statOps.resolveFile("about"), "pages/about.tsx");
     });
 
     it("should not add pages/ prefix when path already starts with pages/", async () => {
-      const files = [makeFile("pages/index.tsx")];
-
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
-        createBranchContextWithFiles(files),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
       );
 
-      // Should find directly
       assertEquals(await statOps.resolveFile("pages/index"), "pages/index.tsx");
     });
 
     it("should resolve with different extension when original not found", async () => {
-      // Only .ts exists, not .tsx
-      const files = [makeFile("utils/helpers.ts")];
-
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
-        createBranchContextWithFiles(files),
+        createBranchContextWithFiles([makeFile("utils/helpers.ts")]),
       );
 
-      // Request .tsx, should find .ts via extension stripping and priority
       assertEquals(await statOps.resolveFile("utils/helpers.tsx"), "utils/helpers.ts");
     });
   });
@@ -469,14 +367,12 @@ describe("StatOperations", () => {
         makeFile("components/Header.tsx", { size: 300 }),
       ];
 
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
         createBranchContextWithFiles(files),
       );
 
-      // Trigger index build via stat
       assertEquals((await statOps.stat("pages/index.tsx")).isFile, true);
       assertEquals((await statOps.stat("pages/about.tsx")).isFile, true);
       assertEquals((await statOps.stat("components/Header.tsx")).isFile, true);
@@ -485,22 +381,16 @@ describe("StatOperations", () => {
     });
 
     it("should rebuild index after clearIndex", async () => {
-      const files = [makeFile("pages/index.tsx")];
-
-      const statOps = new StatOperations(
+      const statOps = createStatOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
         new PathNormalizer(),
-        createBranchContextWithFiles(files),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
       );
 
-      // Build index
       assertEquals(await statOps.exists("pages/index.tsx"), true);
 
-      // Clear
       statOps.clearIndex();
 
-      // Should rebuild on next access
       assertEquals(await statOps.exists("pages/index.tsx"), true);
     });
 
@@ -524,14 +414,8 @@ describe("StatOperations", () => {
         isPersistentCacheInvalidated: () => false,
       };
 
-      const statOps = new StatOperations(
-        createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-        contextProvider,
-      );
+      const statOps = createStatOps(createMockClient(), new PathNormalizer(), contextProvider);
 
-      // Fire concurrent stat requests
       const [exists1, exists2, exists3] = await Promise.all([
         statOps.exists("pages/index.tsx"),
         statOps.exists("pages/index.tsx"),
@@ -541,7 +425,6 @@ describe("StatOperations", () => {
       assertEquals(exists1, true);
       assertEquals(exists2, true);
       assertEquals(exists3, true);
-      // Should only build the index once
       assertEquals(buildCount, 1);
     });
 
@@ -554,21 +437,16 @@ describe("StatOperations", () => {
         },
       });
 
-      const statOps = new StatOperations(
-        client,
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-        {
-          isProductionMode: () => false,
-          getReleaseId: () => null,
-          getContentContext: () => ({
-            sourceType: "branch" as const,
-            projectSlug: "test",
-            branch: "main",
-          }),
-          isPersistentCacheInvalidated: () => false,
-        },
-      );
+      const statOps = createStatOps(client, new PathNormalizer(), {
+        isProductionMode: () => false,
+        getReleaseId: () => null,
+        getContentContext: () => ({
+          sourceType: "branch" as const,
+          projectSlug: "test",
+          branch: "main",
+        }),
+        isPersistentCacheInvalidated: () => false,
+      });
 
       assertEquals(await statOps.exists("pages/index.tsx"), true);
       assertEquals(apiCalled, true);
@@ -583,22 +461,17 @@ describe("StatOperations", () => {
         },
       });
 
-      const statOps = new StatOperations(
-        client,
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-        {
-          isProductionMode: () => true,
-          getReleaseId: () => "rel-1",
-          getContentContext: () => ({
-            sourceType: "release" as const,
-            projectSlug: "test",
-            releaseId: "rel-1",
-          }),
-          isPersistentCacheInvalidated: () => false,
-          isReleaseBeingInvalidated: () => false,
-        },
-      );
+      const statOps = createStatOps(client, new PathNormalizer(), {
+        isProductionMode: () => true,
+        getReleaseId: () => "rel-1",
+        getContentContext: () => ({
+          sourceType: "release" as const,
+          projectSlug: "test",
+          releaseId: "rel-1",
+        }),
+        isPersistentCacheInvalidated: () => false,
+        isReleaseBeingInvalidated: () => false,
+      });
 
       assertEquals(await statOps.exists("pages/index.tsx"), true);
       assertEquals(publishedCalled, true);
@@ -629,21 +502,17 @@ describe("StatOperations", () => {
             branch: "main",
           }),
           isPersistentCacheInvalidated: () => false,
-          // No getFileList - forces API search fallback
         },
       );
 
-      // Trigger 5 search failures to trip the circuit breaker
       for (let i = 0; i < 5; i++) {
         await statOps.resolveFile(`nonexistent-${i}`);
       }
 
       const searchCallsBefore = searchCallCount;
 
-      // Next call should be blocked by circuit breaker
       await statOps.resolveFile("nonexistent-6");
 
-      // No additional search calls should have been made
       assertEquals(searchCallCount, searchCallsBefore);
     });
   });

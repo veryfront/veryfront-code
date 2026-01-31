@@ -66,8 +66,6 @@ export interface BuildEnrichedContextOptions {
 }
 
 export function buildEnrichedContext(options: BuildEnrichedContextOptions): EnrichedContext {
-  // Validate contentSourceId is provided (computed by proxy or fallback path)
-  // The computeContentSourceId() function already validates releaseId requirements
   if (!options.contentSourceId) {
     throw new Error(`Missing contentSourceId for ${options.projectSlug}`);
   }
@@ -133,6 +131,5 @@ export function shouldUseNoCacheHeadersFromHandler(ctx: HandlerContext): boolean
   if (ctx.enriched) return shouldUseNoCacheHeadersFromEnriched(ctx.enriched);
   if (ctx.requestContext?.isLocalDev) return true;
 
-  const environment = ctx.resolvedEnvironment ?? ctx.requestContext?.mode;
-  return environment === "preview";
+  return (ctx.resolvedEnvironment ?? ctx.requestContext?.mode) === "preview";
 }

@@ -19,7 +19,9 @@ export function checkDenoVersion(): Promise<DiagnosticResult> {
         ? runtimeVersion
         : `${runtimeVersion} (recommended: Deno 1.40.0+)`;
 
-      return Promise.resolve(createRuntimeResult(isSupported ? "pass" : "warn", message));
+      return Promise.resolve(
+        createRuntimeResult(isSupported ? "pass" : "warn", message),
+      );
     }
 
     if (runtimeVersion.startsWith("Node.js")) {
@@ -28,12 +30,16 @@ export function checkDenoVersion(): Promise<DiagnosticResult> {
       const isSupported = major >= 18;
       const message = isSupported ? runtimeVersion : `${runtimeVersion} (recommended: Node.js 18+)`;
 
-      return Promise.resolve(createRuntimeResult(isSupported ? "pass" : "warn", message));
+      return Promise.resolve(
+        createRuntimeResult(isSupported ? "pass" : "warn", message),
+      );
     }
 
     return Promise.resolve(createRuntimeResult("pass", runtimeVersion));
   } catch {
-    return Promise.resolve(createRuntimeResult("fail", "Could not detect runtime version"));
+    return Promise.resolve(
+      createRuntimeResult("fail", "Could not detect runtime version"),
+    );
   }
 }
 

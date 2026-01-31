@@ -5,6 +5,12 @@ function shouldStopEsbuild(): boolean {
   return !(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild;
 }
 
+function jsResponse(body: string): Response {
+  return new Response(body, {
+    headers: { "content-type": "application/javascript" },
+  });
+}
+
 async function buildOrServeScript(
   adapter: RuntimeAdapter,
   path: string,
@@ -21,20 +27,15 @@ async function buildOrServeScript(
     const result = await esbuild.build(esbuildOptions);
     const out = result.outputFiles?.[0]?.text ?? src;
 
-    return new Response(out, {
-      headers: { "content-type": "application/javascript" },
-    });
+    return jsResponse(out);
   } catch (error) {
-    if (fallbackBundle) {
-      return new Response(fallbackBundle, {
-        headers: { "content-type": "application/javascript" },
-      });
-    }
+    if (fallbackBundle) return jsResponse(fallbackBundle);
 
     serverLogger.debug(
       "[ScriptHandlers] Build failed, serving raw TypeScript",
       error,
     );
+
     const src = await adapter.fs.readFile(path);
     return new Response(src, {
       headers: { "content-type": "application/typescript" },
@@ -64,6 +65,8 @@ export async function handleClientScript(
     import.meta.url,
   ).pathname;
 
+  const contents = await adapter.fs.readFile(path);
+
   return buildOrServeScript(adapter, path, CLIENT_BOOT_BUNDLE, {
     bundle: true,
     write: false,
@@ -71,7 +74,7 @@ export async function handleClientScript(
     platform: "browser",
     target: "es2020",
     stdin: {
-      contents: await adapter.fs.readFile(path),
+      contents,
       loader: "ts",
       resolveDir: path.substring(0, path.lastIndexOf("/")),
       sourcefile: path,
@@ -86,6 +89,8 @@ export async function handleDomScript(adapter: RuntimeAdapter): Promise<Response
     import.meta.url,
   ).pathname;
 
+  const contents = await adapter.fs.readFile(path);
+
   return buildOrServeScript(adapter, path, CLIENT_DOM_BUNDLE, {
     bundle: true,
     write: false,
@@ -93,7 +98,7 @@ export async function handleDomScript(adapter: RuntimeAdapter): Promise<Response
     platform: "browser",
     target: "es2020",
     stdin: {
-      contents: await adapter.fs.readFile(path),
+      contents,
       loader: "ts",
       resolveDir: path.substring(0, path.lastIndexOf("/")),
       sourcefile: path,

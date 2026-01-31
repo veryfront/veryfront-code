@@ -7,15 +7,6 @@ import type {
   TransformTarget,
 } from "./types.ts";
 
-/**
- * Get React version for transforms.
- * Uses REACT_VERSION constant - the centralized version from package-registry.
- * Prefer passing reactVersion through TransformOptions for per-project versions.
- */
-function getDefaultReactVersion(): string {
-  return REACT_VERSION;
-}
-
 function buildContext(
   source: string,
   filePath: string,
@@ -55,7 +46,7 @@ export async function createTransformContext(
 ): Promise<TransformContext> {
   const [contentHash, reactVersion] = await Promise.all([
     computeShortContentHash(source),
-    Promise.resolve(options.reactVersion ?? getDefaultReactVersion()),
+    Promise.resolve(options.reactVersion ?? REACT_VERSION),
   ]);
 
   return buildContext(source, filePath, projectDir, contentHash, options, reactVersion);

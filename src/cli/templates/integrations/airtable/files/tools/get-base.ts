@@ -13,20 +13,20 @@ export default tool({
     const { tables } = await getBase(baseId);
 
     return {
-      tables: tables.map(({ id, name, primaryFieldId, fields, views }) => ({
-        id,
-        name,
-        primaryFieldId,
-        fields: fields.map(({ id, name, type, options }) => ({
-          id,
-          name,
-          type,
-          options,
+      tables: tables.map((table) => ({
+        id: table.id,
+        name: table.name,
+        primaryFieldId: table.primaryFieldId,
+        fields: table.fields.map((field) => ({
+          id: field.id,
+          name: field.name,
+          type: field.type,
+          options: field.options,
         })),
-        views: views.map(({ id, name, type }) => ({
-          id,
-          name,
-          type,
+        views: table.views.map((view) => ({
+          id: view.id,
+          name: view.name,
+          type: view.type,
         })),
       })),
     };

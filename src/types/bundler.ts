@@ -1,9 +1,9 @@
 export interface BundlerOptions {
-  sources: {
+  sources: Array<{
     path: string;
     content: string;
     type: "mdx" | "tsx" | "ts" | "jsx" | "js" | "css";
-  }[];
+  }>;
   projectDir: string;
   outputDir?: string;
   mode: "development" | "production";
@@ -46,6 +46,6 @@ export interface MDXBundleResult {
 
 export interface EmbeddedBundleManifest {
   version: 1;
-  routes: { path: string; file: string; type: "page" | "api" }[];
-  assets: { path: string; file: string; contentType: string }[];
+  routes: Array<{ path: string; file: string; type: "page" | "api" }>;
+  assets: Array<{ path: string; file: string; contentType: string }>;
 }

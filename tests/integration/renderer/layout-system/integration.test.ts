@@ -6,31 +6,48 @@
 // Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-import {
-  assertEquals as _assertEquals,
-  assertExists,
-  assertStringIncludes,
-} from "@veryfront/testing/assert";
+import { assertExists, assertStringIncludes } from "@veryfront/testing/assert";
 import { join } from "@veryfront/compat/path";
 import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
+import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { VeryfrontRenderer } from "../../../../src/rendering/orchestrator/ssr.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+
+async function createRenderer(projectDir: string): Promise<VeryfrontRenderer> {
+  const adapter = await getAdapter();
+  const renderer = new VeryfrontRenderer({
+    projectDir,
+    mode: "development",
+    adapter,
+  });
+
+  await renderer.initialize();
+  return renderer;
+}
+
+async function withRenderer(
+  projectDir: string,
+  fn: (renderer: VeryfrontRenderer) => Promise<void>,
+): Promise<void> {
+  const renderer = await createRenderer(projectDir);
+  try {
+    await fn(renderer);
+  } finally {
+    await renderer.destroy();
+  }
+}
 
 describe("Layout System Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
-  // Clean up bundler intervals to prevent resource leaks
   afterAll(async () => {
     await cleanupBundler();
   });
 
   it("nested layouts with App Router", async () => {
     await withTestContext("layout-nested-app-router", async (context) => {
-      // Create App Router structure with nested layouts
       await mkdir(join(context.projectDir, "app/blog"), { recursive: true });
 
-      // Root layout
       await writeTextFile(
         join(context.projectDir, "app/layout.tsx"),
         `export default function RootLayout({ children }) {
@@ -38,7 +55,6 @@ describe("Layout System Integration", { sanitizeOps: false, sanitizeResources: f
 }`,
       );
 
-      // Blog layout
       await writeTextFile(
         join(context.projectDir, "app/blog/layout.tsx"),
         `export default function BlogLayout({ children }) {
@@ -46,7 +62,6 @@ describe("Layout System Integration", { sanitizeOps: false, sanitizeResources: f
 }`,
       );
 
-      // Page
       await writeTextFile(
         join(context.projectDir, "app/blog/page.mdx"),
         `---
@@ -59,7 +74,6 @@ This is a test post.
 `,
       );
 
-      // Config
       await writeTextFile(
         join(context.projectDir, "veryfront.config.ts"),
         `export default {
@@ -67,29 +81,18 @@ This is a test post.
 };`,
       );
 
-      const adapter = await getAdapter();
-      const renderer = new VeryfrontRenderer({
-        projectDir: context.projectDir,
-        mode: "development",
-        adapter,
+      await withRenderer(context.projectDir, async (renderer) => {
+        const result = await renderer.renderPage("blog");
+        assertExists(result.html);
+        assertStringIncludes(result.html, "My Blog Post");
       });
-
-      await renderer.initialize();
-
-      const result = await renderer.renderPage("blog");
-
-      assertExists(result.html);
-      assertStringIncludes(result.html, "My Blog Post");
-
-      // Clean up
-      await renderer.destroy();
     });
   });
 
   it("named layout", async () => {
     await withTestContext("layout-named", async (context) => {
-      // Create named layout with isLayout frontmatter
       await mkdir(join(context.projectDir, "layouts"), { recursive: true });
+
       await writeTextFile(
         join(context.projectDir, "layouts/main.mdx"),
         `---
@@ -101,7 +104,6 @@ isLayout: true
 <slot />`,
       );
 
-      // Create page with layout
       await writeTextFile(
         join(context.projectDir, "pages/test.mdx"),
         `---
@@ -113,31 +115,18 @@ layout: main
 `,
       );
 
-      const adapter = await getAdapter();
-      const renderer = new VeryfrontRenderer({
-        projectDir: context.projectDir,
-        mode: "development",
-        adapter,
+      await withRenderer(context.projectDir, async (renderer) => {
+        const result = await renderer.renderPage("test");
+        assertExists(result.html);
+        assertStringIncludes(result.html, "Test Content");
       });
-
-      await renderer.initialize();
-
-      const result = await renderer.renderPage("test");
-
-      assertExists(result.html);
-      assertStringIncludes(result.html, "Test Content");
-
-      // Clean up
-      await renderer.destroy();
     });
   });
 
   it("App Router reserved components", async () => {
     await withTestContext("layout-reserved-components", async (context) => {
-      // Create App Router structure
       await mkdir(join(context.projectDir, "app/products"), { recursive: true });
 
-      // Loading component
       await writeTextFile(
         join(context.projectDir, "app/products/loading.tsx"),
         `export default function Loading() {
@@ -145,7 +134,6 @@ layout: main
 }`,
       );
 
-      // Error component
       await writeTextFile(
         join(context.projectDir, "app/products/error.tsx"),
         `export default function Error({ error }) {
@@ -153,7 +141,6 @@ layout: main
 }`,
       );
 
-      // Page
       await writeTextFile(
         join(context.projectDir, "app/products/page.mdx"),
         `---
@@ -164,7 +151,6 @@ title: Products
 `,
       );
 
-      // Config
       await writeTextFile(
         join(context.projectDir, "veryfront.config.ts"),
         `export default {
@@ -172,28 +158,16 @@ title: Products
 };`,
       );
 
-      const adapter = await getAdapter();
-      const renderer = new VeryfrontRenderer({
-        projectDir: context.projectDir,
-        mode: "development",
-        adapter,
+      await withRenderer(context.projectDir, async (renderer) => {
+        const result = await renderer.renderPage("products");
+        assertExists(result.html);
+        assertStringIncludes(result.html, "Products Page");
       });
-
-      await renderer.initialize();
-
-      const result = await renderer.renderPage("products");
-
-      assertExists(result.html);
-      assertStringIncludes(result.html, "Products Page");
-
-      // Clean up
-      await renderer.destroy();
     });
   });
 
   it("Pages Router with App component", async () => {
     await withTestContext("layout-pages-router-app", async (context) => {
-      // Create App component
       await writeTextFile(
         join(context.projectDir, "components/app.tsx"),
         `export default function App({ children }) {
@@ -207,7 +181,6 @@ title: Products
 }`,
       );
 
-      // Create page
       await writeTextFile(
         join(context.projectDir, "pages/index.mdx"),
         `---
@@ -218,22 +191,11 @@ title: Home
 `,
       );
 
-      const adapter = await getAdapter();
-      const renderer = new VeryfrontRenderer({
-        projectDir: context.projectDir,
-        mode: "development",
-        adapter,
+      await withRenderer(context.projectDir, async (renderer) => {
+        const result = await renderer.renderPage("/");
+        assertExists(result.html);
+        assertStringIncludes(result.html, "Welcome Home");
       });
-
-      await renderer.initialize();
-
-      const result = await renderer.renderPage("/");
-
-      assertExists(result.html);
-      assertStringIncludes(result.html, "Welcome Home");
-
-      // Clean up
-      await renderer.destroy();
     });
   });
 });

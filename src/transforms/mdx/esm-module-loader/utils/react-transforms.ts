@@ -37,10 +37,6 @@ function resolveWithImportMeta(specifier: string, parentUrl: string): string | n
 
 const resolvedPaths: Record<string, string | null> = {};
 
-/**
- * Resolve a Node.js package path using import.meta.resolve.
- * Returns null if resolution fails.
- */
 export function resolveNodePackage(packageSpec: string): string | null {
   if (!IS_TRUE_NODE) return null;
 
@@ -64,41 +60,24 @@ export function resolveNodePackage(packageSpec: string): string | null {
   }
 }
 
-/**
- * Transform react imports to absolute file:// paths for Node.js.
- * This is needed because MDX modules are cached in temp directories
- * where Node.js cannot resolve bare imports.
- */
 export async function transformReactImportsToAbsolute(code: string): Promise<string> {
   if (!IS_TRUE_NODE) return code;
 
-  const reactPath = await resolveNodePackage("react");
-  const reactJsxPath = await resolveNodePackage("react/jsx-runtime");
-  const reactJsxDevPath = await resolveNodePackage("react/jsx-dev-runtime");
-  const reactDomPath = await resolveNodePackage("react-dom");
+  const replacements: Array<[RegExp, string | null]> = [
+    [/from\s+['"]react\/jsx-runtime['"]/g, await resolveNodePackage("react/jsx-runtime")],
+    [
+      /from\s+['"]react\/jsx-dev-runtime['"]/g,
+      await resolveNodePackage("react/jsx-dev-runtime"),
+    ],
+    [/from\s+['"]react-dom['"]/g, await resolveNodePackage("react-dom")],
+    [/from\s+['"]react['"]/g, await resolveNodePackage("react")],
+  ];
 
   let result = code;
 
-  if (reactJsxPath) {
-    result = result.replace(
-      /from\s+['"]react\/jsx-runtime['"]/g,
-      `from "file://${reactJsxPath}"`,
-    );
-  }
-
-  if (reactJsxDevPath) {
-    result = result.replace(
-      /from\s+['"]react\/jsx-dev-runtime['"]/g,
-      `from "file://${reactJsxDevPath}"`,
-    );
-  }
-
-  if (reactDomPath) {
-    result = result.replace(/from\s+['"]react-dom['"]/g, `from "file://${reactDomPath}"`);
-  }
-
-  if (reactPath) {
-    result = result.replace(/from\s+['"]react['"]/g, `from "file://${reactPath}"`);
+  for (const [pattern, resolvedPath] of replacements) {
+    if (!resolvedPath) continue;
+    result = result.replace(pattern, `from "file://${resolvedPath}"`);
   }
 
   return result;

@@ -25,7 +25,7 @@ export function Sidebar({
   onBack,
   backLabel,
 }: SidebarProps): React.ReactElement {
-  const showSubTabs = !!subTabs && !!onSubTabChange;
+  const showSubTabs = subTabs && onSubTabChange;
 
   return (
     <aside className="bg-white border-r border-gray-200 flex flex-col overflow-hidden">
@@ -39,40 +39,44 @@ export function Sidebar({
         />
       </div>
 
-      {showSubTabs && (
-        <div className="flex px-3 py-2 gap-0.5 border-b border-gray-100">
-          {subTabs.map((tab) => {
-            const isActive = currentSubTab === tab.id;
+      {showSubTabs
+        ? (
+          <div className="flex px-3 py-2 gap-0.5 border-b border-gray-100">
+            {subTabs.map((tab) => {
+              const isActive = currentSubTab === tab.id;
 
-            return (
-              <button
-                type="button"
-                key={tab.id}
-                onClick={() => onSubTabChange(tab.id)}
-                className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${
-                  isActive
-                    ? "bg-sky-50 text-sky-600"
-                    : "text-gray-400 hover:bg-gray-50 hover:text-gray-600"
-                }`}
-              >
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
-      )}
+              return (
+                <button
+                  type="button"
+                  key={tab.id}
+                  onClick={() => onSubTabChange(tab.id)}
+                  className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${
+                    isActive
+                      ? "bg-sky-50 text-sky-600"
+                      : "text-gray-400 hover:bg-gray-50 hover:text-gray-600"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+        )
+        : null}
 
       <div className="flex-1 overflow-y-auto p-1.5">
-        {onBack && (
-          <button
-            type="button"
-            onClick={onBack}
-            className="w-full px-2.5 py-2 text-sm text-sky-600 rounded hover:bg-gray-50 flex items-center gap-1.5 text-left"
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
-            {backLabel ?? ".. (back)"}
-          </button>
-        )}
+        {onBack
+          ? (
+            <button
+              type="button"
+              onClick={onBack}
+              className="w-full px-2.5 py-2 text-sm text-sky-600 rounded hover:bg-gray-50 flex items-center gap-1.5 text-left"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+              {backLabel ?? ".. (back)"}
+            </button>
+          )
+          : null}
 
         {items.length === 0
           ? (

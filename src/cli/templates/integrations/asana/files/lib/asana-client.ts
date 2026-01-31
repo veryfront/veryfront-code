@@ -52,8 +52,16 @@ async function asanaFetch<T>(endpoint: string, options: RequestInit = {}): Promi
     return response.json();
   }
 
-  const error = await response.json().catch(() => ({} as any));
-  const message = error?.errors?.[0]?.message ?? response.statusText;
+  let error: unknown = {};
+  try {
+    error = await response.json();
+  } catch {
+    // ignore JSON parse errors
+  }
+
+  const message =
+    (error as { errors?: Array<{ message?: string }> })?.errors?.[0]?.message ?? response.statusText;
+
   throw new Error(`Asana API error: ${response.status} ${message}`);
 }
 
@@ -112,15 +120,17 @@ export async function createTask(options: {
   const body: Record<string, unknown> = {
     name: options.name,
     projects: [options.projectGid],
-    ...(options.notes ? { notes: options.notes } : {}),
-    ...(options.dueOn ? { due_on: options.dueOn } : {}),
-    ...(options.assigneeGid ? { assignee: options.assigneeGid } : {}),
   };
+
+  if (options.notes) body.notes = options.notes;
+  if (options.dueOn) body.due_on = options.dueOn;
+  if (options.assigneeGid) body.assignee = options.assigneeGid;
 
   const { data } = await asanaFetch<AsanaResponse<AsanaTask>>("/tasks", {
     method: "POST",
     body: JSON.stringify({ data: body }),
   });
+
   return data;
 }
 
@@ -146,6 +156,7 @@ export async function updateTask(
     method: "PUT",
     body: JSON.stringify({ data: body }),
   });
+
   return data;
 }
 

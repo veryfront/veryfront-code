@@ -40,13 +40,11 @@ async function multiSelect(
   options: MultiSelectOption[],
   hint?: string,
 ): Promise<AIToolId[] | null> {
-  if (!isTTY()) return options.filter((o) => o.selected).map((o) => o.value as AIToolId);
+  if (!isTTY()) return options.filter((o) => o.selected).map((o) => o.value);
 
   let idx = 0;
   let lines = 0;
-  const selected = new Set<AIToolId>(
-    options.filter((o) => o.selected).map((o) => o.value as AIToolId),
-  );
+  const selected = new Set<AIToolId>(options.filter((o) => o.selected).map((o) => o.value));
 
   function draw(): void {
     if (lines > 0) clearLines(lines);
@@ -62,7 +60,7 @@ async function multiSelect(
     for (let i = 0; i < options.length; i++) {
       const opt = options[i]!;
       const isCurrent = i === idx;
-      const isSelected = selected.has(opt.value as AIToolId);
+      const isSelected = selected.has(opt.value);
       const pointer = isCurrent ? brand("❯") : " ";
       const checkbox = isSelected ? brand("[✓]") : dim("[ ]");
       const label = isCurrent ? opt.label : muted(opt.label);
@@ -107,8 +105,7 @@ async function multiSelect(
       }
 
       if (key === " ") {
-        const opt = options[idx]!;
-        const value = opt.value as AIToolId;
+        const value = options[idx]!.value;
         if (selected.has(value)) selected.delete(value);
         else selected.add(value);
         draw();
@@ -128,7 +125,7 @@ async function multiSelect(
       }
 
       if (key === "a" || key === "A") {
-        for (const o of options) selected.add(o.value as AIToolId);
+        for (const o of options) selected.add(o.value);
         draw();
         continue;
       }
@@ -152,6 +149,7 @@ const TargetFlagSchema = z
   .string()
   .transform((val) => {
     if (val === "all") return AI_TOOLS.map((t) => t.id);
+
     return val
       .split(",")
       .map((t) => t.trim())

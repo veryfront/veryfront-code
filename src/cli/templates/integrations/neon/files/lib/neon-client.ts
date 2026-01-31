@@ -125,9 +125,9 @@ async function neonFetch<T>(endpoint: string, options: RequestInit = {}): Promis
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({} as { message?: string }));
+    const error = (await response.json().catch(() => ({}))) as { message?: string };
     throw new Error(
-      `Neon API error: ${response.status} ${error.message || response.statusText}`,
+      `Neon API error: ${response.status} ${error.message ?? response.statusText}`,
     );
   }
 
@@ -159,11 +159,12 @@ export async function createBranch(
     parentTimestamp?: string;
   },
 ): Promise<NeonBranch> {
-  const branch: Record<string, unknown> = { name: options.name };
-
-  if (options.parentId) branch.parent_id = options.parentId;
-  if (options.parentLsn) branch.parent_lsn = options.parentLsn;
-  if (options.parentTimestamp) branch.parent_timestamp = options.parentTimestamp;
+  const branch: Record<string, unknown> = {
+    name: options.name,
+    ...(options.parentId ? { parent_id: options.parentId } : {}),
+    ...(options.parentLsn ? { parent_lsn: options.parentLsn } : {}),
+    ...(options.parentTimestamp ? { parent_timestamp: options.parentTimestamp } : {}),
+  };
 
   const { branch: createdBranch } = await neonFetch<{ branch: NeonBranch }>(
     `/projects/${projectId}/branches`,
@@ -208,10 +209,7 @@ export async function query<T = Record<string, unknown>>(
 
   try {
     const result = await client.query(sql, params);
-    return {
-      rows: result.rows as T[],
-      rowCount: result.rowCount ?? 0,
-    };
+    return { rows: result.rows as T[], rowCount: result.rowCount ?? 0 };
   } finally {
     await client.end();
   }

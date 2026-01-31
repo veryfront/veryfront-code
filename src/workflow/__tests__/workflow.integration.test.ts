@@ -1,14 +1,3 @@
-/**
- * Workflow Integration Tests
- *
- * Tests the full workflow execution pipeline including:
- * - DAG execution
- * - Loop handling
- * - Retry logic
- * - Timeout enforcement
- * - Approval flow
- */
-
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { delay } from "#std/async.ts";
@@ -29,21 +18,32 @@ function createMockTool(name: string, handler: (input: any) => any): Tool {
   };
 }
 
+async function waitForCondition(
+  check: () => Promise<boolean>,
+  timeout: number,
+  errorMessage: string,
+): Promise<void> {
+  const start = Date.now();
+
+  while (Date.now() - start < timeout) {
+    if (await check()) return;
+    await delay(50);
+  }
+
+  throw new Error(errorMessage);
+}
+
 async function waitForStatus(
   client: WorkflowClient,
   runId: string,
   expectedStatus: string,
   timeout = 5000,
 ): Promise<void> {
-  const start = Date.now();
-
-  while (Date.now() - start < timeout) {
-    const run = await client.getRun(runId);
-    if (run?.status === expectedStatus) return;
-    await delay(50);
-  }
-
-  throw new Error(`Timeout waiting for status "${expectedStatus}"`);
+  await waitForCondition(
+    async () => (await client.getRun(runId))?.status === expectedStatus,
+    timeout,
+    `Timeout waiting for status "${expectedStatus}"`,
+  );
 }
 
 async function waitForApprovals(
@@ -52,15 +52,11 @@ async function waitForApprovals(
   count: number,
   timeout = 5000,
 ): Promise<void> {
-  const start = Date.now();
-
-  while (Date.now() - start < timeout) {
-    const approvals = await client.getPendingApprovals(runId);
-    if (approvals.length >= count) return;
-    await delay(50);
-  }
-
-  throw new Error(`Timeout waiting for ${count} approvals`);
+  await waitForCondition(
+    async () => (await client.getPendingApprovals(runId)).length >= count,
+    timeout,
+    `Timeout waiting for ${count} approvals`,
+  );
 }
 
 describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
@@ -100,8 +96,7 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
       await handle.result();
 
       expect(toolCalled).toBe(true);
-      const run = await client.getRun(handle.runId);
-      expect(run?.status).toBe("completed");
+      expect((await client.getRun(handle.runId))?.status).toBe("completed");
     });
 
     it("should execute parallel steps", async () => {
@@ -199,8 +194,7 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
       await handle.result();
 
       expect(counter).toBe(3);
-      const run = await client.getRun(handle.runId);
-      expect(run?.status).toBe("completed");
+      expect((await client.getRun(handle.runId))?.status).toBe("completed");
     });
 
     it("should respect maxIterations", async () => {
@@ -231,8 +225,7 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
       await handle.result();
 
       expect(counter).toBe(5);
-      const run = await client.getRun(handle.runId);
-      expect(run?.status).toBe("completed");
+      expect((await client.getRun(handle.runId))?.status).toBe("completed");
     });
 
     it("should pass loop context to steps", async () => {
@@ -296,8 +289,7 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
       await handle.result();
 
       expect(attempts).toBe(3);
-      const run = await client.getRun(handle.runId);
-      expect(run?.status).toBe("completed");
+      expect((await client.getRun(handle.runId))?.status).toBe("completed");
     });
 
     it("should fail after max retries", async () => {
@@ -328,8 +320,7 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
       await expect(handle.result()).rejects.toThrow();
 
       expect(attempts).toBe(3);
-      const run = await client.getRun(handle.runId);
-      expect(run?.status).toBe("failed");
+      expect((await client.getRun(handle.runId))?.status).toBe("failed");
     });
   });
 
@@ -365,8 +356,7 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
 
       if (timeoutId != null) clearTimeout(timeoutId);
 
-      const run = await client.getRun(handle.runId);
-      expect(run?.status).toBe("failed");
+      expect((await client.getRun(handle.runId))?.status).toBe("failed");
     });
   });
 
@@ -391,9 +381,7 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
       const handle = await client.start("approval-test", {});
 
       await waitForStatus(client, handle.runId, "waiting");
-
-      const run = await client.getRun(handle.runId);
-      expect(run?.status).toBe("waiting");
+      expect((await client.getRun(handle.runId))?.status).toBe("waiting");
 
       await waitForApprovals(client, handle.runId, 1);
 
@@ -435,8 +423,7 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
       await handle.result();
 
       expect(afterExecuted).toBe(true);
-      const run = await client.getRun(handle.runId);
-      expect(run?.status).toBe("completed");
+      expect((await client.getRun(handle.runId))?.status).toBe("completed");
     });
   });
 });

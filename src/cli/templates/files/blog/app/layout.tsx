@@ -5,7 +5,14 @@ export const metadata = {
   description: "A blog built with Veryfront",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }): ReactNode {
+type RootLayoutProps = {
+  children: ReactNode;
+};
+
+export default function RootLayout({ children }: RootLayoutProps): ReactNode {
+  const linkClassName =
+    "text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors";
+
   return (
     <div className="min-h-screen bg-white dark:bg-neutral-900">
       <header className="sticky top-0 z-50 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-lg border-b border-neutral-200 dark:border-neutral-800">
@@ -15,22 +22,13 @@ export default function RootLayout({ children }: { children: ReactNode }): React
               My Blog
             </a>
             <div className="flex gap-6">
-              <a
-                href="/"
-                className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors"
-              >
+              <a href="/" className={linkClassName}>
                 Home
               </a>
-              <a
-                href="/about"
-                className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors"
-              >
+              <a href="/about" className={linkClassName}>
                 About
               </a>
-              <a
-                href="/archive"
-                className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors"
-              >
+              <a href="/archive" className={linkClassName}>
                 Archive
               </a>
             </div>

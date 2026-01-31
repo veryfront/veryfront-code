@@ -32,15 +32,10 @@ export function executeModule(
   );
 }
 
-export function selectComponent(
-  module: MDXModule,
-  extractLayout: boolean,
-): React.ComponentType<{ components?: MDXComponents; children?: React.ReactNode }> | null {
-  if (typeof module === "function") {
-    return module as React.ComponentType<
-      { components?: MDXComponents; children?: React.ReactNode }
-    >;
-  }
+type MDXComponent = React.ComponentType<{ components?: MDXComponents; children?: React.ReactNode }>;
+
+export function selectComponent(module: MDXModule, extractLayout: boolean): MDXComponent | null {
+  if (typeof module === "function") return module as MDXComponent;
 
   if (extractLayout) {
     return (

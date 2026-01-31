@@ -28,7 +28,7 @@ describe("errors/catalog/build-errors", () => {
         assertEquals(typeof solution.message, "string", `message should be string for ${code}`);
         assertEquals(typeof solution.docs, "string", `docs should be string for ${code}`);
         assertEquals(Array.isArray(solution.steps), true, `steps should be array for ${code}`);
-        assertEquals(solution.steps!.length > 0, true, `steps should not be empty for ${code}`);
+        assertEquals(solution.steps.length > 0, true, `steps should not be empty for ${code}`);
       }
     });
 
@@ -39,7 +39,7 @@ describe("errors/catalog/build-errors", () => {
     it("BUILD_FAILED should have tips", () => {
       const solution = BUILD_ERROR_CATALOG[ErrorCode.BUILD_FAILED]!;
       assertEquals(Array.isArray(solution.tips), true);
-      assertEquals(solution.tips!.length > 0, true);
+      assertEquals(solution.tips.length > 0, true);
     });
 
     it("MDX_COMPILE_ERROR should have an example", () => {

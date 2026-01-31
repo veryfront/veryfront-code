@@ -27,17 +27,15 @@ export default tool({
       hostEmail: meeting.host_email,
       status: meeting.status,
       createdAt: meeting.created_at,
-      settings: settings
-        ? {
-            hostVideo: settings.host_video,
-            participantVideo: settings.participant_video,
-            joinBeforeHost: settings.join_before_host,
-            muteUponEntry: settings.mute_upon_entry,
-            watermark: settings.watermark,
-            audio: settings.audio,
-            autoRecording: settings.auto_recording,
-          }
-        : undefined,
+      settings: settings && {
+        hostVideo: settings.host_video,
+        participantVideo: settings.participant_video,
+        joinBeforeHost: settings.join_before_host,
+        muteUponEntry: settings.mute_upon_entry,
+        watermark: settings.watermark,
+        audio: settings.audio,
+        autoRecording: settings.auto_recording,
+      },
     };
   },
 });

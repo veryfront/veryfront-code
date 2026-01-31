@@ -3,16 +3,25 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { StaticPathsFetcher } from "./static-paths-fetcher.ts";
 import type { PageWithData } from "./types.ts";
 
+function createFetcher(): StaticPathsFetcher {
+  return new StaticPathsFetcher();
+}
+
+function createPageModule(
+  getStaticPaths?: PageWithData["getStaticPaths"],
+): PageWithData {
+  return { default: () => null, ...(getStaticPaths ? { getStaticPaths } : {}) };
+}
+
 describe("StaticPathsFetcher", () => {
   it("should create a new instance", () => {
-    const fetcher = new StaticPathsFetcher();
-    assertExists(fetcher);
+    assertExists(createFetcher());
   });
 
   describe("fetch", () => {
     it("should return null when getStaticPaths is not defined", async () => {
-      const fetcher = new StaticPathsFetcher();
-      const pageModule: PageWithData = { default: () => null };
+      const fetcher = createFetcher();
+      const pageModule = createPageModule();
 
       const result = await fetcher.fetch(pageModule);
 
@@ -20,18 +29,15 @@ describe("StaticPathsFetcher", () => {
     });
 
     it("should return paths from getStaticPaths", async () => {
-      const fetcher = new StaticPathsFetcher();
-      const pageModule: PageWithData = {
-        default: () => null,
-        getStaticPaths: () => ({
-          paths: [
-            { params: { id: "1" } },
-            { params: { id: "2" } },
-            { params: { id: "3" } },
-          ],
-          fallback: false,
-        }),
-      };
+      const fetcher = createFetcher();
+      const pageModule = createPageModule(() => ({
+        paths: [
+          { params: { id: "1" } },
+          { params: { id: "2" } },
+          { params: { id: "3" } },
+        ],
+        fallback: false,
+      }));
 
       const result = await fetcher.fetch(pageModule);
 
@@ -43,14 +49,11 @@ describe("StaticPathsFetcher", () => {
     });
 
     it("should return fallback: false", async () => {
-      const fetcher = new StaticPathsFetcher();
-      const pageModule: PageWithData = {
-        default: () => null,
-        getStaticPaths: () => ({
-          paths: [],
-          fallback: false,
-        }),
-      };
+      const fetcher = createFetcher();
+      const pageModule = createPageModule(() => ({
+        paths: [],
+        fallback: false,
+      }));
 
       const result = await fetcher.fetch(pageModule);
 
@@ -59,14 +62,11 @@ describe("StaticPathsFetcher", () => {
     });
 
     it("should return fallback: true", async () => {
-      const fetcher = new StaticPathsFetcher();
-      const pageModule: PageWithData = {
-        default: () => null,
-        getStaticPaths: () => ({
-          paths: [{ params: { slug: "test" } }],
-          fallback: true,
-        }),
-      };
+      const fetcher = createFetcher();
+      const pageModule = createPageModule(() => ({
+        paths: [{ params: { slug: "test" } }],
+        fallback: true,
+      }));
 
       const result = await fetcher.fetch(pageModule);
 
@@ -75,14 +75,11 @@ describe("StaticPathsFetcher", () => {
     });
 
     it("should return fallback: blocking", async () => {
-      const fetcher = new StaticPathsFetcher();
-      const pageModule: PageWithData = {
-        default: () => null,
-        getStaticPaths: () => ({
-          paths: [],
-          fallback: "blocking",
-        }),
-      };
+      const fetcher = createFetcher();
+      const pageModule = createPageModule(() => ({
+        paths: [],
+        fallback: "blocking",
+      }));
 
       const result = await fetcher.fetch(pageModule);
 
@@ -91,18 +88,15 @@ describe("StaticPathsFetcher", () => {
     });
 
     it("should handle array params for catch-all routes", async () => {
-      const fetcher = new StaticPathsFetcher();
-      const pageModule: PageWithData = {
-        default: () => null,
-        getStaticPaths: () => ({
-          paths: [
-            { params: { slug: ["docs", "intro"] } },
-            { params: { slug: ["docs", "getting-started"] } },
-            { params: { slug: ["blog", "post-1"] } },
-          ],
-          fallback: false,
-        }),
-      };
+      const fetcher = createFetcher();
+      const pageModule = createPageModule(() => ({
+        paths: [
+          { params: { slug: ["docs", "intro"] } },
+          { params: { slug: ["docs", "getting-started"] } },
+          { params: { slug: ["blog", "post-1"] } },
+        ],
+        fallback: false,
+      }));
 
       const result = await fetcher.fetch(pageModule);
 
@@ -112,14 +106,11 @@ describe("StaticPathsFetcher", () => {
     });
 
     it("should handle empty paths array", async () => {
-      const fetcher = new StaticPathsFetcher();
-      const pageModule: PageWithData = {
-        default: () => null,
-        getStaticPaths: () => ({
-          paths: [],
-          fallback: true,
-        }),
-      };
+      const fetcher = createFetcher();
+      const pageModule = createPageModule(() => ({
+        paths: [],
+        fallback: true,
+      }));
 
       const result = await fetcher.fetch(pageModule);
 
@@ -128,14 +119,11 @@ describe("StaticPathsFetcher", () => {
     });
 
     it("should support synchronous getStaticPaths", async () => {
-      const fetcher = new StaticPathsFetcher();
-      const pageModule: PageWithData = {
-        default: () => null,
-        getStaticPaths: () => ({
-          paths: [{ params: { id: "sync" } }],
-          fallback: false,
-        }),
-      };
+      const fetcher = createFetcher();
+      const pageModule = createPageModule(() => ({
+        paths: [{ params: { id: "sync" } }],
+        fallback: false,
+      }));
 
       const result = await fetcher.fetch(pageModule);
 
@@ -144,13 +132,10 @@ describe("StaticPathsFetcher", () => {
     });
 
     it("should throw when getStaticPaths throws", async () => {
-      const fetcher = new StaticPathsFetcher();
-      const pageModule: PageWithData = {
-        default: () => null,
-        getStaticPaths: () => {
-          throw new Error("Failed to fetch paths from API");
-        },
-      };
+      const fetcher = createFetcher();
+      const pageModule = createPageModule(() => {
+        throw new Error("Failed to fetch paths from API");
+      });
 
       await assertRejects(
         () => fetcher.fetch(pageModule),
@@ -160,17 +145,14 @@ describe("StaticPathsFetcher", () => {
     });
 
     it("should handle multiple params per path", async () => {
-      const fetcher = new StaticPathsFetcher();
-      const pageModule: PageWithData = {
-        default: () => null,
-        getStaticPaths: () => ({
-          paths: [
-            { params: { category: "tech", slug: "post-1" } },
-            { params: { category: "news", slug: "post-2" } },
-          ],
-          fallback: false,
-        }),
-      };
+      const fetcher = createFetcher();
+      const pageModule = createPageModule(() => ({
+        paths: [
+          { params: { category: "tech", slug: "post-1" } },
+          { params: { category: "news", slug: "post-2" } },
+        ],
+        fallback: false,
+      }));
 
       const result = await fetcher.fetch(pageModule);
 

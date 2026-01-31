@@ -28,9 +28,9 @@ export function rewriteEsmPaths(code: string, urlBase: string): string {
 
   for (const [pattern, pathIndex, resolver] of patterns) {
     result = result.replace(pattern, (...args) => {
-      const match = args[0] as string;
-      const path = args[pathIndex - 1] as string;
-      const quote = (pathIndex === 3 ? args[2] : args[1]) as string;
+      const match = args[0];
+      const path = args[pathIndex - 1];
+      const quote = pathIndex === 3 ? args[2] : args[1];
 
       const resolved = resolver(path);
       const pathPattern = new RegExp(`${quote}${escapeRegExp(path)}${quote}`);
@@ -63,8 +63,8 @@ export async function fetchEsmModule(
   const allEsmUrls = new Set<string>();
   const urlPattern = /["'](https:\/\/esm\.sh\/[^"']+)["']/g;
 
-  for (let match = urlPattern.exec(code); match !== null; match = urlPattern.exec(code)) {
-    allEsmUrls.add(match[1]!);
+  for (let match = urlPattern.exec(code); match; match = urlPattern.exec(code)) {
+    if (match[1]) allEsmUrls.add(match[1]);
   }
 
   const urlArray = Array.from(allEsmUrls);
@@ -75,7 +75,9 @@ export async function fetchEsmModule(
   if (urlArray.length) {
     const replacementMap = new Map<string, string>();
     for (let i = 0; i < urlArray.length; i++) {
-      replacementMap.set(urlArray[i]!, `file://${cachedPaths[i]}`);
+      const url = urlArray[i];
+      const cached = cachedPaths[i];
+      if (url && cached) replacementMap.set(url, `file://${cached}`);
     }
 
     const combinedPattern = new RegExp(urlArray.map(escapeRegExp).join("|"), "g");

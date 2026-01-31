@@ -1,10 +1,3 @@
-/**
- * Vendor bundle rewriting strategy.
- *
- * Priority: 6
- * Handles: Rewriting React imports to use vendor bundle (browser only)
- */
-
 import type {
   ImportRewriteStrategy,
   ImportSpecifierInfo,
@@ -35,35 +28,25 @@ export class VendorStrategy implements ImportRewriteStrategy {
   readonly priority = 6;
 
   matches(specifier: string, ctx: RewriteContext): boolean {
-    // Only handle browser transforms with vendor bundle configured
     if (ctx.target !== "browser") return false;
     if (!ctx.vendorBundleHash || !ctx.moduleServerUrl) return false;
-
     return REACT_PACKAGES.has(specifier);
   }
 
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
-    if (!ctx.vendorBundleHash || !ctx.moduleServerUrl) {
-      return { specifier: null };
-    }
+    if (!ctx.vendorBundleHash || !ctx.moduleServerUrl) return { specifier: null };
 
     const vendorUrl = buildModuleServerUrl(
       ctx.moduleServerUrl,
       `_vendor.js?v=${ctx.vendorBundleHash}`,
     );
 
-    // For dynamic imports, wrap in promise
-    if (info.isDynamic) {
-      const exportName = sanitizeVendorExportName(info.specifier);
-      return {
-        specifier: null,
-        statement: `import('${vendorUrl}').then(m => m.${exportName})`,
-      };
-    }
+    if (!info.isDynamic) return { specifier: vendorUrl };
 
-    // Simple specifier rewrite - just change the specifier to vendor URL
+    const exportName = sanitizeVendorExportName(info.specifier);
     return {
-      specifier: vendorUrl,
+      specifier: null,
+      statement: `import('${vendorUrl}').then(m => m.${exportName})`,
     };
   }
 }

@@ -39,6 +39,7 @@ export function createCodeSplitter(options: SplitOptions): CodeSplitter {
 export async function loadChunkManifest(manifestPath: string): Promise<ChunkManifest> {
   const fs = createFileSystem();
   const content = await fs.readTextFile(manifestPath);
+
   try {
     return JSON.parse(content) as ChunkManifest;
   } catch {
@@ -63,15 +64,15 @@ export function generatePreloadLinks(
 
   const prefix = baseUrl ? `${baseUrl}/` : "";
 
-  const preloadLinks = (route.preload ?? []).map(
-    (chunk) => `<link rel="modulepreload" href="${prefix}${chunk}">`,
-  );
-  const cssLinks = (route.css ?? []).map(
-    (css) => `<link rel="preload" as="style" href="${prefix}${css}">`,
-  );
+  const links = [
+    `<link rel="modulepreload" href="${prefix}${route.entry}">`,
+    ...(route.preload ?? []).map(
+      (chunk) => `<link rel="modulepreload" href="${prefix}${chunk}">`,
+    ),
+    ...(route.css ?? []).map(
+      (css) => `<link rel="preload" as="style" href="${prefix}${css}">`,
+    ),
+  ];
 
-  return [`<link rel="modulepreload" href="${prefix}${route.entry}">`, ...preloadLinks, ...cssLinks]
-    .join(
-      "\n",
-    );
+  return links.join("\n");
 }

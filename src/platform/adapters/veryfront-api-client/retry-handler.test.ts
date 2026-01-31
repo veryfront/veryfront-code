@@ -11,7 +11,9 @@ function setFetch(
   globalThis.fetch = handler as typeof fetch;
 }
 
-async function captureVeryfrontError(fn: () => Promise<unknown>): Promise<VeryfrontAPIError> {
+async function captureVeryfrontError(
+  fn: () => Promise<unknown>,
+): Promise<VeryfrontAPIError> {
   try {
     await fn();
   } catch (e) {
@@ -21,24 +23,26 @@ async function captureVeryfrontError(fn: () => Promise<unknown>): Promise<Veryfr
 }
 
 describe("retry-handler", () => {
-  afterEach(() => {
+  afterEach((): void => {
     globalThis.fetch = originalFetch;
   });
 
   describe("requestWithRetry", () => {
-    it("should export requestWithRetry function", () => {
+    it("should export requestWithRetry function", (): void => {
       assertExists(requestWithRetry);
       assertEquals(typeof requestWithRetry, "function");
     });
 
     describe("trace context propagation", () => {
-      let capturedHeaders: Headers | null = null;
+      let capturedHeaders: Headers | undefined;
 
-      beforeEach(() => {
-        capturedHeaders = null;
+      beforeEach((): void => {
+        capturedHeaders = undefined;
         setFetch((_url, init) => {
-          capturedHeaders = init?.headers as Headers;
-          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+          capturedHeaders = init?.headers as Headers | undefined;
+          return Promise.resolve(
+            new Response(JSON.stringify({ ok: true }), { status: 200 }),
+          );
         });
       });
 
@@ -58,7 +62,7 @@ describe("retry-handler", () => {
     describe("4xx error handling - no retry", () => {
       let fetchCallCount = 0;
 
-      beforeEach(() => {
+      beforeEach((): void => {
         fetchCallCount = 0;
       });
 
@@ -67,7 +71,7 @@ describe("retry-handler", () => {
         statusText: string,
         body: string,
         token: string,
-      ) {
+      ): Promise<void> {
         setFetch(() => {
           fetchCallCount++;
           return Promise.resolve(new Response(body, { status, statusText }));
@@ -105,7 +109,7 @@ describe("retry-handler", () => {
     describe("429 rate limiting - should retry", () => {
       let fetchCallCount = 0;
 
-      beforeEach(() => {
+      beforeEach((): void => {
         fetchCallCount = 0;
       });
 
@@ -114,10 +118,15 @@ describe("retry-handler", () => {
           fetchCallCount++;
           if (fetchCallCount < 3) {
             return Promise.resolve(
-              new Response("Too Many Requests", { status: 429, statusText: "Too Many Requests" }),
+              new Response("Too Many Requests", {
+                status: 429,
+                statusText: "Too Many Requests",
+              }),
             );
           }
-          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+          return Promise.resolve(
+            new Response(JSON.stringify({ ok: true }), { status: 200 }),
+          );
         });
 
         const result = await requestWithRetry(
@@ -134,7 +143,7 @@ describe("retry-handler", () => {
     describe("5xx server errors - should retry", () => {
       let fetchCallCount = 0;
 
-      beforeEach(() => {
+      beforeEach((): void => {
         fetchCallCount = 0;
       });
 
@@ -149,7 +158,9 @@ describe("retry-handler", () => {
               }),
             );
           }
-          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+          return Promise.resolve(
+            new Response(JSON.stringify({ ok: true }), { status: 200 }),
+          );
         });
 
         const result = await requestWithRetry(
@@ -170,7 +181,9 @@ describe("retry-handler", () => {
               new Response("Bad Gateway", { status: 502, statusText: "Bad Gateway" }),
             );
           }
-          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+          return Promise.resolve(
+            new Response(JSON.stringify({ ok: true }), { status: 200 }),
+          );
         });
 
         const result = await requestWithRetry(
@@ -194,7 +207,9 @@ describe("retry-handler", () => {
               }),
             );
           }
-          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+          return Promise.resolve(
+            new Response(JSON.stringify({ ok: true }), { status: 200 }),
+          );
         });
 
         const result = await requestWithRetry(
@@ -234,7 +249,7 @@ describe("retry-handler", () => {
     describe("network errors - should retry", () => {
       let fetchCallCount = 0;
 
-      beforeEach(() => {
+      beforeEach((): void => {
         fetchCallCount = 0;
       });
 
@@ -242,7 +257,9 @@ describe("retry-handler", () => {
         setFetch(() => {
           fetchCallCount++;
           if (fetchCallCount < 2) return Promise.reject(new Error("Network error"));
-          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+          return Promise.resolve(
+            new Response(JSON.stringify({ ok: true }), { status: 200 }),
+          );
         });
 
         const result = await requestWithRetry(
@@ -259,7 +276,9 @@ describe("retry-handler", () => {
     describe("successful requests", () => {
       it("should return JSON response on success", async () => {
         setFetch(() =>
-          Promise.resolve(new Response(JSON.stringify({ data: "test" }), { status: 200 }))
+          Promise.resolve(
+            new Response(JSON.stringify({ data: "test" }), { status: 200 }),
+          )
         );
 
         const result = await requestWithRetry(

@@ -60,7 +60,9 @@ interface MeetingSettingsInput {
   autoRecording?: "local" | "cloud" | "none";
 }
 
-function toZoomSettings(settings?: MeetingSettingsInput): Record<string, unknown> | undefined {
+function toZoomSettings(
+  settings?: MeetingSettingsInput,
+): Record<string, unknown> | undefined {
   if (!settings) return undefined;
 
   return {
@@ -90,10 +92,8 @@ async function zoomFetch<T>(endpoint: string, options: RequestInit = {}): Promis
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({} as { message?: string }));
-    throw new Error(
-      `Zoom API error: ${response.status} ${error.message || response.statusText}`,
-    );
+    const error = (await response.json().catch(() => ({}))) as { message?: string };
+    throw new Error(`Zoom API error: ${response.status} ${error.message ?? response.statusText}`);
   }
 
   return response.json();

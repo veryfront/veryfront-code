@@ -14,10 +14,7 @@ export default tool({
       .describe("Maximum number of payment intents to retrieve"),
     customerId: z.string().optional().describe("Filter by customer ID (starts with cus_)"),
     createdAfter: z.number().optional().describe("Filter payments created after this Unix timestamp"),
-    createdBefore: z
-      .number()
-      .optional()
-      .describe("Filter payments created before this Unix timestamp"),
+    createdBefore: z.number().optional().describe("Filter payments created before this Unix timestamp"),
   }),
   async execute({ limit, customerId, createdAfter, createdBefore }) {
     const created =

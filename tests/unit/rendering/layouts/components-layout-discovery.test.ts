@@ -13,9 +13,6 @@ import {
 } from "../../../../src/rendering/layouts/layout-collector.ts";
 import { LAYOUT_EXTENSIONS } from "../../../../src/rendering/layouts/types.ts";
 
-/**
- * Creates a mock FileExistenceChecker for testing.
- */
 function createMockChecker(existingPaths: Set<string>): FileExistenceChecker {
   return {
     exists: (path: string) => Promise.resolve(existingPaths.has(path)),
@@ -26,99 +23,27 @@ describe("discoverComponentsLayoutPath", () => {
   const projectDir = "/project";
 
   it("should return null when no layout file exists", async () => {
-    const checker = createMockChecker(new Set());
-
-    const result = await discoverComponentsLayoutPath(projectDir, checker);
+    const result = await discoverComponentsLayoutPath(
+      projectDir,
+      createMockChecker(new Set()),
+    );
 
     assertEquals(result, null, "Should return null when no layout exists");
   });
 
-  it("should find layout.tsx file", async () => {
-    const checker = createMockChecker(
-      new Set(["/project/components/layout.tsx"]),
-    );
+  for (const ext of LAYOUT_EXTENSIONS) {
+    it(`should find layout.${ext} file`, async () => {
+      const expectedPath = `${projectDir}/components/layout.${ext}`;
+      const result = await discoverComponentsLayoutPath(
+        projectDir,
+        createMockChecker(new Set([expectedPath])),
+      );
 
-    const result = await discoverComponentsLayoutPath(projectDir, checker);
-
-    assertEquals(
-      result,
-      "/project/components/layout.tsx",
-      "Should find layout.tsx",
-    );
-  });
-
-  it("should find layout.mdx file", async () => {
-    const checker = createMockChecker(
-      new Set(["/project/components/layout.mdx"]),
-    );
-
-    const result = await discoverComponentsLayoutPath(projectDir, checker);
-
-    assertEquals(
-      result,
-      "/project/components/layout.mdx",
-      "Should find layout.mdx",
-    );
-  });
-
-  it("should find layout.jsx file", async () => {
-    const checker = createMockChecker(
-      new Set(["/project/components/layout.jsx"]),
-    );
-
-    const result = await discoverComponentsLayoutPath(projectDir, checker);
-
-    assertEquals(
-      result,
-      "/project/components/layout.jsx",
-      "Should find layout.jsx",
-    );
-  });
-
-  it("should find layout.md file", async () => {
-    const checker = createMockChecker(
-      new Set(["/project/components/layout.md"]),
-    );
-
-    const result = await discoverComponentsLayoutPath(projectDir, checker);
-
-    assertEquals(
-      result,
-      "/project/components/layout.md",
-      "Should find layout.md",
-    );
-  });
-
-  it("should find layout.ts file", async () => {
-    const checker = createMockChecker(
-      new Set(["/project/components/layout.ts"]),
-    );
-
-    const result = await discoverComponentsLayoutPath(projectDir, checker);
-
-    assertEquals(
-      result,
-      "/project/components/layout.ts",
-      "Should find layout.ts",
-    );
-  });
-
-  it("should find layout.js file", async () => {
-    const checker = createMockChecker(
-      new Set(["/project/components/layout.js"]),
-    );
-
-    const result = await discoverComponentsLayoutPath(projectDir, checker);
-
-    assertEquals(
-      result,
-      "/project/components/layout.js",
-      "Should find layout.js",
-    );
-  });
+      assertEquals(result, expectedPath, `Should find layout.${ext}`);
+    });
+  }
 
   it("should prefer mdx over tsx when both exist (due to extension order)", async () => {
-    // LAYOUT_EXTENSIONS = ["mdx", "md", "tsx", "jsx", "ts", "js"]
     const checker = createMockChecker(
       new Set([
         "/project/components/layout.tsx",
@@ -171,15 +96,16 @@ describe("discoverComponentsLayoutPath", () => {
 
   it("should work with different project directories", async () => {
     const customProjectDir = "/custom/path/to/project";
-    const checker = createMockChecker(
-      new Set([`${customProjectDir}/components/layout.tsx`]),
-    );
+    const expectedPath = `${customProjectDir}/components/layout.tsx`;
 
-    const result = await discoverComponentsLayoutPath(customProjectDir, checker);
+    const result = await discoverComponentsLayoutPath(
+      customProjectDir,
+      createMockChecker(new Set([expectedPath])),
+    );
 
     assertEquals(
       result,
-      `${customProjectDir}/components/layout.tsx`,
+      expectedPath,
       "Should work with custom project directory",
     );
   });
@@ -187,9 +113,9 @@ describe("discoverComponentsLayoutPath", () => {
   it("should not find files in wrong locations", async () => {
     const checker = createMockChecker(
       new Set([
-        "/project/layout.tsx", // Wrong location (root, not components)
-        "/project/src/components/layout.tsx", // Wrong path (src/components)
-        "/project/components/layouts/layout.tsx", // Wrong path (layouts subdirectory)
+        "/project/layout.tsx",
+        "/project/src/components/layout.tsx",
+        "/project/components/layouts/layout.tsx",
       ]),
     );
 
@@ -209,11 +135,14 @@ describe("discoverComponentsLayoutPath", () => {
 
     const result = await discoverComponentsLayoutPath(projectDir, checker);
 
-    assertEquals(result, null, "Should return null when checker always returns false");
+    assertEquals(
+      result,
+      null,
+      "Should return null when checker always returns false",
+    );
   });
 
   it("should respect the defined extension order", async () => {
-    // Verify the extension order matches LAYOUT_EXTENSIONS
     const expectedOrder = ["mdx", "md", "tsx", "jsx", "ts", "js"];
     assertEquals(
       [...LAYOUT_EXTENSIONS],

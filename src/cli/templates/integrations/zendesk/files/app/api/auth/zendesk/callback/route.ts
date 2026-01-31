@@ -5,6 +5,7 @@ function getEnv(name: string): string | undefined {
     // @ts-ignore: Deno global
     return Deno.env.get(name);
   }
+
   // @ts-ignore: Node process
   return globalThis.process?.env?.[name];
 }
@@ -74,7 +75,7 @@ export async function GET(request: Request): Promise<Response> {
 
     return Response.redirect(`${baseUrl}/?connected=zendesk`, 302);
   } catch (error) {
-    console.error("Zendesk OAuth error:", err);
+    console.error("Zendesk OAuth error:", error);
     return Response.redirect(`${baseUrl}/?error=zendesk_oauth_failed`, 302);
   }
 }

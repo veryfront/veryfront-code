@@ -56,9 +56,9 @@ export function ResultBox({ success, label, duration, children }: ResultBoxProps
     <div className="mt-4 border rounded overflow-hidden">
       <div className={`px-3 py-2 text-xs font-medium flex items-center gap-2 ${headerClassName}`}>
         {label}
-        {duration !== undefined
-          ? <span className="ml-auto text-gray-400 font-normal">{duration}ms</span>
-          : null}
+        {duration !== undefined && (
+          <span className="ml-auto text-gray-400 font-normal">{duration}ms</span>
+        )}
       </div>
       <pre className="p-3 text-xs font-mono text-gray-600 overflow-auto max-h-60 whitespace-pre-wrap">
         {children}
@@ -103,7 +103,7 @@ export function DetailHeader({ title, description }: DetailHeaderProps): ReactNo
   return (
     <div className="mb-6">
       <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
-      {description ? <p className="text-sm text-gray-500">{description}</p> : null}
+      {description && <p className="text-sm text-gray-500">{description}</p>}
     </div>
   );
 }
@@ -141,10 +141,6 @@ export function TwoColumnLayout({ sidebar, children }: TwoColumnLayoutProps): Re
 
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
-
-  const kb = bytes / 1024;
-  if (bytes < 1024 * 1024) return `${kb.toFixed(1)} KB`;
-
-  const mb = bytes / (1024 * 1024);
-  return `${mb.toFixed(1)} MB`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

@@ -58,15 +58,17 @@ describe("BunAdapter", () => {
 
     it("should have capabilities", () => {
       const adapter = createAdapter();
-      assertExists(adapter.capabilities);
-      assertEquals(adapter.capabilities.typescript, true);
-      assertEquals(adapter.capabilities.jsx, true);
-      assertEquals(adapter.capabilities.http2, false);
-      assertEquals(adapter.capabilities.websocket, true);
-      assertEquals(adapter.capabilities.workers, true);
-      assertEquals(adapter.capabilities.fileWatching, true);
-      assertEquals(adapter.capabilities.shell, true);
-      assertEquals(adapter.capabilities.writableFs, true);
+      const { capabilities } = adapter;
+
+      assertExists(capabilities);
+      assertEquals(capabilities.typescript, true);
+      assertEquals(capabilities.jsx, true);
+      assertEquals(capabilities.http2, false);
+      assertEquals(capabilities.websocket, true);
+      assertEquals(capabilities.workers, true);
+      assertEquals(capabilities.fileWatching, true);
+      assertEquals(capabilities.shell, true);
+      assertEquals(capabilities.writableFs, true);
     });
 
     it("should have serve method", () => {

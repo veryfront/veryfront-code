@@ -106,10 +106,12 @@ export class VeryfrontAPIClient {
   // Branch-related setters for backward compatibility with adapter
   setRequestBranch(branch: string | null): void {
     this.requestBranch = branch;
+
     if (branch) {
       this.setContext({ type: "branch", name: branch });
       return;
     }
+
     this.clearContext();
   }
 
@@ -237,17 +239,7 @@ export class VeryfrontAPIClient {
   // =============================================================================
 
   listFiles(options: ListFilesOptions = {}): Promise<FileListResult> {
-    const projectRef = this.getProjectSlug()!;
-    const context = this.getContext();
-
-    switch (context.type) {
-      case "branch":
-        return this.operations.listBranchFiles(projectRef, context.name, options);
-      case "environment":
-        return this.operations.listEnvironmentFiles(projectRef, context.name, options);
-      case "release":
-        return this.operations.listReleaseFiles(projectRef, context.version, options);
-    }
+    return this.listFilesByContext(this.getProjectSlug()!, this.getContext(), options);
   }
 
   listAllFiles(options: Omit<ListFilesOptions, "cursor"> = {}) {
@@ -347,9 +339,7 @@ export class VeryfrontAPIClient {
       const file = await this.getFile(entityId);
       return { path: file.path, content: file.content };
     } catch (error) {
-      if (error instanceof Error && error.message.includes("404")) {
-        return null;
-      }
+      if (error instanceof Error && error.message.includes("404")) return null;
       throw error;
     }
   }
@@ -372,10 +362,7 @@ export class VeryfrontAPIClient {
   async searchFilesWithContent(
     pattern: string,
   ): Promise<Array<{ path: string; content: string }>> {
-    const projectRef = this.getProjectSlug()!;
-    const context = this.getContext();
-
-    const result = await this.listFilesByContext(projectRef, context, { pattern, limit: 20 });
+    const result = await this.listFiles({ pattern, limit: 20 });
 
     const filesWithContent: Array<{ path: string; content: string }> = [];
     const filesNeedingContent: string[] = [];
@@ -388,9 +375,7 @@ export class VeryfrontAPIClient {
       }
     }
 
-    if (filesNeedingContent.length === 0) {
-      return filesWithContent;
-    }
+    if (filesNeedingContent.length === 0) return filesWithContent;
 
     const fetched = await Promise.all(
       filesNeedingContent.map(async (path) => {
@@ -451,13 +436,15 @@ export class VeryfrontAPIClient {
 
   listPublishedFiles(_projectId?: string, releaseId?: string, environmentName?: string) {
     const projectRef = this.getProjectSlug()!;
-    // Use release endpoint if releaseId provided, otherwise use environment when specified
+
     if (releaseId) {
       return this.operations.listAllReleaseFiles(projectRef, releaseId);
     }
+
     if (environmentName) {
       return this.operations.listAllEnvironmentFiles(projectRef, environmentName);
     }
+
     throw new VeryfrontAPIError(
       "Cannot list published files without releaseId or environmentName",
       400,
@@ -470,15 +457,17 @@ export class VeryfrontAPIClient {
     environmentName?: string,
   ): Promise<string> {
     const projectRef = this.getProjectSlug()!;
-    // Use release endpoint if releaseId provided, otherwise use environment when specified
+
     if (releaseId) {
       const result = await this.operations.getReleaseFile(projectRef, releaseId, path);
       return result.content;
     }
+
     if (environmentName) {
       const result = await this.operations.getEnvironmentFile(projectRef, environmentName, path);
       return result.content;
     }
+
     throw new VeryfrontAPIError(
       "Cannot fetch published file without releaseId or environmentName",
       400,

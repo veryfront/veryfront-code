@@ -1,18 +1,11 @@
 import { getValidToken } from "./oauth.ts";
 
-// Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
   // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
-    return Deno.env.get(key);
-  }
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
 
   // @ts-ignore - process global
-  if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
-    return process.env[key];
-  }
+  if (typeof process !== "undefined" && process.env) return process.env[key];
 
   return undefined;
 }
@@ -102,9 +95,6 @@ export interface Issue {
   };
 }
 
-/**
- * Bitbucket OAuth provider configuration
- */
 export const bitbucketOAuthProvider = {
   name: "bitbucket",
   authorizationUrl: "https://bitbucket.org/site/oauth2/authorize",
@@ -120,15 +110,59 @@ function buildQuery(params: URLSearchParams): string {
   return query ? `?${query}` : "";
 }
 
-/**
- * Create a Bitbucket client for a specific user
- */
-export function createBitbucketClient(userId: string) {
+export function createBitbucketClient(userId: string): {
+  getCurrentUser(): Promise<BitbucketUser>;
+  listRepositories(options?: { role?: "owner" | "contributor" | "member"; perPage?: number }): Promise<Repository[]>;
+  getRepository(workspace: string, repoSlug: string): Promise<Repository>;
+  listPullRequests(
+    workspace: string,
+    repoSlug: string,
+    options?: { state?: "OPEN" | "MERGED" | "DECLINED" | "SUPERSEDED"; perPage?: number },
+  ): Promise<PullRequest[]>;
+  getPullRequest(workspace: string, repoSlug: string, pullRequestId: number): Promise<PullRequest>;
+  createPullRequest(
+    workspace: string,
+    repoSlug: string,
+    options: {
+      title: string;
+      description?: string;
+      sourceBranch: string;
+      destinationBranch: string;
+      closeSourceBranch?: boolean;
+    },
+  ): Promise<PullRequest>;
+  listIssues(
+    workspace: string,
+    repoSlug: string,
+    options?: {
+      state?:
+        | "new"
+        | "open"
+        | "resolved"
+        | "on hold"
+        | "invalid"
+        | "duplicate"
+        | "wontfix"
+        | "closed";
+      kind?: "bug" | "enhancement" | "proposal" | "task";
+      priority?: "trivial" | "minor" | "major" | "critical" | "blocker";
+      perPage?: number;
+    },
+  ): Promise<Issue[]>;
+  createIssue(
+    workspace: string,
+    repoSlug: string,
+    options: {
+      title: string;
+      description?: string;
+      kind?: "bug" | "enhancement" | "proposal" | "task";
+      priority?: "trivial" | "minor" | "major" | "critical" | "blocker";
+    },
+  ): Promise<Issue>;
+} {
   async function getAccessToken(): Promise<string> {
     const token = await getValidToken(bitbucketOAuthProvider, userId, "bitbucket");
-    if (!token) {
-      throw new Error("Bitbucket not connected. Please connect your Bitbucket account first.");
-    }
+    if (!token) throw new Error("Bitbucket not connected. Please connect your Bitbucket account first.");
     return token;
   }
 
@@ -154,16 +188,10 @@ export function createBitbucketClient(userId: string) {
   }
 
   return {
-    /**
-     * Get authenticated user
-     */
     getCurrentUser(): Promise<BitbucketUser> {
       return apiRequest("/user");
     },
 
-    /**
-     * List user's repositories
-     */
     async listRepositories(
       options: {
         role?: "owner" | "contributor" | "member";
@@ -174,22 +202,14 @@ export function createBitbucketClient(userId: string) {
       if (options.role) params.set("role", options.role);
       if (options.perPage) params.set("pagelen", String(options.perPage));
 
-      const response = await apiRequest<{ values: Repository[] }>(
-        `/repositories${buildQuery(params)}`,
-      );
-      return response.values;
+      const { values } = await apiRequest<{ values: Repository[] }>(`/repositories${buildQuery(params)}`);
+      return values;
     },
 
-    /**
-     * Get repository details
-     */
     getRepository(workspace: string, repoSlug: string): Promise<Repository> {
       return apiRequest(`/repositories/${workspace}/${repoSlug}`);
     },
 
-    /**
-     * List pull requests for a repository
-     */
     async listPullRequests(
       workspace: string,
       repoSlug: string,
@@ -202,26 +222,16 @@ export function createBitbucketClient(userId: string) {
       if (options.state) params.set("state", options.state);
       if (options.perPage) params.set("pagelen", String(options.perPage));
 
-      const response = await apiRequest<{ values: PullRequest[] }>(
+      const { values } = await apiRequest<{ values: PullRequest[] }>(
         `/repositories/${workspace}/${repoSlug}/pullrequests${buildQuery(params)}`,
       );
-      return response.values;
+      return values;
     },
 
-    /**
-     * Get a single pull request
-     */
-    getPullRequest(
-      workspace: string,
-      repoSlug: string,
-      pullRequestId: number,
-    ): Promise<PullRequest> {
+    getPullRequest(workspace: string, repoSlug: string, pullRequestId: number): Promise<PullRequest> {
       return apiRequest(`/repositories/${workspace}/${repoSlug}/pullrequests/${pullRequestId}`);
     },
 
-    /**
-     * Create a pull request
-     */
     createPullRequest(
       workspace: string,
       repoSlug: string,
@@ -245,9 +255,6 @@ export function createBitbucketClient(userId: string) {
       });
     },
 
-    /**
-     * List issues for a repository
-     */
     async listIssues(
       workspace: string,
       repoSlug: string,
@@ -272,15 +279,12 @@ export function createBitbucketClient(userId: string) {
       if (options.priority) params.set("priority", options.priority);
       if (options.perPage) params.set("pagelen", String(options.perPage));
 
-      const response = await apiRequest<{ values: Issue[] }>(
+      const { values } = await apiRequest<{ values: Issue[] }>(
         `/repositories/${workspace}/${repoSlug}/issues${buildQuery(params)}`,
       );
-      return response.values;
+      return values;
     },
 
-    /**
-     * Create an issue
-     */
     createIssue(
       workspace: string,
       repoSlug: string,

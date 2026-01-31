@@ -24,12 +24,12 @@ export default tool({
     const client = createSheetsClient(DEFAULT_USER_ID);
     const spreadsheets = await client.listSpreadsheets({ maxResults, orderBy });
 
-    return spreadsheets.map(({ id, name, webViewLink, createdTime, modifiedTime }) => ({
-      id,
-      name,
-      url: webViewLink,
-      createdTime,
-      modifiedTime,
+    return spreadsheets.map((spreadsheet) => ({
+      id: spreadsheet.id,
+      name: spreadsheet.name,
+      url: spreadsheet.webViewLink,
+      createdTime: spreadsheet.createdTime,
+      modifiedTime: spreadsheet.modifiedTime,
     }));
   },
 });

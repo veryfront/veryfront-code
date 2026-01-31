@@ -18,24 +18,15 @@ export default tool({
       .optional()
       .describe("New expected close date in YYYY-MM-DD format"),
   }),
-  async execute({
-    dealId,
-    title,
-    value,
-    status,
-    stageId,
-    personId,
-    orgId,
-    expectedCloseDate,
-  }) {
-    const deal = await updateDeal(dealId, {
-      title,
-      value,
-      status,
-      stageId,
-      personId,
-      orgId,
-      expectedCloseDate,
+  async execute(input) {
+    const deal = await updateDeal(input.dealId, {
+      title: input.title,
+      value: input.value,
+      status: input.status,
+      stageId: input.stageId,
+      personId: input.personId,
+      orgId: input.orgId,
+      expectedCloseDate: input.expectedCloseDate,
     });
 
     return {

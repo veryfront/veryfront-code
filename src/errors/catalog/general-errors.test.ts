@@ -26,7 +26,7 @@ describe("errors/catalog/general-errors", () => {
         assertEquals(typeof solution.message, "string", `message should be string for ${code}`);
         assertEquals(typeof solution.docs, "string", `docs should be string for ${code}`);
         assertEquals(Array.isArray(solution.steps), true, `steps should be array for ${code}`);
-        assertEquals(solution.steps!.length > 0, true, `steps should not be empty for ${code}`);
+        assertEquals(solution.steps.length > 0, true, `steps should not be empty for ${code}`);
       }
     });
 
@@ -35,8 +35,8 @@ describe("errors/catalog/general-errors", () => {
     });
 
     it("UNKNOWN_ERROR should suggest running veryfront doctor", () => {
-      const solution = GENERAL_ERROR_CATALOG[ErrorCode.UNKNOWN_ERROR]!;
-      const hasDoctor = solution.steps!.some((step) => step.includes("doctor"));
+      const solution = GENERAL_ERROR_CATALOG[ErrorCode.UNKNOWN_ERROR];
+      const hasDoctor = solution.steps.some((step) => step.includes("doctor"));
       assertEquals(hasDoctor, true);
     });
   });

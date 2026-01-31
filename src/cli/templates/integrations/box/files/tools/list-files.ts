@@ -26,16 +26,20 @@ export default tool({
   async execute({ folderId, limit, offset }) {
     const items = await listFiles({ folderId, limit, offset });
 
-    return items.map((item) => ({
-      id: item.id,
-      type: item.type,
-      name: item.name,
-      size: item.type === "file" ? item.size : undefined,
-      createdAt: item.created_at,
-      modifiedAt: item.modified_at,
-      createdBy: item.created_by?.name,
-      modifiedBy: item.modified_by?.name,
-      path: item.path_collection?.entries.map((e) => e.name).join("/") ?? "/",
-    }));
+    return items.map((item) => {
+      const pathEntries = item.path_collection?.entries;
+
+      return {
+        id: item.id,
+        type: item.type,
+        name: item.name,
+        size: item.type === "file" ? item.size : undefined,
+        createdAt: item.created_at,
+        modifiedAt: item.modified_at,
+        createdBy: item.created_by?.name,
+        modifiedBy: item.modified_by?.name,
+        path: pathEntries ? pathEntries.map((e) => e.name).join("/") : "/",
+      };
+    });
   },
 });

@@ -27,10 +27,15 @@ export const CIRCUIT_BREAKER_THRESHOLD = 3;
 export const CIRCUIT_BREAKER_RESET_MS = 60 * 1000;
 
 // Max concurrent ESM transforms (safety net, not throttle). Set to 0 to disable.
-export const MAX_CONCURRENT_TRANSFORMS = Number.parseInt(
-  String(getSsrMaxConcurrentTransformsEnv(50)),
-  10,
-);
+let _maxConcurrentTransforms: number | undefined;
+export function getMaxConcurrentTransforms(): number {
+  if (_maxConcurrentTransforms !== undefined) return _maxConcurrentTransforms;
+  _maxConcurrentTransforms = Number.parseInt(
+    String(getSsrMaxConcurrentTransformsEnv(50)),
+    10,
+  );
+  return _maxConcurrentTransforms;
+}
 
 /**
  * Maximum concurrent transforms per project (noisy-neighbor protection).
@@ -38,13 +43,16 @@ export const MAX_CONCURRENT_TRANSFORMS = Number.parseInt(
  * more than ~1/3 of transform capacity. Set to 0 to disable per-project limits.
  * Configurable via SSR_TRANSFORM_PER_PROJECT_LIMIT env var.
  */
-// deno-lint-ignore no-explicit-any
-const envLimit = (globalThis as any).Deno?.env?.get("SSR_TRANSFORM_PER_PROJECT_LIMIT") ??
-  // deno-lint-ignore no-explicit-any
-  (globalThis as any).process?.env?.SSR_TRANSFORM_PER_PROJECT_LIMIT;
-export const TRANSFORM_PER_PROJECT_LIMIT = envLimit !== undefined
-  ? parseInt(String(envLimit), 10)
-  : Math.ceil(MAX_CONCURRENT_TRANSFORMS / 3);
+let _transformPerProjectLimit: number | undefined;
+export function getTransformPerProjectLimit(): number {
+  if (_transformPerProjectLimit !== undefined) return _transformPerProjectLimit;
+  const envLimit = globalThis.Deno?.env?.get("SSR_TRANSFORM_PER_PROJECT_LIMIT") ??
+    globalThis.process?.env?.SSR_TRANSFORM_PER_PROJECT_LIMIT;
+  _transformPerProjectLimit = envLimit !== undefined
+    ? Number.parseInt(String(envLimit), 10)
+    : Math.ceil(getMaxConcurrentTransforms() / 3);
+  return _transformPerProjectLimit;
+}
 
 export const TRANSFORM_ACQUIRE_TIMEOUT_MS = 500;
 export const IN_PROGRESS_WAIT_TIMEOUT_MS = 30_000;

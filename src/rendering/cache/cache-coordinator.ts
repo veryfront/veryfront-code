@@ -59,9 +59,7 @@ export class CacheCoordinator {
     return withSpan(
       "cache.persistResult",
       async () => {
-        if (result.stream) {
-          return;
-        }
+        if (result.stream) return;
 
         const now = Date.now();
         const payload: CachePayload = {

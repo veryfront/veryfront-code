@@ -183,20 +183,18 @@ export class RendererLifecycle {
     const isVeryFrontAPI = config.fs?.type === "veryfront-api";
     const compiledBinary = isCompiledBinary();
 
-    if (compiledBinary || isVeryFrontAPI) {
+    if (!compiledBinary && !isVeryFrontAPI) {
+      logger.debug("Loading components eagerly for MDX import mapping");
+
+      const componentDirs = config.directories?.components ?? ["components"];
+      for (const dir of componentDirs) {
+        await componentRegistry.loadFromDirectory(join(projectDir, dir), false);
+      }
+    } else {
       logger.debug("Skipping eager component loading (will load lazily on-demand)", {
         isCompiledBinary: compiledBinary,
         isVeryFrontAPI,
       });
-      logger.debug("Renderer services initialized successfully");
-      return this.services;
-    }
-
-    logger.debug("Loading components eagerly for MDX import mapping");
-
-    const componentDirs = config.directories?.components ?? ["components"];
-    for (const dir of componentDirs) {
-      await componentRegistry.loadFromDirectory(join(projectDir, dir), false);
     }
 
     logger.debug("Renderer services initialized successfully");
@@ -224,7 +222,8 @@ export class RendererLifecycle {
   }
 
   getServices(): RendererServices {
-    if (!this.services) {
+    const services = this.services;
+    if (!services) {
       throw toError(
         createError({
           type: "render",
@@ -232,7 +231,7 @@ export class RendererLifecycle {
         }),
       );
     }
-    return this.services;
+    return services;
   }
 
   async initializeComponents(): Promise<void> {
@@ -270,7 +269,6 @@ export class RendererLifecycle {
   }
 
   async destroy(): Promise<void> {
-    if (!this.services) return;
-    await this.services.cacheCoordinator.destroy();
+    await this.services?.cacheCoordinator.destroy();
   }
 }

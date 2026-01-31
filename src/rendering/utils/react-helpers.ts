@@ -6,7 +6,7 @@ export const normalizeChild = (() => {
 
   return (child: React.ReactNode): React.ReactNode => {
     if (
-      React.isValidElement(child) || !child || typeof child !== "object" || Array.isArray(child)
+      !child || React.isValidElement(child) || typeof child !== "object" || Array.isArray(child)
     ) {
       return child;
     }

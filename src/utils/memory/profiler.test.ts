@@ -16,7 +16,6 @@ import {
 
 describe("memory/profiler", () => {
   afterEach(() => {
-    // Clean up any registered caches
     unregisterCache("test-cache");
     unregisterCache("test-cache-1");
     unregisterCache("test-cache-2");
@@ -26,38 +25,28 @@ describe("memory/profiler", () => {
 
   describe("registerCache / unregisterCache", () => {
     it("should register a cache that appears in getCacheStats", () => {
-      registerCache("test-cache", () => ({
-        name: "test-cache",
-        entries: 42,
-      }));
+      registerCache("test-cache", () => ({ name: "test-cache", entries: 42 }));
 
-      const stats = getCacheStats();
-      const testStat = stats.find((s) => s.name === "test-cache");
+      const testStat = getCacheStats().find((s) => s.name === "test-cache");
       assertEquals(testStat?.entries, 42);
     });
 
     it("should unregister a cache so it no longer appears", () => {
-      registerCache("test-cache", () => ({
-        name: "test-cache",
-        entries: 10,
-      }));
+      registerCache("test-cache", () => ({ name: "test-cache", entries: 10 }));
       unregisterCache("test-cache");
 
-      const stats = getCacheStats();
-      const testStat = stats.find((s) => s.name === "test-cache");
+      const testStat = getCacheStats().find((s) => s.name === "test-cache");
       assertEquals(testStat, undefined);
     });
 
     it("should handle unregistering a cache that does not exist", () => {
       unregisterCache("nonexistent");
-      // Should not throw
     });
   });
 
   describe("getCacheStats", () => {
     it("should return an array", () => {
-      const stats = getCacheStats();
-      assert(Array.isArray(stats));
+      assert(Array.isArray(getCacheStats()));
     });
 
     it("should handle cache stats functions that throw", () => {
@@ -65,23 +54,15 @@ describe("memory/profiler", () => {
         throw new Error("stats error");
       });
 
-      const stats = getCacheStats();
-      const errStat = stats.find((s) => s.name === "error-cache");
+      const errStat = getCacheStats().find((s) => s.name === "error-cache");
       assertEquals(errStat?.entries, -1);
     });
 
     it("should return stats from multiple registered caches", () => {
-      registerCache("test-cache-1", () => ({
-        name: "test-cache-1",
-        entries: 5,
-      }));
-      registerCache("test-cache-2", () => ({
-        name: "test-cache-2",
-        entries: 10,
-      }));
+      registerCache("test-cache-1", () => ({ name: "test-cache-1", entries: 5 }));
+      registerCache("test-cache-2", () => ({ name: "test-cache-2", entries: 10 }));
 
-      const stats = getCacheStats();
-      const names = stats.map((s) => s.name);
+      const names = getCacheStats().map((s) => s.name);
       assert(names.includes("test-cache-1"));
       assert(names.includes("test-cache-2"));
     });
@@ -105,9 +86,9 @@ describe("memory/profiler", () => {
     });
 
     it("should have heapUsedPercent between 0 and 100", () => {
-      const stats = getHeapStats();
-      assert(stats.heapUsedPercent >= 0);
-      assert(stats.heapUsedPercent <= 100);
+      const { heapUsedPercent } = getHeapStats();
+      assert(heapUsedPercent >= 0);
+      assert(heapUsedPercent <= 100);
     });
   });
 
@@ -121,26 +102,21 @@ describe("memory/profiler", () => {
     });
 
     it("should have a valid ISO timestamp", () => {
-      const snapshot = getMemorySnapshot();
-      const date = new Date(snapshot.timestamp);
-      assert(!isNaN(date.getTime()));
+      const { timestamp } = getMemorySnapshot();
+      assert(!isNaN(new Date(timestamp).getTime()));
     });
 
     it("should include registered cache entries in totalCacheEntries", () => {
-      registerCache("test-cache", () => ({
-        name: "test-cache",
-        entries: 25,
-      }));
+      registerCache("test-cache", () => ({ name: "test-cache", entries: 25 }));
 
-      const snapshot = getMemorySnapshot();
-      assert(snapshot.totalCacheEntries >= 25);
+      const { totalCacheEntries } = getMemorySnapshot();
+      assert(totalCacheEntries >= 25);
     });
   });
 
   describe("forceGC", () => {
     it("should return a boolean", async () => {
-      const result = await forceGC();
-      assertEquals(typeof result, "boolean");
+      assertEquals(typeof (await forceGC()), "boolean");
     });
   });
 
@@ -155,7 +131,6 @@ describe("memory/profiler", () => {
     it("should have heapUsedPercent matching getHeapStats", () => {
       const pressure = checkMemoryPressure();
       const heap = getHeapStats();
-      // Values may differ slightly due to allocation between calls
       assert(Math.abs(pressure.heapUsedPercent - heap.heapUsedPercent) < 5);
     });
   });
@@ -169,12 +144,10 @@ describe("memory/profiler", () => {
 
     it("should clamp threshold to minimum 0.1", () => {
       setHeapWarningThreshold(0.01);
-      // We can't directly read it, but it should not throw
     });
 
     it("should clamp threshold to maximum 0.99", () => {
       setHeapWarningThreshold(1.5);
-      // We can't directly read it, but it should not throw
     });
   });
 
@@ -201,10 +174,7 @@ describe("memory/profiler", () => {
     });
 
     it("should not throw when caches are registered", () => {
-      registerCache("test-cache", () => ({
-        name: "test-cache",
-        entries: 5,
-      }));
+      registerCache("test-cache", () => ({ name: "test-cache", entries: 5 }));
       clearAllCaches();
     });
   });

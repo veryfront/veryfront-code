@@ -6,7 +6,6 @@
 
 import { getValidToken } from "./oauth.ts";
 
-// Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
   // @ts-ignore - Deno global
   if (typeof Deno !== "undefined") return Deno.env.get(key);
@@ -328,8 +327,8 @@ export const docsOAuthProvider = {
   name: "docs-google",
   authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
   tokenUrl: "https://oauth2.googleapis.com/token",
-  clientId: getEnv("GOOGLE_CLIENT_ID") || "",
-  clientSecret: getEnv("GOOGLE_CLIENT_SECRET") || "",
+  clientId: getEnv("GOOGLE_CLIENT_ID") ?? "",
+  clientSecret: getEnv("GOOGLE_CLIENT_SECRET") ?? "",
   scopes: [
     "https://www.googleapis.com/auth/documents.readonly",
     "https://www.googleapis.com/auth/documents",
@@ -338,9 +337,6 @@ export const docsOAuthProvider = {
   callbackPath: "/api/auth/docs-google/callback",
 };
 
-/**
- * Create a Docs client for a specific user
- */
 export function createDocsClient(userId: string): {
   listDocuments(options?: {
     maxResults?: number;
@@ -363,9 +359,7 @@ export function createDocsClient(userId: string): {
 } {
   async function getAccessToken(): Promise<string> {
     const token = await getValidToken(docsOAuthProvider, userId, "docs-google");
-    if (!token) {
-      throw new Error("Google Docs not connected. Please connect your Google account first.");
-    }
+    if (!token) throw new Error("Google Docs not connected. Please connect your Google account first.");
     return token;
   }
 
@@ -402,148 +396,132 @@ export function createDocsClient(userId: string): {
     return apiRequest<T>(DRIVE_API_BASE, "Drive", endpoint, options);
   }
 
-  return {
-    /**
-     * List documents from Google Drive
-     */
-    async listDocuments(options = {}): Promise<DocumentFile[]> {
-      const params = new URLSearchParams({
-        q: "mimeType='application/vnd.google-apps.document' and trashed=false",
-        fields: "files(id,name,mimeType,createdTime,modifiedTime,webViewLink,iconLink,thumbnailLink)",
-        pageSize: String(options.maxResults || 20),
-        orderBy: `${options.orderBy || "modifiedTime"} desc`,
-      });
+  function extractText(document: Document): string {
+    const textParts: string[] = [];
 
-      const result = await driveApiRequest<{ files: DocumentFile[] }>(`/files?${params.toString()}`);
-      return result.files || [];
-    },
-
-    /**
-     * Get document content and metadata
-     */
-    getDocument(documentId: string): Promise<Document> {
-      return docsApiRequest<Document>(`/documents/${documentId}`);
-    },
-
-    /**
-     * Create a new document
-     */
-    createDocument(options: CreateDocumentOptions): Promise<Document> {
-      return docsApiRequest<Document>("/documents", {
-        method: "POST",
-        body: JSON.stringify({ title: options.title }),
-      });
-    },
-
-    /**
-     * Update document using batch requests
-     */
-    updateDocument(documentId: string, requests: Request[]): Promise<BatchUpdateResponse> {
-      return docsApiRequest<BatchUpdateResponse>(`/documents/${documentId}:batchUpdate`, {
-        method: "POST",
-        body: JSON.stringify({ requests }),
-      });
-    },
-
-    /**
-     * Insert text at a specific location
-     */
-    insertText(documentId: string, text: string, index: number): Promise<BatchUpdateResponse> {
-      return this.updateDocument(documentId, [
-        {
-          insertText: {
-            text,
-            location: { index },
-          },
-        },
-      ]);
-    },
-
-    /**
-     * Delete content in a range
-     */
-    deleteContent(documentId: string, startIndex: number, endIndex: number): Promise<BatchUpdateResponse> {
-      return this.updateDocument(documentId, [
-        {
-          deleteContentRange: {
-            range: { startIndex, endIndex },
-          },
-        },
-      ]);
-    },
-
-    /**
-     * Replace all occurrences of text
-     */
-    replaceAllText(
-      documentId: string,
-      searchText: string,
-      replaceText: string,
-      matchCase = false,
-    ): Promise<BatchUpdateResponse> {
-      return this.updateDocument(documentId, [
-        {
-          replaceAllText: {
-            containsText: {
-              text: searchText,
-              matchCase,
-            },
-            replaceText,
-          },
-        },
-      ]);
-    },
-
-    /**
-     * Search documents by query
-     */
-    async searchDocuments(query: string, maxResults = 20): Promise<DocumentFile[]> {
-      const params = new URLSearchParams({
-        q: `mimeType='application/vnd.google-apps.document' and trashed=false and fullText contains '${query}'`,
-        fields: "files(id,name,mimeType,createdTime,modifiedTime,webViewLink,iconLink,thumbnailLink)",
-        pageSize: String(maxResults),
-        orderBy: "modifiedTime desc",
-      });
-
-      const result = await driveApiRequest<{ files: DocumentFile[] }>(`/files?${params.toString()}`);
-      return result.files || [];
-    },
-
-    /**
-     * Extract plain text from document body
-     */
-    extractText(document: Document): string {
-      const textParts: string[] = [];
-
-      function processElement(element: StructuralElement): void {
-        if (element.paragraph) {
-          for (const el of element.paragraph.elements) {
-            if (el.textRun) textParts.push(el.textRun.content);
-          }
-          return;
+    function processElement(element: StructuralElement): void {
+      if (element.paragraph) {
+        for (const el of element.paragraph.elements) {
+          if (el.textRun) textParts.push(el.textRun.content);
         }
-
-        if (element.table) {
-          for (const row of element.table.tableRows) {
-            for (const cell of row.tableCells) {
-              for (const child of cell.content) processElement(child);
-            }
-          }
-        }
+        return;
       }
 
-      for (const element of document.body.content) processElement(element);
-      return textParts.join("");
-    },
+      if (!element.table) return;
 
-    /**
-     * Create a document with initial content
-     */
-    async createDocumentWithContent(title: string, content: string): Promise<Document> {
-      const doc = await this.createDocument({ title });
-      await this.insertText(doc.documentId, content, 1);
-      return this.getDocument(doc.documentId);
-    },
+      for (const row of element.table.tableRows) {
+        for (const cell of row.tableCells) {
+          for (const child of cell.content) processElement(child);
+        }
+      }
+    }
+
+    for (const element of document.body.content) processElement(element);
+    return textParts.join("");
+  }
+
+  async function listDocuments(options: {
+    maxResults?: number;
+    orderBy?: "createdTime" | "modifiedTime" | "name";
+  } = {}): Promise<DocumentFile[]> {
+    const params = new URLSearchParams({
+      q: "mimeType='application/vnd.google-apps.document' and trashed=false",
+      fields: "files(id,name,mimeType,createdTime,modifiedTime,webViewLink,iconLink,thumbnailLink)",
+      pageSize: String(options.maxResults ?? 20),
+      orderBy: `${options.orderBy ?? "modifiedTime"} desc`,
+    });
+
+    const result = await driveApiRequest<{ files: DocumentFile[] }>(`/files?${params.toString()}`);
+    return result.files ?? [];
+  }
+
+  async function searchDocuments(query: string, maxResults = 20): Promise<DocumentFile[]> {
+    const params = new URLSearchParams({
+      q: `mimeType='application/vnd.google-apps.document' and trashed=false and fullText contains '${query}'`,
+      fields: "files(id,name,mimeType,createdTime,modifiedTime,webViewLink,iconLink,thumbnailLink)",
+      pageSize: String(maxResults),
+      orderBy: "modifiedTime desc",
+    });
+
+    const result = await driveApiRequest<{ files: DocumentFile[] }>(`/files?${params.toString()}`);
+    return result.files ?? [];
+  }
+
+  function getDocument(documentId: string): Promise<Document> {
+    return docsApiRequest<Document>(`/documents/${documentId}`);
+  }
+
+  function createDocument(options: CreateDocumentOptions): Promise<Document> {
+    return docsApiRequest<Document>("/documents", {
+      method: "POST",
+      body: JSON.stringify({ title: options.title }),
+    });
+  }
+
+  function updateDocument(documentId: string, requests: Request[]): Promise<BatchUpdateResponse> {
+    return docsApiRequest<BatchUpdateResponse>(`/documents/${documentId}:batchUpdate`, {
+      method: "POST",
+      body: JSON.stringify({ requests }),
+    });
+  }
+
+  function insertText(documentId: string, text: string, index: number): Promise<BatchUpdateResponse> {
+    return updateDocument(documentId, [
+      {
+        insertText: {
+          text,
+          location: { index },
+        },
+      },
+    ]);
+  }
+
+  function deleteContent(documentId: string, startIndex: number, endIndex: number): Promise<BatchUpdateResponse> {
+    return updateDocument(documentId, [
+      {
+        deleteContentRange: {
+          range: { startIndex, endIndex },
+        },
+      },
+    ]);
+  }
+
+  function replaceAllText(
+    documentId: string,
+    searchText: string,
+    replaceText: string,
+    matchCase = false,
+  ): Promise<BatchUpdateResponse> {
+    return updateDocument(documentId, [
+      {
+        replaceAllText: {
+          containsText: {
+            text: searchText,
+            matchCase,
+          },
+          replaceText,
+        },
+      },
+    ]);
+  }
+
+  async function createDocumentWithContent(title: string, content: string): Promise<Document> {
+    const doc = await createDocument({ title });
+    await insertText(doc.documentId, content, 1);
+    return getDocument(doc.documentId);
+  }
+
+  return {
+    listDocuments,
+    getDocument,
+    createDocument,
+    updateDocument,
+    insertText,
+    deleteContent,
+    replaceAllText,
+    searchDocuments,
+    extractText,
+    createDocumentWithContent,
   };
 }
 

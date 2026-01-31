@@ -38,20 +38,19 @@ export class LRUCache<K, V> {
 
     this.stopCleanupTimer();
 
-    const timer = setInterval(() => {
+    this.cleanupTimer = setInterval(() => {
       this.adapter.cleanupExpired();
     }, this.cleanupIntervalMs);
 
-    this.cleanupTimer = timer;
-
     // Unref the timer so it doesn't prevent process exit or cause test leaks
-    unrefTimer(timer);
+    unrefTimer(this.cleanupTimer);
   }
 
   private stopCleanupTimer(): void {
     if (!this.cleanupTimer) {
       return;
     }
+
     clearInterval(this.cleanupTimer);
     this.cleanupTimer = undefined;
   }

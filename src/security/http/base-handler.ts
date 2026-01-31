@@ -20,17 +20,13 @@ export interface HandlerHelpers {
 export abstract class BaseHandler implements Handler {
   abstract metadata: HandlerMetadata;
 
-  protected readonly helpers: HandlerHelpers;
-
-  constructor() {
-    this.helpers = {
-      createResponseBuilder: this.createResponseBuilder.bind(this),
-      respond: this.respond.bind(this),
-      logDebug: this.logDebug.bind(this),
-      getErrorMessage: this.getErrorMessage.bind(this),
-      continue: this.continue.bind(this),
-    };
-  }
+  protected readonly helpers: HandlerHelpers = {
+    createResponseBuilder: (ctx, nonce) => this.createResponseBuilder(ctx, nonce),
+    respond: (response, metadata) => this.respond(response, metadata),
+    logDebug: (message, extra, ctx) => this.logDebug(message, extra, ctx),
+    getErrorMessage: (error) => this.getErrorMessage(error),
+    continue: () => this.continue(),
+  };
 
   abstract handle(req: Request, ctx: HandlerContext): Promise<HandlerResult>;
 
@@ -43,11 +39,7 @@ export abstract class BaseHandler implements Handler {
     const { pathname } = new URL(req.url);
     const method = req.method.toUpperCase();
 
-    for (const pattern of patterns) {
-      if (this.matchesPattern(pathname, method, pattern)) return true;
-    }
-
-    return false;
+    return patterns.some((pattern) => this.matchesPattern(pathname, method, pattern));
   }
 
   private matchesPattern(pathname: string, method: string, pattern: RoutePattern): boolean {
@@ -61,13 +53,10 @@ export abstract class BaseHandler implements Handler {
     const routePattern = pattern.pattern;
 
     if (typeof routePattern === "string") {
-      if (pattern.prefix) return pathname.startsWith(routePattern);
-      return pathname === routePattern;
+      return pattern.prefix ? pathname.startsWith(routePattern) : pathname === routePattern;
     }
 
-    if (routePattern instanceof RegExp) {
-      return routePattern.test(pathname);
-    }
+    if (routePattern instanceof RegExp) return routePattern.test(pathname);
 
     return false;
   }
@@ -136,12 +125,9 @@ export abstract class BaseHandler implements Handler {
     }
 
     const requireToken = options.requireToken ?? false;
-    const hasSlug = !!ctx.projectSlug;
-    const hasToken = !!ctx.proxyToken;
+    if (!ctx.projectSlug || (requireToken && !ctx.proxyToken)) return fn();
 
-    if (!hasSlug || (requireToken && !hasToken)) return fn();
-
-    if (typeof fsWrapper.isMultiProjectMode === "function" && fsWrapper.isMultiProjectMode()) {
+    if (fsWrapper.isMultiProjectMode?.()) {
       const isProduction = (ctx.resolvedEnvironment ?? ctx.requestContext?.mode) === "production";
       const branch = ctx.parsedDomain?.branch ?? null;
 
@@ -157,8 +143,8 @@ export abstract class BaseHandler implements Handler {
       );
 
       return fsWrapper.runWithContext!(
-        ctx.projectSlug!,
-        ctx.proxyToken || "",
+        ctx.projectSlug,
+        ctx.proxyToken ?? "",
         fn,
         ctx.projectId,
         { productionMode: isProduction, releaseId: ctx.releaseId, branch },

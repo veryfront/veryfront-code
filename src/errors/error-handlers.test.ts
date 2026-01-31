@@ -18,8 +18,7 @@ describe("error-handlers", () => {
 
       assertEquals(wrapped.message, "Wrapper message: Original error");
       assertEquals(wrapped.code, ErrorCode.RENDER_ERROR);
-      const context = wrapped.context as { key?: string } | undefined;
-      assertEquals(context?.key, "value");
+      assertEquals((wrapped.context as { key?: string } | undefined)?.key, "value");
     });
 
     it("should preserve error code from VeryfrontError", () => {

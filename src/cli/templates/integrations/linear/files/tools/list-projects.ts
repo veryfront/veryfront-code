@@ -21,27 +21,23 @@ export default tool({
   async execute({ limit, includeArchived }) {
     const projects = await listProjects({ limit, includeArchived });
 
-    return projects.map((project) => {
-      const lead = project.lead
+    return projects.map((project) => ({
+      id: project.id,
+      name: project.name,
+      description: project.description,
+      state: project.state,
+      progress: Math.round(project.progress * 100),
+      url: project.url,
+      lead: project.lead
         ? { id: project.lead.id, name: project.lead.name }
-        : null;
-
-      return {
-        id: project.id,
-        name: project.name,
-        description: project.description,
-        state: project.state,
-        progress: Math.round(project.progress * 100), // Convert to percentage
-        url: project.url,
-        lead,
-        teams: project.teams.nodes.map((team) => ({
-          id: team.id,
-          name: team.name,
-          key: team.key,
-        })),
-        createdAt: project.createdAt,
-        updatedAt: project.updatedAt,
-      };
-    });
+        : null,
+      teams: project.teams.nodes.map((team) => ({
+        id: team.id,
+        name: team.name,
+        key: team.key,
+      })),
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
+    }));
   },
 });

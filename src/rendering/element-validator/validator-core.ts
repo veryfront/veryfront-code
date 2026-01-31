@@ -1,4 +1,4 @@
-import * as React from "react";
+import type * as React from "react";
 import type { ValidationOptions } from "./types.ts";
 import { deepInspectElement, type InspectionOptions } from "./element-inspector.ts";
 import { ensureValidReactElement, type NormalizationOptions } from "./element-normalizer.ts";
@@ -16,14 +16,16 @@ export class ElementValidator {
     this.debugMode = options.debugMode ?? false;
   }
 
-  /** Recursively inspects element tree for invalid children that would cause React Error #31 */
-  deepInspectElement(element: unknown, path = "root", depth = 0): void {
-    const inspectionOptions: InspectionOptions = {
+  private getInspectionOptions(): InspectionOptions {
+    return {
       maxDepth: this.maxDepth,
       debugMode: this.debugMode,
     };
+  }
 
-    deepInspectElement(element, path, depth, inspectionOptions);
+  /** Recursively inspects element tree for invalid children that would cause React Error #31 */
+  deepInspectElement(element: unknown, path = "root", depth = 0): void {
+    deepInspectElement(element, path, depth, this.getInspectionOptions());
   }
 
   /** Validates and normalizes a React element, optionally with deep inspection */
@@ -31,10 +33,7 @@ export class ElementValidator {
     pageElement: React.ReactNode,
     inspectionEnabled = false,
   ): React.ReactElement {
-    const inspectionOptions: InspectionOptions = {
-      maxDepth: this.maxDepth,
-      debugMode: this.debugMode,
-    };
+    const inspectionOptions = this.getInspectionOptions();
 
     const normalizationOptions: NormalizationOptions = {
       inspectionEnabled,

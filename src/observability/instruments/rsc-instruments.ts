@@ -17,24 +17,28 @@ export function createRscInstruments(
   config: MetricsConfig,
 ): RscInstruments {
   const prefix = `${config.prefix}.rsc`;
+  const advice = {
+    explicitBucketBoundaries: [...DURATION_HISTOGRAM_BOUNDARIES_MS],
+  };
 
   const rscRenderDuration = meter.createHistogram(`${prefix}.render.duration`, {
     description: "RSC render duration",
     unit: "ms",
-    advice: { explicitBucketBoundaries: [...DURATION_HISTOGRAM_BOUNDARIES_MS] },
+    advice,
   });
 
   const rscStreamDuration = meter.createHistogram(`${prefix}.stream.duration`, {
     description: "RSC stream duration",
     unit: "ms",
-    advice: { explicitBucketBoundaries: [...DURATION_HISTOGRAM_BOUNDARIES_MS] },
+    advice,
   });
 
-  const createRequestCounter = (name: string, description: string): Counter =>
-    meter.createCounter(`${prefix}.${name}`, {
+  function createRequestCounter(name: string, description: string): Counter {
+    return meter.createCounter(`${prefix}.${name}`, {
       description,
       unit: "requests",
     });
+  }
 
   const rscManifestCounter = createRequestCounter(
     "manifest",

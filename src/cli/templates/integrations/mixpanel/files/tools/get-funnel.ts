@@ -22,14 +22,20 @@ export default tool({
       name: funnel.name,
       dateRange: { from, to },
       overallConversionRate: `${overallConversionRate.toFixed(2)}%`,
-      steps: funnel.steps.map((step, index) => ({
-        stepNumber: index + 1,
-        event: step.event,
-        count: step.count,
-        overallConversionRate: `${(step.overall_conv_ratio * 100).toFixed(2)}%`,
-        stepConversionRate: `${(step.step_conv_ratio * 100).toFixed(2)}%`,
-        averageTime: step.avg_time ? `${(step.avg_time / 60).toFixed(1)} minutes` : "N/A",
-      })),
+      steps: funnel.steps.map((step, index) => {
+        const averageTime = step.avg_time
+          ? `${(step.avg_time / 60).toFixed(1)} minutes`
+          : "N/A";
+
+        return {
+          stepNumber: index + 1,
+          event: step.event,
+          count: step.count,
+          overallConversionRate: `${(step.overall_conv_ratio * 100).toFixed(2)}%`,
+          stepConversionRate: `${(step.step_conv_ratio * 100).toFixed(2)}%`,
+          averageTime,
+        };
+      }),
       data: funnel.data,
     };
   },

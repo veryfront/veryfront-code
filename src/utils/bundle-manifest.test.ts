@@ -21,9 +21,7 @@ describe("InMemoryBundleManifestStore", () => {
       compiledAt: Date.now(),
       source: "test.mdx",
       mode: "development",
-      meta: {
-        type: "mdx",
-      },
+      meta: { type: "mdx" },
     };
 
     const code: BundleCode = {
@@ -31,14 +29,14 @@ describe("InMemoryBundleManifestStore", () => {
     };
 
     await store.setBundleMetadata("test-key", metadata);
-    await store.setBundleCode("code-hash-1", code);
+    await store.setBundleCode(metadata.codeHash, code);
 
     const retrievedMetadata = await store.getBundleMetadata("test-key");
     assertExists(retrievedMetadata);
     assertEquals(retrievedMetadata.hash, metadata.hash);
     assertEquals(retrievedMetadata.codeHash, metadata.codeHash);
 
-    const retrievedCode = await store.getBundleCode("code-hash-1");
+    const retrievedCode = await store.getBundleCode(metadata.codeHash);
     assertExists(retrievedCode);
     assertEquals(retrievedCode.code, code.code);
 
@@ -113,12 +111,12 @@ describe("InMemoryBundleManifestStore", () => {
     };
 
     await store.setBundleMetadata("test-key", metadata);
-    await store.setBundleCode("code-hash-3", code);
+    await store.setBundleCode(metadata.codeHash, code);
 
     await store.deleteBundle("test-key");
 
     assertEquals(await store.getBundleMetadata("test-key"), undefined);
-    assertEquals(await store.getBundleCode("code-hash-3"), undefined);
+    assertEquals(await store.getBundleCode(metadata.codeHash), undefined);
   });
 
   it("clear all", async () => {
@@ -134,12 +132,12 @@ describe("InMemoryBundleManifestStore", () => {
     };
 
     await store.setBundleMetadata("test-key", metadata);
-    await store.setBundleCode("code-hash-4", { code: "test" });
+    await store.setBundleCode(metadata.codeHash, { code: "test" });
 
     await store.clear();
 
     assertEquals(await store.getBundleMetadata("test-key"), undefined);
-    assertEquals(await store.getBundleCode("code-hash-4"), undefined);
+    assertEquals(await store.getBundleCode(metadata.codeHash), undefined);
   });
 
   it("statistics", async () => {
@@ -201,13 +199,8 @@ describe("computeCodeHash", () => {
   });
 
   it("different for different content", async () => {
-    const code1: BundleCode = {
-      code: "export default function Test1() {}",
-    };
-
-    const code2: BundleCode = {
-      code: "export default function Test2() {}",
-    };
+    const code1: BundleCode = { code: "export default function Test1() {}" };
+    const code2: BundleCode = { code: "export default function Test2() {}" };
 
     const hash1 = await computeCodeHash(code1);
     const hash2 = await computeCodeHash(code2);

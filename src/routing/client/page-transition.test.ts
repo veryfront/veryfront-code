@@ -36,6 +36,12 @@ interface MockDocument {
   createElement?: (tag: string) => MockElement;
 }
 
+function collectText(element: MockElement): string {
+  let text = element.textContent ?? "";
+  for (const child of element._children ?? []) text += collectText(child);
+  return text;
+}
+
 function setupMockDOM(): {
   mockDocument: MockDocument;
   mockRoot: MockElement;
@@ -51,12 +57,6 @@ function setupMockDOM(): {
 
   let scrollToX = 0;
   let scrollToY = 0;
-
-  function collectText(element: any): string {
-    let text = element.textContent || "";
-    for (const child of element._children ?? []) text += collectText(child);
-    return text;
-  }
 
   const mockRootChildren: MockElement[] = [];
   let mockRootInnerHTML = "";
@@ -111,8 +111,8 @@ function setupMockDOM(): {
     appendChild: (child: MockElement) => {
       mockHeadElements.push(child);
     },
-    querySelector: (selector: string) => {
-      return mockHeadElements.find((el) => {
+    querySelector: (selector: string) =>
+      mockHeadElements.find((el) => {
         if (selector.includes('name="description"')) {
           return el.getAttribute?.("name") === "description";
         }
@@ -120,8 +120,7 @@ function setupMockDOM(): {
           return el.getAttribute?.("property") === "og:title";
         }
         return false;
-      }) ?? null;
-    },
+      }) ?? null,
   };
 
   const mockDocument: MockDocument = {
@@ -142,7 +141,7 @@ function setupMockDOM(): {
       let onclick: (() => void) | null = null;
       let type = "";
 
-      const element: MockElement = {
+      return {
         tagName: tag.toUpperCase(),
         _children: children,
         setAttribute: (name: string, value: string) => {
@@ -183,8 +182,6 @@ function setupMockDOM(): {
           type = value;
         },
       };
-
-      return element;
     },
   };
 
@@ -210,353 +207,356 @@ function setupMockDOM(): {
   };
 }
 
+function withMocks(
+  test: (mocks: ReturnType<typeof setupMockDOM>) => void | Promise<void>,
+): () => void | Promise<void> {
+  return async () => {
+    const mocks = setupMockDOM();
+    try {
+      await test(mocks);
+    } finally {
+      mocks.cleanup();
+    }
+  };
+}
+
 describe("PageTransition", () => {
   describe("Constructor", () => {
-    it("should create PageTransition with setupViewportPrefetch callback", () => {
-      const mocks = setupMockDOM();
-
-      const pageTransition = new PageTransition(() => {});
-      assertExists(pageTransition, "PageTransition instance should be created");
-
-      mocks.cleanup();
-    });
+    it(
+      "should create PageTransition with setupViewportPrefetch callback",
+      withMocks(() => {
+        const pageTransition = new PageTransition(() => {});
+        assertExists(pageTransition, "PageTransition instance should be created");
+      }),
+    );
   });
 
   describe("updatePage", () => {
-    it("should update document title when frontmatter includes title", () => {
-      const mocks = setupMockDOM();
-      const pageTransition = new PageTransition(() => {});
+    it(
+      "should update document title when frontmatter includes title",
+      withMocks((mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        const data: RouteData = {
+          html: "<div>Content</div>",
+          frontmatter: { title: "New Page Title" },
+        };
 
-      const data: RouteData = {
-        html: "<div>Content</div>",
-        frontmatter: { title: "New Page Title" },
-      };
+        pageTransition.updatePage(data, false, 0);
 
-      pageTransition.updatePage(data, false, 0);
+        assertEquals(
+          mocks.mockDocument.title,
+          "New Page Title",
+          "Document title should be updated from frontmatter",
+        );
+      }),
+    );
 
-      assertEquals(
-        mocks.mockDocument.title,
-        "New Page Title",
-        "Document title should be updated from frontmatter",
-      );
+    it(
+      "should not update document title when frontmatter has no title",
+      withMocks((mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        const originalTitle = mocks.mockDocument.title;
+        const data: RouteData = {
+          html: "<div>Content</div>",
+          frontmatter: {},
+        };
 
-      mocks.cleanup();
-    });
+        pageTransition.updatePage(data, false, 0);
 
-    it("should not update document title when frontmatter has no title", () => {
-      const mocks = setupMockDOM();
-      const pageTransition = new PageTransition(() => {});
+        assertEquals(
+          mocks.mockDocument.title,
+          originalTitle,
+          "Document title should remain unchanged when no title in frontmatter",
+        );
+      }),
+    );
 
-      const originalTitle = mocks.mockDocument.title;
-      const data: RouteData = {
-        html: "<div>Content</div>",
-        frontmatter: {},
-      };
+    it(
+      "should update meta tags from frontmatter",
+      withMocks(() => {
+        const pageTransition = new PageTransition(() => {});
+        const data: RouteData = {
+          html: "<div>Content</div>",
+          frontmatter: {
+            description: "Test description",
+            ogTitle: "Test OG Title",
+          },
+        };
 
-      pageTransition.updatePage(data, false, 0);
+        pageTransition.updatePage(data, false, 0);
 
-      assertEquals(
-        mocks.mockDocument.title,
-        originalTitle,
-        "Document title should remain unchanged when no title in frontmatter",
-      );
+        assertExists(pageTransition, "PageTransition should handle meta tag updates");
+      }),
+    );
 
-      mocks.cleanup();
-    });
+    it(
+      "should perform transition when root element exists and html is not empty",
+      withMocks(async (mocks) => {
+        let prefetchCalled = false;
+        const pageTransition = new PageTransition(() => {
+          prefetchCalled = true;
+        });
 
-    it("should update meta tags from frontmatter", () => {
-      const mocks = setupMockDOM();
-      const pageTransition = new PageTransition(() => {});
+        const data: RouteData = {
+          html: "<div>New Content</div>",
+          frontmatter: {},
+        };
 
-      const data: RouteData = {
-        html: "<div>Content</div>",
-        frontmatter: {
-          description: "Test description",
-          ogTitle: "Test OG Title",
-        },
-      };
+        pageTransition.updatePage(data, false, 0);
 
-      pageTransition.updatePage(data, false, 0);
+        await delay(200);
 
-      assertExists(pageTransition, "PageTransition should handle meta tag updates");
+        assertEquals(
+          mocks.mockRoot.innerHTML,
+          "<div>New Content</div>",
+          "Root element should contain new HTML after transition",
+        );
+        assertEquals(prefetchCalled, true, "Viewport prefetch should be set up after transition");
+      }),
+    );
 
-      mocks.cleanup();
-    });
+    it(
+      "should not perform transition when root element is missing",
+      withMocks((mocks) => {
+        mocks.mockDocument.getElementById = () => null;
 
-    it("should perform transition when root element exists and html is not empty", async () => {
-      const mocks = setupMockDOM();
+        const pageTransition = new PageTransition(() => {});
+        const data: RouteData = { html: "<div>Content</div>", frontmatter: {} };
 
-      let prefetchCalled = false;
-      const pageTransition = new PageTransition(() => {
-        prefetchCalled = true;
-      });
+        pageTransition.updatePage(data, false, 0);
+      }),
+    );
 
-      const data: RouteData = {
-        html: "<div>New Content</div>",
-        frontmatter: {},
-      };
+    it(
+      "should not perform transition when html is empty string",
+      withMocks((mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        const originalHtml = mocks.mockRoot.innerHTML;
+        const data: RouteData = { html: "", frontmatter: {} };
 
-      pageTransition.updatePage(data, false, 0);
+        pageTransition.updatePage(data, false, 0);
 
-      await delay(200);
-
-      assertEquals(
-        mocks.mockRoot.innerHTML,
-        "<div>New Content</div>",
-        "Root element should contain new HTML after transition",
-      );
-      assertEquals(prefetchCalled, true, "Viewport prefetch should be set up after transition");
-
-      mocks.cleanup();
-    });
-
-    it("should not perform transition when root element is missing", () => {
-      const mocks = setupMockDOM();
-      mocks.mockDocument.getElementById = () => null;
-
-      const pageTransition = new PageTransition(() => {});
-      const data: RouteData = { html: "<div>Content</div>", frontmatter: {} };
-
-      pageTransition.updatePage(data, false, 0);
-
-      mocks.cleanup();
-    });
-
-    it("should not perform transition when html is empty string", () => {
-      const mocks = setupMockDOM();
-      const pageTransition = new PageTransition(() => {});
-
-      const originalHtml = mocks.mockRoot.innerHTML;
-      const data: RouteData = { html: "", frontmatter: {} };
-
-      pageTransition.updatePage(data, false, 0);
-
-      assertEquals(
-        mocks.mockRoot.innerHTML,
-        originalHtml,
-        "Root element should not change when html is empty",
-      );
-
-      mocks.cleanup();
-    });
+        assertEquals(
+          mocks.mockRoot.innerHTML,
+          originalHtml,
+          "Root element should not change when html is empty",
+        );
+      }),
+    );
   });
 
   describe("performTransition (via updatePage)", () => {
-    it("should fade out root element before transition", () => {
-      const mocks = setupMockDOM();
-      const pageTransition = new PageTransition(() => {});
+    it(
+      "should fade out root element before transition",
+      withMocks((mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        const data: RouteData = { html: "<div>New Content</div>", frontmatter: {} };
 
-      const data: RouteData = { html: "<div>New Content</div>", frontmatter: {} };
+        mocks.mockRoot.style!.opacity = "1";
+        pageTransition.updatePage(data, false, 0);
 
-      mocks.mockRoot.style!.opacity = "1";
-      pageTransition.updatePage(data, false, 0);
+        assertEquals(
+          mocks.mockRoot.style!.opacity,
+          "0",
+          "Root element opacity should be set to 0 immediately",
+        );
+      }),
+    );
 
-      assertEquals(
-        mocks.mockRoot.style!.opacity,
-        "0",
-        "Root element opacity should be set to 0 immediately",
-      );
+    it(
+      "should fade in root element after transition",
+      withMocks(async (mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        const data: RouteData = { html: "<div>New Content</div>", frontmatter: {} };
 
-      mocks.cleanup();
-    });
+        pageTransition.updatePage(data, false, 0);
 
-    it("should fade in root element after transition", async () => {
-      const mocks = setupMockDOM();
-      const pageTransition = new PageTransition(() => {});
+        await delay(200);
 
-      const data: RouteData = { html: "<div>New Content</div>", frontmatter: {} };
+        assertEquals(
+          mocks.mockRoot.style!.opacity,
+          "1",
+          "Root element opacity should be set to 1 after transition",
+        );
+      }),
+    );
 
-      pageTransition.updatePage(data, false, 0);
+    it(
+      "should scroll to top when isPopState is false",
+      withMocks(async (mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        const data: RouteData = { html: "<div>Content</div>", frontmatter: {} };
 
-      await delay(200);
+        pageTransition.updatePage(data, false, 0);
 
-      assertEquals(
-        mocks.mockRoot.style!.opacity,
-        "1",
-        "Root element opacity should be set to 1 after transition",
-      );
+        await delay(200);
 
-      mocks.cleanup();
-    });
+        assertEquals(mocks.getScrollPosition().y, 0, "Should scroll to top for forward navigation");
+      }),
+    );
 
-    it("should scroll to top when isPopState is false", async () => {
-      const mocks = setupMockDOM();
-      const pageTransition = new PageTransition(() => {});
+    it(
+      "should restore scroll position when isPopState is true",
+      withMocks(async (mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        const data: RouteData = { html: "<div>Content</div>", frontmatter: {} };
 
-      const data: RouteData = { html: "<div>Content</div>", frontmatter: {} };
+        const savedScrollY = 500;
+        pageTransition.updatePage(data, true, savedScrollY);
 
-      pageTransition.updatePage(data, false, 0);
+        await delay(200);
 
-      await delay(200);
+        assertEquals(
+          mocks.getScrollPosition().y,
+          savedScrollY,
+          "Should restore scroll position for back/forward navigation",
+        );
+      }),
+    );
 
-      assertEquals(mocks.getScrollPosition().y, 0, "Should scroll to top for forward navigation");
+    it(
+      "should handle scroll errors gracefully",
+      withMocks(async () => {
+        (globalThis as any).scrollTo = () => {
+          throw new Error("Scroll failed");
+        };
 
-      mocks.cleanup();
-    });
+        const pageTransition = new PageTransition(() => {});
+        const data: RouteData = { html: "<div>Content</div>", frontmatter: {} };
 
-    it("should restore scroll position when isPopState is true", async () => {
-      const mocks = setupMockDOM();
-      const pageTransition = new PageTransition(() => {});
+        pageTransition.updatePage(data, false, 0);
 
-      const data: RouteData = { html: "<div>Content</div>", frontmatter: {} };
-
-      const savedScrollY = 500;
-      pageTransition.updatePage(data, true, savedScrollY);
-
-      await delay(200);
-
-      assertEquals(
-        mocks.getScrollPosition().y,
-        savedScrollY,
-        "Should restore scroll position for back/forward navigation",
-      );
-
-      mocks.cleanup();
-    });
-
-    it("should handle scroll errors gracefully", async () => {
-      const mocks = setupMockDOM();
-      (globalThis as any).scrollTo = () => {
-        throw new Error("Scroll failed");
-      };
-
-      const pageTransition = new PageTransition(() => {});
-      const data: RouteData = { html: "<div>Content</div>", frontmatter: {} };
-
-      pageTransition.updatePage(data, false, 0);
-
-      await delay(200);
-
-      mocks.cleanup();
-    });
+        await delay(200);
+      }),
+    );
   });
 
   describe("showError", () => {
-    it("should display error message in root element", () => {
-      const mocks = setupMockDOM();
-      const pageTransition = new PageTransition(() => {});
+    it(
+      "should display error message in root element",
+      withMocks((mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        const error = new Error("Network request failed");
 
-      const error = new Error("Network request failed");
-      pageTransition.showError(error);
+        pageTransition.showError(error);
 
-      assertEquals(
-        mocks.mockRoot.innerHTML?.includes("Oops! Something went wrong"),
-        true,
-        "Error heading should be displayed",
-      );
-      assertEquals(
-        mocks.mockRoot.innerHTML?.includes("Network request failed"),
-        true,
-        "Error message should be displayed",
-      );
-      assertEquals(
-        mocks.mockRoot.innerHTML?.includes("Reload Page"),
-        true,
-        "Reload button should be displayed",
-      );
+        assertEquals(
+          mocks.mockRoot.innerHTML?.includes("Oops! Something went wrong"),
+          true,
+          "Error heading should be displayed",
+        );
+        assertEquals(
+          mocks.mockRoot.innerHTML?.includes("Network request failed"),
+          true,
+          "Error message should be displayed",
+        );
+        assertEquals(
+          mocks.mockRoot.innerHTML?.includes("Reload Page"),
+          true,
+          "Reload button should be displayed",
+        );
+      }),
+    );
 
-      mocks.cleanup();
-    });
+    it(
+      "should handle missing root element gracefully",
+      withMocks((mocks) => {
+        mocks.mockDocument.getElementById = () => null;
 
-    it("should handle missing root element gracefully", () => {
-      const mocks = setupMockDOM();
-      mocks.mockDocument.getElementById = () => null;
+        const pageTransition = new PageTransition(() => {});
+        pageTransition.showError(new Error("Test error"));
+      }),
+    );
 
-      const pageTransition = new PageTransition(() => {});
-      pageTransition.showError(new Error("Test error"));
+    it(
+      "should include error message in displayed content",
+      withMocks((mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        const errorMessage = 'Custom error message with special characters <>&"';
 
-      mocks.cleanup();
-    });
+        pageTransition.showError(new Error(errorMessage));
 
-    it("should include error message in displayed content", () => {
-      const mocks = setupMockDOM();
-      const pageTransition = new PageTransition(() => {});
-
-      const errorMessage = 'Custom error message with special characters <>&"';
-      pageTransition.showError(new Error(errorMessage));
-
-      assertEquals(
-        mocks.mockRoot.innerHTML?.includes(errorMessage),
-        true,
-        "Custom error message should be included in error display",
-      );
-
-      mocks.cleanup();
-    });
+        assertEquals(
+          mocks.mockRoot.innerHTML?.includes(errorMessage),
+          true,
+          "Custom error message should be included in error display",
+        );
+      }),
+    );
   });
 
   describe("setLoadingState", () => {
-    it("should show loading indicator when loading is true", () => {
-      const mocks = setupMockDOM();
-      const pageTransition = new PageTransition(() => {});
+    it(
+      "should show loading indicator when loading is true",
+      withMocks((mocks) => {
+        const pageTransition = new PageTransition(() => {});
 
-      pageTransition.setLoadingState(true);
+        pageTransition.setLoadingState(true);
 
-      assertEquals(
-        mocks.mockLoadingIndicator.style!.display,
-        "block",
-        "Loading indicator should be visible",
-      );
-      assertEquals(
-        mocks.mockBodyClasses.has("veryfront-loading"),
-        true,
-        "Body should have loading class",
-      );
+        assertEquals(
+          mocks.mockLoadingIndicator.style!.display,
+          "block",
+          "Loading indicator should be visible",
+        );
+        assertEquals(
+          mocks.mockBodyClasses.has("veryfront-loading"),
+          true,
+          "Body should have loading class",
+        );
+      }),
+    );
 
-      mocks.cleanup();
-    });
+    it(
+      "should hide loading indicator when loading is false",
+      withMocks((mocks) => {
+        const pageTransition = new PageTransition(() => {});
 
-    it("should hide loading indicator when loading is false", () => {
-      const mocks = setupMockDOM();
-      const pageTransition = new PageTransition(() => {});
+        pageTransition.setLoadingState(true);
+        pageTransition.setLoadingState(false);
 
-      pageTransition.setLoadingState(true);
-      pageTransition.setLoadingState(false);
+        assertEquals(
+          mocks.mockLoadingIndicator.style!.display,
+          "none",
+          "Loading indicator should be hidden",
+        );
+        assertEquals(
+          mocks.mockBodyClasses.has("veryfront-loading"),
+          false,
+          "Body should not have loading class",
+        );
+      }),
+    );
 
-      assertEquals(
-        mocks.mockLoadingIndicator.style!.display,
-        "none",
-        "Loading indicator should be hidden",
-      );
-      assertEquals(
-        mocks.mockBodyClasses.has("veryfront-loading"),
-        false,
-        "Body should not have loading class",
-      );
+    it(
+      "should handle missing loading indicator gracefully",
+      withMocks((mocks) => {
+        mocks.mockDocument.getElementById = (id: string) => (id === "root" ? mocks.mockRoot : null);
 
-      mocks.cleanup();
-    });
+        const pageTransition = new PageTransition(() => {});
+        pageTransition.setLoadingState(true);
 
-    it("should handle missing loading indicator gracefully", () => {
-      const mocks = setupMockDOM();
-      mocks.mockDocument.getElementById = (id: string) => (id === "root" ? mocks.mockRoot : null);
+        assertEquals(
+          mocks.mockBodyClasses.has("veryfront-loading"),
+          true,
+          "Body class should still be updated even without indicator element",
+        );
+      }),
+    );
 
-      const pageTransition = new PageTransition(() => {});
-      pageTransition.setLoadingState(true);
+    it(
+      "should toggle loading state multiple times",
+      withMocks((mocks) => {
+        const pageTransition = new PageTransition(() => {});
 
-      assertEquals(
-        mocks.mockBodyClasses.has("veryfront-loading"),
-        true,
-        "Body class should still be updated even without indicator element",
-      );
+        pageTransition.setLoadingState(true);
+        assertEquals(mocks.mockLoadingIndicator.style!.display, "block");
 
-      mocks.cleanup();
-    });
+        pageTransition.setLoadingState(false);
+        assertEquals(mocks.mockLoadingIndicator.style!.display, "none");
 
-    it("should toggle loading state multiple times", () => {
-      const mocks = setupMockDOM();
-      const pageTransition = new PageTransition(() => {});
-
-      pageTransition.setLoadingState(true);
-      assertEquals(mocks.mockLoadingIndicator.style!.display, "block");
-
-      pageTransition.setLoadingState(false);
-      assertEquals(mocks.mockLoadingIndicator.style!.display, "none");
-
-      pageTransition.setLoadingState(true);
-      assertEquals(mocks.mockLoadingIndicator.style!.display, "block");
-
-      mocks.cleanup();
-    });
+        pageTransition.setLoadingState(true);
+        assertEquals(mocks.mockLoadingIndicator.style!.display, "block");
+      }),
+    );
   });
 });

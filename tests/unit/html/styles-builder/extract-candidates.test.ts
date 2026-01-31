@@ -1,29 +1,20 @@
-/**
- * Comprehensive tests for Tailwind CSS v4 candidate extraction.
- *
- * Tests cover all Tailwind features to ensure the regex pattern
- * correctly identifies class candidates from source content.
- */
-
 import { assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { extractCandidates } from "../../../../src/html/styles-builder/tailwind-compiler.ts";
 
-describe("extractCandidates", () => {
-  /**
-   * Helper to test that specific classes are extracted from content
-   */
-  function assertExtractsClasses(content: string, expectedClasses: string[]) {
-    const result = extractCandidates(content);
-    for (const cls of expectedClasses) {
-      assertEquals(
-        result.includes(cls),
-        true,
-        `Expected to extract "${cls}" from content. Got: [${result.join(", ")}]`,
-      );
-    }
-  }
+function assertExtractsClasses(content: string, expectedClasses: string[]): void {
+  const result = extractCandidates(content);
 
+  for (const cls of expectedClasses) {
+    assertEquals(
+      result.includes(cls),
+      true,
+      `Expected to extract "${cls}" from content. Got: [${result.join(", ")}]`,
+    );
+  }
+}
+
+describe("extractCandidates", () => {
   describe("Basic Utilities", () => {
     it("should extract simple utility classes", () => {
       const content = `<div className="mt-4 bg-blue-500 text-white p-2">`;
@@ -620,22 +611,25 @@ describe("extractCandidates", () => {
     it("should deduplicate classes", () => {
       const content = `className="mt-4 mt-4 bg-blue-500 bg-blue-500"`;
       const result = extractCandidates(content);
-      const mt4Count = result.filter((c) => c === "mt-4").length;
-      const bgCount = result.filter((c) => c === "bg-blue-500").length;
-      assertEquals(mt4Count, 1, "Should deduplicate mt-4");
-      assertEquals(bgCount, 1, "Should deduplicate bg-blue-500");
+
+      assertEquals(result.filter((c) => c === "mt-4").length, 1, "Should deduplicate mt-4");
+      assertEquals(
+        result.filter((c) => c === "bg-blue-500").length,
+        1,
+        "Should deduplicate bg-blue-500",
+      );
     });
 
     it("should handle empty content", () => {
-      const result = extractCandidates("");
-      assertEquals(result.length, 0, "Should return empty array for empty content");
+      assertEquals(extractCandidates("").length, 0, "Should return empty array for empty content");
     });
 
     it("should handle content with no classes", () => {
       const content = "Hello world! This is some text.";
       const result = extractCandidates(content);
-      // Note: words like "Hello", "world", "This", etc. will be extracted but that's fine
-      // The important thing is it doesn't crash
+
+      // Note: words like "Hello", "world", "This", etc. will be extracted but that's fine.
+      // The important thing is it doesn't crash.
       assertEquals(Array.isArray(result), true, "Should return an array");
     });
 

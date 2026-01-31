@@ -116,11 +116,7 @@ describe("base.ts type exports", () => {
 
   describe("ServeOptions", () => {
     it("should define serve options structure", () => {
-      const options: ServeOptions = {
-        port: 3000,
-        hostname: "localhost",
-      };
-
+      const options: ServeOptions = { port: 3000, hostname: "localhost" };
       assertEquals(options, { port: 3000, hostname: "localhost" });
     });
 

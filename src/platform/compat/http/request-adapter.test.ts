@@ -2,6 +2,10 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { convertNodeRequestToWebRequest } from "./request-adapter.ts";
 
+function createMockReq(method: string, headers: Record<string, string>) {
+  return { method, headers };
+}
+
 describe("convertNodeRequestToWebRequest", () => {
   it("should export the function", () => {
     assertExists(convertNodeRequestToWebRequest);
@@ -9,12 +13,10 @@ describe("convertNodeRequestToWebRequest", () => {
   });
 
   it("should convert a GET request", () => {
-    const mockReq = {
-      method: "GET",
-      headers: { "content-type": "application/json" },
-    };
-
-    const result = convertNodeRequestToWebRequest(mockReq as any, "http://localhost/test");
+    const result = convertNodeRequestToWebRequest(
+      createMockReq("GET", { "content-type": "application/json" }) as any,
+      "http://localhost/test",
+    );
 
     assertExists(result);
     assertEquals(result.method, "GET");
@@ -22,12 +24,10 @@ describe("convertNodeRequestToWebRequest", () => {
   });
 
   it("should convert a POST request", () => {
-    const mockReq = {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-    };
-
-    const result = convertNodeRequestToWebRequest(mockReq as any, "http://localhost/api");
+    const result = convertNodeRequestToWebRequest(
+      createMockReq("POST", { "content-type": "application/json" }) as any,
+      "http://localhost/api",
+    );
 
     assertExists(result);
     assertEquals(result.method, "POST");
@@ -35,15 +35,13 @@ describe("convertNodeRequestToWebRequest", () => {
   });
 
   it("should preserve headers", () => {
-    const mockReq = {
-      method: "GET",
-      headers: {
+    const result = convertNodeRequestToWebRequest(
+      createMockReq("GET", {
         "x-custom-header": "custom-value",
         authorization: "Bearer token",
-      },
-    };
-
-    const result = convertNodeRequestToWebRequest(mockReq as any, "http://localhost/test");
+      }) as any,
+      "http://localhost/test",
+    );
 
     assertEquals(result.headers.get("x-custom-header"), "custom-value");
     assertEquals(result.headers.get("authorization"), "Bearer token");

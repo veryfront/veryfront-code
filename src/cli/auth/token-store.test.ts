@@ -39,7 +39,7 @@ describe("Token Store", () => {
   afterEach(async () => {
     await safeDeleteToken();
 
-    if (originalXdgConfig) {
+    if (originalXdgConfig != null) {
       setEnv("XDG_CONFIG_HOME", originalXdgConfig);
     } else {
       deleteEnv("XDG_CONFIG_HOME");

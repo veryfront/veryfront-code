@@ -17,7 +17,7 @@ export interface TailwindBatchOptions {
 
 export interface AssetPipelineOptions {
   images?: ImageOptimizationOptions;
-  css?: CSSOptimizationOptions & { enabled?: boolean };
+  css?: (CSSOptimizationOptions & { enabled?: boolean }) | undefined;
   tailwind?: TailwindBatchOptions;
 }
 
@@ -84,8 +84,9 @@ export async function runAssetPipeline(
     }
   }
 
-  if (options.tailwind?.enabled !== false && options.tailwind) {
-    const { projectDir, sourceDir = "styles", outputDir = ".veryfront/css" } = options.tailwind;
+  const tailwindOptions = options.tailwind;
+  if (tailwindOptions && tailwindOptions.enabled !== false) {
+    const { projectDir, sourceDir = "styles", outputDir = ".veryfront/css" } = tailwindOptions;
 
     if (!projectDir) {
       logger.warn("Tailwind CSS processing skipped: projectDir not provided");
@@ -97,8 +98,9 @@ export async function runAssetPipeline(
           outputDir,
         );
 
+        result.tailwind.enabled = true;
+
         if (tailwindResults.length === 0) {
-          result.tailwind.enabled = true;
           logger.info("Tailwind CSS processing skipped - no Tailwind files detected", {
             directory: sourceDir,
           });

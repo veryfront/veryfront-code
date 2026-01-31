@@ -24,7 +24,7 @@ export function generateVariant(
 ): Promise<ImageVariant | null> {
   return withSpan(
     "build.asset.generateVariant",
-    async () => {
+    async (): Promise<ImageVariant | null> => {
       const fs = createFileSystem();
 
       try {
@@ -45,8 +45,8 @@ export function generateVariant(
         return {
           format,
           size: width,
-          width: processedMetadata.width || width,
-          height: processedMetadata.height || Math.round(width / aspectRatio),
+          width: processedMetadata.width ?? width,
+          height: processedMetadata.height ?? Math.round(width / aspectRatio),
           path: relative(outputDir, outputPath),
           fileSize: buffer.length,
         };
@@ -78,11 +78,12 @@ export function generateImageVariants(
 ): Promise<ImageVariant[]> {
   return withSpan(
     "build.asset.generateImageVariants",
-    async () => {
+    async (): Promise<ImageVariant[]> => {
       const variants: ImageVariant[] = [];
-      const originalWidth = metadata.width || 1920;
+      const originalWidth = metadata.width ?? 1920;
+      const metaWidth = metadata.width;
 
-      const validSizes = sizes.filter((size) => !metadata.width || metadata.width >= size);
+      const validSizes = metaWidth ? sizes.filter((size) => metaWidth >= size) : sizes;
       const allSizes = [...validSizes, originalWidth];
 
       for (const size of allSizes) {

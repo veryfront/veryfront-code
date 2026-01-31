@@ -16,48 +16,33 @@ import {
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
-/** Check if hostname matches project domain (including www variant) */
 function isProjectDomain(hostname: string): boolean {
   const projectDomain = getSSRProjectDomain();
   if (!projectDomain) return false;
   return hostname === projectDomain || hostname === `www.${projectDomain}`;
 }
 
-/**
- * Rewrite fetch URL for SSR.
- * - Handles relative URLs (starting with /) by prepending localhost
- * - Redirects requests to the project's own domain to the local server
- */
 function rewriteFetchUrlForSSR(url: string): string {
   const serverPort = getSSRServerPort();
   if (!serverPort) return url;
 
-  if (url.startsWith("/")) {
-    return `http://localhost:${serverPort}${url}`;
-  }
+  if (url.startsWith("/")) return `http://localhost:${serverPort}${url}`;
 
   try {
     const parsed = new URL(url);
-    if (isProjectDomain(parsed.hostname)) {
-      return `http://localhost:${serverPort}${parsed.pathname}${parsed.search}`;
-    }
+    if (!isProjectDomain(parsed.hostname)) return url;
+    return `http://localhost:${serverPort}${parsed.pathname}${parsed.search}`;
   } catch {
-    // Invalid URL, return as-is
+    return url;
   }
-
-  return url;
 }
 
-/** Extract URL string from fetch input */
 function extractUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
   if (input instanceof URL) return input.toString();
   return input.url;
 }
 
-/**
- * Check if a URL is an API endpoint that should be client-only.
- */
 function isClientOnlyApiUrl(url: string): boolean {
   if (url.startsWith("/api/")) return true;
 
@@ -83,9 +68,7 @@ function createSSRFetch(): typeof fetch {
       "veryfront.fetch_rewritten": rewrittenUrl !== url,
     };
 
-    if (rewrittenUrl !== url) {
-      spanAttributes["http.original_url"] = url;
-    }
+    if (rewrittenUrl !== url) spanAttributes["http.original_url"] = url;
 
     try {
       const parsed = new URL(rewrittenUrl);
@@ -108,12 +91,15 @@ function createSSRFetch(): typeof fetch {
           return response;
         }
 
-        const response =
-          await (rewrittenUrl === url
-            ? originalFetch(input, init)
-            : typeof input === "string" || input instanceof URL
-            ? originalFetch(rewrittenUrl, init)
-            : originalFetch(new Request(rewrittenUrl, input), init));
+        let response: Response;
+
+        if (rewrittenUrl === url) {
+          response = await originalFetch(input, init);
+        } else if (typeof input === "string" || input instanceof URL) {
+          response = await originalFetch(rewrittenUrl, init);
+        } else {
+          response = await originalFetch(new Request(rewrittenUrl, input), init);
+        }
 
         setActiveSpanAttributes({ "http.status_code": response.status });
         return response;

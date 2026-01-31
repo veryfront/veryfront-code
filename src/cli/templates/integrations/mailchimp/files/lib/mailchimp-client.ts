@@ -130,7 +130,7 @@ function buildQueryString(params: Record<string, string | number | undefined>): 
   const searchParams = new URLSearchParams();
 
   for (const [key, value] of Object.entries(params)) {
-    if (value === undefined) continue;
+    if (value == null) continue;
     searchParams.set(key, String(value));
   }
 
@@ -163,11 +163,16 @@ async function initializeBaseUrl(): Promise<void> {
   }
 }
 
-async function mailchimpFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+async function requireAccessToken(): Promise<string> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Mailchimp. Please connect your account.");
   }
+  return token;
+}
+
+async function mailchimpFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const token = await requireAccessToken();
 
   if (MAILCHIMP_BASE_URL === "https://us1.api.mailchimp.com/3.0") {
     await initializeBaseUrl();
@@ -184,9 +189,7 @@ async function mailchimpFetch<T>(endpoint: string, options: RequestInit = {}): P
 
   if (!response.ok) {
     const error = (await response.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(
-      `Mailchimp API error: ${response.status} ${error.detail ?? response.statusText}`,
-    );
+    throw new Error(`Mailchimp API error: ${response.status} ${error.detail ?? response.statusText}`);
   }
 
   return response.json();
@@ -246,10 +249,6 @@ export async function listMembers(
 }
 
 export async function getMetadata(): Promise<MailchimpMetadata> {
-  const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with Mailchimp. Please connect your account.");
-  }
-
+  const token = await requireAccessToken();
   return fetchMetadata(token);
 }

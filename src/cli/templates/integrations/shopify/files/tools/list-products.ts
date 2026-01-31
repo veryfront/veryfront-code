@@ -22,26 +22,36 @@ export default tool({
   async execute({ limit, status, productType }) {
     const products = await listProducts({ limit, status, productType });
 
-    return products.map((product) => ({
-      id: product.id,
-      title: product.title,
-      vendor: product.vendor,
-      productType: product.product_type,
-      status: product.status,
-      tags: product.tags,
-      createdAt: product.created_at,
-      variants: product.variants.map((variant) => ({
-        id: variant.id,
-        title: variant.title,
-        price: variant.price,
-        sku: variant.sku,
-        inventoryQuantity: variant.inventory_quantity,
-      })),
-      images: product.images.map((image) => ({
-        id: image.id,
-        src: image.src,
-        alt: image.alt,
-      })),
-    }));
+    return products.map(
+      ({
+        id,
+        title,
+        vendor,
+        product_type,
+        status: productStatus,
+        tags,
+        created_at,
+        variants,
+        images,
+      }) => ({
+        id,
+        title,
+        vendor,
+        productType: product_type,
+        status: productStatus,
+        tags,
+        createdAt: created_at,
+        variants: variants.map(
+          ({ id, title, price, sku, inventory_quantity }) => ({
+            id,
+            title,
+            price,
+            sku,
+            inventoryQuantity: inventory_quantity,
+          }),
+        ),
+        images: images.map(({ id, src, alt }) => ({ id, src, alt })),
+      }),
+    );
   },
 });

@@ -38,6 +38,17 @@ interface InFlightEntry {
   startedAt: number;
 }
 
+function hashPreview(content: string): number {
+  return content
+    .slice(0, 100)
+    .split("")
+    .reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
+}
+
+function previewText(content: string, max = 80): string {
+  return content.length > max ? `${content.slice(0, max)}...` : content;
+}
+
 export class ReadOperations {
   private readonly inFlightRequests = new Map<string, InFlightEntry>();
   private lastCleanupTime = 0;
@@ -63,12 +74,12 @@ export class ReadOperations {
   }
 
   clearFileListIndex(): void {
-    if (this.fileListIndex) {
-      const size = this.fileListIndex.size;
-      this.fileListIndex = null;
-      this.fileListIndexKey = null;
-      logger.debug("[ReadOperations] Cleared file list index", { entriesCleared: size });
-    }
+    if (!this.fileListIndex) return;
+
+    const size = this.fileListIndex.size;
+    this.fileListIndex = null;
+    this.fileListIndexKey = null;
+    logger.debug("[ReadOperations] Cleared file list index", { entriesCleared: size });
   }
 
   private cleanupStaleInFlightRequests(): void {
@@ -87,8 +98,8 @@ export class ReadOperations {
     }
 
     if (this.inFlightRequests.size > MAX_IN_FLIGHT_REQUESTS) {
-      const entries = [...this.inFlightRequests.entries()].sort((a, b) =>
-        a[1].startedAt - b[1].startedAt
+      const entries = [...this.inFlightRequests.entries()].sort(
+        (a, b) => a[1].startedAt - b[1].startedAt,
       );
       const toRemove = entries.slice(0, this.inFlightRequests.size - MAX_IN_FLIGHT_REQUESTS);
       for (const [key] of toRemove) {
@@ -119,9 +130,7 @@ export class ReadOperations {
       return null;
     }
 
-    const cacheCheckSample = fileList.find((f) =>
-      f.path.includes("Welcome") || f.path.includes("welcome")
-    );
+    const cacheCheckSample = fileList.find((f) => /welcome/i.test(f.path));
     logger.debug("[ReadOperations] getOrBuildFileListIndex: got file list from cache", {
       fileListSize: fileList.length,
       filesWithContent: fileList.filter((f) => f.content).length,
@@ -133,9 +142,7 @@ export class ReadOperations {
     const indexKey = `${fileList.length}:${fileList[0]?.path ?? ""}:${
       fileList[fileList.length - 1]?.path ?? ""
     }`;
-    if (this.fileListIndex && this.fileListIndexKey === indexKey) {
-      return this.fileListIndex;
-    }
+    if (this.fileListIndex && this.fileListIndexKey === indexKey) return this.fileListIndex;
 
     const index = new Map<string, string>();
     for (const file of fileList) {
@@ -145,20 +152,14 @@ export class ReadOperations {
     this.fileListIndex = index;
     this.fileListIndexKey = indexKey;
 
-    const sampleFile = fileList.find((f) =>
-      f.path.includes("Welcome") || f.path.includes("welcome")
-    );
+    const sampleFile = fileList.find((f) => /welcome/i.test(f.path));
     const sampleContent = sampleFile?.content;
-    const sampleHash = sampleContent?.slice(0, 100).split("").reduce(
-      (h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0,
-      0,
-    );
     logger.debug("[ReadOperations] Built file list index", {
       fileListSize: fileList.length,
       indexedWithContent: index.size,
       sampleFilePath: sampleFile?.path,
       sampleContentLength: sampleContent?.length,
-      sampleContentHash: sampleHash,
+      sampleContentHash: sampleContent ? hashPreview(sampleContent) : undefined,
       sampleContentPreview: sampleContent?.slice(0, 200)?.replace(/\n/g, "\\n"),
     });
 
@@ -189,16 +190,11 @@ export class ReadOperations {
       return undefined;
     }
 
-    const contentPreview = content.length > 200 ? content.slice(0, 200) + "..." : content;
-    const contentHash = content.slice(0, 100).split("").reduce(
-      (h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0,
-      0,
-    );
     logger.debug("[ReadOperations] FILE_LIST_CACHE_HIT - serving from file list cache", {
       path: normalizedPath,
       contentLength: content.length,
-      contentHash,
-      contentPreview: contentPreview.replace(/\n/g, "\\n"),
+      contentHash: hashPreview(content),
+      contentPreview: previewText(content, 200).replace(/\n/g, "\\n"),
     });
 
     return content;
@@ -234,7 +230,6 @@ export class ReadOperations {
     const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
     const cacheKey = `${cacheKeyPrefix}:${normalizedPath}`;
     const isProduction = this.contextProvider?.isProductionMode() ?? false;
-    let skipPersistentCaches = false;
 
     logger.debug("[ReadOperations] fetchContent context", {
       path: normalizedPath,
@@ -250,49 +245,46 @@ export class ReadOperations {
 
     const requestCached = getRequestScopedFile(cacheKey);
     if (requestCached) {
-      const preview = requestCached.length > 80
-        ? requestCached.slice(0, 80) + "..."
-        : requestCached;
       logger.debug("[ReadOperations] REQUEST_CACHE_HIT", {
         path: normalizedPath,
         cacheKey,
         contentLength: requestCached.length,
-        preview: preview.replace(/\n/g, "\\n"),
+        preview: previewText(requestCached).replace(/\n/g, "\\n"),
       });
       return requestCached;
     }
 
-    if (isProduction) {
-      // Skip persistent cache if this prefix is being invalidated (prevents stale reads during deletion)
-      const currentReleaseId = ctx?.releaseId;
-      const isPrefixInvalidated =
-        this.contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false;
-      const isReleaseInvalidated = currentReleaseId &&
-        this.contextProvider?.isReleaseBeingInvalidated?.(currentReleaseId);
+    const currentReleaseId = ctx?.releaseId;
+    const isPrefixInvalidated =
+      (isProduction && this.contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix)) ??
+        false;
+    const isReleaseInvalidated = isProduction && currentReleaseId
+      ? this.contextProvider?.isReleaseBeingInvalidated?.(currentReleaseId)
+      : undefined;
 
-      skipPersistentCaches = isPrefixInvalidated || !!isReleaseInvalidated;
+    const skipPersistentCaches = !!(isPrefixInvalidated || isReleaseInvalidated);
 
-      if (skipPersistentCaches) {
-        logger.info("[ReadOperations] PERSISTENT_CACHE_SKIPPED - cache invalidation in progress", {
+    if (isProduction && skipPersistentCaches) {
+      logger.info("[ReadOperations] PERSISTENT_CACHE_SKIPPED - cache invalidation in progress", {
+        path: normalizedPath,
+        cacheKey,
+        cacheKeyPrefix,
+        releaseId: currentReleaseId ?? undefined,
+        prefixInvalidated: isPrefixInvalidated,
+      });
+    }
+
+    if (isProduction && !skipPersistentCaches) {
+      const cached = await this.cache.getAsync<string>(cacheKey);
+      if (cached) {
+        logger.debug("[ReadOperations] PERSISTENT_CACHE_HIT", {
           path: normalizedPath,
           cacheKey,
-          cacheKeyPrefix,
-          releaseId: currentReleaseId ?? undefined,
-          prefixInvalidated: isPrefixInvalidated,
+          contentLength: cached.length,
+          preview: previewText(cached).replace(/\n/g, "\\n"),
         });
-      } else {
-        const cached = await this.cache.getAsync<string>(cacheKey);
-        if (cached) {
-          const preview = cached.length > 80 ? cached.slice(0, 80) + "..." : cached;
-          logger.debug("[ReadOperations] PERSISTENT_CACHE_HIT", {
-            path: normalizedPath,
-            cacheKey,
-            contentLength: cached.length,
-            preview: preview.replace(/\n/g, "\\n"),
-          });
-          setRequestScopedFile(cacheKey, cached);
-          return cached;
-        }
+        setRequestScopedFile(cacheKey, cached);
+        return cached;
       }
     }
 
@@ -351,6 +343,7 @@ export class ReadOperations {
             isProduction,
           );
         }
+
         return await this.fetchDraftContent(normalizedPath, apiPath, cacheKey, isProduction);
       } finally {
         this.inFlightRequests.delete(cacheKey);
@@ -443,7 +436,6 @@ export class ReadOperations {
 
     try {
       const result = await this.client.resolveFileWithExtension(basePath, [...EXTENSION_PRIORITY]);
-
       if (!result) return null;
 
       logger.debug("[ReadOperations] Pattern search found file", {
@@ -525,11 +517,10 @@ export class ReadOperations {
 
     const content = await this.client.getFileContent(apiPath);
 
-    const preview = content.length > 80 ? content.slice(0, 80) + "..." : content;
     logger.info("[ReadOperations] API_FETCH_DONE - got content from API", {
       path: normalizedPath,
       contentLength: content.length,
-      preview: preview.replace(/\n/g, "\\n"),
+      preview: previewText(content).replace(/\n/g, "\\n"),
       willCache: shouldCache,
     });
 

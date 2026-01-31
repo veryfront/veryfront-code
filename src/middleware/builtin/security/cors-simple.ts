@@ -5,7 +5,7 @@ import { validateOriginSync } from "#veryfront/security/http/cors/validators.ts"
 import { HTTP_NO_CONTENT } from "#veryfront/utils/constants/http.ts";
 
 export function corsSimple(options: CORSOptions | string = "*"): Middleware {
-  const origin = typeof options === "string" ? options : (options.origin ?? "*");
+  const origin = typeof options === "string" ? options : options.origin ?? "*";
 
   return async (ctx, next) => {
     const req = getRequest(ctx);
@@ -25,10 +25,10 @@ export function corsSimple(options: CORSOptions | string = "*"): Middleware {
     const res = await next();
     if (!res) return res;
 
+    if (!validation.allowedOrigin) return res;
+
     const headers = new Headers(res.headers);
-    if (validation.allowedOrigin) {
-      headers.set("Access-Control-Allow-Origin", validation.allowedOrigin);
-    }
+    headers.set("Access-Control-Allow-Origin", validation.allowedOrigin);
 
     return new Response(res.body, { status: res.status, headers });
   };

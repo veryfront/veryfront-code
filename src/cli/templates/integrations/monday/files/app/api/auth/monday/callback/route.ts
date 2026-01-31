@@ -1,16 +1,10 @@
-/**
- * Monday.com OAuth Callback
- *
- * Handles the OAuth callback from Monday.com and stores the tokens.
- */
-
 import { createOAuthCallbackHandler, memoryTokenStore, mondayConfig } from "veryfront/oauth";
 import { tokenStore } from "../../../../../lib/token-store.ts";
 
 const USER_ID = "current-user";
 
 const hybridTokenStore = {
-  async getTokens(serviceId: string) {
+  getTokens(serviceId: string) {
     return tokenStore.getToken(USER_ID, serviceId);
   },
   async setTokens(

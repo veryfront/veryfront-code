@@ -1,5 +1,6 @@
 export function getDevStyles(nonce?: string): string {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+
   return `
   <style${nonceAttr}>
     .dev-indicator {
@@ -30,15 +31,20 @@ export function getDevStyles(nonce?: string): string {
   </style>`;
 }
 
+function getNonceAttr(nonce?: string): string {
+  return nonce ? ` nonce="${nonce}"` : "";
+}
+
 export function getDevScripts(_hmrPort?: number, nonce?: string): string {
-  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+  const nonceAttr = getNonceAttr(nonce);
+
   return `
   <script type="module" src="/_veryfront/rsc/client.js"${nonceAttr}></script>
   <script type="module" src="/_veryfront/hmr.js"${nonceAttr}></script>`;
 }
 
 export function getProdScripts(slug: string, nonce?: string): string {
-  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+  const nonceAttr = getNonceAttr(nonce);
   const encodedSlug = encodeURIComponent(slug);
 
   return `
@@ -56,7 +62,7 @@ export interface StudioScriptOptions {
 }
 
 export function getStudioScripts(options: StudioScriptOptions): string {
-  const nonceAttr = options.nonce ? ` nonce="${options.nonce}"` : "";
+  const nonceAttr = getNonceAttr(options.nonce);
 
   const params = new URLSearchParams({
     projectId: options.projectId,

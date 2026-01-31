@@ -6,7 +6,6 @@
 
 import { getValidToken } from "./oauth.ts";
 
-// Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
   // @ts-ignore - Deno global
   if (typeof Deno !== "undefined") {
@@ -76,10 +75,7 @@ export const slackOAuthProvider = {
   callbackPath: "/api/auth/slack/callback",
 };
 
-/**
- * Create a Slack client for a specific user
- */
-export function createSlackClient(userId: string): {
+export interface SlackClient {
   listChannels(options?: {
     limit?: number;
     excludeArchived?: boolean;
@@ -99,7 +95,12 @@ export function createSlackClient(userId: string): {
     query: string,
     options?: { count?: number },
   ): Promise<SlackMessage[]>;
-} {
+}
+
+/**
+ * Create a Slack client for a specific user
+ */
+export function createSlackClient(userId: string): SlackClient {
   async function getAccessToken(): Promise<string> {
     const token = await getValidToken(slackOAuthProvider, userId, "slack");
     if (!token) {
@@ -176,15 +177,12 @@ export function createSlackClient(userId: string): {
       text: string,
       options = {},
     ): Promise<{ ts: string; channel: string }> {
-      return await apiRequest<{ ts: string; channel: string }>(
-        "chat.postMessage",
-        {
-          channel: channelId,
-          text,
-          thread_ts: options.threadTs,
-          unfurl_links: options.unfurlLinks ?? true,
-        },
-      );
+      return apiRequest<{ ts: string; channel: string }>("chat.postMessage", {
+        channel: channelId,
+        text,
+        thread_ts: options.threadTs,
+        unfurl_links: options.unfurlLinks ?? true,
+      });
     },
 
     /**
@@ -231,5 +229,3 @@ export function createSlackClient(userId: string): {
     },
   };
 }
-
-export type SlackClient = ReturnType<typeof createSlackClient>;

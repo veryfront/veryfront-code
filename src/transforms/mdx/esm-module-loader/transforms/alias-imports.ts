@@ -58,10 +58,12 @@ function findAliasImports(code: string): AliasImport[] {
 }
 
 function createFileReader(fs: FSAdapter): (path: string) => Promise<string | null> {
+  const decoder = new TextDecoder();
+
   return async (path: string): Promise<string | null> => {
     try {
       const content = await fs.readFile(path);
-      return typeof content === "string" ? content : new TextDecoder().decode(content);
+      return typeof content === "string" ? content : decoder.decode(content);
     } catch {
       return null;
     }
@@ -69,8 +71,16 @@ function createFileReader(fs: FSAdapter): (path: string) => Promise<string | nul
 }
 
 function getPathDesc(imp: AliasImport): string {
-  if (imp.type === "project-alias") return `@/${imp.relativePath}`;
-  return `/_vf_modules/${imp.relativePath}`;
+  return imp.type === "project-alias"
+    ? `@/${imp.relativePath}`
+    : `/_vf_modules/${imp.relativePath}`;
+}
+
+function getEsbuildLoader(extension: string): "tsx" | "jsx" | "ts" | null {
+  if (extension === ".tsx") return "tsx";
+  if (extension === ".jsx") return "jsx";
+  if (extension === ".ts") return "ts";
+  return null;
 }
 
 async function transformImport(
@@ -92,12 +102,8 @@ async function transformImport(
   try {
     let transformed = content;
 
-    if (extension === ".tsx" || extension === ".jsx" || extension === ".ts") {
-      let loader: "tsx" | "jsx" | "ts";
-      if (extension === ".tsx") loader = "tsx";
-      else if (extension === ".jsx") loader = "jsx";
-      else loader = "ts";
-
+    const loader = getEsbuildLoader(extension);
+    if (loader) {
       const esbuildResult = await transform(content, {
         loader,
         jsx: "transform",
@@ -124,9 +130,7 @@ async function transformImport(
       ? `import ${imp.importClause} from "file://${transformedPath}";`
       : `from "file://${transformedPath}"`;
 
-    logger.debug(
-      `${LOG_PREFIX_MDX_LOADER} Transformed ${getPathDesc(imp)} -> ${transformedPath}`,
-    );
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Transformed ${getPathDesc(imp)} -> ${transformedPath}`);
 
     return { original: imp.original, replacement };
   } catch (error) {
@@ -168,7 +172,7 @@ export async function transformProjectAliasImports(
   fs: FSAdapter,
   esmCacheDir: string,
 ): Promise<string> {
-  return await transformAliasImports(code, fs, esmCacheDir, "project-alias");
+  return transformAliasImports(code, fs, esmCacheDir, "project-alias");
 }
 
 /**
@@ -180,5 +184,5 @@ export async function transformModuleServerImports(
   fs: FSAdapter,
   esmCacheDir: string,
 ): Promise<string> {
-  return await transformAliasImports(code, fs, esmCacheDir, "vf-modules");
+  return transformAliasImports(code, fs, esmCacheDir, "vf-modules");
 }

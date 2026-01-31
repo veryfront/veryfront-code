@@ -8,20 +8,23 @@ describe("cli/discovery/config-validator", () => {
     it("should return valid with no providers configured", () => {
       const config = {} as VeryfrontConfig;
       const result = validateAIConfig(config);
+
       assertEquals(result.valid, true);
       assertEquals(result.warnings.length, 0);
       assertEquals(result.errors.length, 0);
     });
 
     it("should return valid when ai config is undefined", () => {
-      const config = { ai: undefined } as unknown as VeryfrontConfig;
+      const config = { ai: undefined } as VeryfrontConfig;
       const result = validateAIConfig(config);
+
       assertEquals(result.valid, true);
     });
 
     it("should return valid when ai.providers is undefined", () => {
-      const config = { ai: {} } as unknown as VeryfrontConfig;
+      const config = { ai: {} } as VeryfrontConfig;
       const result = validateAIConfig(config);
+
       assertEquals(result.valid, true);
       assertEquals(result.warnings.length, 0);
     });
@@ -33,12 +36,13 @@ describe("cli/discovery/config-validator", () => {
             openai: {},
           },
         },
-      } as unknown as VeryfrontConfig;
+      } as VeryfrontConfig;
       const result = validateAIConfig(config);
+
       assertEquals(result.valid, true);
       assertEquals(result.warnings.length, 1);
-      assertEquals(result.warnings[0]!.includes("openai"), true);
-      assertEquals(result.warnings[0]!.includes("OPENAI_API_KEY"), true);
+      assertEquals(result.warnings[0]?.includes("openai"), true);
+      assertEquals(result.warnings[0]?.includes("OPENAI_API_KEY"), true);
     });
 
     it("should not warn when provider has apiKey", () => {
@@ -48,8 +52,9 @@ describe("cli/discovery/config-validator", () => {
             openai: { apiKey: "sk-test" },
           },
         },
-      } as unknown as VeryfrontConfig;
+      } as VeryfrontConfig;
       const result = validateAIConfig(config);
+
       assertEquals(result.valid, true);
       assertEquals(result.warnings.length, 0);
     });
@@ -63,8 +68,9 @@ describe("cli/discovery/config-validator", () => {
             groq: { apiKey: "key-exists" },
           },
         },
-      } as unknown as VeryfrontConfig;
+      } as VeryfrontConfig;
       const result = validateAIConfig(config);
+
       assertEquals(result.warnings.length, 2);
     });
 
@@ -75,9 +81,10 @@ describe("cli/discovery/config-validator", () => {
             anthropic: {},
           },
         },
-      } as unknown as VeryfrontConfig;
+      } as VeryfrontConfig;
       const result = validateAIConfig(config);
-      assertEquals(result.warnings[0]!.includes("ANTHROPIC_API_KEY"), true);
+
+      assertEquals(result.warnings[0]?.includes("ANTHROPIC_API_KEY"), true);
     });
   });
 });

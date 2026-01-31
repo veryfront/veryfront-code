@@ -10,9 +10,9 @@ async function assertExport(
 
   assertExists(value);
 
-  if (expectedType) {
-    assertEquals(typeof value, expectedType);
-  }
+  if (!expectedType) return;
+
+  assertEquals(typeof value, expectedType);
 }
 
 describe("adapters/index.ts exports", () => {

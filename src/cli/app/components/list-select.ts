@@ -49,24 +49,20 @@ export interface ListSelectState<T = unknown> {
  * Create initial list state
  */
 export function createListState<T>(items: ListItem<T>[]): ListSelectState<T> {
-  return {
-    items,
-    selectedIndex: 0,
-    scrollOffset: 0,
-  };
+  return { items, selectedIndex: 0, scrollOffset: 0 };
 }
 
 /**
  * Move selection up
  */
 export function moveUp<T>(state: ListSelectState<T>): ListSelectState<T> {
-  if (state.items.length === 0) return state;
+  const { items, selectedIndex, scrollOffset } = state;
+  if (items.length === 0) return state;
 
-  const newIndex = state.selectedIndex > 0 ? state.selectedIndex - 1 : state.items.length - 1;
+  const newIndex = selectedIndex > 0 ? selectedIndex - 1 : items.length - 1;
+  const newScrollOffset = newIndex < scrollOffset ? newIndex : scrollOffset;
 
-  const scrollOffset = newIndex < state.scrollOffset ? newIndex : state.scrollOffset;
-
-  return { ...state, selectedIndex: newIndex, scrollOffset };
+  return { ...state, selectedIndex: newIndex, scrollOffset: newScrollOffset };
 }
 
 /**
@@ -76,19 +72,19 @@ export function moveDown<T>(
   state: ListSelectState<T>,
   visibleCount = 10,
 ): ListSelectState<T> {
-  if (state.items.length === 0) return state;
+  const { items, selectedIndex, scrollOffset } = state;
+  if (items.length === 0) return state;
 
-  const newIndex = state.selectedIndex < state.items.length - 1 ? state.selectedIndex + 1 : 0;
+  const newIndex = selectedIndex < items.length - 1 ? selectedIndex + 1 : 0;
 
-  let scrollOffset = state.scrollOffset;
-
+  let newScrollOffset = scrollOffset;
   if (newIndex === 0) {
-    scrollOffset = 0;
+    newScrollOffset = 0;
   } else if (newIndex >= scrollOffset + visibleCount) {
-    scrollOffset = newIndex - visibleCount + 1;
+    newScrollOffset = newIndex - visibleCount + 1;
   }
 
-  return { ...state, selectedIndex: newIndex, scrollOffset };
+  return { ...state, selectedIndex: newIndex, scrollOffset: newScrollOffset };
 }
 
 /**
@@ -112,6 +108,12 @@ export function getSelectedItem<T>(
   return state.items[state.selectedIndex];
 }
 
+function getShortcut(displayNum: number): string | undefined {
+  if (displayNum <= 0 || displayNum > 35) return undefined;
+  if (displayNum <= 9) return String(displayNum);
+  return String.fromCharCode(96 + displayNum - 9); // 10='a', 11='b', etc.
+}
+
 /**
  * Render the list as a string
  */
@@ -130,7 +132,6 @@ export function renderList<T>(
 
   if (state.items.length === 0) return `  ${dim(emptyMessage)}`;
 
-  const lines: string[] = [];
   const start = state.scrollOffset;
   const end = Math.min(start + visibleCount, state.items.length);
   const visibleItems = state.items.slice(start, end);
@@ -138,6 +139,8 @@ export function renderList<T>(
   const numberWidth = showNumbers ? 4 : 0; // " [1] "
   const cursorWidth = 2; // "› " or "  "
   const prefixWidth = numberWidth + cursorWidth;
+
+  const lines: string[] = [];
 
   for (let i = 0; i < visibleItems.length; i++) {
     const item = visibleItems[i];
@@ -148,45 +151,45 @@ export function renderList<T>(
     const displayNum = actualIndex + 1 + numberOffset;
 
     const parts: string[] = [];
-
     parts.push(isSelected ? brand("›") : " ", " ");
 
     if (showNumbers) {
-      if (displayNum <= 35) {
-        const shortcut = displayNum <= 9
-          ? String(displayNum)
-          : String.fromCharCode(96 + displayNum - 9); // 10='a', 11='b', etc.
-        parts.push(isSelected ? brand(`[${shortcut}]`) : dim(`[${shortcut}]`), " ");
+      const shortcut = getShortcut(displayNum);
+      if (shortcut) {
+        const token = `[${shortcut}]`;
+        parts.push(isSelected ? brand(token) : dim(token), " ");
       } else {
         parts.push("    ");
       }
     }
 
-    // Render label, then use remaining space for meta
-    const labelText = item.label;
     const availableForContent = maxWidth - prefixWidth;
+    const labelText = item.label;
 
-    if (item.meta) {
-      // Split space between label and meta dynamically
-      const metaText = item.meta;
-      const totalNeeded = labelText.length + 1 + metaText.length; // 1 for space
-
-      if (totalNeeded <= availableForContent) {
-        // Both fit - no truncation needed
-        parts.push(isSelected ? labelText : dim(labelText));
-        const padding = availableForContent - labelText.length - metaText.length;
-        parts.push(" ".repeat(Math.max(1, padding)), dim(metaText));
-      } else {
-        // Need to truncate - prioritize label, give rest to meta
-        const labelMax = Math.min(labelText.length, Math.floor(availableForContent * 0.4));
-        const metaMax = availableForContent - labelMax - 1;
-        const label = truncate(labelText, labelMax);
-        parts.push(isSelected ? label : dim(label));
-        parts.push(" ", dim(truncate(metaText, metaMax)));
-      }
-    } else {
+    if (!item.meta) {
       const label = truncate(labelText, availableForContent);
       parts.push(isSelected ? label : dim(label));
+      lines.push(parts.join(""));
+
+      if (isSelected && item.description) {
+        lines.push(`     ${dim(truncate(item.description, maxWidth - 5))}`);
+      }
+      continue;
+    }
+
+    const metaText = item.meta;
+    const totalNeeded = labelText.length + 1 + metaText.length; // 1 for space
+
+    if (totalNeeded <= availableForContent) {
+      parts.push(isSelected ? labelText : dim(labelText));
+      const padding = availableForContent - labelText.length - metaText.length;
+      parts.push(" ".repeat(Math.max(1, padding)), dim(metaText));
+    } else {
+      const labelMax = Math.min(labelText.length, Math.floor(availableForContent * 0.4));
+      const metaMax = availableForContent - labelMax - 1;
+      const label = truncate(labelText, labelMax);
+      parts.push(isSelected ? label : dim(label));
+      parts.push(" ", dim(truncate(metaText, metaMax)));
     }
 
     lines.push(parts.join(""));

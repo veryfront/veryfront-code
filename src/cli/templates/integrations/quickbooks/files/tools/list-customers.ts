@@ -26,6 +26,15 @@ export default tool({
     return customers.map((customer) => {
       const billAddr = customer.BillAddr;
 
+      const address = billAddr
+        ? {
+            line1: billAddr.Line1,
+            city: billAddr.City,
+            state: billAddr.CountrySubDivisionCode,
+            postalCode: billAddr.PostalCode,
+          }
+        : undefined;
+
       return {
         id: customer.Id,
         displayName: customer.DisplayName,
@@ -34,14 +43,7 @@ export default tool({
         familyName: customer.FamilyName,
         email: customer.PrimaryEmailAddr?.Address,
         phone: customer.PrimaryPhone?.FreeFormNumber,
-        address: billAddr
-          ? {
-              line1: billAddr.Line1,
-              city: billAddr.City,
-              state: billAddr.CountrySubDivisionCode,
-              postalCode: billAddr.PostalCode,
-            }
-          : undefined,
+        address,
         balance: customer.Balance,
         active: customer.Active,
       };

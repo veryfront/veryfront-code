@@ -5,6 +5,14 @@
 
 import type { Counter, Histogram, Meter } from "@opentelemetry/api";
 
+export type RSCRequestKind =
+  | "manifest"
+  | "page"
+  | "stream"
+  | "action"
+  | "error"
+  | "flight_page";
+
 export interface ObservabilityMetrics {
   recordRender: (durationMs: number) => void;
   recordCacheGet: (hit: boolean) => void;
@@ -12,7 +20,7 @@ export interface ObservabilityMetrics {
   recordCacheInvalidate: (count: number) => void;
   recordHttpRequest: () => void;
   recordRSCRequest: (
-    type: "manifest" | "page" | "stream" | "action",
+    type: Exclude<RSCRequestKind, "error" | "flight_page">,
     attributes?: Record<string, string>,
   ) => void;
   recordRSCStream: (durationMs: number) => void;
@@ -59,11 +67,3 @@ export interface OtelInstruments {
   cacheSetCounter?: Counter;
   cacheInvalidateCounter?: Counter;
 }
-
-export type RSCRequestKind =
-  | "manifest"
-  | "page"
-  | "stream"
-  | "action"
-  | "error"
-  | "flight_page";

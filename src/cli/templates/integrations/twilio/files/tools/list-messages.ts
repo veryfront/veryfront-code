@@ -2,6 +2,13 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { formatPhoneNumber, listMessages } from "../../lib/twilio-client.ts";
 
+type ListMessagesOptions = {
+  to?: string;
+  from?: string;
+  dateSent?: string;
+  limit?: number;
+};
+
 export default tool({
   id: "list-messages",
   description:
@@ -28,7 +35,7 @@ export default tool({
   }),
   execute: async ({ to, from, dateSent, limit }) => {
     try {
-      const options: { to?: string; from?: string; dateSent?: string; limit?: number } = {
+      const options: ListMessagesOptions = {
         to: to ? formatPhoneNumber(to) : undefined,
         from: from ? formatPhoneNumber(from) : undefined,
         dateSent,
@@ -62,11 +69,13 @@ export default tool({
         errorMessage: msg.error_message,
       }));
 
+      const messageCount = messages.length;
+
       return {
         success: true,
-        count: messages.length,
+        count: messageCount,
         messages: formattedMessages,
-        message: `Found ${messages.length} message${messages.length === 1 ? "" : "s"}.`,
+        message: `Found ${messageCount} message${messageCount === 1 ? "" : "s"}.`,
       };
     } catch (error) {
       if (error instanceof Error && error.message.includes("not configured")) {

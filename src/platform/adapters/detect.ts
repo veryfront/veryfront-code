@@ -41,31 +41,32 @@ export function getAdapter(): Promise<RuntimeAdapter> {
   return withSpan(
     "platform.adapter.getAdapter",
     async () => {
-      if (runtimeId === "deno") {
-        const { denoAdapter } = await import("./deno.ts");
-        return denoAdapter;
+      switch (runtimeId) {
+        case "deno": {
+          const { denoAdapter } = await import("./deno.ts");
+          return denoAdapter;
+        }
+        case "bun": {
+          const { bunAdapter } = await import("./bun.ts");
+          return bunAdapter;
+        }
+        case "node": {
+          const { nodeAdapter } = await import("./node.ts");
+          return nodeAdapter;
+        }
+        case "cloudflare":
+          return throwConfigError(
+            "Cloudflare adapter requires manual initialization with environment. Please use createCloudflareAdapter() with your environment context.",
+          );
+        default: {
+          const supportedRuntimes = ["deno", "bun", "node", "cloudflare"];
+          throwConfigError(
+            `Unsupported runtime: ${runtimeId}. Supported runtimes: ${
+              supportedRuntimes.join(", ")
+            }`,
+          );
+        }
       }
-
-      if (runtimeId === "bun") {
-        const { bunAdapter } = await import("./bun.ts");
-        return bunAdapter;
-      }
-
-      if (runtimeId === "node") {
-        const { nodeAdapter } = await import("./node.ts");
-        return nodeAdapter;
-      }
-
-      if (runtimeId === "cloudflare") {
-        throwConfigError(
-          "Cloudflare adapter requires manual initialization with environment. Please use createCloudflareAdapter() with your environment context.",
-        );
-      }
-
-      const supportedRuntimes = ["deno", "bun", "node", "cloudflare"];
-      throwConfigError(
-        `Unsupported runtime: ${runtimeId}. Supported runtimes: ${supportedRuntimes.join(", ")}`,
-      );
     },
     { "adapter.runtime": runtimeId },
   );

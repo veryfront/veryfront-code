@@ -9,10 +9,8 @@ import { tokenStore } from "../../../../../lib/token-store.ts";
 
 const USER_ID = "current-user";
 
-// Hybrid adapter: uses framework's memoryTokenStore for state (PKCE),
-// but user's tokenStore for actual token storage
 const hybridTokenStore = {
-  async getTokens(serviceId: string) {
+  getTokens(serviceId: string) {
     return tokenStore.getToken(USER_ID, serviceId);
   },
   async setTokens(

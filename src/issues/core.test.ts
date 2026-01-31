@@ -92,8 +92,7 @@ This is the body.
 });
 
 Deno.test("parseFrontmatter - returns null for invalid content", () => {
-  const content = "No frontmatter here";
-  const result = parseFrontmatter(content);
+  const result = parseFrontmatter("No frontmatter here");
   assertEquals(result, null);
 });
 
@@ -171,8 +170,7 @@ The login page times out.
 });
 
 Deno.test("parseIssue - returns null for invalid content", () => {
-  const content = "Not a valid issue file";
-  const issue = parseIssue(content, "invalid.md");
+  const issue = parseIssue("Not a valid issue file", "invalid.md");
   assertEquals(issue, null);
 });
 

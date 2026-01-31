@@ -143,16 +143,10 @@ export const USE_CASE_CONFIGS: Record<UseCaseName, UseCaseConfig> = {
 function getModuleDir(): string {
   const moduleUrl = new URL(".", import.meta.url);
 
-  if (moduleUrl.protocol !== "file:") {
-    return moduleUrl.href;
-  }
+  if (moduleUrl.protocol !== "file:") return moduleUrl.href;
 
   let moduleDir = moduleUrl.pathname;
-  if (
-    typeof process !== "undefined" &&
-    process.platform === "win32" &&
-    moduleDir.startsWith("/")
-  ) {
+  if (typeof process !== "undefined" && process.platform === "win32" && moduleDir.startsWith("/")) {
     moduleDir = moduleDir.slice(1);
   }
 
@@ -195,10 +189,9 @@ export async function loadIntegration(
   const config = await loadIntegrationConfig(integrationName);
   if (!config) return null;
 
-  return {
-    config,
-    files: await loadTemplateFromDirectory(`integration:${integrationName}`),
-  };
+  const files = await loadTemplateFromDirectory(`integration:${integrationName}`);
+
+  return { config, files };
 }
 
 /**
@@ -211,11 +204,11 @@ export function validateIntegrations(integrations: IntegrationName[]): {
   const errors: string[] = [];
 
   for (const integration of integrations) {
-    if (!AVAILABLE_INTEGRATIONS.includes(integration)) {
-      errors.push(
-        `Unknown integration: ${integration}. Available: ${AVAILABLE_INTEGRATIONS.join(", ")}`,
-      );
-    }
+    if (AVAILABLE_INTEGRATIONS.includes(integration)) continue;
+
+    errors.push(
+      `Unknown integration: ${integration}. Available: ${AVAILABLE_INTEGRATIONS.join(", ")}`,
+    );
   }
 
   return { valid: errors.length === 0, errors };
@@ -237,13 +230,13 @@ export async function loadIntegrations(
 
   for (const name of integrationNames) {
     const integration = await loadIntegration(name);
-
     if (!integration) {
       errors.push(`Integration not found: ${name}`);
       continue;
     }
 
     integrations.push(integration);
+
     for (const file of integration.files) {
       // Later integrations override earlier ones
       fileMap.set(file.path, file);
@@ -252,7 +245,7 @@ export async function loadIntegrations(
 
   return {
     integrations,
-    files: Array.from(fileMap.values()).sort((a, b) => a.path.localeCompare(b.path)),
+    files: [...fileMap.values()].sort((a, b) => a.path.localeCompare(b.path)),
     errors,
   };
 }
@@ -260,9 +253,7 @@ export async function loadIntegrations(
 /**
  * Check if an integration exists
  */
-export async function integrationExists(
-  integrationName: string,
-): Promise<boolean> {
+export async function integrationExists(integrationName: string): Promise<boolean> {
   const fs = createFileSystem();
   const integrationDir = getIntegrationDirectory(integrationName);
 
@@ -526,18 +517,17 @@ export async function getValidToken(
 
   // Check if token needs refresh
   if (token.expiresAt && Date.now() > token.expiresAt - 60000) {
-    if (token.refreshToken) {
-      try {
-        const newToken = await refreshAccessToken(provider, token.refreshToken);
-        await tokenStore.setToken(userId, serviceName, newToken);
-        return newToken.accessToken;
-      } catch {
-        // Refresh failed, token is invalid
-        await tokenStore.deleteToken(userId, serviceName);
-        return null;
-      }
+    if (!token.refreshToken) return null;
+
+    try {
+      const newToken = await refreshAccessToken(provider, token.refreshToken);
+      await tokenStore.setToken(userId, serviceName, newToken);
+      return newToken.accessToken;
+    } catch {
+      // Refresh failed, token is invalid
+      await tokenStore.deleteToken(userId, serviceName);
+      return null;
     }
-    return null;
   }
 
   return token.accessToken;
@@ -576,7 +566,7 @@ export function ActionCards({ actions, onPrompt, categories }: ActionCardsProps)
 
   return (
     <div className="space-y-6">
-      {categories && categories.length > 0 && (
+      {categories?.length ? (
         <div className="flex gap-2 flex-wrap">
           <CategoryTab
             label="Featured"
@@ -592,7 +582,7 @@ export function ActionCards({ actions, onPrompt, categories }: ActionCardsProps)
             />
           ))}
         </div>
-      )}
+      ) : null}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredActions.map((action) => (
@@ -610,11 +600,11 @@ export function ActionCards({ actions, onPrompt, categories }: ActionCardsProps)
               {action.title}
             </h3>
 
-            {action.description && (
+            {action.description ? (
               <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4">
                 {action.description}
               </p>
-            )}
+            ) : null}
 
             <div className="flex items-center justify-between mt-4">
               <button
@@ -625,11 +615,11 @@ export function ActionCards({ actions, onPrompt, categories }: ActionCardsProps)
                 Try Prompt
               </button>
 
-              {action.users && (
+              {action.users ? (
                 <span className="text-sm text-orange-500 font-medium">
                   {action.users} Users
                 </span>
-              )}
+              ) : null}
             </div>
           </div>
         ))}
@@ -710,9 +700,17 @@ function ServiceBadge({
     );
   }
 
+  function handleClick(): void {
+    if (onConnect) {
+      onConnect(service.id);
+      return;
+    }
+    window.location.href = service.connectUrl;
+  }
+
   return (
     <button
-      onClick={() => (onConnect ? onConnect(service.id) : (window.location.href = service.connectUrl))}
+      onClick={handleClick}
       className="inline-flex items-center gap-2 px-3 py-1.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-full hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
     >
       <span className="w-5 h-5 opacity-50">{service.icon}</span>

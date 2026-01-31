@@ -12,52 +12,41 @@
 
 import { serverLogger as logger } from "#veryfront/utils";
 
-/**
- * Single module entry with metadata
- */
 interface ModuleEntry {
-  /** Module path (e.g., "pages/index.js") */
   path: string;
-  /** Whether this is a critical path module (page/layout) */
   critical: boolean;
-  /** Load order (lower = loaded earlier) */
   loadOrder: number;
-  /** Size in bytes (if known) */
   sizeBytes?: number;
 }
 
-/**
- * Complete manifest for a single route
- */
 interface RouteManifest {
-  /** Route slug (e.g., "", "about", "blog/[slug]") */
   route: string;
-  /** All modules needed for this route */
   modules: ModuleEntry[];
-  /** Total count of modules */
   moduleCount: number;
-  /** Total size in bytes (if all sizes known) */
   totalSizeBytes?: number;
-  /** When this manifest was last updated */
   updatedAt: number;
-  /** How many times this route has been rendered */
   renderCount: number;
 }
 
-/**
- * In-memory store for route manifests
- * Key: projectSlug:route
- */
 const manifestStore = new Map<string, RouteManifest>();
-
-/**
- * Pending module collection per request
- * Key: requestId
- */
 const pendingCollections = new Map<string, Set<string>>();
 
 function buildKey(projectSlug: string | undefined, route: string): string {
   return `${projectSlug ?? "default"}:${route || "index"}`;
+}
+
+function buildManifest(
+  route: string,
+  modules: ModuleEntry[],
+  existingRenderCount: number | undefined,
+): RouteManifest {
+  return {
+    route,
+    modules,
+    moduleCount: modules.length,
+    updatedAt: Date.now(),
+    renderCount: (existingRenderCount ?? 0) + 1,
+  };
 }
 
 export function startModuleCollection(requestId: string): void {
@@ -91,15 +80,13 @@ export function finishModuleCollection(
   let loadOrder = 0;
 
   for (const path of criticalModules) {
-    if (collection.has(path)) {
-      newModules.push({ path, critical: true, loadOrder: loadOrder++ });
-    }
+    if (!collection.has(path)) continue;
+    newModules.push({ path, critical: true, loadOrder: loadOrder++ });
   }
 
   for (const path of collection) {
-    if (!criticalSet.has(path)) {
-      newModules.push({ path, critical: false, loadOrder: loadOrder++ });
-    }
+    if (criticalSet.has(path)) continue;
+    newModules.push({ path, critical: false, loadOrder: loadOrder++ });
   }
 
   const mergedModules = existing?.modules ?? [];
@@ -111,14 +98,7 @@ export function finishModuleCollection(
     existingPaths.add(mod.path);
   }
 
-  const manifest: RouteManifest = {
-    route,
-    modules: mergedModules,
-    moduleCount: mergedModules.length,
-    updatedAt: Date.now(),
-    renderCount: (existing?.renderCount ?? 0) + 1,
-  };
-
+  const manifest = buildManifest(route, mergedModules, existing?.renderCount);
   manifestStore.set(key, manifest);
 
   logger.debug("[RouteModuleManifest] Updated manifest", {
@@ -195,14 +175,7 @@ export function recordSSRModules(
     addedCount++;
   }
 
-  const manifest: RouteManifest = {
-    route,
-    modules: existingModules,
-    moduleCount: existingModules.length,
-    updatedAt: Date.now(),
-    renderCount: (existing?.renderCount ?? 0) + 1,
-  };
-
+  const manifest = buildManifest(route, existingModules, existing?.renderCount);
   manifestStore.set(key, manifest);
 
   logger.debug("[RouteModuleManifest] Recorded SSR modules", {

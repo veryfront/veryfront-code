@@ -20,7 +20,7 @@ export default function ChatPage(): React.ReactElement {
         <div className="px-4 py-3 flex items-center justify-between">
           <h1 className="font-medium text-neutral-900 dark:text-white">AI Assistant</h1>
           <div className="flex items-center gap-4">
-            <IntegrationStatus />
+            <ServiceStatusFromAPI />
             <a
               href="/setup"
               className="text-sm text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200"
@@ -36,15 +36,11 @@ export default function ChatPage(): React.ReactElement {
   )
 }
 
-function IntegrationStatus(): React.ReactElement | null {
-  return <ServiceStatusFromAPI />
-}
-
 function ServiceStatusFromAPI(): React.ReactElement | null {
   const [integrations, setIntegrations] = useState<Integration[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState<boolean>(true)
 
-  useEffect(() => {
+  useEffect((): void => {
     async function fetchStatus(): Promise<void> {
       try {
         const res = await fetch('/api/integrations/status')
@@ -59,7 +55,7 @@ function ServiceStatusFromAPI(): React.ReactElement | null {
       }
     }
 
-    fetchStatus()
+    void fetchStatus()
   }, [])
 
   if (loading) {
@@ -72,8 +68,13 @@ function ServiceStatusFromAPI(): React.ReactElement | null {
 
   if (integrations.length === 0) return null
 
-  const connected = integrations.filter(integration => integration.connected)
-  const disconnected = integrations.filter(integration => !integration.connected)
+  const connected: Integration[] = []
+  const disconnected: Integration[] = []
+
+  for (const integration of integrations) {
+    if (integration.connected) connected.push(integration)
+    else disconnected.push(integration)
+  }
 
   return (
     <div className="flex items-center gap-2">

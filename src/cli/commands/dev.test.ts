@@ -9,10 +9,11 @@ describe("cli/commands/dev", () => {
         port: 3000,
         projectDir: "/tmp/project",
       };
-      assertEquals(options.port, 3000);
-      assertEquals(options.projectDir, "/tmp/project");
-      assertEquals(options.hmr, undefined);
-      assertEquals(options.demoMode, undefined);
+
+      assertEquals(options, {
+        port: 3000,
+        projectDir: "/tmp/project",
+      });
     });
 
     it("should accept full options", () => {
@@ -22,10 +23,13 @@ describe("cli/commands/dev", () => {
         hmr: true,
         demoMode: false,
       };
-      assertEquals(options.port, 8080);
-      assertEquals(options.projectDir, "/home/user/my-app");
-      assertEquals(options.hmr, true);
-      assertEquals(options.demoMode, false);
+
+      assertEquals(options, {
+        port: 8080,
+        projectDir: "/home/user/my-app",
+        hmr: true,
+        demoMode: false,
+      });
     });
 
     it("should accept demo mode", () => {
@@ -34,6 +38,7 @@ describe("cli/commands/dev", () => {
         projectDir: "/tmp/project",
         demoMode: true,
       };
+
       assertEquals(options.demoMode, true);
     });
 
@@ -43,6 +48,7 @@ describe("cli/commands/dev", () => {
         projectDir: "/tmp/project",
         hmr: false,
       };
+
       assertEquals(options.hmr, false);
     });
   });
@@ -53,6 +59,7 @@ describe("cli/commands/dev", () => {
         port: 3000,
         projectDir: "/tmp/project",
       };
+
       const devOptions: DevOptions = options;
       assertEquals(devOptions.port, 3000);
     });
@@ -65,6 +72,7 @@ describe("cli/commands/dev", () => {
         done: Promise.resolve(),
         stop: async () => {},
       };
+
       assertEquals(typeof result.ready.then, "function");
       assertEquals(typeof result.done.then, "function");
       assertEquals(typeof result.stop, "function");
@@ -76,11 +84,13 @@ describe("cli/commands/dev", () => {
         done: new Promise(() => {}), // never resolves
         stop: async () => {},
       };
+
       await result.ready;
     });
 
     it("should allow calling stop", async () => {
       let stopped = false;
+
       const result: DevCommandResult = {
         ready: Promise.resolve(),
         done: Promise.resolve(),
@@ -89,22 +99,18 @@ describe("cli/commands/dev", () => {
           return Promise.resolve();
         },
       };
+
       await result.stop();
       assertEquals(stopped, true);
     });
   });
 
   describe("dev command port logic", () => {
-    // The dev command calculates the final port as:
-    // - If port !== DEFAULT_DEV_PORT (3000), use the user-specified port
-    // - Otherwise, use config.dev.port or fall back to the argument port
     const DEFAULT_DEV_PORT = 3000;
 
-    function calculateFinalPort(
-      port: number,
-      configPort?: number,
-    ): number {
-      return port !== DEFAULT_DEV_PORT ? port : (configPort ?? port);
+    function calculateFinalPort(port: number, configPort?: number): number {
+      if (port !== DEFAULT_DEV_PORT) return port;
+      return configPort ?? port;
     }
 
     it("should use user-specified port when not default", () => {
@@ -121,14 +127,12 @@ describe("cli/commands/dev", () => {
 
     it("should use MCP port as finalPort + 2", () => {
       const finalPort = calculateFinalPort(3000, undefined);
-      const mcpPort = finalPort + 2;
-      assertEquals(mcpPort, 3002);
+      assertEquals(finalPort + 2, 3002);
     });
 
     it("should use HMR port as finalPort + 1", () => {
       const finalPort = calculateFinalPort(8080, undefined);
-      const hmrPort = finalPort + 1;
-      assertEquals(hmrPort, 8081);
+      assertEquals(finalPort + 1, 8081);
     });
   });
 

@@ -24,8 +24,8 @@ describe("rendering/rsc/actions/helpers", () => {
     });
 
     it("should generate unique tokens", () => {
-      const a = generateCsrfToken().token;
-      const b = generateCsrfToken().token;
+      const { token: a } = generateCsrfToken();
+      const { token: b } = generateCsrfToken();
       assertEquals(a !== b, true);
     });
   });
@@ -66,7 +66,10 @@ describe("rendering/rsc/actions/helpers", () => {
         },
       });
       assertEquals(
-        validateCsrf(req, { cookieName: "custom_csrf", headerName: "x-custom-csrf" }),
+        validateCsrf(req, {
+          cookieName: "custom_csrf",
+          headerName: "x-custom-csrf",
+        }),
         true,
       );
     });
@@ -87,11 +90,11 @@ describe("rendering/rsc/actions/helpers", () => {
 
     it("should decode a JWT payload", () => {
       const payload = { sub: "user123", role: "admin" };
-      const encodedPayload = btoa(JSON.stringify(payload));
-      const jwt = `header.${encodedPayload}.signature`;
+      const jwt = `header.${btoa(JSON.stringify(payload))}.signature`;
       const req = new Request("http://localhost/", {
         headers: { cookie: `session=${jwt}` },
       });
+
       const result = getSessionFromJwt(req);
       assertEquals(result?.sub, "user123");
       assertEquals(result?.role, "admin");
@@ -99,11 +102,11 @@ describe("rendering/rsc/actions/helpers", () => {
 
     it("should use custom cookie name", () => {
       const payload = { id: 1 };
-      const encodedPayload = btoa(JSON.stringify(payload));
-      const jwt = `h.${encodedPayload}.s`;
+      const jwt = `h.${btoa(JSON.stringify(payload))}.s`;
       const req = new Request("http://localhost/", {
         headers: { cookie: `auth=${jwt}` },
       });
+
       assertEquals(getSessionFromJwt(req, { cookieName: "auth" })?.id, 1);
     });
 

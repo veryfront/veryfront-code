@@ -6,7 +6,7 @@ import type { MiddlewareHandler } from "../types.ts";
 describe("middleware/core/pipeline/executor", () => {
   describe("executeMiddlewarePipeline", () => {
     it("should execute middleware and return response", async () => {
-      const handler: MiddlewareHandler = (_c) => new Response("hello");
+      const handler: MiddlewareHandler = () => new Response("hello");
       const res = await executeMiddlewarePipeline(
         new Request("http://localhost/"),
         handler,
@@ -55,7 +55,7 @@ describe("middleware/core/pipeline/executor", () => {
       };
       const adapter = {
         env: {
-          get: (key: string) => key === "NODE_ENV" ? "development" : undefined,
+          get: (key: string) => (key === "NODE_ENV" ? "development" : undefined),
         },
       };
       const res = await executeMiddlewarePipeline(
@@ -78,7 +78,7 @@ describe("middleware/core/pipeline/executor", () => {
       };
       const adapter = {
         env: {
-          get: (key: string) => key === "NODE_ENV" ? "production" : undefined,
+          get: (key: string) => (key === "NODE_ENV" ? "production" : undefined),
         },
       };
       const res = await executeMiddlewarePipeline(
@@ -102,11 +102,10 @@ describe("middleware/core/pipeline/executor", () => {
         capturedEnv = c.env;
         return new Response("ok");
       };
-      const env = { KEY: "value" };
       await executeMiddlewarePipeline(
         new Request("http://localhost/"),
         handler,
-        env,
+        { KEY: "value" },
       );
       assertEquals(capturedEnv?.KEY, "value");
     });

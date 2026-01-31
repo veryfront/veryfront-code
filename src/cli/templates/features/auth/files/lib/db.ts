@@ -22,9 +22,9 @@ function findUserByEmail(email: string): User | null {
 
 function createUser(data: Omit<User, "id" | "createdAt">): User {
   const now = Date.now();
-  const newUser: User = { ...data, id: `user_${now}`, createdAt: now };
-  users.push(newUser);
-  return newUser;
+  const user: User = { ...data, id: `user_${now}`, createdAt: now };
+  users.push(user);
+  return user;
 }
 
 export const db = {

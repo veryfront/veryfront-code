@@ -26,8 +26,8 @@ export class ParallelNodeHandler extends BaseNodeHandler<ParallelNodeConfig> {
   readonly nodeType = "parallel" as const;
 
   constructor(
-    private subExecutor: IDAGSubExecutor,
-    private callbacks?: ParallelNodeCallbacks,
+    private readonly subExecutor: IDAGSubExecutor,
+    private readonly callbacks?: ParallelNodeCallbacks,
   ) {
     super();
   }

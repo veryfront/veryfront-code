@@ -71,12 +71,13 @@ export class Semaphore {
 
   private release(): void {
     const next = this.waiting.shift();
-    if (next) {
-      if (next.timeoutId) clearTimeout(next.timeoutId);
-      next.resolve();
+    if (!next) {
+      this.permits++;
       return;
     }
-    this.permits++;
+
+    if (next.timeoutId) clearTimeout(next.timeoutId);
+    next.resolve();
   }
 
   get active(): number {

@@ -150,6 +150,7 @@ export async function getBoard(boardId: string): Promise<MondayBoard> {
   if (!board) {
     throw new Error(`Board with ID ${boardId} not found`);
   }
+
   return board;
 }
 
@@ -229,6 +230,7 @@ export async function getItem(itemId: string): Promise<MondayItem> {
   if (!item) {
     throw new Error(`Item with ID ${itemId} not found`);
   }
+
   return item;
 }
 
@@ -294,30 +296,31 @@ export async function updateItem(
     await mondayFetch<{ change_simple_column_value: MondayItem }>(nameQuery);
   }
 
-  if (updates.columnValues) {
-    const columnValuesStr = JSON.stringify(JSON.stringify(updates.columnValues));
-    const query = `
-      mutation {
-        change_multiple_column_values(
-          item_id: ${itemId},
-          column_values: ${columnValuesStr}
-        ) {
-          id
-          name
-          state
-          column_values {
-            id
-            text
-            title
-            type
-            value
-          }
-        }
-      }
-    `;
-    const data = await mondayFetch<{ change_multiple_column_values: MondayItem }>(query);
-    return data.change_multiple_column_values;
+  if (!updates.columnValues) {
+    return getItem(itemId);
   }
 
-  return getItem(itemId);
+  const columnValuesStr = JSON.stringify(JSON.stringify(updates.columnValues));
+  const query = `
+    mutation {
+      change_multiple_column_values(
+        item_id: ${itemId},
+        column_values: ${columnValuesStr}
+      ) {
+        id
+        name
+        state
+        column_values {
+          id
+          text
+          title
+          type
+          value
+        }
+      }
+    }
+  `;
+
+  const data = await mondayFetch<{ change_multiple_column_values: MondayItem }>(query);
+  return data.change_multiple_column_values;
 }

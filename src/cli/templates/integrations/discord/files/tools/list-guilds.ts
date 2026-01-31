@@ -15,17 +15,13 @@ export default tool({
   async execute({ includeIcons }) {
     const guilds = await listGuilds();
 
-    return guilds.map((guild) => {
-      const icon = includeIcons ? getGuildIconUrl(guild) : undefined;
-
-      return {
-        id: guild.id,
-        name: guild.name,
-        owner: guild.owner,
-        icon,
-        features: guild.features,
-        permissions: guild.permissions,
-      };
-    });
+    return guilds.map((guild) => ({
+      id: guild.id,
+      name: guild.name,
+      owner: guild.owner,
+      icon: includeIcons ? getGuildIconUrl(guild) : undefined,
+      features: guild.features,
+      permissions: guild.permissions,
+    }));
   },
 });

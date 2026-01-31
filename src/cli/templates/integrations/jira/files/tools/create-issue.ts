@@ -19,7 +19,7 @@ export default tool({
     labels: z.array(z.string()).optional().describe("Array of labels to add to the issue"),
   }),
   async execute({ projectKey, summary, issueType, description, priority, assigneeId, labels }) {
-    const issue = await createIssue({
+    const { key, id, fields } = await createIssue({
       projectKey,
       summary,
       issueType,
@@ -29,11 +29,9 @@ export default tool({
       labels,
     });
 
-    const { fields } = issue;
-
     return {
-      key: issue.key,
-      id: issue.id,
+      key,
+      id,
       summary: fields.summary,
       status: fields.status.name,
       type: fields.issuetype.name,
@@ -44,7 +42,7 @@ export default tool({
         name: fields.project.name,
       },
       created: fields.created,
-      message: `Issue ${issue.key} created successfully`,
+      message: `Issue ${key} created successfully`,
     };
   },
 });

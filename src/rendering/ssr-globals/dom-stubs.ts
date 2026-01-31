@@ -5,12 +5,19 @@ const noopNull = (): null => null;
 const noopEmptyArray = (): [] => [];
 const emptyString = "";
 
-const createClassListStub = () => ({
-  add: noop,
-  remove: noop,
-  contains: noopFalse,
-  toggle: noopFalse,
-});
+function createClassListStub(): {
+  add: () => void;
+  remove: () => void;
+  contains: () => false;
+  toggle: () => false;
+} {
+  return {
+    add: noop,
+    remove: noop,
+    contains: noopFalse,
+    toggle: noopFalse,
+  };
+}
 
 export function createElementStub(): {
   style: Record<string, unknown>;
@@ -68,7 +75,7 @@ export function createElementStub(): {
     removeChild: noop,
     insertBefore: noop,
     replaceChild: noop,
-    cloneNode: () => createElementStub(),
+    cloneNode: createElementStub,
     addEventListener: noop,
     removeEventListener: noop,
     querySelector: noopNull,
@@ -161,8 +168,8 @@ export function createDocumentStub(): {
     mozFullScreenElement: null,
     msFullscreenElement: null,
 
-    createElement: () => createElementStub(),
-    createElementNS: () => createElementStub(),
+    createElement: createElementStub,
+    createElementNS: createElementStub,
     createTextNode: () => ({ textContent: emptyString }),
     querySelector: noopNull,
     querySelectorAll: noopEmptyArray,

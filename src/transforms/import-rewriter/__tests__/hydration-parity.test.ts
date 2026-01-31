@@ -31,19 +31,15 @@ describe("Hydration Parity", () => {
         import { jsx } from "react/jsx-runtime";
       `;
 
-      const ssrCtx = createContext({ target: "ssr" });
-      const browserCtx = createContext({ target: "browser" });
+      const ssrResult = await rewriteImports(code, createContext({ target: "ssr" }));
+      const browserResult = await rewriteImports(code, createContext({ target: "browser" }));
 
-      const ssrResult = await rewriteImports(code, ssrCtx);
-      const browserResult = await rewriteImports(code, browserCtx);
-
-      // Both should resolve to the same esm.sh URLs
       expect(ssrResult).toContain(`https://esm.sh/react@${DEFAULT_REACT_VERSION}`);
       expect(browserResult).toContain(`https://esm.sh/react@${DEFAULT_REACT_VERSION}`);
 
-      // Extract React URLs and verify they match
-      const ssrReactUrl = ssrResult.match(/https:\/\/esm\.sh\/react@[\d.]+\?[^"']+/)?.[0];
-      const browserReactUrl = browserResult.match(/https:\/\/esm\.sh\/react@[\d.]+\?[^"']+/)?.[0];
+      const reactUrlPattern = /https:\/\/esm\.sh\/react@[\d.]+\?[^"']+/;
+      const ssrReactUrl = ssrResult.match(reactUrlPattern)?.[0];
+      const browserReactUrl = browserResult.match(reactUrlPattern)?.[0];
 
       expect(ssrReactUrl).toBe(browserReactUrl);
     });
@@ -54,11 +50,10 @@ describe("Hydration Parity", () => {
       const ssrResult = await rewriteImports(code, createContext({ target: "ssr" }));
       const browserResult = await rewriteImports(code, createContext({ target: "browser" }));
 
-      // Both should have external=react and target=es2022
-      expect(ssrResult).toContain("external=react");
-      expect(ssrResult).toContain("target=es2022");
-      expect(browserResult).toContain("external=react");
-      expect(browserResult).toContain("target=es2022");
+      for (const result of [ssrResult, browserResult]) {
+        expect(result).toContain("external=react");
+        expect(result).toContain("target=es2022");
+      }
     });
   });
 
@@ -68,7 +63,6 @@ describe("Hydration Parity", () => {
 
       const ssrResult = await rewriteImports(code, createContext({ target: "ssr" }));
 
-      // SSR should normalize to .js
       expect(ssrResult).toContain("./utils.js");
       expect(ssrResult).not.toContain("./utils.tsx");
     });
@@ -76,19 +70,16 @@ describe("Hydration Parity", () => {
     it("should handle path aliases consistently", async () => {
       const code = `import { Button } from "@/components/Button";`;
 
-      const ssrCtx = createContext({
-        target: "ssr",
-        filePath: "/project/pages/home/index.tsx",
-      });
-      const browserCtx = createContext({
-        target: "browser",
-        filePath: "/project/pages/home/index.tsx",
-      });
+      const ctxOverrides = { filePath: "/project/pages/home/index.tsx" };
+      const ssrResult = await rewriteImports(
+        code,
+        createContext({ target: "ssr", ...ctxOverrides }),
+      );
+      const browserResult = await rewriteImports(
+        code,
+        createContext({ target: "browser", ...ctxOverrides }),
+      );
 
-      const ssrResult = await rewriteImports(code, ssrCtx);
-      const browserResult = await rewriteImports(code, browserCtx);
-
-      // Both should resolve @/ to relative paths
       expect(ssrResult).toContain("..");
       expect(browserResult).toContain("..");
     });
@@ -100,7 +91,6 @@ describe("Hydration Parity", () => {
 
       const result = await rewriteImports(code, createContext({ target: "browser" }));
 
-      // Should use React-specific URL with deps=csstype, not generic esm.sh
       expect(result).toContain("deps=csstype");
     });
 
@@ -109,7 +99,6 @@ describe("Hydration Parity", () => {
 
       const result = await rewriteImports(code, createContext({ target: "browser" }));
 
-      // Should add external params but not double-wrap
       expect(result).not.toContain("https://esm.sh/https://");
     });
 
@@ -119,9 +108,7 @@ describe("Hydration Parity", () => {
 
       const result = await rewriteImports(code, createContext({ target: "browser" }));
 
-      // URL already has query params, should be preserved intact
       expect(result).toContain("@radix-ui/react-slot@1.0.1");
-      // Must not concatenate URLs
       expect(result).not.toContain("react-slhttps://");
       expect(result).not.toContain("react-slothttps://");
     });
@@ -135,11 +122,9 @@ describe("Hydration Parity", () => {
 
       const result = await rewriteImports(code, createContext({ target: "browser" }));
 
-      // All three imports should resolve correctly
       expect(result).toContain("@radix-ui/react-slot@1.0.1");
       expect(result).toContain(`react@${DEFAULT_REACT_VERSION}`);
       expect(result).toContain("./lib/utils");
-      // No URL corruption
       expect(result).not.toContain("https://esm.sh/https://");
     });
   });
@@ -176,8 +161,10 @@ describe("Strategy Unit Tests", () => {
 
       for (const { file, expected } of testCases) {
         const code = `import { Button } from "@/components/Button";`;
-        const ctx = createContext({ filePath: file, target: "browser" });
-        const result = await rewriteImports(code, ctx);
+        const result = await rewriteImports(
+          code,
+          createContext({ filePath: file, target: "browser" }),
+        );
         expect(result).toContain(expected);
       }
     });
@@ -236,9 +223,8 @@ describe("Strategy Unit Tests", () => {
         const code = `import { something } from "${builtin}";`;
         const result = await rewriteImports(code, createContext({ target: "browser" }));
 
-        // Must never produce esm.sh/node: URLs (they 404)
         expect(result).not.toContain(`esm.sh/${builtin}`);
-        expect(result).not.toContain(`esm.sh/node:`);
+        expect(result).not.toContain("esm.sh/node:");
       }
     });
 
@@ -246,7 +232,6 @@ describe("Strategy Unit Tests", () => {
       const code = `import { AsyncLocalStorage } from "node:async_hooks";`;
       const result = await rewriteImports(code, createContext({ target: "browser" }));
 
-      // Should use the typed polyfill module
       expect(result).toContain("/_vf_modules/_veryfront/platform/polyfills/node-async-hooks.js");
       expect(result).not.toContain('"node:async_hooks"');
     });
@@ -255,7 +240,6 @@ describe("Strategy Unit Tests", () => {
       const code = `import { something } from "node:fs";`;
       const result = await rewriteImports(code, createContext({ target: "browser" }));
 
-      // Should use the generic noop module
       expect(result).toContain("/_vf_modules/_veryfront/platform/polyfills/node-noop.js");
       expect(result).not.toContain('"node:fs"');
     });
@@ -264,7 +248,6 @@ describe("Strategy Unit Tests", () => {
       const code = `import { AsyncLocalStorage } from "node:async_hooks";`;
       const result = await rewriteImports(code, createContext({ target: "ssr" }));
 
-      // SSR should keep node: imports unchanged
       expect(result).toContain('"node:async_hooks"');
     });
 
@@ -277,14 +260,9 @@ describe("Strategy Unit Tests", () => {
 
       const result = await rewriteImports(code, createContext({ target: "browser" }));
 
-      // node: → polyfill module (not esm.sh)
       expect(result).not.toContain("esm.sh/node:");
       expect(result).toContain("/_vf_modules/_veryfront/platform/polyfills/node-async-hooks.js");
-
-      // react → esm.sh with version
       expect(result).toContain(`esm.sh/react@${DEFAULT_REACT_VERSION}`);
-
-      // veryfront/head → module server URL
       expect(result).toContain("/_vf_modules/react/components/Head.js");
     });
   });
@@ -294,16 +272,13 @@ describe("Strategy Unit Tests", () => {
       const code = `import React from "react";`;
       const result = await rewriteImports(code, createContext({ target: "browser" }));
 
-      // Should have csstype deps (from ReactStrategy), not just external=react
       expect(result).toContain("deps=csstype");
     });
 
     it("should add version warning for unversioned packages", async () => {
-      // This test verifies the warning is logged, not thrown
       const code = `import _ from "lodash";`;
       const result = await rewriteImports(code, createContext({ target: "browser" }));
 
-      // Should still resolve to esm.sh
       expect(result).toContain("esm.sh/lodash");
     });
 
@@ -311,7 +286,6 @@ describe("Strategy Unit Tests", () => {
       const code = `import { createHash } from "node:crypto";`;
       const result = await rewriteImports(code, createContext({ target: "browser" }));
 
-      // BareStrategy must not handle node: imports
       expect(result).not.toContain("esm.sh/node:crypto");
     });
   });
@@ -335,10 +309,6 @@ describe("Strategy Unit Tests", () => {
 
 describe("Regression: Full Import Chain", () => {
   it("should handle the blog page import pattern (Head → head-collector → node:async_hooks)", async () => {
-    // Simulates the blog.mdx → Head.tsx → head-collector.ts chain
-    // The head-collector.ts uses node:async_hooks which must not become esm.sh
-
-    // Step 1: blog.mdx imports
     const blogCode = `
       import { Head } from "veryfront/head";
       import { BlogList } from "@/components/blog/BlogList";
@@ -350,7 +320,6 @@ describe("Regression: Full Import Chain", () => {
     expect(blogResult).toContain("./components/blog/BlogList");
     expect(blogResult).toContain(`esm.sh/react@${DEFAULT_REACT_VERSION}`);
 
-    // Step 2: head-collector.ts imports (framework module served to browser)
     const headCollectorCode = `
       import { AsyncLocalStorage } from "node:async_hooks";
       import { isServerEnvironment } from "#veryfront/platform/compat/runtime.ts";
@@ -360,18 +329,14 @@ describe("Regression: Full Import Chain", () => {
       createContext({ target: "browser", filePath: "/project/src/react/head-collector.ts" }),
     );
 
-    // node:async_hooks must NOT become esm.sh URL
     expect(headCollectorResult).not.toContain("esm.sh/node:");
-    // Should use the typed polyfill module
     expect(headCollectorResult).toContain(
       "/_vf_modules/_veryfront/platform/polyfills/node-async-hooks.js",
     );
-    // #veryfront/* should resolve to module server
     expect(headCollectorResult).toContain("/_vf_modules/_veryfront/");
   });
 
   it("should handle isomorphic component with server-only dependency", async () => {
-    // Component that imports both browser-safe and server-only modules
     const code = `
       import React from "react";
       import { collectHead } from "#veryfront/react/head-collector.ts";
@@ -381,12 +346,10 @@ describe("Regression: Full Import Chain", () => {
     const browserResult = await rewriteImports(code, createContext({ target: "browser" }));
     const ssrResult = await rewriteImports(code, createContext({ target: "ssr" }));
 
-    // Browser: all resolved to module server URLs
     expect(browserResult).toContain("esm.sh/react@");
     expect(browserResult).toContain("/_vf_modules/_veryfront/react/head-collector.js");
     expect(browserResult).toContain("/_vf_modules/_veryfront/platform/compat/runtime.js");
 
-    // SSR: React resolved, #veryfront kept as-is
     expect(ssrResult).toContain("esm.sh/react@");
     expect(ssrResult).toContain("#veryfront/react/head-collector.ts");
     expect(ssrResult).toContain("#veryfront/platform/compat/runtime.ts");

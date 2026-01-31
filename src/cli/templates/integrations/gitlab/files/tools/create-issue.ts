@@ -7,9 +7,9 @@ export default tool({
   description:
     "Create a new issue in a GitLab project. Can set title, description, labels, assignees, milestone, and due date.",
   inputSchema: z.object({
-    projectId: z.union([z.number(), z.string()]).describe(
-      'Project ID or path (e.g., "gitlab-org/gitlab" or 278964)',
-    ),
+    projectId: z
+      .union([z.number(), z.string()])
+      .describe('Project ID or path (e.g., "gitlab-org/gitlab" or 278964)'),
     title: z.string().min(1).describe("Issue title"),
     description: z.string().optional().describe("Issue description in Markdown format"),
     labels: z.array(z.string()).optional().describe('Labels to apply (e.g., ["bug", "urgent"])'),

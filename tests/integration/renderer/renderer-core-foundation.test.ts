@@ -18,7 +18,6 @@ import { describe, it } from "@veryfront/testing/bdd";
 
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-import type { VeryfrontRenderer as _VeryfrontRenderer } from "../../../src/rendering/orchestrator/ssr.ts";
 
 // Skip tests on non-Deno runtimes (SSR uses URL-based imports)
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
@@ -83,7 +82,6 @@ describe(
         await withTestContext("renderer-core-components", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
-          // Create a test component
           await writeTextFile(
             join(context.projectDir, "components", "Button.tsx"),
             `export default function Button({ children }) {
@@ -315,6 +313,7 @@ export default function RootLayout({ children }) {
           const html = result.html;
           const rootIdx = html.indexOf('class="root"');
           const blogIdx = html.indexOf('class="blog"');
+
           assert(
             rootIdx !== -1 && blogIdx !== -1 && rootIdx < blogIdx,
             "Layouts should be nested correctly",
@@ -411,29 +410,26 @@ title: Stream Test
             mode: "development",
           });
 
-          const result = await renderer.renderPage("test", {
-            delivery: "stream",
-          });
+          const result = await renderer.renderPage("test", { delivery: "stream" });
 
-          // When streaming delivery is requested, content may go to stream or html
-          // depending on mode and configuration
-          if (result.stream) {
-            // Consume the stream to verify content
-            const reader = result.stream.getReader();
-            const decoder = new TextDecoder();
-            let fullContent = "";
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              fullContent += decoder.decode(value, { stream: true });
-            }
-            fullContent += decoder.decode();
-            assertStringIncludes(fullContent, "Streaming Content");
-          } else {
-            // Fallback to html if stream is null
+          if (!result.stream) {
             assertEquals(typeof result.html, "string");
             assertStringIncludes(result.html, "Streaming Content");
+            return;
           }
+
+          const reader = result.stream.getReader();
+          const decoder = new TextDecoder();
+          let fullContent = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            fullContent += decoder.decode(value, { stream: true });
+          }
+
+          fullContent += decoder.decode();
+          assertStringIncludes(fullContent, "Streaming Content");
         });
       });
 
@@ -441,10 +437,7 @@ title: Stream Test
         await withTestContext("renderer-core-ssr-production", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "test.mdx"),
-            `# Production Test`,
-          );
+          await writeTextFile(join(context.projectDir, "pages", "test.mdx"), `# Production Test`);
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -461,10 +454,7 @@ title: Stream Test
         await withTestContext("renderer-core-ssr-hash", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "test.mdx"),
-            `# Test`,
-          );
+          await writeTextFile(join(context.projectDir, "pages", "test.mdx"), `# Test`);
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -488,10 +478,9 @@ title: Stream Test
             mode: "development",
           });
 
-          const bundle = await renderer.compileMDX(
-            "# Hello World\n\nThis is a test.",
-            { title: "Test" },
-          );
+          const bundle = await renderer.compileMDX("# Hello World\n\nThis is a test.", {
+            title: "Test",
+          });
 
           assertExists(bundle);
           assertExists(bundle.compiledCode);
@@ -529,11 +518,7 @@ title: Stream Test
           });
 
           await assertRejects(
-            async () =>
-              await renderer.compileMDX(
-                "<InvalidComponent unclosed={",
-                { title: "Broken" },
-              ),
+            async () => await renderer.compileMDX("<InvalidComponent unclosed={", { title: "Broken" }),
             Error,
             "compilation",
           );
@@ -628,7 +613,6 @@ title: Stream Test
 
           const result = await renderer.renderPage("data");
           assertExists(result);
-          // Script pages return different structure
         });
       });
     });
@@ -703,10 +687,7 @@ version: 2
         await withTestContext("renderer-core-clear-all", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "test.mdx"),
-            `# Test`,
-          );
+          await writeTextFile(join(context.projectDir, "pages", "test.mdx"), `# Test`);
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -716,7 +697,6 @@ version: 2
           await renderer.renderPage("test");
           renderer.clearAllState();
 
-          // Should be able to render again after clearing
           const result = await renderer.renderPage("test");
           assertExists(result);
         });
@@ -726,10 +706,7 @@ version: 2
         await withTestContext("renderer-core-module-cache", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "test.mdx"),
-            `# Test Page`,
-          );
+          await writeTextFile(join(context.projectDir, "pages", "test.mdx"), `# Test Page`);
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,

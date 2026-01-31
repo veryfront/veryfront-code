@@ -36,8 +36,10 @@ describe("Route Module Manifest", () => {
   });
 
   it("getRouteModulePaths returns paths in order", () => {
-    const paths = getRouteModulePaths("test-project", "index");
-    assertEquals(paths, ["pages/index.js", "components/Header.js"]);
+    assertEquals(getRouteModulePaths("test-project", "index"), [
+      "pages/index.js",
+      "components/Header.js",
+    ]);
   });
 
   it("recordSSRModules merges with existing manifest", () => {
@@ -70,8 +72,7 @@ describe("Route Module Manifest", () => {
   });
 
   it("getCriticalModulePaths returns critical modules only", () => {
-    const critical = getCriticalModulePaths("test-project", "about");
-    assertEquals(critical, ["pages/about.js"]);
+    assertEquals(getCriticalModulePaths("test-project", "about"), ["pages/about.js"]);
   });
 
   it("getManifestStats returns correct statistics", () => {

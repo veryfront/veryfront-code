@@ -81,17 +81,15 @@ async function* nodeWalk(
   ): AsyncIterableIterator<WalkEntry> {
     if (depth > maxDepth) return;
 
-    let rawEntries: Array<
-      {
-        name: string;
-        isFile: () => boolean;
-        isDirectory: () => boolean;
-        isSymbolicLink: () => boolean;
-      }
-    >;
+    let entries: Array<{
+      name: string;
+      isFile: () => boolean;
+      isDirectory: () => boolean;
+      isSymbolicLink: () => boolean;
+    }>;
+
     try {
-      const entries = await readdir(dir, { withFileTypes: true });
-      rawEntries = entries.map((e) => ({
+      entries = (await readdir(dir, { withFileTypes: true })).map((e) => ({
         name: String(e.name),
         isFile: () => e.isFile(),
         isDirectory: () => e.isDirectory(),
@@ -101,9 +99,9 @@ async function* nodeWalk(
       return;
     }
 
-    for (const entry of rawEntries) {
-      const entryName = entry.name;
-      const path = join(dir, entryName);
+    for (const entry of entries) {
+      const name = entry.name;
+      const path = join(dir, name);
 
       if (skip?.some((pattern) => pattern.test(path))) continue;
 
@@ -121,13 +119,12 @@ async function* nodeWalk(
         }
       }
 
-      if (exts && isFile && !exts.includes(extname(entryName))) continue;
-
+      if (isFile && exts && !exts.includes(extname(name))) continue;
       if (match && !match.some((pattern) => pattern.test(path))) continue;
 
       const walkEntry: WalkEntry = {
         path,
-        name: entryName,
+        name,
         isFile,
         isDirectory,
         isSymlink,

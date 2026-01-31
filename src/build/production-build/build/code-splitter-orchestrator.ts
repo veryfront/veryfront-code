@@ -1,12 +1,3 @@
-/**
- * Code Splitter Orchestrator Module
- *
- * Handles code splitting orchestration:
- * - Configuring the code splitter
- * - Running the splitting process
- * - Managing chunk manifests
- */
-
 import { serverLogger as logger } from "#veryfront/utils";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { type ChunkManifest, createCodeSplitter } from "#veryfront/build/bundler/index.ts";
@@ -17,9 +8,6 @@ export interface SplitResult {
   chunks: number;
 }
 
-/**
- * Run code splitting on the provided routes
- */
 export async function runCodeSplitting(
   projectDir: string,
   outputDir: string,
@@ -40,7 +28,7 @@ export async function runCodeSplitting(
     routes: routes.map(({ path, file, slug }) => ({
       path,
       file,
-      name: slug.replace(/\//g, "-"),
+      name: slug.replaceAll("/", "-"),
     })),
     shared: ["react", "react-dom"],
     external: [],

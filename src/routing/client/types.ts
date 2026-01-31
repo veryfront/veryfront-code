@@ -17,8 +17,8 @@ export interface PageData {
 export interface RouteData {
   html?: string;
   frontmatter?: FrontmatterData;
-  components?: Record<string, unknown>;
-  pageData?: Record<string, unknown>;
+  components?: ComponentMap;
+  pageData?: PageData;
 }
 
 export interface LayoutInfo {

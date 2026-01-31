@@ -17,7 +17,7 @@ export class NotFoundHandler extends BaseHandler {
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const pathname = new URL(req.url).pathname;
-    const securityConfig = ctx.securityConfig ?? undefined;
+    const securityConfig = ctx.securityConfig;
     const corsConfig = ctx.securityConfig?.cors;
 
     try {
@@ -37,7 +37,10 @@ export class NotFoundHandler extends BaseHandler {
         HTTP_INTERNAL_SERVER_ERROR,
         "Internal Server Error",
         req,
-        { securityConfig, corsConfig },
+        {
+          securityConfig,
+          corsConfig,
+        },
       );
 
       return Promise.resolve(this.respond(response));

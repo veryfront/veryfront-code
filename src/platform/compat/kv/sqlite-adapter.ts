@@ -10,11 +10,13 @@ export class SqliteKv implements Kv {
 
   private initialize(): void {
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY,
+      CREATE TABLE IF NOT EXISTS kv_store (
+        key TEXT PRIMARY KEY,
         value TEXT,
         versionstamp TEXT,
         created_at INTEGER,
-        updated_at INTEGER)
+        updated_at INTEGER
+      )
     `);
   }
 
@@ -42,23 +44,20 @@ export class SqliteKv implements Kv {
 
   set<T = unknown>(key: string[], value: T): Promise<void> {
     const keyStr = this.keyToString(key);
-    const valueStr = JSON.stringify(value);
     const now = Date.now();
-    const versionstamp = now.toString();
 
     this.db
       .prepare(`
-      INSERT OR REPLACE INTO kv_store (key, value, versionstamp, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?)
-    `)
-      .run(keyStr, valueStr, versionstamp, now, now);
+        INSERT OR REPLACE INTO kv_store (key, value, versionstamp, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+      `)
+      .run(keyStr, JSON.stringify(value), now.toString(), now, now);
 
     return Promise.resolve();
   }
 
   delete(key: string[]): Promise<void> {
-    const keyStr = this.keyToString(key);
-    this.db.prepare("DELETE FROM kv_store WHERE key = ?").run(keyStr);
+    this.db.prepare("DELETE FROM kv_store WHERE key = ?").run(this.keyToString(key));
     return Promise.resolve();
   }
 

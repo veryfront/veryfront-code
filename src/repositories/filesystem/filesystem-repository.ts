@@ -1,12 +1,3 @@
-/**
- * FileSystem Repository Implementation
- *
- * Wraps SecureFs with RepositoryContext for project-scoped filesystem operations.
- * Provides the same interface as SecureFs for drop-in replacement.
- *
- * @module repositories/filesystem/filesystem-repository
- */
-
 import type { DirEntry, FileInfo, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   createSecureFs,
@@ -36,18 +27,6 @@ export interface SecureFsRepositoryConfig {
  *
  * Wraps SecureFs to provide project-scoped filesystem operations
  * with the RepositoryContext for cache key generation.
- *
- * @example
- * ```typescript
- * const repo = new SecureFsRepository({
- *   baseDir: "/path/to/project",
- *   adapter: runtime.adapter,
- *   context: { projectId: "my-project", environment: "preview", versionId: "v1" },
- *   securityContext: "static-serving",
- * });
- *
- * const content = await repo.readFile("pages/index.mdx");
- * ```
  */
 export class SecureFsRepository implements FileSystemRepository {
   private readonly secureFs: SecureFs;
@@ -74,11 +53,11 @@ export class SecureFsRepository implements FileSystemRepository {
   async writeFile(path: string, content: string | Uint8Array): Promise<void> {
     if (typeof content === "string") {
       await this.secureFs.writeFile(path, content);
-    } else {
-      // Convert Uint8Array to string for SecureFs (which only accepts string)
-      const text = new TextDecoder().decode(content);
-      await this.secureFs.writeFile(path, text);
+      return;
     }
+
+    const text = new TextDecoder().decode(content);
+    await this.secureFs.writeFile(path, text);
   }
 
   exists(path: string): Promise<boolean> {

@@ -14,9 +14,8 @@ import {
   type PageRenderResult,
 } from "../../../../src/modules/server/index.ts";
 
-// Mock renderer for testing
 class MockRenderer implements PageRendererLike {
-  private pages: Map<string, PageRenderResult> = new Map();
+  private pages = new Map<string, PageRenderResult>();
 
   setPage(slug: string, result: PageRenderResult): void {
     this.pages.set(slug, result);
@@ -24,9 +23,7 @@ class MockRenderer implements PageRendererLike {
 
   renderPage(slug: string): Promise<PageRenderResult> {
     const page = this.pages.get(slug);
-    if (!page) {
-      throw new Error(`Page not found: ${slug}`);
-    }
+    if (!page) throw new Error(`Page not found: ${slug}`);
     return Promise.resolve(page);
   }
 }
@@ -34,18 +31,12 @@ class MockRenderer implements PageRendererLike {
 describe("API Server Tests", () => {
   describe("API Server - Instance Creation", () => {
     it("creates instance with renderer", () => {
-      const renderer = new MockRenderer();
-      const server = new APIServer({ renderer });
-
+      const server = new APIServer({ renderer: new MockRenderer() });
       assertExists(server, "Should create APIServer instance");
     });
 
     it("accepts valid options interface", () => {
-      const renderer = new MockRenderer();
-      const options: APIServerOptions = {
-        renderer,
-      };
-
+      const options: APIServerOptions = { renderer: new MockRenderer() };
       const server = new APIServer(options);
       assertExists(server, "Should accept options interface");
     });
@@ -53,44 +44,45 @@ describe("API Server Tests", () => {
 
   describe("API Server - Route Handling", () => {
     it("returns null for non-API routes", async () => {
-      const renderer = new MockRenderer();
-      const server = new APIServer({ renderer });
+      const server = new APIServer({ renderer: new MockRenderer() });
 
-      const response = await server.handleRequest("/");
-      assertEquals(response, null, "Should return null for root path");
-
-      const response2 = await server.handleRequest("/about");
-      assertEquals(response2, null, "Should return null for regular pages");
-
-      const response3 = await server.handleRequest("/static/style.css");
-      assertEquals(response3, null, "Should return null for static assets");
+      assertEquals(await server.handleRequest("/"), null, "Should return null for root path");
+      assertEquals(await server.handleRequest("/about"), null, "Should return null for regular pages");
+      assertEquals(
+        await server.handleRequest("/static/style.css"),
+        null,
+        "Should return null for static assets",
+      );
     });
 
     it("returns null for user-defined API routes", async () => {
-      const renderer = new MockRenderer();
-      const server = new APIServer({ renderer });
+      const server = new APIServer({ renderer: new MockRenderer() });
 
-      const response = await server.handleRequest("/api/users");
-      assertEquals(response, null, "Should return null for /api/ routes");
-
-      const response2 = await server.handleRequest("/api/posts/123");
-      assertEquals(response2, null, "Should return null for nested API routes");
+      assertEquals(await server.handleRequest("/api/users"), null, "Should return null for /api/ routes");
+      assertEquals(
+        await server.handleRequest("/api/posts/123"),
+        null,
+        "Should return null for nested API routes",
+      );
     });
 
     it("correctly identifies page data endpoints", async () => {
-      const renderer = new MockRenderer();
-      const server = new APIServer({ renderer });
+      const server = new APIServer({ renderer: new MockRenderer() });
 
-      // Should handle
       const response1 = await server.handleRequest("/_veryfront/data/test.json");
       assertExists(response1, "Should handle /_veryfront/data/ prefix");
 
-      // Should not handle
-      const response2 = await server.handleRequest("/veryfront/data/test.json");
-      assertEquals(response2, null, "Should not handle without leading underscore");
+      assertEquals(
+        await server.handleRequest("/veryfront/data/test.json"),
+        null,
+        "Should not handle without leading underscore",
+      );
 
-      const response3 = await server.handleRequest("/_veryfront/api/test.json");
-      assertEquals(response3, null, "Should not handle different /_veryfront/ paths");
+      assertEquals(
+        await server.handleRequest("/_veryfront/api/test.json"),
+        null,
+        "Should not handle different /_veryfront/ paths",
+      );
     });
   });
 
@@ -107,14 +99,14 @@ describe("API Server Tests", () => {
       const response = await server.handleRequest("/_veryfront/data/about.json");
 
       assertExists(response, "Should return response for page data API");
-      assertEquals(response!.status, 200, "Should return 200 status");
+      assertEquals(response.status, 200, "Should return 200 status");
       assertEquals(
-        response!.headers.get("content-type"),
+        response.headers.get("content-type"),
         "application/json",
         "Should return JSON content-type",
       );
 
-      const data = await response!.json();
+      const data = await response.json();
       assertEquals(data.slug, "about", "Should include slug in response");
       assertEquals(data.frontmatter.title, "About Page", "Should include frontmatter");
       assertEquals(data.html, "<h1>About</h1>", "Should include rendered HTML");
@@ -132,9 +124,9 @@ describe("API Server Tests", () => {
       const response = await server.handleRequest("/_veryfront/data/.json");
 
       assertExists(response, "Should return response for index page");
-      assertEquals(response!.status, 200, "Should return 200 status");
+      assertEquals(response.status, 200, "Should return 200 status");
 
-      const data = await response!.json();
+      const data = await response.json();
       assertEquals(data.slug, "", "Should have empty slug for index");
       assertEquals(data.frontmatter.title, "Home", "Should include frontmatter");
     });
@@ -150,9 +142,9 @@ describe("API Server Tests", () => {
       const response = await server.handleRequest("/_veryfront/data/docs/getting-started.json");
 
       assertExists(response, "Should handle nested slugs");
-      assertEquals(response!.status, 200, "Should return 200 for nested pages");
+      assertEquals(response.status, 200, "Should return 200 for nested pages");
 
-      const data = await response!.json();
+      const data = await response.json();
       assertEquals(data.slug, "docs/getting-started", "Should preserve nested slug structure");
     });
 
@@ -212,11 +204,9 @@ describe("API Server Tests", () => {
 
       const server = new APIServer({ renderer });
 
-      // Success response
       const successResponse = await server.handleRequest("/_veryfront/data/test.json");
       assertEquals(successResponse!.headers.get("content-type"), "application/json");
 
-      // Error response
       const errorResponse = await server.handleRequest("/_veryfront/data/missing.json");
       assertEquals(errorResponse!.headers.get("content-type"), "application/json");
     });
@@ -286,26 +276,16 @@ describe("API Server Tests", () => {
 
   describe("API Server - Error Handling", () => {
     it("returns 404 for missing pages", async () => {
-      const renderer = new MockRenderer();
-      const server = new APIServer({ renderer });
-
+      const server = new APIServer({ renderer: new MockRenderer() });
       const response = await server.handleRequest("/_veryfront/data/nonexistent.json");
 
       assertExists(response, "Should return response for missing pages");
-      assertEquals(response!.status, 404, "Should return 404 status");
-      assertEquals(
-        response!.headers.get("content-type"),
-        "application/json",
-        "Should still return JSON",
-      );
+      assertEquals(response.status, 404, "Should return 404 status");
+      assertEquals(response.headers.get("content-type"), "application/json", "Should still return JSON");
 
-      const data = await response!.json();
+      const data = await response.json();
       assertExists(data.error, "Should include error message");
-      assertEquals(
-        data.error,
-        "Page not found: nonexistent",
-        "Should include specific error message",
-      );
+      assertEquals(data.error, "Page not found: nonexistent", "Should include specific error message");
     });
 
     it("handles renderer errors gracefully", async () => {
@@ -319,9 +299,9 @@ describe("API Server Tests", () => {
       const response = await server.handleRequest("/_veryfront/data/error.json");
 
       assertExists(response, "Should return response even when renderer fails");
-      assertEquals(response!.status, 404, "Should return 404 for render errors");
+      assertEquals(response.status, 404, "Should return 404 for render errors");
 
-      const data = await response!.json();
+      const data = await response.json();
       assertEquals(data.error, "Render failed unexpectedly", "Should include error message");
     });
 
@@ -337,9 +317,9 @@ describe("API Server Tests", () => {
       const response = await server.handleRequest("/_veryfront/data/test.json");
 
       assertExists(response, "Should handle non-Error exceptions");
-      assertEquals(response!.status, 404, "Should return 404");
+      assertEquals(response.status, 404, "Should return 404");
 
-      const data = await response!.json();
+      const data = await response.json();
       assertEquals(data.error, "String error message", "Should convert non-Error to string");
     });
 
@@ -353,9 +333,8 @@ describe("API Server Tests", () => {
       const server = new APIServer({ renderer });
       const response = await server.handleRequest("/_veryfront/data/test.json");
 
-      // Should still return a valid response even if logging fails internally
       assertExists(response, "Should return response despite potential logging errors");
-      assertEquals(response!.status, 404, "Should return 404 for render errors");
+      assertEquals(response.status, 404, "Should return 404 for render errors");
     });
   });
 

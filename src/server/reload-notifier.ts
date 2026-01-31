@@ -50,10 +50,7 @@ class ReloadNotifierImpl {
       project: projectInfo,
     });
 
-    if (changedPaths?.length) {
-      for (const path of changedPaths) this.pendingChangedPaths.add(path);
-    }
-
+    for (const path of changedPaths ?? []) this.pendingChangedPaths.add(path);
     if (projectInfo) this.pendingProject = projectInfo;
 
     this.notifyInvalidateListeners();
@@ -66,21 +63,18 @@ class ReloadNotifierImpl {
       const paths = this.pendingChangedPaths.size > 0
         ? Array.from(this.pendingChangedPaths)
         : undefined;
-      const projectInfo = this.pendingProject;
+      const pendingProject = this.pendingProject;
 
       this.pendingChangedPaths.clear();
       this.pendingProject = undefined;
 
-      logger.debug(
-        "[ReloadNotifier] Debounce complete, notifying reload listeners",
-        {
-          listenerCount: this.listeners.size,
-          changedPaths: paths,
-          project: projectInfo,
-        },
-      );
+      logger.debug("[ReloadNotifier] Debounce complete, notifying reload listeners", {
+        listenerCount: this.listeners.size,
+        changedPaths: paths,
+        project: pendingProject,
+      });
 
-      this.notifyListeners(paths, projectInfo);
+      this.notifyListeners(paths, pendingProject);
     }, DEBOUNCE_MS);
   }
 

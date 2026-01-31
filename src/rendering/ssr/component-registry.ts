@@ -1,8 +1,3 @@
-/**
- * Component registry for managing and loading React components.
- * @module
- */
-
 import { dirname, join } from "../../platform/compat/path-helper.ts";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "#veryfront/utils";
 import * as React from "react";
@@ -23,18 +18,12 @@ interface FailedComponent {
   timestamp: number;
 }
 
-/**
- * Creates an error boundary component that renders a fallback for failed components.
- * This prevents one broken component from crashing the entire page.
- */
 function createErrorFallbackComponent(
   componentName: string,
   error: string,
 ): React.ComponentType<Record<string, unknown>> {
   const ErrorFallback: React.FC<Record<string, unknown>> = () => {
-    const isDev = typeof process !== "undefined" &&
-      process.env?.NODE_ENV === "development";
-
+    const isDev = typeof process !== "undefined" && process.env?.NODE_ENV === "development";
     if (!isDev) return React.createElement(React.Fragment);
 
     return React.createElement(
@@ -80,17 +69,6 @@ function createErrorFallbackComponent(
   return ErrorFallback;
 }
 
-/**
- * Registry for managing React components with virtual module system integration.
- * Supports deferred loading, caching, and component initialization.
- *
- * @example
- * ```ts
- * const registry = new ComponentRegistry(virtualModules, 3000, adapter)
- * await registry.loadFromDirectory('./components')
- * const Button = registry.get('Button')
- * ```
- */
 export class ComponentRegistry {
   private components = new Map<string, React.ComponentType<Record<string, unknown>>>();
   private virtualModules: VirtualModuleSystem;
@@ -102,22 +80,9 @@ export class ComponentRegistry {
   private adapter?: RuntimeAdapter;
   private moduleServerUrl?: string;
   private vendorBundleHash?: string;
-  /** Project ID (UUID) for SSR cache isolation in multi-project mode */
   private projectId?: string;
-  /** Content source identifier for cache isolation (branch or release) */
   private contentSourceId?: string;
 
-  /**
-   * Creates a new component registry.
-   *
-   * @param virtualModules - Optional virtual module system instance
-   * @param serverPort - Server port for module loading (defaults to DEFAULT_DASHBOARD_PORT)
-   * @param adapter - Runtime adapter for file system operations
-   * @param moduleServerUrl - Optional URL for module server
-   * @param vendorBundleHash - Optional hash for vendor bundle versioning
-   * @param projectId - Project ID (UUID) for SSR cache isolation in multi-project mode
-   * @param contentSourceId - Content source identifier for cache isolation
-   */
   constructor(
     virtualModules?: VirtualModuleSystem,
     serverPort: number = DEFAULT_DASHBOARD_PORT,
@@ -136,17 +101,6 @@ export class ComponentRegistry {
     this.contentSourceId = contentSourceId;
   }
 
-  /**
-   * Loads components from a directory.
-   *
-   * @param dir - Directory path containing component files
-   * @param deferLoading - If true, stores component sources for later initialization
-   *
-   * @remarks
-   * Processes files with extensions: .tsx, .jsx, .ts, .js
-   * Automatically determines project root from directory structure
-   * Registers components in virtual module system
-   */
   async loadFromDirectory(dir: string, deferLoading = false): Promise<void> {
     const actualProjectRoot = dir.endsWith("/components") || dir.endsWith("\\components")
       ? dirname(dir)
@@ -162,15 +116,6 @@ export class ComponentRegistry {
     }
   }
 
-  /**
-   * Retrieves a component by name.
-   *
-   * @param name - Component name (without file extension)
-   * @returns The React component or null if not found
-   *
-   * @remarks
-   * Returns null if component is pending initialization (deferred loading)
-   */
   get(name: string): React.ComponentType<Record<string, unknown>> | null {
     const component = this.components.get(name);
     if (component) return component;
@@ -182,47 +127,22 @@ export class ComponentRegistry {
     return null;
   }
 
-  /**
-   * Gets all registered components as a record.
-   *
-   * @returns Record mapping component names to component instances
-   */
   getAll(): Record<string, React.ComponentType<Record<string, unknown>>> {
     return Object.fromEntries(this.components);
   }
 
-  /**
-   * Gets all components as MDXComponents record (for MDX rendering).
-   * Returns components typed as ComponentType<unknown> for compatibility with MDX.
-   *
-   * @returns Record mapping component names to component instances with unknown props
-   */
   getAllAsComponents(): Record<string, React.ComponentType<unknown>> {
     return Object.fromEntries(this.components) as Record<string, React.ComponentType<unknown>>;
   }
 
-  /**
-   * Checks if a component is registered.
-   *
-   * @param name - Component name to check
-   * @returns True if the component is registered
-   */
   has(name: string): boolean {
     return this.components.has(name);
   }
 
-  /**
-   * Gets the virtual module system instance.
-   *
-   * @returns The virtual module system used by this registry
-   */
   getVirtualModuleSystem(): VirtualModuleSystem {
     return this.virtualModules;
   }
 
-  /**
-   * Clear loaded components and reset initialization state.
-   */
   clear(): void {
     this.components.clear();
     this.componentSources.clear();
@@ -230,16 +150,6 @@ export class ComponentRegistry {
     this.initialized = false;
   }
 
-  /**
-   * Initializes all deferred components.
-   * Should be called after loadFromDirectory with deferLoading=true.
-   *
-   * @remarks
-   * Loads all stored component sources and marks registry as initialized.
-   * Failed components are replaced with error fallback components to prevent
-   * one broken component from crashing the entire page.
-   * Only runs once - subsequent calls return immediately.
-   */
   async initializeComponents(): Promise<void> {
     if (this.initialized) return;
 
@@ -304,19 +214,10 @@ export class ComponentRegistry {
     logger.debug(`Component initialization complete: ${successCount} components loaded`);
   }
 
-  /**
-   * Gets information about failed components.
-   * @returns Array of failed component records
-   */
   getFailedComponents(): FailedComponent[] {
     return Array.from(this.failedComponents.values());
   }
 
-  /**
-   * Checks if a component failed to load.
-   * @param name - Component name to check
-   * @returns True if the component failed to load
-   */
   hasFailed(name: string): boolean {
     return this.failedComponents.has(name);
   }
@@ -329,9 +230,6 @@ export class ComponentRegistry {
     contentSourceId?: string;
   } {
     return {
-      // Use the actual project ID (UUID) for SSR cache isolation in multi-project mode
-      // This ensures each project has its own SSR cache directory
-      // Falls back to projectRoot for single-project/local dev mode
       projectId: this.projectId ?? projectRoot,
       dev: true,
       moduleServerUrl: this.moduleServerUrl,
@@ -345,7 +243,8 @@ export class ComponentRegistry {
     projectRoot: string,
     deferLoading: boolean,
   ): Promise<number> {
-    const readDir = this.adapter?.fs.readDir;
+    const adapter = this.adapter;
+    const readDir = adapter?.fs.readDir;
     if (!readDir) return 0;
 
     let count = 0;
@@ -354,9 +253,9 @@ export class ComponentRegistry {
     for await (const entry of readDir(dir)) {
       const entryPath = join(dir, entry.name);
 
-      // Skip node_modules and hidden dirs, but allow .veryfront (excluding system subdirs)
       if (entry.name === "node_modules") continue;
       if (entry.name.startsWith(".") && entry.name !== ".veryfront") continue;
+
       if (
         dir.includes(".veryfront") &&
         ["cache", "compiled", "tmp", "temp", "output", "optimized-images", "css"].includes(
@@ -371,15 +270,13 @@ export class ComponentRegistry {
         continue;
       }
 
-      if (!(entry.isFile || entry.isSymlink) || !/\.(tsx|jsx|ts|js)$/.test(entry.name)) {
-        continue;
-      }
+      if (!(entry.isFile || entry.isSymlink) || !/\.(tsx|jsx|ts|js)$/.test(entry.name)) continue;
 
       const componentName = entry.name.replace(/\.(tsx|jsx|ts|js)$/, "");
       if (componentName === "index") continue;
 
       try {
-        const fileContent = await this.adapter!.fs.readFile(entryPath);
+        const fileContent = await adapter.fs.readFile(entryPath);
 
         await this.virtualModules.registerModule(`component:${componentName}`, fileContent, dir);
 
@@ -395,7 +292,7 @@ export class ComponentRegistry {
             fileContent,
             entryPath,
             projectRoot,
-            this.adapter!,
+            adapter,
             this.getLoaderOptions(projectRoot),
           );
 

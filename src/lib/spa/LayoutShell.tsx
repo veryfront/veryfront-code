@@ -30,7 +30,6 @@ type LayoutComponentType = ComponentType<{ children: ReactNode; [key: string]: u
 
 function LayoutWrapper({ layout, layoutProps, children }: LayoutWrapperProps): JSX.Element {
   const [LayoutComponent, setLayoutComponent] = useState<LayoutComponentType | null>(() => {
-    // Try to get from cache synchronously first (for SSR hydration match)
     return (getCachedComponent(layout.path) as LayoutComponentType | null) ?? null;
   });
 
@@ -39,15 +38,18 @@ function LayoutWrapper({ layout, layoutProps, children }: LayoutWrapperProps): J
 
     let mounted = true;
 
-    loadComponent(layout.path).then((Component) => {
+    async function load(): Promise<void> {
+      const Component = await loadComponent(layout.path);
       if (!mounted || !Component) return;
       setLayoutComponent(() => Component as LayoutComponentType);
-    });
+    }
+
+    void load();
 
     return () => {
       mounted = false;
     };
-  }, [layout.path, LayoutComponent]);
+  }, [LayoutComponent, layout.path]);
 
   if (!LayoutComponent) return <LayoutLoading />;
 
@@ -59,15 +61,12 @@ export function LayoutShell(
 ): JSX.Element {
   if (layouts.length === 0) return <>{children}</>;
 
-  // Build layout tree from outermost to innermost
-  // layouts[0] is outermost, layouts[layouts.length - 1] is innermost
   let tree: ReactNode = children;
 
   for (let i = layouts.length - 1; i >= 0; i--) {
     const layout = layouts[i];
     const props = layoutProps[layout.path] ?? {};
 
-    // Use the layout path as key for React to preserve the component instance
     tree = (
       <Suspense key={layout.path} fallback={<LayoutLoading />}>
         <LayoutWrapper layout={layout} layoutProps={props}>

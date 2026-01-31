@@ -91,7 +91,12 @@ export interface ToolResultPart {
 export type MessagePart =
   | { type: "text"; text: string }
   | ToolCallPart
-  | { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, unknown> }
+  | {
+    type: "tool-call";
+    toolCallId: string;
+    toolName: string;
+    args: Record<string, unknown>;
+  }
   | ToolResultPart;
 
 export interface Message {
@@ -121,9 +126,9 @@ export function getToolArguments(part: ToolCallPart): Record<string, unknown> {
   if (hasArgs(part)) return part.args;
   if (hasInput(part)) return part.input;
 
-  const p = part as ToolCallPart;
+  const basePart = part as ToolCallPart;
   throw new Error(
-    `Tool call part for "${p.toolName}" (${p.toolCallId}) missing both 'args' and 'input' fields`,
+    `Tool call part for "${basePart.toolName}" (${basePart.toolCallId}) missing both 'args' and 'input' fields`,
   );
 }
 

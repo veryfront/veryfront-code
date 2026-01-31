@@ -7,7 +7,9 @@ export class LRUTracker {
   }
 
   remove(key: string): void {
-    this.accessOrder = this.accessOrder.filter((k) => k !== key);
+    const index = this.accessOrder.indexOf(key);
+    if (index === -1) return;
+    this.accessOrder.splice(index, 1);
   }
 
   getLRU(): string | undefined {
@@ -19,6 +21,6 @@ export class LRUTracker {
   }
 
   clear(): void {
-    this.accessOrder = [];
+    this.accessOrder.length = 0;
   }
 }

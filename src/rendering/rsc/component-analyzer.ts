@@ -2,7 +2,7 @@ import { join, relative } from "#veryfront/platform/compat/path/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import { toBase64Url } from "#veryfront/utils/path-utils.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
-import type { ComponentAnalysis, ComponentType } from "./types.ts";
+import type { ClientComponentMeta, ComponentAnalysis, ComponentType } from "./types.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { extractExportNames } from "./export-extractor.ts";
@@ -30,7 +30,6 @@ export async function analyzeComponent(
 }
 
 function detectDirective(content: string, directive: string): boolean {
-  // Match directives like 'use client' or "use client" at the start of a line
   const directivePattern = new RegExp(`^\\s*['"]${directive}['"];?\\s*$`, "m");
   return directivePattern.test(content);
 }
@@ -58,11 +57,11 @@ export async function buildClientManifest(
   projectDir: string,
   appDir: string = "app",
   fs?: FileSystemAdapter,
-): Promise<Map<string, import("./types.ts").ClientComponentMeta>> {
-  const manifest = new Map<string, import("./types.ts").ClientComponentMeta>();
+): Promise<Map<string, ClientComponentMeta>> {
+  const manifest = new Map<string, ClientComponentMeta>();
   const appPath = join(projectDir, appDir);
 
-  const fsAdapter = fs ?? (await getFsAdapter(manifest));
+  const fsAdapter = fs ?? (await getFsAdapter());
   if (!fsAdapter) return manifest;
 
   try {
@@ -72,7 +71,6 @@ export async function buildClientManifest(
         if (!/\.(tsx?|jsx?)$/.test(filePath)) return;
 
         const analysis = await analyzeComponent(filePath, fsAdapter);
-
         if (analysis.type !== "client") return;
 
         const relativePath = relative(projectDir, filePath);
@@ -94,9 +92,7 @@ export async function buildClientManifest(
   return manifest;
 }
 
-async function getFsAdapter(
-  _manifest: Map<string, import("./types.ts").ClientComponentMeta>,
-): Promise<FileSystemAdapter | undefined> {
+async function getFsAdapter(): Promise<FileSystemAdapter | undefined> {
   try {
     const adapter = await runtime.get();
     return adapter.fs;

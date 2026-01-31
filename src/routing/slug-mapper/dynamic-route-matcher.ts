@@ -12,16 +12,13 @@ function isDynamicParam(part: string): boolean {
   return part.startsWith("[") && part.endsWith("]");
 }
 
-function hasSpreadParam(parts: string[]): boolean {
-  return parts.some(isSpreadParam);
-}
-
 export function extractParams(pattern: string, slug: string): RouteParams | null {
   const patternParts = pattern.split("/").filter(Boolean);
   const slugParts = slug.split("/").filter(Boolean);
   const params: RouteParams = {};
 
-  if (!hasSpreadParam(patternParts) && patternParts.length !== slugParts.length) {
+  const hasSpread = patternParts.some(isSpreadParam);
+  if (!hasSpread && patternParts.length !== slugParts.length) {
     return null;
   }
 
@@ -52,11 +49,7 @@ export function extractParams(pattern: string, slug: string): RouteParams | null
     slugIndex++;
   }
 
-  if (slugIndex < slugParts.length) {
-    return null;
-  }
-
-  return params;
+  return slugIndex < slugParts.length ? null : params;
 }
 
 export function matchesPattern(pattern: string, slug: string): boolean {

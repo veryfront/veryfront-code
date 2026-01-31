@@ -43,7 +43,6 @@ export default tool({
       .describe("Maximum number of pull requests to return"),
   }),
   execute: async ({ workspace, repoSlug, state, limit }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = context?.userId ?? "current-user";
 
     try {
@@ -52,6 +51,8 @@ export default tool({
         state,
         perPage: limit,
       });
+
+      const repository = `${workspace}/${repoSlug}`;
 
       return {
         pullRequests: prs.map((pr: PullRequest) => ({
@@ -71,8 +72,8 @@ export default tool({
           updatedOn: pr.updated_on,
         })),
         count: prs.length,
-        repository: `${workspace}/${repoSlug}`,
-        message: `Found ${prs.length} ${state} pull request(s) in ${workspace}/${repoSlug}.`,
+        repository,
+        message: `Found ${prs.length} ${state} pull request(s) in ${repository}.`,
       };
     } catch (error) {
       if (error instanceof Error && error.message.includes("not connected")) {

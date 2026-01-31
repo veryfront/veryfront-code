@@ -2,9 +2,12 @@ import { assert, assertEquals, assertInstanceOf } from "#veryfront/testing/asser
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MiddlewareContext } from "./context.ts";
 
-function createCtx(env?: Record<string, unknown>, executionCtx?: unknown): MiddlewareContext {
+function createCtx(
+  env: Record<string, unknown> = {},
+  executionCtx?: unknown,
+): MiddlewareContext {
   const req = new Request("https://example.com/test");
-  return new MiddlewareContext(req, env ?? {}, executionCtx as never);
+  return new MiddlewareContext(req, env, executionCtx as never);
 }
 
 describe("MiddlewareContext", () => {
@@ -46,7 +49,6 @@ describe("MiddlewareContext", () => {
   describe("json", () => {
     it("should return JSON response", async () => {
       const ctx = createCtx();
-
       const response = ctx.json({ message: "hello" });
 
       assertInstanceOf(response, Response);
@@ -61,7 +63,6 @@ describe("MiddlewareContext", () => {
 
     it("should accept custom init options", () => {
       const ctx = createCtx();
-
       const response = ctx.json({ error: "Not Found" }, { status: 404 });
 
       assertEquals(response.status, 404);
@@ -71,7 +72,6 @@ describe("MiddlewareContext", () => {
   describe("text", () => {
     it("should return plain text response", async () => {
       const ctx = createCtx();
-
       const response = ctx.text("Hello World");
 
       assertInstanceOf(response, Response);
@@ -81,7 +81,6 @@ describe("MiddlewareContext", () => {
 
     it("should accept custom init options", () => {
       const ctx = createCtx();
-
       const response = ctx.text("Created", { status: 201 });
 
       assertEquals(response.status, 201);
@@ -91,7 +90,6 @@ describe("MiddlewareContext", () => {
   describe("html", () => {
     it("should return HTML response", async () => {
       const ctx = createCtx();
-
       const response = ctx.html("<h1>Hello</h1>");
 
       assertInstanceOf(response, Response);
@@ -101,7 +99,6 @@ describe("MiddlewareContext", () => {
 
     it("should accept custom init options", () => {
       const ctx = createCtx();
-
       const response = ctx.html("<h1>Error</h1>", { status: 500 });
 
       assertEquals(response.status, 500);
@@ -111,7 +108,6 @@ describe("MiddlewareContext", () => {
   describe("redirect", () => {
     it("should return redirect response with default status 302", () => {
       const ctx = createCtx();
-
       const response = ctx.redirect("/new-location");
 
       assertEquals(response.status, 302);
@@ -120,7 +116,6 @@ describe("MiddlewareContext", () => {
 
     it("should accept custom status code", () => {
       const ctx = createCtx();
-
       const response = ctx.redirect("/permanent", 301);
 
       assertEquals(response.status, 301);
@@ -129,7 +124,6 @@ describe("MiddlewareContext", () => {
 
     it("should handle external URLs", () => {
       const ctx = createCtx();
-
       const response = ctx.redirect("https://other.com/path");
 
       assertEquals(response.headers.get("Location"), "https://other.com/path");

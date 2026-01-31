@@ -20,9 +20,7 @@ export default tool({
       .describe("Maximum number of results to return"),
   }),
   async execute({ query, type, limit }) {
-    const filter =
-      type === "all" ? undefined : { property: "object", value: type };
-
+    const filter = type === "all" ? undefined : { property: "object", value: type };
     const results = await searchNotion(query, { filter, pageSize: limit });
 
     return results.map((item) => {
@@ -39,7 +37,7 @@ export default tool({
       return {
         id: item.id,
         type: "database",
-        title: item.title?.map((t: { plain_text: string }) => t.plain_text).join("") ?? "",
+        title: item.title?.map((t) => t.plain_text).join("") ?? "",
         url: item.url,
       };
     });

@@ -47,7 +47,6 @@ describe("platform/core-platform", () => {
 
   describe("supportsCapability", () => {
     it("should return true for boolean capabilities that are true", () => {
-      // Running in Deno, so canRunMCPServer should be true
       assertEquals(supportsCapability("canRunMCPServer"), true);
     });
 
@@ -57,11 +56,8 @@ describe("platform/core-platform", () => {
   });
 
   describe("getPlatformWarnings", () => {
-    // Test with explicit platform to avoid environment dependency
     it("should return no warnings for deno platform", () => {
-      // getPlatformWarnings uses detectPlatform() internally which returns deno
       const warnings = getPlatformWarnings();
-      // Deno has full capabilities, so no warnings expected
       assertEquals(Array.isArray(warnings), true);
     });
   });

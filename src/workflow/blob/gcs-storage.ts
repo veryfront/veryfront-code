@@ -22,6 +22,7 @@ export class GCSBlobStorage implements BlobStorage {
 
   constructor(config: GCSBlobStorageConfig) {
     this.config = config;
+
     try {
       JSON.parse(this.config.serviceAccountKey);
     } catch {
@@ -34,7 +35,7 @@ export class GCSBlobStorage implements BlobStorage {
   }
 
   private async getAccessToken(): Promise<string> {
-    if (this.tokenCache && this.tokenCache.expiresAt > new Date()) {
+    if (this.tokenCache?.expiresAt && this.tokenCache.expiresAt > new Date()) {
       return this.tokenCache.accessToken;
     }
 
@@ -43,14 +44,17 @@ export class GCSBlobStorage implements BlobStorage {
     const scope = "https://www.googleapis.com/auth/devstorage.full_control";
 
     const now = Date.now();
+    const iat = Math.floor(now / 1000);
+    const exp = iat + 3600;
+
     const jwtHeader = btoa(JSON.stringify({ alg: "RS256", typ: "JWT" }));
     const jwtClaimSet = btoa(
       JSON.stringify({
         iss: sa.client_email,
         scope,
         aud: tokenEndpoint,
-        exp: Math.floor(now / 1000) + 3600,
-        iat: Math.floor(now / 1000),
+        exp,
+        iat,
       }),
     );
 
@@ -124,14 +128,10 @@ export class GCSBlobStorage implements BlobStorage {
       "Content-Type": mimeType,
     };
 
-    if (contentLength !== undefined) {
-      headers["Content-Length"] = String(contentLength);
-    }
+    if (contentLength !== undefined) headers["Content-Length"] = String(contentLength);
 
-    if (options.metadata) {
-      for (const [k, v] of Object.entries(options.metadata)) {
-        headers[`x-goog-meta-${k.toLowerCase()}`] = v;
-      }
+    for (const [k, v] of Object.entries(options.metadata ?? {})) {
+      headers[`x-goog-meta-${k.toLowerCase()}`] = v;
     }
 
     if (expiresAt) {
@@ -196,7 +196,7 @@ export class GCSBlobStorage implements BlobStorage {
   async getText(id: string): Promise<string | null> {
     const stream = await this.getStream(id);
     if (!stream) return null;
-    return await new Response(stream).text();
+    return new Response(stream).text();
   }
 
   async getBytes(id: string): Promise<Uint8Array | null> {
@@ -270,10 +270,8 @@ export class GCSBlobStorage implements BlobStorage {
     const metadata: Record<string, string> = {};
     const rawMetadata = gcsObject.metadata as Record<string, string> | undefined;
 
-    if (rawMetadata) {
-      for (const [k, v] of Object.entries(rawMetadata)) {
-        metadata[k.startsWith("x-goog-meta-") ? k.replace("x-goog-meta-", "") : k] = v;
-      }
+    for (const [k, v] of Object.entries(rawMetadata ?? {})) {
+      metadata[k.startsWith("x-goog-meta-") ? k.replace("x-goog-meta-", "") : k] = v;
     }
 
     const expiresAt = metadata.expiresat ? new Date(metadata.expiresat) : undefined;

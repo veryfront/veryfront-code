@@ -11,7 +11,9 @@ export function normalizePath(pathname: string): string {
 }
 
 export function joinPath(a: string, b: string): string {
-  return `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
+  const left = a.replace(/\/$/, "");
+  const right = b.replace(/^\//, "");
+  return `${left}/${right}`;
 }
 
 export function isWithinDirectory(root: string, target: string): boolean {
@@ -75,14 +77,9 @@ export function toBase64Url(s: string): string {
 }
 
 function getBase64Padding(length: number): string {
-  switch (length % 4) {
-    case 2:
-      return "==";
-    case 3:
-      return "=";
-    default:
-      return "";
-  }
+  if (length % 4 === 2) return "==";
+  if (length % 4 === 3) return "=";
+  return "";
 }
 
 export function fromBase64Url(encoded: string): string {

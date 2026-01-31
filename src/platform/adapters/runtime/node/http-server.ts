@@ -18,10 +18,8 @@ export class NodeServer implements Server {
 
   stop(): Promise<void> {
     return new Promise((resolve) => {
-      if (wsServer) {
-        wsServer.close();
-        wsServer = null;
-      }
+      wsServer?.close();
+      wsServer = null;
       this.server.close(() => resolve());
     });
   }
@@ -87,13 +85,11 @@ export async function createNodeServer(
       _res.statusCode = response.status;
       _res.statusMessage = response.statusText;
 
-      for (const [key, value] of response.headers) {
-        _res.setHeader(key, value);
-      }
+      for (const [key, value] of response.headers) _res.setHeader(key, value);
 
       if (response.body) {
         const reader = response.body.getReader();
-        for (;;) {
+        while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           _res.write(value);
@@ -150,10 +146,8 @@ export async function createNodeServer(
   });
 
   signal?.addEventListener("abort", () => {
-    if (wsServer) {
-      wsServer.close();
-      wsServer = null;
-    }
+    wsServer?.close();
+    wsServer = null;
     server.close();
   });
 

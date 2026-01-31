@@ -37,9 +37,11 @@ export async function validateDevFilePath(
 
   const normalizedRoot = normalizePath(ctx.projectDir);
   const normalizedTarget = normalizePath(absPath);
-  const relativePath = normalizedTarget === normalizedRoot
-    ? ""
-    : normalizedTarget.slice(normalizedRoot.length + 1);
+
+  let relativePath = "";
+  if (normalizedTarget !== normalizedRoot) {
+    relativePath = normalizedTarget.slice(normalizedRoot.length + 1);
+  }
 
   const topLevel = relativePath.split("/")[0] ?? "";
   if (topLevel && !ALLOWED_TOP_LEVEL_DIRS.has(topLevel)) {

@@ -1,11 +1,3 @@
-/**
- * Token Manager for OAuth Token Caching
- *
- * Manages OAuth tokens with automatic refresh before expiry.
- * Caches tokens per scope (preview/production) and project.
- * Supports pluggable cache backends (memory, Redis).
- */
-
 import { fetchOAuthToken, type TokenResponse } from "./oauth-client.ts";
 import type { TokenCache, TokenCacheEntry } from "./cache/types.ts";
 import { MemoryCache } from "./cache/memory-cache.ts";
@@ -39,31 +31,22 @@ export class TokenManager {
     this.refreshBuffer = options.refreshBuffer ?? 2 * 60 * 1000; // 2 minutes before expiry
   }
 
-  /**
-   * Get a valid token for the given scope and project.
-   * Returns cached token if valid, otherwise fetches a new one.
-   * Can use either projectSlug or customDomain to identify the project.
-   */
   async getToken(
     scope: TokenScope,
     projectSlug?: string,
     customDomain?: string,
   ): Promise<string> {
-    return await withSpan(
+    const projectKey = projectSlug || customDomain;
+    const cacheKey = this.getCacheKey(scope, projectKey);
+
+    return withSpan(
       ProxySpanNames.PROXY_TOKEN_FETCH,
       async () => {
-        const cacheKey = this.getCacheKey(scope, projectSlug || customDomain);
         const cached = await this.cache.get(cacheKey);
+        if (cached && this.isTokenValid(cached)) return cached.token;
 
-        if (cached && this.isTokenValid(cached)) {
-          return cached.token;
-        }
-
-        // Prevent duplicate concurrent requests for the same token
         const pending = this.pendingRequests.get(cacheKey);
-        if (pending) {
-          return pending;
-        }
+        if (pending) return pending;
 
         const tokenPromise = this.fetchAndCacheToken(scope, projectSlug, customDomain);
         this.pendingRequests.set(cacheKey, tokenPromise);
@@ -76,38 +59,25 @@ export class TokenManager {
       },
       {
         "proxy.token_scope": scope,
-        "proxy.project_slug": projectSlug || "",
-        "proxy.custom_domain": customDomain || "",
-        "proxy.cache_key": this.getCacheKey(scope, projectSlug || customDomain),
+        "proxy.project_slug": projectSlug ?? "",
+        "proxy.custom_domain": customDomain ?? "",
+        "proxy.cache_key": cacheKey,
       },
     );
   }
 
-  /**
-   * Invalidate a cached token, forcing refresh on next request.
-   */
   async invalidateToken(scope: TokenScope, projectSlug?: string): Promise<void> {
-    const cacheKey = this.getCacheKey(scope, projectSlug);
-    await this.cache.delete(cacheKey);
+    await this.cache.delete(this.getCacheKey(scope, projectSlug));
   }
 
-  /**
-   * Clear all cached tokens.
-   */
   async clearCache(): Promise<void> {
     await this.cache.clear();
   }
 
-  /**
-   * Get cache statistics.
-   */
   async getStats(): Promise<{ hits: number; misses: number; size: number; type: string }> {
-    return await this.cache.stats();
+    return this.cache.stats();
   }
 
-  /**
-   * Close the cache connection (for Redis cleanup).
-   */
   async close(): Promise<void> {
     await this.cache.close();
   }
@@ -125,10 +95,9 @@ export class TokenManager {
     projectSlug?: string,
     customDomain?: string,
   ): Promise<string> {
-    const clientId = scope === "preview" ? this.config.previewClientId : this.config.clientId;
-    const clientSecret = scope === "preview"
-      ? this.config.previewClientSecret
-      : this.config.clientSecret;
+    const isPreview = scope === "preview";
+    const clientId = isPreview ? this.config.previewClientId : this.config.clientId;
+    const clientSecret = isPreview ? this.config.previewClientSecret : this.config.clientSecret;
 
     const response = await fetchOAuthToken({
       apiBaseUrl: this.config.apiBaseUrl,
@@ -138,37 +107,31 @@ export class TokenManager {
       customDomain,
     });
 
-    const expiresAt = this.calculateExpiresAt(response);
+    const projectKey = projectSlug || customDomain;
 
-    await this.cache.set(this.getCacheKey(scope, projectSlug || customDomain), {
+    await this.cache.set(this.getCacheKey(scope, projectKey), {
       token: response.access_token,
-      expiresAt,
+      expiresAt: this.calculateExpiresAt(response),
       scope,
-      projectSlug: projectSlug || customDomain,
+      projectSlug: projectKey,
     });
 
     return response.access_token;
   }
 
   private calculateExpiresAt(response: TokenResponse): number {
-    if (response.expires_in) {
-      return Date.now() + response.expires_in * 1000;
-    }
+    if (response.expires_in) return Date.now() + response.expires_in * 1000;
 
-    // Try to decode JWT and get exp claim
     try {
-      const [, payload] = response.access_token.split(".");
-      if (payload) {
-        const decoded = JSON.parse(atob(payload));
-        if (decoded.exp) {
-          return decoded.exp * 1000;
-        }
-      }
+      const payload = response.access_token.split(".")[1];
+      if (!payload) return Date.now() + 3600 * 1000;
+
+      const decoded = JSON.parse(atob(payload));
+      if (decoded?.exp) return decoded.exp * 1000;
     } catch {
       // Fall through to default
     }
 
-    // Default to 1 hour
     return Date.now() + 3600 * 1000;
   }
 }

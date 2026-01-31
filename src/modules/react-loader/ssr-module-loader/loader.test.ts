@@ -57,19 +57,19 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     clearSSRModuleCache();
 
     const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-p1-" });
-    const filePath = join(projectDir, "components", "CacheInvalTest.tsx");
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "CacheInvalTest.tsx");
     const projectId = "project-p1-test";
     const contentSourceId = "local-main";
 
     try {
-      await mkdir(join(projectDir, "components"), { recursive: true });
+      await mkdir(componentsDir, { recursive: true });
 
       const source = "export default function CacheInvalTest() { return null; }";
       const contentHash = hashCodeHex(source);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
-      // Build the cache keys the loader would use
       const filePathCacheKey = buildSSRModuleCacheKey(
         VERSION,
         projectId,
@@ -81,8 +81,6 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );
 
-      // Create a temp .mjs file that imports a non-existent module.
-      // Use a unique filename so Deno's module cache won't have it.
       const uniqueId = crypto.randomUUID().slice(0, 8);
       const brokenTempPath = join(projectDir, `broken-${uniqueId}.mjs`);
       await writeTextFile(
@@ -90,14 +88,11 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
         `import { missing } from "./this-file-does-not-exist-${uniqueId}.mjs";\nexport default function CacheInvalTest() { return null; }`,
       );
 
-      // Pre-populate globalModuleCache as if the transform had already succeeded
       const fakeEntry = { tempPath: brokenTempPath, contentHash };
       globalModuleCache.set(contentCacheKey, fakeEntry);
       globalModuleCache.set(filePathCacheKey, fakeEntry);
 
-      // Mark HTTP bundle verification as done so transform doesn't re-verify
-      const verifyKey = `${brokenTempPath}:${contentHash}`;
-      verifiedHttpBundlePaths.set(verifyKey, true);
+      verifiedHttpBundlePaths.set(`${brokenTempPath}:${contentHash}`, true);
 
       await writeTextFile(filePath, source);
 
@@ -109,22 +104,17 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
         dev: true,
       });
 
-      // loadModule should fail at import() with "Cannot find module",
-      // and P1 logic should delete the cache entry
-      let threw = false;
       try {
         await loader.loadModule(filePath, source);
+        assert(false, "Expected loadModule to throw");
       } catch (err) {
-        threw = true;
         const msg = err instanceof Error ? err.message : String(err);
         assert(
           msg.includes("Cannot find module") || msg.includes("Module not found"),
           `Expected module-not-found error, got: ${msg}`,
         );
       }
-      assert(threw, "Expected loadModule to throw");
 
-      // P1: the filePathCacheKey should have been deleted from globalModuleCache
       assertEquals(
         globalModuleCache.has(filePathCacheKey),
         false,
@@ -159,9 +149,9 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const component = await loader.loadModule(filePath, source);
       assertEquals(component.name, "Good");
 
-      // Cache should be retained for successful loads
-      const cacheKeys = [...globalModuleCache.keys()];
-      const matchingKeys = cacheKeys.filter((k) => k.includes("project-retain-test"));
+      const matchingKeys = [...globalModuleCache.keys()].filter((k) =>
+        k.includes("project-retain-test")
+      );
       assert(
         matchingKeys.length > 0,
         "Expected cache entries to be retained after successful import",

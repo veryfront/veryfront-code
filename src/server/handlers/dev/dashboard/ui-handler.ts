@@ -13,7 +13,6 @@ const JS_HEADERS = {
 
 function getUiDirectory(): string {
   const currentFile = new URL(import.meta.url).pathname;
-  // UI moved to src/server/dev-ui/dashboard/
   return currentFile.replace(/\/handlers\/dev\/dashboard\/ui-handler\.ts$/, "/dev-ui/dashboard");
 }
 
@@ -21,8 +20,12 @@ function resolveRelativeImport(currentDir: string, importPath: string): string {
   const parts = currentDir ? currentDir.split("/") : [];
 
   for (const part of importPath.split("/")) {
-    if (part === "..") parts.pop();
-    else if (part !== ".") parts.push(part);
+    if (part === "..") {
+      parts.pop();
+      continue;
+    }
+    if (part === ".") continue;
+    parts.push(part);
   }
 
   return parts.join("/");
@@ -43,9 +46,7 @@ function transformModule(filePath: string, source: string, relativePath: string)
         minify: false,
       });
 
-      const parts = relativePath.split("/");
-      parts.pop();
-      const currentDir = parts.join("/");
+      const currentDir = relativePath.split("/").slice(0, -1).join("/");
 
       return result.code.replace(
         /from\s+["'](\.\.?\/[^"']+)\.tsx?["']/g,
@@ -65,7 +66,7 @@ async function readUiModule(
   try {
     return { filePath: tsxPath, source: await readTextFile(tsxPath) };
   } catch {
-    // fall through
+    // try .ts
   }
 
   const tsPath = `${uiDir}/${relativePath}.ts`;
@@ -83,7 +84,7 @@ export function handleDashboardUI(req: Request): Promise<Response | null> {
   return withSpan(
     "server.dev.dashboardUI.handle",
     async () => {
-      const relativePath = pathname.replace("/_dev/ui/", "").replace(/\.js$/, "");
+      const relativePath = pathname.slice("/_dev/ui/".length).replace(/\.js$/, "");
       const uiDir = getUiDirectory();
 
       const module = await readUiModule(uiDir, relativePath);
@@ -96,8 +97,8 @@ export function handleDashboardUI(req: Request): Promise<Response | null> {
 
       const { filePath, source } = module;
 
-      const cached = moduleCache.get(filePath);
       const now = Date.now();
+      const cached = moduleCache.get(filePath);
       if (cached && now - cached.timestamp < CACHE_TTL) {
         return new Response(cached.code, { headers: JS_HEADERS });
       }
@@ -108,10 +109,8 @@ export function handleDashboardUI(req: Request): Promise<Response | null> {
         return new Response(code, { headers: JS_HEADERS });
       } catch (error) {
         logger.error("[DevDashboard] Transform error", { filePath, error });
-        return new Response(
-          `// Transform error: ${error instanceof Error ? error.message : String(error)}`,
-          { status: 500, headers: JS_HEADERS },
-        );
+        const message = error instanceof Error ? error.message : String(error);
+        return new Response(`// Transform error: ${message}`, { status: 500, headers: JS_HEADERS });
       }
     },
     { "handler.pathname": pathname },

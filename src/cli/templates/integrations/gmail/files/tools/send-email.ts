@@ -30,16 +30,9 @@ export default tool({
     try {
       const gmail = createGmailClient(userId);
 
-      const result = await gmail.sendEmail({
-        to,
-        subject,
-        body,
-        cc,
-        bcc,
-        isHtml,
-      });
+      const result = await gmail.sendEmail({ to, subject, body, cc, bcc, isHtml });
 
-      const toFormatted = formatRecipients(to)!;
+      const toFormatted = formatRecipients(to) ?? "";
 
       return {
         success: true,

@@ -18,14 +18,18 @@ export default tool({
   async execute({ query, limit, offset, contentTypes }) {
     const results = await searchFiles({ query, limit, offset, contentTypes });
 
-    return results.map((item) => ({
-      id: item.id,
-      type: item.type,
-      name: item.name,
-      size: item.size,
-      createdAt: item.created_at,
-      modifiedAt: item.modified_at,
-      path: item.path_collection?.entries.map((e) => e.name).join("/") ?? "/",
-    }));
+    return results.map((item) => {
+      const path = item.path_collection?.entries.map((e) => e.name).join("/") ?? "/";
+
+      return {
+        id: item.id,
+        type: item.type,
+        name: item.name,
+        size: item.size,
+        createdAt: item.created_at,
+        modifiedAt: item.modified_at,
+        path,
+      };
+    });
   },
 });

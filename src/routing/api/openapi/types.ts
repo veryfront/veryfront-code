@@ -1,25 +1,9 @@
-/**
- * OpenAPI Route Types
- *
- * Types for defining OpenAPI-documented routes with Zod schema validation.
- *
- * @module routing/api/openapi/types
- */
-
 import type { z } from "zod";
 import type { JsonSchema } from "#veryfront/tool/schema";
 import type { AppRouteHandler } from "../module-loader/types.ts";
 
-/**
- * Symbol for storing OpenAPI metadata on handler functions.
- * Using a Symbol ensures the metadata doesn't conflict with other properties.
- */
 export const OPENAPI_METADATA = Symbol.for("veryfront.openapi.metadata");
 
-/**
- * Configuration for createRoute wrapper function.
- * Users define their route with Zod schemas for automatic OpenAPI generation.
- */
 export interface OpenAPIRouteConfig<
   TParams extends z.ZodTypeAny = z.ZodTypeAny,
   TQuery extends z.ZodTypeAny = z.ZodTypeAny,
@@ -39,10 +23,6 @@ export interface OpenAPIRouteConfig<
   handler: AppRouteHandler;
 }
 
-/**
- * Converted OpenAPI metadata stored on handler functions.
- * Zod schemas are converted to JSON Schema format.
- */
 export interface OpenAPIRouteMetadata {
   summary?: string;
   description?: string;
@@ -62,16 +42,10 @@ export interface OpenAPIRouteMetadata {
   >;
 }
 
-/**
- * Handler function with optional OpenAPI metadata attached.
- */
 export interface WrappedHandler extends AppRouteHandler {
   [OPENAPI_METADATA]?: OpenAPIRouteMetadata;
 }
 
-/**
- * OpenAPI 3.1.0 specification types
- */
 export interface OpenAPISpec {
   openapi: "3.1.0";
   info: OpenAPIInfo;

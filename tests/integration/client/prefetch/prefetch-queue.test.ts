@@ -10,7 +10,6 @@ import type { PrefetchQueueOptions } from "@veryfront/rendering/client/prefetch/
 import { delay as sleep } from "@std/async";
 import { scaleMs } from "@veryfront/testing";
 
-// Mock fetch function
 interface MockFetchOptions {
   status?: number;
   ok?: boolean;
@@ -19,7 +18,7 @@ interface MockFetchOptions {
   shouldAbort?: boolean;
 }
 
-const createMockFetch = (options: MockFetchOptions = {}) => {
+function createMockFetch(options: MockFetchOptions = {}): typeof fetch {
   const {
     status = 200,
     ok = true,
@@ -29,9 +28,7 @@ const createMockFetch = (options: MockFetchOptions = {}) => {
   } = options;
 
   return async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
-    if (delay > 0) {
-      await sleep(delay);
-    }
+    if (delay > 0) await sleep(delay);
 
     if (shouldAbort && init?.signal) {
       throw new DOMException("The operation was aborted", "AbortError");
@@ -48,22 +45,33 @@ const createMockFetch = (options: MockFetchOptions = {}) => {
       clone: () => ({ ok, status, headers: mockHeaders } as Response),
     } as Response;
   };
-};
+}
 
-// Setup global mocks
-const setupMocks = () => {
+function createOptions(overrides: Partial<PrefetchQueueOptions> = {}): PrefetchQueueOptions {
+  return {
+    maxConcurrent: 3,
+    maxSize: 1024 * 1024,
+    timeout: 5000,
+    ...overrides,
+  };
+}
+
+function createLink(href: string): HTMLAnchorElement {
+  return { href } as HTMLAnchorElement;
+}
+
+function setupMocks(): {
+  cleanup: () => void;
+  setMockFetch: (fn: typeof fetch) => void;
+} {
   const originalFetch = globalThis.fetch;
   const originalDocument = globalThis.document;
 
   let mockFetch: typeof fetch = createMockFetch();
+
   (globalThis as any).fetch = (...args: Parameters<typeof fetch>) => mockFetch(...args);
   (globalThis as any).document = {
-    createElement: (tag: string) => {
-      if (tag === "a") {
-        return { href: "" };
-      }
-      return {};
-    },
+    createElement: (tag: string) => (tag === "a" ? { href: "" } : {}),
   };
 
   return {
@@ -75,43 +83,22 @@ const setupMocks = () => {
       mockFetch = fn;
     },
   };
-};
+}
 
 describe("PrefetchQueue", () => {
   describe("Constructor and Configuration", () => {
     it("should create PrefetchQueue with options and prefetchedUrls", () => {
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const queue = new PrefetchQueue(options, prefetchedUrls);
+      const queue = new PrefetchQueue(createOptions(), new Set<string>());
       assertExists(queue);
     });
 
     it("should initialize with zero queue size", () => {
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const queue = new PrefetchQueue(options, prefetchedUrls);
+      const queue = new PrefetchQueue(createOptions(), new Set<string>());
       assertEquals(queue.getQueueSize(), 0);
     });
 
     it("should initialize with zero concurrent count", () => {
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const queue = new PrefetchQueue(options, prefetchedUrls);
+      const queue = new PrefetchQueue(createOptions(), new Set<string>());
       assertEquals(queue.getConcurrentCount(), 0);
     });
   });
@@ -120,17 +107,8 @@ describe("PrefetchQueue", () => {
     it("should allow setting resource callback", () => {
       const mocks = setupMocks();
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const queue = new PrefetchQueue(options, prefetchedUrls);
-      const callback = (_response: Response, _url: string) => {};
-
-      queue.setResourceCallback(callback);
+      const queue = new PrefetchQueue(createOptions(), new Set<string>());
+      queue.setResourceCallback((_response: Response, _url: string) => {});
 
       mocks.cleanup();
     });
@@ -139,14 +117,7 @@ describe("PrefetchQueue", () => {
       const mocks = setupMocks();
       mocks.setMockFetch(createMockFetch({ ok: true }));
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const queue = new PrefetchQueue(options, prefetchedUrls);
+      const queue = new PrefetchQueue(createOptions(), new Set<string>());
 
       let callbackCalled = false;
       let callbackUrl = "";
@@ -156,11 +127,7 @@ describe("PrefetchQueue", () => {
         callbackUrl = url;
       });
 
-      const link = {
-        href: "http://example.com/page",
-      } as HTMLAnchorElement;
-
-      await queue.prefetchLink(link);
+      await queue.prefetchLink(createLink("http://example.com/page"));
 
       assertEquals(callbackCalled, true);
       assertEquals(callbackUrl, "http://example.com/page");
@@ -172,26 +139,14 @@ describe("PrefetchQueue", () => {
       const mocks = setupMocks();
       mocks.setMockFetch(createMockFetch({ ok: false, status: 404 }));
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const queue = new PrefetchQueue(options, prefetchedUrls);
+      const queue = new PrefetchQueue(createOptions(), new Set<string>());
 
       let callbackCalled = false;
-
       queue.setResourceCallback((_response: Response, _url: string) => {
         callbackCalled = true;
       });
 
-      const link = {
-        href: "http://example.com/notfound",
-      } as HTMLAnchorElement;
-
-      await queue.prefetchLink(link);
+      await queue.prefetchLink(createLink("http://example.com/notfound"));
 
       assertEquals(callbackCalled, false);
 
@@ -204,20 +159,10 @@ describe("PrefetchQueue", () => {
       const mocks = setupMocks();
       mocks.setMockFetch(createMockFetch({ ok: true }));
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
       const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions(), prefetchedUrls);
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
-
-      const link = {
-        href: "http://example.com/page",
-      } as HTMLAnchorElement;
-
-      await queue.prefetchLink(link);
+      await queue.prefetchLink(createLink("http://example.com/page"));
 
       assertEquals(prefetchedUrls.has("http://example.com/page"), true);
 
@@ -233,20 +178,12 @@ describe("PrefetchQueue", () => {
         return createMockFetch()(...args);
       });
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set(["http://example.com/page"]);
+      const queue = new PrefetchQueue(
+        createOptions(),
+        new Set(["http://example.com/page"]),
+      );
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
-
-      const link = {
-        href: "http://example.com/page",
-      } as HTMLAnchorElement;
-
-      await queue.prefetchLink(link);
+      await queue.prefetchLink(createLink("http://example.com/page"));
 
       assertEquals(fetchCallCount, 0);
 
@@ -262,23 +199,10 @@ describe("PrefetchQueue", () => {
         return createMockFetch()(...args);
       });
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions(), new Set<string>());
+      const link = createLink("http://example.com/page");
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
-
-      const link = {
-        href: "http://example.com/page",
-      } as HTMLAnchorElement;
-
-      // Start first prefetch (won't await)
       queue.prefetchLink(link);
-
-      // Try to prefetch same URL immediately
       await queue.prefetchLink(link);
 
       assertEquals(fetchCallCount, 1);
@@ -291,27 +215,13 @@ describe("PrefetchQueue", () => {
 
       let requestHeaders: Record<string, string> = {};
       mocks.setMockFetch((url, init) => {
-        if (init?.headers) {
-          const headers = init.headers as Record<string, string>;
-          requestHeaders = { ...headers };
-        }
+        if (init?.headers) requestHeaders = { ...(init.headers as Record<string, string>) };
         return createMockFetch()(url, init);
       });
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions(), new Set<string>());
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
-
-      const link = {
-        href: "http://example.com/page",
-      } as HTMLAnchorElement;
-
-      await queue.prefetchLink(link);
+      await queue.prefetchLink(createLink("http://example.com/page"));
 
       assertEquals(requestHeaders["X-Veryfront-Prefetch"], "1");
 
@@ -320,26 +230,14 @@ describe("PrefetchQueue", () => {
 
     it("should handle fetch errors gracefully", async () => {
       const mocks = setupMocks();
-
       mocks.setMockFetch(() => {
         throw new Error("Network error");
       });
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
       const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions(), prefetchedUrls);
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
-
-      const link = {
-        href: "http://example.com/page",
-      } as HTMLAnchorElement;
-
-      // Should not throw
-      await queue.prefetchLink(link);
+      await queue.prefetchLink(createLink("http://example.com/page"));
 
       assertEquals(prefetchedUrls.has("http://example.com/page"), false);
 
@@ -350,21 +248,10 @@ describe("PrefetchQueue", () => {
       const mocks = setupMocks();
       mocks.setMockFetch(createMockFetch({ shouldAbort: true }));
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
       const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions(), prefetchedUrls);
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
-
-      const link = {
-        href: "http://example.com/page",
-      } as HTMLAnchorElement;
-
-      // Should not throw
-      await queue.prefetchLink(link);
+      await queue.prefetchLink(createLink("http://example.com/page"));
 
       assertEquals(prefetchedUrls.has("http://example.com/page"), false);
 
@@ -377,7 +264,7 @@ describe("PrefetchQueue", () => {
       const mocks = setupMocks();
 
       mocks.setMockFetch(async (url, init) => {
-        await new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
           const timeoutId = setTimeout(resolve, scaleMs(100));
           init?.signal?.addEventListener("abort", () => {
             clearTimeout(timeoutId);
@@ -387,28 +274,14 @@ describe("PrefetchQueue", () => {
         return createMockFetch()(url, init);
       });
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 2,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions({ maxConcurrent: 2 }), new Set<string>());
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
+      queue.prefetchLink(createLink("http://example.com/page1"));
+      queue.prefetchLink(createLink("http://example.com/page2"));
+      queue.prefetchLink(createLink("http://example.com/page3"));
 
-      const link1 = { href: "http://example.com/page1" } as HTMLAnchorElement;
-      const link2 = { href: "http://example.com/page2" } as HTMLAnchorElement;
-      const link3 = { href: "http://example.com/page3" } as HTMLAnchorElement;
-
-      // Start 3 prefetches
-      queue.prefetchLink(link1);
-      queue.prefetchLink(link2);
-      queue.prefetchLink(link3);
-
-      // Wait a bit for queue to process
       await sleep(50);
 
-      // Should have skipped the third one
       assertEquals(queue.getConcurrentCount() <= 2, true);
 
       mocks.cleanup();
@@ -418,20 +291,9 @@ describe("PrefetchQueue", () => {
       const mocks = setupMocks();
       mocks.setMockFetch(createMockFetch());
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions(), new Set<string>());
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
-
-      const link = {
-        href: "http://example.com/page",
-      } as HTMLAnchorElement;
-
-      await queue.prefetchLink(link);
+      await queue.prefetchLink(createLink("http://example.com/page"));
 
       assertEquals(queue.getConcurrentCount(), 0);
 
@@ -442,20 +304,9 @@ describe("PrefetchQueue", () => {
       const mocks = setupMocks();
       mocks.setMockFetch(createMockFetch());
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions(), new Set<string>());
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
-
-      const link = {
-        href: "http://example.com/page",
-      } as HTMLAnchorElement;
-
-      await queue.prefetchLink(link);
+      await queue.prefetchLink(createLink("http://example.com/page"));
 
       assertEquals(queue.getQueueSize(), 0);
 
@@ -469,24 +320,14 @@ describe("PrefetchQueue", () => {
       mocks.setMockFetch(
         createMockFetch({
           ok: true,
-          headers: { "content-length": "2000000" }, // 2MB
+          headers: { "content-length": "2000000" },
         }),
       );
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024, // 1MB limit
-        timeout: 5000,
-      };
       const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions({ maxSize: 1024 * 1024 }), prefetchedUrls);
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
-
-      const link = {
-        href: "http://example.com/large-file",
-      } as HTMLAnchorElement;
-
-      await queue.prefetchLink(link);
+      await queue.prefetchLink(createLink("http://example.com/large-file"));
 
       assertEquals(prefetchedUrls.has("http://example.com/large-file"), false);
 
@@ -498,24 +339,14 @@ describe("PrefetchQueue", () => {
       mocks.setMockFetch(
         createMockFetch({
           ok: true,
-          headers: { "content-length": "500000" }, // 500KB
+          headers: { "content-length": "500000" },
         }),
       );
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024, // 1MB limit
-        timeout: 5000,
-      };
       const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions({ maxSize: 1024 * 1024 }), prefetchedUrls);
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
-
-      const link = {
-        href: "http://example.com/small-file",
-      } as HTMLAnchorElement;
-
-      await queue.prefetchLink(link);
+      await queue.prefetchLink(createLink("http://example.com/small-file"));
 
       assertEquals(prefetchedUrls.has("http://example.com/small-file"), true);
 
@@ -524,27 +355,12 @@ describe("PrefetchQueue", () => {
 
     it("should handle missing content-length header", async () => {
       const mocks = setupMocks();
-      mocks.setMockFetch(
-        createMockFetch({
-          ok: true,
-          headers: {}, // No content-length
-        }),
-      );
+      mocks.setMockFetch(createMockFetch({ ok: true, headers: {} }));
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
       const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions(), prefetchedUrls);
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
-
-      const link = {
-        href: "http://example.com/no-length",
-      } as HTMLAnchorElement;
-
-      await queue.prefetchLink(link);
+      await queue.prefetchLink(createLink("http://example.com/no-length"));
 
       assertEquals(prefetchedUrls.has("http://example.com/no-length"), true);
 
@@ -556,24 +372,14 @@ describe("PrefetchQueue", () => {
       mocks.setMockFetch(
         createMockFetch({
           ok: true,
-          headers: { "content-length": "1048576" }, // Exactly 1MB
+          headers: { "content-length": "1048576" },
         }),
       );
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024, // 1MB limit
-        timeout: 5000,
-      };
       const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions({ maxSize: 1024 * 1024 }), prefetchedUrls);
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
-
-      const link = {
-        href: "http://example.com/exact-size",
-      } as HTMLAnchorElement;
-
-      await queue.prefetchLink(link);
+      await queue.prefetchLink(createLink("http://example.com/exact-size"));
 
       assertEquals(prefetchedUrls.has("http://example.com/exact-size"), true);
 
@@ -595,20 +401,10 @@ describe("PrefetchQueue", () => {
         return createMockFetch()(url, init);
       });
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 50, // Short timeout
-      };
       const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions({ timeout: 50 }), prefetchedUrls);
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
-
-      const link = {
-        href: "http://example.com/slow",
-      } as HTMLAnchorElement;
-
-      await queue.prefetchLink(link);
+      await queue.prefetchLink(createLink("http://example.com/slow"));
 
       assertEquals(prefetchedUrls.has("http://example.com/slow"), false);
 
@@ -621,14 +417,8 @@ describe("PrefetchQueue", () => {
       const mocks = setupMocks();
       mocks.setMockFetch(createMockFetch({ ok: true }));
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
       const prefetchedUrls = new Set<string>();
-
-      const queue = new PrefetchQueue(options, prefetchedUrls);
+      const queue = new PrefetchQueue(createOptions(), prefetchedUrls);
 
       await queue.prefetch("http://example.com/page");
 
@@ -649,14 +439,7 @@ describe("PrefetchQueue", () => {
         },
       };
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const queue = new PrefetchQueue(options, prefetchedUrls);
+      const queue = new PrefetchQueue(createOptions(), new Set<string>());
 
       await queue.prefetch("http://example.com/page");
 
@@ -672,7 +455,7 @@ describe("PrefetchQueue", () => {
 
       let abortedCount = 0;
       mocks.setMockFetch(async (url, init) => {
-        await new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
           const timeoutId = setTimeout(resolve, scaleMs(100));
           init?.signal?.addEventListener("abort", () => {
             clearTimeout(timeoutId);
@@ -688,27 +471,15 @@ describe("PrefetchQueue", () => {
         return createMockFetch()(url, init);
       });
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions(), new Set<string>());
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
+      queue.prefetchLink(createLink("http://example.com/page1"));
+      queue.prefetchLink(createLink("http://example.com/page2"));
 
-      const link1 = { href: "http://example.com/page1" } as HTMLAnchorElement;
-      const link2 = { href: "http://example.com/page2" } as HTMLAnchorElement;
-
-      queue.prefetchLink(link1);
-      queue.prefetchLink(link2);
-
-      // Wait a bit for queue to start
       await sleep(10);
 
       queue.stopAll();
 
-      // Wait for aborts to process
       await sleep(50);
 
       assertEquals(abortedCount >= 0, true);
@@ -720,7 +491,7 @@ describe("PrefetchQueue", () => {
       const mocks = setupMocks();
 
       mocks.setMockFetch(async (url, init) => {
-        await new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
           const timeoutId = setTimeout(resolve, scaleMs(100));
           init?.signal?.addEventListener("abort", () => {
             clearTimeout(timeoutId);
@@ -730,18 +501,9 @@ describe("PrefetchQueue", () => {
         return createMockFetch()(url, init);
       });
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions(), new Set<string>());
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
-
-      const link = { href: "http://example.com/page" } as HTMLAnchorElement;
-
-      queue.prefetchLink(link);
+      queue.prefetchLink(createLink("http://example.com/page"));
 
       await sleep(10);
 
@@ -756,7 +518,7 @@ describe("PrefetchQueue", () => {
       const mocks = setupMocks();
 
       mocks.setMockFetch(async (url, init) => {
-        await new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
           const timeoutId = setTimeout(resolve, scaleMs(100));
           init?.signal?.addEventListener("abort", () => {
             clearTimeout(timeoutId);
@@ -766,18 +528,9 @@ describe("PrefetchQueue", () => {
         return createMockFetch()(url, init);
       });
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions(), new Set<string>());
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
-
-      const link = { href: "http://example.com/page" } as HTMLAnchorElement;
-
-      queue.prefetchLink(link);
+      queue.prefetchLink(createLink("http://example.com/page"));
 
       await sleep(10);
 
@@ -794,14 +547,8 @@ describe("PrefetchQueue", () => {
       const mocks = setupMocks();
       mocks.setMockFetch(createMockFetch({ ok: true }));
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
       const prefetchedUrls = new Set<string>();
-
-      const queue = new PrefetchQueue(options, prefetchedUrls);
+      const queue = new PrefetchQueue(createOptions(), prefetchedUrls);
 
       await queue.prefetch("http://example.com/page1");
       await queue.prefetch("http://example.com/page2");
@@ -814,26 +561,13 @@ describe("PrefetchQueue", () => {
 
     it("should handle invalid URLs gracefully", async () => {
       const mocks = setupMocks();
-
       mocks.setMockFetch(() => {
         throw new TypeError("Invalid URL");
       });
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions(), new Set<string>());
 
-      const queue = new PrefetchQueue(options, prefetchedUrls);
-
-      const link = {
-        href: "not-a-valid-url",
-      } as HTMLAnchorElement;
-
-      // Should not throw
-      await queue.prefetchLink(link);
+      await queue.prefetchLink(createLink("not-a-valid-url"));
 
       mocks.cleanup();
     });
@@ -842,25 +576,13 @@ describe("PrefetchQueue", () => {
       const mocks = setupMocks();
       mocks.setMockFetch(createMockFetch({ ok: true }));
 
-      const options: PrefetchQueueOptions = {
-        maxConcurrent: 3,
-        maxSize: 1024 * 1024,
-        timeout: 5000,
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const queue = new PrefetchQueue(options, prefetchedUrls);
+      const queue = new PrefetchQueue(createOptions(), new Set<string>());
 
       queue.setResourceCallback((_response: Response, _url: string) => {
         throw new Error("Callback error");
       });
 
-      const link = {
-        href: "http://example.com/page",
-      } as HTMLAnchorElement;
-
-      // Should not throw (error should be caught internally)
-      await queue.prefetchLink(link);
+      await queue.prefetchLink(createLink("http://example.com/page"));
 
       mocks.cleanup();
     });

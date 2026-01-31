@@ -5,26 +5,26 @@ import { format, parse } from "./parse-format.ts";
 describe("platform/compat/path/parse-format", () => {
   describe("parse", () => {
     it("should parse absolute path", () => {
-      const result = parse("/home/user/file.ts");
-      assertEquals(result.root, "/");
-      assertEquals(result.dir, "/home/user");
-      assertEquals(result.base, "file.ts");
-      assertEquals(result.ext, ".ts");
-      assertEquals(result.name, "file");
+      const { root, dir, base, ext, name } = parse("/home/user/file.ts");
+      assertEquals(root, "/");
+      assertEquals(dir, "/home/user");
+      assertEquals(base, "file.ts");
+      assertEquals(ext, ".ts");
+      assertEquals(name, "file");
     });
 
     it("should parse relative path", () => {
-      const result = parse("src/utils.js");
-      assertEquals(result.root, "");
-      assertEquals(result.base, "utils.js");
-      assertEquals(result.ext, ".js");
-      assertEquals(result.name, "utils");
+      const { root, base, ext, name } = parse("src/utils.js");
+      assertEquals(root, "");
+      assertEquals(base, "utils.js");
+      assertEquals(ext, ".js");
+      assertEquals(name, "utils");
     });
 
     it("should parse file without extension", () => {
-      const result = parse("/usr/bin/deno");
-      assertEquals(result.ext, "");
-      assertEquals(result.name, "deno");
+      const { ext, name } = parse("/usr/bin/deno");
+      assertEquals(ext, "");
+      assertEquals(name, "deno");
     });
   });
 
@@ -41,12 +41,24 @@ describe("platform/compat/path/parse-format", () => {
     });
 
     it("should format from name and ext when no base", () => {
-      const result = format({ root: "", dir: "src", base: "", ext: ".js", name: "utils" });
+      const result = format({
+        root: "",
+        dir: "src",
+        base: "",
+        ext: ".js",
+        name: "utils",
+      });
       assertEquals(result, "src/utils.js");
     });
 
     it("should format base without dir", () => {
-      const result = format({ root: "", dir: "", base: "file.ts", ext: ".ts", name: "file" });
+      const result = format({
+        root: "",
+        dir: "",
+        base: "file.ts",
+        ext: ".ts",
+        name: "file",
+      });
       assertEquals(result, "file.ts");
     });
   });

@@ -75,54 +75,19 @@ interface FileSystemLike {
   stat(path: string): Promise<{ isFile: boolean; mtime: Date | null }>;
 }
 
-/**
- * Static File Service
- *
- * Handles the business logic of static file serving:
- * - Manifest loading and caching
- * - File candidate resolution
- * - Cache strategy determination
- *
- * Supports optional FileSystemRepository injection for testing.
- *
- * @example
- * ```typescript
- * // Default usage (creates SecureFs internally)
- * const service = new StaticFileService();
- * const result = await service.resolveFile("/style.css", options);
- *
- * // With injected repository (for testing)
- * const mockFs = new MockFileSystemRepository({ context, files: {...} });
- * const service = new StaticFileService(mockFs);
- * ```
- */
 export class StaticFileService {
   private static manifestCache = new Map<string, ManifestIndex>();
   private static manifestLoading = new Map<string, Promise<ManifestIndex | null>>();
 
-  /**
-   * Optional filesystem repository for dependency injection.
-   * When provided, used instead of creating SecureFs internally.
-   */
   private readonly fsRepo?: FileSystemRepository;
 
-  /**
-   * Create a StaticFileService.
-   *
-   * @param fsRepo - Optional filesystem repository for testing/DI
-   */
   constructor(fsRepo?: FileSystemRepository) {
     this.fsRepo = fsRepo;
   }
 
-  /**
-   * Get a filesystem interface for the given options.
-   * Uses injected repository if available, otherwise creates SecureFs.
-   */
   private getFileSystem(options: StaticFileOptions): FileSystemLike {
-    if (this.fsRepo) {
-      return this.fsRepo;
-    }
+    if (this.fsRepo) return this.fsRepo;
+
     return createSecureFs({
       baseDir: options.projectDir,
       adapter: options.adapter,
@@ -131,15 +96,11 @@ export class StaticFileService {
     });
   }
 
-  /**
-   * Resolve a static file from the request path
-   */
   async resolveFile(
     requestPath: string,
     options: StaticFileOptions,
   ): Promise<StaticFileResult | null> {
     const fs = this.getFileSystem(options);
-
     const normalizedPath = requestPath === "/" ? "/index.html" : requestPath;
     const candidates = await this.buildCandidates(normalizedPath, options, fs);
 
@@ -151,9 +112,6 @@ export class StaticFileService {
     return null;
   }
 
-  /**
-   * Build list of candidate file paths to check
-   */
   private async buildCandidates(
     normalizedPath: string,
     options: StaticFileOptions,
@@ -162,35 +120,25 @@ export class StaticFileService {
     const candidates: Array<{ path: string; source: "manifest" | "dist" | "public" }> = [];
     const seen = new Set<string>();
 
-    const addCandidate = (path: string, source: "manifest" | "dist" | "public") => {
+    const addCandidate = (path: string, source: "manifest" | "dist" | "public"): void => {
       const normalized = normalizePath(path);
       if (seen.has(normalized)) return;
       seen.add(normalized);
       candidates.push({ path: normalized, source });
     };
 
-    // Try manifest first
     const manifestPath = await this.resolveManifestAsset(normalizedPath, options, fs);
-    if (manifestPath) {
-      addCandidate(manifestPath, "manifest");
-    }
+    if (manifestPath) addCandidate(manifestPath, "manifest");
 
-    // Then try dist and public directories
     for (const dir of ["dist", "public"] as const) {
       const root = joinPath(options.projectDir, dir);
       const absPath = normalizePath(joinPath(root, normalizedPath));
-
-      if (isWithinDirectory(root, absPath)) {
-        addCandidate(absPath, dir);
-      }
+      if (isWithinDirectory(root, absPath)) addCandidate(absPath, dir);
     }
 
     return candidates;
   }
 
-  /**
-   * Try to resolve a single candidate path
-   */
   private async tryResolveCandidate(
     candidate: { path: string; source: "manifest" | "dist" | "public" },
     requestPath: string,
@@ -203,15 +151,13 @@ export class StaticFileService {
 
       const data = await fs.readFileBytes(candidate.path);
       const etag = computeEtag(data);
-      const ext = getExtension(candidate.path);
-      const cacheStrategy = this.determineCacheStrategy(candidate, requestPath, options);
 
       return {
         path: candidate.path,
         data,
         etag,
-        contentType: this.getContentType(ext),
-        cacheStrategy,
+        contentType: getContentTypeFromExt(getExtension(candidate.path)),
+        cacheStrategy: this.determineCacheStrategy(candidate, requestPath, options),
         source: candidate.source,
       };
     } catch {
@@ -219,36 +165,24 @@ export class StaticFileService {
     }
   }
 
-  /**
-   * Determine the appropriate cache strategy for a file
-   */
   private determineCacheStrategy(
     candidate: { path: string; source: "manifest" | "dist" | "public" },
     requestPath: string,
     options: StaticFileOptions,
   ): CacheStrategy {
-    // Preview mode: no caching
-    if (options.isPreviewMode && !options.isLocalDev) {
-      return "no-cache";
-    }
+    if (options.isPreviewMode && !options.isLocalDev) return "no-cache";
 
-    // Hashed filenames or veryfront assets from dist/manifest: immutable
-    const isHashed = hasHashedFilename(candidate.path);
     const isVeryfrontAsset = requestPath.includes("/_veryfront/");
     if (
-      isHashed ||
-      ((candidate.source === "dist" || candidate.source === "manifest") && isVeryfrontAsset)
+      hasHashedFilename(candidate.path) ||
+      (isVeryfrontAsset && (candidate.source === "dist" || candidate.source === "manifest"))
     ) {
       return "immutable";
     }
 
-    // Default: medium caching
     return "medium";
   }
 
-  /**
-   * Resolve a request path to a manifest asset path
-   */
   private async resolveManifestAsset(
     requestPath: string,
     options: StaticFileOptions,
@@ -257,15 +191,10 @@ export class StaticFileService {
     const index = await this.loadManifestIndex(options, fs);
     if (!index) return null;
 
-    const normalized = normalizePath(
-      requestPath.startsWith("/") ? requestPath : `/${requestPath}`,
-    );
+    const normalized = normalizePath(requestPath.startsWith("/") ? requestPath : `/${requestPath}`);
     return index.assets.get(normalized) ?? null;
   }
 
-  /**
-   * Load the build manifest index (with caching)
-   */
   private async loadManifestIndex(
     options: StaticFileOptions,
     fs: FileSystemLike,
@@ -274,7 +203,7 @@ export class StaticFileService {
     const distRoot = joinPath(options.projectDir, "dist");
     const manifestPath = joinPath(distRoot, "_veryfront/manifest.json");
 
-    let stat;
+    let stat: { isFile: boolean; mtime: Date | null };
     try {
       stat = await fs.stat(manifestPath);
     } catch {
@@ -283,22 +212,17 @@ export class StaticFileService {
 
     const currentMtime = stat.mtime?.getTime() ?? null;
     const cached = StaticFileService.manifestCache.get(cacheKey);
+    if (cached?.mtime === currentMtime) return cached;
 
-    if (cached && (cached.mtime ?? null) === currentMtime) {
-      return cached;
-    }
+    const existingLoader = StaticFileService.manifestLoading.get(cacheKey);
+    if (existingLoader) return await existingLoader;
 
-    // Check if already loading
-    let loader = StaticFileService.manifestLoading.get(cacheKey);
-    if (loader) return await loader;
-
-    // Load manifest
-    loader = (async () => {
+    const loader = (async (): Promise<ManifestIndex | null> => {
       try {
         const manifestRaw = await fs.readFile(manifestPath);
         const manifest = JSON.parse(manifestRaw) as BuildManifest;
         const assets = this.extractManifestAssets(manifest, distRoot);
-        const indexValue = { assets, mtime: currentMtime };
+        const indexValue: ManifestIndex = { assets, mtime: currentMtime };
         StaticFileService.manifestCache.set(cacheKey, indexValue);
         return indexValue;
       } catch {
@@ -313,13 +237,10 @@ export class StaticFileService {
     return await loader;
   }
 
-  /**
-   * Extract asset paths from build manifest
-   */
   private extractManifestAssets(manifest: BuildManifest, distRoot: string): Map<string, string> {
     const assets = new Map<string, string>();
 
-    const addAsset = (requestPath: string | null | undefined) => {
+    const addAsset = (requestPath: string | null | undefined): void => {
       if (!requestPath) return;
       const normalized = normalizePath(
         requestPath.startsWith("/") ? requestPath : `/${requestPath}`,
@@ -327,7 +248,6 @@ export class StaticFileService {
       assets.set(normalized, normalizePath(joinPath(distRoot, normalized)));
     };
 
-    // Extract chunk assets
     if (manifest.chunks) {
       for (const chunkInfo of Object.values(manifest.chunks.chunks || {})) {
         if (!chunkInfo || typeof chunkInfo !== "object") continue;
@@ -348,7 +268,6 @@ export class StaticFileService {
       }
     }
 
-    // Extract route chunks
     for (const route of manifest.routes || []) {
       if (!Array.isArray(route.chunks)) continue;
       for (const chunk of route.chunks) {
@@ -359,31 +278,12 @@ export class StaticFileService {
     return assets;
   }
 
-  /**
-   * Get content type for file extension
-   */
-  private getContentType(ext: string): string {
-    return getContentTypeFromExt(ext);
-  }
-
-  /**
-   * Check if a path is an asset request (vs page request)
-   */
   isAssetRequest(pathname: string): boolean {
-    // .veryfront directory paths should go to SSR
-    if (pathname.includes("/.veryfront/") || pathname.startsWith("/.veryfront")) {
-      return false;
-    }
-    // .md files should go to MarkdownPreviewHandler
-    if (pathname.endsWith(".md")) {
-      return false;
-    }
+    if (pathname.includes("/.veryfront/") || pathname.startsWith("/.veryfront")) return false;
+    if (pathname.endsWith(".md")) return false;
     return pathname.includes(".") || pathname.startsWith("/_veryfront/");
   }
 
-  /**
-   * Clear manifest cache (useful for testing)
-   */
   static clearCache(): void {
     StaticFileService.manifestCache.clear();
     StaticFileService.manifestLoading.clear();

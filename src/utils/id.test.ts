@@ -11,8 +11,7 @@ describe("id", () => {
     });
 
     it("should generate ID with prefix", () => {
-      const id = generateId("msg");
-      assertMatch(id, /^msg-[0-9a-zA-Z]{16}$/);
+      assertMatch(generateId("msg"), /^msg-[0-9a-zA-Z]{16}$/);
     });
 
     it("should generate unique IDs", () => {

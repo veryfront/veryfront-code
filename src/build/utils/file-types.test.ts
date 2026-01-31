@@ -18,48 +18,84 @@ import {
 describe("build/utils/file-types", () => {
   describe("isImageFile", () => {
     it("should detect image extensions", () => {
-      assertEquals(isImageFile("photo.jpg"), true);
-      assertEquals(isImageFile("photo.jpeg"), true);
-      assertEquals(isImageFile("icon.png"), true);
-      assertEquals(isImageFile("hero.webp"), true);
-      assertEquals(isImageFile("logo.svg"), true);
-      assertEquals(isImageFile("anim.gif"), true);
-      assertEquals(isImageFile("pic.avif"), true);
+      const cases: Array<[string, boolean]> = [
+        ["photo.jpg", true],
+        ["photo.jpeg", true],
+        ["icon.png", true],
+        ["hero.webp", true],
+        ["logo.svg", true],
+        ["anim.gif", true],
+        ["pic.avif", true],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(isImageFile(file), expected);
+      }
     });
 
     it("should be case-insensitive", () => {
-      assertEquals(isImageFile("photo.JPG"), true);
-      assertEquals(isImageFile("icon.PNG"), true);
+      const cases: Array<[string, boolean]> = [
+        ["photo.JPG", true],
+        ["icon.PNG", true],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(isImageFile(file), expected);
+      }
     });
 
     it("should reject non-image files", () => {
-      assertEquals(isImageFile("app.ts"), false);
-      assertEquals(isImageFile("style.css"), false);
+      const cases: Array<[string, boolean]> = [
+        ["app.ts", false],
+        ["style.css", false],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(isImageFile(file), expected);
+      }
     });
   });
 
   describe("isScriptFile", () => {
     it("should detect script extensions", () => {
-      assertEquals(isScriptFile("app.js"), true);
-      assertEquals(isScriptFile("comp.jsx"), true);
-      assertEquals(isScriptFile("app.ts"), true);
-      assertEquals(isScriptFile("comp.tsx"), true);
-      assertEquals(isScriptFile("lib.mjs"), true);
-      assertEquals(isScriptFile("lib.cjs"), true);
+      const cases: Array<[string, boolean]> = [
+        ["app.js", true],
+        ["comp.jsx", true],
+        ["app.ts", true],
+        ["comp.tsx", true],
+        ["lib.mjs", true],
+        ["lib.cjs", true],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(isScriptFile(file), expected);
+      }
     });
 
     it("should reject non-script files", () => {
-      assertEquals(isScriptFile("style.css"), false);
-      assertEquals(isScriptFile("photo.png"), false);
+      const cases: Array<[string, boolean]> = [
+        ["style.css", false],
+        ["photo.png", false],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(isScriptFile(file), expected);
+      }
     });
   });
 
   describe("isStyleFile", () => {
     it("should detect style extensions", () => {
-      assertEquals(isStyleFile("style.css"), true);
-      assertEquals(isStyleFile("theme.scss"), true);
-      assertEquals(isStyleFile("base.sass"), true);
-      assertEquals(isStyleFile("vars.less"), true);
+      const cases: Array<[string, boolean]> = [
+        ["style.css", true],
+        ["theme.scss", true],
+        ["base.sass", true],
+        ["vars.less", true],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(isStyleFile(file), expected);
+      }
     });
 
     it("should reject non-style files", () => {
@@ -69,8 +105,14 @@ describe("build/utils/file-types", () => {
 
   describe("isDocumentFile", () => {
     it("should detect document extensions", () => {
-      assertEquals(isDocumentFile("readme.md"), true);
-      assertEquals(isDocumentFile("page.mdx"), true);
+      const cases: Array<[string, boolean]> = [
+        ["readme.md", true],
+        ["page.mdx", true],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(isDocumentFile(file), expected);
+      }
     });
 
     it("should reject non-document files", () => {
@@ -80,15 +122,27 @@ describe("build/utils/file-types", () => {
 
   describe("getOptimizedImageFormat", () => {
     it("should normalize jpg to jpeg", () => {
-      assertEquals(getOptimizedImageFormat("jpg"), "jpeg");
-      assertEquals(getOptimizedImageFormat("jpeg"), "jpeg");
+      const cases: Array<[string, string]> = [
+        ["jpg", "jpeg"],
+        ["jpeg", "jpeg"],
+      ];
+
+      for (const [format, expected] of cases) {
+        assertEquals(getOptimizedImageFormat(format), expected);
+      }
     });
 
     it("should preserve known formats", () => {
-      assertEquals(getOptimizedImageFormat("png"), "png");
-      assertEquals(getOptimizedImageFormat("webp"), "webp");
-      assertEquals(getOptimizedImageFormat("avif"), "avif");
-      assertEquals(getOptimizedImageFormat("svg"), "svg");
+      const cases: Array<[string, string]> = [
+        ["png", "png"],
+        ["webp", "webp"],
+        ["avif", "avif"],
+        ["svg", "svg"],
+      ];
+
+      for (const [format, expected] of cases) {
+        assertEquals(getOptimizedImageFormat(format), expected);
+      }
     });
 
     it("should handle dot prefix", () => {
@@ -106,17 +160,29 @@ describe("build/utils/file-types", () => {
 
   describe("getEsbuildLoader", () => {
     it("should map script extensions", () => {
-      assertEquals(getEsbuildLoader("app.ts"), "ts");
-      assertEquals(getEsbuildLoader("comp.tsx"), "tsx");
-      assertEquals(getEsbuildLoader("app.js"), "js");
-      assertEquals(getEsbuildLoader("comp.jsx"), "jsx");
-      assertEquals(getEsbuildLoader("lib.mjs"), "js");
-      assertEquals(getEsbuildLoader("lib.cjs"), "js");
+      const cases: Array<[string, string]> = [
+        ["app.ts", "ts"],
+        ["comp.tsx", "tsx"],
+        ["app.js", "js"],
+        ["comp.jsx", "jsx"],
+        ["lib.mjs", "js"],
+        ["lib.cjs", "js"],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(getEsbuildLoader(file), expected);
+      }
     });
 
     it("should map style extensions to css", () => {
-      assertEquals(getEsbuildLoader("style.css"), "css");
-      assertEquals(getEsbuildLoader("theme.scss"), "css");
+      const cases: Array<[string, string]> = [
+        ["style.css", "css"],
+        ["theme.scss", "css"],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(getEsbuildLoader(file), expected);
+      }
     });
 
     it("should map mdx to tsx", () => {
@@ -156,22 +222,40 @@ describe("build/utils/file-types", () => {
 
   describe("needsTranspilation", () => {
     it("should require transpilation for TS/TSX/JSX/MDX", () => {
-      assertEquals(needsTranspilation("app.ts"), true);
-      assertEquals(needsTranspilation("comp.tsx"), true);
-      assertEquals(needsTranspilation("comp.jsx"), true);
-      assertEquals(needsTranspilation("page.mdx"), true);
+      const cases: Array<[string, boolean]> = [
+        ["app.ts", true],
+        ["comp.tsx", true],
+        ["comp.jsx", true],
+        ["page.mdx", true],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(needsTranspilation(file), expected);
+      }
     });
 
     it("should not require for JS/CSS", () => {
-      assertEquals(needsTranspilation("app.js"), false);
-      assertEquals(needsTranspilation("style.css"), false);
+      const cases: Array<[string, boolean]> = [
+        ["app.js", false],
+        ["style.css", false],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(needsTranspilation(file), expected);
+      }
     });
   });
 
   describe("isTypeScriptFile", () => {
     it("should detect .ts and .tsx", () => {
-      assertEquals(isTypeScriptFile("app.ts"), true);
-      assertEquals(isTypeScriptFile("comp.tsx"), true);
+      const cases: Array<[string, boolean]> = [
+        ["app.ts", true],
+        ["comp.tsx", true],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(isTypeScriptFile(file), expected);
+      }
     });
 
     it("should reject non-TS files", () => {
@@ -181,13 +265,25 @@ describe("build/utils/file-types", () => {
 
   describe("isJSXFile", () => {
     it("should detect .jsx and .tsx", () => {
-      assertEquals(isJSXFile("comp.jsx"), true);
-      assertEquals(isJSXFile("comp.tsx"), true);
+      const cases: Array<[string, boolean]> = [
+        ["comp.jsx", true],
+        ["comp.tsx", true],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(isJSXFile(file), expected);
+      }
     });
 
     it("should reject non-JSX", () => {
-      assertEquals(isJSXFile("app.ts"), false);
-      assertEquals(isJSXFile("app.js"), false);
+      const cases: Array<[string, boolean]> = [
+        ["app.ts", false],
+        ["app.js", false],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(isJSXFile(file), expected);
+      }
     });
   });
 
@@ -197,22 +293,40 @@ describe("build/utils/file-types", () => {
     });
 
     it("should reject .md and others", () => {
-      assertEquals(isMDXFile("readme.md"), false);
-      assertEquals(isMDXFile("app.ts"), false);
+      const cases: Array<[string, boolean]> = [
+        ["readme.md", false],
+        ["app.ts", false],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(isMDXFile(file), expected);
+      }
     });
   });
 
   describe("getMimeType", () => {
     it("should return correct MIME for images", () => {
-      assertEquals(getMimeType("photo.jpg"), "image/jpeg");
-      assertEquals(getMimeType("icon.png"), "image/png");
-      assertEquals(getMimeType("logo.svg"), "image/svg+xml");
+      const cases: Array<[string, string]> = [
+        ["photo.jpg", "image/jpeg"],
+        ["icon.png", "image/png"],
+        ["logo.svg", "image/svg+xml"],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(getMimeType(file), expected);
+      }
     });
 
     it("should return correct MIME for scripts", () => {
-      assertEquals(getMimeType("app.js"), "application/javascript");
-      assertEquals(getMimeType("app.ts"), "application/typescript");
-      assertEquals(getMimeType("data.json"), "application/json");
+      const cases: Array<[string, string]> = [
+        ["app.js", "application/javascript"],
+        ["app.ts", "application/typescript"],
+        ["data.json", "application/json"],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(getMimeType(file), expected);
+      }
     });
 
     it("should return correct MIME for styles", () => {
@@ -220,8 +334,14 @@ describe("build/utils/file-types", () => {
     });
 
     it("should return correct MIME for documents", () => {
-      assertEquals(getMimeType("readme.md"), "text/markdown");
-      assertEquals(getMimeType("page.mdx"), "text/mdx");
+      const cases: Array<[string, string]> = [
+        ["readme.md", "text/markdown"],
+        ["page.mdx", "text/mdx"],
+      ];
+
+      for (const [file, expected] of cases) {
+        assertEquals(getMimeType(file), expected);
+      }
     });
 
     it("should default to octet-stream for unknown", () => {

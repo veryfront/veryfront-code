@@ -158,12 +158,10 @@ describe("html-generation/html-shell-generator", () => {
         }),
       );
 
-      // Must NOT contain the broken empty-hash CSS link
       assert(
         !result.includes('href="/_vf/css/.css"'),
         "Should not emit /_vf/css/.css with empty hash",
       );
-      // Should still have the Tailwind CSS comment section
       assertStringIncludes(
         result,
         "<!-- Tailwind CSS: Server-side JIT compiled -->",

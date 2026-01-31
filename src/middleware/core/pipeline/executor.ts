@@ -19,7 +19,7 @@ export function executeMiddlewarePipeline(
 ): Promise<Response> {
   return withSpan(
     "middleware.pipeline.execute",
-    async () => {
+    async (): Promise<Response> => {
       const context = new MiddlewareContext(req, env ?? {}, executionCtx);
 
       try {
@@ -40,22 +40,21 @@ export function executeMiddlewarePipeline(
         });
 
         const nodeEnv = adapter?.env.get("NODE_ENV") ?? "production";
+        const body: Record<string, unknown> = {
+          error: "Internal Server Error",
+          method: req.method,
+          url: req.url,
+        };
 
-        return new Response(
-          JSON.stringify({
-            error: "Internal Server Error",
-            method: req.method,
-            url: req.url,
-            ...(nodeEnv === "development" && {
-              message: normalizedError.message,
-              stack: normalizedError.stack?.split("\n").slice(0, 10),
-            }),
-          }),
-          {
-            status: HTTP_SERVER_ERROR,
-            headers: { "content-type": "application/json" },
-          },
-        );
+        if (nodeEnv === "development") {
+          body.message = normalizedError.message;
+          body.stack = normalizedError.stack?.split("\n").slice(0, 10);
+        }
+
+        return new Response(JSON.stringify(body), {
+          status: HTTP_SERVER_ERROR,
+          headers: { "content-type": "application/json" },
+        });
       }
     },
     { "http.method": req.method, "http.url": req.url },

@@ -2,6 +2,29 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { getComments } from "../../lib/figma-client.ts";
 
+type FormattedComment = {
+  id: string;
+  message: string;
+  author: { handle: string; avatar: string };
+  createdAt: string;
+  resolvedAt: string | null;
+  isResolved: boolean;
+  parentId: string | null;
+  isReply: boolean;
+  location: { nodeIds: string; x: number; y: number } | null;
+};
+
+type Output = {
+  totalComments: number;
+  unresolvedCount: number;
+  resolvedCount: number;
+  threads: Array<{
+    rootComment: FormattedComment;
+    replies: FormattedComment[];
+  }>;
+  fileUrl: string;
+};
+
 export default tool({
   id: "get-comments",
   description:
@@ -16,44 +39,16 @@ export default tool({
       .default(50)
       .describe("Maximum number of comments to return"),
   }),
-  async execute({ fileKey, includeResolved, limit }): Promise<{
-    totalComments: number;
-    unresolvedCount: number;
-    resolvedCount: number;
-    threads: Array<{
-      rootComment: {
-        id: string;
-        message: string;
-        author: { handle: string; avatar: string };
-        createdAt: string;
-        resolvedAt: string | null;
-        isResolved: boolean;
-        parentId: string | null;
-        isReply: boolean;
-        location: { nodeIds: string; x: number; y: number } | null;
-      };
-      replies: Array<{
-        id: string;
-        message: string;
-        author: { handle: string; avatar: string };
-        createdAt: string;
-        resolvedAt: string | null;
-        isResolved: boolean;
-        parentId: string | null;
-        isReply: boolean;
-        location: { nodeIds: string; x: number; y: number } | null;
-      }>;
-    }>;
-    fileUrl: string;
-  }> {
+  async execute({ fileKey, includeResolved, limit }): Promise<Output> {
     const response = await getComments(fileKey);
-    const allComments = includeResolved
+
+    const filteredComments = includeResolved
       ? response.comments
       : response.comments.filter((comment) => !comment.resolved_at);
 
-    const comments = allComments.slice(0, limit);
+    const comments = filteredComments.slice(0, limit);
 
-    const formattedComments = comments.map((comment) => ({
+    const formattedComments: FormattedComment[] = comments.map((comment) => ({
       id: comment.id,
       message: comment.message,
       author: {
@@ -62,9 +57,9 @@ export default tool({
       },
       createdAt: comment.created_at,
       resolvedAt: comment.resolved_at,
-      isResolved: !!comment.resolved_at,
+      isResolved: Boolean(comment.resolved_at),
       parentId: comment.parent_id,
-      isReply: !!comment.parent_id,
+      isReply: Boolean(comment.parent_id),
       location: comment.client_meta.node_id
         ? {
             nodeIds: comment.client_meta.node_id,
@@ -74,17 +69,14 @@ export default tool({
         : null,
     }));
 
-    const rootComments = formattedComments.filter((c) => !c.isReply);
-    const repliesByParentId = new Map<string, typeof formattedComments>();
+    const rootComments = formattedComments.filter((comment) => !comment.isReply);
 
+    const repliesByParentId = new Map<string, FormattedComment[]>();
     for (const comment of formattedComments) {
       if (!comment.parentId) continue;
-      const existing = repliesByParentId.get(comment.parentId);
-      if (existing) {
-        existing.push(comment);
-      } else {
-        repliesByParentId.set(comment.parentId, [comment]);
-      }
+      const replies = repliesByParentId.get(comment.parentId);
+      if (replies) replies.push(comment);
+      else repliesByParentId.set(comment.parentId, [comment]);
     }
 
     const threads = rootComments.map((root) => ({

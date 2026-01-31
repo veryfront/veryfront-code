@@ -32,8 +32,7 @@ export async function resolveAppComponentPath(
   if (configApp) {
     if (!isValidComponentPath(configApp)) {
       throw new Error(
-        `App component not found: "${configApp}". ` +
-          `Check your veryfront.config.ts 'app' setting.`,
+        `App component not found: "${configApp}". Check your veryfront.config.ts 'app' setting.`,
       );
     }
 
@@ -41,15 +40,14 @@ export async function resolveAppComponentPath(
       ? configApp
       : join(projectDir, configApp);
 
-    if (await adapter.fs.exists(appPath)) {
-      logger.debug("[AppResolver] Using config.app", { path: appPath });
-      return appPath;
+    if (!(await adapter.fs.exists(appPath))) {
+      throw new Error(
+        `App component not found: "${configApp}" (resolved to "${appPath}"). Check your veryfront.config.ts 'app' setting.`,
+      );
     }
 
-    throw new Error(
-      `App component not found: "${configApp}" (resolved to "${appPath}"). ` +
-        `Check your veryfront.config.ts 'app' setting.`,
-    );
+    logger.debug("[AppResolver] Using config.app", { path: appPath });
+    return appPath;
   }
 
   for (const ext of VALID_EXTENSIONS) {
@@ -57,10 +55,10 @@ export async function resolveAppComponentPath(
     const exists = await adapter.fs.exists(appPath);
     logger.debug("[AppResolver] Checking default path", { appPath, exists });
 
-    if (exists) {
-      logger.debug("[AppResolver] Found app component via discovery", { path: appPath });
-      return appPath;
-    }
+    if (!exists) continue;
+
+    logger.debug("[AppResolver] Found app component via discovery", { path: appPath });
+    return appPath;
   }
 
   logger.debug("[AppResolver] No app component found");

@@ -81,7 +81,7 @@ function createMockEnv(overrides: Partial<RuntimeEnv> = {}): RuntimeEnv {
     veryfrontVersion: undefined,
     denoV8Flags: "",
     ...overrides,
-  } as RuntimeEnv;
+  };
 }
 
 describe("config/env", () => {
@@ -89,6 +89,7 @@ describe("config/env", () => {
     it("should return false by default", () => {
       assertEquals(getDisableLruIntervalEnv(createMockEnv()), false);
     });
+
     it("should return true when set", () => {
       assertEquals(getDisableLruIntervalEnv(createMockEnv({ disableLruInterval: true })), true);
     });
@@ -110,6 +111,7 @@ describe("config/env", () => {
         10,
       );
     });
+
     it("should return default when env value is 0", () => {
       assertEquals(
         getSsrMaxConcurrentTransformsEnv(50, createMockEnv({ ssrMaxConcurrentTransforms: 0 })),
@@ -122,6 +124,7 @@ describe("config/env", () => {
     it("should return undefined by default", () => {
       assertEquals(getRedisUrlEnv(createMockEnv()), undefined);
     });
+
     it("should return url when set", () => {
       assertEquals(
         getRedisUrlEnv(createMockEnv({ redisUrl: "redis://localhost:6379" })),
@@ -134,6 +137,7 @@ describe("config/env", () => {
     it("should return empty string by default", () => {
       assertEquals(getV8FlagsEnv(createMockEnv()), "");
     });
+
     it("should return flags when set", () => {
       assertEquals(
         getV8FlagsEnv(createMockEnv({ denoV8Flags: "--max-old-space-size=4096" })),
@@ -146,6 +150,7 @@ describe("config/env", () => {
     it("should return undefined by default", () => {
       assertEquals(getCacheDirEnv(createMockEnv()), undefined);
     });
+
     it("should return path when set", () => {
       assertEquals(getCacheDirEnv(createMockEnv({ cacheDir: "/tmp/cache" })), "/tmp/cache");
     });
@@ -155,6 +160,7 @@ describe("config/env", () => {
     it("should return false by default", () => {
       assertEquals(isPerfEnabledEnv(createMockEnv()), false);
     });
+
     it("should return true when enabled", () => {
       assertEquals(isPerfEnabledEnv(createMockEnv({ perfEnabled: true })), true);
     });
@@ -168,6 +174,7 @@ describe("config/env", () => {
       assertEquals(config.repo, undefined);
       assertEquals(config.ref, undefined);
     });
+
     it("should return populated config", () => {
       const config = getGithubEnvConfig(
         createMockEnv({
@@ -188,6 +195,7 @@ describe("config/env", () => {
     it("should return undefined by default", () => {
       assertEquals(getApiTokenEnv(createMockEnv()), undefined);
     });
+
     it("should return token when set", () => {
       assertEquals(getApiTokenEnv(createMockEnv({ apiToken: "vf_test" })), "vf_test");
     });
@@ -200,6 +208,7 @@ describe("config/env", () => {
       assertEquals(config.baseURL, undefined);
       assertEquals(config.organizationId, undefined);
     });
+
     it("should return populated config", () => {
       const config = getOpenAIEnvConfig(
         createMockEnv({ openaiApiKey: "sk-test", openaiBaseUrl: "https://api.openai.com" }),
@@ -233,6 +242,7 @@ describe("config/env", () => {
     it("should return false by default", () => {
       assertEquals(isDebugEnvEnabled(createMockEnv()), false);
     });
+
     it("should return true when debug enabled", () => {
       assertEquals(isDebugEnvEnabled(createMockEnv({ debug: true })), true);
     });
@@ -242,6 +252,7 @@ describe("config/env", () => {
     it("should return false by default", () => {
       assertEquals(isCiEnv(createMockEnv()), false);
     });
+
     it("should return true in CI", () => {
       assertEquals(isCiEnv(createMockEnv({ ci: true })), true);
     });
@@ -251,6 +262,7 @@ describe("config/env", () => {
     it("should return false by default", () => {
       assertEquals(isDenoTestingEnv(createMockEnv()), false);
     });
+
     it("should return true when testing", () => {
       assertEquals(isDenoTestingEnv(createMockEnv({ denoTesting: true })), true);
     });
@@ -260,6 +272,7 @@ describe("config/env", () => {
     it("should return undefined by default", () => {
       assertEquals(getNoColorEnv(createMockEnv()), undefined);
     });
+
     it("should return '1' when noColor is true", () => {
       assertEquals(getNoColorEnv(createMockEnv({ noColor: true })), "1");
     });
@@ -269,6 +282,7 @@ describe("config/env", () => {
     it("should return undefined by default", () => {
       assertEquals(getForceColorEnv(createMockEnv()), undefined);
     });
+
     it("should return '1' when forceColor is true", () => {
       assertEquals(getForceColorEnv(createMockEnv({ forceColor: true })), "1");
     });
@@ -278,6 +292,7 @@ describe("config/env", () => {
     it("should return false by default", () => {
       assertEquals(isRscExperimentalEnabled(createMockEnv()), false);
     });
+
     it("should return true when enabled", () => {
       assertEquals(isRscExperimentalEnabled(createMockEnv({ experimentalRsc: true })), true);
     });
@@ -287,6 +302,7 @@ describe("config/env", () => {
     it("should return undefined by default", () => {
       assertEquals(getVeryfrontVersion(createMockEnv()), undefined);
     });
+
     it("should return version when set", () => {
       assertEquals(getVeryfrontVersion(createMockEnv({ veryfrontVersion: "1.2.3" })), "1.2.3");
     });
@@ -294,11 +310,9 @@ describe("config/env", () => {
 
   describe("getEnvironmentFromEnv", () => {
     it("should return veryfrontEnv when set", () => {
-      assertEquals(
-        getEnvironmentFromEnv(createMockEnv({ veryfrontEnv: "staging" })),
-        "staging",
-      );
+      assertEquals(getEnvironmentFromEnv(createMockEnv({ veryfrontEnv: "staging" })), "staging");
     });
+
     it("should fall back to nodeEnv when veryfrontEnv is empty", () => {
       assertEquals(
         getEnvironmentFromEnv(createMockEnv({ veryfrontEnv: "", nodeEnv: "production" })),
@@ -313,6 +327,7 @@ describe("config/env", () => {
       assertEquals(config.enabledFlag, undefined);
       assertEquals(config.veryfrontFlag, undefined);
     });
+
     it("should return enabled config with flags", () => {
       const config = getOtelTracingConfig(
         createMockEnv({
@@ -335,6 +350,7 @@ describe("config/env", () => {
       const config = getOtelMetricsConfig(createMockEnv());
       assertEquals(config.enabledFlag, undefined);
     });
+
     it("should return enabled config", () => {
       const config = getOtelMetricsConfig(
         createMockEnv({

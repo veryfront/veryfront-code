@@ -99,7 +99,6 @@ export class DevEndpointsHandler extends BaseHandler {
 
     const url = new URL(req.url);
     const script = this.getScriptForPath(url.pathname, url);
-
     if (!script) {
       return Promise.resolve(this.continue());
     }
@@ -211,6 +210,11 @@ window.addEventListener('beforeunload', () => {
   ws.close();
 });
 
+// Debounce HMR updates to prevent flashing from rapid-fire cache population
+let pendingUpdates = [];
+let updateDebounceTimer = null;
+const UPDATE_DEBOUNCE_MS = 100;
+
 async function handleUpdate(update) {
   if (!update.path) {
     console.warn('[HMR] Update message missing path');
@@ -222,7 +226,28 @@ async function handleUpdate(update) {
     notifyStudioAndReload();
     return;
   }
-  await updateJS(update.path);
+
+  // Debounce JS updates - batch rapid updates into single re-render
+  pendingUpdates.push(update.path);
+
+  if (updateDebounceTimer) {
+    clearTimeout(updateDebounceTimer);
+  }
+
+  updateDebounceTimer = setTimeout(async () => {
+    const paths = pendingUpdates;
+    pendingUpdates = [];
+    updateDebounceTimer = null;
+
+    if (paths.length === 1) {
+      console.log('[HMR] Processing single update:', paths[0]);
+    } else {
+      console.log('[HMR] Processing', paths.length, 'batched updates');
+    }
+
+    // Single re-render for all batched updates
+    await updateJS(paths[0]);
+  }, UPDATE_DEBOUNCE_MS);
 }
 ${getUpdateJSFunction("[HMR]")}
 
@@ -563,6 +588,11 @@ document.head.appendChild(errorScript);
     };
   }
 
+  // Debounce HMR updates to prevent flashing from rapid-fire cache population
+  let pendingUpdates = [];
+  let updateDebounceTimer = null;
+  const UPDATE_DEBOUNCE_MS = 100;
+
   async function handleUpdate(update) {
     console.log('[Preview HMR] handleUpdate called with:', JSON.stringify(update));
     if (!update.path) {
@@ -571,11 +601,6 @@ document.head.appendChild(errorScript);
     }
 
     console.log('[Preview HMR] Processing update for:', update.path);
-    console.log('[Preview HMR] Current global functions state:', {
-      __veryfrontRenderPage: typeof window.__veryfrontRenderPage,
-      __veryfrontSetHMRRefreshTimestamp: typeof window.__veryfrontSetHMRRefreshTimestamp,
-      __veryfrontClearComponentCache: typeof window.__veryfrontClearComponentCache
-    });
 
     // CSS changes trigger full reload to get fresh Tailwind compilation
     if (update.path.endsWith('.css')) {
@@ -584,10 +609,27 @@ document.head.appendChild(errorScript);
       return;
     }
 
-    // Use smart HMR: clear component cache and re-render without full reload
-    // This is faster than full page reload and preserves client-side state
-    console.log('[Preview HMR] JS update detected, calling updateJS');
-    await updateJS(update.path);
+    // Debounce JS updates - batch rapid updates into single re-render
+    pendingUpdates.push(update.path);
+
+    if (updateDebounceTimer) {
+      clearTimeout(updateDebounceTimer);
+    }
+
+    updateDebounceTimer = setTimeout(async () => {
+      const paths = pendingUpdates;
+      pendingUpdates = [];
+      updateDebounceTimer = null;
+
+      if (paths.length === 1) {
+        console.log('[Preview HMR] Processing single update:', paths[0]);
+      } else {
+        console.log('[Preview HMR] Processing', paths.length, 'batched updates');
+      }
+
+      // Single re-render for all batched updates
+      await updateJS(paths[0]);
+    }, UPDATE_DEBOUNCE_MS);
   }
 ${getUpdateJSFunction("[Preview HMR]")}
 

@@ -22,7 +22,7 @@ export function handleAPIError(
 
   if (!isDevelopment(adapter)) return internalServerError();
 
-  const err = error instanceof Error ? error : undefined;
+  const err = error instanceof Error ? error : null;
 
   return jsonResponse(
     {

@@ -56,16 +56,22 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
           status={tool.status}
           className={theme.tool}
         >
-          {tool.result !== undefined && (
-            <ToolResult result={tool.result} className={theme.toolResult} />
-          )}
-          {tool.error && (
-            <div className="mt-2 p-3 bg-red-50 dark:bg-red-900/20 text-red-900 dark:text-red-100 rounded-xl text-sm border border-red-200 dark:border-red-800">
-              Error: {tool.error}
-            </div>
-          )}
+          {tool.result !== undefined
+            ? <ToolResult result={tool.result} className={theme.toolResult} />
+            : null}
+
+          {tool.error
+            ? (
+              <div className="mt-2 p-3 bg-red-50 dark:bg-red-900/20 text-red-900 dark:text-red-100 rounded-xl text-sm border border-red-200 dark:border-red-800">
+                Error: {tool.error}
+              </div>
+            )
+            : null}
         </ToolInvocation>
       ));
+
+    const hasToolCalls = toolCalls.length > 0;
+    const hasMessages = (messages?.length ?? 0) > 0;
 
     return (
       <AgentContainer ref={ref} className={cn(theme.container, className)}>
@@ -74,34 +80,38 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
           className={cn(theme.status, getStatusColor(status))}
         />
 
-        {thinking && (
-          <ThinkingIndicator className={theme.thinking}>
-            <span className="font-semibold">Thinking:</span>
-            {thinking}
-          </ThinkingIndicator>
-        )}
+        {thinking
+          ? (
+            <ThinkingIndicator className={theme.thinking}>
+              <span className="font-semibold">Thinking:</span>
+              {thinking}
+            </ThinkingIndicator>
+          )
+          : null}
 
-        {toolCalls.length > 0 && (
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
-              Tool Calls
-            </h3>
-            <ToolList
-              toolCalls={toolCalls}
-              className="space-y-3"
-              renderTool={toolRenderer}
-            />
-          </div>
-        )}
+        {hasToolCalls
+          ? (
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
+                Tool Calls
+              </h3>
+              <ToolList
+                toolCalls={toolCalls}
+                className="space-y-3"
+                renderTool={toolRenderer}
+              />
+            </div>
+          )
+          : null}
 
-        {messages?.length
+        {hasMessages
           ? (
             <div className="space-y-3">
               <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
                 Messages
               </h3>
               <div className="space-y-2 max-h-96 overflow-y-auto">
-                {messages.map((msg) => (
+                {messages!.map((msg) => (
                   <div
                     key={msg.id}
                     className="text-sm p-3 rounded-xl bg-neutral-50 dark:bg-neutral-800"

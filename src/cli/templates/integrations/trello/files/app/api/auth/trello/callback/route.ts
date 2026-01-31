@@ -4,7 +4,7 @@ import { tokenStore } from "../../../../../lib/token-store.ts";
 const USER_ID = "current-user";
 
 const hybridTokenStore = {
-  async getTokens(serviceId: string) {
+  getTokens(serviceId: string) {
     return tokenStore.getToken(USER_ID, serviceId);
   },
   async setTokens(

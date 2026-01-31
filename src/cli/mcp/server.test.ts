@@ -3,14 +3,31 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MCPDevServer } from "./server.ts";
 import type { MCPServerConfig } from "./server.ts";
 
+const SERVER_BIND_DELAY_MS = 200;
+
+function waitForServerBind(): Promise<void> {
+  return new Promise((r) => setTimeout(r, SERVER_BIND_DELAY_MS));
+}
+
+async function postMcp(
+  port: number,
+  body: unknown,
+  headers: HeadersInit = { "Content-Type": "application/json" },
+): Promise<Response> {
+  return await fetch(`http://localhost:${port}/mcp`, {
+    method: "POST",
+    headers,
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  });
+}
+
 describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () => {
   let server: MCPDevServer | null = null;
 
   afterEach(async () => {
-    if (server) {
-      await server.stop();
-      server = null;
-    }
+    if (!server) return;
+    await server.stop();
+    server = null;
   });
 
   describe("MCPDevServer constructor", () => {
@@ -29,17 +46,13 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("should accept stdio config", () => {
-      const config: MCPServerConfig = {
-        stdio: true,
-      };
+      const config: MCPServerConfig = { stdio: true };
       server = new MCPDevServer(config);
       assertExists(server);
     });
 
     it("should accept httpPort config", () => {
-      const config: MCPServerConfig = {
-        httpPort: 9999,
-      };
+      const config: MCPServerConfig = { httpPort: 9999 };
       server = new MCPDevServer(config);
       assertExists(server);
     });
@@ -69,7 +82,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
     it("should be idempotent", () => {
       server = new MCPDevServer({});
       server.start();
-      server.start(); // second call should be no-op
+      server.start();
     });
   });
 
@@ -100,18 +113,13 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       server = new MCPDevServer({ httpPort: portNum });
       server.start();
 
-      // Give the server a moment to bind
-      await new Promise((r) => setTimeout(r, 200));
+      await waitForServerBind();
 
-      const response = await fetch(`http://localhost:${portNum}/mcp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "initialize",
-          params: {},
-        }),
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {},
       });
 
       assertEquals(response.status, 200);
@@ -138,17 +146,13 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       });
       server.start();
 
-      await new Promise((r) => setTimeout(r, 200));
+      await waitForServerBind();
 
-      const response = await fetch(`http://localhost:${portNum}/mcp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 2,
-          method: "initialize",
-          params: {},
-        }),
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "initialize",
+        params: {},
       });
 
       const data = await response.json();
@@ -161,16 +165,12 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       server = new MCPDevServer({ httpPort: portNum });
       server.start();
 
-      await new Promise((r) => setTimeout(r, 200));
+      await waitForServerBind();
 
-      const response = await fetch(`http://localhost:${portNum}/mcp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 3,
-          method: "tools/list",
-        }),
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/list",
       });
 
       const data = await response.json();
@@ -179,7 +179,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       assertExists(data.result);
       assertExists(data.result.tools);
       assertEquals(Array.isArray(data.result.tools), true);
-      // Each tool should have name, description, inputSchema
+
       for (const tool of data.result.tools) {
         assertExists(tool.name);
         assertExists(tool.description);
@@ -192,16 +192,12 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       server = new MCPDevServer({ httpPort: portNum });
       server.start();
 
-      await new Promise((r) => setTimeout(r, 200));
+      await waitForServerBind();
 
-      const response = await fetch(`http://localhost:${portNum}/mcp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 4,
-          method: "resources/list",
-        }),
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 4,
+        method: "resources/list",
       });
 
       const data = await response.json();
@@ -221,16 +217,12 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       server = new MCPDevServer({ httpPort: portNum });
       server.start();
 
-      await new Promise((r) => setTimeout(r, 200));
+      await waitForServerBind();
 
-      const response = await fetch(`http://localhost:${portNum}/mcp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 5,
-          method: "prompts/list",
-        }),
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 5,
+        method: "prompts/list",
       });
 
       const data = await response.json();
@@ -250,16 +242,12 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       server = new MCPDevServer({ httpPort: portNum });
       server.start();
 
-      await new Promise((r) => setTimeout(r, 200));
+      await waitForServerBind();
 
-      const response = await fetch(`http://localhost:${portNum}/mcp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 6,
-          method: "nonexistent/method",
-        }),
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 6,
+        method: "nonexistent/method",
       });
 
       const data = await response.json();
@@ -273,7 +261,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       server = new MCPDevServer({ httpPort: portNum });
       server.start();
 
-      await new Promise((r) => setTimeout(r, 200));
+      await waitForServerBind();
 
       const response = await fetch(`http://localhost:${portNum}/other`, {
         method: "POST",
@@ -289,7 +277,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       server = new MCPDevServer({ httpPort: portNum });
       server.start();
 
-      await new Promise((r) => setTimeout(r, 200));
+      await waitForServerBind();
 
       const response = await fetch(`http://localhost:${portNum}/mcp`, {
         method: "GET",
@@ -303,7 +291,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       server = new MCPDevServer({ httpPort: portNum });
       server.start();
 
-      await new Promise((r) => setTimeout(r, 200));
+      await waitForServerBind();
 
       const response = await fetch(`http://localhost:${portNum}/mcp`, {
         method: "OPTIONS",
@@ -322,20 +310,20 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       server = new MCPDevServer({ httpPort: portNum });
       server.start();
 
-      await new Promise((r) => setTimeout(r, 200));
+      await waitForServerBind();
 
-      const response = await fetch(`http://localhost:${portNum}/mcp`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Origin: "http://localhost:3000",
-        },
-        body: JSON.stringify({
+      const response = await postMcp(
+        portNum,
+        {
           jsonrpc: "2.0",
           id: 1,
           method: "initialize",
-        }),
-      });
+        },
+        {
+          "Content-Type": "application/json",
+          Origin: "http://localhost:3000",
+        },
+      );
 
       assertEquals(
         response.headers.get("Access-Control-Allow-Origin"),
@@ -348,13 +336,9 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       server = new MCPDevServer({ httpPort: portNum });
       server.start();
 
-      await new Promise((r) => setTimeout(r, 200));
+      await waitForServerBind();
 
-      const response = await fetch(`http://localhost:${portNum}/mcp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "not-json",
-      });
+      const response = await postMcp(portNum, "not-json");
 
       assertEquals(response.status, 400);
       const data = await response.json();
@@ -367,17 +351,13 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       server = new MCPDevServer({ httpPort: portNum });
       server.start();
 
-      await new Promise((r) => setTimeout(r, 200));
+      await waitForServerBind();
 
-      const response = await fetch(`http://localhost:${portNum}/mcp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 7,
-          method: "tools/call",
-          params: { name: "nonexistent_tool", arguments: {} },
-        }),
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: { name: "nonexistent_tool", arguments: {} },
       });
 
       const data = await response.json();

@@ -1,24 +1,8 @@
-/****
- * Workflow Registry
- *
- * Project-scoped registry for workflow DEFINITIONS (not executions).
- * Each project has its own isolated workflow namespace, preventing
- * cross-project workflow access.
- *
- * Note: This registry stores workflow metadata/definitions only.
- * Workflow RUNS are managed by WorkflowClient with backend-specific storage.
- *
- * @module
- */
-
 import type { Workflow, WorkflowDefinition, WorkflowNode } from "./types.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema";
 import { agentLogger as logger } from "#veryfront/utils";
 import { ProjectScopedRegistryManager } from "#veryfront/ai/registry-manager.ts";
 
-/**
- * Serializable node information for the registry
- */
 export interface NodeInfo {
   id: string;
   type: string;
@@ -34,9 +18,6 @@ export interface NodeInfo {
   message?: string;
 }
 
-/**
- * Workflow metadata for the registry (serializable)
- */
 export interface WorkflowMetadata {
   id: string;
   description?: string;
@@ -72,9 +53,10 @@ function createProxy(): unknown {
   );
 }
 
-/**
- * Extract metadata from a workflow definition
- */
+function getWorkflowDefinition(workflow: Workflow | WorkflowDefinition): WorkflowDefinition {
+  return "definition" in workflow ? workflow.definition : workflow;
+}
+
 function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
   let workflowNodes: WorkflowNode[] = [];
   let dynamicSteps = false;
@@ -160,13 +142,13 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
 
       const children: string[] = [];
 
-      if ("nodes" in config && Array.isArray(config.nodes)) {
+      if (Array.isArray(config.nodes)) {
         children.push(...extractNodeInfo(config.nodes as WorkflowNode[]));
       }
-      if ("then" in config && Array.isArray(config.then)) {
+      if (Array.isArray(config.then)) {
         children.push(...extractNodeInfo(config.then as WorkflowNode[]));
       }
-      if ("else" in config && Array.isArray(config.else)) {
+      if (Array.isArray(config.else)) {
         children.push(...extractNodeInfo(config.else as WorkflowNode[]));
       }
 
@@ -214,77 +196,47 @@ const workflowDefinitionManager = new ProjectScopedRegistryManager<WorkflowDefin
   "workflow-definition",
 );
 
-/**
- * Workflow Registry class
- */
 class WorkflowRegistryClass {
-  /**
-   * Register a workflow definition
-   */
   register(workflow: Workflow | WorkflowDefinition): void {
-    const definition = "definition" in workflow ? workflow.definition : workflow;
+    const definition = getWorkflowDefinition(workflow);
     const metadata = extractMetadata(definition);
 
     workflowMetadataManager.register(definition.id, metadata);
     workflowDefinitionManager.register(definition.id, definition);
   }
 
-  /**
-   * Register a framework-provided workflow available to all projects.
-   */
   registerShared(workflow: Workflow | WorkflowDefinition): void {
-    const definition = "definition" in workflow ? workflow.definition : workflow;
+    const definition = getWorkflowDefinition(workflow);
     const metadata = extractMetadata(definition);
 
     workflowMetadataManager.registerShared(definition.id, metadata);
     workflowDefinitionManager.registerShared(definition.id, definition);
   }
 
-  /**
-   * Get workflow metadata by ID
-   */
   get(id: string): WorkflowMetadata | undefined {
     return workflowMetadataManager.get(id);
   }
 
-  /**
-   * Get workflow definition by ID
-   */
   getDefinition(id: string): WorkflowDefinition | undefined {
     return workflowDefinitionManager.get(id);
   }
 
-  /**
-   * Check if a workflow is registered
-   */
   has(id: string): boolean {
     return workflowMetadataManager.has(id);
   }
 
-  /**
-   * Get all workflow IDs
-   */
   getAllIds(): string[] {
     return workflowMetadataManager.getAllIds();
   }
 
-  /**
-   * Get all workflow metadata
-   */
   getAll(): Map<string, WorkflowMetadata> {
     return workflowMetadataManager.getAll();
   }
 
-  /**
-   * Get all as array (for API responses)
-   */
   getAllAsArray(): WorkflowMetadata[] {
     return Array.from(this.getAll().values());
   }
 
-  /**
-   * Get registry stats
-   */
   getStats(): {
     total: number;
     byNodeType: Record<string, number>;
@@ -311,59 +263,39 @@ class WorkflowRegistryClass {
     };
   }
 
-  /**
-   * Remove a workflow
-   */
   unregister(id: string): boolean {
     const metaDeleted = workflowMetadataManager.delete(id);
     const defDeleted = workflowDefinitionManager.delete(id);
     return metaDeleted || defDeleted;
   }
 
-  /**
-   * Clear all workflows for current project
-   */
   clear(): void {
     workflowMetadataManager.clear();
     workflowDefinitionManager.clear();
   }
 
-  /**
-   * Clear everything (for testing)
-   */
   clearAll(): void {
     workflowMetadataManager.clearAll();
     workflowDefinitionManager.clearAll();
   }
 
-  getRegistryStats() {
+  getRegistryStats(): ReturnType<typeof workflowMetadataManager.getStats> {
     return workflowMetadataManager.getStats();
   }
 }
 
-// Singleton instance - maintains same interface but now project-scoped internally
 export const workflowRegistry = new WorkflowRegistryClass();
 
-// Export class for type usage
 export { WorkflowRegistryClass };
 
-/**
- * Register a workflow definition globally
- */
 export function registerWorkflow(workflow: Workflow | WorkflowDefinition): void {
   workflowRegistry.register(workflow);
 }
 
-/**
- * Get a workflow by ID
- */
 export function getWorkflow(id: string): WorkflowMetadata | undefined {
   return workflowRegistry.get(id);
 }
 
-/**
- * Get all registered workflow IDs
- */
 export function getAllWorkflowIds(): string[] {
   return workflowRegistry.getAllIds();
 }

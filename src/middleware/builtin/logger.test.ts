@@ -5,14 +5,22 @@ import { devLogger, logger, prodLogger } from "./logger.ts";
 function makeCtx(
   url = "http://localhost/api/data",
   headers: Record<string, string> = {},
-) {
+): { request: Request; req: Request } {
   const req = new Request(url, { headers });
   return { request: req, req };
 }
 
-const nextOk = () => Promise.resolve(new Response("ok", { status: 200 }));
-const next404 = () => Promise.resolve(new Response("not found", { status: 404 }));
-const next500 = () => Promise.resolve(new Response("error", { status: 500 }));
+function nextOk(): Promise<Response> {
+  return Promise.resolve(new Response("ok", { status: 200 }));
+}
+
+function next404(): Promise<Response> {
+  return Promise.resolve(new Response("not found", { status: 404 }));
+}
+
+function next500(): Promise<Response> {
+  return Promise.resolve(new Response("error", { status: 500 }));
+}
 
 function getFirstLog(logs: string[]): string {
   const entry = logs[0];
@@ -25,7 +33,9 @@ describe("middleware/builtin/logger", () => {
     it("should pass through and return response unchanged", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "tiny", log: (msg) => logs.push(msg) });
+
       const res = await mw(makeCtx(), nextOk);
+
       assertEquals(res?.status, 200);
       assertEquals(logs.length, 1);
     });
@@ -33,7 +43,9 @@ describe("middleware/builtin/logger", () => {
     it("should log in tiny format", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "tiny", log: (msg) => logs.push(msg) });
+
       await mw(makeCtx("http://localhost/hello"), nextOk);
+
       assertEquals(logs.length, 1);
       const entry = getFirstLog(logs);
       assert(entry.includes("GET"));
@@ -44,10 +56,12 @@ describe("middleware/builtin/logger", () => {
     it("should log in short format", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "short", log: (msg) => logs.push(msg) });
+
       await mw(
         makeCtx("http://localhost/test", { "x-forwarded-for": "1.2.3.4" }),
         nextOk,
       );
+
       assertEquals(logs.length, 1);
       const entry = getFirstLog(logs);
       assert(entry.includes("GET"));
@@ -59,7 +73,9 @@ describe("middleware/builtin/logger", () => {
     it("should log in common format", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "common", log: (msg) => logs.push(msg) });
+
       await mw(makeCtx("http://localhost/page"), nextOk);
+
       assertEquals(logs.length, 1);
       const entry = getFirstLog(logs);
       assert(entry.includes("GET /page HTTP/1.1"));
@@ -69,13 +85,15 @@ describe("middleware/builtin/logger", () => {
     it("should log in combined format", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "combined", log: (msg) => logs.push(msg) });
+
       await mw(
         makeCtx("http://localhost/page", {
           "user-agent": "TestAgent/1.0",
-          "referer": "http://example.com",
+          referer: "http://example.com",
         }),
         nextOk,
       );
+
       assertEquals(logs.length, 1);
       const entry = getFirstLog(logs);
       assert(entry.includes("TestAgent/1.0"));
@@ -86,9 +104,10 @@ describe("middleware/builtin/logger", () => {
     it("should log in dev format with color codes", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "dev", log: (msg) => logs.push(msg) });
+
       await mw(makeCtx("http://localhost/api"), nextOk);
+
       assertEquals(logs.length, 1);
-      // Dev format includes ANSI color codes
       const entry = getFirstLog(logs);
       assert(entry.includes("GET"));
       assert(entry.includes("/api"));
@@ -98,17 +117,19 @@ describe("middleware/builtin/logger", () => {
     it("should log in json format", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "json", log: (msg) => logs.push(msg) });
+
       await mw(
         makeCtx("http://localhost/api/data", {
           "user-agent": "TestBot/2.0",
           "x-request-id": "req-123",
           "x-trace-id": "trace-456",
           "x-project-slug": "my-project",
-          "referer": "http://ref.com",
+          referer: "http://ref.com",
           "x-forwarded-for": "10.0.0.1",
         }),
         next404,
       );
+
       assertEquals(logs.length, 1);
       const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.level, "warn");
@@ -128,7 +149,9 @@ describe("middleware/builtin/logger", () => {
     it("should set json level to error for 5xx", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "json", log: (msg) => logs.push(msg) });
+
       await mw(makeCtx(), next500);
+
       const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.level, "error");
     });
@@ -136,7 +159,9 @@ describe("middleware/builtin/logger", () => {
     it("should set json level to info for 2xx", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "json", log: (msg) => logs.push(msg) });
+
       await mw(makeCtx(), nextOk);
+
       const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.level, "info");
     });
@@ -148,7 +173,9 @@ describe("middleware/builtin/logger", () => {
         skip: (req) => new URL(req.url).pathname === "/health",
         log: (msg) => logs.push(msg),
       });
+
       const res = await mw(makeCtx("http://localhost/health"), nextOk);
+
       assertEquals(res?.status, 200);
       assertEquals(logs.length, 0);
     });
@@ -160,14 +187,18 @@ describe("middleware/builtin/logger", () => {
         skip: () => false,
         log: (msg) => logs.push(msg),
       });
+
       await mw(makeCtx(), nextOk);
+
       assertEquals(logs.length, 1);
     });
 
     it("should log 500 when next returns undefined", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "json", log: (msg) => logs.push(msg) });
+
       const res = await mw(makeCtx(), () => Promise.resolve(undefined));
+
       assertEquals(res, undefined);
       const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.http.status, 500);
@@ -177,12 +208,14 @@ describe("middleware/builtin/logger", () => {
     it("should log 500 and rethrow when next throws", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "json", log: (msg) => logs.push(msg) });
+
       let caught: Error | undefined;
       try {
         await mw(makeCtx(), () => Promise.reject(new Error("boom")));
       } catch (e) {
-        caught = e as Error;
+        caught = e instanceof Error ? e : new Error(String(e));
       }
+
       assertEquals(caught?.message, "boom");
       assertEquals(logs.length, 1);
       const entry = JSON.parse(getFirstLog(logs));
@@ -192,10 +225,12 @@ describe("middleware/builtin/logger", () => {
     it("should use x-real-ip when x-forwarded-for is absent", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "json", log: (msg) => logs.push(msg) });
+
       await mw(
         makeCtx("http://localhost/", { "x-real-ip": "192.168.1.1" }),
         nextOk,
       );
+
       const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.http.remoteAddr, "192.168.1.1");
     });
@@ -203,7 +238,9 @@ describe("middleware/builtin/logger", () => {
     it("should use - when no remote address headers present", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "json", log: (msg) => logs.push(msg) });
+
       await mw(makeCtx(), nextOk);
+
       const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.http.remoteAddr, "-");
     });
@@ -211,7 +248,9 @@ describe("middleware/builtin/logger", () => {
     it("should omit optional json fields when headers absent", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "json", log: (msg) => logs.push(msg) });
+
       await mw(makeCtx(), nextOk);
+
       const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.requestId, undefined);
       assertEquals(entry.traceId, undefined);
@@ -223,10 +262,9 @@ describe("middleware/builtin/logger", () => {
     it("should use traceparent header as traceId fallback", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "json", log: (msg) => logs.push(msg) });
-      await mw(
-        makeCtx("http://localhost/", { traceparent: "00-abc-def-01" }),
-        nextOk,
-      );
+
+      await mw(makeCtx("http://localhost/", { traceparent: "00-abc-def-01" }), nextOk);
+
       const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.traceId, "00-abc-def-01");
     });
@@ -234,9 +272,10 @@ describe("middleware/builtin/logger", () => {
     it("should default to dev format when no options", async () => {
       const logs: string[] = [];
       const mw = logger({ log: (msg) => logs.push(msg) });
+
       await mw(makeCtx("http://localhost/test"), nextOk);
+
       assertEquals(logs.length, 1);
-      // Dev format has ANSI escape codes
       assert(getFirstLog(logs).includes("\x1b["));
     });
   });
@@ -244,7 +283,9 @@ describe("middleware/builtin/logger", () => {
   describe("devLogger", () => {
     it("should create a logger with dev format", async () => {
       const mw = devLogger();
+
       const res = await mw(makeCtx(), nextOk);
+
       assertEquals(res?.status, 200);
     });
   });
@@ -252,7 +293,9 @@ describe("middleware/builtin/logger", () => {
   describe("prodLogger", () => {
     it("should create a logger with json format", async () => {
       const mw = prodLogger();
+
       const res = await mw(makeCtx(), nextOk);
+
       assertEquals(res?.status, 200);
     });
   });

@@ -38,7 +38,7 @@ export default tool({
     } catch (error) {
       if (!(error instanceof Error)) throw error;
 
-      const { message } = error;
+      const message = error.message;
 
       if (message.includes("not configured")) {
         return {
@@ -48,30 +48,22 @@ export default tool({
         };
       }
 
-      if (message.includes("63007")) {
-        return {
-          error:
-            "Recipient has not opted in to receive WhatsApp messages. They must send a message to your WhatsApp sandbox first.",
-          sandboxUrl: "https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn",
-        };
-      }
+      const errorMap: Array<[code: string, result: Record<string, unknown>]> = [
+        [
+          "63007",
+          {
+            error:
+              "Recipient has not opted in to receive WhatsApp messages. They must send a message to your WhatsApp sandbox first.",
+            sandboxUrl: "https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn",
+          },
+        ],
+        ["63016", { error: "WhatsApp message failed: Recipient phone number is not a WhatsApp user." }],
+        ["63030", { error: "Message body is required for WhatsApp messages unless media is included." }],
+        ["63003", { error: "Message exceeds maximum allowed length for WhatsApp." }],
+      ];
 
-      if (message.includes("63016")) {
-        return {
-          error: "WhatsApp message failed: Recipient phone number is not a WhatsApp user.",
-        };
-      }
-
-      if (message.includes("63030")) {
-        return {
-          error: "Message body is required for WhatsApp messages unless media is included.",
-        };
-      }
-
-      if (message.includes("63003")) {
-        return {
-          error: "Message exceeds maximum allowed length for WhatsApp.",
-        };
+      for (const [code, result] of errorMap) {
+        if (message.includes(code)) return result;
       }
 
       throw error;

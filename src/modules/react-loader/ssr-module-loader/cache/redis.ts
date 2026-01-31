@@ -22,16 +22,11 @@ export function redisKey(key: string): string {
 
 /** Initialize distributed caching for SSR modules */
 export async function initializeSSRDistributedCache(): Promise<boolean> {
-  const backend = await getDistributedCache();
-  return backend !== null;
+  return (await getDistributedCache()) !== null;
 }
 
 /** Check if distributed caching is enabled for SSR modules */
 export function isSSRDistributedCacheEnabled(): boolean {
-  // We can't synchronously check if backend is initialized without accessing the promise
-  // But we can check if we *should* be enabled based on env via CacheBackend utils
-  // For now, this returns true because it's used as a guard for get/set calls
-  // which themselves are async and handle missing backends gracefully.
   return true;
 }
 

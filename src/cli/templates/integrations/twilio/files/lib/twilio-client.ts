@@ -60,19 +60,17 @@ interface TwilioErrorResponse {
 }
 
 function buildParams(params: Record<string, string | number>): string {
-  const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    search.append(key, String(value));
-  }
-  return search.toString();
+  return new URLSearchParams(
+    Object.entries(params).map(([key, value]) => [key, String(value)]),
+  ).toString();
 }
 
 function addMediaUrls(params: Record<string, string>, mediaUrl?: string[]): void {
   if (!mediaUrl?.length) return;
 
-  mediaUrl.forEach((url, index) => {
+  for (const [index, url] of mediaUrl.entries()) {
     params[`MediaUrl[${index}]`] = url;
-  });
+  }
 }
 
 function ensureTwilioCredentials(): NonNullable<ReturnType<typeof getTwilioCredentials>> {
@@ -101,18 +99,19 @@ async function twilioFetch<T>(
   };
 
   let body: string | undefined;
-  if (options.params) {
-    const encoded = buildParams(options.params);
+  const encodedParams = options.params ? buildParams(options.params) : undefined;
+
+  if (encodedParams) {
     if (options.method === "POST") {
-      body = encoded;
+      body = encodedParams;
       headers["Content-Type"] = "application/x-www-form-urlencoded";
     } else {
-      url += `?${encoded}`;
+      url += `?${encodedParams}`;
     }
   }
 
   const response = await fetch(url, { ...options, headers, body });
-  const data = await response.json();
+  const data: unknown = await response.json();
 
   if (!response.ok) {
     const error = data as TwilioErrorResponse;
@@ -232,8 +231,11 @@ export async function makeCall(
     From: phoneNumber,
   };
 
-  if (options?.twimlUrl) params.Url = options.twimlUrl;
-  else params.Twiml = twiml;
+  if (options?.twimlUrl) {
+    params.Url = options.twimlUrl;
+  } else {
+    params.Twiml = twiml;
+  }
 
   if (options?.statusCallback) params.StatusCallback = options.statusCallback;
   if (options?.statusCallbackMethod) params.StatusCallbackMethod = options.statusCallbackMethod;

@@ -23,14 +23,15 @@ export default tool({
     const results = await searchContent(query, { spaceKey, limit });
 
     return results.map((result) => {
-      const space = result.content.space;
+      const { content, excerpt, url } = result;
+      const space = content.space;
 
       return {
-        id: result.content.id,
-        type: result.content.type,
-        title: result.content.title,
-        excerpt: result.excerpt,
-        url: result.url,
+        id: content.id,
+        type: content.type,
+        title: content.title,
+        excerpt,
+        url,
         space: space
           ? {
               id: space.id,
@@ -38,7 +39,7 @@ export default tool({
               name: space.name,
             }
           : undefined,
-        lastUpdated: result.content.history?.lastUpdated.when,
+        lastUpdated: content.history?.lastUpdated.when,
       };
     });
   },

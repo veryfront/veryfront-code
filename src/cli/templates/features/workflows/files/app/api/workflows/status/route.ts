@@ -1,5 +1,6 @@
 export function GET(req: Request): Response {
-  const runId = new URL(req.url).searchParams.get("runId");
+  const { searchParams } = new URL(req.url);
+  const runId = searchParams.get("runId");
 
   if (!runId) {
     return Response.json({ error: "runId is required" }, { status: 400 });

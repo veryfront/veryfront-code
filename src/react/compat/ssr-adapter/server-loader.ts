@@ -24,31 +24,35 @@ export function resetReactCache(): void {
   reactDOMServerCache = null;
 }
 
+async function loadFromCachedHttpModule<T>(url: string, label: string): Promise<T> {
+  const cacheDir = getHttpBundleCacheDir();
+  const cachedPath = await cacheModuleToLocal(url, cacheDir);
+  logger.debug(`[server-loader] Loading ${label} from cached HTTP module`, { cachedPath });
+  return (await import(cachedPath)) as T;
+}
+
 export function getProjectReact(): Promise<typeof import("react")> {
   if (projectReactCache) return Promise.resolve(projectReactCache);
 
   return reactLoadFlight.do("react", async () => {
     if (projectReactCache) return projectReactCache;
 
-    // For compiled Deno binaries, use cached HTTP modules to ensure the same
-    // React instance as user components (which also use cached HTTP modules).
-    // Bare imports in compiled binaries resolve to compiled-in versions,
-    // creating multiple React instances and breaking hooks.
     if (isDenoCompiled) {
-      const urls = getReactUrls();
-      const cacheDir = getHttpBundleCacheDir();
-      const reactUrl = urls.react;
+      const reactUrl = getReactUrls().react;
       if (!reactUrl) {
         throw new Error("[server-loader] React URL not found in getReactUrls()");
       }
-      const cachedPath = await cacheModuleToLocal(reactUrl, cacheDir);
-      logger.debug("[server-loader] Loading React from cached HTTP module", { cachedPath });
-      const reactModule = await import(cachedPath) as { default?: typeof import("react") };
+
+      const reactModule = await loadFromCachedHttpModule<{ default?: typeof import("react") }>(
+        reactUrl,
+        "React",
+      );
       projectReactCache = (reactModule.default ?? reactModule) as typeof import("react");
-    } else {
-      const reactModule = await import("react");
-      projectReactCache = (reactModule.default ?? reactModule) as typeof import("react");
+      return projectReactCache;
     }
+
+    const reactModule = await import("react");
+    projectReactCache = (reactModule.default ?? reactModule) as typeof import("react");
     return projectReactCache;
   });
 }
@@ -60,27 +64,21 @@ export function getReactDOMServer(): Promise<ReactDOMServer> {
     if (reactDOMServerCache) return reactDOMServerCache;
 
     const versionInfo = getReactVersionInfo();
-    let serverModule: typeof import("react-dom/server");
+    const react18Plus = versionInfo.isReact18 || versionInfo.isReact19;
 
-    // For compiled Deno binaries, use cached HTTP modules to ensure the same
-    // React instance as user components. See getProjectReact() for details.
+    let serverModule: typeof import("react-dom/server");
     if (isDenoCompiled) {
-      const urls = getReactUrls();
-      const cacheDir = getHttpBundleCacheDir();
-      const serverUrl = urls["react-dom/server"];
+      const serverUrl = getReactUrls()["react-dom/server"];
       if (!serverUrl) {
         throw new Error("[server-loader] react-dom/server URL not found in getReactUrls()");
       }
-      const cachedPath = await cacheModuleToLocal(serverUrl, cacheDir);
-      logger.debug("[server-loader] Loading react-dom/server from cached HTTP module", {
-        cachedPath,
-      });
-      serverModule = await import(cachedPath) as typeof import("react-dom/server");
+      serverModule = await loadFromCachedHttpModule<typeof import("react-dom/server")>(
+        serverUrl,
+        "react-dom/server",
+      );
     } else {
       serverModule = await import("react-dom/server");
     }
-
-    const react18Plus = versionInfo.isReact18 || versionInfo.isReact19;
 
     reactDOMServerCache = {
       renderToString: serverModule.renderToString,

@@ -14,10 +14,6 @@ import type { MCPTool } from "./tools.ts";
 import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-// ============================================================================
-// Configuration
-// ============================================================================
-
 const DEFAULT_API_URL = "http://api.lvh.me:4000";
 
 function getApiBaseUrl(): string {
@@ -28,16 +24,12 @@ function getApiToken(): string | undefined {
   return getRuntimeEnv().apiToken;
 }
 
-/**
- * Make an authenticated request to the Veryfront API
- */
 async function apiRequest<T>(
   method: string,
   path: string,
   options: { body?: unknown; token?: string } = {},
 ): Promise<{ ok: boolean; data?: T; error?: string; status: number }> {
   const token = options.token ?? getApiToken();
-
   if (!token) {
     return { ok: false, error: "No API token available. Set VERYFRONT_API_TOKEN.", status: 401 };
   }
@@ -56,24 +48,21 @@ async function apiRequest<T>(
 
     if (!response.ok) {
       const errorText = await response.text();
-      let errorMessage: string;
+      let errorMessage = errorText || `HTTP ${response.status}`;
 
       try {
         const errorJson = JSON.parse(errorText);
-        errorMessage = errorJson.message || errorJson.error || errorText;
+        errorMessage = errorJson.message || errorJson.error || errorMessage;
       } catch {
-        errorMessage = errorText || `HTTP ${response.status}`;
+        // ignore JSON parse errors
       }
 
       return { ok: false, error: errorMessage, status: response.status };
     }
 
-    if (response.status === 204) {
-      return { ok: true, status: 204 };
-    }
+    if (response.status === 204) return { ok: true, status: 204 };
 
-    const data = (await response.json()) as T;
-    return { ok: true, data, status: response.status };
+    return { ok: true, data: (await response.json()) as T, status: response.status };
   } catch (error) {
     return {
       ok: false,
@@ -83,16 +72,17 @@ async function apiRequest<T>(
   }
 }
 
-/**
- * URL-encode a file path for use in API URLs
- */
 function encodeFilePath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
 }
 
-// ============================================================================
-// Types
-// ============================================================================
+function getBranchPath(branch?: string): string {
+  return branch ? `/branches/${branch}` : "";
+}
+
+function getBranchParam(branch?: string): string {
+  return branch ? `?branch_id=${branch}` : "";
+}
 
 interface RemoteFile {
   id?: string;
@@ -177,12 +167,12 @@ export const vfRemoteListFiles: MCPTool<RemoteListFilesInput, RemoteListFilesOut
         const params = new URLSearchParams();
         if (input.pattern) params.set("pattern", input.pattern);
         params.set("limit", String(input.limit));
-        params.set("fields", "(path,type,size)"); // Only fetch necessary fields
+        params.set("fields", "(path,type,size)");
 
-        const branchPath = input.branch ? `/branches/${input.branch}` : "";
-        const path = `/${input.project}${branchPath}/files?${params.toString()}`;
-
-        const result = await apiRequest<FileListResponse>("GET", path);
+        const apiPath = `/${input.project}${
+          getBranchPath(input.branch)
+        }/files?${params.toString()}`;
+        const result = await apiRequest<FileListResponse>("GET", apiPath);
         if (!result.ok) return { success: false, error: result.error };
 
         const files = result.data?.data ?? [];
@@ -223,10 +213,9 @@ export const vfRemoteGetFile: MCPTool<RemoteGetFileInput, RemoteGetFileOutput> =
     withSpan(
       "cli.mcp.tool.vf_remote_get_file",
       async () => {
-        const encodedPath = encodeFilePath(input.path);
-        const branchPath = input.branch ? `/branches/${input.branch}` : "";
-        const apiPath = `/${input.project}${branchPath}/files/${encodedPath}`;
-
+        const apiPath = `/${input.project}${getBranchPath(input.branch)}/files/${
+          encodeFilePath(input.path)
+        }`;
         const result = await apiRequest<RemoteFile>("GET", apiPath);
         if (!result.ok) return { success: false, error: result.error };
 
@@ -271,10 +260,9 @@ export const vfRemoteUpdateFile: MCPTool<RemoteUpdateFileInput, RemoteUpdateFile
     withSpan(
       "cli.mcp.tool.vf_remote_update_file",
       async () => {
-        const encodedPath = encodeFilePath(input.path);
-        const branchParam = input.branch ? `?branch_id=${input.branch}` : "";
-        const apiPath = `/${input.project}/files/${encodedPath}${branchParam}`;
-
+        const apiPath = `/${input.project}/files/${encodeFilePath(input.path)}${
+          getBranchParam(input.branch)
+        }`;
         const result = await apiRequest<{ id: string; path: string }>("PUT", apiPath, {
           body: { content: input.content },
         });
@@ -313,13 +301,11 @@ export const vfRemoteDeleteFile: MCPTool<RemoteDeleteFileInput, RemoteDeleteFile
   description: "Delete a file from a remote Veryfront project.",
   inputSchema: remoteDeleteFileInput,
   execute: async (input) => {
-    const encodedPath = encodeFilePath(input.path);
-    const branchParam = input.branch ? `?branch_id=${input.branch}` : "";
-    const apiPath = `/${input.project}/files/${encodedPath}${branchParam}`;
-
+    const apiPath = `/${input.project}/files/${encodeFilePath(input.path)}${
+      getBranchParam(input.branch)
+    }`;
     const result = await apiRequest<void>("DELETE", apiPath);
     if (!result.ok) return { success: false, error: result.error };
-
     return { success: true };
   },
 };
@@ -356,9 +342,7 @@ export const vfRemoteSearchFiles: MCPTool<RemoteSearchFilesInput, RemoteSearchFi
     withSpan(
       "cli.mcp.tool.vf_remote_search_files",
       async () => {
-        const branchPath = input.branch ? `/branches/${input.branch}` : "";
-        const apiPath = `/${input.project}${branchPath}/files/search`;
-
+        const apiPath = `/${input.project}${getBranchPath(input.branch)}/files/search`;
         const result = await apiRequest<SearchResponse>("POST", apiPath, {
           body: {
             query: input.query,
@@ -406,9 +390,7 @@ export const vfRemoteMoveFile: MCPTool<RemoteMoveFileInput, RemoteMoveFileOutput
   description: "Move or rename a file in a remote Veryfront project.",
   inputSchema: remoteMoveFileInput,
   execute: async (input) => {
-    const branchParam = input.branch ? `?branch_id=${input.branch}` : "";
-    const apiPath = `/${input.project}/files/move${branchParam}`;
-
+    const apiPath = `/${input.project}/files/move${getBranchParam(input.branch)}`;
     const result = await apiRequest<{ source_path: string; destination_path: string }>(
       "POST",
       apiPath,
@@ -459,9 +441,8 @@ export const vfRemoteListBranches: MCPTool<RemoteListBranchesInput, RemoteListBr
     if (input.search) params.set("search", input.search);
     if (input.status) params.set("status", input.status);
 
-    const path = `/${input.project}/branches?${params.toString()}`;
-    const result = await apiRequest<{ data: Branch[] }>("GET", path);
-
+    const apiPath = `/${input.project}/branches?${params.toString()}`;
+    const result = await apiRequest<{ data: Branch[] }>("GET", apiPath);
     if (!result.ok) return { success: false, error: result.error };
 
     return { success: true, branches: result.data?.data ?? [] };
@@ -494,13 +475,11 @@ export const vfRemoteCreateBranch: MCPTool<RemoteCreateBranchInput, RemoteCreate
     "Create a new branch in a remote Veryfront project. Branch from main by default, or specify a base branch.",
   inputSchema: remoteCreateBranchInput,
   execute: async (input) => {
-    const path = `/${input.project}/branches`;
-    const result = await apiRequest<Branch>("POST", path, {
+    const result = await apiRequest<Branch>("POST", `/${input.project}/branches`, {
       body: { name: input.name, base_branch_id: input.base_branch_id || null },
     });
 
     if (!result.ok) return { success: false, error: result.error };
-
     return { success: true, branch: result.data };
   },
 };
@@ -533,14 +512,14 @@ export const vfRemoteMergeBranch: MCPTool<RemoteMergeBranchInput, RemoteMergeBra
   description: "Merge a branch into the target branch (or main if not specified).",
   inputSchema: remoteMergeBranchInput,
   execute: async (input) => {
-    const path = `/${input.project}/branches/${input.branch_id}/merge`;
+    const apiPath = `/${input.project}/branches/${input.branch_id}/merge`;
     const result = await apiRequest<{
       success: boolean;
       branch: Branch;
       merged_documents: number;
       added_documents: number;
       deleted_documents: number;
-    }>("POST", path, {
+    }>("POST", apiPath, {
       body: { target_branch_id: input.target_branch_id || null },
     });
 
@@ -577,11 +556,12 @@ export const vfRemoteDeleteBranch: MCPTool<RemoteDeleteBranchInput, RemoteDelete
   description: "Delete a branch from a remote Veryfront project.",
   inputSchema: remoteDeleteBranchInput,
   execute: async (input) => {
-    const path = `/${input.project}/branches/${input.branch_id}`;
-    const result = await apiRequest<{ success: boolean }>("DELETE", path);
+    const result = await apiRequest<{ success: boolean }>(
+      "DELETE",
+      `/${input.project}/branches/${input.branch_id}`,
+    );
 
     if (!result.ok) return { success: false, error: result.error };
-
     return { success: true };
   },
 };
@@ -620,7 +600,6 @@ export const vfRemoteCreateProject: MCPTool<RemoteCreateProjectInput, RemoteCrea
     });
 
     if (!result.ok) return { success: false, error: result.error };
-
     return { success: true, project: result.data };
   },
 };
@@ -667,9 +646,7 @@ export const vfRemoteCloneProject: MCPTool<RemoteCloneProjectInput, RemoteCloneP
         }
 
         const newProject = createResult.data;
-        if (!newProject) {
-          return { success: false, error: "Project created but no data returned" };
-        }
+        if (!newProject) return { success: false, error: "Project created but no data returned" };
 
         const params = new URLSearchParams();
         params.set("limit", "1000");

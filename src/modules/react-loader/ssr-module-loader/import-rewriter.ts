@@ -7,6 +7,14 @@
  * @module module-system/react-loader/ssr-module-loader/import-rewriter
  */
 
+const IMPORT_FROM_PREFIX = "from\\s*[\"']";
+const IMPORT_FROM_SUFFIX = "[\"']";
+const REGEX_ESCAPE = /[.*+?^${}()|[\]\\]/g;
+
+function escapeRegExp(value: string): string {
+  return value.replace(REGEX_ESCAPE, "\\$&");
+}
+
 /**
  * Rewrite a cross-project import specifier to use a local temp path.
  */
@@ -15,10 +23,14 @@ export function rewriteCrossProjectImport(
   specifier: string,
   tempPath: string,
 ): string {
-  const jsSpecifier = specifier.replace(/\.(tsx?|jsx|mdx)$/, ".js");
-  const escapedSpecifier = specifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const escapedJsSpecifier = jsSpecifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`from\\s*["'](${escapedSpecifier}|${escapedJsSpecifier})["']`, "g");
+  const jsSpecifier = toJsExtension(specifier);
+  const escapedSpecifier = escapeRegExp(specifier);
+  const escapedJsSpecifier = escapeRegExp(jsSpecifier);
+  const pattern = new RegExp(
+    `${IMPORT_FROM_PREFIX}(${escapedSpecifier}|${escapedJsSpecifier})${IMPORT_FROM_SUFFIX}`,
+    "g",
+  );
+
   return transformed.replace(pattern, `from "file://${tempPath}"`);
 }
 
@@ -42,12 +54,15 @@ export function rewriteLocalImports(
 
   let result = transformed;
 
-  for (const [specifierOrPath, tempPath] of localImportPaths.entries()) {
+  for (const [specifierOrPath, tempPath] of localImportPaths) {
     const patterns = buildImportPatterns(specifierOrPath, fromRelativeDir, normalizedProjectDir);
 
     for (const pattern of patterns) {
-      const escapedPattern = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const regex = new RegExp(`from\\s*["'](${escapedPattern})["']`, "g");
+      const escapedPattern = escapeRegExp(pattern);
+      const regex = new RegExp(
+        `${IMPORT_FROM_PREFIX}(${escapedPattern})${IMPORT_FROM_SUFFIX}`,
+        "g",
+      );
       result = result.replace(regex, `from "file://${tempPath}"`);
     }
   }
@@ -63,17 +78,14 @@ function buildImportPatterns(
   fromRelativeDir: string,
   projectDir: string,
 ): string[] {
-  // Handle @/ alias imports (e.g., @/components/Welcome)
   if (specifierOrPath.startsWith("@/")) {
     return buildAliasImportPatterns(specifierOrPath, fromRelativeDir);
   }
 
-  // Handle absolute paths
   if (specifierOrPath.startsWith("/") || specifierOrPath.startsWith(projectDir)) {
     return buildAbsoluteImportPatterns(specifierOrPath, fromRelativeDir, projectDir);
   }
 
-  // Handle relative imports (./foo, ../foo)
   if (specifierOrPath.startsWith("./") || specifierOrPath.startsWith("../")) {
     return buildRelativeImportPatterns(specifierOrPath);
   }
@@ -88,7 +100,6 @@ function buildAliasImportPatterns(specifier: string, fromRelativeDir: string): s
 
   const patterns = [`${relativePrefix}${aliasPath}.js`];
 
-  // Handle paths that already have an extension
   if (/\.(tsx?|jsx|mdx)$/.test(aliasPath)) {
     patterns.push(`${relativePrefix}${toJsExtension(aliasPath)}`);
   }
@@ -143,12 +154,8 @@ function computeRelativePath(fromDir: string, toDir: string, fileName: string): 
   const upCount = fromParts.length - commonPrefixLen;
   const downParts = toParts.slice(commonPrefixLen);
 
-  if (upCount === 0 && downParts.length === 0) {
-    return `./${fileName}`;
-  }
-  if (upCount === 0) {
-    return `./${downParts.join("/")}/${fileName}`;
-  }
+  if (upCount === 0 && downParts.length === 0) return `./${fileName}`;
+  if (upCount === 0) return `./${downParts.join("/")}/${fileName}`;
 
   const upPath = "../".repeat(upCount);
   const downPath = downParts.length > 0 ? `${downParts.join("/")}/` : "";

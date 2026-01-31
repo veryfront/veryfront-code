@@ -15,7 +15,8 @@ export type AnyMiddlewareContext =
   | { request: Request };
 
 export function getRequest(ctx: AnyMiddlewareContext): Request {
-  return "req" in ctx ? ctx.req : ctx.request;
+  if ("req" in ctx) return ctx.req;
+  return ctx.request;
 }
 
 export type OriginValidator = (origin: string) => boolean | Promise<boolean>;

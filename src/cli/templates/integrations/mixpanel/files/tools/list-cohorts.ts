@@ -21,20 +21,24 @@ export default tool({
 
     const totalUsers = cohorts.reduce((sum, c) => sum + c.count, 0);
 
-    let largestCohort = "N/A";
-    let smallestCohort = "N/A";
+    if (cohorts.length === 0) {
+      return {
+        total: 0,
+        cohorts: [],
+        summary: {
+          totalUsers: 0,
+          largestCohort: "N/A",
+          smallestCohort: "N/A",
+        },
+      };
+    }
 
-    if (cohorts.length > 0) {
-      let largest = cohorts[0];
-      let smallest = cohorts[0];
+    let largest = cohorts[0];
+    let smallest = cohorts[0];
 
-      for (const c of cohorts) {
-        if (c.count > largest.count) largest = c;
-        if (c.count < smallest.count) smallest = c;
-      }
-
-      largestCohort = largest.name;
-      smallestCohort = smallest.name;
+    for (const c of cohorts) {
+      if (c.count > largest.count) largest = c;
+      if (c.count < smallest.count) smallest = c;
     }
 
     return {
@@ -50,8 +54,8 @@ export default tool({
       })),
       summary: {
         totalUsers,
-        largestCohort,
-        smallestCohort,
+        largestCohort: largest.name,
+        smallestCohort: smallest.name,
       },
     };
   },

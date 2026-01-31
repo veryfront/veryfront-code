@@ -1,12 +1,3 @@
-/**
- * Tool Registry
- *
- * Project-scoped registry for AI tools. Each project has its own isolated
- * tool namespace, preventing cross-project tool access.
- *
- * @module
- */
-
 import type { Tool, ToolDefinition } from "./types.ts";
 import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
@@ -54,23 +45,23 @@ class ToolRegistryClass {
   }
 
   getToolsForProvider(): ToolDefinition[] {
-    return [...this.getAll().values()].map(toolToProviderDefinition);
+    return [...toolManager.getAll().values()].map(toolToProviderDefinition);
   }
 
-  getStats() {
+  getStats(): ReturnType<typeof toolManager.getStats> {
     return toolManager.getStats();
   }
 }
 
-// Singleton instance - maintains same interface but now project-scoped internally
 export const toolRegistry = new ToolRegistryClass();
 
 export function toolToProviderDefinition(tool: Tool): ToolDefinition {
+  const hasPreConvertedSchema = tool.inputSchemaJson != null;
   const jsonSchema = tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema);
 
   agentLogger.info(
     `[TOOL] Using ${
-      tool.inputSchemaJson ? "pre-converted" : "runtime-converted"
+      hasPreConvertedSchema ? "pre-converted" : "runtime-converted"
     } schema for "${tool.id}"`,
   );
 

@@ -10,8 +10,8 @@ export async function loadJSXRuntime(): Promise<JSXRuntime> {
 
   return {
     Fragment: runtime.Fragment,
-    jsx: (runtime.jsx ?? runtime.jsxDEV) as JSXRuntime["jsx"],
-    jsxs: (runtime.jsxs ?? runtime.jsxDEV) as JSXRuntime["jsxs"],
-    jsxDEV: (runtime.jsxDEV ?? runtime.jsx) as JSXRuntime["jsxDEV"],
-  };
+    jsx: runtime.jsx ?? runtime.jsxDEV,
+    jsxs: runtime.jsxs ?? runtime.jsxDEV,
+    jsxDEV: runtime.jsxDEV ?? runtime.jsx,
+  } as JSXRuntime;
 }

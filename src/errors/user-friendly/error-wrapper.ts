@@ -16,7 +16,9 @@ export function wrapErrorHandler<TArgs extends unknown[], TReturn>(
         cliLogger.error(red("✖ Unknown error:"), error);
       }
 
-      if (import.meta.main) exit(1);
+      if (import.meta.main) {
+        exit(1);
+      }
 
       throw error;
     }

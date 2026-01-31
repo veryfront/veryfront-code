@@ -8,24 +8,51 @@ import { clearConfigCache, getConfig, type VeryfrontConfig } from "@veryfront/co
 import { remove, writeTextFile } from "@veryfront/testing/deno-compat";
 import { withTestContext } from "../../_helpers/context.ts";
 
+function projectFile(projectDir: string, file: string): string {
+  return `${projectDir}/${file}`;
+}
+
+async function removeDefaultConfig(projectDir: string): Promise<void> {
+  await remove(projectFile(projectDir, "veryfront.config.js"));
+}
+
+async function getConfigWithAdapter(projectDir: string): Promise<VeryfrontConfig> {
+  const adapter = await getAdapter();
+  return await getConfig(projectDir, adapter);
+}
+
+async function expectConfigError(
+  projectDir: string,
+  includes: string[],
+): Promise<void> {
+  let error: Error | null = null;
+
+  try {
+    await getConfigWithAdapter(projectDir);
+  } catch (e) {
+    error = e as Error;
+  }
+
+  assertEquals(error !== null, true);
+  for (const text of includes) {
+    assertEquals(error?.message.includes(text), true);
+  }
+}
+
 describe("config/loader", () => {
   it("defaults when no config file", async () => {
     await withTestContext("config-defaults", async (context) => {
-      const adapter = await getAdapter();
       clearConfigCache();
-      const cfg = await getConfig(context.projectDir, adapter);
-      // esmLayouts default true
+      const cfg = await getConfigWithAdapter(context.projectDir);
+
       assertEquals(cfg.experimental?.esmLayouts, true);
-      // has default theme color
       assertEquals(!!cfg.theme?.colors?.primary, true);
     });
   });
 
   it("merges partial user config", async () => {
     await withTestContext("config-merge", async (context) => {
-      const adapter = await getAdapter();
-      // Remove the default config created by TestContext
-      await remove(`${context.projectDir}/veryfront.config.js`);
+      await removeDefaultConfig(context.projectDir);
 
       const user: Partial<VeryfrontConfig> = {
         title: "X",
@@ -36,15 +63,17 @@ describe("config/loader", () => {
           importMap: { imports: { react: "https://esm.sh/react@18" } } as any,
         },
       };
+
       await writeTextFile(
-        `${context.projectDir}/veryfront.config.ts`,
+        projectFile(context.projectDir, "veryfront.config.ts"),
         `export default ${JSON.stringify(user)};`,
       );
+
       clearConfigCache();
-      const cfg = await getConfig(context.projectDir, adapter);
+      const cfg = await getConfigWithAdapter(context.projectDir);
+
       assertEquals(cfg.title, "X");
       assertEquals(cfg.dev?.port, 9999);
-      // untouched defaults should still exist (esmLayouts)
       assertEquals(cfg.experimental?.esmLayouts, true);
       assertEquals(cfg.build?.outDir, "out");
       assertEquals((cfg.resolve as any)?.importMap?.imports?.react?.includes("react@18"), true);
@@ -54,81 +83,57 @@ describe("config/loader", () => {
   it("failure to execute config falls back to defaults", async () => {
     await withTestContext("config-error-fallback", async (context) => {
       await writeTextFile(
-        `${context.projectDir}/veryfront.config.ts`,
+        projectFile(context.projectDir, "veryfront.config.ts"),
         `export default (()=>{ throw new Error('boom') })()`,
       );
+
       clearConfigCache();
-      const adapter = await getAdapter();
-      const cfg = await getConfig(context.projectDir, adapter);
+      const cfg = await getConfigWithAdapter(context.projectDir);
+
       assertEquals(cfg.experimental?.esmLayouts, true);
     });
   });
 
   it("rejects invalid title type", async () => {
     await withTestContext("config-validation", async (context) => {
-      // Remove the default config created by TestContext
-      await remove(`${context.projectDir}/veryfront.config.js`);
+      await removeDefaultConfig(context.projectDir);
 
-      // Invalid config that should fail validation
       await writeTextFile(
-        `${context.projectDir}/veryfront.config.ts`,
-        `export default { title: 123 };`, // title should be string
+        projectFile(context.projectDir, "veryfront.config.ts"),
+        `export default { title: 123 };`,
       );
+
       clearConfigCache();
-
-      let error: Error | null = null;
-      try {
-        const adapter = await getAdapter();
-        await getConfig(context.projectDir, adapter);
-      } catch (e) {
-        error = e as Error;
-      }
-
-      assertEquals(error !== null, true);
-      assertEquals(error?.message.includes("Invalid veryfront.config"), true);
+      await expectConfigError(context.projectDir, ["Invalid veryfront.config"]);
     });
   });
 
   it("rejects invalid CORS config", async () => {
     await withTestContext("config-cors-validation", async (context) => {
-      // Remove the default config created by TestContext
-      await remove(`${context.projectDir}/veryfront.config.js`);
+      await removeDefaultConfig(context.projectDir);
 
-      // Invalid CORS config
       await writeTextFile(
-        `${context.projectDir}/veryfront.config.ts`,
-        `export default { security: { cors: { origin: 123 } } };`, // origin should be string
+        projectFile(context.projectDir, "veryfront.config.ts"),
+        `export default { security: { cors: { origin: 123 } } };`,
       );
+
       clearConfigCache();
-
-      let error: Error | null = null;
-      try {
-        const adapter = await getAdapter();
-        await getConfig(context.projectDir, adapter);
-      } catch (e) {
-        error = e as Error;
-      }
-
-      assertEquals(error !== null, true);
-      // Error message is more specific now: "security.cors.origin must be a string..."
-      assertEquals(error?.message.includes("security.cors.origin"), true);
-      assertEquals(error?.message.includes("must be a string"), true);
+      await expectConfigError(context.projectDir, ["security.cors.origin", "must be a string"]);
     });
   });
 
   it("rejects unknown keys", async () => {
     await withTestContext("config-unknown-keys", async (context) => {
-      // Remove the default config created by TestContext
-      await remove(`${context.projectDir}/veryfront.config.js`);
+      await removeDefaultConfig(context.projectDir);
 
-      // Config with unknown keys
       await writeTextFile(
-        `${context.projectDir}/veryfront.config.ts`,
+        projectFile(context.projectDir, "veryfront.config.ts"),
         `export default { title: "Test", unknownKey: "value", anotherUnknown: 123 };`,
       );
-      clearConfigCache();
 
+      clearConfigCache();
       const adapter = await getAdapter();
+
       await assertRejects(
         () => getConfig(context.projectDir, adapter),
         Error,
@@ -139,76 +144,73 @@ describe("config/loader", () => {
 
   it("loads .js config file", async () => {
     await withTestContext("config-js-file", async (context) => {
-      // TestContext already creates a default .js config, so we'll update it
       await writeTextFile(
-        `${context.projectDir}/veryfront.config.js`,
+        projectFile(context.projectDir, "veryfront.config.js"),
         `export default { title: "JS Config" };`,
       );
+
       clearConfigCache();
-      const adapter = await getAdapter();
-      const cfg = await getConfig(context.projectDir, adapter);
+      const cfg = await getConfigWithAdapter(context.projectDir);
+
       assertEquals(cfg.title, "JS Config");
     });
   });
 
   it("loads .mjs config file", async () => {
     await withTestContext("config-mjs-file", async (context) => {
-      // Remove the default config created by TestContext
-      await remove(`${context.projectDir}/veryfront.config.js`);
+      await removeDefaultConfig(context.projectDir);
 
       await writeTextFile(
-        `${context.projectDir}/veryfront.config.mjs`,
+        projectFile(context.projectDir, "veryfront.config.mjs"),
         `export default { title: "MJS Config" };`,
       );
+
       clearConfigCache();
-      const adapter = await getAdapter();
-      const cfg = await getConfig(context.projectDir, adapter);
+      const cfg = await getConfigWithAdapter(context.projectDir);
+
       assertEquals(cfg.title, "MJS Config");
     });
   });
 
   it("prioritizes .js over .ts and .mjs", async () => {
     await withTestContext("config-precedence", async (context) => {
-      // Create all three config files
       await writeTextFile(
-        `${context.projectDir}/veryfront.config.js`,
+        projectFile(context.projectDir, "veryfront.config.js"),
         `export default { title: "JS wins" };`,
       );
       await writeTextFile(
-        `${context.projectDir}/veryfront.config.ts`,
+        projectFile(context.projectDir, "veryfront.config.ts"),
         `export default { title: "TS loses" };`,
       );
       await writeTextFile(
-        `${context.projectDir}/veryfront.config.mjs`,
+        projectFile(context.projectDir, "veryfront.config.mjs"),
         `export default { title: "MJS loses" };`,
       );
+
       clearConfigCache();
-      const adapter = await getAdapter();
-      const cfg = await getConfig(context.projectDir, adapter);
+      const cfg = await getConfigWithAdapter(context.projectDir);
+
       assertEquals(cfg.title, "JS wins");
     });
   });
 
   it("caches config per project directory", async () => {
-    // For tests needing multiple directories, we can nest TestContext calls
     await withTestContext("config-cache-project1", async (context1) => {
       await withTestContext("config-cache-project2", async (context2) => {
         clearConfigCache();
 
-        // Remove default configs
-        await remove(`${context1.projectDir}/veryfront.config.js`);
-        await remove(`${context2.projectDir}/veryfront.config.js`);
+        await removeDefaultConfig(context1.projectDir);
+        await removeDefaultConfig(context2.projectDir);
 
         await writeTextFile(
-          `${context1.projectDir}/veryfront.config.ts`,
+          projectFile(context1.projectDir, "veryfront.config.ts"),
           `export default { title: "Project 1" };`,
         );
         await writeTextFile(
-          `${context2.projectDir}/veryfront.config.ts`,
+          projectFile(context2.projectDir, "veryfront.config.ts"),
           `export default { title: "Project 2" };`,
         );
 
-        // Load both configs
         const adapter = await getAdapter();
         const cfg1 = await getConfig(context1.projectDir, adapter);
         const cfg2 = await getConfig(context2.projectDir, adapter);
@@ -216,11 +218,9 @@ describe("config/loader", () => {
         assertEquals(cfg1.title, "Project 1");
         assertEquals(cfg2.title, "Project 2");
 
-        // Load again - should come from cache
         const cfg1Again = await getConfig(context1.projectDir, adapter);
         const cfg2Again = await getConfig(context2.projectDir, adapter);
 
-        // Should be the same object reference (cached)
         assertEquals(cfg1 === cfg1Again, true);
         assertEquals(cfg2 === cfg2Again, true);
       });
@@ -229,15 +229,14 @@ describe("config/loader", () => {
 
   it("merges import maps correctly", async () => {
     await withTestContext("config-import-map-merge", async (context) => {
-      // Remove the default config created by TestContext
-      await remove(`${context.projectDir}/veryfront.config.js`);
+      await removeDefaultConfig(context.projectDir);
 
       const user = {
         resolve: {
           importMap: {
             imports: {
               "my-lib": "https://example.com/my-lib.js",
-              react: "https://esm.sh/react@17", // Override default React
+              react: "https://esm.sh/react@17",
             },
             scopes: {
               "/some/scope/": {
@@ -247,22 +246,19 @@ describe("config/loader", () => {
           },
         },
       };
+
       await writeTextFile(
-        `${context.projectDir}/veryfront.config.ts`,
+        projectFile(context.projectDir, "veryfront.config.ts"),
         `export default ${JSON.stringify(user)};`,
       );
+
       clearConfigCache();
-      const adapter = await getAdapter();
-      const cfg = await getConfig(context.projectDir, adapter);
+      const cfg = await getConfigWithAdapter(context.projectDir);
 
       const importMap = (cfg.resolve as any)?.importMap;
-      // User's custom import
       assertEquals(importMap?.imports?.["my-lib"], "https://example.com/my-lib.js");
-      // User's React override
       assertEquals(importMap?.imports?.react, "https://esm.sh/react@17");
-      // Default React DOM should still exist
       assertEquals(importMap?.imports?.["react-dom"]?.includes("react-dom"), true);
-      // User's scopes
       assertEquals(
         importMap?.scopes?.["/some/scope/"]?.["scoped-lib"],
         "https://example.com/scoped.js",
@@ -272,38 +268,34 @@ describe("config/loader", () => {
 
   it("loads named export config", async () => {
     await withTestContext("config-named-export", async (context) => {
-      // Remove the default config created by TestContext
-      await remove(`${context.projectDir}/veryfront.config.js`);
+      await removeDefaultConfig(context.projectDir);
 
       await writeTextFile(
-        `${context.projectDir}/veryfront.config.ts`,
+        projectFile(context.projectDir, "veryfront.config.ts"),
         `export const title = "Named Export";`,
       );
+
       clearConfigCache();
-      const adapter = await getAdapter();
-      const cfg = await getConfig(context.projectDir, adapter);
+      const cfg = await getConfigWithAdapter(context.projectDir);
+
       assertEquals(cfg.title, "Named Export");
     });
   });
 
   it("provides default import map when resolve is not specified", async () => {
     await withTestContext("config-no-resolve", async (context) => {
-      // Remove the default config created by TestContext
-      await remove(`${context.projectDir}/veryfront.config.js`);
+      await removeDefaultConfig(context.projectDir);
 
-      const user = {
-        title: "No Resolve",
-        // No resolve section
-      };
+      const user = { title: "No Resolve" };
+
       await writeTextFile(
-        `${context.projectDir}/veryfront.config.ts`,
+        projectFile(context.projectDir, "veryfront.config.ts"),
         `export default ${JSON.stringify(user)};`,
       );
-      clearConfigCache();
-      const adapter = await getAdapter();
-      const cfg = await getConfig(context.projectDir, adapter);
 
-      // Should still have default import map
+      clearConfigCache();
+      const cfg = await getConfigWithAdapter(context.projectDir);
+
       const importMap = (cfg.resolve as any)?.importMap;
       assertEquals(importMap?.imports?.react?.includes("react"), true);
     });

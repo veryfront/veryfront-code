@@ -1,14 +1,3 @@
-/**
- * Fast scaffold - Write template files without any prompts
- *
- * Optimized for speed by:
- * - No interactive prompts
- * - Parallel file writes
- * - Placeholder env values
- *
- * @module cli/commands/new/fast-scaffold
- */
-
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
 import { getTemplate } from "../../templates/index.ts";
@@ -26,10 +15,6 @@ export interface ScaffoldResult {
   slug: string;
 }
 
-/**
- * Scaffold a project without any prompts.
- * Uses the AI template by default and creates placeholder env values.
- */
 export async function scaffoldProjectFast(
   projectDir: string,
   template: InitTemplate = "ai",
@@ -39,9 +24,7 @@ export async function scaffoldProjectFast(
   const fs = createFileSystem();
 
   const templateFiles = await getTemplate(template);
-  if (!templateFiles?.length) {
-    throw new Error(`Template "${template}" not found`);
-  }
+  if (!templateFiles?.length) throw new Error(`Template "${template}" not found`);
 
   const integrationFiles: TemplateFile[] = [];
   const integrationEnvVars: Array<{ name: string; placeholder: string }> = [];
@@ -56,23 +39,20 @@ export async function scaffoldProjectFast(
       for (const envVar of integration.config.envVars ?? []) {
         integrationEnvVars.push({
           name: envVar.name,
-          placeholder: envVar.description ?? `your-${envVar.name.toLowerCase().replace(/_/g, "-")}`,
+          placeholder: envVar.description ??
+            `your-${envVar.name.toLowerCase().replace(/_/g, "-")}`,
         });
       }
     }
   }
 
-  const allFiles: TemplateFile[] = [
+  const uniqueFiles = dedupeFilesByPath([
     ...templateFiles,
     ...integrationFiles,
     createVeryfrontConfig(slug, template),
     createEnvFile(template, integrationEnvVars),
     createEnvExampleFile(template, integrationEnvVars),
-  ];
-
-  const fileMap = new Map<string, TemplateFile>();
-  for (const file of allFiles) fileMap.set(file.path, file);
-  const uniqueFiles = [...fileMap.values()];
+  ]);
 
   await Promise.all(
     uniqueFiles.map(async (file) => {
@@ -90,15 +70,19 @@ export async function scaffoldProjectFast(
   };
 }
 
-/**
- * Create veryfront.config.ts with projectSlug
- */
+function dedupeFilesByPath(files: TemplateFile[]): TemplateFile[] {
+  const fileMap = new Map<string, TemplateFile>();
+  for (const file of files) fileMap.set(file.path, file);
+  return [...fileMap.values()];
+}
+
 function createVeryfrontConfig(slug: string, template: InitTemplate): TemplateFile {
   const usesAppRouter = ["ai", "minimal", "app", "blog", "docs"].includes(template);
 
-  let extras = "";
-  if (template === "app") {
-    extras = `
+  const routerConfig = usesAppRouter ? `\n  router: "app",` : "";
+
+  const extras = template === "app"
+    ? `
   // Theme
   theme: {
     colors: {
@@ -108,10 +92,8 @@ function createVeryfrontConfig(slug: string, template: InitTemplate): TemplateFi
       danger: "#EF4444",
     },
   },
-`;
-  }
-
-  const routerConfig = usesAppRouter ? `\n  router: "app",` : "";
+`
+    : "";
 
   return {
     path: "veryfront.config.ts",
@@ -131,33 +113,27 @@ export default config;
   };
 }
 
-/**
- * Create .env file with placeholder values
- */
 function createEnvFile(
   template: InitTemplate,
   integrationEnvVars: Array<{ name: string; placeholder: string }> = [],
 ): TemplateFile {
   const envVars: Record<string, string> = {};
 
-  if (template === "ai") {
-    envVars.OPENAI_API_KEY = "sk-your-openai-api-key";
-  }
+  if (template === "ai") envVars.OPENAI_API_KEY = "sk-your-openai-api-key";
 
   for (const { name, placeholder } of integrationEnvVars) {
     envVars[name] = placeholder;
   }
 
-  const content = Object.entries(envVars)
-    .map(([key, value]) => `${key}=${value}`)
-    .join("\n") + "\n";
+  const content = `${
+    Object.entries(envVars)
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n")
+  }\n`;
 
   return { path: ".env", content };
 }
 
-/**
- * Create .env.example file with documentation
- */
 function createEnvExampleFile(
   template: InitTemplate,
   integrationEnvVars: Array<{ name: string; placeholder: string }> = [],

@@ -10,13 +10,9 @@ export interface OAuthProviderConfig {
   additionalAuthParams?: Record<string, string>;
   additionalTokenParams?: Record<string, string>;
   useBasicAuth?: boolean;
-  tokenResponseMapping?: {
-    accessToken?: string;
-    refreshToken?: string;
-    expiresIn?: string;
-    tokenType?: string;
-    scope?: string;
-  };
+  tokenResponseMapping?: Partial<
+    Record<"accessToken" | "refreshToken" | "expiresIn" | "tokenType" | "scope", string>
+  >;
 }
 
 export interface OAuthServiceConfig extends OAuthProviderConfig {

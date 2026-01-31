@@ -2,6 +2,19 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { createLead, formatLeadName } from "../../lib/salesforce-client.ts";
 
+type Output = {
+  id: string;
+  name: string;
+  lastName: string;
+  firstName?: string;
+  company: string;
+  email?: string;
+  phone?: string;
+  title?: string;
+  status: string;
+  message: string;
+};
+
 export default tool({
   id: "create-lead",
   description:
@@ -34,19 +47,8 @@ export default tool({
     description: z.string().optional().describe("Description or notes about the lead"),
     rating: z.string().optional().describe('Lead rating (e.g., "Hot", "Warm", "Cold")'),
   }),
-  async execute(input): Promise<{
-    id: string;
-    name: string;
-    lastName: string;
-    firstName?: string;
-    company: string;
-    email?: string;
-    phone?: string;
-    title?: string;
-    status: string;
-    message: string;
-  }> {
-    const leadData: Record<string, any> = {
+  async execute(input): Promise<Output> {
+    const leadData: Record<string, unknown> = {
       LastName: input.lastName,
       Company: input.company,
     };
@@ -81,13 +83,11 @@ export default tool({
       throw new Error(`Failed to create lead: ${JSON.stringify(result.errors)}`);
     }
 
-    const lead = {
+    const name = formatLeadName({
       FirstName: input.firstName,
       LastName: input.lastName,
       Email: input.email,
-    };
-
-    const name = formatLeadName(lead);
+    });
 
     return {
       id: result.id,

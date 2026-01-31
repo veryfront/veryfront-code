@@ -61,7 +61,8 @@ export function getElementTypeName(element: React.ReactElement): string {
   const { type } = element;
 
   if (typeof type === "function") {
-    return type.name || (type as React.ComponentType<any>).displayName || "<Anonymous>";
+    const componentType = type as React.ComponentType<any>;
+    return type.name || componentType.displayName || "<Anonymous>";
   }
 
   return String(type);
@@ -95,13 +96,27 @@ export function getElementDebugInfo(child: unknown): {
   symbolValue?: symbol;
   typeValue?: unknown;
 } {
+  if (child == null || typeof child !== "object") {
+    return {
+      type: "undefined",
+      hasSymbol: false,
+      symbolValue: undefined,
+      typeValue: undefined,
+    };
+  }
+
   const internal = child as ReactElementInternal;
 
+  let type: string;
+  if (typeof internal.type === "function") {
+    type = (internal.type as { name?: string }).name || "AnonymousFunction";
+  } else {
+    type = String(internal.type);
+  }
+
   return {
-    type: typeof internal.type === "function"
-      ? (internal.type as { name?: string }).name || "AnonymousFunction"
-      : String(internal.type),
-    hasSymbol: child != null && typeof child === "object" && "$typeof" in child,
+    type,
+    hasSymbol: "$typeof" in child,
     symbolValue: internal.$typeof,
     typeValue: internal.type,
   };

@@ -28,7 +28,11 @@ describe("errors/catalog/module-errors", () => {
         assertEquals(typeof solution.message, "string", `message should be string for ${code}`);
         assertEquals(typeof solution.docs, "string", `docs should be string for ${code}`);
         assertEquals(Array.isArray(solution.steps), true, `steps should be array for ${code}`);
-        assertEquals(solution.steps!.length > 0, true, `steps should not be empty for ${code}`);
+        assertEquals(
+          (solution.steps?.length ?? 0) > 0,
+          true,
+          `steps should not be empty for ${code}`,
+        );
       }
     });
 
@@ -37,21 +41,21 @@ describe("errors/catalog/module-errors", () => {
     });
 
     it("CACHE_PATH_MISMATCH should have an example with curl command", () => {
-      const solution = MODULE_ERROR_CATALOG[ErrorCode.CACHE_PATH_MISMATCH]!;
-      assertEquals(typeof solution.example, "string");
-      assertEquals(solution.example!.includes("curl"), true);
+      const solution = MODULE_ERROR_CATALOG[ErrorCode.CACHE_PATH_MISMATCH];
+      assertEquals(typeof solution?.example, "string");
+      assertEquals(solution?.example?.includes("curl"), true);
     });
 
     it("MODULE_NOT_FOUND should have an example with import map", () => {
-      const solution = MODULE_ERROR_CATALOG[ErrorCode.MODULE_NOT_FOUND]!;
-      assertEquals(typeof solution.example, "string");
-      assertEquals(solution.example!.includes("importMap"), true);
+      const solution = MODULE_ERROR_CATALOG[ErrorCode.MODULE_NOT_FOUND];
+      assertEquals(typeof solution?.example, "string");
+      assertEquals(solution?.example?.includes("importMap"), true);
     });
 
     it("DEPENDENCY_MISSING should have an example", () => {
-      const solution = MODULE_ERROR_CATALOG[ErrorCode.DEPENDENCY_MISSING]!;
-      assertEquals(typeof solution.example, "string");
-      assertEquals(solution.example!.includes("react"), true);
+      const solution = MODULE_ERROR_CATALOG[ErrorCode.DEPENDENCY_MISSING];
+      assertEquals(typeof solution?.example, "string");
+      assertEquals(solution?.example?.includes("react"), true);
     });
   });
 });

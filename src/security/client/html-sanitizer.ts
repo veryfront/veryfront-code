@@ -47,7 +47,7 @@ interface GlobalWithVeryfrontEnv {
 }
 
 function isDevMode(): boolean {
-  const g = globalThis as unknown as GlobalWithVeryfrontEnv;
+  const g = globalThis as GlobalWithVeryfrontEnv;
   return g.__VERYFRONT_DEV__ === true || g.Deno?.env?.get?.("VERYFRONT_ENV") === "development";
 }
 
@@ -77,15 +77,10 @@ export function validateTrustedHtml(
 
   for (const { pattern, name } of SUSPICIOUS_PATTERNS) {
     pattern.lastIndex = 0;
-
     if (!pattern.test(html)) continue;
 
-    const message = `[Security] Suspicious ${name} detected in server HTML`;
-    if (warn) console.warn(message);
-
-    if (strict || !isDevMode()) {
-      throw new Error(`Potentially unsafe HTML: ${name} detected`);
-    }
+    if (warn) console.warn(`[Security] Suspicious ${name} detected in server HTML`);
+    if (strict || !isDevMode()) throw new Error(`Potentially unsafe HTML: ${name} detected`);
   }
 
   return html;
@@ -104,7 +99,6 @@ export function createErrorDisplay(options: {
   const { title, message, details, style } = options;
 
   const container = document.createElement("div");
-
   Object.assign(container.style, {
     color: "red",
     border: "2px solid red",
@@ -124,12 +118,12 @@ export function createErrorDisplay(options: {
   messageEl.textContent = message;
   container.appendChild(messageEl);
 
-  if (details) {
-    const detailsEl = document.createElement("pre");
-    detailsEl.style.cssText = "margin: 5px 0; white-space: pre-wrap; word-break: break-word;";
-    detailsEl.textContent = details;
-    container.append(document.createElement("br"), detailsEl);
-  }
+  if (!details) return container;
+
+  const detailsEl = document.createElement("pre");
+  detailsEl.style.cssText = "margin: 5px 0; white-space: pre-wrap; word-break: break-word;";
+  detailsEl.textContent = details;
+  container.append(document.createElement("br"), detailsEl);
 
   return container;
 }

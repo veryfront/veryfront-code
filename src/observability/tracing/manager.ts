@@ -1,10 +1,10 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { OpenTelemetryAPI, TracingConfig, TracingState } from "./types.ts";
-import { loadConfig } from "./config.ts";
-import { SpanOperations } from "./span-operations.ts";
-import { ContextPropagation } from "./context-propagation.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
+import { loadConfig } from "./config.ts";
+import { ContextPropagation } from "./context-propagation.ts";
+import { SpanOperations } from "./span-operations.ts";
+import type { OpenTelemetryAPI, TracingConfig, TracingState } from "./types.ts";
 
 /**
  * Tracing manager class
@@ -29,7 +29,6 @@ export class TracingManager {
     }
 
     const finalConfig = loadConfig(config, adapter);
-
     this.state.initialized = true;
 
     if (!finalConfig.enabled) {
@@ -58,17 +57,14 @@ export class TracingManager {
     const api = (await import("@opentelemetry/api")) as OpenTelemetryAPI;
     this.state.api = api;
 
-    this.state.tracer = api.trace.getTracer(config.serviceName || "veryfront", VERSION);
+    this.state.tracer = api.trace.getTracer(config.serviceName ?? "veryfront", VERSION);
 
     const { W3CTraceContextPropagator } = await import("@opentelemetry/core");
     const propagator = new W3CTraceContextPropagator();
     this.state.propagator = propagator;
     api.propagation.setGlobalPropagator(propagator);
 
-    if (this.state.tracer) {
-      this.spanOps = new SpanOperations(api, this.state.tracer);
-    }
-
+    this.spanOps = this.state.tracer ? new SpanOperations(api, this.state.tracer) : null;
     this.contextProp = new ContextPropagation(api, propagator);
   }
 

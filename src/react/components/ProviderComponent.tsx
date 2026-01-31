@@ -47,11 +47,11 @@ export function ProviderComponent({
       return null;
     }
   }, [
-    mdxBundle.compiledCode,
-    stableFrontmatter,
-    components,
-    mdxBundle.globals,
     children,
+    components,
+    mdxBundle.compiledCode,
+    mdxBundle.globals,
+    stableFrontmatter,
   ]);
 
   return element ?? <>{children}</>;

@@ -38,8 +38,7 @@ describe("cache/hash", () => {
 
   describe("hashToString", () => {
     it("should return base36 string", () => {
-      const result = hashToString(12345);
-      assertEquals(result, (12345).toString(36));
+      assertEquals(hashToString(12345), (12345).toString(36));
     });
 
     it("should handle zero", () => {
@@ -59,8 +58,7 @@ describe("cache/hash", () => {
 
   describe("getCacheKey", () => {
     it("should produce type:hash format", () => {
-      const key = getCacheKey("http", "https://esm.sh/react");
-      assertEquals(key.startsWith("http:"), true);
+      assertEquals(getCacheKey("http", "https://esm.sh/react").startsWith("http:"), true);
     });
 
     it("should produce consistent keys", () => {
@@ -71,35 +69,36 @@ describe("cache/hash", () => {
     });
 
     it("should differ for different types with same input", () => {
-      assertNotEquals(
-        getCacheKey("http", "test"),
-        getCacheKey("mod", "test"),
-      );
+      assertNotEquals(getCacheKey("http", "test"), getCacheKey("mod", "test"));
     });
   });
 
   describe("getVersionedCacheKey", () => {
     it("should produce type:vN:hash format", () => {
-      const key = getVersionedCacheKey("mod", 12, "pages/index.tsx");
-      assertEquals(key.startsWith("mod:v12:"), true);
+      assertEquals(
+        getVersionedCacheKey("mod", 12, "pages/index.tsx").startsWith("mod:v12:"),
+        true,
+      );
     });
 
     it("should handle string version", () => {
-      const key = getVersionedCacheKey("mod", "19", "test");
-      assertEquals(key.includes(":v19:"), true);
+      assertEquals(getVersionedCacheKey("mod", "19", "test").includes(":v19:"), true);
     });
   });
 
   describe("getCompoundCacheKey", () => {
     it("should combine multiple components", () => {
-      const key = getCompoundCacheKey("mod", ["projectId", "filePath", "hash"]);
-      assertEquals(key.startsWith("mod:"), true);
+      assertEquals(
+        getCompoundCacheKey("mod", ["projectId", "filePath", "hash"]).startsWith("mod:"),
+        true,
+      );
     });
 
     it("should differ for different component order", () => {
-      const k1 = getCompoundCacheKey("mod", ["a", "b"]);
-      const k2 = getCompoundCacheKey("mod", ["b", "a"]);
-      assertNotEquals(k1, k2);
+      assertNotEquals(
+        getCompoundCacheKey("mod", ["a", "b"]),
+        getCompoundCacheKey("mod", ["b", "a"]),
+      );
     });
   });
 
@@ -137,22 +136,18 @@ describe("cache/hash", () => {
     });
 
     it("should be consistent", async () => {
-      const h1 = await sha256Hash("test");
-      const h2 = await sha256Hash("test");
-      assertEquals(h1, h2);
+      assertEquals(await sha256Hash("test"), await sha256Hash("test"));
     });
   });
 
   describe("sha256Short", () => {
     it("should return 8 character string", async () => {
-      const hash = await sha256Short("hello");
-      assertEquals(hash.length, 8);
+      assertEquals((await sha256Short("hello")).length, 8);
     });
 
     it("should be prefix of full hash", async () => {
       const full = await sha256Hash("test");
-      const short = await sha256Short("test");
-      assertEquals(short, full.slice(0, 8));
+      assertEquals(await sha256Short("test"), full.slice(0, 8));
     });
   });
 
@@ -173,8 +168,7 @@ describe("cache/hash", () => {
 
   describe("parseHttpBundleFilename", () => {
     it("should extract hash from valid filename", () => {
-      const result = parseHttpBundleFilename("http-12345.mjs");
-      assertEquals(result, "12345");
+      assertEquals(parseHttpBundleFilename("http-12345.mjs"), "12345");
     });
 
     it("should return null for invalid filename", () => {

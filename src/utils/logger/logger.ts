@@ -210,10 +210,7 @@ function isTty(): boolean {
       return Boolean(globalThis.Deno?.stdout?.isTerminal?.());
     }
     if (hasNodeProcess(globalThis)) {
-      return Boolean(
-        (globalThis as unknown as { process?: { stdout?: { isTTY?: boolean } } }).process?.stdout
-          ?.isTTY,
-      );
+      return Boolean(globalThis.process?.stdout?.isTTY);
     }
   } catch {
     return false;
@@ -298,10 +295,8 @@ function extractToEntryField(
   coerce: (value: unknown) => LogEntry[keyof LogEntry],
 ): void {
   if (!(key in context)) return;
-  (entry as unknown as Record<string, unknown>)[key] = coerce(
-    (context as Record<string, unknown>)[key],
-  );
-  delete (context as Record<string, unknown>)[key];
+  entry[key] = coerce(context[key]) as never;
+  delete context[key];
 }
 
 class ConsoleLogger implements Logger {
@@ -470,41 +465,34 @@ export function __registerRequestContextGetter(
   requestContextGetter = getter;
 }
 
+function withRequestLogger(base: Logger): Logger {
+  const ctx = requestContextGetter?.();
+  return ctx?.logger ?? base;
+}
+
 /**
  * Create a context-aware logger proxy that automatically uses
  * request-scoped context from AsyncLocalStorage when available.
  */
-function createContextAwareLogger(baseLogger: ConsoleLogger): Logger {
+function createContextAwareLogger(base: ConsoleLogger): Logger {
   return {
     debug(message: string, ...args: unknown[]): void {
-      const ctx = requestContextGetter?.();
-      const logger = ctx?.logger ?? baseLogger;
-      logger.debug(message, ...args);
+      withRequestLogger(base).debug(message, ...args);
     },
     info(message: string, ...args: unknown[]): void {
-      const ctx = requestContextGetter?.();
-      const logger = ctx?.logger ?? baseLogger;
-      logger.info(message, ...args);
+      withRequestLogger(base).info(message, ...args);
     },
     warn(message: string, ...args: unknown[]): void {
-      const ctx = requestContextGetter?.();
-      const logger = ctx?.logger ?? baseLogger;
-      logger.warn(message, ...args);
+      withRequestLogger(base).warn(message, ...args);
     },
     error(message: string, ...args: unknown[]): void {
-      const ctx = requestContextGetter?.();
-      const logger = ctx?.logger ?? baseLogger;
-      logger.error(message, ...args);
+      withRequestLogger(base).error(message, ...args);
     },
     time<T>(label: string, fn: () => Promise<T>): Promise<T> {
-      const ctx = requestContextGetter?.();
-      const logger = ctx?.logger ?? baseLogger;
-      return logger.time(label, fn);
+      return withRequestLogger(base).time(label, fn);
     },
     child(context: Record<string, unknown>): Logger {
-      const ctx = requestContextGetter?.();
-      const logger = ctx?.logger ?? baseLogger;
-      return logger.child(context);
+      return withRequestLogger(base).child(context);
     },
   };
 }

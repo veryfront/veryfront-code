@@ -11,7 +11,6 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const tailwindV4ImportPattern = /@import\s+["']tailwindcss(?:\/[^"']*)?["']/;
 
-/** Detect if a CSS file uses Tailwind v4 (@import "tailwindcss" syntax) */
 export function isTailwindV4File(
   filePath: string,
   projectDir: string,
@@ -19,7 +18,7 @@ export function isTailwindV4File(
 ): Promise<boolean> {
   return withSpan(
     "build.asset.isTailwindV4File",
-    async () => {
+    async (): Promise<boolean> => {
       const secureFs = createSecureFs({
         baseDir: projectDir,
         adapter,
@@ -39,12 +38,13 @@ export function isTailwindV4File(
   );
 }
 
-/** Auto-detect content paths for Tailwind class scanning */
 export function autoDetectContentPaths(projectDir: string): string[] {
-  return [
-    join(projectDir, "app/**/*.{js,ts,jsx,tsx,mdx}"),
-    join(projectDir, "pages/**/*.{js,ts,jsx,tsx,mdx}"),
-    join(projectDir, "components/**/*.{js,ts,jsx,tsx,mdx}"),
-    join(projectDir, "src/**/*.{js,ts,jsx,tsx,mdx}"),
+  const patterns = [
+    "app/**/*.{js,ts,jsx,tsx,mdx}",
+    "pages/**/*.{js,ts,jsx,tsx,mdx}",
+    "components/**/*.{js,ts,jsx,tsx,mdx}",
+    "src/**/*.{js,ts,jsx,tsx,mdx}",
   ];
+
+  return patterns.map((pattern) => join(projectDir, pattern));
 }

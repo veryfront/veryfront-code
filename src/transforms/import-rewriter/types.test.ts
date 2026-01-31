@@ -10,65 +10,29 @@ import {
 
 describe("transforms/import-rewriter/types", () => {
   describe("classifySpecifier", () => {
-    it("should classify 'react' as react", () => {
-      assertEquals(classifySpecifier("react"), "react");
-    });
+    const cases: Array<[string, ReturnType<typeof classifySpecifier>]> = [
+      ["react", "react"],
+      ["react-dom", "react"],
+      ["react/jsx-runtime", "react"],
+      ["react-dom/client", "react"],
+      ["https://esm.sh/lodash", "url"],
+      ["http://cdn.com/lib.js", "url"],
+      ["#veryfront/utils", "veryfront"],
+      ["veryfront/client", "veryfront"],
+      ["@veryfront/sdk", "veryfront"],
+      ["@/components/Button", "alias"],
+      ["./utils", "relative"],
+      ["../lib/helper", "relative"],
+      ["myproject@1.0.0/@/components", "cross-project"],
+      ["lodash", "bare"],
+      ["@tanstack/react-query", "bare"],
+    ];
 
-    it("should classify 'react-dom' as react", () => {
-      assertEquals(classifySpecifier("react-dom"), "react");
-    });
-
-    it("should classify 'react/jsx-runtime' as react", () => {
-      assertEquals(classifySpecifier("react/jsx-runtime"), "react");
-    });
-
-    it("should classify 'react-dom/client' as react", () => {
-      assertEquals(classifySpecifier("react-dom/client"), "react");
-    });
-
-    it("should classify https URLs as url", () => {
-      assertEquals(classifySpecifier("https://esm.sh/lodash"), "url");
-    });
-
-    it("should classify http URLs as url", () => {
-      assertEquals(classifySpecifier("http://cdn.com/lib.js"), "url");
-    });
-
-    it("should classify #veryfront/ as veryfront", () => {
-      assertEquals(classifySpecifier("#veryfront/utils"), "veryfront");
-    });
-
-    it("should classify veryfront/ as veryfront", () => {
-      assertEquals(classifySpecifier("veryfront/client"), "veryfront");
-    });
-
-    it("should classify @veryfront/ as veryfront", () => {
-      assertEquals(classifySpecifier("@veryfront/sdk"), "veryfront");
-    });
-
-    it("should classify @/ as alias", () => {
-      assertEquals(classifySpecifier("@/components/Button"), "alias");
-    });
-
-    it("should classify ./ as relative", () => {
-      assertEquals(classifySpecifier("./utils"), "relative");
-    });
-
-    it("should classify ../ as relative", () => {
-      assertEquals(classifySpecifier("../lib/helper"), "relative");
-    });
-
-    it("should classify cross-project imports", () => {
-      assertEquals(classifySpecifier("myproject@1.0.0/@/components"), "cross-project");
-    });
-
-    it("should classify bare specifiers", () => {
-      assertEquals(classifySpecifier("lodash"), "bare");
-    });
-
-    it("should classify scoped packages as bare", () => {
-      assertEquals(classifySpecifier("@tanstack/react-query"), "bare");
-    });
+    for (const [specifier, expected] of cases) {
+      it(`should classify '${specifier}' as ${expected}`, () => {
+        assertEquals(classifySpecifier(specifier), expected);
+      });
+    }
   });
 
   describe("isReactSpecifier", () => {

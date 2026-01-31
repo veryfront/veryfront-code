@@ -48,10 +48,7 @@ export default tool({
         };
       }
 
-      return {
-        ...baseInfo,
-        type: "unknown" as const,
-      };
+      return { ...baseInfo, type: "unknown" as const };
     });
 
     return {

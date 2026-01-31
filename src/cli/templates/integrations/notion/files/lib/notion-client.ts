@@ -40,10 +40,7 @@ interface NotionProperty {
   [key: string]: unknown;
 }
 
-async function notionFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+async function notionFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Notion. Please connect your account.");
@@ -60,7 +57,9 @@ async function notionFetch<T>(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({} as { message?: string }));
+    const error = (await response.json().catch(() => ({} as { message?: string }))) as {
+      message?: string;
+    };
     throw new Error(
       `Notion API error: ${response.status} ${error.message ?? response.statusText}`,
     );
@@ -76,15 +75,16 @@ export async function searchNotion(
     pageSize?: number;
   },
 ): Promise<Array<NotionPage | NotionDatabase>> {
-  const body: Record<string, unknown> = { query };
+  const body: Record<string, unknown> = {
+    query,
+    ...(options?.filter ? { filter: options.filter } : {}),
+    ...(options?.pageSize ? { page_size: options.pageSize } : {}),
+  };
 
-  if (options?.filter) body.filter = options.filter;
-  if (options?.pageSize) body.page_size = options.pageSize;
-
-  const response = await notionFetch<NotionResponse<NotionPage | NotionDatabase>>(
-    "/search",
-    { method: "POST", body: JSON.stringify(body) },
-  );
+  const response = await notionFetch<NotionResponse<NotionPage | NotionDatabase>>("/search", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 
   return response.results ?? [];
 }
@@ -94,9 +94,7 @@ export function getPage(pageId: string): Promise<NotionPage> {
 }
 
 export async function getPageContent(pageId: string): Promise<NotionBlock[]> {
-  const response = await notionFetch<NotionResponse<NotionBlock>>(
-    `/blocks/${pageId}/children`,
-  );
+  const response = await notionFetch<NotionResponse<NotionBlock>>(`/blocks/${pageId}/children`);
   return response.results ?? [];
 }
 
@@ -108,11 +106,11 @@ export async function queryDatabase(
     pageSize?: number;
   },
 ): Promise<NotionPage[]> {
-  const body: Record<string, unknown> = {};
-
-  if (options?.filter) body.filter = options.filter;
-  if (options?.sorts) body.sorts = options.sorts;
-  if (options?.pageSize) body.page_size = options.pageSize;
+  const body: Record<string, unknown> = {
+    ...(options?.filter ? { filter: options.filter } : {}),
+    ...(options?.sorts ? { sorts: options.sorts } : {}),
+    ...(options?.pageSize ? { page_size: options.pageSize } : {}),
+  };
 
   const response = await notionFetch<NotionResponse<NotionPage>>(
     `/databases/${databaseId}/query`,
@@ -129,9 +127,10 @@ export function createPage(options: {
   content?: string;
   properties?: Record<string, unknown>;
 }): Promise<NotionPage> {
-  const parent = options.parentType === "database"
-    ? { database_id: options.parentId }
-    : { page_id: options.parentId };
+  const parent =
+    options.parentType === "database"
+      ? { database_id: options.parentId }
+      : { page_id: options.parentId };
 
   const properties: Record<string, unknown> = options.properties ?? {};
 
@@ -151,19 +150,17 @@ export function createPage(options: {
     });
   }
 
-  if (options.content) {
-    for (const paragraph of options.content.split("\n\n")) {
-      const trimmed = paragraph.trim();
-      if (!trimmed) continue;
+  for (const paragraph of options.content?.split("\n\n") ?? []) {
+    const trimmed = paragraph.trim();
+    if (!trimmed) continue;
 
-      children.push({
-        object: "block",
-        type: "paragraph",
-        paragraph: {
-          rich_text: [{ type: "text", text: { content: trimmed } }],
-        },
-      });
-    }
+    children.push({
+      object: "block",
+      type: "paragraph",
+      paragraph: {
+        rich_text: [{ type: "text", text: { content: trimmed } }],
+      },
+    });
   }
 
   return notionFetch<NotionPage>("/pages", {
@@ -194,5 +191,6 @@ export function getPageTitle(page: NotionPage): string {
       return prop.title.map((t) => t.plain_text).join("");
     }
   }
+
   return "Untitled";
 }

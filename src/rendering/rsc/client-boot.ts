@@ -11,7 +11,6 @@ import {
 import { consumeNdjsonStream, getContainer } from "./client-dom.ts";
 import { FS_PATH_PREFIX, HYDRATION_DATA_ID, RSC_PATH_PREFIX, RSC_ROOT_ID } from "./constants.ts";
 
-// Convert file path to base64url (matching server-side toBase64Url)
 function toBase64Url(str: string): string | null {
   try {
     const base64 = btoa(unescape(encodeURIComponent(str)));
@@ -22,7 +21,6 @@ function toBase64Url(str: string): string | null {
   }
 }
 
-// Get hydration data from the page
 function getHydrationData(): { pagePath?: string } | null {
   try {
     const el = document.getElementById(HYDRATION_DATA_ID);
@@ -34,7 +32,6 @@ function getHydrationData(): { pagePath?: string } | null {
   }
 }
 
-// Try RSC streaming approach
 async function tryStream(q: string): Promise<boolean> {
   try {
     const res = await fetch(RSC_PATH_PREFIX + "stream" + q);
@@ -51,11 +48,8 @@ async function tryStream(q: string): Promise<boolean> {
   }
 }
 
-// Hydrate using the hydrate.js script (for data-client-ref markers)
 async function hydrateMarkers(): Promise<void> {
   try {
-    // Dynamic import needs to be preserved or handled by esbuild correctly
-    // We use the full path here which matches what was in the inline script
     const mod = await import(RSC_PATH_PREFIX + "hydrate.js");
     mod.bootHydration?.();
   } catch (e) {
@@ -63,7 +57,6 @@ async function hydrateMarkers(): Promise<void> {
   }
 }
 
-// Direct React hydration for 'use client' page components
 async function hydratePageComponent(pagePath: string): Promise<boolean> {
   try {
     const React = await import(getReactCDNUrl(REACT_DEFAULT_VERSION));
@@ -86,8 +79,8 @@ async function hydratePageComponent(pagePath: string): Promise<boolean> {
       return false;
     }
 
-    const root = document.body.querySelector("div[class]") ||
-      document.body.firstElementChild ||
+    const root = document.body.querySelector("div[class]") ??
+      document.body.firstElementChild ??
       document.body;
 
     ReactDOM.hydrateRoot(root, React.createElement(Component, {}), {
@@ -112,14 +105,12 @@ async function applyPayload(q: string): Promise<boolean> {
 
     if (data?.slots) {
       for (const [id, html] of Object.entries(data.slots)) {
-        const el = getContainer(document, id);
-        el.innerHTML = String(html || "");
+        getContainer(document, id).innerHTML = String(html || "");
       }
-    } else {
-      const el = getContainer(document, RSC_ROOT_ID);
-      el.innerHTML = String(data?.html || "");
+      return true;
     }
 
+    getContainer(document, RSC_ROOT_ID).innerHTML = String(data?.html || "");
     return true;
   } catch (e) {
     console.debug?.("[RSC] payload fetch failed", e);
@@ -129,11 +120,9 @@ async function applyPayload(q: string): Promise<boolean> {
 
 export async function boot(): Promise<void> {
   try {
-    const q = globalThis.window?.location.search || "";
+    const q = globalThis.window?.location.search ?? "";
 
-    const hydrationData = getHydrationData();
-    const pagePath = hydrationData?.pagePath;
-
+    const pagePath = getHydrationData()?.pagePath;
     if (pagePath) {
       console.debug?.("[RSC] Found page component in hydration data:", pagePath);
       if (await hydratePageComponent(pagePath)) {
@@ -158,11 +147,14 @@ export async function boot(): Promise<void> {
   }
 }
 
-// Auto-boot on DOM ready
 if (typeof document !== "undefined") {
+  const run = (): void => {
+    void boot();
+  };
+
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => boot());
+    document.addEventListener("DOMContentLoaded", run);
   } else {
-    boot();
+    run();
   }
 }

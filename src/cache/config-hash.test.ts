@@ -11,8 +11,9 @@ describe("cache/config-hash", () => {
     });
 
     it("should be consistent for same config", async () => {
-      const h1 = await computeConfigHash({ reactVersion: "19.1.1", dev: false });
-      const h2 = await computeConfigHash({ reactVersion: "19.1.1", dev: false });
+      const config = { reactVersion: "19.1.1", dev: false };
+      const h1 = await computeConfigHash(config);
+      const h2 = await computeConfigHash(config);
       assertEquals(h1, h2);
     });
 
@@ -43,8 +44,9 @@ describe("cache/config-hash", () => {
     });
 
     it("should be consistent", () => {
-      const h1 = computeConfigHashSync({ dev: true });
-      const h2 = computeConfigHashSync({ dev: true });
+      const config = { dev: true };
+      const h1 = computeConfigHashSync(config);
+      const h2 = computeConfigHashSync(config);
       assertEquals(h1, h2);
     });
 

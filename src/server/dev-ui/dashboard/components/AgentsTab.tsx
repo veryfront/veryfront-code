@@ -14,31 +14,29 @@ export function AgentsTab({ agents, tools, onNavigateToMCP }: AgentsTabProps): R
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
-  const searchLower = search.toLowerCase();
+  const filteredAgents = useMemo(() => {
+    const searchLower = search.toLowerCase();
+    return agents.filter((a) => a.id.toLowerCase().includes(searchLower));
+  }, [agents, search]);
 
-  const filteredAgents = useMemo(
-    () => agents.filter((a) => a.id.toLowerCase().includes(searchLower)),
-    [agents, searchLower],
-  );
-
-  const selectedAgent = useMemo(
-    () => agents.find((a) => a.id === selectedId),
-    [agents, selectedId],
-  );
-
-  const sidebar = (
-    <Sidebar
-      search={search}
-      onSearchChange={setSearch}
-      items={filteredAgents.map((a) => ({ id: a.id, label: a.id }))}
-      selectedId={selectedId}
-      onSelect={setSelectedId}
-      emptyMessage="No agents registered"
-    />
-  );
+  const selectedAgent = useMemo(() => {
+    if (!selectedId) return undefined;
+    return agents.find((a) => a.id === selectedId);
+  }, [agents, selectedId]);
 
   return (
-    <TwoColumnLayout sidebar={sidebar}>
+    <TwoColumnLayout
+      sidebar={
+        <Sidebar
+          search={search}
+          onSearchChange={setSearch}
+          items={filteredAgents.map((a) => ({ id: a.id, label: a.id }))}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          emptyMessage="No agents registered"
+        />
+      }
+    >
       {selectedAgent
         ? <AgentDetail agent={selectedAgent} tools={tools} onNavigateToMCP={onNavigateToMCP} />
         : <EmptyState message="Select an agent" />}
@@ -89,9 +87,9 @@ function AgentDetail({ agent, tools, onNavigateToMCP }: AgentDetailProps): React
               <div className="flex flex-wrap gap-1.5">
                 {toolIds.map((id) => {
                   const exists = tools.some((t) => t.id === id);
-                  const handleClick = exists ? () => onNavigateToMCP("tools", id) : undefined;
+                  const onClick = exists ? () => onNavigateToMCP("tools", id) : undefined;
 
-                  return <Badge key={id} label={id} exists={exists} onClick={handleClick} />;
+                  return <Badge key={id} label={id} exists={exists} onClick={onClick} />;
                 })}
               </div>
             )}

@@ -14,19 +14,22 @@ export const ROUTE_ERROR_CATALOG: PartialErrorCatalog = {
     ],
   ),
 
-  [ErrorCode.INVALID_ROUTE_FILE]: createErrorSolution(ErrorCode.INVALID_ROUTE_FILE, {
-    title: "Invalid route file",
-    message: "Route file has invalid structure or exports.",
-    steps: [
-      "API routes must export GET, POST, etc. functions",
-      "Page routes must export default component",
-      "Check for syntax errors",
-    ],
-    example: `// app/api/users/route.ts
+  [ErrorCode.INVALID_ROUTE_FILE]: createErrorSolution(
+    ErrorCode.INVALID_ROUTE_FILE,
+    {
+      title: "Invalid route file",
+      message: "Route file has invalid structure or exports.",
+      steps: [
+        "API routes must export GET, POST, etc. functions",
+        "Page routes must export default component",
+        "Check for syntax errors",
+      ],
+      example: `// app/api/users/route.ts
 export async function GET() {
   return Response.json({ users: [] })
 }`,
-  }),
+    },
+  ),
 
   [ErrorCode.ROUTE_HANDLER_INVALID]: createSimpleError(
     ErrorCode.ROUTE_HANDLER_INVALID,
@@ -65,10 +68,6 @@ export async function GET() {
     ErrorCode.API_ROUTE_ERROR,
     "API route error",
     "Error in API route execution.",
-    [
-      "Check API handler code",
-      "Ensure proper error handling",
-      "Verify request parsing",
-    ],
+    ["Check API handler code", "Ensure proper error handling", "Verify request parsing"],
   ),
 };

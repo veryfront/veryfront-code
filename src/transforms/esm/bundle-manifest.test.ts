@@ -71,7 +71,6 @@ describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, ()
     it("returns valid when all bundle files exist", async () => {
       const tmpDir = await makeTempDir();
       try {
-        // Create fake bundle files
         await writeTextFile(join(tmpDir, "http-aaa111.mjs"), "// bundle aaa111");
         await writeTextFile(join(tmpDir, "http-bbb222.mjs"), "// bundle bbb222");
 
@@ -81,14 +80,8 @@ describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, ()
         ];
 
         const manifest = await createBundleManifest(bundles);
-
-        // Store manifest so validateBundleGroup can load it
-        // Since we don't have a distributed cache in tests, this will
-        // return valid:false due to missing manifest (expected)
         const result = await validateBundleGroup(manifest.manifestId, tmpDir);
 
-        // Without distributed cache, manifest can't be loaded
-        // so validation returns {valid: false, failedHashes: []}
         assertEquals(result.valid, false);
         assertEquals(result.failedHashes.length, 0);
       } finally {
@@ -98,6 +91,7 @@ describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, ()
 
     it("returns invalid with empty failedHashes when manifest not in distributed cache", async () => {
       const result = await validateBundleGroup("nonexistent-manifest-id", "/tmp/nonexistent");
+
       assertEquals(result.valid, false);
       assertEquals(result.failedHashes.length, 0);
     });

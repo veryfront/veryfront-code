@@ -1,16 +1,6 @@
 // Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-/**
- * ReloadNotifier Tests
- *
- * Tests for the reload notification system:
- * - Subscription management
- * - Event triggering
- * - Debouncing behavior
- * - ChangedPaths support for smart HMR
- */
-
 import { assert, assertEquals } from "@veryfront/testing/assert";
 import { afterAll, afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { delay } from "#veryfront/testing/deno-compat.ts";
@@ -18,26 +8,26 @@ import { ReloadNotifier } from "../../../../src/server/reload-notifier.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
 describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
-  beforeEach(() => {
+  beforeEach((): void => {
     ReloadNotifier.reset();
   });
 
-  afterEach(() => {
+  afterEach((): void => {
     ReloadNotifier.reset();
   });
 
-  afterAll(async () => {
+  afterAll(async (): Promise<void> => {
     await cleanupBundler();
   });
 
   describe("ReloadNotifier - Subscription Management", () => {
-    it("starts with zero listeners", () => {
+    it("starts with zero listeners", (): void => {
       assertEquals(ReloadNotifier.getListenerCount(), 0);
       assertEquals(ReloadNotifier.getInvalidateListenerCount(), 0);
     });
 
-    it("can subscribe and unsubscribe reload listeners", () => {
-      const listener = () => {};
+    it("can subscribe and unsubscribe reload listeners", (): void => {
+      const listener = (): void => {};
 
       assertEquals(ReloadNotifier.getListenerCount(), 0);
 
@@ -48,8 +38,8 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(ReloadNotifier.getListenerCount(), 0);
     });
 
-    it("can subscribe and unsubscribe invalidate listeners", () => {
-      const listener = () => {};
+    it("can subscribe and unsubscribe invalidate listeners", (): void => {
+      const listener = (): void => {};
 
       assertEquals(ReloadNotifier.getInvalidateListenerCount(), 0);
 
@@ -60,19 +50,15 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(ReloadNotifier.getInvalidateListenerCount(), 0);
     });
 
-    it("supports multiple listeners", () => {
-      const listeners = [() => {}, () => {}, () => {}];
-      const unsubscribers: (() => void)[] = [];
-
-      for (const listener of listeners) {
-        unsubscribers.push(ReloadNotifier.subscribe(listener));
-      }
+    it("supports multiple listeners", (): void => {
+      const listeners = [(): void => {}, (): void => {}, (): void => {}];
+      const unsubscribers = listeners.map((listener) => ReloadNotifier.subscribe(listener));
 
       assertEquals(ReloadNotifier.getListenerCount(), 3);
 
       // Unsubscribe in reverse order
-      for (const unsub of unsubscribers.reverse()) {
-        unsub();
+      for (const unsubscribe of unsubscribers.reverse()) {
+        unsubscribe();
       }
 
       assertEquals(ReloadNotifier.getListenerCount(), 0);
@@ -80,10 +66,10 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
   });
 
   describe("ReloadNotifier - Invalidate Events", () => {
-    it("triggers invalidate listeners immediately", async () => {
+    it("triggers invalidate listeners immediately", (): void => {
       let invalidateCalled = false;
 
-      const unsubscribe = ReloadNotifier.subscribeInvalidate(() => {
+      const unsubscribe = ReloadNotifier.subscribeInvalidate((): void => {
         invalidateCalled = true;
       });
 
@@ -97,16 +83,15 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
   });
 
   describe("ReloadNotifier - ChangedPaths Support", () => {
-    it("passes changedPaths to reload listeners after debounce", async () => {
+    it("passes changedPaths to reload listeners after debounce", async (): Promise<void> => {
       let receivedPaths: string[] | undefined;
 
-      const unsubscribe = ReloadNotifier.subscribe((paths) => {
+      const unsubscribe = ReloadNotifier.subscribe((paths): void => {
         receivedPaths = paths;
       });
 
       ReloadNotifier.triggerReload(["pages/index.mdx", "components/Button.tsx"]);
 
-      // Wait for debounce (300ms + buffer)
       await delay(400);
 
       assertEquals(receivedPaths?.length, 2);
@@ -116,24 +101,21 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
       unsubscribe();
     });
 
-    it("accumulates changedPaths during debounce window", async () => {
+    it("accumulates changedPaths during debounce window", async (): Promise<void> => {
       let receivedPaths: string[] | undefined;
 
-      const unsubscribe = ReloadNotifier.subscribe((paths) => {
+      const unsubscribe = ReloadNotifier.subscribe((paths): void => {
         receivedPaths = paths;
       });
 
-      // Trigger multiple times within debounce window
       ReloadNotifier.triggerReload(["pages/index.mdx"]);
       await delay(100);
       ReloadNotifier.triggerReload(["components/Button.tsx"]);
       await delay(100);
       ReloadNotifier.triggerReload(["lib/utils.ts"]);
 
-      // Wait for debounce to complete
       await delay(500);
 
-      // Should have all accumulated paths
       assertEquals(receivedPaths?.length, 3);
       assert(receivedPaths?.includes("pages/index.mdx"));
       assert(receivedPaths?.includes("components/Button.tsx"));
@@ -142,61 +124,54 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
       unsubscribe();
     });
 
-    it("deduplicates changedPaths", async () => {
+    it("deduplicates changedPaths", async (): Promise<void> => {
       let receivedPaths: string[] | undefined;
 
-      const unsubscribe = ReloadNotifier.subscribe((paths) => {
+      const unsubscribe = ReloadNotifier.subscribe((paths): void => {
         receivedPaths = paths;
       });
 
-      // Trigger same path multiple times
       ReloadNotifier.triggerReload(["pages/index.mdx"]);
       await delay(50);
       ReloadNotifier.triggerReload(["pages/index.mdx"]);
       await delay(50);
       ReloadNotifier.triggerReload(["pages/index.mdx"]);
 
-      // Wait for debounce
       await delay(400);
 
-      // Should only have one entry (deduplicated via Set)
       assertEquals(receivedPaths?.length, 1);
       assertEquals(receivedPaths?.[0], "pages/index.mdx");
 
       unsubscribe();
     });
 
-    it("handles empty changedPaths array", async () => {
+    it("handles empty changedPaths array", async (): Promise<void> => {
       let receivedPaths: string[] | undefined;
 
-      const unsubscribe = ReloadNotifier.subscribe((paths) => {
+      const unsubscribe = ReloadNotifier.subscribe((paths): void => {
         receivedPaths = paths;
       });
 
       ReloadNotifier.triggerReload([]);
 
-      // Wait for debounce
       await delay(400);
 
-      // Should be undefined when no paths provided
       assertEquals(receivedPaths, undefined);
 
       unsubscribe();
     });
 
-    it("handles undefined changedPaths", async () => {
+    it("handles undefined changedPaths", async (): Promise<void> => {
       let receivedPaths: string[] | undefined;
 
-      const unsubscribe = ReloadNotifier.subscribe((paths) => {
+      const unsubscribe = ReloadNotifier.subscribe((paths): void => {
         receivedPaths = paths;
       });
 
       ReloadNotifier.triggerReload();
 
-      // Wait for debounce
       await delay(400);
 
-      // Should be undefined when no paths provided
       assertEquals(receivedPaths, undefined);
 
       unsubscribe();
@@ -204,23 +179,21 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
   });
 
   describe("ReloadNotifier - Error Handling", () => {
-    it("continues notifying other listeners if one throws", async () => {
+    it("continues notifying other listeners if one throws", async (): Promise<void> => {
       let secondListenerCalled = false;
 
-      const unsubscribe1 = ReloadNotifier.subscribe(() => {
+      const unsubscribe1 = ReloadNotifier.subscribe((): void => {
         throw new Error("Listener error");
       });
 
-      const unsubscribe2 = ReloadNotifier.subscribe(() => {
+      const unsubscribe2 = ReloadNotifier.subscribe((): void => {
         secondListenerCalled = true;
       });
 
       ReloadNotifier.triggerReload();
 
-      // Wait for debounce
       await delay(400);
 
-      // Second listener should still be called
       assertEquals(secondListenerCalled, true);
 
       unsubscribe1();

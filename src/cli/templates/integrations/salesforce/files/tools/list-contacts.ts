@@ -22,9 +22,10 @@ export default tool({
       contacts: response.records.map((contact) => {
         const additionalFields = fields
           ? Object.fromEntries(
-              fields
-                .filter((field) => contact[field] !== undefined)
-                .map((field) => [field, contact[field]]),
+              fields.flatMap((field) => {
+                const value = contact[field];
+                return value === undefined ? [] : [[field, value]];
+              }),
             )
           : undefined;
 

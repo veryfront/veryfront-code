@@ -1,11 +1,3 @@
-/**
- * Performance Timer Utility
- *
- * Collects timing data for performance analysis.
- * Enable with VERYFRONT_PERF=1 environment variable.
- */
-
-import { isPerfEnabledEnv } from "#veryfront/config/env.ts";
 import { serverLogger } from "#veryfront/utils";
 
 interface TimingEntry {
@@ -16,19 +8,47 @@ interface TimingEntry {
   parent?: string;
 }
 
-const enabled = isPerfEnabledEnv();
+let cachedEnabled: boolean | undefined;
+
+function getEnabled(): boolean {
+  if (cachedEnabled !== undefined) return cachedEnabled;
+  // Default to disabled in tests/during module loading
+  cachedEnabled = false;
+  return cachedEnabled;
+}
+
+// Try to load the env module asynchronously - will update cachedEnabled on success
+import("#veryfront/config/env.ts")
+  .then((mod) => {
+    try {
+      cachedEnabled = mod.isPerfEnabledEnv();
+    } catch {
+      cachedEnabled = false;
+    }
+  })
+  .catch(() => {
+    cachedEnabled = false;
+  });
 const timings = new Map<string, TimingEntry[]>();
 let currentRequestId: string | null = null;
 
+function formatMs(value: number | undefined): number {
+  return Number(value?.toFixed(1));
+}
+
+function formatPct(duration: number, total: number): string {
+  return ((duration / total) * 100).toFixed(1);
+}
+
 export function startRequest(requestId: string): void {
-  if (!enabled) return;
+  if (!getEnabled()) return;
 
   currentRequestId = requestId;
   timings.set(requestId, []);
 }
 
 export function startTimer(label: string, parent?: string): () => void {
-  if (!enabled || !currentRequestId) return () => {};
+  if (!getEnabled() || !currentRequestId) return () => {};
 
   const entry: TimingEntry = { label, startMs: performance.now(), parent };
   timings.get(currentRequestId)?.push(entry);
@@ -44,7 +64,7 @@ export async function timeAsync<T>(
   fn: () => Promise<T>,
   parent?: string,
 ): Promise<T> {
-  if (!enabled) return fn();
+  if (!getEnabled()) return fn();
 
   const stop = startTimer(label, parent);
   try {
@@ -55,7 +75,7 @@ export async function timeAsync<T>(
 }
 
 export function endRequest(requestId: string): void {
-  if (!enabled) return;
+  if (!getEnabled()) return;
 
   const entries = timings.get(requestId);
   if (!entries?.length) {
@@ -74,40 +94,48 @@ export function endRequest(requestId: string): void {
   const children = new Map<string, TimingEntry[]>();
 
   for (const entry of sorted) {
-    if (!entry.parent) continue;
-    const list = children.get(entry.parent) ?? [];
-    list.push(entry);
-    children.set(entry.parent, list);
+    const parentLabel = entry.parent;
+    if (!parentLabel) continue;
+
+    const list = children.get(parentLabel);
+    if (list) {
+      list.push(entry);
+    } else {
+      children.set(parentLabel, [entry]);
+    }
   }
 
-  const breakdown: Record<string, unknown>[] = [];
-  for (const entry of roots) {
+  const breakdown: Record<string, unknown>[] = roots.map((entry) => {
     const duration = entry.durationMs ?? 0;
-    const pct = ((duration / total) * 100).toFixed(1);
+
     const item: Record<string, unknown> = {
       label: entry.label,
-      durationMs: Number(entry.durationMs?.toFixed(1)),
-      pct,
+      durationMs: formatMs(entry.durationMs),
+      pct: formatPct(duration, total),
     };
 
     const childList = children.get(entry.label);
-    if (childList) {
-      item.children = childList.slice(0, 5).map((child) => ({
+    if (!childList) return item;
+
+    item.children = childList.slice(0, 5).map((child) => {
+      const childDuration = child.durationMs ?? 0;
+      return {
         label: child.label,
-        durationMs: Number(child.durationMs?.toFixed(1)),
-        pct: ((child.durationMs ?? 0) / total * 100).toFixed(1),
-      }));
-      if (childList.length > 5) {
-        item.childrenOmitted = childList.length - 5;
-      }
+        durationMs: formatMs(child.durationMs),
+        pct: formatPct(childDuration, total),
+      };
+    });
+
+    if (childList.length > 5) {
+      item.childrenOmitted = childList.length - 5;
     }
 
-    breakdown.push(item);
-  }
+    return item;
+  });
 
   serverLogger.debug(`[PERF] Request ${requestId}`, {
     requestId,
-    totalMs: Number(total.toFixed(1)),
+    totalMs: formatMs(total),
     breakdown,
   });
 
@@ -116,5 +144,5 @@ export function endRequest(requestId: string): void {
 }
 
 export function isEnabled(): boolean {
-  return enabled;
+  return getEnabled();
 }

@@ -1,8 +1,3 @@
-/****
- * Empty State Components
- * @module ai/react/components/chat/components/empty-state
- */
-
 import * as React from "react";
 import { cn } from "../../theme.ts";
 import { ArrowDownIcon } from "../../icons/index.ts";

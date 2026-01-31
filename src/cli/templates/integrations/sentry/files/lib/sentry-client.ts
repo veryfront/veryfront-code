@@ -137,16 +137,15 @@ export interface Event {
 
 function getRequiredOrg(): string {
   const org = getOrg();
-  if (!org) {
-    throw new Error(
-      "Sentry organization not configured. Please set SENTRY_ORG environment variable.",
-    );
-  }
-  return org;
+  if (org) return org;
+
+  throw new Error(
+    "Sentry organization not configured. Please set SENTRY_ORG environment variable.",
+  );
 }
 
 async function sentryFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const authToken = getApiKey() || process.env.SENTRY_AUTH_TOKEN;
+  const authToken = getApiKey() ?? process.env.SENTRY_AUTH_TOKEN;
   if (!authToken) {
     throw new Error("Not authenticated with Sentry. Please set SENTRY_AUTH_TOKEN.");
   }
@@ -161,7 +160,7 @@ async function sentryFetch<T>(endpoint: string, options: RequestInit = {}): Prom
   });
 
   if (!response.ok) {
-    const error = (await response.json().catch(() => ({}))) as { detail?: string };
+    const error: { detail?: string } = await response.json().catch(() => ({}));
     throw new Error(
       error.detail ?? `Sentry API error: ${response.status} ${response.statusText}`,
     );
@@ -194,7 +193,6 @@ export function listIssues(
   } = {},
 ): Promise<Issue[]> {
   const org = getRequiredOrg();
-
   const params = new URLSearchParams({ project: projectSlug });
 
   if (options.query) params.append("query", options.query);

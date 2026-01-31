@@ -56,17 +56,13 @@ export const dataProcessingPipeline = workflow<DataProcessingInput, DataProcessi
       "validate",
     );
 
-    const merge = dependsOn(
-      dependsOn(
-        step("merge", {
-          tool: "dataMerger",
-          input: { steps: ["transform", "aggregate"] },
-          checkpoint: true,
-        }),
-        "transform",
-      ),
-      "aggregate",
-    );
+    const mergeStep = step("merge", {
+      tool: "dataMerger",
+      input: { steps: ["transform", "aggregate"] },
+      checkpoint: true,
+    });
+
+    const merge = dependsOn(dependsOn(mergeStep, "transform"), "aggregate");
 
     const exportStep = dependsOn(
       step("export", {

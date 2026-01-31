@@ -1,48 +1,35 @@
-/**
- * Test Data Factory
- *
- * Centralized factory for creating test data across all tests.
- * This ensures consistency and reduces duplication.
- */
-
 export class TestDataFactory {
-  /**
-   * Creates MDX page content with optional frontmatter
-   */
   static createMDXPage(options: {
     title: string;
     content: string;
     frontmatter?: Record<string, any>;
   }): string {
-    let frontmatterStr = "";
-    if (options.frontmatter && Object.keys(options.frontmatter).length > 0) {
-      frontmatterStr = "---\n";
-      for (const [key, value] of Object.entries(options.frontmatter)) {
-        if (typeof value === "string") {
-          frontmatterStr += `${key}: ${value}\n`;
-        } else if (Array.isArray(value)) {
-          frontmatterStr += `${key}: [${value.join(", ")}]\n`;
-        } else {
-          frontmatterStr += `${key}: ${JSON.stringify(value)}\n`;
-        }
-      }
-      frontmatterStr += "---\n\n";
+    const frontmatter = options.frontmatter;
+
+    if (!frontmatter || Object.keys(frontmatter).length === 0) {
+      return `# ${options.title}\n\n${options.content}`;
     }
 
-    return `${frontmatterStr}# ${options.title}\n\n${options.content}`;
+    const frontmatterLines = Object.entries(frontmatter).map(([key, value]) => {
+      if (typeof value === "string") return `${key}: ${value}`;
+      if (Array.isArray(value)) return `${key}: [${value.join(", ")}]`;
+      return `${key}: ${JSON.stringify(value)}`;
+    });
+
+    return `---\n${frontmatterLines.join("\n")}\n---\n\n# ${options.title}\n\n${options.content}`;
   }
 
-  /**
-   * Creates a React component with TypeScript
-   */
   static createReactComponent(name: string, props: string[] = []): string {
-    const propsInterface = props.length > 0
+    const hasProps = props.length > 0;
+
+    const propsInterface = hasProps
       ? `interface ${name}Props {
 ${props.map((p) => `  ${p}: any;`).join("\n")}
 }`
       : "";
 
-    const propsParam = props.length > 0 ? `{ ${props.join(", ")} }: ${name}Props` : "()";
+    const propsParam = hasProps ? `{ ${props.join(", ")} }: ${name}Props` : "()";
+    const propsSpans = hasProps ? `\n      ${props.map((p) => `<span>{${p}}</span>`).join("\n      ")}` : "";
 
     return `import React from 'react';
 
@@ -51,8 +38,7 @@ ${propsInterface}
 export default function ${name}${propsParam} {
   return (
     <div data-testid="${name.toLowerCase()}" className="${name.toLowerCase()}">
-      ${name} Component
-      ${props.map((p) => `<span>{${p}}</span>`).join("\n      ")}
+      ${name} Component${propsSpans}
     </div>
   );
 }
@@ -60,11 +46,9 @@ export default function ${name}${propsParam} {
 export { ${name} };`;
   }
 
-  /**
-   * Creates an App Router layout component
-   */
   static createAppLayout(options: { title?: string; includeMetadata?: boolean } = {}): string {
-    const title = options.title || "Test App";
+    const title = options.title ?? "Test App";
+
     const metadata = options.includeMetadata
       ? `
 export const metadata = {
@@ -95,38 +79,28 @@ export default function RootLayout({
 }`;
   }
 
-  /**
-   * Creates a Next.js API route handler
-   */
   static createAPIHandler(options: { methods?: string[]; useContext?: boolean } = {}): string {
-    const methods = options.methods || ["GET"];
-    const handlers = methods
-      .map((method) => {
-        const bodyHandling = ["POST", "PUT", "PATCH"].includes(method)
-          ? `
-    const body = await request.json();`
-          : "";
+    const methods = options.methods ?? ["GET"];
 
-        return `export async function ${method}(request: Request${
-          options.useContext ? ", context: any" : ""
-        }) {${bodyHandling}
+    return methods
+      .map((method) => {
+        const hasBody = ["POST", "PUT", "PATCH"].includes(method);
+        const contextParam = options.useContext ? ", context: any" : "";
+        const bodyParsing = hasBody ? "\n    const body = await request.json();" : "";
+        const bodyField = hasBody ? "\n    body," : "";
+        const contextField = options.useContext ? "\n    context," : "";
+
+        return `export async function ${method}(request: Request${contextParam}) {${bodyParsing}
   
   return Response.json({
     method: '${method}',
-    timestamp: new Date().toISOString(),${bodyHandling ? "\n    body," : ""}${
-          options.useContext ? "\n    context," : ""
-        }
+    timestamp: new Date().toISOString(),${bodyField}${contextField}
   });
 }`;
       })
       .join("\n\n");
-
-    return handlers;
   }
 
-  /**
-   * Creates a custom hook for testing
-   */
   static createCustomHook(name: string, returnValue: any = { value: 0 }): string {
     return `import { useState, useEffect } from 'react';
 
@@ -146,9 +120,6 @@ export function ${name}() {
 }`;
   }
 
-  /**
-   * Creates a CSS module file
-   */
   static createCSSModule(className: string): string {
     return `.${className} {
   display: flex;
@@ -180,9 +151,6 @@ export function ${name}() {
 }`;
   }
 
-  /**
-   * Creates a veryfront.config.js file
-   */
   static createConfig(
     options: {
       title?: string;
@@ -192,7 +160,7 @@ export function ${name}() {
     } = {},
   ): string {
     const config: any = {
-      title: options.title || "Test Site",
+      title: options.title ?? "Test Site",
       description: "Test site for automated testing",
       cache: {
         dir: ".veryfront/cache",
@@ -212,19 +180,13 @@ export function ${name}() {
       config.security = options.security;
     }
 
-    if (options.features && options.features.length > 0) {
-      config.experimental = {};
-      options.features.forEach((feature) => {
-        config.experimental[feature] = true;
-      });
+    if (options.features?.length) {
+      config.experimental = Object.fromEntries(options.features.map((feature) => [feature, true]));
     }
 
     return `export default ${JSON.stringify(config, null, 2)};`;
   }
 
-  /**
-   * Creates a middleware function for testing
-   */
   static createMiddleware(name: string): string {
     return `export async function ${name}(request: Request, next: () => Promise<Response>) {
   const start = Date.now();
@@ -242,9 +204,6 @@ export function ${name}() {
 }`;
   }
 
-  /**
-   * Creates test user data
-   */
   static createUser(
     overrides: Partial<{
       id: string;
@@ -263,9 +222,6 @@ export function ${name}() {
     };
   }
 
-  /**
-   * Creates a mock Redis response
-   */
   static createRedisResponse<T>(
     value: T,
     ttl?: number,
@@ -276,34 +232,22 @@ export function ${name}() {
   } {
     return {
       value,
-      ttl: ttl || -1,
+      ttl: ttl ?? -1,
       type: typeof value,
     };
   }
 
-  /**
-   * Creates a mock HTTP response
-   */
   static createMockResponse(
     options: { status?: number; body?: any; headers?: Record<string, string> } = {},
   ): Response {
-    const status = options.status || 200;
-    const headers = new Headers(options.headers || {});
+    const status = options.status ?? 200;
+    const headers = new Headers(options.headers ?? {});
+    const hasBody = options.body !== undefined && options.body !== null;
 
-    if (options.body && !headers.has("content-type")) {
+    if (hasBody && !headers.has("content-type")) {
       headers.set("content-type", "application/json");
     }
 
-    return new Response(options.body ? JSON.stringify(options.body) : null, { status, headers });
+    return new Response(hasBody ? JSON.stringify(options.body) : null, { status, headers });
   }
 }
-
-/**
- * Note: createMockAdapter has been moved to src/platform/adapters/mock.ts
- *
- * Use the following import instead:
- * import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
- *
- * This change was made to fix the architectural issue where src/ test files
- * were importing from tests/, which violates clean architecture principles.
- */

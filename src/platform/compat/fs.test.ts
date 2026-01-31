@@ -87,6 +87,7 @@ describe("Filesystem Compat", () => {
       // Compare as Uint8Array to handle Node.js Buffer vs Uint8Array differences
       const readAsUint8 = new Uint8Array(readContent);
       assertEquals(readAsUint8.length, content.length);
+
       for (let i = 0; i < content.length; i++) {
         assertEquals(readAsUint8[i], content[i]);
       }
@@ -135,8 +136,7 @@ describe("Filesystem Compat", () => {
       await mkdir(dirPath);
 
       assertEquals(await exists(dirPath), true);
-      const info = await stat(dirPath);
-      assertEquals(info.isDirectory, true);
+      assertEquals((await stat(dirPath)).isDirectory, true);
     });
 
     it("should create nested directories with recursive option", async () => {
@@ -165,14 +165,11 @@ describe("Filesystem Compat", () => {
       const names = entries.map((e) => e.name).sort();
       assertEquals(names, ["file1.txt", "file2.txt", "subdir"]);
 
-      assertEquals(
-        entries.find((e) => e.name === "file1.txt")?.isFile,
-        true,
-      );
-      assertEquals(
-        entries.find((e) => e.name === "subdir")?.isDirectory,
-        true,
-      );
+      const file1 = entries.find((e) => e.name === "file1.txt");
+      const subdir = entries.find((e) => e.name === "subdir");
+
+      assertEquals(file1?.isFile, true);
+      assertEquals(subdir?.isDirectory, true);
     });
   });
 

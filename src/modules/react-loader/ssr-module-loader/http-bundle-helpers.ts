@@ -9,21 +9,24 @@
 
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
-/** Extract HTTP bundle paths from transformed code for proactive recovery */
 export function extractHttpBundlePaths(code: string): Array<{ path: string; hash: string }> {
   // Create regex per call to avoid shared lastIndex state across concurrent calls.
   const httpBundlePattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+
   const bundles: Array<{ path: string; hash: string }> = [];
   const seen = new Set<string>();
-  let match;
+
+  let match: RegExpExecArray | null;
   while ((match = httpBundlePattern.exec(code)) !== null) {
-    const path = match[1] as string;
-    const hash = match[2] as string;
-    if (!seen.has(hash)) {
-      seen.add(hash);
-      bundles.push({ path, hash });
-    }
+    const path = match[1];
+    const hash = match[2];
+
+    if (!path || !hash || seen.has(hash)) continue;
+
+    seen.add(hash);
+    bundles.push({ path, hash });
   }
+
   return bundles;
 }
 
@@ -36,16 +39,20 @@ export function extractHttpBundlePaths(code: string): Array<{ path: string; hash
 export function extractAllFilePaths(code: string): string[] {
   // Create regex per call to avoid shared lastIndex state across concurrent calls.
   const allFilePathsPattern = /file:\/\/([^"'\s]+\.(?:mjs|js))/gi;
+
   const paths: string[] = [];
   const seen = new Set<string>();
-  let match;
+
+  let match: RegExpExecArray | null;
   while ((match = allFilePathsPattern.exec(code)) !== null) {
-    const path = match[1] as string;
-    if (!seen.has(path)) {
-      seen.add(path);
-      paths.push(path);
-    }
+    const path = match[1];
+
+    if (!path || seen.has(path)) continue;
+
+    seen.add(path);
+    paths.push(path);
   }
+
   return paths;
 }
 

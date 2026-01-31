@@ -18,6 +18,15 @@ export class CorsHandler extends BaseHandler {
     patterns: [{ pattern: /.*/, method: "OPTIONS" }],
   };
 
+  private static readonly DEFAULT_METHODS = "GET,POST,PUT,PATCH,DELETE,OPTIONS";
+  private static readonly HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
+  private static readonly ROUTE_FILE_NAMES = [
+    "route.tsx",
+    "route.ts",
+    "route.jsx",
+    "route.js",
+  ] as const;
+
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (req.method.toUpperCase() !== "OPTIONS") return this.continue();
 
@@ -29,7 +38,7 @@ export class CorsHandler extends BaseHandler {
       const cfg = await getConfig(ctx.projectDir, ctx.adapter);
       corsConfig = cfg?.security?.cors ?? corsConfig;
     } catch (error) {
-      this.logDebug("Failed to load CORS config", { error: error }, ctx);
+      this.logDebug("Failed to load CORS config", { error }, ctx);
     }
 
     const response = ResponseBuilder.preflight(req, {
@@ -42,15 +51,6 @@ export class CorsHandler extends BaseHandler {
 
     return this.respond(response);
   }
-
-  private static readonly DEFAULT_METHODS = "GET,POST,PUT,PATCH,DELETE,OPTIONS";
-  private static readonly HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
-  private static readonly ROUTE_FILE_NAMES = [
-    "route.tsx",
-    "route.ts",
-    "route.jsx",
-    "route.js",
-  ] as const;
 
   private async resolveAllowedMethods(pathname: string, ctx: HandlerContext): Promise<string> {
     try {
@@ -66,7 +66,7 @@ export class CorsHandler extends BaseHandler {
 
       return [...new Set(methods)].join(", ");
     } catch (error) {
-      this.logDebug("Failed to resolve route for CORS", { error: error, pathname }, ctx);
+      this.logDebug("Failed to resolve route for CORS", { error, pathname }, ctx);
       return CorsHandler.DEFAULT_METHODS;
     }
   }
@@ -81,7 +81,7 @@ export class CorsHandler extends BaseHandler {
       const st = await ctx.adapter.fs.stat(appRoot);
       if (!st.isDirectory) return null;
     } catch (error) {
-      this.logDebug("App directory not found", { appRoot, error: error }, ctx);
+      this.logDebug("App directory not found", { appRoot, error }, ctx);
       return null;
     }
 
@@ -91,7 +91,8 @@ export class CorsHandler extends BaseHandler {
     const params: Record<string, string | string[]> = {};
 
     for (let i = 0; i < segments.length; i++) {
-      const seg = segments[i]!;
+      const seg = segments[i];
+      if (!seg) continue;
 
       const names: string[] = [];
       try {

@@ -1,12 +1,5 @@
-/**
- * Google Drive API Client
- *
- * Provides a type-safe interface to Google Drive API operations.
- */
-
 import { getValidToken } from "./oauth.ts";
 
-// Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
   // @ts-ignore - Deno global
   if (typeof Deno !== "undefined") return Deno.env.get(key);
@@ -87,9 +80,6 @@ export interface SearchFilesOptions {
   orderBy?: string;
 }
 
-/**
- * Google Drive OAuth provider configuration
- */
 export const driveOAuthProvider = {
   name: "drive",
   authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -103,9 +93,6 @@ export const driveOAuthProvider = {
   callbackPath: "/api/auth/drive/callback",
 };
 
-/**
- * Create a Drive client for a specific user
- */
 export function createDriveClient(userId: string): {
   listFiles(options?: ListFilesOptions): Promise<DriveFileList>;
   getFile(fileId: string): Promise<DriveFile>;
@@ -145,6 +132,7 @@ export function createDriveClient(userId: string): {
       throw new Error(`Drive API error: ${response.status} - ${error}`);
     }
 
+    if (response.status === 204) return undefined as T;
     return response.json();
   }
 
@@ -165,14 +153,13 @@ export function createDriveClient(userId: string): {
     return metadata;
   }
 
+  const fileFields =
+    "id,name,mimeType,kind,createdTime,modifiedTime,size,webViewLink,webContentLink,iconLink,thumbnailLink,parents,starred,trashed,shared,owners,lastModifyingUser,capabilities";
+
   return {
-    /**
-     * List files in a folder (or root if no folderId provided)
-     */
     async listFiles(options: ListFilesOptions = {}): Promise<DriveFileList> {
       const params = new URLSearchParams({
-        fields:
-          "nextPageToken,incompleteSearch,files(id,name,mimeType,kind,createdTime,modifiedTime,size,webViewLink,webContentLink,iconLink,thumbnailLink,parents,starred,trashed,shared,owners,lastModifyingUser,capabilities)",
+        fields: `nextPageToken,incompleteSearch,files(${fileFields})`,
         pageSize: String(options.pageSize ?? 100),
         orderBy: options.orderBy ?? "modifiedTime desc",
       });
@@ -187,21 +174,11 @@ export function createDriveClient(userId: string): {
       return driveApiRequest<DriveFileList>(`/files?${params.toString()}`);
     },
 
-    /**
-     * Get metadata about a specific file
-     */
     async getFile(fileId: string): Promise<DriveFile> {
-      const params = new URLSearchParams({
-        fields:
-          "id,name,mimeType,kind,createdTime,modifiedTime,size,webViewLink,webContentLink,iconLink,thumbnailLink,parents,starred,trashed,shared,owners,lastModifyingUser,capabilities",
-      });
-
+      const params = new URLSearchParams({ fields: fileFields });
       return driveApiRequest<DriveFile>(`/files/${fileId}?${params.toString()}`);
     },
 
-    /**
-     * Search for files using Drive query syntax
-     */
     async searchFiles(options: SearchFilesOptions): Promise<DriveFileList> {
       const params = new URLSearchParams({
         fields:
@@ -216,9 +193,6 @@ export function createDriveClient(userId: string): {
       return driveApiRequest<DriveFileList>(`/files?${params.toString()}`);
     },
 
-    /**
-     * Create a new folder
-     */
     async createFolder(options: CreateFolderOptions): Promise<DriveFile> {
       const metadata = buildMetadata({
         name: options.name,
@@ -233,9 +207,6 @@ export function createDriveClient(userId: string): {
       });
     },
 
-    /**
-     * Upload a text file to Drive
-     */
     async uploadFile(options: UploadFileOptions): Promise<DriveFile> {
       const accessToken = await getAccessToken();
 
@@ -279,9 +250,6 @@ export function createDriveClient(userId: string): {
       return response.json();
     },
 
-    /**
-     * Download file content as text
-     */
     async downloadFile(fileId: string): Promise<string> {
       const accessToken = await getAccessToken();
 
@@ -297,16 +265,10 @@ export function createDriveClient(userId: string): {
       return response.text();
     },
 
-    /**
-     * Delete a file or folder (move to trash)
-     */
     async deleteFile(fileId: string): Promise<void> {
       await driveApiRequest(`/files/${fileId}`, { method: "DELETE" });
     },
 
-    /**
-     * Copy a file
-     */
     async copyFile(fileId: string, name: string, parentId?: string): Promise<DriveFile> {
       const metadata: Record<string, unknown> = { name };
       if (parentId) metadata.parents = [parentId];
@@ -317,9 +279,6 @@ export function createDriveClient(userId: string): {
       });
     },
 
-    /**
-     * Update file metadata
-     */
     async updateFile(
       fileId: string,
       updates: { name?: string; description?: string; starred?: boolean },

@@ -9,7 +9,7 @@ export class PathNormalizer {
 
   normalize(path: string): string {
     const projectDir = this.projectDir;
-    const wasAbsoluteInProject = !!projectDir && path.startsWith(projectDir);
+    const wasAbsoluteInProject = projectDir != null && path.startsWith(projectDir);
 
     let normalized = path;
 

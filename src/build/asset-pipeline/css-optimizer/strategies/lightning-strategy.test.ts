@@ -1,7 +1,6 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { LightningCSSStrategy } from "./lightning-strategy.ts";
-import type { CSSOptimizationOptions } from "../types/index.ts";
 
 describe("build/asset-pipeline/css-optimizer/strategies/lightning-strategy", () => {
   describe("LightningCSSStrategy", () => {
@@ -21,12 +20,12 @@ describe("build/asset-pipeline/css-optimizer/strategies/lightning-strategy", () 
     describe("canProcess", () => {
       it("should return false when lightningCSS is not loaded", () => {
         const strategy = new LightningCSSStrategy();
-        assertEquals(strategy.canProcess({} as CSSOptimizationOptions), false);
+        assertEquals(strategy.canProcess({}), false);
       });
 
       it("should return false when disabled", () => {
         const strategy = new LightningCSSStrategy();
-        assertEquals(strategy.canProcess({ enabled: false } as CSSOptimizationOptions), false);
+        assertEquals(strategy.canProcess({ enabled: false }), false);
       });
     });
 
@@ -34,7 +33,7 @@ describe("build/asset-pipeline/css-optimizer/strategies/lightning-strategy", () 
       it("should reject when not initialized", async () => {
         const strategy = new LightningCSSStrategy();
         await assertRejects(
-          () => strategy.process("body{}", "test.css", {} as CSSOptimizationOptions),
+          () => strategy.process("body{}", "test.css", {}),
           Error,
           "Lightning CSS not initialized",
         );

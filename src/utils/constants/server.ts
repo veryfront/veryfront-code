@@ -11,7 +11,7 @@ export { DEFAULT_PORT } from "#veryfront/config/defaults.ts";
 export const DEFAULT_DASHBOARD_PORT = 3001;
 
 /** Internal URL prefix for all veryfront endpoints */
-export const INTERNAL_PREFIX = "/_veryfront" as const;
+export const INTERNAL_PREFIX = "/_veryfront";
 
 /**
  * All internal veryfront URL path prefixes (directories)
@@ -127,9 +127,7 @@ export function normalizeChunkPath(
   filename: string,
   basePath: string = INTERNAL_PATH_PREFIXES.CHUNKS,
 ): string {
-  if (filename.startsWith("/")) {
-    return filename;
-  }
+  if (filename.startsWith("/")) return filename;
 
   return `${basePath.replace(/\/$/, "")}/${filename}`;
 }

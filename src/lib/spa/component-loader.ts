@@ -17,7 +17,7 @@ export function loadComponent(path: string): Promise<ComponentType<unknown> | nu
     try {
       const moduleUrl = pathToModuleUrl(path);
       const module = await import(/* @vite-ignore */ moduleUrl);
-      const Component = module.default || module;
+      const Component = module.default ?? module;
 
       componentCache.set(path, Component);
       return Component;

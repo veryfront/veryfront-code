@@ -15,7 +15,6 @@ import {
 } from "./metrics-recorder.ts";
 
 describe("observability/simple-metrics/metrics-recorder", () => {
-  // Reset state before each test group
   describe("recordHttp", () => {
     it("should accumulate resolved and blocked counts", () => {
       resetMetrics();
@@ -23,7 +22,6 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       assertEquals(state.jitHttpResolved, 5);
       assertEquals(state.jitHttpBlocked, 2);
       assertEquals(state.jitHttpFetchMsTotal, 150);
-      resetMetrics();
     });
   });
 
@@ -34,7 +32,6 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       assertEquals(state.cacheGets, 1);
       assertEquals(state.cacheHits, 1);
       assertEquals(state.cacheMisses, 0);
-      resetMetrics();
     });
 
     it("should increment gets and misses on miss", () => {
@@ -43,7 +40,6 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       assertEquals(state.cacheGets, 1);
       assertEquals(state.cacheHits, 0);
       assertEquals(state.cacheMisses, 1);
-      resetMetrics();
     });
   });
 
@@ -52,7 +48,6 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       resetMetrics();
       recordCacheSet();
       assertEquals(state.cacheSets, 1);
-      resetMetrics();
     });
   });
 
@@ -63,7 +58,6 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       assertEquals(state.cacheInvalidations, 5);
       recordCacheInvalidate(3);
       assertEquals(state.cacheInvalidations, 8);
-      resetMetrics();
     });
   });
 
@@ -73,7 +67,6 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       recordSSR(50);
       const bucket50 = state._ssrCounts.find((c) => c > 0);
       assertEquals(bucket50 !== undefined, true);
-      resetMetrics();
     });
   });
 
@@ -82,21 +75,18 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       resetMetrics();
       recordRSC("page");
       assertEquals(state.rscPage, 1);
-      resetMetrics();
     });
 
     it("should increment manifest counter", () => {
       resetMetrics();
       recordRSC("manifest");
       assertEquals(state.rscManifest, 1);
-      resetMetrics();
     });
 
     it("should increment error counter", () => {
       resetMetrics();
       recordRSC("error");
       assertEquals(state.rscErrors, 1);
-      resetMetrics();
     });
   });
 
@@ -105,7 +95,6 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       resetMetrics();
       recordCorsRejection();
       assertEquals(state.corsRejections, 1);
-      resetMetrics();
     });
   });
 
@@ -114,7 +103,6 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       resetMetrics();
       recordSecurityHeaders();
       assertEquals(state.securityHeadersApplied, 1);
-      resetMetrics();
     });
   });
 
@@ -124,7 +112,6 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       recordApiRequest(200);
       recordApiRequest(201);
       assertEquals(state.apiRequests2xx, 2);
-      resetMetrics();
     });
 
     it("should categorize 4xx responses", () => {
@@ -132,7 +119,6 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       recordApiRequest(404);
       recordApiRequest(401);
       assertEquals(state.apiRequests4xx, 2);
-      resetMetrics();
     });
 
     it("should categorize 5xx responses", () => {
@@ -140,7 +126,6 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       recordApiRequest(500);
       recordApiRequest(503);
       assertEquals(state.apiRequests5xx, 2);
-      resetMetrics();
     });
   });
 
@@ -149,7 +134,6 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       resetMetrics();
       recordApiRetry();
       assertEquals(state.apiRetries, 1);
-      resetMetrics();
     });
   });
 });

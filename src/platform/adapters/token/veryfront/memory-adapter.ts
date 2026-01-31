@@ -21,7 +21,7 @@ export class MemoryTokenAdapter implements TokenStorageAdapter {
 
   constructor() {
     globalStore[STORAGE_KEY] ??= new Map<string, string>();
-    this.storage = globalStore[STORAGE_KEY];
+    this.storage = globalStore[STORAGE_KEY] ?? new Map<string, string>();
 
     logger.warn(
       "[MemoryTokenAdapter] Using in-memory storage. " +
@@ -50,7 +50,8 @@ export class MemoryTokenAdapter implements TokenStorageAdapter {
 
   list(prefix?: string): Promise<string[]> {
     const keys = Array.from(this.storage.keys());
-    return Promise.resolve(prefix ? keys.filter((k) => k.startsWith(prefix)) : keys);
+    if (!prefix) return Promise.resolve(keys);
+    return Promise.resolve(keys.filter((k) => k.startsWith(prefix)));
   }
 
   dispose(): void {

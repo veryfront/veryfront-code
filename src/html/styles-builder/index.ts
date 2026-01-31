@@ -5,11 +5,9 @@ export {
   cacheCSSAsync,
   clearCSSCache,
   compileGlobalsCSS,
-  type CSSErrorInfo,
   extractCandidates,
   extractCandidatesFromFiles,
   formatCSSError,
-  type GenerateOptions,
   generateTailwind4CSS,
   generateTailwindCSS,
   getCSSByHash,
@@ -17,5 +15,5 @@ export {
   hashCSS,
   invalidateCompiler,
   invalidateProjectCSS,
-  type TailwindResult,
 } from "./tailwind-compiler.ts";
+export type { CSSErrorInfo, GenerateOptions, TailwindResult } from "./tailwind-compiler.ts";

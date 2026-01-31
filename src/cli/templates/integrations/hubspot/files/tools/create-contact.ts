@@ -15,15 +15,14 @@ export default tool({
     website: z.string().optional().describe("Website URL"),
   }),
   async execute({ email, firstname, lastname, phone, company, jobtitle, website }) {
-    const properties: Record<string, string> = {
-      email,
-      ...(firstname ? { firstname } : {}),
-      ...(lastname ? { lastname } : {}),
-      ...(phone ? { phone } : {}),
-      ...(company ? { company } : {}),
-      ...(jobtitle ? { jobtitle } : {}),
-      ...(website ? { website } : {}),
-    };
+    const properties: Record<string, string> = { email };
+
+    if (firstname) properties.firstname = firstname;
+    if (lastname) properties.lastname = lastname;
+    if (phone) properties.phone = phone;
+    if (company) properties.company = company;
+    if (jobtitle) properties.jobtitle = jobtitle;
+    if (website) properties.website = website;
 
     const contact = await createContact(properties);
     const name = formatContactName(contact);

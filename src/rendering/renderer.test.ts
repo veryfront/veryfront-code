@@ -1,8 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
-// ---- Inline reimplementations of non-exported helpers for unit testing ----
-
 function getEnv(name: string): string | undefined {
   // deno-lint-ignore no-explicit-any
   const g = globalThis as any;
@@ -15,37 +13,41 @@ function computePerProjectLimit(maxConcurrent: number): number {
   return Math.ceil(maxConcurrent / 3);
 }
 
-/** Project slot management */
 function createProjectSlotManager(limit: number) {
   const counts = new Map<string, number>();
 
-  return {
-    acquire(projectId: string): boolean {
-      if (limit <= 0) return true;
-      const current = counts.get(projectId) ?? 0;
-      if (current >= limit) return false;
-      counts.set(projectId, current + 1);
-      return true;
-    },
-    release(projectId: string): void {
-      if (limit <= 0) return;
-      const current = counts.get(projectId) ?? 0;
-      if (current <= 1) {
-        counts.delete(projectId);
-      } else {
-        counts.set(projectId, current - 1);
-      }
-    },
-    getCount(projectId: string): number {
-      return counts.get(projectId) ?? 0;
-    },
-    getCounts(): Map<string, number> {
-      return counts;
-    },
-  };
-}
+  function acquire(projectId: string): boolean {
+    if (limit <= 0) return true;
 
-// ---- Tests ----
+    const current = counts.get(projectId) ?? 0;
+    if (current >= limit) return false;
+
+    counts.set(projectId, current + 1);
+    return true;
+  }
+
+  function release(projectId: string): void {
+    if (limit <= 0) return;
+
+    const current = counts.get(projectId) ?? 0;
+    if (current <= 1) {
+      counts.delete(projectId);
+      return;
+    }
+
+    counts.set(projectId, current - 1);
+  }
+
+  function getCount(projectId: string): number {
+    return counts.get(projectId) ?? 0;
+  }
+
+  function getCounts(): Map<string, number> {
+    return counts;
+  }
+
+  return { acquire, release, getCount, getCounts };
+}
 
 describe("Renderer helpers", () => {
   describe("getEnv", () => {
@@ -54,9 +56,7 @@ describe("Renderer helpers", () => {
     });
 
     it("should return value for set env vars (Deno)", () => {
-      // In Deno test context, PATH should exist
       const path = getEnv("PATH");
-      // PATH is typically set on all platforms
       assertEquals(typeof path === "string" || path === undefined, true);
     });
   });
@@ -70,8 +70,7 @@ describe("Renderer helpers", () => {
     });
 
     it("should handle the default concurrent value", () => {
-      const limit = computePerProjectLimit(RENDER_MAX_CONCURRENT_DEFAULT);
-      assertEquals(limit, 10);
+      assertEquals(computePerProjectLimit(RENDER_MAX_CONCURRENT_DEFAULT), 10);
     });
   });
 
@@ -96,7 +95,7 @@ describe("Renderer helpers", () => {
       const manager = createProjectSlotManager(2);
       assertEquals(manager.acquire("proj-1"), true);
       assertEquals(manager.acquire("proj-1"), true);
-      assertEquals(manager.acquire("proj-1"), false); // limit reached
+      assertEquals(manager.acquire("proj-1"), false);
       assertEquals(manager.getCount("proj-1"), 2);
     });
 
@@ -117,7 +116,6 @@ describe("Renderer helpers", () => {
 
     it("should handle release on non-acquired project gracefully", () => {
       const manager = createProjectSlotManager(2);
-      // Should not throw
       manager.release("never-acquired");
       assertEquals(manager.getCount("never-acquired"), 0);
     });
@@ -152,25 +150,21 @@ describe("Renderer helpers", () => {
 
   describe("RENDER_PIPELINE_TIMEOUT_MS defaults", () => {
     it("should parse default timeout as 60000", () => {
-      const defaultTimeout = parseInt("60000", 10);
-      assertEquals(defaultTimeout, 60000);
+      assertEquals(parseInt("60000", 10), 60000);
     });
 
     it("should parse custom timeout from string", () => {
-      const custom = parseInt("30000", 10);
-      assertEquals(custom, 30000);
+      assertEquals(parseInt("30000", 10), 30000);
     });
 
     it("should handle invalid timeout string as NaN", () => {
-      const invalid = parseInt("not-a-number", 10);
-      assertEquals(Number.isNaN(invalid), true);
+      assertEquals(Number.isNaN(parseInt("not-a-number", 10)), true);
     });
   });
 
   describe("RENDER_MAX_CONCURRENT defaults", () => {
     it("should parse default max concurrent as 30", () => {
-      const maxConcurrent = parseInt("30", 10);
-      assertEquals(maxConcurrent, 30);
+      assertEquals(parseInt("30", 10), 30);
     });
   });
 });

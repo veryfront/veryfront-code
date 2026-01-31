@@ -9,10 +9,7 @@ export default tool({
   inputSchema: z.object({
     projectSlug: z.string().describe("The slug of the project to list issues from"),
     query: z.string().optional().describe("Search query to filter issues (e.g., 'is:unresolved')"),
-    status: z
-      .enum(["resolved", "unresolved", "ignored"])
-      .optional()
-      .describe("Filter by issue status"),
+    status: z.enum(["resolved", "unresolved", "ignored"]).optional().describe("Filter by issue status"),
     sort: z
       .enum(["date", "new", "freq", "priority", "user"])
       .optional()
@@ -29,54 +26,14 @@ export default tool({
   async execute({ projectSlug, query, status, sort, limit }) {
     const issues = await listIssues(projectSlug, { query, status, sort, limit });
 
-    return issues.map(
-      ({
-        id,
-        shortId,
-        title,
-        culprit,
-        permalink,
-        level,
-        status: issueStatus,
-        substatus,
-        platform,
-        project,
-        type,
-        metadata,
-        count,
-        userCount,
-        firstSeen,
-        lastSeen,
-        numComments,
-        isBookmarked,
-        isSubscribed,
-        assignedTo,
-      }) => ({
-        id,
-        shortId,
-        title,
-        culprit,
-        permalink,
-        level,
-        status: issueStatus,
-        substatus,
-        platform,
-        project: {
-          id: project.id,
-          name: project.name,
-          slug: project.slug,
-        },
-        type,
-        metadata,
-        count,
-        userCount,
-        firstSeen,
-        lastSeen,
-        numComments,
-        isBookmarked,
-        isSubscribed,
-        assignedTo,
-      }),
-    );
+    return issues.map((issue) => ({
+      ...issue,
+      status: issue.status,
+      project: {
+        id: issue.project.id,
+        name: issue.project.name,
+        slug: issue.project.slug,
+      },
+    }));
   },
 });

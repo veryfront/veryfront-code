@@ -30,13 +30,13 @@ export default tool({
         name: message.from.emailAddress.name,
         email: message.from.emailAddress.address,
       },
-      to: message.toRecipients.map((r) => ({
-        name: r.emailAddress.name,
-        email: r.emailAddress.address,
+      to: message.toRecipients.map(({ emailAddress }) => ({
+        name: emailAddress.name,
+        email: emailAddress.address,
       })),
-      cc: message.ccRecipients?.map((r) => ({
-        name: r.emailAddress.name,
-        email: r.emailAddress.address,
+      cc: message.ccRecipients?.map(({ emailAddress }) => ({
+        name: emailAddress.name,
+        email: emailAddress.address,
       })),
       body,
       bodyPreview: message.bodyPreview,

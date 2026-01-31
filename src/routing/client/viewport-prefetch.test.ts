@@ -12,11 +12,19 @@ type IntersectionObserverCallback = (
   observer: any,
 ) => void;
 
-function setupMockIntersectionObserver() {
+function setupMockIntersectionObserver(): {
+  getObserverCallback: () => IntersectionObserverCallback | null;
+  getObserverOptions: () => any;
+  getObservedElements: () => Set<HTMLElement>;
+  getUnobservedElements: () => Set<HTMLElement>;
+  isDisconnectCalled: () => boolean;
+  triggerIntersection: (element: HTMLElement, isIntersecting: boolean) => void;
+  reset: () => void;
+  cleanup: () => void;
+} {
   const originalIntersectionObserver = (globalThis as any).IntersectionObserver;
   const originalHTMLAnchorElement = (globalThis as any).HTMLAnchorElement;
 
-  // Mock HTMLAnchorElement class for instanceof checks
   class MockHTMLAnchorElement {
     tagName = "A";
     private _attributes = new Map<string, string>();
@@ -90,17 +98,19 @@ function createMockAnchor(
   attributes: Record<string, string> = {},
 ): HTMLAnchorElement {
   const AnchorClass = (globalThis as any).HTMLAnchorElement;
-  const anchor = new AnchorClass();
-  anchor.setAttribute("href", href);
+  const anchor = new AnchorClass() as HTMLAnchorElement;
 
+  anchor.setAttribute("href", href);
   for (const [key, value] of Object.entries(attributes)) {
     anchor.setAttribute(key, value);
   }
 
-  return anchor as HTMLAnchorElement;
+  return anchor;
 }
 
-function createMockRoot<T extends Document | HTMLElement>(anchors: HTMLAnchorElement[]): T {
+function createMockRoot<T extends Document | HTMLElement>(
+  anchors: HTMLAnchorElement[],
+): T {
   return {
     querySelectorAll: (selector: string) => {
       if (selector === 'a[href]:not([target="_blank"])') return anchors as any;
@@ -112,36 +122,27 @@ function createMockRoot<T extends Document | HTMLElement>(anchors: HTMLAnchorEle
 describe("ViewportPrefetch", () => {
   describe("Constructor", () => {
     it("should create ViewportPrefetch with prefetch callback", () => {
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback);
-
+      const viewportPrefetch = new ViewportPrefetch(() => {});
       assertExists(viewportPrefetch, "ViewportPrefetch instance should be created");
     });
 
     it("should create ViewportPrefetch with empty prefetch options", () => {
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, {});
-
+      const viewportPrefetch = new ViewportPrefetch(() => {}, {});
       assertExists(viewportPrefetch, "Should create with empty options");
     });
 
     it("should create ViewportPrefetch with hover option", () => {
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { hover: true });
-
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { hover: true });
       assertExists(viewportPrefetch, "Should create with hover option");
     });
 
     it("should create ViewportPrefetch with viewport option", () => {
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
-
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: true });
       assertExists(viewportPrefetch, "Should create with viewport option");
     });
 
     it("should create ViewportPrefetch with both options", () => {
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, {
+      const viewportPrefetch = new ViewportPrefetch(() => {}, {
         hover: true,
         viewport: true,
       });
@@ -153,30 +154,25 @@ describe("ViewportPrefetch", () => {
   describe("setup", () => {
     it("should create IntersectionObserver when available", () => {
       const mocks = setupMockIntersectionObserver();
+      const viewportPrefetch = new ViewportPrefetch(() => {});
 
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback);
-
-      const mockDoc = createMockRoot<Document>([]);
-      viewportPrefetch.setup(mockDoc);
+      viewportPrefetch.setup(createMockRoot<Document>([]));
 
       assertEquals(mocks.getObserverCallback() !== null, true, "Observer callback should be set");
-
       mocks.cleanup();
     });
 
     it("should create observer with 200px rootMargin", () => {
       const mocks = setupMockIntersectionObserver();
+      const viewportPrefetch = new ViewportPrefetch(() => {});
 
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback);
+      viewportPrefetch.setup(createMockRoot<Document>([]));
 
-      const mockDoc = createMockRoot<Document>([]);
-      viewportPrefetch.setup(mockDoc);
-
-      const options = mocks.getObserverOptions();
-      assertEquals(options?.rootMargin, "200px", "Should set rootMargin to 200px");
-
+      assertEquals(
+        mocks.getObserverOptions()?.rootMargin,
+        "200px",
+        "Should set rootMargin to 200px",
+      );
       mocks.cleanup();
     });
 
@@ -184,21 +180,15 @@ describe("ViewportPrefetch", () => {
       const originalIO = (globalThis as any).IntersectionObserver;
       delete (globalThis as any).IntersectionObserver;
 
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback);
-
-      const mockDoc = createMockRoot<Document>([]);
-      viewportPrefetch.setup(mockDoc); // Should not throw
+      const viewportPrefetch = new ViewportPrefetch(() => {});
+      viewportPrefetch.setup(createMockRoot<Document>([]));
 
       (globalThis as any).IntersectionObserver = originalIO;
     });
 
     it("should disconnect previous observer before creating new one", () => {
       const mocks = setupMockIntersectionObserver();
-
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback);
-
+      const viewportPrefetch = new ViewportPrefetch(() => {});
       const mockDoc = createMockRoot<Document>([]);
 
       viewportPrefetch.setup(mockDoc);
@@ -213,15 +203,12 @@ describe("ViewportPrefetch", () => {
 
     it("should observe internal links when viewport is enabled", () => {
       const mocks = setupMockIntersectionObserver();
-
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: true });
 
       const anchor1 = createMockAnchor("/page1");
       const anchor2 = createMockAnchor("/page2");
-      const mockDoc = createMockRoot<Document>([anchor1, anchor2]);
 
-      viewportPrefetch.setup(mockDoc);
+      viewportPrefetch.setup(createMockRoot<Document>([anchor1, anchor2]));
 
       const observed = mocks.getObservedElements();
       assertEquals(observed.has(anchor1 as any), true, "Should observe first link");
@@ -232,18 +219,14 @@ describe("ViewportPrefetch", () => {
 
     it("should observe links with data-prefetch=viewport attribute", () => {
       const mocks = setupMockIntersectionObserver();
-
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: false });
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: false });
 
       const anchor = createMockAnchor("/page", { "data-prefetch": "viewport" });
-      const mockDoc = createMockRoot<Document>([anchor]);
 
-      viewportPrefetch.setup(mockDoc);
+      viewportPrefetch.setup(createMockRoot<Document>([anchor]));
 
-      const observed = mocks.getObservedElements();
       assertEquals(
-        observed.has(anchor as any),
+        mocks.getObservedElements().has(anchor as any),
         true,
         "Should observe link with data-prefetch=viewport",
       );
@@ -253,142 +236,101 @@ describe("ViewportPrefetch", () => {
 
     it("should not observe links when viewport is disabled and no data-prefetch attribute", () => {
       const mocks = setupMockIntersectionObserver();
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: false });
 
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: false });
+      viewportPrefetch.setup(createMockRoot<Document>([createMockAnchor("/page")]));
 
-      const anchor = createMockAnchor("/page");
-      const mockDoc = createMockRoot<Document>([anchor]);
-
-      viewportPrefetch.setup(mockDoc);
-
-      const observed = mocks.getObservedElements();
-      assertEquals(observed.size, 0, "Should not observe any links");
-
+      assertEquals(mocks.getObservedElements().size, 0, "Should not observe any links");
       mocks.cleanup();
     });
 
     it("should not observe links with data-prefetch=false", () => {
       const mocks = setupMockIntersectionObserver();
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: true });
 
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
+      viewportPrefetch.setup(
+        createMockRoot<Document>([createMockAnchor("/page", { "data-prefetch": "false" })]),
+      );
 
-      const anchor = createMockAnchor("/page", { "data-prefetch": "false" });
-      const mockDoc = createMockRoot<Document>([anchor]);
-
-      viewportPrefetch.setup(mockDoc);
-
-      const observed = mocks.getObservedElements();
-      assertEquals(observed.size, 0, "Should not observe links with data-prefetch=false");
-
+      assertEquals(
+        mocks.getObservedElements().size,
+        0,
+        "Should not observe links with data-prefetch=false",
+      );
       mocks.cleanup();
     });
 
     it("should not observe external links", () => {
       const mocks = setupMockIntersectionObserver();
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: true });
 
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
+      viewportPrefetch.setup(
+        createMockRoot<Document>([createMockAnchor("https://external.com/page")]),
+      );
 
-      const anchor = createMockAnchor("https://external.com/page");
-      const mockDoc = createMockRoot<Document>([anchor]);
-
-      viewportPrefetch.setup(mockDoc);
-
-      const observed = mocks.getObservedElements();
-      assertEquals(observed.size, 0, "Should not observe external links");
-
+      assertEquals(mocks.getObservedElements().size, 0, "Should not observe external links");
       mocks.cleanup();
     });
 
     it("should not observe hash links", () => {
       const mocks = setupMockIntersectionObserver();
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: true });
 
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
+      viewportPrefetch.setup(createMockRoot<Document>([createMockAnchor("#section")]));
 
-      const anchor = createMockAnchor("#section");
-      const mockDoc = createMockRoot<Document>([anchor]);
-
-      viewportPrefetch.setup(mockDoc);
-
-      const observed = mocks.getObservedElements();
-      assertEquals(observed.size, 0, "Should not observe hash links");
-
+      assertEquals(mocks.getObservedElements().size, 0, "Should not observe hash links");
       mocks.cleanup();
     });
 
     it("should not observe download links", () => {
       const mocks = setupMockIntersectionObserver();
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: true });
 
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
+      viewportPrefetch.setup(
+        createMockRoot<Document>([createMockAnchor("/file.pdf", { download: "file.pdf" })]),
+      );
 
-      const anchor = createMockAnchor("/file.pdf", { download: "file.pdf" });
-      const mockDoc = createMockRoot<Document>([anchor]);
-
-      viewportPrefetch.setup(mockDoc);
-
-      const observed = mocks.getObservedElements();
-      assertEquals(observed.size, 0, "Should not observe download links");
-
+      assertEquals(mocks.getObservedElements().size, 0, "Should not observe download links");
       mocks.cleanup();
     });
 
     it("should not observe links without href", () => {
       const mocks = setupMockIntersectionObserver();
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: true });
 
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
+      viewportPrefetch.setup(createMockRoot<Document>([createMockAnchor("")]));
 
-      const anchor = createMockAnchor("");
-      const mockDoc = createMockRoot<Document>([anchor]);
-
-      viewportPrefetch.setup(mockDoc);
-
-      const observed = mocks.getObservedElements();
-      assertEquals(observed.size, 0, "Should not observe links without href");
-
+      assertEquals(mocks.getObservedElements().size, 0, "Should not observe links without href");
       mocks.cleanup();
     });
 
     it("should work with HTMLElement as root", () => {
       const mocks = setupMockIntersectionObserver();
-
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: true });
 
       const anchor = createMockAnchor("/page");
-      const mockElement = createMockRoot<HTMLElement>([anchor]);
+      viewportPrefetch.setup(createMockRoot<HTMLElement>([anchor]));
 
-      viewportPrefetch.setup(mockElement);
-
-      const observed = mocks.getObservedElements();
-      assertEquals(observed.has(anchor as any), true, "Should observe links in HTMLElement");
-
+      assertEquals(
+        mocks.getObservedElements().has(anchor as any),
+        true,
+        "Should observe links in HTMLElement",
+      );
       mocks.cleanup();
     });
 
     it("should handle mixed internal and external links", () => {
       const mocks = setupMockIntersectionObserver();
-
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: true });
 
       const internalLink1 = createMockAnchor("/page1");
       const externalLink = createMockAnchor("https://external.com");
       const internalLink2 = createMockAnchor("/page2");
       const hashLink = createMockAnchor("#section");
 
-      const mockDoc = createMockRoot<Document>([
-        internalLink1,
-        externalLink,
-        internalLink2,
-        hashLink,
-      ]);
-
-      viewportPrefetch.setup(mockDoc);
+      viewportPrefetch.setup(
+        createMockRoot<Document>([internalLink1, externalLink, internalLink2, hashLink]),
+      );
 
       const observed = mocks.getObservedElements();
       assertEquals(observed.size, 2, "Should only observe internal links");
@@ -400,9 +342,7 @@ describe("ViewportPrefetch", () => {
 
     it("should handle setup errors gracefully", () => {
       const mocks = setupMockIntersectionObserver();
-
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback);
+      const viewportPrefetch = new ViewportPrefetch(() => {});
 
       const mockDoc = {
         querySelectorAll: () => {
@@ -411,7 +351,6 @@ describe("ViewportPrefetch", () => {
       } as unknown as Document;
 
       viewportPrefetch.setup(mockDoc);
-
       mocks.cleanup();
     });
   });
@@ -421,21 +360,16 @@ describe("ViewportPrefetch", () => {
       const mocks = setupMockIntersectionObserver();
 
       let prefetchedUrl = "";
-      const prefetchCallback = (url: string) => {
+      const viewportPrefetch = new ViewportPrefetch((url: string) => {
         prefetchedUrl = url;
-      };
-
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
+      }, { viewport: true });
 
       const anchor = createMockAnchor("/page");
-      const mockDoc = createMockRoot<Document>([anchor]);
-
-      viewportPrefetch.setup(mockDoc);
+      viewportPrefetch.setup(createMockRoot<Document>([anchor]));
 
       mocks.triggerIntersection(anchor as any, true);
 
       assertEquals(prefetchedUrl, "/page", "Should call prefetch callback with URL");
-
       mocks.cleanup();
     });
 
@@ -443,34 +377,25 @@ describe("ViewportPrefetch", () => {
       const mocks = setupMockIntersectionObserver();
 
       let prefetchCalled = false;
-      const prefetchCallback = () => {
+      const viewportPrefetch = new ViewportPrefetch(() => {
         prefetchCalled = true;
-      };
-
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
+      }, { viewport: true });
 
       const anchor = createMockAnchor("/page");
-      const mockDoc = createMockRoot<Document>([anchor]);
-
-      viewportPrefetch.setup(mockDoc);
+      viewportPrefetch.setup(createMockRoot<Document>([anchor]));
 
       mocks.triggerIntersection(anchor as any, false);
 
       assertEquals(prefetchCalled, false, "Should not call prefetch when not intersecting");
-
       mocks.cleanup();
     });
 
     it("should unobserve link after intersection", () => {
       const mocks = setupMockIntersectionObserver();
-
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: true });
 
       const anchor = createMockAnchor("/page");
-      const mockDoc = createMockRoot<Document>([anchor]);
-
-      viewportPrefetch.setup(mockDoc);
+      viewportPrefetch.setup(createMockRoot<Document>([anchor]));
 
       assertEquals(
         mocks.getObservedElements().has(anchor as any),
@@ -485,7 +410,6 @@ describe("ViewportPrefetch", () => {
         true,
         "Should unobserve after intersection",
       );
-
       mocks.cleanup();
     });
 
@@ -493,17 +417,13 @@ describe("ViewportPrefetch", () => {
       const mocks = setupMockIntersectionObserver();
 
       const prefetchedUrls: string[] = [];
-      const prefetchCallback = (url: string) => {
+      const viewportPrefetch = new ViewportPrefetch((url: string) => {
         prefetchedUrls.push(url);
-      };
-
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
+      }, { viewport: true });
 
       const anchor1 = createMockAnchor("/page1");
       const anchor2 = createMockAnchor("/page2");
-      const mockDoc = createMockRoot<Document>([anchor1, anchor2]);
-
-      viewportPrefetch.setup(mockDoc);
+      viewportPrefetch.setup(createMockRoot<Document>([anchor1, anchor2]));
 
       mocks.triggerIntersection(anchor1 as any, true);
       mocks.triggerIntersection(anchor2 as any, true);
@@ -519,21 +439,16 @@ describe("ViewportPrefetch", () => {
       const mocks = setupMockIntersectionObserver();
 
       let prefetchCalled = false;
-      const prefetchCallback = () => {
+      const viewportPrefetch = new ViewportPrefetch(() => {
         prefetchCalled = true;
-      };
+      }, { viewport: true });
 
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
-
-      const anchor = createMockAnchor(""); // No href
-      const mockDoc = createMockRoot<Document>([anchor]);
-
-      viewportPrefetch.setup(mockDoc);
+      const anchor = createMockAnchor("");
+      viewportPrefetch.setup(createMockRoot<Document>([anchor]));
 
       mocks.getObserverCallback()?.([{ isIntersecting: true, target: anchor as any }], null);
 
       assertEquals(prefetchCalled, false, "Should not prefetch when href is empty");
-
       mocks.cleanup();
     });
   });
@@ -541,30 +456,22 @@ describe("ViewportPrefetch", () => {
   describe("disconnect", () => {
     it("should disconnect observer", () => {
       const mocks = setupMockIntersectionObserver();
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: true });
 
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
-
-      const mockDoc = createMockRoot<Document>([]);
-      viewportPrefetch.setup(mockDoc);
-
+      viewportPrefetch.setup(createMockRoot<Document>([]));
       viewportPrefetch.disconnect();
 
       assertEquals(mocks.isDisconnectCalled(), true, "Should call disconnect on observer");
-
       mocks.cleanup();
     });
 
     it("should handle disconnect when no observer exists", () => {
       const mocks = setupMockIntersectionObserver();
-
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback);
+      const viewportPrefetch = new ViewportPrefetch(() => {});
 
       viewportPrefetch.disconnect();
 
       assertEquals(mocks.isDisconnectCalled(), false, "Should not throw when no observer");
-
       mocks.cleanup();
     });
 
@@ -582,12 +489,8 @@ describe("ViewportPrefetch", () => {
 
       (globalThis as any).IntersectionObserver = ErrorIntersectionObserver;
 
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback);
-
-      const mockDoc = createMockRoot<Document>([]);
-      viewportPrefetch.setup(mockDoc);
-
+      const viewportPrefetch = new ViewportPrefetch(() => {});
+      viewportPrefetch.setup(createMockRoot<Document>([]));
       viewportPrefetch.disconnect();
 
       mocks.cleanup();
@@ -595,14 +498,10 @@ describe("ViewportPrefetch", () => {
 
     it("should set observer to null after disconnect", () => {
       const mocks = setupMockIntersectionObserver();
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: true });
 
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
-
-      const mockDoc = createMockRoot<Document>([]);
-      viewportPrefetch.setup(mockDoc);
+      viewportPrefetch.setup(createMockRoot<Document>([]));
       viewportPrefetch.disconnect();
-
       viewportPrefetch.disconnect();
 
       mocks.cleanup();
@@ -610,9 +509,7 @@ describe("ViewportPrefetch", () => {
 
     it("should allow setup after disconnect", () => {
       const mocks = setupMockIntersectionObserver();
-
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: true });
 
       const anchor = createMockAnchor("/page");
       const mockDoc = createMockRoot<Document>([anchor]);
@@ -621,12 +518,13 @@ describe("ViewportPrefetch", () => {
       viewportPrefetch.disconnect();
 
       mocks.reset();
-
       viewportPrefetch.setup(mockDoc);
 
-      const observed = mocks.getObservedElements();
-      assertEquals(observed.has(anchor as any), true, "Should observe links after disconnect");
-
+      assertEquals(
+        mocks.getObservedElements().has(anchor as any),
+        true,
+        "Should observe links after disconnect",
+      );
       mocks.cleanup();
     });
   });
@@ -636,22 +534,17 @@ describe("ViewportPrefetch", () => {
       const mocks = setupMockIntersectionObserver();
 
       const prefetchedUrls: string[] = [];
-      const prefetchCallback = (url: string) => {
+      const viewportPrefetch = new ViewportPrefetch((url: string) => {
         prefetchedUrls.push(url);
-      };
-
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
+      }, { viewport: true });
 
       const anchor1 = createMockAnchor("/page1");
       const anchor2 = createMockAnchor("/page2");
       const anchor3 = createMockAnchor("https://external.com");
 
-      const mockDoc = createMockRoot<Document>([anchor1, anchor2, anchor3]);
+      viewportPrefetch.setup(createMockRoot<Document>([anchor1, anchor2, anchor3]));
 
-      viewportPrefetch.setup(mockDoc);
-
-      const observed = mocks.getObservedElements();
-      assertEquals(observed.size, 2, "Should observe 2 internal links");
+      assertEquals(mocks.getObservedElements().size, 2, "Should observe 2 internal links");
 
       mocks.triggerIntersection(anchor1 as any, true);
       assertEquals(prefetchedUrls.length, 1, "Should prefetch first link");
@@ -667,17 +560,13 @@ describe("ViewportPrefetch", () => {
 
     it("should respect data-prefetch attribute priority", () => {
       const mocks = setupMockIntersectionObserver();
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: false });
 
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: false });
+      const link1 = createMockAnchor("/page1");
+      const link2 = createMockAnchor("/page2", { "data-prefetch": "viewport" });
+      const link3 = createMockAnchor("/page3", { "data-prefetch": "false" });
 
-      const link1 = createMockAnchor("/page1"); // No attribute, viewport disabled
-      const link2 = createMockAnchor("/page2", { "data-prefetch": "viewport" }); // Explicit viewport
-      const link3 = createMockAnchor("/page3", { "data-prefetch": "false" }); // Explicit false
-
-      const mockDoc = createMockRoot<Document>([link1, link2, link3]);
-
-      viewportPrefetch.setup(mockDoc);
+      viewportPrefetch.setup(createMockRoot<Document>([link1, link2, link3]));
 
       const observed = mocks.getObservedElements();
       assertEquals(observed.size, 1, "Should only observe link with data-prefetch=viewport");
@@ -688,21 +577,19 @@ describe("ViewportPrefetch", () => {
 
     it("should handle setup with no qualifying links", () => {
       const mocks = setupMockIntersectionObserver();
-
-      const prefetchCallback = () => {};
-      const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: true });
 
       const externalLink = createMockAnchor("https://external.com");
       const hashLink = createMockAnchor("#section");
       const downloadLink = createMockAnchor("/file.pdf", { download: "file.pdf" });
 
-      const mockDoc = createMockRoot<Document>([externalLink, hashLink, downloadLink]);
+      viewportPrefetch.setup(createMockRoot<Document>([externalLink, hashLink, downloadLink]));
 
-      viewportPrefetch.setup(mockDoc);
-
-      const observed = mocks.getObservedElements();
-      assertEquals(observed.size, 0, "Should not observe any non-qualifying links");
-
+      assertEquals(
+        mocks.getObservedElements().size,
+        0,
+        "Should not observe any non-qualifying links",
+      );
       mocks.cleanup();
     });
   });

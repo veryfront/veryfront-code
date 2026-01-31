@@ -2,13 +2,21 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontAPIClient, VeryfrontAPIError } from "./veryfront-api-client/index.ts";
 
-function withMockFetch<T>(mockFetch: typeof globalThis.fetch, fn: () => Promise<T>): Promise<T> {
+function withMockFetch<T>(
+  mockFetch: typeof globalThis.fetch,
+  fn: () => Promise<T>,
+): Promise<T> {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = mockFetch;
 
   return fn().finally(() => {
     globalThis.fetch = originalFetch;
   });
+}
+
+function assertVeryfrontError(error: unknown): VeryfrontAPIError {
+  assertEquals(error instanceof VeryfrontAPIError, true);
+  return error as VeryfrontAPIError;
 }
 
 describe("VeryfrontAPIClient", () => {
@@ -39,8 +47,8 @@ describe("VeryfrontAPIClient", () => {
         client.getProjectId();
         throw new Error("Should have thrown");
       } catch (error) {
-        assertEquals(error instanceof VeryfrontAPIError, true);
-        assertEquals((error as VeryfrontAPIError).message.includes("not initialized"), true);
+        const apiError = assertVeryfrontError(error);
+        assertEquals(apiError.message.includes("not initialized"), true);
       }
     });
   });
@@ -54,8 +62,8 @@ describe("VeryfrontAPIClient", () => {
             await client.listProjects();
             throw new Error("Should have thrown");
           } catch (error) {
-            assertEquals(error instanceof VeryfrontAPIError, true);
-            assertEquals((error as VeryfrontAPIError).status, 404);
+            const apiError = assertVeryfrontError(error);
+            assertEquals(apiError.status, 404);
           }
         },
       );
@@ -76,7 +84,7 @@ describe("VeryfrontAPIClient", () => {
             await client.listProjects();
             throw new Error("Should have thrown");
           } catch (error) {
-            assertEquals(error instanceof VeryfrontAPIError, true);
+            assertVeryfrontError(error);
             assertEquals(callCount, 1);
           }
         },
@@ -91,11 +99,13 @@ describe("VeryfrontAPIClient", () => {
       await withMockFetch(
         () => {
           callCount++;
+
           if (callCount < 3) {
             return Promise.resolve(
               new Response("Server error", { status: 500, statusText: "Internal Server Error" }),
             );
           }
+
           return Promise.resolve(
             new Response(JSON.stringify({ data: [] }), {
               status: 200,
@@ -135,7 +145,7 @@ describe("VeryfrontAPIClient", () => {
             await clientWithRetries.listProjects();
             throw new Error("Should have thrown");
           } catch (error) {
-            assertEquals(error instanceof VeryfrontAPIError, true);
+            assertVeryfrontError(error);
             assertEquals(callCount, 2);
           }
         },
@@ -170,6 +180,7 @@ describe("VeryfrontAPIClient", () => {
 
           if (urlStr.includes("/branches/") && urlStr.includes("/files")) {
             page++;
+
             if (page === 1) {
               return Promise.resolve(
                 new Response(

@@ -98,10 +98,10 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
 
       setRun(workflowRun);
       setError(null);
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") return;
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
 
-      const fetchError = error instanceof Error ? error : new Error(String(error));
+      const fetchError = err instanceof Error ? err : new Error(String(err));
       setError(fetchError);
       onError?.(fetchError);
     }
@@ -122,8 +122,8 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
         throw new Error(`Failed to cancel workflow: ${response.status}`);
       }
       await refresh();
-    } catch (error) {
-      const cancelError = error instanceof Error ? error : new Error(String(error));
+    } catch (err) {
+      const cancelError = err instanceof Error ? err : new Error(String(err));
       setError(cancelError);
       throw cancelError;
     }
@@ -138,8 +138,8 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
         throw new Error(`Failed to retry workflow: ${response.status}`);
       }
       await refresh();
-    } catch (error) {
-      const retryError = error instanceof Error ? error : new Error(String(error));
+    } catch (err) {
+      const retryError = err instanceof Error ? err : new Error(String(err));
       setError(retryError);
       throw retryError;
     }
@@ -159,11 +159,13 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     const intervalId = setInterval(() => {
       const currentStatus = previousStatusRef.current;
       if (!currentStatus) return;
+
       if (
         currentStatus === "completed" || currentStatus === "failed" || currentStatus === "cancelled"
       ) {
         return;
       }
+
       fetchRun();
     }, pollInterval);
 
@@ -171,7 +173,7 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
       abortControllerRef.current?.abort();
       clearInterval(intervalId);
     };
-  }, [autoRefresh, fetchRun, pollInterval, refresh, runId]);
+  }, [autoRefresh, fetchRun, pollInterval, refresh]);
 
   return {
     run,

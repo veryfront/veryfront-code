@@ -1,10 +1,3 @@
-/**
- * Shared Redis Client Utility
- *
- * Provides a singleton Redis client with connection pooling,
- * automatic reconnection, and graceful fallback handling.
- */
-
 import { getRedisUrlEnv } from "#veryfront/config/env.ts";
 import { logger } from "./logger/logger.ts";
 
@@ -25,9 +18,7 @@ export interface RedisClient {
 
 export interface RedisClientOptions {
   url?: string;
-  /** Connection timeout in milliseconds */
   connectTimeout?: number;
-  /** Enable auto-reconnect on disconnect */
   autoReconnect?: boolean;
 }
 
@@ -71,7 +62,7 @@ async function createClient(options: RedisClientOptions): Promise<RedisClient> {
   let createClientFn: ((opts: { url?: string }) => RedisClient) | undefined;
 
   try {
-    const redisClientModule = ["npm:@redis/client", "@1.5.8"].join("");
+    const redisClientModule = "npm:@redis/client@1.5.8";
     const mod = await import(redisClientModule);
     createClientFn = mod.createClient as (opts: { url?: string }) => RedisClient;
   } catch {
@@ -107,7 +98,7 @@ export function isRedisAvailable(): boolean {
 }
 
 export function isRedisConfigured(): boolean {
-  return !!getRedisUrlEnv();
+  return Boolean(getRedisUrlEnv());
 }
 
 export async function disconnectRedis(): Promise<void> {

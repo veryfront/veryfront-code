@@ -1,8 +1,3 @@
-/**
- * Type definitions for RSC endpoints
- * @module rsc-endpoints/types
- */
-
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 

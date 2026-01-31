@@ -218,11 +218,7 @@ describe("Filesystem Operations", () => {
 
 describe("Runtime Detection", () => {
   it("exactly one runtime is detected", () => {
-    assertEquals(
-      [isDeno, isBun, isNode].filter(Boolean).length,
-      1,
-      "exactly one runtime should be detected",
-    );
+    assertEquals([isDeno, isBun, isNode].filter(Boolean).length, 1);
   });
 
   it("detected runtime matches version string", () => {

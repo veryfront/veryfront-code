@@ -32,6 +32,7 @@ export async function readConfigFile(projectDir: string): Promise<VeryfrontConfi
 
   for (const ext of [".ts", ".js"]) {
     const configPath = join(projectDir, `veryfront.config${ext}`);
+
     try {
       if (!(await fs.exists(configPath))) continue;
 
@@ -45,6 +46,7 @@ export async function readConfigFile(projectDir: string): Promise<VeryfrontConfi
   }
 
   const rcPath = join(projectDir, ".veryfrontrc");
+
   try {
     if (!(await fs.exists(rcPath))) return null;
     const content = await fs.readTextFile(rcPath);
@@ -66,7 +68,8 @@ async function inferProjectSlug(projectDir: string): Promise<string | null> {
     if (await fs.exists(packagePath)) {
       const content = await fs.readTextFile(packagePath);
       const pkg = JSON.parse(content) as { name?: string };
-      if (pkg.name) return slugify(pkg.name.replace(/^@[^/]+\//, ""));
+      const name = pkg.name?.replace(/^@[^/]+\//, "");
+      if (name) return slugify(name);
     }
   } catch {
     // Ignore errors
@@ -126,8 +129,9 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
     params?: Record<string, string>,
   ): Promise<T> {
     const url = new URL(`${apiUrl}${path}`);
-    if (params) {
-      for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+
+    for (const [key, value] of Object.entries(params ?? {})) {
+      url.searchParams.set(key, value);
     }
 
     const response = await fetch(url.toString(), {
@@ -142,12 +146,14 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
 
     if (!response.ok) {
       let errorMessage = `API request failed: ${response.status} ${response.statusText}`;
+
       try {
         const errorBody = (await response.json()) as ApiError;
         errorMessage = errorBody.message || errorBody.error || errorMessage;
       } catch {
         // Ignore JSON parse errors
       }
+
       throw new Error(errorMessage);
     }
 

@@ -13,12 +13,9 @@ export type {
   NodeRedisClient,
   NodeRedisModule,
 } from "./types.ts";
-
 export type { RedisAdapter } from "./interface.ts";
 
 export { DenoRedisAdapter } from "./deno.ts";
 export { NodeRedisAdapter } from "./node.ts";
-
 export { clearModuleCache, getRedisModule } from "./modules.ts";
-
 export { arrayToObject } from "./utils.ts";

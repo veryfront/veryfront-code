@@ -49,7 +49,7 @@ export function validatePathBasics(path: string): ValidationResult {
   for (const part of parts) {
     if (part === "..") {
       depth++;
-      if (depth > maxDepth) maxDepth = depth;
+      maxDepth = Math.max(maxDepth, depth);
       continue;
     }
 

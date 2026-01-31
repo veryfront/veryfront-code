@@ -20,6 +20,12 @@ const MOVE_UP = "\x1b[1A";
 const HIDE_CURSOR = "\x1b[?25l";
 const SHOW_CURSOR = "\x1b[?25h";
 
+function clearOptions(count: number): void {
+  for (let i = 0; i < count; i++) {
+    writeStdout(MOVE_UP + CLEAR_LINE);
+  }
+}
+
 /**
  * Single-select with arrow key navigation
  */
@@ -48,12 +54,6 @@ export async function select(
     }
   }
 
-  function clearOptions(): void {
-    for (let i = 0; i < options.length; i++) {
-      writeStdout(MOVE_UP + CLEAR_LINE);
-    }
-  }
-
   writeStdout(HIDE_CURSOR);
   renderOptions();
 
@@ -62,7 +62,7 @@ export async function select(
       if (key === "up") {
         if (selectedIndex <= 0) return undefined;
         selectedIndex--;
-        clearOptions();
+        clearOptions(options.length);
         renderOptions();
         return undefined;
       }
@@ -70,7 +70,7 @@ export async function select(
       if (key === "down") {
         if (selectedIndex >= options.length - 1) return undefined;
         selectedIndex++;
-        clearOptions();
+        clearOptions(options.length);
         renderOptions();
         return undefined;
       }
@@ -81,7 +81,7 @@ export async function select(
       return undefined;
     });
 
-    clearOptions();
+    clearOptions(options.length);
     const selected = options[selectedIndex];
     if (selected) console.log(`  ${green("✓")} ${selected.label}`);
 
@@ -121,12 +121,6 @@ export async function multiSelect(
     }
   }
 
-  function clearOptions(): void {
-    for (let i = 0; i < options.length; i++) {
-      writeStdout(MOVE_UP + CLEAR_LINE);
-    }
-  }
-
   writeStdout(HIDE_CURSOR);
   renderOptions();
 
@@ -135,7 +129,7 @@ export async function multiSelect(
       if (key === "up") {
         if (cursorIndex <= 0) return undefined;
         cursorIndex--;
-        clearOptions();
+        clearOptions(options.length);
         renderOptions();
         return undefined;
       }
@@ -143,7 +137,7 @@ export async function multiSelect(
       if (key === "down") {
         if (cursorIndex >= options.length - 1) return undefined;
         cursorIndex++;
-        clearOptions();
+        clearOptions(options.length);
         renderOptions();
         return undefined;
       }
@@ -155,7 +149,7 @@ export async function multiSelect(
         if (selected.has(opt.value)) selected.delete(opt.value);
         else selected.add(opt.value);
 
-        clearOptions();
+        clearOptions(options.length);
         renderOptions();
         return undefined;
       }
@@ -166,7 +160,7 @@ export async function multiSelect(
       return undefined;
     });
 
-    clearOptions();
+    clearOptions(options.length);
     for (const opt of options) {
       if (selected.has(opt.value)) console.log(`  ${green("✓")} ${opt.label}`);
     }

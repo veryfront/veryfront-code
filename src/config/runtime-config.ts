@@ -118,15 +118,15 @@ function mergeConfigWithEnv(fileConfig: VeryfrontConfig, env: RuntimeEnv): Veryf
 
     observability: {
       tracing: {
+        ...fileConfig.observability?.tracing,
         enabled: env.otelEnabled || fileConfig.observability?.tracing?.enabled,
         endpoint: env.otelEndpoint || fileConfig.observability?.tracing?.endpoint,
         serviceName: env.otelServiceName || fileConfig.observability?.tracing?.serviceName,
-        ...fileConfig.observability?.tracing,
       },
       metrics: {
+        ...fileConfig.observability?.metrics,
         enabled: env.otelMetricsEnabled || fileConfig.observability?.metrics?.enabled,
         endpoint: env.otelMetricsEndpoint || fileConfig.observability?.metrics?.endpoint,
-        ...fileConfig.observability?.metrics,
       },
     },
   };

@@ -2,11 +2,13 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { formatAmount, getBalance } from "../../lib/stripe-client.ts";
 
-function mapBalanceItem(bal: {
+type BalanceItem = {
   amount: number;
   currency: string;
   source_types: unknown;
-}): {
+};
+
+function mapBalanceItem(bal: BalanceItem): {
   amount: string;
   amountRaw: number;
   currency: string;

@@ -28,7 +28,7 @@ export function LiveApp({
 }: LiveAppProps): React.ReactElement {
   const [isStudioConnected, setIsStudioConnected] = useState(false);
 
-  useEffect(() => {
+  useEffect((): void | (() => void) => {
     if (!studioEnabled || mode !== "development") {
       return;
     }
@@ -63,10 +63,10 @@ export function LiveApp({
       studioOrigin,
     );
 
-    return () => {
+    return (): void => {
       globalThis.removeEventListener("message", handleMessage);
     };
-  }, [studioEnabled, mode]);
+  }, [mode, studioEnabled]);
 
   return (
     <LiveDataProvider>
@@ -77,13 +77,11 @@ export function LiveApp({
               <LiveLayoutComponent layout={layout}>{children}</LiveLayoutComponent>
             </LiveProviderComponent>
 
-            {isStudioConnected
-              ? (
-                <div className="fixed bottom-4 left-4 bg-green-500 text-white px-3 py-1 rounded-full text-sm z-50">
-                  Studio Connected
-                </div>
-              )
-              : null}
+            {isStudioConnected && (
+              <div className="fixed bottom-4 left-4 bg-green-500 text-white px-3 py-1 rounded-full text-sm z-50">
+                Studio Connected
+              </div>
+            )}
           </LivePageContextProvider>
         </LiveDependenciesProvider>
       </LiveStylesheetProvider>

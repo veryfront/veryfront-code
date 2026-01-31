@@ -11,7 +11,10 @@ import { remarkCodeBlocks, remarkMdxRemoveParagraphs } from "./remark-mdx-utils.
 export type PluginFunction = (
   tree: MdastRoot | HastRoot,
   file?: unknown,
-) => void | Promise<void> | ((tree: MdastRoot | HastRoot, file?: unknown) => void);
+) =>
+  | void
+  | Promise<void>
+  | ((tree: MdastRoot | HastRoot, file?: unknown) => void);
 
 export function getRemarkPlugins(): Pluggable[] {
   return [
@@ -24,8 +27,5 @@ export function getRemarkPlugins(): Pluggable[] {
 }
 
 export function getRehypePlugins(): Pluggable[] {
-  return [
-    rehypeHighlight,
-    rehypeSlug,
-  ];
+  return [rehypeHighlight, rehypeSlug];
 }

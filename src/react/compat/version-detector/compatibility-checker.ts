@@ -34,13 +34,12 @@ export function checkVersionCompatibility(
       continue;
     }
 
-    if (REACT_18_FEATURES.has(feature)) {
-      errors.push(`Feature "${feature}" requires React 18+ (current: ${info.version})`);
-      compatible = false;
-      continue;
-    }
+    const isReact18Feature = REACT_18_FEATURES.has(feature);
+    const message = isReact18Feature
+      ? `Feature "${feature}" requires React 18+ (current: ${info.version})`
+      : `Feature "${feature}" is not available (current: React ${info.version})`;
 
-    errors.push(`Feature "${feature}" is not available (current: React ${info.version})`);
+    errors.push(message);
     compatible = false;
   }
 

@@ -62,20 +62,24 @@ export async function generateReactVersionConfig(
 
   const fs = createFileSystem();
   const baseConfigPath = join(projectDir, options.extends ?? "deno.json");
-  let baseConfig: Record<string, unknown> = {};
 
+  let baseConfig: Record<string, unknown> = {};
   try {
     baseConfig = JSON.parse(await fs.readTextFile(baseConfigPath));
   } catch (error) {
     logger.warn(`Could not read base config from ${baseConfigPath}`, error);
   }
 
+  const baseImports = (baseConfig.imports as Record<string, string> | undefined) ?? {};
+  const additionalImports = (options.additional?.imports as Record<string, string> | undefined) ??
+    {};
+
   const versionConfig = {
     ...baseConfig,
     imports: {
-      ...(baseConfig.imports ?? {}),
+      ...baseImports,
       ...config.imports,
-      ...(options.additional?.imports ?? {}),
+      ...additionalImports,
     },
   };
 
@@ -100,16 +104,21 @@ export function getReactImports(version: ReactVersion): Record<string, string> {
 export async function detectReactVersionFromConfig(
   projectDir: string,
 ): Promise<ReactVersion | null> {
-  try {
-    const fs = createFileSystem();
-    const configPath = join(projectDir, "deno.json");
-    const config = JSON.parse(await fs.readTextFile(configPath));
+  const fs = createFileSystem();
+  const configPath = join(projectDir, "deno.json");
 
-    const reactImport: string | undefined = config.imports?.react;
+  try {
+    const config = JSON.parse(await fs.readTextFile(configPath)) as {
+      imports?: { react?: string };
+    };
+
+    const reactImport = config.imports?.react;
     if (!reactImport) return null;
 
     for (const [version, versionConfig] of Object.entries(REACT_CONFIGS)) {
-      if (reactImport.includes(`@${versionConfig.exact}`)) return version as ReactVersion;
+      if (reactImport.includes(`@${versionConfig.exact}`)) {
+        return version as ReactVersion;
+      }
     }
 
     if (reactImport.includes("@17")) return "17";
@@ -123,7 +132,9 @@ export async function detectReactVersionFromConfig(
   }
 }
 
-export function createReactVersionSwitcher(projectDir: string): ReactVersionSwitcher {
+export function createReactVersionSwitcher(
+  projectDir: string,
+): ReactVersionSwitcher {
   return {
     async switchTo(version: ReactVersion): Promise<void> {
       const fs = createFileSystem();
@@ -134,7 +145,9 @@ export function createReactVersionSwitcher(projectDir: string): ReactVersionSwit
       }
 
       logger.info(`Switched to React ${version} configuration`);
-      logger.info(`Use --config deno.react${version}.json to run with React ${version}`);
+      logger.info(
+        `Use --config deno.react${version}.json to run with React ${version}`,
+      );
     },
 
     getCurrentVersion(): Promise<ReactVersion | null> {

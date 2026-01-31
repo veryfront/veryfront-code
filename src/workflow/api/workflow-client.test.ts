@@ -1,7 +1,3 @@
-/**
- * Workflow Client Tests
- */
-
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createWorkflowClient, WorkflowClient } from "./workflow-client.ts";
@@ -44,16 +40,20 @@ describe("WorkflowClient", () => {
   });
 
   describe("register()", () => {
+    async function withNewClient(
+      register: (client: WorkflowClient) => void,
+    ): Promise<void> {
+      const client = createWorkflowClient({ backend: new MemoryBackend() });
+      register(client);
+      await client.destroy();
+    }
+
     it("should register a workflow", async () => {
-      const newClient = createWorkflowClient({ backend: new MemoryBackend() });
-      newClient.register(testWorkflow);
-      await newClient.destroy();
+      await withNewClient((client) => client.register(testWorkflow));
     });
 
     it("should register workflow definition directly", async () => {
-      const newClient = createWorkflowClient({ backend: new MemoryBackend() });
-      newClient.register(testWorkflow.definition);
-      await newClient.destroy();
+      await withNewClient((client) => client.register(testWorkflow.definition));
     });
   });
 
@@ -101,19 +101,21 @@ describe("WorkflowClient", () => {
   });
 
   describe("listRuns()", () => {
-    it("should list workflow runs", async () => {
+    async function seedRuns(): Promise<void> {
       await client.start("test-workflow", {});
       await client.start("test-workflow", {});
       await client.start("approval-workflow", {});
+    }
+
+    it("should list workflow runs", async () => {
+      await seedRuns();
 
       const all = await client.listRuns();
       assertEquals(all.length, 3);
     });
 
     it("should filter by workflowId", async () => {
-      await client.start("test-workflow", {});
-      await client.start("test-workflow", {});
-      await client.start("approval-workflow", {});
+      await seedRuns();
 
       const filtered = await client.listRuns({ workflowId: "test-workflow" });
       assertEquals(filtered.length, 2);

@@ -27,7 +27,7 @@ describe("errors/catalog/rsc-errors", () => {
         assertEquals(typeof solution.message, "string", `message should be string for ${code}`);
         assertEquals(typeof solution.docs, "string", `docs should be string for ${code}`);
         assertEquals(Array.isArray(solution.steps), true, `steps should be array for ${code}`);
-        assertEquals(solution.steps!.length > 0, true, `steps should not be empty for ${code}`);
+        assertEquals(solution.steps.length > 0, true, `steps should not be empty for ${code}`);
       }
     });
 
@@ -38,13 +38,13 @@ describe("errors/catalog/rsc-errors", () => {
     it("CLIENT_BOUNDARY_VIOLATION should have an example", () => {
       const solution = RSC_ERROR_CATALOG[ErrorCode.CLIENT_BOUNDARY_VIOLATION]!;
       assertEquals(typeof solution.example, "string");
-      assertEquals(solution.example!.includes("use client"), true);
+      assertEquals(solution.example.includes("use client"), true);
     });
 
     it("INVALID_USE_CLIENT should have an example", () => {
       const solution = RSC_ERROR_CATALOG[ErrorCode.INVALID_USE_CLIENT]!;
       assertEquals(typeof solution.example, "string");
-      assertEquals(solution.example!.includes("use client"), true);
+      assertEquals(solution.example.includes("use client"), true);
     });
   });
 });

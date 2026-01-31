@@ -30,11 +30,11 @@ export default tool({
       milestone: issue.milestone
         ? { id: issue.milestone.id, title: issue.milestone.title }
         : null,
-      assignees: issue.assignees.map((a) => ({
-        id: a.id,
-        username: a.username,
-        name: a.name,
-        avatarUrl: a.avatar_url,
+      assignees: issue.assignees.map(({ id, username, name, avatar_url }) => ({
+        id,
+        username,
+        name,
+        avatarUrl: avatar_url,
       })),
       author: {
         id: issue.author.id,

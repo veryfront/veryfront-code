@@ -42,30 +42,38 @@ describe("route-parser", () => {
 
     it("should create regex that matches static paths", () => {
       const route = parseRoute("/about", "about.tsx");
-      assertEquals(route.regex?.test("/about"), true);
-      assertEquals(route.regex?.test("/about/more"), false);
+      const { regex } = route;
+
+      assertEquals(regex?.test("/about"), true);
+      assertEquals(regex?.test("/about/more"), false);
     });
 
     it("should create regex that matches dynamic params", () => {
       const route = parseRoute("/users/[id]", "user.tsx");
-      assertEquals(route.regex?.test("/users/123"), true);
-      assertEquals(route.regex?.test("/users/abc"), true);
-      assertEquals(route.regex?.test("/users/"), false);
+      const { regex } = route;
+
+      assertEquals(regex?.test("/users/123"), true);
+      assertEquals(regex?.test("/users/abc"), true);
+      assertEquals(regex?.test("/users/"), false);
     });
 
     it("should create regex that matches catch-all", () => {
       const route = parseRoute("/docs/[...slug]", "docs.tsx");
-      assertEquals(route.regex?.test("/docs/a/b/c"), true);
-      assertEquals(route.regex?.test("/docs/intro"), true);
-      assertEquals(route.regex?.test("/docs/"), false);
+      const { regex } = route;
+
+      assertEquals(regex?.test("/docs/a/b/c"), true);
+      assertEquals(regex?.test("/docs/intro"), true);
+      assertEquals(regex?.test("/docs/"), false);
     });
 
     it("should create regex that matches optional catch-all", () => {
       const route = parseRoute("/shop/[[...category]]", "shop.tsx");
-      assertEquals(route.regex?.test("/shop"), true);
-      assertEquals(route.regex?.test("/shop/"), true);
-      assertEquals(route.regex?.test("/shop/electronics"), true);
-      assertEquals(route.regex?.test("/shop/electronics/phones"), true);
+      const { regex } = route;
+
+      assertEquals(regex?.test("/shop"), true);
+      assertEquals(regex?.test("/shop/"), true);
+      assertEquals(regex?.test("/shop/electronics"), true);
+      assertEquals(regex?.test("/shop/electronics/phones"), true);
     });
   });
 
@@ -73,25 +81,41 @@ describe("route-parser", () => {
     it("should rank static routes highest", () => {
       const staticRoute = parseRoute("/about/team", "team.tsx");
       const dynamicRoute = parseRoute("/[id]", "dynamic.tsx");
-      assertGreater(getSpecificityScore(staticRoute), getSpecificityScore(dynamicRoute));
+
+      assertGreater(
+        getSpecificityScore(staticRoute),
+        getSpecificityScore(dynamicRoute),
+      );
     });
 
     it("should rank dynamic routes higher than catch-all", () => {
       const dynamicRoute = parseRoute("/users/[id]", "user.tsx");
       const catchAllRoute = parseRoute("/users/[...path]", "catch.tsx");
-      assertGreater(getSpecificityScore(dynamicRoute), getSpecificityScore(catchAllRoute));
+
+      assertGreater(
+        getSpecificityScore(dynamicRoute),
+        getSpecificityScore(catchAllRoute),
+      );
     });
 
     it("should rank catch-all higher than optional catch-all", () => {
       const catchAllRoute = parseRoute("/[...slug]", "catch.tsx");
       const optionalCatchAll = parseRoute("/[[...slug]]", "optional.tsx");
-      assertGreater(getSpecificityScore(catchAllRoute), getSpecificityScore(optionalCatchAll));
+
+      assertGreater(
+        getSpecificityScore(catchAllRoute),
+        getSpecificityScore(optionalCatchAll),
+      );
     });
 
     it("should give higher scores to longer routes", () => {
       const shortRoute = parseRoute("/a", "a.tsx");
       const longRoute = parseRoute("/a/b/c", "abc.tsx");
-      assertGreater(getSpecificityScore(longRoute), getSpecificityScore(shortRoute));
+
+      assertGreater(
+        getSpecificityScore(longRoute),
+        getSpecificityScore(shortRoute),
+      );
     });
   });
 });

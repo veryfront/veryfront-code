@@ -25,7 +25,8 @@ export function handleError(error: Error): void {
   }
 
   if (error.stack) {
-    safeLog(() => serverLogger.error(error.stack!));
+    const stack = error.stack;
+    safeLog(() => serverLogger.error(stack));
   }
 }
 
@@ -116,9 +117,11 @@ export async function retryWithBackoff<T>(
       lastError = error;
       safeLog(() => log.warn(`Attempt ${attempt + 1} failed, retrying...`, error));
 
-      if (attempt >= maxRetries - 1) continue;
+      if (attempt >= maxRetries - 1) {
+        continue;
+      }
 
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
       delay = Math.min(delay * 2, maxDelay);
     }
   }

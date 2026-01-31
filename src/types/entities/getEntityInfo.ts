@@ -158,14 +158,9 @@ export async function getEntityBySlug(
       });
 
       if (resolveFile) {
-        // Only check pages/ directory for routes (root files are not routable)
         const basePaths = [pathHelper.join(projectDir, "pages", slug)];
 
-        // .veryfront routes can be at root level
-        if (isVeryfrontRoute) {
-          basePaths.unshift(pathHelper.join(projectDir, slug));
-        }
-
+        if (isVeryfrontRoute) basePaths.unshift(pathHelper.join(projectDir, slug));
         if (slug === "index" || slug === "") {
           basePaths.unshift(pathHelper.join(projectDir, "pages", "index"));
         }
@@ -243,7 +238,6 @@ export async function getEntityBySlug(
         return null;
       }
 
-      // Only check pages/ directory for routes (root files are not routable)
       const possiblePaths = [
         pathHelper.join(projectDir, "pages", `${slug}.mdx`),
         pathHelper.join(projectDir, "pages", `${slug}.md`),
@@ -257,7 +251,6 @@ export async function getEntityBySlug(
         pathHelper.join(projectDir, "pages", `${slug}/index.ts`),
       ];
 
-      // .veryfront routes can be at root level
       if (isVeryfrontRoute) {
         possiblePaths.unshift(
           pathHelper.join(projectDir, `${slug}.mdx`),

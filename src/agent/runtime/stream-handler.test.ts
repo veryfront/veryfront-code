@@ -1,23 +1,25 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createStreamState, handleStreamEvent } from "./stream-handler.ts";
-import type { StreamState as _StreamState } from "./stream-handler.ts";
 
-function createMockController() {
+function createMockController(): {
+  controller: ReadableStreamDefaultController;
+  chunks: Uint8Array[];
+} {
   const chunks: Uint8Array[] = [];
   const controller = {
     enqueue(chunk: Uint8Array) {
       chunks.push(chunk);
     },
   } as unknown as ReadableStreamDefaultController;
+
   return { controller, chunks };
 }
 
 function decodeChunks(chunks: Uint8Array[]): Record<string, unknown>[] {
   const decoder = new TextDecoder();
-  return chunks.map((c) => {
-    const text = decoder.decode(c);
-    // SSE format: data: {...}\n\n
+  return chunks.map((chunk) => {
+    const text = decoder.decode(chunk);
     const json = text.replace(/^data:\s*/, "").trim();
     return JSON.parse(json);
   });
@@ -72,6 +74,7 @@ describe("stream-handler", () => {
 
       const events = decodeChunks(chunks);
       assertEquals(events.length, 1);
+
       const first = events[0];
       assertExists(first);
       assertEquals(first.type, "text-delta");
@@ -90,7 +93,7 @@ describe("stream-handler", () => {
         controller,
         encoder,
         undefined,
-        { onChunk: (c) => receivedChunks.push(c) },
+        { onChunk: (chunk) => receivedChunks.push(chunk) },
       );
 
       assertEquals(receivedChunks, ["data"]);
@@ -109,6 +112,7 @@ describe("stream-handler", () => {
       );
 
       assertEquals(state.toolCalls.size, 1);
+
       const tc = state.toolCalls.get("tc1");
       assertExists(tc);
       assertEquals(tc.name, "search");
@@ -119,7 +123,6 @@ describe("stream-handler", () => {
       const state = createStreamState();
       const { controller } = createMockController();
 
-      // First register the tool call
       state.toolCalls.set("tc1", { id: "tc1", name: "search", arguments: "" });
 
       handleStreamEvent(
@@ -158,6 +161,7 @@ describe("stream-handler", () => {
       );
 
       assertEquals(state.toolCalls.size, 1);
+
       const tc = state.toolCalls.get("tc2");
       assertExists(tc);
       assertEquals(tc.arguments, '{"x":1}');
@@ -191,32 +195,24 @@ describe("stream-handler", () => {
         controller,
         encoder,
         undefined,
-        {
-          onUsage: (u) => {
-            receivedUsage = u;
-          },
-        },
+        { onUsage: (usage) => (receivedUsage = usage) },
       );
 
-      const usage = receivedUsage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-      assertEquals(usage.promptTokens, 10);
+      assertEquals(receivedUsage?.promptTokens, 10);
     });
 
     it("ignores tool_call_start with no id", () => {
       const state = createStreamState();
-      const { controller, chunks: _chunks } = createMockController();
+      const { controller } = createMockController();
 
       handleStreamEvent(
-        { type: "tool_call_start", toolCall: { id: "", name: "x" } } as Parameters<
-          typeof handleStreamEvent
-        >[0],
+        { type: "tool_call_start", toolCall: { id: "", name: "x" } },
         state,
         controller,
         encoder,
         undefined,
       );
 
-      // No tool call registered because id is falsy
       assertEquals(state.toolCalls.size, 0);
     });
 
@@ -232,7 +228,6 @@ describe("stream-handler", () => {
         undefined,
       );
 
-      // Should not throw, just silently skip
       assertEquals(chunks.length, 0);
     });
   });

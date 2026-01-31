@@ -14,16 +14,16 @@ export class MinificationStrategy implements CSSOptimizationStrategy {
     return options.enabled !== false && options.minify !== false;
   }
 
-  process(
+  async process(
     content: string,
     filename: string,
     _options: CSSOptimizationOptions,
   ): Promise<CSSProcessingResult> {
     logger.debug(`Using basic minification for ${filename}`);
 
-    return Promise.resolve({
+    return {
       code: basicMinify(content),
       sourceMap: undefined,
-    });
+    };
   }
 }

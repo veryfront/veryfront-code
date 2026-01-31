@@ -64,7 +64,6 @@ export function getOutputPath(inputPath: string, outputDir: string): string {
   }
 
   const outputFilename = `${filename.replace(".css", "")}.min.css`;
-
   const isAbsolute = dir.startsWith("/") || /^[a-zA-Z]:/.test(dir);
   const relativePath = isAbsolute ? relative(cwd(), dir) : dir;
 

@@ -26,19 +26,24 @@ export function renderAttributes(props: Record<string, unknown>): string {
 }
 
 export async function treeToHTML(node: RSCNode): Promise<string> {
-  if (node.type === "html") return node.html ?? "";
+  switch (node.type) {
+    case "html":
+      return node.html ?? "";
 
-  if (node.type === "client") {
-    const instanceId = `rsc-${crypto.randomUUID()}`;
-    const propsJson = escapeHtml(stringifyProps(node.props ?? {}));
-    return `<div data-rsc-component="${node.component}" data-rsc-props='${propsJson}' data-rsc-id="${instanceId}"></div>`;
+    case "client": {
+      const instanceId = `rsc-${crypto.randomUUID()}`;
+      const propsJson = escapeHtml(stringifyProps(node.props ?? {}));
+      return `<div data-rsc-component="${node.component}" data-rsc-props='${propsJson}' data-rsc-id="${instanceId}"></div>`;
+    }
+
+    case "fragment":
+    case "server": {
+      const children = node.children ?? [];
+      const childrenHtml = await Promise.all(children.map(treeToHTML));
+      return childrenHtml.join("");
+    }
+
+    default:
+      return "";
   }
-
-  if (node.type === "fragment" || node.type === "server") {
-    const children = node.children ?? [];
-    const childrenHtml = await Promise.all(children.map(treeToHTML));
-    return childrenHtml.join("");
-  }
-
-  return "";
 }

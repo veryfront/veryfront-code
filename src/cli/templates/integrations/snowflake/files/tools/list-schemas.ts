@@ -19,27 +19,26 @@ export default tool({
   }),
   async execute({ database, includeDetails }) {
     const schemas = await listSchemas(database);
+    const count = schemas.length;
 
     if (!includeDetails) {
       return {
         database,
-        count: schemas.length,
+        count,
         schemas: schemas.map(({ name }) => name),
       };
     }
 
     return {
       database,
-      count: schemas.length,
-      schemas: schemas.map(
-        ({ name, database_name, created_on, owner, comment }) => ({
-          name,
-          databaseName: database_name,
-          createdOn: created_on,
-          owner,
-          comment: comment ?? null,
-        }),
-      ),
+      count,
+      schemas: schemas.map(({ name, database_name, created_on, owner, comment }) => ({
+        name,
+        databaseName: database_name,
+        createdOn: created_on,
+        owner,
+        comment: comment ?? null,
+      })),
     };
   },
 });

@@ -45,9 +45,7 @@ function renderLogo(): string[] {
   const offColor = useColor ? "\x1b[38;5;240m" : "";
 
   return AGENT_FACE.map((row) =>
-    row
-      .map((dot) => (dot === 1 ? `${litColor}●${RESET}` : `${offColor}○${RESET}`))
-      .join(" ")
+    row.map((dot) => (dot === 1 ? `${litColor}●${RESET}` : `${offColor}○${RESET}`)).join(" ")
   );
 }
 
@@ -59,11 +57,16 @@ function padVertical(lines: string[], targetHeight: number, width: number): stri
   const bottom = padCount - top;
   const blank = repeat(" ", width);
 
-  return [...Array(top).fill(blank), ...lines, ...Array(bottom).fill(blank)];
+  return [
+    ...Array.from({ length: top }, () => blank),
+    ...lines,
+    ...Array.from({ length: bottom }, () => blank),
+  ];
 }
 
 function buildTextLines(title: string, subtitle: string | undefined, info: BannerInfo): string[] {
-  return [brand(title) + (subtitle ? ` ${dim(subtitle)}` : ""), "", ...formatInfoLines(info)];
+  const titleLine = brand(title) + (subtitle ? ` ${dim(subtitle)}` : "");
+  return [titleLine, "", ...formatInfoLines(info)];
 }
 
 export function banner(options: BannerOptions = {}): string {
@@ -77,8 +80,8 @@ export function banner(options: BannerOptions = {}): string {
   } = options;
 
   const infoLines = buildTextLines(title, subtitle, info);
-
   let contentLines = infoLines;
+
   if (showLogo) {
     const logoLines = renderLogo();
     if (logoLines.length > 0) {
@@ -118,13 +121,16 @@ export function inlineBanner(options: BannerOptions = {}): string {
   const logoLines = renderLogo();
   const maxHeight = Math.max(logoLines.length, textLines.length);
   const textStart = Math.floor((maxHeight - textLines.length) / 2);
+  const blankLogo = repeat(" ", 13);
 
   const lines = Array.from({ length: maxHeight }, (_, i) => {
-    let line = "  " + (logoLines[i] ?? repeat(" ", 13));
+    let line = "  " + (logoLines[i] ?? blankLogo);
+
     const textIndex = i - textStart;
     if (textIndex >= 0 && textIndex < textLines.length) {
       line += "   " + textLines[textIndex];
     }
+
     return line;
   });
 

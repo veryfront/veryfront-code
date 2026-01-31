@@ -14,10 +14,22 @@ const baseConfig = {
 function createManager(
   options: Partial<ConstructorParameters<typeof ProxyFSAdapterManager>[0]> = {},
 ): ProxyFSAdapterManager {
-  return new ProxyFSAdapterManager({
-    baseConfig,
-    ...options,
-  });
+  return new ProxyFSAdapterManager({ baseConfig, ...options });
+}
+
+async function assertGetAdapterRejects(
+  manager: ProxyFSAdapterManager,
+  args: Parameters<ProxyFSAdapterManager["getAdapter"]>,
+  messageIncludes: string,
+): Promise<void> {
+  try {
+    await manager.getAdapter(...args);
+    assertEquals(true, false, "Should have thrown");
+  } catch (e) {
+    assertExists(e);
+    assertEquals(e instanceof Error, true);
+    assertEquals((e as Error).message.includes(messageIncludes), true);
+  }
 }
 
 describe("ProxyFSAdapterManager", () => {
@@ -55,7 +67,6 @@ describe("ProxyFSAdapterManager", () => {
 
     it("should default maxAdapters to 100", () => {
       const manager = createManager();
-      // Indirectly verify by checking it can be created
       assertExists(manager);
       manager.dispose();
     });
@@ -122,7 +133,6 @@ describe("ProxyFSAdapterManager", () => {
 
     it("should differentiate by releaseId in production mode", () => {
       const manager = createManager();
-      // Different release IDs should be different cache keys
       assertEquals(manager.hasAdapter("project", true, "rel-1"), false);
       assertEquals(manager.hasAdapter("project", true, "rel-2"), false);
       manager.dispose();
@@ -156,7 +166,6 @@ describe("ProxyFSAdapterManager", () => {
     it("should stop cleanup timer on dispose", () => {
       const manager = createManager({ cleanupIntervalMs: 1000 });
       manager.dispose();
-      // If cleanup timer wasn't cleared, test would hang or leak
     });
 
     it("should clear all adapters on dispose", () => {
@@ -171,12 +180,11 @@ describe("ProxyFSAdapterManager", () => {
     it("should reject empty projectSlug", async () => {
       const manager = createManager();
       try {
-        await manager.getAdapter("", "valid-token", undefined, false);
-        assertEquals(true, false, "Should have thrown");
-      } catch (e) {
-        assertExists(e);
-        assertEquals(e instanceof Error, true);
-        assertEquals((e as Error).message.includes("projectSlug"), true);
+        await assertGetAdapterRejects(
+          manager,
+          ["", "valid-token", undefined, false],
+          "projectSlug",
+        );
       } finally {
         manager.dispose();
       }
@@ -185,21 +193,17 @@ describe("ProxyFSAdapterManager", () => {
     it("should reject empty token", async () => {
       const manager = createManager();
       try {
-        await manager.getAdapter("valid-slug", "", undefined, false);
-        assertEquals(true, false, "Should have thrown");
-      } catch (e) {
-        assertExists(e);
-        assertEquals(e instanceof Error, true);
-        assertEquals((e as Error).message.includes("token"), true);
+        await assertGetAdapterRejects(
+          manager,
+          ["valid-slug", "", undefined, false],
+          "token",
+        );
       } finally {
         manager.dispose();
       }
     });
 
     it("should accept valid parameters structurally", () => {
-      // Verify that valid parameters pass Zod validation without making API calls
-      // We test this indirectly: if empty slug/token throws validation errors,
-      // then valid values would pass validation (API call would happen next)
       const manager = createManager();
       assertExists(manager);
       manager.dispose();

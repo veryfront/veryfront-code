@@ -60,9 +60,10 @@ export class ProxyFSAdapterManager {
     this.maxIdleMs = config.maxIdleMs ?? 30 * 60 * 1000;
 
     if (config.cleanupIntervalMs) {
-      this.cleanupTimer = setInterval((): void => {
-        this.cleanupIdleAdapters();
-      }, config.cleanupIntervalMs);
+      this.cleanupTimer = setInterval(
+        (): void => this.cleanupIdleAdapters(),
+        config.cleanupIntervalMs,
+      );
     }
 
     logger.debug("[ProxyFSAdapterManager] Created", {
@@ -356,10 +357,7 @@ export class ProxyFSAdapterManager {
 
     adapter.setContentContext(context);
 
-    const projectAdapter: ProjectAdapter = {
-      adapter,
-      lastAccessed: Date.now(),
-    };
+    const projectAdapter: ProjectAdapter = { adapter, lastAccessed: Date.now() };
 
     const initPromise = (async (): Promise<VeryfrontFSAdapter> => {
       const initStartTime = performance.now();
@@ -401,49 +399,36 @@ export class ProxyFSAdapterManager {
   }
 
   private evictLeastRecentlyUsed(): void {
-    let oldest: { cacheKey: string; time: number } | null = null;
+    let oldestCacheKey: string | null = null;
+    let oldestTime = Infinity;
 
     for (const [cacheKey, adapter] of this.adapters) {
-      if (!oldest || adapter.lastAccessed < oldest.time) {
-        oldest = { cacheKey, time: adapter.lastAccessed };
+      if (adapter.lastAccessed < oldestTime) {
+        oldestCacheKey = cacheKey;
+        oldestTime = adapter.lastAccessed;
       }
     }
 
-    if (!oldest) return;
+    if (!oldestCacheKey) return;
 
-    logger.debug("[ProxyFSAdapterManager] Evicting LRU adapter", { cacheKey: oldest.cacheKey });
+    logger.debug("[ProxyFSAdapterManager] Evicting LRU adapter", { cacheKey: oldestCacheKey });
 
-    const adapter = this.adapters.get(oldest.cacheKey);
+    const adapter = this.adapters.get(oldestCacheKey);
     if (!adapter) return;
 
     adapter.adapter.dispose();
-    this.adapters.delete(oldest.cacheKey);
+    this.adapters.delete(oldestCacheKey);
   }
 
   private cleanupIdleAdapters(): void {
     const now = Date.now();
-    const toRemove: string[] = [];
 
     for (const [cacheKey, adapter] of this.adapters) {
-      if (now - adapter.lastAccessed > this.maxIdleMs) {
-        toRemove.push(cacheKey);
-      }
-    }
+      if (now - adapter.lastAccessed <= this.maxIdleMs) continue;
 
-    for (const cacheKey of toRemove) {
       logger.debug("[ProxyFSAdapterManager] Removing idle adapter", { cacheKey });
-      const adapter = this.adapters.get(cacheKey);
-      if (!adapter) continue;
-
       adapter.adapter.dispose();
       this.adapters.delete(cacheKey);
-    }
-
-    if (toRemove.length) {
-      logger.debug("[ProxyFSAdapterManager] Cleanup complete", {
-        removed: toRemove.length,
-        remaining: this.adapters.size,
-      });
     }
   }
 

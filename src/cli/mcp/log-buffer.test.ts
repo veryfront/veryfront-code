@@ -23,7 +23,9 @@ describe("cli/mcp/log-buffer", () => {
       buf.info("i");
       buf.warn("w");
       buf.error("e");
+
       assertEquals(buf.count, 4);
+
       const counts = buf.countByLevel();
       assertEquals(counts.debug, 1);
       assertEquals(counts.info, 1);
@@ -37,7 +39,9 @@ describe("cli/mcp/log-buffer", () => {
       buf.info("2");
       buf.info("3");
       buf.info("4");
+
       assertEquals(buf.count, 3);
+
       const first = buf.getAll()[0];
       assertExists(first);
       assertEquals(first.message, "2");
@@ -48,9 +52,8 @@ describe("cli/mcp/log-buffer", () => {
       buf.info("a");
       buf.error("b");
       buf.info("c");
-      const errors = buf.query({ level: "error" });
-      assertEquals(errors.length, 1);
-      const first = errors[0];
+
+      const [first] = buf.query({ level: "error" });
       assertExists(first);
       assertEquals(first.message, "b");
     });
@@ -59,6 +62,7 @@ describe("cli/mcp/log-buffer", () => {
       const buf = new LogBuffer();
       buf.info("a", "src1");
       buf.info("b", "src2");
+
       const results = buf.query({ source: "src1" });
       assertEquals(results.length, 1);
     });
@@ -67,6 +71,7 @@ describe("cli/mcp/log-buffer", () => {
       const buf = new LogBuffer();
       buf.info("hello world");
       buf.info("goodbye");
+
       const results = buf.query({ pattern: "hello" });
       assertEquals(results.length, 1);
     });
@@ -75,6 +80,7 @@ describe("cli/mcp/log-buffer", () => {
       const buf = new LogBuffer();
       buf.info("error: something failed");
       buf.info("ok");
+
       const results = buf.query({ pattern: /error/i });
       assertEquals(results.length, 1);
     });
@@ -84,10 +90,10 @@ describe("cli/mcp/log-buffer", () => {
       buf.info("1");
       buf.info("2");
       buf.info("3");
-      const results = buf.query({ limit: 2 });
-      assertEquals(results.length, 2);
-      const first = results[0];
+
+      const [first, second] = buf.query({ limit: 2 });
       assertExists(first);
+      assertExists(second);
       assertEquals(first.message, "2");
     });
 
@@ -96,10 +102,10 @@ describe("cli/mcp/log-buffer", () => {
       buf.info("1");
       buf.info("2");
       buf.info("3");
-      const tail = buf.tail(2);
-      assertEquals(tail.length, 2);
-      const first = tail[0];
+
+      const [first, second] = buf.tail(2);
       assertExists(first);
+      assertExists(second);
       assertEquals(first.message, "2");
     });
 
@@ -114,8 +120,10 @@ describe("cli/mcp/log-buffer", () => {
       const buf = new LogBuffer();
       const received: string[] = [];
       const unsub = buf.subscribe((entry) => received.push(entry.message));
+
       buf.info("test");
       assertEquals(received, ["test"]);
+
       unsub();
       buf.info("after unsub");
       assertEquals(received.length, 1);
@@ -124,6 +132,7 @@ describe("cli/mcp/log-buffer", () => {
     it("should format entries", () => {
       const buf = new LogBuffer();
       buf.info("hello", "myapp");
+
       const formatted = buf.format();
       assertEquals(formatted.includes("INFO"), true);
       assertEquals(formatted.includes("myapp"), true);

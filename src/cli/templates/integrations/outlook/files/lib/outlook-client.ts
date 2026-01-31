@@ -95,8 +95,8 @@ export async function listEmails(options?: {
 }): Promise<OutlookMessage[]> {
   const params = new URLSearchParams();
 
-  if (options?.top) params.set("$top", options.top.toString());
-  if (options?.skip) params.set("$skip", options.skip.toString());
+  if (options?.top != null) params.set("$top", options.top.toString());
+  if (options?.skip != null) params.set("$skip", options.skip.toString());
   if (options?.filter) params.set("$filter", options.filter);
   if (options?.orderBy) params.set("$orderby", options.orderBy);
 
@@ -145,16 +145,12 @@ export async function searchEmails(options: {
   top?: number;
   skip?: number;
 }): Promise<OutlookMessage[]> {
-  const params = new URLSearchParams({
-    $search: `"${options.query}"`,
-  });
+  const params = new URLSearchParams({ $search: `"${options.query}"` });
 
-  if (options.top) params.set("$top", options.top.toString());
-  if (options.skip) params.set("$skip", options.skip.toString());
+  if (options.top != null) params.set("$top", options.top.toString());
+  if (options.skip != null) params.set("$skip", options.skip.toString());
 
-  const response = await graphFetch<GraphResponse<OutlookMessage>>(
-    `/messages?${params.toString()}`,
-  );
+  const response = await graphFetch<GraphResponse<OutlookMessage>>(`/messages?${params.toString()}`);
   return response.value ?? [];
 }
 

@@ -29,7 +29,7 @@ const DEFAULT_OPTIONS: Required<CSSOptimizationOptions> = {
 
 export class CSSOptimizerService {
   private options: Required<CSSOptimizationOptions>;
-  private strategies: CSSOptimizationStrategy[] = [];
+  private strategies: CSSOptimizationStrategy[];
   private cacheManager: CacheManager;
   private lightningStrategy: LightningCSSStrategy;
   private minificationStrategy: MinificationStrategy;
@@ -65,12 +65,9 @@ export class CSSOptimizerService {
     }
 
     const lightningReady = await this.lightningStrategy.init();
-
-    if (lightningReady) {
-      logger.info("Using Lightning CSS for optimization");
-    } else {
-      logger.info("Using fallback CSS minification");
-    }
+    logger.info(
+      lightningReady ? "Using Lightning CSS for optimization" : "Using fallback CSS minification",
+    );
 
     return true;
   }
@@ -95,7 +92,7 @@ export class CSSOptimizerService {
 
         await this.secureFs.mkdir(this.options.outputDir, { recursive: true });
 
-        const cssFiles = this.options.inputFiles.length > 0
+        const cssFiles = this.options.inputFiles.length
           ? this.options.inputFiles
           : await findCSSFiles(this.options.inputDir);
 
@@ -126,33 +123,13 @@ export class CSSOptimizerService {
       const content = await this.secureFs.readFile(cssPath);
       const originalSize = new TextEncoder().encode(content).length;
 
-      let optimized = content;
-      let sourceMap: string | undefined;
-
-      const strategy = this.selectStrategy();
-
-      if (!strategy) {
-        if (this.options.minify) {
-          optimized = basicMinify(content);
-        }
-      } else {
-        try {
-          const result = await strategy.process(content, cssPath, this.options);
-          optimized = result.code;
-          sourceMap = result.sourceMap;
-        } catch (error) {
-          logger.warn(`Strategy ${strategy.name} failed, using fallback`, {
-            error: error instanceof Error ? error.message : String(error),
-          });
-          optimized = basicMinify(content);
-        }
-      }
+      const { optimized, sourceMap } = await this.processContent(content, cssPath);
 
       const outputPath = getOutputPath(relPath, this.options.outputDir);
       await this.secureFs.mkdir(dirname(outputPath), { recursive: true });
       await this.secureFs.writeFile(outputPath, optimized);
 
-      if (sourceMap && this.options.sourceMap) {
+      if (this.options.sourceMap && sourceMap) {
         await this.secureFs.writeFile(`${outputPath}.map`, sourceMap);
       }
 
@@ -182,14 +159,37 @@ export class CSSOptimizerService {
     }
   }
 
+  private async processContent(
+    content: string,
+    cssPath: string,
+  ): Promise<{ optimized: string; sourceMap?: string }> {
+    const strategy = this.selectStrategy();
+
+    if (!strategy) {
+      return { optimized: this.options.minify ? basicMinify(content) : content };
+    }
+
+    try {
+      const result = await strategy.process(content, cssPath, this.options);
+      return { optimized: result.code, sourceMap: result.sourceMap };
+    } catch (error) {
+      logger.warn(`Strategy ${strategy.name} failed, using fallback`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { optimized: basicMinify(content) };
+    }
+  }
+
   private selectStrategy(): CSSOptimizationStrategy | null {
     const sortedStrategies = [...this.strategies].sort((a, b) => b.priority - a.priority);
 
     for (const strategy of sortedStrategies) {
-      if (strategy.canProcess(this.options)) {
-        logger.debug(`Selected strategy: ${strategy.name}`);
-        return strategy;
+      if (!strategy.canProcess(this.options)) {
+        continue;
       }
+
+      logger.debug(`Selected strategy: ${strategy.name}`);
+      return strategy;
     }
 
     return null;

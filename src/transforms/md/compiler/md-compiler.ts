@@ -8,8 +8,7 @@ import rehypeSlug from "rehype-slug";
 import rehypeStringify from "rehype-stringify";
 import { visit } from "unist-util-visit";
 import { toString } from "mdast-util-to-string";
-import type { Root as MdastRoot } from "mdast";
-import type { Heading } from "mdast";
+import type { Heading, Root as MdastRoot } from "mdast";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { extractFrontmatter } from "../../mdx/compiler/frontmatter-extractor.ts";
 import type {
@@ -31,7 +30,7 @@ interface ExtractedHeading {
 function remarkExtractHeadings(headings: ExtractedHeading[]) {
   const slugger = new Slugger();
 
-  return (tree: MdastRoot) => {
+  return (tree: MdastRoot): void => {
     visit(tree, "heading", (node: Heading) => {
       const text = toString(node);
       const id = slugger.slug(text);
@@ -41,10 +40,29 @@ function remarkExtractHeadings(headings: ExtractedHeading[]) {
 }
 
 function escapeForJsString(str: string): string {
-  return str
-    .replace(/\\/g, "\\\\")
-    .replace(/`/g, "\\`")
-    .replace(/\$/g, "\\$");
+  return str.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+}
+
+function createCompiledCode(escapedHtml: string, isPreview: boolean): string {
+  if (isPreview) {
+    return `import { jsx as _jsx } from "react/jsx-runtime";
+export default function MDContent({ components, params, ...props }) {
+  return _jsx("div", {
+    className: "markdown-body",
+    dangerouslySetInnerHTML: { __html: \`${escapedHtml}\` }
+  });
+}
+`;
+  }
+
+  return `import { jsx as _jsx } from "react/jsx-runtime";
+export default function MDContent({ components, params, className, ...props }) {
+  return _jsx("div", {
+    className,
+    dangerouslySetInnerHTML: { __html: \`${escapedHtml}\` }
+  });
+}
+`;
 }
 
 export function compileMarkdownRuntime(
@@ -58,7 +76,7 @@ export function compileMarkdownRuntime(
 ): Promise<MdxRuntimeBundle> {
   return withSpan(
     "transforms.compileMarkdownRuntime",
-    async () => {
+    async (): Promise<MdxRuntimeBundle> => {
       try {
         const { body, frontmatter: extractedFrontmatter } = extractFrontmatter(
           content,
@@ -93,23 +111,7 @@ export function compileMarkdownRuntime(
         const isPreview = checkMarkdownPreview(filePath, extractedFrontmatter);
 
         // Note: destructure params/components to prevent them from spreading to DOM
-        const compiledCode = isPreview
-          ? `import { jsx as _jsx } from "react/jsx-runtime";
-export default function MDContent({ components, params, ...props }) {
-  return _jsx("div", {
-    className: "markdown-body",
-    dangerouslySetInnerHTML: { __html: \`${escapedHtml}\` }
-  });
-}
-`
-          : `import { jsx as _jsx } from "react/jsx-runtime";
-export default function MDContent({ components, params, className, ...props }) {
-  return _jsx("div", {
-    className,
-    dangerouslySetInnerHTML: { __html: \`${escapedHtml}\` }
-  });
-}
-`;
+        const compiledCode = createCompiledCode(escapedHtml, isPreview);
 
         return {
           compiledCode,
@@ -120,18 +122,18 @@ export default function MDContent({ components, params, className, ...props }) {
           rawHtml: html,
         };
       } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+
         logger.error("[MD Compiler] Compilation failed:", {
           filePath,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
+          error: err.message,
+          stack: err.stack,
         });
 
         throw toError(
           createError({
             type: "build",
-            message: `Markdown compilation error: ${
-              error instanceof Error ? error.message : String(error)
-            } | file: ${filePath ?? "<memory>"}`,
+            message: `Markdown compilation error: ${err.message} | file: ${filePath ?? "<memory>"}`,
           }),
         );
       }

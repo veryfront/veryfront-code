@@ -18,6 +18,9 @@ export default tool({
   async execute({ parentFolderId, fileName, fileContent }) {
     const file = await uploadFile({ parentFolderId, fileName, fileContent });
 
+    const path =
+      file.path_collection?.entries.map((entry) => entry.name).join("/") ?? "/";
+
     return {
       success: true,
       file: {
@@ -25,7 +28,7 @@ export default tool({
         name: file.name,
         size: file.size,
         createdAt: file.created_at,
-        path: file.path_collection?.entries.map((e) => e.name).join("/") ?? "/",
+        path,
       },
     };
   },

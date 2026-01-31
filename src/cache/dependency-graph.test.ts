@@ -43,7 +43,6 @@ describe("DependencyGraph", () => {
       graph.addModule("/b.ts", ["/c.ts"]);
       graph.addModule("/c.ts", ["/a.ts"]); // Cycle: c -> a
 
-      // Should not throw and should return all nodes
       const deps = graph.getTransitiveDependencies("/a.ts");
       expect(deps).toContain("/b.ts");
       expect(deps).toContain("/c.ts");
@@ -53,8 +52,7 @@ describe("DependencyGraph", () => {
       const graph = new DependencyGraph();
       graph.addModule("/a.ts", ["/a.ts"]); // Self-reference
 
-      const deps = graph.getTransitiveDependencies("/a.ts");
-      expect(deps).toEqual([]);
+      expect(graph.getTransitiveDependencies("/a.ts")).toEqual([]);
     });
   });
 
@@ -78,9 +76,7 @@ describe("DependencyGraph", () => {
       graph.addModule("/a.ts", ["/b.ts"]);
       graph.addModule("/b.ts", ["/c.ts"]);
 
-      // Adding c -> a would create a cycle
       expect(graph.wouldCreateCycle("/c.ts", "/a.ts")).toBe(true);
-      // Adding d -> a would not create a cycle
       expect(graph.wouldCreateCycle("/d.ts", "/a.ts")).toBe(false);
     });
   });
@@ -152,7 +148,6 @@ describe("normalizeSpecifierToPath", () => {
       "/project/pages/index.tsx",
       "/project",
     );
-    // Path is normalized without extension since original doesn't have one
     expect(result).toBe("/project/components/Button");
   });
 
@@ -162,7 +157,6 @@ describe("normalizeSpecifierToPath", () => {
       "/project/pages/index.tsx",
       "/project",
     );
-    // Relative path from pages dir
     expect(result).toBe("/project/pages/utils/helpers");
   });
 
@@ -172,7 +166,6 @@ describe("normalizeSpecifierToPath", () => {
       "/project/pages/home/index.tsx",
       "/project",
     );
-    // Goes up from home to pages, then into shared
     expect(result).toBe("/project/pages/shared/types");
   });
 

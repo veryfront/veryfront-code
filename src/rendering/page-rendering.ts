@@ -42,15 +42,15 @@ export function handleMDXPage(
   return withSpan(
     "rendering.handleMDXPage",
     async () => {
-      const frontmatter = pageInfo.entity.frontmatter;
+      const { frontmatter, content, path } = pageInfo.entity;
       const fmArg = frontmatter && Object.keys(frontmatter).length > 0 ? frontmatter : undefined;
 
       const ssrBundle = await compileContent(
         "development",
         projectDir,
-        pageInfo.entity.content,
+        content,
         fmArg,
-        pageInfo.entity.path,
+        path,
         "server",
       );
 
@@ -64,9 +64,9 @@ export function handleMDXPage(
           const browserBundle = await compileContent(
             "development",
             projectDir,
-            pageInfo.entity.content,
+            content,
             fmArg,
-            pageInfo.entity.path,
+            path,
             "browser",
           );
           pageBundle.clientModuleCode = browserBundle.compiledCode;
@@ -101,8 +101,8 @@ export function handleMDXPage(
           collectedMetadata = { ...collectedMetadata, ...mod.metadata };
         }
 
-        try {
-          if (typeof mod.generateMetadata === "function") {
+        if (typeof mod.generateMetadata === "function") {
+          try {
             const params = options?.params
               ? (Object.fromEntries(
                 Object.entries(options.params).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]),
@@ -112,22 +112,22 @@ export function handleMDXPage(
             const gen = await mod.generateMetadata({
               params,
               slug,
-              path: pageInfo.entity.path,
+              path,
               frontmatter: frontmatter || {},
             });
 
             if (gen && typeof gen === "object") {
               collectedMetadata = { ...collectedMetadata, ...(gen as Record<string, unknown>) };
             }
+          } catch (e) {
+            const normalizedError = ensureError(e);
+            logger.warn("generateMetadata threw for MDX page", {
+              error: normalizedError.message,
+              slug,
+              path,
+            });
+            throw normalizedError;
           }
-        } catch (e) {
-          const normalizedError = ensureError(e);
-          logger.warn("generateMetadata threw for MDX page", {
-            error: normalizedError.message,
-            slug,
-            path: pageInfo.entity.path,
-          });
-          throw normalizedError;
         }
 
         // Get project's React for createElement to ensure element symbols match user components

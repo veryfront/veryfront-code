@@ -12,21 +12,20 @@ function getFs(): FileSystem {
 async function isNotFoundError(error: unknown, path: string): Promise<boolean> {
   const nodeError = error as NodeJS.ErrnoException | undefined;
   if (nodeError?.code === "ENOENT") return true;
-
   if (error instanceof Error && error.name === "NotFound") return true;
-
   return !(await getFs().exists(path));
 }
 
-export async function loadEnv(options: {
-  cwd?: string;
-  override?: boolean;
-  debug?: boolean;
-} = {}): Promise<void> {
+export async function loadEnv(
+  options: {
+    cwd?: string;
+    override?: boolean;
+    debug?: boolean;
+  } = {},
+): Promise<void> {
   const { cwd = getCwd(), override = false, debug = false } = options;
 
   const env = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
-
   const envFiles = [`${cwd}/.env`, `${cwd}/.env.${env}`, `${cwd}/.env.local`];
 
   let loadedCount = 0;
@@ -55,17 +54,16 @@ export async function loadEnv(options: {
       loadedCount++;
       if (debug) logger.debug(`[env] Loaded ${file}`);
     } catch (error) {
-      if (!(await isNotFoundError(error, file))) {
-        logger.warn(`[env] Failed to load ${file}:`, error);
-      }
+      if (await isNotFoundError(error, file)) continue;
+      logger.warn(`[env] Failed to load ${file}:`, error);
     }
   }
 
-  if (loadedCount > 0) {
-    logger.debug(
-      `[env] Loaded ${totalVars} environment variables from ${loadedCount} file(s)`,
-    );
-  }
+  if (loadedCount === 0) return;
+
+  logger.debug(
+    `[env] Loaded ${totalVars} environment variables from ${loadedCount} file(s)`,
+  );
 }
 
 function parseEnvFile(content: string): Record<string, string> {

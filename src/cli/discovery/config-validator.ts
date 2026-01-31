@@ -27,6 +27,22 @@ export function validateAIConfig(config: VeryfrontConfig): ValidationResult {
   return result;
 }
 
+function _printMessages(
+  title: string,
+  icon: string,
+  color: (text: string) => string,
+  messages: string[],
+): void {
+  if (messages.length === 0) return;
+
+  console.log("");
+  logger.warn(`${color(title)}:`);
+  for (const message of messages) {
+    console.log(`  ${color(icon)} ${message.replace(/\n/g, "\n    ")}`);
+  }
+  console.log("");
+}
+
 export function runAIConfigValidation(config: VeryfrontConfig): void {
   const result = validateAIConfig(config);
 

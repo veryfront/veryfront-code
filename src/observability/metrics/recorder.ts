@@ -32,10 +32,12 @@ export class MetricsRecorder {
 
   recordCacheGet(hit: boolean, attributes?: Record<string, string>): void {
     this.instruments.cacheGetCounter?.add(1, attributes);
-    (hit ? this.instruments.cacheHitCounter : this.instruments.cacheMissCounter)?.add(
-      1,
-      attributes,
-    );
+
+    if (hit) {
+      this.instruments.cacheHitCounter?.add(1, attributes);
+    } else {
+      this.instruments.cacheMissCounter?.add(1, attributes);
+    }
   }
 
   recordCacheSet(attributes?: Record<string, string>): void {
@@ -48,10 +50,7 @@ export class MetricsRecorder {
     attributes?: Record<string, string>,
   ): void {
     this.instruments.cacheInvalidateCounter?.add(count, attributes);
-    this.runtimeState.cacheSize = Math.max(
-      0,
-      this.runtimeState.cacheSize - count,
-    );
+    this.runtimeState.cacheSize = Math.max(0, this.runtimeState.cacheSize - count);
   }
 
   setCacheSize(size: number): void {

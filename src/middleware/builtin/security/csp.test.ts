@@ -8,16 +8,22 @@ describe("contentSecurityPolicy", () => {
     return new MiddlewareContext(new Request("https://example.com/"));
   }
 
+  async function runMiddleware(
+    middleware: ReturnType<typeof contentSecurityPolicy>,
+    response: Response,
+  ): Promise<Response | undefined> {
+    return await middleware(createContext(), () => Promise.resolve(response));
+  }
+
+  function getCsp(response: Response | undefined): string {
+    return response?.headers.get("Content-Security-Policy") ?? "";
+  }
+
   it("should add CSP header to response", async () => {
     const middleware = contentSecurityPolicy({ "default-src": "'self'" });
+    const response = await runMiddleware(middleware, new Response("OK"));
 
-    const response = await middleware(
-      createContext(),
-      () => Promise.resolve(new Response("OK")),
-    );
-
-    const csp = response?.headers.get("Content-Security-Policy") ?? "";
-    assertStringIncludes(csp, "default-src 'self'");
+    assertStringIncludes(getCsp(response), "default-src 'self'");
   });
 
   it("should combine multiple directives", async () => {
@@ -27,12 +33,9 @@ describe("contentSecurityPolicy", () => {
       "style-src": "'self' 'unsafe-inline'",
     });
 
-    const response = await middleware(
-      createContext(),
-      () => Promise.resolve(new Response("OK")),
-    );
+    const response = await runMiddleware(middleware, new Response("OK"));
+    const csp = getCsp(response);
 
-    const csp = response?.headers.get("Content-Security-Policy") ?? "";
     assertStringIncludes(csp, "default-src 'self'");
     assertStringIncludes(csp, "script-src 'self' https://cdn.example.com");
     assertStringIncludes(csp, "style-src 'self' 'unsafe-inline'");
@@ -44,13 +47,9 @@ describe("contentSecurityPolicy", () => {
       { nonce: "abc123" },
     );
 
-    const response = await middleware(
-      createContext(),
-      () => Promise.resolve(new Response("OK")),
-    );
+    const response = await runMiddleware(middleware, new Response("OK"));
 
-    const csp = response?.headers.get("Content-Security-Policy") ?? "";
-    assertStringIncludes(csp, "'nonce-abc123'");
+    assertStringIncludes(getCsp(response), "'nonce-abc123'");
   });
 
   it("should merge with existing CSP", async () => {
@@ -59,22 +58,18 @@ describe("contentSecurityPolicy", () => {
       { merge: "frame-ancestors 'none'" },
     );
 
-    const response = await middleware(
-      createContext(),
-      () => Promise.resolve(new Response("OK")),
-    );
+    const response = await runMiddleware(middleware, new Response("OK"));
+    const csp = getCsp(response);
 
-    const csp = response?.headers.get("Content-Security-Policy") ?? "";
     assertStringIncludes(csp, "frame-ancestors 'none'");
     assertStringIncludes(csp, "default-src 'self'");
   });
 
   it("should preserve original response status", async () => {
     const middleware = contentSecurityPolicy({ "default-src": "'self'" });
-
-    const response = await middleware(
-      createContext(),
-      () => Promise.resolve(new Response("Created", { status: 201 })),
+    const response = await runMiddleware(
+      middleware,
+      new Response("Created", { status: 201 }),
     );
 
     assertEquals(response?.status, 201);
@@ -82,11 +77,7 @@ describe("contentSecurityPolicy", () => {
 
   it("should preserve original response body", async () => {
     const middleware = contentSecurityPolicy({ "default-src": "'self'" });
-
-    const response = await middleware(
-      createContext(),
-      () => Promise.resolve(new Response("Original Body")),
-    );
+    const response = await runMiddleware(middleware, new Response("Original Body"));
 
     assertEquals(await response?.text(), "Original Body");
   });

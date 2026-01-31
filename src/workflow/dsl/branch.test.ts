@@ -104,8 +104,7 @@ describe("unless()", () => {
     );
 
     const config = node.config as BranchNodeConfig;
-    const result = await config.condition({} as never);
-    assertEquals(result, true);
+    assertEquals(await config.condition({} as never), true);
 
     originalConditionValue = true;
 
@@ -116,7 +115,6 @@ describe("unless()", () => {
     );
 
     const config2 = node2.config as BranchNodeConfig;
-    const result2 = await config2.condition({} as never);
-    assertEquals(result2, false);
+    assertEquals(await config2.condition({} as never), false);
   });
 });

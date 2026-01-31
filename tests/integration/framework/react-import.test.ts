@@ -1,5 +1,3 @@
-import * as React from "react";
-void React;
 import { assertEquals, assertExists } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
@@ -12,7 +10,6 @@ describe("React Import Tests", () => {
   describe("ComponentRegistry", () => {
     it("should handle React imports in components", async () => {
       await withTestContext("react-import-component", async (context) => {
-        // Create a test component with React import
         const testComponentContent = `
 import React from 'react';
 
@@ -28,19 +25,15 @@ export default function TestComponent() {
 
         const componentsDir = `${context.projectDir}/components`;
         await mkdir(componentsDir, { recursive: true });
-        const componentPath = `${componentsDir}/TestComponent.tsx`;
 
-        // Write the test component
-        await writeTextFile(componentPath, testComponentContent);
+        await writeTextFile(`${componentsDir}/TestComponent.tsx`, testComponentContent);
 
-        // Test component registry
         const registry = new ComponentRegistry({
           projectDir: context.projectDir,
           adapter: await getAdapter(),
         });
         await registry.discover();
 
-        // Check if component was loaded
         const componentInfo = await registry.loadComponent("TestComponent");
         assertEquals(componentInfo !== null, true, "Component should be discovered");
         assertEquals(componentInfo?.isLoaded, true, "Component should be loaded");
@@ -54,7 +47,6 @@ export default function TestComponent() {
 
     it("should handle multiple React components", async () => {
       await withTestContext("react-import-multiple", async (context) => {
-        // Create multiple test components
         const components = [
           {
             name: "Button.tsx",
@@ -83,25 +75,23 @@ export default function Card({ title, children }) {
         const componentsDir = `${context.projectDir}/components`;
         await mkdir(componentsDir, { recursive: true });
 
-        // Write all components
-        for (const comp of components) {
-          await writeTextFile(`${componentsDir}/${comp.name}`, comp.content);
+        for (const { name, content } of components) {
+          await writeTextFile(`${componentsDir}/${name}`, content);
         }
 
-        // Load components
         const registry = new ComponentRegistry({
           projectDir: context.projectDir,
           adapter: await getAdapter(),
         });
         await registry.discover();
 
-        // Verify all components discovered
         assertEquals(registry.has("Button"), true, "Button component should be discovered");
         assertEquals(registry.has("Card"), true, "Card component should be discovered");
 
-        // Load and verify components
-        const buttonInfo = await registry.loadComponent("Button");
-        const cardInfo = await registry.loadComponent("Card");
+        const [buttonInfo, cardInfo] = await Promise.all([
+          registry.loadComponent("Button"),
+          registry.loadComponent("Card"),
+        ]);
 
         assertEquals(buttonInfo?.isLoaded, true, "Button should be loaded");
         assertEquals(cardInfo?.isLoaded, true, "Card should be loaded");
@@ -111,7 +101,6 @@ export default function Card({ title, children }) {
 
   describe("Import Map Loader", () => {
     it("should transform imports with import map", () => {
-      // Test code with various import patterns
       const testCode = `
 import React from 'react';
 import { useState, useEffect } from 'react';
@@ -124,20 +113,17 @@ const MyComponent = () => {
 };
 `;
 
-      // Create a minimal import map for testing
       const importMap = {
         imports: {
-          "react": "https://esm.sh/react@19.0.0",
+          react: "https://esm.sh/react@19.0.0",
           "react-dom": "https://esm.sh/react-dom@19.0.0",
           "react/jsx-runtime": "https://esm.sh/react@19.0.0/jsx-runtime",
         },
       };
       assertExists(importMap.imports, "Import map should have imports");
 
-      // Transform the code
       const transformed = transformImportsWithMap(testCode, importMap);
 
-      // Verify React imports are left as bare imports (managed by import map)
       assertEquals(
         transformed.includes('from "react"'),
         true,

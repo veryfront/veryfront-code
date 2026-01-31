@@ -3,19 +3,14 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
-// ──────────────────────────────────────────────────────────────
-// Pure-logic duplicates from loader.ts for isolated unit testing
-// (these are non-exported helpers)
-// ──────────────────────────────────────────────────────────────
-
 function resolveProjectDir(context: {
   projectDir?: string;
   adapter?: { env: { get(key: string): string | undefined } };
 }): string {
   if (context.projectDir) return context.projectDir;
 
-  const envProjectDir = context.adapter?.env.get("VERYFRONT_PROJECT_DIR") ??
-    context.adapter?.env.get("VF_PROJECT_DIR");
+  const env = context.adapter?.env;
+  const envProjectDir = env?.get("VERYFRONT_PROJECT_DIR") ?? env?.get("VF_PROJECT_DIR");
   if (envProjectDir) return envProjectDir;
 
   throw new Error(
@@ -24,7 +19,7 @@ function resolveProjectDir(context: {
 }
 
 function rewriteProjectAliasImports(code: string): string {
-  return code.replace(/from\s+["']@\/([^"']+)["']/g, (_match, path) => {
+  return code.replace(/from\s+["']@\/([^"']+)["']/g, (_match, path: string) => {
     const jsPath = path.endsWith(".js") ? path : `${path}.js`;
     return `from "/_vf_modules/${jsPath}"`;
   });
@@ -35,8 +30,10 @@ function stripReactFromImportMap(importMap: {
   scopes?: Record<string, Record<string, string>>;
 }): { imports?: Record<string, string>; scopes?: Record<string, Record<string, string>> } {
   const isReactSpecifier = (key: string): boolean =>
-    key === "react" || key === "react-dom" ||
-    key.startsWith("react/") || key.startsWith("react-dom/");
+    key === "react" ||
+    key === "react-dom" ||
+    key.startsWith("react/") ||
+    key.startsWith("react-dom/");
 
   const imports = importMap.imports ? { ...importMap.imports } : undefined;
   if (imports) {
@@ -67,29 +64,23 @@ function findVfModuleImports(code: string): Array<{ original: string; path: stri
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(code)) !== null) {
     const [original, , path] = match;
-    if (path) imports.push({ original, path });
+    imports.push({ original, path });
   }
 
   return imports;
 }
 
-// ──────────────────────────────────────────────────────────────
-// Tests
-// ──────────────────────────────────────────────────────────────
-
 describe("esm-module-loader/loader", { sanitizeResources: false, sanitizeOps: false }, () => {
-  // ── resolveProjectDir ──
   describe("resolveProjectDir", () => {
     it("returns projectDir when provided directly", () => {
-      const result = resolveProjectDir({ projectDir: "/my/project" });
-      assertEquals(result, "/my/project");
+      assertEquals(resolveProjectDir({ projectDir: "/my/project" }), "/my/project");
     });
 
     it("falls back to VERYFRONT_PROJECT_DIR env var", () => {
       const ctx = {
         adapter: {
           env: {
-            get: (key: string) => key === "VERYFRONT_PROJECT_DIR" ? "/env/project" : undefined,
+            get: (key: string) => (key === "VERYFRONT_PROJECT_DIR" ? "/env/project" : undefined),
           },
         },
       };
@@ -100,7 +91,7 @@ describe("esm-module-loader/loader", { sanitizeResources: false, sanitizeOps: fa
       const ctx = {
         adapter: {
           env: {
-            get: (key: string) => key === "VF_PROJECT_DIR" ? "/vf/project" : undefined,
+            get: (key: string) => (key === "VF_PROJECT_DIR" ? "/vf/project" : undefined),
           },
         },
       };
@@ -123,53 +114,54 @@ describe("esm-module-loader/loader", { sanitizeResources: false, sanitizeOps: fa
     });
 
     it("throws when no project dir available", () => {
-      let threw = false;
       try {
         resolveProjectDir({});
       } catch (e) {
-        threw = true;
         assertEquals((e as Error).message.includes("projectDir is required"), true);
+        return;
       }
-      assertEquals(threw, true);
+      assertEquals(true, false);
     });
 
     it("throws when adapter has no matching env vars", () => {
-      let threw = false;
       try {
         resolveProjectDir({ adapter: { env: { get: () => undefined } } });
       } catch {
-        threw = true;
+        return;
       }
-      assertEquals(threw, true);
+      assertEquals(true, false);
     });
   });
 
-  // ── rewriteProjectAliasImports ──
   describe("rewriteProjectAliasImports", () => {
     it("rewrites @/ imports to /_vf_modules/ paths", () => {
       const code = `import Foo from "@/components/Foo";`;
-      const result = rewriteProjectAliasImports(code);
-      assertEquals(result, `import Foo from "/_vf_modules/components/Foo.js";`);
+      assertEquals(
+        rewriteProjectAliasImports(code),
+        `import Foo from "/_vf_modules/components/Foo.js";`,
+      );
     });
 
     it("preserves .js extension if already present", () => {
       const code = `import utils from "@/lib/utils.js";`;
-      const result = rewriteProjectAliasImports(code);
-      assertEquals(result, `import utils from "/_vf_modules/lib/utils.js";`);
+      assertEquals(
+        rewriteProjectAliasImports(code),
+        `import utils from "/_vf_modules/lib/utils.js";`,
+      );
     });
 
     it("handles single-quoted imports", () => {
       const code = `import Bar from '@/components/Bar';`;
-      const result = rewriteProjectAliasImports(code);
-      assertEquals(result, `import Bar from "/_vf_modules/components/Bar.js";`);
+      assertEquals(
+        rewriteProjectAliasImports(code),
+        `import Bar from "/_vf_modules/components/Bar.js";`,
+      );
     });
 
     it("rewrites multiple alias imports", () => {
-      const code = [
-        `import A from "@/a";`,
-        `import B from "@/b";`,
-        `import C from "react";`,
-      ].join("\n");
+      const code = [`import A from "@/a";`, `import B from "@/b";`, `import C from "react";`].join(
+        "\n",
+      );
       const result = rewriteProjectAliasImports(code);
       assertEquals(result.includes(`"/_vf_modules/a.js"`), true);
       assertEquals(result.includes(`"/_vf_modules/b.js"`), true);
@@ -187,28 +179,27 @@ describe("esm-module-loader/loader", { sanitizeResources: false, sanitizeOps: fa
     });
   });
 
-  // ── stripReactFromImportMap ──
   describe("stripReactFromImportMap", () => {
     it("removes react from imports", () => {
       const result = stripReactFromImportMap({
         imports: {
-          "react": "https://esm.sh/react@18",
-          "lodash": "https://esm.sh/lodash",
+          react: "https://esm.sh/react@18",
+          lodash: "https://esm.sh/lodash",
         },
       });
-      assertEquals(result.imports?.["react"], undefined);
-      assertEquals(result.imports?.["lodash"], "https://esm.sh/lodash");
+      assertEquals(result.imports?.react, undefined);
+      assertEquals(result.imports?.lodash, "https://esm.sh/lodash");
     });
 
     it("removes react-dom from imports", () => {
       const result = stripReactFromImportMap({
         imports: {
           "react-dom": "https://esm.sh/react-dom@18",
-          "other": "https://other.com",
+          other: "https://other.com",
         },
       });
       assertEquals(result.imports?.["react-dom"], undefined);
-      assertEquals(result.imports?.["other"], "https://other.com");
+      assertEquals(result.imports?.other, "https://other.com");
     });
 
     it("removes react subpath imports", () => {
@@ -229,13 +220,13 @@ describe("esm-module-loader/loader", { sanitizeResources: false, sanitizeOps: fa
         imports: {},
         scopes: {
           "/": {
-            "react": "https://esm.sh/react@18",
-            "lodash": "https://esm.sh/lodash",
+            react: "https://esm.sh/react@18",
+            lodash: "https://esm.sh/lodash",
           },
         },
       });
-      assertEquals(result.scopes?.["/"]?.["react"], undefined);
-      assertEquals(result.scopes?.["/"]?.["lodash"], "https://esm.sh/lodash");
+      assertEquals(result.scopes?.["/"]?.react, undefined);
+      assertEquals(result.scopes?.["/"]?.lodash, "https://esm.sh/lodash");
     });
 
     it("handles empty import map", () => {
@@ -245,13 +236,12 @@ describe("esm-module-loader/loader", { sanitizeResources: false, sanitizeOps: fa
     });
 
     it("does not mutate the original", () => {
-      const original = { imports: { "react": "url", "other": "url2" } };
+      const original = { imports: { react: "url", other: "url2" } };
       stripReactFromImportMap(original);
-      assertEquals(original.imports["react"], "url");
+      assertEquals(original.imports.react, "url");
     });
   });
 
-  // ── findVfModuleImports ──
   describe("findVfModuleImports", () => {
     it("finds _vf_modules/ imports with leading slash", () => {
       const code = `import Foo from "/_vf_modules/components/Foo.js";`;
@@ -283,14 +273,12 @@ describe("esm-module-loader/loader", { sanitizeResources: false, sanitizeOps: fa
 
     it("returns empty array for code without _vf_modules", () => {
       const code = `import React from "react";`;
-      const imports = findVfModuleImports(code);
-      assertEquals(imports.length, 0);
+      assertEquals(findVfModuleImports(code).length, 0);
     });
 
     it("handles single-quoted imports", () => {
       const code = `import Foo from '/_vf_modules/foo.js';`;
-      const imports = findVfModuleImports(code);
-      assertEquals(imports.length, 1);
+      assertEquals(findVfModuleImports(code).length, 1);
     });
 
     it("preserves full original match for replacement", () => {
@@ -303,10 +291,9 @@ describe("esm-module-loader/loader", { sanitizeResources: false, sanitizeOps: fa
     });
   });
 
-  // ── MDXLayout detection regex ──
   describe("MDXLayout detection regex", () => {
-    const hasLayoutDecl = (code: string) => /\bconst\s+MDXLayout\b/.test(code);
-    const hasLayoutExport = (code: string) => /export\s+\{[^}]*MDXLayout/.test(code);
+    const hasLayoutDecl = (code: string): boolean => /\bconst\s+MDXLayout\b/.test(code);
+    const hasLayoutExport = (code: string): boolean => /export\s+\{[^}]*MDXLayout/.test(code);
 
     it("detects const MDXLayout declaration", () => {
       assertEquals(hasLayoutDecl("const MDXLayout = SomeLayout;"), true);
@@ -326,14 +313,12 @@ describe("esm-module-loader/loader", { sanitizeResources: false, sanitizeOps: fa
 
     it("auto-export needed when layout declared but not exported", () => {
       const code = "const MDXLayout = Layout;";
-      const needsAutoExport = hasLayoutDecl(code) && !hasLayoutExport(code);
-      assertEquals(needsAutoExport, true);
+      assertEquals(hasLayoutDecl(code) && !hasLayoutExport(code), true);
     });
 
     it("auto-export not needed when already exported", () => {
       const code = "const MDXLayout = Layout;\nexport { MDXLayout as __vfLayout };";
-      const needsAutoExport = hasLayoutDecl(code) && !hasLayoutExport(code);
-      assertEquals(needsAutoExport, false);
+      assertEquals(hasLayoutDecl(code) && !hasLayoutExport(code), false);
     });
   });
 });

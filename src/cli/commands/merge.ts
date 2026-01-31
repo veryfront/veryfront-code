@@ -135,7 +135,6 @@ function getMergePreview(
   targetBranchId?: string,
 ): Promise<MergePreviewDiff[]> {
   const params: Record<string, string> = targetBranchId ? { target_branch_id: targetBranchId } : {};
-
   return client
     .get<{ diffs: MergePreviewDiff[] }>(
       `/projects/${projectSlug}/branches/${branchId}/merge-preview`,
@@ -164,7 +163,7 @@ export async function mergeCommand(options: MergeOptions): Promise<void> {
     throw new Error(`Branch "${branch}" not found`);
   }
 
-  const targetName = into || "main";
+  const targetName = into ?? "main";
 
   let targetBranchId: string | undefined;
   if (into && into !== "main") {

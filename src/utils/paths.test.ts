@@ -31,22 +31,17 @@ describe("paths", () => {
     });
 
     it("should have ALL extensions as union of MDX and SCRIPT and CSS", () => {
+      const all = FILE_EXTENSIONS.ALL;
+
       for (const ext of FILE_EXTENSIONS.MDX) {
-        assert(
-          (FILE_EXTENSIONS.ALL as readonly string[]).includes(ext),
-          `ALL should include ${ext}`,
-        );
+        assert(all.includes(ext), `ALL should include ${ext}`);
       }
+
       for (const ext of FILE_EXTENSIONS.SCRIPT) {
-        assert(
-          (FILE_EXTENSIONS.ALL as readonly string[]).includes(ext),
-          `ALL should include ${ext}`,
-        );
+        assert(all.includes(ext), `ALL should include ${ext}`);
       }
-      assert(
-        (FILE_EXTENSIONS.ALL as readonly string[]).includes(".css"),
-        "ALL should include .css",
-      );
+
+      assert(all.includes(".css"), "ALL should include .css");
     });
   });
 });

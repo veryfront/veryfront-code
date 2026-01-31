@@ -8,25 +8,26 @@ describe("CONTENT_TYPES", () => {
   });
 
   it("should map common file extensions to content types", () => {
-    assertEquals(CONTENT_TYPES[".html"], "text/html; charset=utf-8");
-    assertEquals(CONTENT_TYPES[".css"], "text/css; charset=utf-8");
-    assertEquals(CONTENT_TYPES[".js"], "application/javascript; charset=utf-8");
-    assertEquals(CONTENT_TYPES[".json"], "application/json; charset=utf-8");
-    assertEquals(CONTENT_TYPES[".txt"], "text/plain; charset=utf-8");
-  });
+    const cases: Array<[string, string]> = [
+      [".html", "text/html; charset=utf-8"],
+      [".css", "text/css; charset=utf-8"],
+      [".js", "application/javascript; charset=utf-8"],
+      [".mjs", "application/javascript; charset=utf-8"],
+      [".json", "application/json; charset=utf-8"],
+      [".txt", "text/plain; charset=utf-8"],
+    ];
 
-  it("should map .mjs to javascript content type", () => {
-    assertEquals(CONTENT_TYPES[".mjs"], "application/javascript; charset=utf-8");
+    for (const [ext, type] of cases) {
+      assertEquals(CONTENT_TYPES[ext], type);
+    }
   });
 
   it("should map image extensions", () => {
-    assert(CONTENT_TYPES[".png"] !== undefined);
-    assert(CONTENT_TYPES[".jpg"] !== undefined);
-    assert(CONTENT_TYPES[".jpeg"] !== undefined);
-    assert(CONTENT_TYPES[".gif"] !== undefined);
-    assert(CONTENT_TYPES[".svg"] !== undefined);
-    assert(CONTENT_TYPES[".ico"] !== undefined);
-    assert(CONTENT_TYPES[".webp"] !== undefined);
+    const extensions = [".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp"];
+
+    for (const ext of extensions) {
+      assert(CONTENT_TYPES[ext] !== undefined);
+    }
   });
 
   it("should have same content type for .jpg and .jpeg", () => {
@@ -34,10 +35,16 @@ describe("CONTENT_TYPES", () => {
   });
 
   it("should map font extensions", () => {
-    assertEquals(CONTENT_TYPES[".woff"], "font/woff");
-    assertEquals(CONTENT_TYPES[".woff2"], "font/woff2");
-    assertEquals(CONTENT_TYPES[".ttf"], "font/ttf");
-    assertEquals(CONTENT_TYPES[".otf"], "font/otf");
+    const cases: Array<[string, string]> = [
+      [".woff", "font/woff"],
+      [".woff2", "font/woff2"],
+      [".ttf", "font/ttf"],
+      [".otf", "font/otf"],
+    ];
+
+    for (const [ext, type] of cases) {
+      assertEquals(CONTENT_TYPES[ext], type);
+    }
   });
 
   it("should have all keys starting with a dot", () => {

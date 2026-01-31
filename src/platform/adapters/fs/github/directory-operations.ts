@@ -7,22 +7,12 @@ import type { DirectoryEntry, ResolvedGitHubConfig } from "./types.ts";
 const LOG_PREFIX = "[GitHubDirectoryOperations]";
 
 export class GitHubDirectoryOperations {
-  private readonly config: ResolvedGitHubConfig;
-  private readonly cache: FileCache;
-  private readonly statOps: GitHubStatOperations;
-  private readonly projectDir: string;
-
   constructor(
-    config: ResolvedGitHubConfig,
-    cache: FileCache,
-    statOps: GitHubStatOperations,
-    projectDir: string = "",
-  ) {
-    this.config = config;
-    this.cache = cache;
-    this.statOps = statOps;
-    this.projectDir = projectDir;
-  }
+    private readonly config: ResolvedGitHubConfig,
+    private readonly cache: FileCache,
+    private readonly statOps: GitHubStatOperations,
+    private readonly projectDir: string = "",
+  ) {}
 
   readdir(path: string): DirectoryEntry[] {
     const normalizedPath = this.normalizePath(path);
@@ -38,29 +28,22 @@ export class GitHubDirectoryOperations {
       return [];
     }
 
-    const entries: DirectoryEntry[] = [];
-
-    for (const file of this.statOps.getFilesInDirectory(normalizedPath)) {
-      const name = file.path.split("/").pop() ?? file.path;
-      entries.push({
-        name,
+    const entries: DirectoryEntry[] = [
+      ...this.statOps.getFilesInDirectory(normalizedPath).map((file) => ({
+        name: file.path.split("/").pop() ?? file.path,
         path: file.path,
         isFile: true,
         isDirectory: false,
         isSymlink: false,
-      });
-    }
-
-    for (const subdir of this.statOps.getSubdirectories(normalizedPath)) {
-      const fullPath = normalizedPath ? `${normalizedPath}/${subdir}` : subdir;
-      entries.push({
+      })),
+      ...this.statOps.getSubdirectories(normalizedPath).map((subdir) => ({
         name: subdir,
-        path: fullPath,
+        path: normalizedPath ? `${normalizedPath}/${subdir}` : subdir,
         isFile: false,
         isDirectory: true,
         isSymlink: false,
-      });
-    }
+      })),
+    ];
 
     entries.sort((a, b) => {
       if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
@@ -68,14 +51,11 @@ export class GitHubDirectoryOperations {
     });
 
     this.cache.set(cacheKey, entries);
-
     return entries;
   }
 
   async *readDir(path: string): AsyncIterable<DirectoryEntry> {
-    for (const entry of this.readdir(path)) {
-      yield entry;
-    }
+    for (const entry of this.readdir(path)) yield entry;
   }
 
   private normalizePath(path: string): string {

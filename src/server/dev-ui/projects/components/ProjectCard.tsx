@@ -10,8 +10,7 @@ function formatRelativeTime(dateString?: string): string {
   if (!dateString) return "";
 
   const date = new Date(dateString);
-  const diffMs = Date.now() - date.getTime();
-  const diffSecs = Math.floor(diffMs / 1000);
+  const diffSecs = Math.floor((Date.now() - date.getTime()) / 1000);
 
   if (diffSecs < 60) return "just now";
 
@@ -48,10 +47,8 @@ export function ProjectCard({
     >
       <h3 className="text-lg font-semibold text-gray-900 mb-1">{name}</h3>
       <p className="text-sm font-mono text-blue-600 mb-2">{slug}</p>
-      {description
-        ? <p className="text-sm text-gray-500 mb-3 line-clamp-2">{description}</p>
-        : null}
-      {relativeTime ? <p className="text-xs text-gray-400">Updated {relativeTime}</p> : null}
+      {description && <p className="text-sm text-gray-500 mb-3 line-clamp-2">{description}</p>}
+      {relativeTime && <p className="text-xs text-gray-400">Updated {relativeTime}</p>}
     </a>
   );
 }

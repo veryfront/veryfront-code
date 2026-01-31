@@ -6,14 +6,16 @@ export function setCors(
   req: Request,
   securityConfig: SecurityConfig | null,
 ): void {
-  const validation = validateOriginSync(req.headers.get("origin"), securityConfig?.cors);
-  const allowedOrigin = validation.allowedOrigin;
+  const allowedOrigin = validateOriginSync(
+    req.headers.get("origin"),
+    securityConfig?.cors,
+  ).allowedOrigin;
 
   if (!allowedOrigin) return;
 
   headers.set("Access-Control-Allow-Origin", allowedOrigin);
 
-  if (allowedOrigin !== "*") {
-    headers.set("Vary", "Origin");
-  }
+  if (allowedOrigin === "*") return;
+
+  headers.set("Vary", "Origin");
 }

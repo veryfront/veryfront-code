@@ -27,12 +27,7 @@ export default defineTool({
 
     try {
       const client = getZendeskClient();
-      const tickets = await client.listTickets({
-        limit: input.limit,
-        status: input.status,
-        priority: input.priority,
-        assigneeId: input.assigneeId,
-      });
+      const tickets = await client.listTickets(input);
 
       return {
         count: tickets.length,

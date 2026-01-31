@@ -4,7 +4,9 @@ import { VeryfrontFSAdapter } from "./adapter.ts";
 import { createVeryfrontConfig } from "./types.ts";
 import type { FSAdapterConfig, ResolvedContentContext } from "./types.ts";
 
-function createAdapter(overrides: Partial<FSAdapterConfig> = {}): VeryfrontFSAdapter {
+function createAdapter(
+  overrides: Partial<FSAdapterConfig> = {},
+): VeryfrontFSAdapter {
   return new VeryfrontFSAdapter({
     veryfront: {
       baseUrl: "https://api.example.com",
@@ -26,43 +28,44 @@ describe("VeryfrontFSAdapter", () => {
 
   describe("constructor", () => {
     it("should be instantiable with minimal config", () => {
-      const adapter = createAdapter();
-      assertExists(adapter);
+      assertExists(createAdapter());
     });
 
     it("should accept proxyMode in config", () => {
-      const adapter = createAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          proxyMode: true,
-          cache: { enabled: false },
-        },
-      });
-      assertExists(adapter);
+      assertExists(
+        createAdapter({
+          veryfront: {
+            baseUrl: "https://api.example.com",
+            apiToken: "test-token",
+            projectSlug: "test-project",
+            proxyMode: true,
+            cache: { enabled: false },
+          },
+        }),
+      );
     });
 
     it("should accept projectDir in config", () => {
-      const adapter = createAdapter({ projectDir: "/tmp/my-project" });
-      assertExists(adapter);
+      assertExists(createAdapter({ projectDir: "/tmp/my-project" }));
     });
 
     it("should accept contentSource in config", () => {
-      const adapter = createAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          contentSource: { type: "environment", name: "production" },
-          cache: { enabled: false },
-        },
-      });
-      assertExists(adapter);
+      assertExists(
+        createAdapter({
+          veryfront: {
+            baseUrl: "https://api.example.com",
+            apiToken: "test-token",
+            projectSlug: "test-project",
+            contentSource: { type: "environment", name: "production" },
+            cache: { enabled: false },
+          },
+        }),
+      );
     });
 
     it("should accept invalidationCallbacks in config", () => {
       let clearCalled = false;
+
       const adapter = new VeryfrontFSAdapter({
         veryfront: {
           baseUrl: "https://api.example.com",
@@ -76,80 +79,38 @@ describe("VeryfrontFSAdapter", () => {
           },
         },
       });
+
       assertExists(adapter);
-      // Verify callback was stored (indirectly through adapter creation)
-      assertEquals(clearCalled, false); // Not called yet
+      assertEquals(clearCalled, false);
     });
   });
 
   describe("instance methods", () => {
-    it("should have readFile method", () => {
-      assertEquals(typeof createAdapter().readFile, "function");
-    });
+    const methods = [
+      "readFile",
+      "readTextFile",
+      "readdir",
+      "stat",
+      "exists",
+      "initialize",
+      "dispose",
+      "getCacheStats",
+      "setRequestToken",
+      "setContentContext",
+      "resolveFile",
+      "readFileBytes",
+      "getAllSourceFiles",
+      "getEntityIdForPath",
+      "getFilePathByEntityId",
+      "getPokeMetrics",
+      "getClient",
+    ] as const;
 
-    it("should have readTextFile method", () => {
-      assertEquals(typeof createAdapter().readTextFile, "function");
-    });
-
-    it("should have readdir method", () => {
-      assertEquals(typeof createAdapter().readdir, "function");
-    });
-
-    it("should have stat method", () => {
-      assertEquals(typeof createAdapter().stat, "function");
-    });
-
-    it("should have exists method", () => {
-      assertEquals(typeof createAdapter().exists, "function");
-    });
-
-    it("should have initialize method", () => {
-      assertEquals(typeof createAdapter().initialize, "function");
-    });
-
-    it("should have dispose method", () => {
-      assertEquals(typeof createAdapter().dispose, "function");
-    });
-
-    it("should have getCacheStats method", () => {
-      assertEquals(typeof createAdapter().getCacheStats, "function");
-    });
-
-    it("should have setRequestToken method", () => {
-      assertEquals(typeof createAdapter().setRequestToken, "function");
-    });
-
-    it("should have setContentContext method", () => {
-      assertEquals(typeof createAdapter().setContentContext, "function");
-    });
-
-    it("should have resolveFile method", () => {
-      assertEquals(typeof createAdapter().resolveFile, "function");
-    });
-
-    it("should have readFileBytes method", () => {
-      assertEquals(typeof createAdapter().readFileBytes, "function");
-    });
-
-    it("should have getAllSourceFiles method", () => {
-      assertEquals(typeof createAdapter().getAllSourceFiles, "function");
-    });
-
-    it("should have getEntityIdForPath method", () => {
-      assertEquals(typeof createAdapter().getEntityIdForPath, "function");
-    });
-
-    it("should have getFilePathByEntityId method", () => {
-      assertEquals(typeof createAdapter().getFilePathByEntityId, "function");
-    });
-
-    it("should have getPokeMetrics method", () => {
-      assertEquals(typeof createAdapter().getPokeMetrics, "function");
-    });
-
-    it("should have getClient method", () => {
-      assertEquals(typeof createAdapter().getClient, "function");
-    });
+    for (const method of methods) {
+      it(`should have ${method} method`, () => {
+        assertEquals(typeof (createAdapter() as any)[method], "function");
+      });
+    }
   });
 
   describe("content context", () => {
@@ -164,6 +125,7 @@ describe("VeryfrontFSAdapter", () => {
         projectSlug: "test-project",
         branch: "main",
       });
+
       const ctx = adapter.getContentContext();
       assertEquals(ctx?.sourceType, "branch");
       assertEquals(ctx?.branch, "main");
@@ -177,6 +139,7 @@ describe("VeryfrontFSAdapter", () => {
         projectSlug: "test-project",
         environmentName: "production",
       });
+
       const ctx = adapter.getContentContext();
       assertEquals(ctx?.sourceType, "environment");
       assertEquals(ctx?.environmentName, "production");
@@ -189,6 +152,7 @@ describe("VeryfrontFSAdapter", () => {
         projectSlug: "test-project",
         releaseId: "release-123",
       });
+
       const ctx = adapter.getContentContext();
       assertEquals(ctx?.sourceType, "release");
       assertEquals(ctx?.releaseId, "release-123");
@@ -201,6 +165,7 @@ describe("VeryfrontFSAdapter", () => {
         projectSlug: "my-project",
         releaseId: "release-uuid-123",
       });
+
       const ctx = adapter.getContentContext();
       assertEquals(ctx?.sourceType, "release");
       assertEquals(ctx?.releaseId, "release-uuid-123");
@@ -218,6 +183,7 @@ describe("VeryfrontFSAdapter", () => {
         projectSlug: "test-project",
         releaseId: "release-new",
       });
+
       assertEquals(adapter.getContentContext()?.releaseId, "release-new");
     });
 
@@ -228,9 +194,10 @@ describe("VeryfrontFSAdapter", () => {
         projectSlug: "test-project",
         branch: "main",
       };
+
       adapter.setContentContext(ctx);
-      // Setting same context again should not error
       adapter.setContentContext(ctx);
+
       assertEquals(adapter.getContentContext()?.branch, "main");
     });
 
@@ -246,6 +213,7 @@ describe("VeryfrontFSAdapter", () => {
         projectSlug: "test-project",
         releaseId: "rel-1",
       });
+
       assertEquals(adapter.getContentContext()?.sourceType, "release");
     });
   });
@@ -278,8 +246,7 @@ describe("VeryfrontFSAdapter", () => {
 
   describe("dispose", () => {
     it("should dispose without error", () => {
-      const adapter = createAdapter();
-      adapter.dispose();
+      createAdapter().dispose();
     });
 
     it("should allow calling dispose multiple times", () => {
@@ -291,8 +258,7 @@ describe("VeryfrontFSAdapter", () => {
 
   describe("getCacheStats", () => {
     it("should return stats object with cache and poke properties", () => {
-      const adapter = createAdapter();
-      const stats = adapter.getCacheStats();
+      const stats = createAdapter().getCacheStats();
       assertExists(stats);
       assertExists(stats.cache);
       assertExists(stats.poke);
@@ -304,8 +270,7 @@ describe("VeryfrontFSAdapter", () => {
 
   describe("getPokeMetrics", () => {
     it("should return metrics object", () => {
-      const adapter = createAdapter();
-      const metrics = adapter.getPokeMetrics();
+      const metrics = createAdapter().getPokeMetrics();
       assertExists(metrics);
       assertEquals(metrics.received, 0);
       assertEquals(metrics.invalidationsTriggered, 0);
@@ -316,38 +281,31 @@ describe("VeryfrontFSAdapter", () => {
 
   describe("getProjectData", () => {
     it("should return undefined before initialization", () => {
-      const adapter = createAdapter();
-      assertEquals(adapter.getProjectData(), undefined);
+      assertEquals(createAdapter().getProjectData(), undefined);
     });
   });
 
   describe("getAllSourceFiles", () => {
     it("should return empty array when no content context", async () => {
-      const adapter = createAdapter();
-      const files = await adapter.getAllSourceFiles();
-      assertEquals(files, []);
+      assertEquals(await createAdapter().getAllSourceFiles(), []);
     });
   });
 
   describe("getEntityIdForPath", () => {
     it("should return undefined when no content context", () => {
-      const adapter = createAdapter();
-      assertEquals(adapter.getEntityIdForPath("pages/index.tsx"), undefined);
+      assertEquals(createAdapter().getEntityIdForPath("pages/index.tsx"), undefined);
     });
   });
 
   describe("getFilePathByEntityId", () => {
     it("should return undefined when no content context", () => {
-      const adapter = createAdapter();
-      assertEquals(adapter.getFilePathByEntityId("entity-123"), undefined);
+      assertEquals(createAdapter().getFilePathByEntityId("entity-123"), undefined);
     });
   });
 
   describe("getClient", () => {
     it("should return API client instance", () => {
-      const adapter = createAdapter();
-      const client = adapter.getClient();
-      assertExists(client);
+      assertExists(createAdapter().getClient());
     });
   });
 });
@@ -370,6 +328,7 @@ describe("createVeryfrontConfig", () => {
         projectSlug: "test",
       },
     });
+
     assertEquals(config.cache.enabled, true);
     assertEquals(config.cache.ttl, 60_000);
     assertEquals(config.cache.maxSize, 1000);
@@ -384,6 +343,7 @@ describe("createVeryfrontConfig", () => {
         cache: { enabled: false, ttl: 5000 },
       },
     });
+
     assertEquals(config.cache.enabled, false);
     assertEquals(config.cache.ttl, 5000);
   });
@@ -396,6 +356,7 @@ describe("createVeryfrontConfig", () => {
         projectSlug: "test",
       },
     });
+
     assertEquals(config.retry.maxRetries, 3);
     assertEquals(config.retry.initialDelay, 1000);
     assertEquals(config.retry.maxDelay, 10000);
@@ -409,6 +370,7 @@ describe("createVeryfrontConfig", () => {
         projectSlug: "test",
       },
     });
+
     assertEquals(config.contentSource.type, "branch");
   });
 
@@ -421,6 +383,7 @@ describe("createVeryfrontConfig", () => {
         contentSource: { type: "environment", name: "production" },
       },
     });
+
     assertEquals(config.contentSource.type, "environment");
   });
 
@@ -432,6 +395,7 @@ describe("createVeryfrontConfig", () => {
         projectSlug: "test",
       },
     });
+
     assertEquals(config.apiToken, "key-123");
   });
 
@@ -444,13 +408,13 @@ describe("createVeryfrontConfig", () => {
         projectSlug: "test",
       },
     });
+
     assertEquals(config.apiToken, "token-123");
   });
 
   it("should default empty strings when optional fields missing", () => {
-    const config = createVeryfrontConfig({
-      veryfront: {},
-    });
+    const config = createVeryfrontConfig({ veryfront: {} });
+
     assertEquals(config.apiBaseUrl, "");
     assertEquals(config.apiToken, "");
     assertEquals(config.projectSlug, "");
@@ -465,6 +429,7 @@ describe("createVeryfrontConfig", () => {
         proxyMode: true,
       },
     });
+
     assertEquals(config.proxyMode, true);
   });
 
@@ -477,6 +442,7 @@ describe("createVeryfrontConfig", () => {
         projectId: "proj-abc",
       },
     });
+
     assertEquals(config.projectId, "proj-abc");
   });
 });

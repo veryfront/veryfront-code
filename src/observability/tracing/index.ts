@@ -84,8 +84,8 @@ export function getActiveContext(): Context | undefined {
 
 export async function withActiveSpan<T>(span: Span | null, fn: () => Promise<T>): Promise<T> {
   const contextProp = getContextProp();
-  if (!contextProp) return await fn();
-  return await contextProp.withActiveSpan(span, fn);
+  if (!contextProp) return fn();
+  return contextProp.withActiveSpan(span, fn);
 }
 
 export async function withSpan<T>(
@@ -96,9 +96,9 @@ export async function withSpan<T>(
   const contextProp = getContextProp();
   const spanOps = getSpanOps();
 
-  if (!contextProp || !spanOps) return await fn(null);
+  if (!contextProp || !spanOps) return fn(null);
 
-  return await contextProp.withSpanAsync(
+  return contextProp.withSpanAsync(
     name,
     fn,
     (n) => spanOps.startSpan(n, options),

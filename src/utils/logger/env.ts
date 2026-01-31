@@ -4,13 +4,11 @@ import { hasDenoRuntime, hasNodeProcess } from "../runtime-guards.ts";
 export function getEnvironmentVariable(name: string): string | undefined {
   try {
     if (hasDenoRuntime(globalThis)) {
-      const value = (globalThis as GlobalWithDeno).Deno?.env.get(name);
-      return value || undefined;
+      return (globalThis as GlobalWithDeno).Deno?.env.get(name) || undefined;
     }
 
     if (hasNodeProcess(globalThis)) {
-      const value = (globalThis as GlobalWithProcess).process?.env[name];
-      return value || undefined;
+      return (globalThis as GlobalWithProcess).process?.env[name] || undefined;
     }
 
     return undefined;

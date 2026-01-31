@@ -43,7 +43,7 @@ describe("base64url", () => {
     });
 
     it("should encode an empty Uint8Array", () => {
-      assertEquals(base64urlEncodeBytes(new Uint8Array([])), "");
+      assertEquals(base64urlEncodeBytes(new Uint8Array()), "");
     });
 
     it("should remove padding from byte encoding", () => {

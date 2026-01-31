@@ -115,29 +115,25 @@ class CostTracker {
       return 0;
     }
 
-    const inputCost = (inputTokens / 1_000_000) * pricing.input;
-    const outputCost = (outputTokens / 1_000_000) * pricing.output;
-
-    return inputCost + outputCost;
+    return (inputTokens / 1_000_000) * pricing.input + (outputTokens / 1_000_000) * pricing.output;
   }
 
   getSummary(startTime?: number, endTime?: number): UsageSummary {
     const start = startTime ?? 0;
     const end = endTime ?? Date.now();
 
-    const relevantRecords = this.records.filter(
-      (r) => r.timestamp >= start && r.timestamp <= end,
-    );
-
     const summary: UsageSummary = {
-      requests: relevantRecords.length,
+      requests: 0,
       tokens: { prompt: 0, completion: 0, total: 0 },
       cost: 0,
       byProvider: {},
       period: { start, end },
     };
 
-    for (const record of relevantRecords) {
+    for (const record of this.records) {
+      if (record.timestamp < start || record.timestamp > end) continue;
+
+      summary.requests++;
       summary.tokens.prompt += record.tokens.prompt;
       summary.tokens.completion += record.tokens.completion;
       summary.tokens.total += record.tokens.total;
@@ -196,10 +192,10 @@ class CostTracker {
   }
 
   destroy(): void {
-    if (this.resetInterval) {
-      clearInterval(this.resetInterval);
-      this.resetInterval = null;
-    }
+    if (!this.resetInterval) return;
+
+    clearInterval(this.resetInterval);
+    this.resetInterval = null;
     this.records = [];
   }
 
@@ -236,12 +232,12 @@ export function createCostTracker(config: CostConfig): {
   const tracker = new CostTracker(config);
 
   return {
-    track: (agentId, model, response, userId) => tracker.track(agentId, model, response, userId),
-    getSummary: (startTime, endTime) => tracker.getSummary(startTime, endTime),
-    getDailySummary: () => tracker.getDailySummary(),
-    getMonthlySummary: () => tracker.getMonthlySummary(),
-    getAllRecords: () => tracker.getAllRecords(),
-    clear: () => tracker.clear(),
+    track: tracker.track.bind(tracker),
+    getSummary: tracker.getSummary.bind(tracker),
+    getDailySummary: tracker.getDailySummary.bind(tracker),
+    getMonthlySummary: tracker.getMonthlySummary.bind(tracker),
+    getAllRecords: tracker.getAllRecords.bind(tracker),
+    clear: tracker.clear.bind(tracker),
   };
 }
 
@@ -256,7 +252,7 @@ export function costTrackingMiddleware(
       context.agentId,
       context.model || "unknown",
       result,
-      (context.data as Record<string, unknown>)?.userId as string | undefined,
+      (context.data as { userId?: string } | undefined)?.userId,
     );
     return result;
   };

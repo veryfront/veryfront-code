@@ -27,12 +27,13 @@ export default tool({
       const diff = await github.getPullRequestDiff(owner, repoName, prNumber);
 
       const maxDiffLength = 50000;
-      const truncatedDiff =
-        diff.length > maxDiffLength
-          ? `${diff.substring(0, maxDiffLength)}\n\n... (diff truncated, ${
-              diff.length - maxDiffLength
-            } characters remaining)`
-          : diff;
+      let truncatedDiff = diff;
+
+      if (diff.length > maxDiffLength) {
+        truncatedDiff = `${diff.substring(0, maxDiffLength)}\n\n... (diff truncated, ${
+          diff.length - maxDiffLength
+        } characters remaining)`;
+      }
 
       return {
         pullRequest: {

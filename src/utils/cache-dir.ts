@@ -16,13 +16,11 @@ export function getCacheDirFromContext(): string | undefined {
 }
 
 export function getCacheBaseDir(): string {
-  const contextCacheDir = getCacheDirFromContext();
-  if (contextCacheDir) return contextCacheDir;
-
-  const envCacheDir = getCacheDirEnv();
-  if (envCacheDir) return envCacheDir;
-
-  return join(cwd(), ".cache");
+  return (
+    getCacheDirFromContext() ??
+      getCacheDirEnv() ??
+      join(cwd(), ".cache")
+  );
 }
 
 export function getMdxEsmCacheDir(): string {
@@ -59,7 +57,6 @@ export async function ensureCacheNodeModules(): Promise<void> {
     const cacheBase = getCacheBaseDir();
     const targetLink = join(cacheBase, "node_modules");
 
-    // Already exists (previous run, manual setup, etc.)
     try {
       lstatSync(targetLink);
       return;
@@ -67,16 +64,13 @@ export async function ensureCacheNodeModules(): Promise<void> {
       // Doesn't exist yet
     }
 
-    // Resolve react from the framework's own node_modules
     const require = createRequire(import.meta.url);
     const reactEntry = require.resolve("react");
 
-    // Extract the node_modules directory that contains react.
-    // e.g. /usr/local/lib/node_modules/veryfront/node_modules/react/index.js
-    //      → /usr/local/lib/node_modules/veryfront/node_modules
     const marker = "/node_modules/react";
     const idx = reactEntry.lastIndexOf(marker);
     if (idx === -1) return;
+
     const nodeModulesDir = reactEntry.substring(0, idx + "/node_modules".length);
 
     mkdirSync(cacheBase, { recursive: true });

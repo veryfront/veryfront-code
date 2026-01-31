@@ -11,10 +11,6 @@ import { APIRouteHandler } from "#veryfront/routing";
 import { serverLogger } from "#veryfront/utils";
 import type { HandlerContext } from "../../types.ts";
 
-/**
- * Handler cache interface for dependency injection.
- * Simplified interface that matches Map's essential methods.
- */
 export interface HandlerCache<T> {
   get(key: string): T | undefined;
   set(key: string, value: T): void;
@@ -24,24 +20,12 @@ export interface HandlerCache<T> {
 }
 
 const apiHandlerCache = new Map<string, Promise<APIRouteHandler>>();
-
-/** Injected cache for testing (overrides default Map) */
 let injectedCache: HandlerCache<Promise<APIRouteHandler>> | null = null;
 
 function getCache(): HandlerCache<Promise<APIRouteHandler>> {
   return injectedCache ?? apiHandlerCache;
 }
 
-/**
- * Inject a custom cache for testing.
- * Call with null to restore default behavior.
- *
- * @example
- * ```typescript
- * const mockCache = new Map<string, Promise<APIRouteHandler>>();
- * __injectCacheForTests(mockCache);
- * ```
- */
 export function __injectCacheForTests(
   cache: HandlerCache<Promise<APIRouteHandler>> | null,
 ): void {
@@ -81,7 +65,7 @@ export async function getApiHandler(ctx: HandlerContext): Promise<APIRouteHandle
     cache.set(key, promise);
   }
 
-  return await promise;
+  return promise;
 }
 
 export async function resetApiHandler(projectDir?: string): Promise<void> {

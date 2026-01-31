@@ -16,9 +16,7 @@ describe("parseTargetFlag", () => {
 
   it("should parse comma-separated targets", () => {
     const targets = parseTargetFlag("cursor,claude-code");
-    assertEquals(targets.includes("cursor"), true);
-    assertEquals(targets.includes("claude-code"), true);
-    assertEquals(targets.length, 2);
+    assertEquals(targets, ["cursor", "claude-code"]);
   });
 
   it("should parse all targets", () => {
@@ -32,7 +30,7 @@ describe("parseTargetFlag", () => {
 });
 
 describe("findInstalledTools", () => {
-  let tempDir: string;
+  let tempDir = "";
 
   beforeEach(async () => {
     tempDir = await makeTempDir();
@@ -49,6 +47,7 @@ describe("findInstalledTools", () => {
 
   it("should find installed cursor rules", async () => {
     await writeTextFile(`${tempDir}/.cursorrules`, "test");
+
     const installed = await findInstalledTools({ cwd: tempDir });
     assertEquals(installed.includes("cursor"), true);
   });
@@ -67,7 +66,7 @@ describe("findInstalledTools", () => {
 });
 
 describe("uninstallTargets", () => {
-  let tempDir: string;
+  let tempDir = "";
 
   beforeEach(async () => {
     tempDir = await makeTempDir();
@@ -78,34 +77,47 @@ describe("uninstallTargets", () => {
   });
 
   it("should remove cursor rules file", async () => {
-    await writeTextFile(`${tempDir}/.cursorrules`, "test");
+    const cursorRulesPath = `${tempDir}/.cursorrules`;
+
+    await writeTextFile(cursorRulesPath, "test");
     await uninstallTargets(["cursor"], { cwd: tempDir });
-    assertEquals(await exists(`${tempDir}/.cursorrules`), false);
+
+    assertEquals(await exists(cursorRulesPath), false);
   });
 
   it("should remove claude-code and empty parent directory", async () => {
-    await mkdir(`${tempDir}/.claude`);
-    await writeTextFile(`${tempDir}/.claude/CLAUDE.md`, "test");
+    const claudeDirPath = `${tempDir}/.claude`;
+    const claudeMdPath = `${claudeDirPath}/CLAUDE.md`;
+
+    await mkdir(claudeDirPath);
+    await writeTextFile(claudeMdPath, "test");
     await uninstallTargets(["claude-code"], { cwd: tempDir });
-    assertEquals(await exists(`${tempDir}/.claude/CLAUDE.md`), false);
-    assertEquals(await exists(`${tempDir}/.claude`), false);
+
+    assertEquals(await exists(claudeMdPath), false);
+    assertEquals(await exists(claudeDirPath), false);
   });
 
   it("should not fail when file does not exist", async () => {
+    const cursorRulesPath = `${tempDir}/.cursorrules`;
+
     await uninstallTargets(["cursor"], { cwd: tempDir });
-    assertEquals(await exists(`${tempDir}/.cursorrules`), false);
+    assertEquals(await exists(cursorRulesPath), false);
   });
 
   it("should remove multiple targets", async () => {
-    await writeTextFile(`${tempDir}/.cursorrules`, "test");
-    await writeTextFile(`${tempDir}/SKILL.md`, "test");
-    await writeTextFile(`${tempDir}/AGENTS.md`, "test");
+    const cursorRulesPath = `${tempDir}/.cursorrules`;
+    const skillPath = `${tempDir}/SKILL.md`;
+    const agentsPath = `${tempDir}/AGENTS.md`;
+
+    await writeTextFile(cursorRulesPath, "test");
+    await writeTextFile(skillPath, "test");
+    await writeTextFile(agentsPath, "test");
 
     await uninstallTargets(["cursor", "skill", "agents"], { cwd: tempDir });
 
-    assertEquals(await exists(`${tempDir}/.cursorrules`), false);
-    assertEquals(await exists(`${tempDir}/SKILL.md`), false);
-    assertEquals(await exists(`${tempDir}/AGENTS.md`), false);
+    assertEquals(await exists(cursorRulesPath), false);
+    assertEquals(await exists(skillPath), false);
+    assertEquals(await exists(agentsPath), false);
   });
 
   it("should throw for empty targets", async () => {
@@ -113,9 +125,6 @@ describe("uninstallTargets", () => {
   });
 
   it("should throw for invalid targets", async () => {
-    await assertRejects(
-      () => uninstallTargets(["invalid" as never], { cwd: tempDir }),
-      Error,
-    );
+    await assertRejects(() => uninstallTargets(["invalid" as never], { cwd: tempDir }), Error);
   });
 });

@@ -23,8 +23,6 @@ describe("OAuth Client", () => {
 
     it("throws on HTTP error", async () => {
       const { fetchOAuthToken } = await import("./oauth-client.ts");
-
-      // Mock server that returns 401
       const { server, port } = createMockServer(
         () => new Response("Unauthorized", { status: 401 }),
       );
@@ -47,7 +45,6 @@ describe("OAuth Client", () => {
 
     it("parses successful response", async () => {
       const { fetchOAuthToken } = await import("./oauth-client.ts");
-
       const { server, port } = createMockServer(
         () =>
           new Response(

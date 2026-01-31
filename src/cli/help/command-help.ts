@@ -28,9 +28,9 @@ export function showCommandHelp(command: string): void {
   console.log(formatUsage(cmd.usage));
 
   const options = cmd.options ?? [];
-  if (options.length > 0) {
+  if (options.length) {
     console.log(`  ${formatSectionHeader("Options")}`);
-    const maxLength = calculateMaxLength(options.map((o) => ({ length: o.flag.length })));
+    const maxLength = calculateMaxLength(options.map((opt) => ({ length: opt.flag.length })));
 
     for (const opt of options) {
       console.log(formatOption(opt, maxLength));
@@ -39,7 +39,7 @@ export function showCommandHelp(command: string): void {
   }
 
   const examples = cmd.examples ?? [];
-  if (examples.length > 0) {
+  if (examples.length) {
     console.log(`  ${formatSectionHeader("Examples")}`);
     for (const example of examples) {
       console.log(formatExample(example));
@@ -48,5 +48,7 @@ export function showCommandHelp(command: string): void {
   }
 
   const tips = getCommandTips(command);
-  if (tips) console.log(tips);
+  if (tips) {
+    console.log(tips);
+  }
 }

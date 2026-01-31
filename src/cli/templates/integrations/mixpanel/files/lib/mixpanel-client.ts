@@ -78,15 +78,12 @@ function getAuthHeader(): string {
 async function mixpanelFetch<T>(
   baseUrl: string,
   endpoint: string,
-  options: RequestInit & { params?: Record<string, string | number | boolean> } =
-    {},
+  options: RequestInit & { params?: Record<string, string | number | boolean> } = {},
 ): Promise<T> {
   const url = new URL(`${baseUrl}${endpoint}`);
 
-  if (options.params) {
-    for (const [key, value] of Object.entries(options.params)) {
-      url.searchParams.append(key, String(value));
-    }
+  for (const [key, value] of Object.entries(options.params ?? {})) {
+    url.searchParams.append(key, String(value));
   }
 
   const headers: Record<string, string> = {
@@ -100,20 +97,18 @@ async function mixpanelFetch<T>(
 
   const response = await fetch(url.toString(), { ...options, headers });
 
-  if (!response.ok) {
-    let errorMessage = `Mixpanel API error: ${response.status} ${response.statusText}`;
+  if (response.ok) return (await response.json()) as T;
 
-    try {
-      const errorData = (await response.json()) as MixpanelError;
-      if (errorData.error) errorMessage = `Mixpanel API error: ${errorData.error}`;
-    } catch {
-      // If parsing JSON fails, use default error message
-    }
+  let errorMessage = `Mixpanel API error: ${response.status} ${response.statusText}`;
 
-    throw new Error(errorMessage);
+  try {
+    const errorData = (await response.json()) as MixpanelError;
+    if (errorData.error) errorMessage = `Mixpanel API error: ${errorData.error}`;
+  } catch {
+    // If parsing JSON fails, use default error message
   }
 
-  return (await response.json()) as T;
+  throw new Error(errorMessage);
 }
 
 export async function trackEvent(
@@ -144,15 +139,15 @@ export async function trackEvent(
     body: JSON.stringify([payload]),
   });
 
-  if (!response.ok) {
-    const text = await response.text();
-    return {
-      status: 0,
-      error: `Failed to track event: ${response.status} ${text}`,
-    };
+  if (response.ok) {
+    return (await response.json()) as { status: number; error?: string };
   }
 
-  return (await response.json()) as { status: number; error?: string };
+  const text = await response.text();
+  return {
+    status: 0,
+    error: `Failed to track event: ${response.status} ${text}`,
+  };
 }
 
 export async function queryEvents(
@@ -174,8 +169,9 @@ export async function queryEvents(
     { params },
   );
 
+  if (!Array.isArray(response)) return [];
+
   const events: MixpanelEventResult[] = [];
-  if (!Array.isArray(response)) return events;
 
   for (const line of response) {
     if (typeof line !== "string" || !line.trim()) continue;

@@ -3,6 +3,12 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { rehypeMdxComponents, rehypePreserveNodeIds } from "./rehype-utils.ts";
 import type { Element, Root } from "hast";
 
+type DataNodeAttribute =
+  | "data-node-id"
+  | "data-node-start"
+  | "data-node-end"
+  | "data-node-line";
+
 // deno-lint-ignore no-explicit-any
 function setElementData(element: Element, data: any): void {
   element.data = data;
@@ -10,15 +16,12 @@ function setElementData(element: Element, data: any): void {
 
 function createElement(
   tagName: string,
+  // deno-lint-ignore no-explicit-any
   properties: Record<string, any> = {},
+  // deno-lint-ignore no-explicit-any
   children: any[] = [],
 ): Element {
-  return {
-    type: "element",
-    tagName,
-    properties,
-    children,
-  };
+  return { type: "element", tagName, properties, children };
 }
 
 function createTree(...children: Element[]): Root {
@@ -26,7 +29,7 @@ function createTree(...children: Element[]): Root {
 }
 
 function runPreserveNodeIdsTest(
-  attribute: "data-node-id" | "data-node-start" | "data-node-end" | "data-node-line",
+  attribute: DataNodeAttribute,
   value: string | number,
 ): void {
   const element = createElement("p");
@@ -89,7 +92,7 @@ describe("rehype-utils", () => {
       rehypePreserveNodeIds()(tree);
 
       assertEquals(element.properties?.["data-custom"], undefined);
-      assertEquals(element.properties?.["className"], undefined);
+      assertEquals(element.properties?.className, undefined);
     });
 
     it("initializes properties if missing", () => {
@@ -138,7 +141,10 @@ describe("rehype-utils", () => {
 
       assertExists((mdxComponent as any).data);
       assertExists((mdxComponent as any).data.hProperties);
-      assertEquals((mdxComponent as any).data.hProperties["data-mdx-component"], "Button");
+      assertEquals(
+        (mdxComponent as any).data.hProperties["data-mdx-component"],
+        "Button",
+      );
     });
 
     it("handles multiple components", () => {
@@ -148,8 +154,14 @@ describe("rehype-utils", () => {
 
       rehypeMdxComponents()(tree);
 
-      assertEquals((mdxComponent1 as any).data.hProperties["data-mdx-component"], "Button");
-      assertEquals((mdxComponent2 as any).data.hProperties["data-mdx-component"], "Card");
+      assertEquals(
+        (mdxComponent1 as any).data.hProperties["data-mdx-component"],
+        "Button",
+      );
+      assertEquals(
+        (mdxComponent2 as any).data.hProperties["data-mdx-component"],
+        "Card",
+      );
     });
 
     it("initializes data if missing", () => {
@@ -173,7 +185,10 @@ describe("rehype-utils", () => {
       rehypeMdxComponents()(tree);
 
       assertEquals((mdxComponent as any).data.customProp, "value");
-      assertEquals((mdxComponent as any).data.hProperties["data-mdx-component"], "Button");
+      assertEquals(
+        (mdxComponent as any).data.hProperties["data-mdx-component"],
+        "Button",
+      );
     });
 
     it("preserves existing hProperties", () => {
@@ -187,7 +202,10 @@ describe("rehype-utils", () => {
       rehypeMdxComponents()(tree);
 
       assertEquals((mdxComponent as any).data.hProperties.id, "custom-id");
-      assertEquals((mdxComponent as any).data.hProperties["data-mdx-component"], "Button");
+      assertEquals(
+        (mdxComponent as any).data.hProperties["data-mdx-component"],
+        "Button",
+      );
     });
   });
 });

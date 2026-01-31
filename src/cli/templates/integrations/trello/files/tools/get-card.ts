@@ -9,34 +9,21 @@ export default tool({
     cardId: z.string().describe("The ID of the card to retrieve"),
   }),
   async execute({ cardId }) {
-    const {
-      id,
-      name,
-      desc,
-      url,
-      closed,
-      idList,
-      idBoard,
-      due,
-      dueComplete,
-      labels,
-      idMembers,
-      dateLastActivity,
-    } = await getCard(cardId);
+    const card = await getCard(cardId);
 
     return {
-      id,
-      name,
-      desc,
-      url,
-      closed,
-      idList,
-      idBoard,
-      due,
-      dueComplete,
-      labels: labels.map(({ id, name, color }) => ({ id, name, color })),
-      memberIds: idMembers,
-      lastActivity: dateLastActivity,
+      id: card.id,
+      name: card.name,
+      desc: card.desc,
+      url: card.url,
+      closed: card.closed,
+      idList: card.idList,
+      idBoard: card.idBoard,
+      due: card.due,
+      dueComplete: card.dueComplete,
+      labels: card.labels.map(({ id, name, color }) => ({ id, name, color })),
+      memberIds: card.idMembers,
+      lastActivity: card.dateLastActivity,
     };
   },
 });

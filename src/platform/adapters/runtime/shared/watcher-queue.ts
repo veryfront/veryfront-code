@@ -10,20 +10,18 @@ export function createWatcherIterator(
     return isClosed() || isAborted();
   }
 
-  function doneResult(): IteratorResult<FileChangeEvent> {
-    return { done: true, value: undefined };
-  }
+  const doneResult: IteratorResult<FileChangeEvent> = { done: true, value: undefined };
 
   return {
     next(): Promise<IteratorResult<FileChangeEvent>> {
-      if (isDone()) return Promise.resolve(doneResult());
+      if (isDone()) return Promise.resolve(doneResult);
 
       const event = eventQueue.shift();
       if (event) return Promise.resolve({ done: false, value: event });
 
       return new Promise((resolve) => {
         if (isDone()) {
-          resolve(doneResult());
+          resolve(doneResult);
           return;
         }
         setResolver(resolve);
@@ -31,7 +29,7 @@ export function createWatcherIterator(
     },
 
     return(): Promise<IteratorResult<FileChangeEvent>> {
-      return Promise.resolve(doneResult());
+      return Promise.resolve(doneResult);
     },
   };
 }

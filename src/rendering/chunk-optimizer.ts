@@ -17,8 +17,7 @@ const VERYFRONT_EXCLUDED_DIRS = new Set([
 function shouldSkipDir(name: string, parentPath?: string): boolean {
   if (name === ".veryfront") return false; // Allow .veryfront directory itself
   if (name.startsWith(".")) return true; // Skip other hidden directories
-  if (parentPath?.includes(".veryfront") && VERYFRONT_EXCLUDED_DIRS.has(name)) return true;
-  return false;
+  return Boolean(parentPath?.includes(".veryfront") && VERYFRONT_EXCLUDED_DIRS.has(name));
 }
 
 const SIZE_LIMITS = {
@@ -39,7 +38,7 @@ function analyzeImports(content: string): {
 
   let match: RegExpExecArray | null;
   while ((match = importRegex.exec(content)) !== null) {
-    const spec = match[1] ?? "";
+    const spec = match[1];
     if (!spec) continue;
 
     if (spec.startsWith(".") || spec.startsWith("/")) {
@@ -253,8 +252,7 @@ export function generateChunkManifest(analysis: ChunkAnalysis): ChunkManifest {
   }
 
   for (const [pagePath, imports] of analysis.pages) {
-    const pageDeps = getExternalDeps(imports);
-    const pageDepSet = new Set(pageDeps);
+    const pageDepSet = new Set(getExternalDeps(imports));
 
     const pageChunks: string[] = [];
     for (const chunk of analysis.suggestedChunks) {

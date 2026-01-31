@@ -5,6 +5,8 @@ import { discoverFiles } from "#veryfront/utils/file-discovery.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const EXTENSIONS = [".ts", ".js", ".tsx", ".jsx"];
+const ROUTE_FILE_RE = /^route\.(ts|js|tsx|jsx)$/;
+const PAGE_EXT_RE = /\.(ts|js|tsx|jsx)$/;
 
 export function discoverPagesRoutes(
   router: DynamicRouter,
@@ -15,15 +17,9 @@ export function discoverPagesRoutes(
   return withSpan(
     "api.discoverPagesRoutes",
     async () => {
-      for await (
-        const file of discoverFiles({
-          baseDir: dir,
-          extensions: EXTENSIONS,
-          adapter,
-        })
-      ) {
+      for await (const file of discoverFiles({ baseDir: dir, extensions: EXTENSIONS, adapter })) {
         const relativePath = relative(dir, file.path);
-        const routePath = `${prefix}/${relativePath.replace(/\.(ts|js|tsx|jsx)$/, "")}`;
+        const routePath = `${prefix}/${relativePath.replace(PAGE_EXT_RE, "")}`;
         const pattern = routePath.replace(/\/index$/, "") || prefix;
 
         router.addRoute(pattern, file.path);
@@ -51,10 +47,9 @@ export function discoverAppRoutes(
           adapter,
         })
       ) {
-        if (!file.isFile || !/^route\.(ts|js|tsx|jsx)$/.test(file.name)) continue;
+        if (!file.isFile || !ROUTE_FILE_RE.test(file.name)) continue;
 
-        const pattern = prefix === "" ? "/" : prefix;
-        router.addRoute(pattern, file.path);
+        router.addRoute(prefix === "" ? "/" : prefix, file.path);
       }
 
       for await (
@@ -67,8 +62,7 @@ export function discoverAppRoutes(
       ) {
         if (!entry.isDirectory) continue;
 
-        const dirPrefix = `${prefix}/${entry.name}`;
-        await discoverAppRoutes(router, entry.path, dirPrefix, adapter);
+        await discoverAppRoutes(router, entry.path, `${prefix}/${entry.name}`, adapter);
       }
     },
     { "api.discovery.dir": dir, "api.discovery.prefix": prefix },

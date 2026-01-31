@@ -13,13 +13,17 @@ export async function GET(_req: Request): Promise<Response> {
   const userId = "current-user";
 
   const integrations = await Promise.all(
-    INTEGRATIONS.map(async ({ id, name, icon }) => ({
-      id,
-      name,
-      icon,
-      connected: await tokenStore.isConnected(userId, id),
-      connectUrl: `/api/auth/${id}`,
-    })),
+    INTEGRATIONS.map(async (integration) => {
+      const { id, name, icon } = integration;
+
+      return {
+        id,
+        name,
+        icon,
+        connected: await tokenStore.isConnected(userId, id),
+        connectUrl: `/api/auth/${id}`,
+      };
+    }),
   );
 
   return Response.json({ integrations });

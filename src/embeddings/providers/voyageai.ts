@@ -30,10 +30,8 @@ export class VoyageAIEmbeddingProvider extends BaseEmbeddingProvider {
   }
 
   protected transformRequest(request: EmbeddingRequest): Record<string, unknown> {
-    const model = request.model ?? this.config.model ?? this.defaultModel;
-
     return {
-      model,
+      model: request.model ?? this.config.model ?? this.defaultModel,
       input: request.inputs,
       input_type: "document",
     };
@@ -41,13 +39,12 @@ export class VoyageAIEmbeddingProvider extends BaseEmbeddingProvider {
 
   protected transformResponse(response: unknown): EmbeddingResponse {
     const parsed = VoyageAIEmbeddingResponseSchema.parse(response);
-    const dimension = parsed.data[0]?.embedding.length ?? this.defaultDimension;
     const totalTokens = parsed.usage.total_tokens;
 
     return {
       embeddings: parsed.data.map(({ index, embedding }) => ({ index, embedding })),
       model: parsed.model,
-      dimension,
+      dimension: parsed.data[0]?.embedding.length ?? this.defaultDimension,
       usage: {
         promptTokens: totalTokens,
         totalTokens,

@@ -3,7 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
 import { vendorStrategy } from "./vendor-strategy.ts";
 
-function makeCtx(overrides?: Partial<RewriteContext>): RewriteContext {
+function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
   return {
     filePath: "/project/pages/index.tsx",
     projectDir: "/project",
@@ -62,15 +62,15 @@ describe("VendorStrategy", () => {
   describe("rewrite", () => {
     it("should rewrite static react import to vendor URL", () => {
       const result = vendorStrategy.rewrite(makeInfo("react"), makeCtx());
-      assertEquals(result.specifier!.includes("_vendor.js"), true);
-      assertEquals(result.specifier!.includes("v=abc123"), true);
+      assertEquals(result.specifier?.includes("_vendor.js"), true);
+      assertEquals(result.specifier?.includes("v=abc123"), true);
     });
 
     it("should rewrite dynamic import with statement replacement", () => {
       const result = vendorStrategy.rewrite(makeInfo("react", true), makeCtx());
       assertEquals(result.specifier, null);
-      assertEquals(result.statement!.includes("import("), true);
-      assertEquals(result.statement!.includes("_vendor.js"), true);
+      assertEquals(result.statement?.includes("import("), true);
+      assertEquals(result.statement?.includes("_vendor.js"), true);
     });
 
     it("should return null when no vendor config", () => {

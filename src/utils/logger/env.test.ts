@@ -5,9 +5,7 @@ import { getEnvironmentVariable } from "./env.ts";
 describe("logger/env", () => {
   describe("getEnvironmentVariable", () => {
     it("should return value for known env var", () => {
-      // NODE_ENV should be set in test environment
       const result = getEnvironmentVariable("NODE_ENV");
-      // May or may not be set, but should not throw
       assertEquals(typeof result === "string" || result === undefined, true);
     });
 
@@ -17,9 +15,8 @@ describe("logger/env", () => {
     });
 
     it("should return undefined for empty variable name", () => {
-      // Should not throw
       const result = getEnvironmentVariable("");
-      assertEquals(result === undefined || typeof result === "string", true);
+      assertEquals(typeof result === "string" || result === undefined, true);
     });
   });
 });

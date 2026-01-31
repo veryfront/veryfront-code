@@ -19,16 +19,14 @@ import {
 } from "./runtime-config.ts";
 import { _resetRuntimeEnv, createTestRuntimeEnv } from "./runtime-env.ts";
 
-describe("RuntimeConfig", () => {
-  beforeEach(() => {
-    _resetRuntimeConfig();
-    _resetRuntimeEnv();
-  });
+function reset(): void {
+  _resetRuntimeConfig();
+  _resetRuntimeEnv();
+}
 
-  afterEach(() => {
-    _resetRuntimeConfig();
-    _resetRuntimeEnv();
-  });
+describe("RuntimeConfig", () => {
+  beforeEach(reset);
+  afterEach(reset);
 
   describe("DEFAULT_CONFIG", () => {
     it("has expected default values", () => {
@@ -60,7 +58,7 @@ describe("RuntimeConfig", () => {
 
       expect(config.title).toBe("My App");
       expect(config.projectSlug).toBe("my-app");
-      expect(config.description).toBe("Built with Veryfront"); // default
+      expect(config.description).toBe("Built with Veryfront");
     });
 
     it("computes runtime flags correctly", () => {

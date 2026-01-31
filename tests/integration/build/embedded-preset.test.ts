@@ -1,7 +1,11 @@
 import { assert, assertEquals } from "@veryfront/testing/assert";
 import { join } from "@veryfront/compat/path";
 import { describe, it } from "@veryfront/testing/bdd";
-import { mkdir, readTextFile, writeTextFile } from "@veryfront/testing/deno-compat";
+import {
+  mkdir,
+  readTextFile,
+  writeTextFile,
+} from "@veryfront/testing/deno-compat";
 import { buildEmbeddedPreset } from "../../../src/build/embedded/preset.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { isDeno } from "@veryfront/platform/compat/runtime.ts";
@@ -20,9 +24,12 @@ describe(
   () => {
     it("builds minimal manifest and outputs under embedded/", async () => {
       await withTestContext("embedded-preset", async (context) => {
-        // minimal page for entry detection
         await mkdir(join(context.projectDir, "app"), { recursive: true });
-        await writeTextFile(join(context.projectDir, "app", "page.mdx"), "# Hello");
+        await writeTextFile(
+          join(context.projectDir, "app", "page.mdx"),
+          "# Hello",
+        );
+
         const outDir = join(context.projectDir, "dist");
         await mkdir(outDir, { recursive: true });
 
@@ -31,13 +38,15 @@ describe(
           outDir,
           runtime: "deno",
         });
+
         assertEquals(manifest.version, 1);
         assert(Array.isArray(manifest.routes));
         assert(Array.isArray(manifest.assets));
 
-        const manifestPath = join(outDir, "embedded", "manifest.json");
-        const text = await readTextFile(manifestPath);
-        assert(text.includes("embedded/app.js"));
+        const manifestText = await readTextFile(
+          join(outDir, "embedded", "manifest.json"),
+        );
+        assert(manifestText.includes("embedded/app.js"));
 
         const appJs = await readTextFile(join(outDir, "embedded", "app.js"));
         assert(appJs.length > 0);
@@ -49,53 +58,54 @@ describe(
         const outDir = join(context.projectDir, "dist");
         await mkdir(outDir, { recursive: true });
 
-        // app router root and nested
-        await mkdir(join(context.projectDir, "app", "blog"), {
-          recursive: true,
-        });
+        await mkdir(join(context.projectDir, "app", "blog"), { recursive: true });
         await writeTextFile(join(context.projectDir, "app", "page.mdx"), "# Root");
-        await writeTextFile(join(context.projectDir, "app", "blog", "page.mdx"), "# Blog");
+        await writeTextFile(
+          join(context.projectDir, "app", "blog", "page.mdx"),
+          "# Blog",
+        );
 
-        // pages router index and nested
         await mkdir(join(context.projectDir, "pages", "docs"), {
           recursive: true,
         });
-        await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Index");
-        await writeTextFile(join(context.projectDir, "pages", "docs", "guide.mdx"), "# Guide");
+        await writeTextFile(
+          join(context.projectDir, "pages", "index.mdx"),
+          "# Index",
+        );
+        await writeTextFile(
+          join(context.projectDir, "pages", "docs", "guide.mdx"),
+          "# Guide",
+        );
 
         const { manifest } = await buildEmbeddedPreset({
           projectDir: context.projectDir,
           outDir,
           runtime: "deno",
         });
-        // Routes must include at least 4 entries (root + 3 discovered)
+
         assert(Array.isArray(manifest.routes));
         assert(manifest.routes.length >= 4);
 
         const routePaths = new Set(manifest.routes.map((r) => r.path));
-        // Root always present
         assert(routePaths.has("/"));
-        // App/blog page discovered
         assert(routePaths.has("/blog"));
-        // Pages index and nested path discovered
-        assert(routePaths.has("/index")); // pages/index.mdx maps to "/index"
+        assert(routePaths.has("/index"));
         assert(routePaths.has("/docs/guide"));
 
-        // RSC assets
         const assetPaths = new Set(manifest.assets.map((a) => a.path));
         assert(assetPaths.has("/_veryfront/rsc/dom.js"));
         assert(assetPaths.has("/_veryfront/rsc/hydrator.js"));
         assert(assetPaths.has("/_veryfront/rsc/hydrate-client.js"));
 
-        // Verify per-route JS files exist
         const filesToCheck = [
           join(outDir, "embedded", "app.js"),
           join(outDir, "embedded", "app", "blog.js"),
           join(outDir, "embedded", "pages", "index.js"),
           join(outDir, "embedded", "pages", "docs", "guide.js"),
         ];
-        for (const f of filesToCheck) {
-          const code = await readTextFile(f);
+
+        for (const filePath of filesToCheck) {
+          const code = await readTextFile(filePath);
           assert(code.length > 0);
         }
       });
@@ -105,8 +115,12 @@ describe(
       await withTestContext("embedded-preset-import-smoke", async (context) => {
         const outDir = join(context.projectDir, "dist");
         await mkdir(outDir, { recursive: true });
+
         await mkdir(join(context.projectDir, "app"), { recursive: true });
-        await writeTextFile(join(context.projectDir, "app", "page.mdx"), "# Hello Import");
+        await writeTextFile(
+          join(context.projectDir, "app", "page.mdx"),
+          "# Hello Import",
+        );
 
         await buildEmbeddedPreset({
           projectDir: context.projectDir,
@@ -124,16 +138,25 @@ describe(
       await withTestContext("embedded-preset-export-shape", async (context) => {
         const outDir = join(context.projectDir, "dist");
         await mkdir(outDir, { recursive: true });
-        await mkdir(join(context.projectDir, "app", "blog"), {
-          recursive: true,
-        });
+
+        await mkdir(join(context.projectDir, "app", "blog"), { recursive: true });
         await mkdir(join(context.projectDir, "pages", "docs"), {
           recursive: true,
         });
+
         await writeTextFile(join(context.projectDir, "app", "page.mdx"), "# Root");
-        await writeTextFile(join(context.projectDir, "app", "blog", "page.mdx"), "# Blog");
-        await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Index");
-        await writeTextFile(join(context.projectDir, "pages", "docs", "guide.mdx"), "# Guide");
+        await writeTextFile(
+          join(context.projectDir, "app", "blog", "page.mdx"),
+          "# Blog",
+        );
+        await writeTextFile(
+          join(context.projectDir, "pages", "index.mdx"),
+          "# Index",
+        );
+        await writeTextFile(
+          join(context.projectDir, "pages", "docs", "guide.mdx"),
+          "# Guide",
+        );
 
         await buildEmbeddedPreset({
           projectDir: context.projectDir,
@@ -146,9 +169,9 @@ describe(
           join(outDir, "embedded", "pages", "index.js"),
           join(outDir, "embedded", "pages", "docs", "guide.js"),
         ];
-        for (const f of files) {
-          const code = await readTextFile(f);
-          // Basic shape: exported module present (either default or named)
+
+        for (const filePath of files) {
+          const code = await readTextFile(filePath);
           assert(code.includes("export default") || /export\s+\{/.test(code));
         }
       });

@@ -18,6 +18,7 @@ describe("html/html-injection", () => {
         minMeta,
         { mode: "production", slug: "test" },
       );
+
       assertEquals(html.includes("<p>Hello</p>"), true);
       assertEquals(html.includes("{{ content }}"), false);
     });
@@ -29,6 +30,7 @@ describe("html/html-injection", () => {
         { title: "My Title", description: "" },
         { mode: "production", slug: "test" },
       );
+
       assertEquals(html.includes("My Title"), true);
     });
 
@@ -39,6 +41,7 @@ describe("html/html-injection", () => {
         { title: "", description: "My Description" },
         { mode: "production", slug: "test" },
       );
+
       assertEquals(html.includes("My Description"), true);
     });
 
@@ -49,6 +52,7 @@ describe("html/html-injection", () => {
         minMeta,
         { mode: "development", slug: "test" },
       );
+
       assertEquals(html.includes("hmr.js"), true);
     });
 
@@ -59,6 +63,7 @@ describe("html/html-injection", () => {
         minMeta,
         { mode: "production", slug: "my-slug" },
       );
+
       assertEquals(html.includes("hydrate.js"), true);
       assertEquals(html.includes("my-slug"), true);
     });
@@ -70,6 +75,7 @@ describe("html/html-injection", () => {
         minMeta,
         { mode: "production", slug: "test" },
       );
+
       assertEquals(html.includes("devScripts"), false);
       assertEquals(html.includes("devStyles"), false);
     });
@@ -79,8 +85,14 @@ describe("html/html-injection", () => {
         baseTemplate,
         "<p>content</p>",
         minMeta,
-        { mode: "production", slug: "test", pagePath: "/app/page.tsx", isClientPage: true },
+        {
+          mode: "production",
+          slug: "test",
+          pagePath: "/app/page.tsx",
+          isClientPage: true,
+        },
       );
+
       assertEquals(html.includes("veryfront-hydration-data"), true);
       assertEquals(html.includes("/app/page.tsx"), true);
     });
@@ -90,8 +102,15 @@ describe("html/html-injection", () => {
         baseTemplate,
         "",
         minMeta,
-        { mode: "production", slug: "test", studioEmbed: true, projectId: "p1", pageId: "pg1" },
+        {
+          mode: "production",
+          slug: "test",
+          studioEmbed: true,
+          projectId: "p1",
+          pageId: "pg1",
+        },
       );
+
       assertEquals(html.includes("studio-bridge.js"), true);
     });
   });

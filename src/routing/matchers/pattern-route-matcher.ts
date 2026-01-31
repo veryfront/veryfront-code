@@ -14,10 +14,10 @@ export class DynamicRouter {
   }
 
   match(pathname: string): RouteMatch | null {
-    const cached = this.cache.get(pathname);
-    if (cached !== undefined) return cached;
-
     const normalizedPathname = normalizePath(pathname);
+
+    const cached = this.cache.get(normalizedPathname);
+    if (cached !== undefined) return cached;
 
     for (const route of this.routes) {
       const match = matchRoute(normalizedPathname, route);

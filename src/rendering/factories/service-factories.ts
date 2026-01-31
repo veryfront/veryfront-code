@@ -8,8 +8,6 @@ import { ComponentRegistry } from "../ssr/component-registry.ts";
 import { VirtualModuleSystem } from "../virtual-module-system.ts";
 import { PageRenderer } from "../page-renderer.ts";
 
-// contentSourceId is now a required field on RenderContext, computed upstream by proxy or fallback paths
-
 export function createPageResolver(ctx: RenderContext): PageResolver {
   return new PageResolver({
     projectDir: ctx.projectDir,
@@ -70,15 +68,15 @@ export interface CreatePageRendererOptions {
 
 export function createPageRenderer(
   ctx: RenderContext,
-  options: CreatePageRendererOptions,
+  { componentRegistry, compileMDX }: CreatePageRendererOptions,
 ): PageRenderer {
   return new PageRenderer({
     projectDir: ctx.projectDir,
     mode: ctx.mode,
     config: ctx.config,
     adapter: ctx.adapter,
-    componentRegistry: options.componentRegistry,
-    compileMDX: options.compileMDX,
+    componentRegistry,
+    compileMDX,
     moduleServerUrl: ctx.moduleServerUrl,
   });
 }

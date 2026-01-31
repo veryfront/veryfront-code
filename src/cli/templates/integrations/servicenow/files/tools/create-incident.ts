@@ -20,7 +20,8 @@ export default defineTool({
     subcategory: z.string().optional().describe("Incident subcategory"),
   }),
   async execute(input) {
-    if (!(await isServiceNowConnected())) {
+    const connected = await isServiceNowConnected();
+    if (!connected) {
       return {
         error: "ServiceNow not connected",
         action: "Please connect ServiceNow via /api/auth/servicenow",

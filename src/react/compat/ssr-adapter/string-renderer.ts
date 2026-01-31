@@ -28,7 +28,7 @@ export async function renderToStringAdapter(
 
   if (server.renderToReadableStream) {
     try {
-      const stream = await withSpan(
+      const stream = (await withSpan(
         SpanNames.SSR_REACT_RENDER_TO_STREAM,
         () =>
           server.renderToReadableStream!(element, {
@@ -38,7 +38,8 @@ export async function renderToStringAdapter(
             },
           }),
         { "ssr.method": "renderToReadableStream" },
-      ) as ReadableStream<Uint8Array>;
+      )) as ReadableStream<Uint8Array>;
+
       return await streamToString(stream);
     } catch (error) {
       logger.warn("SSR renderToReadableStream failed, falling back to renderToString", error);

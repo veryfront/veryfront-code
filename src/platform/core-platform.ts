@@ -84,7 +84,7 @@ const PLATFORM_CAPABILITIES: Record<Platform, PlatformCapabilities> = {
     streamingRecommended: true,
     displayName: "Unknown Platform",
   },
-} as const;
+};
 
 export function getPlatformCapabilities(platform?: Platform): PlatformCapabilities {
   return PLATFORM_CAPABILITIES[platform ?? detectPlatform()] ?? PLATFORM_CAPABILITIES.unknown;

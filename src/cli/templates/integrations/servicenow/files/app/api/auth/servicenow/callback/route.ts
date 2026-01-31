@@ -68,7 +68,7 @@ export async function GET(request: Request): Promise<Response> {
 
     return Response.redirect(`${baseUrl}/?connected=servicenow`, 302);
   } catch (error) {
-    console.error("ServiceNow OAuth error:", err);
+    console.error("ServiceNow OAuth error:", error);
     return Response.redirect(`${baseUrl}/?error=servicenow_oauth_failed`, 302);
   }
 }

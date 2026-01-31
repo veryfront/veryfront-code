@@ -10,11 +10,8 @@ describe("workflow/dsl/validation", () => {
       validateNodeId("a");
     });
 
-    it("should throw for empty string", () => {
+    it("should throw for empty or whitespace-only string", () => {
       assertThrows(() => validateNodeId(""), Error, "non-empty");
-    });
-
-    it("should throw for whitespace-only string", () => {
       assertThrows(() => validateNodeId("   "), Error, "non-empty");
       assertThrows(() => validateNodeId("\t"), Error, "non-empty");
     });

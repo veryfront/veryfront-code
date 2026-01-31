@@ -16,37 +16,49 @@ import {
 describe("route-path-utils", () => {
   describe("isDynamicSegment", () => {
     it("should detect standard dynamic segments", () => {
-      for (const segment of ["[id]", "[slug]", "[userId]"]) {
+      const segments = ["[id]", "[slug]", "[userId]"] as const;
+
+      for (const segment of segments) {
         assertEquals(isDynamicSegment(segment), true);
       }
     });
 
     it("should detect catch-all segments", () => {
-      for (const segment of ["[...slug]", "[...path]"]) {
+      const segments = ["[...slug]", "[...path]"] as const;
+
+      for (const segment of segments) {
         assertEquals(isDynamicSegment(segment), true);
       }
     });
 
     it("should detect optional catch-all segments", () => {
-      for (const segment of ["[[...slug]]", "[[...params]]"]) {
+      const segments = ["[[...slug]]", "[[...params]]"] as const;
+
+      for (const segment of segments) {
         assertEquals(isDynamicSegment(segment), true);
       }
     });
 
     it("should detect file-style dynamic segments", () => {
-      for (const segment of ["[id].tsx", "[slug].ts"]) {
+      const segments = ["[id].tsx", "[slug].ts"] as const;
+
+      for (const segment of segments) {
         assertEquals(isDynamicSegment(segment), true);
       }
     });
 
     it("should return false for static segments", () => {
-      for (const segment of ["about", "users", "page.tsx"]) {
+      const segments = ["about", "users", "page.tsx"] as const;
+
+      for (const segment of segments) {
         assertEquals(isDynamicSegment(segment), false);
       }
     });
 
     it("should return false for non-bracket strings", () => {
-      for (const segment of ["", "normal"]) {
+      const segments = ["", "normal"] as const;
+
+      for (const segment of segments) {
         assertEquals(isDynamicSegment(segment), false);
       }
     });
@@ -54,13 +66,17 @@ describe("route-path-utils", () => {
 
   describe("isDynamicRoute", () => {
     it("should detect routes with dynamic segments", () => {
-      for (const route of ["/users/[id]", "[...slug]", "/blog/[year]/[month]"]) {
+      const routes = ["/users/[id]", "[...slug]", "/blog/[year]/[month]"] as const;
+
+      for (const route of routes) {
         assertEquals(isDynamicRoute(route), true);
       }
     });
 
     it("should return false for static routes", () => {
-      for (const route of ["/about", "/users/list"]) {
+      const routes = ["/about", "/users/list"] as const;
+
+      for (const route of routes) {
         assertEquals(isDynamicRoute(route), false);
       }
     });
@@ -68,7 +84,9 @@ describe("route-path-utils", () => {
 
   describe("isCatchAllSegment", () => {
     it("should detect catch-all segments", () => {
-      for (const segment of ["[...slug]", "[...path]"]) {
+      const segments = ["[...slug]", "[...path]"] as const;
+
+      for (const segment of segments) {
         assertEquals(isCatchAllSegment(segment), true);
       }
     });
@@ -78,7 +96,9 @@ describe("route-path-utils", () => {
     });
 
     it("should return false for standard dynamic segments", () => {
-      for (const segment of ["[id]", "[slug]"]) {
+      const segments = ["[id]", "[slug]"] as const;
+
+      for (const segment of segments) {
         assertEquals(isCatchAllSegment(segment), false);
       }
     });
@@ -90,13 +110,13 @@ describe("route-path-utils", () => {
 
   describe("removeFileExtension", () => {
     it("should remove known extensions", () => {
-      const cases: Array<[string, string]> = [
+      const cases = [
         ["page.tsx", "page"],
         ["component.jsx", "component"],
         ["utils.ts", "utils"],
         ["script.js", "script"],
         ["content.mdx", "content"],
-      ];
+      ] as const;
 
       for (const [input, expected] of cases) {
         assertEquals(removeFileExtension(input), expected);
@@ -104,7 +124,9 @@ describe("route-path-utils", () => {
     });
 
     it("should not modify paths without extensions", () => {
-      for (const input of ["folder", "[id]"]) {
+      const inputs = ["folder", "[id]"] as const;
+
+      for (const input of inputs) {
         assertEquals(removeFileExtension(input), input);
       }
     });
@@ -243,23 +265,23 @@ describe("route-path-utils", () => {
 
   describe("matchesPattern", () => {
     it("should return true for matching patterns", () => {
-      for (
-        const [pattern, path] of [
-          ["[id]", "123"],
-          ["users/[id]", "users/123"],
-        ] as const
-      ) {
+      const cases = [
+        ["[id]", "123"],
+        ["users/[id]", "users/123"],
+      ] as const;
+
+      for (const [pattern, path] of cases) {
         assertEquals(matchesPattern(pattern, path), true);
       }
     });
 
     it("should return false for non-matching patterns", () => {
-      for (
-        const [pattern, path] of [
-          ["users/list", "users/detail"],
-          ["[id]", "a/b"],
-        ] as const
-      ) {
+      const cases = [
+        ["users/list", "users/detail"],
+        ["[id]", "a/b"],
+      ] as const;
+
+      for (const [pattern, path] of cases) {
         assertEquals(matchesPattern(pattern, path), false);
       }
     });

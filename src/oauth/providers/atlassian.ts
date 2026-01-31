@@ -12,7 +12,7 @@ const atlassianBase = {
     audience: "api.atlassian.com",
     prompt: "consent",
   },
-};
+} satisfies Omit<OAuthServiceConfig, "serviceId" | "apiBaseUrl" | "defaultScopes">;
 
 export const jiraConfig: OAuthServiceConfig = {
   ...atlassianBase,

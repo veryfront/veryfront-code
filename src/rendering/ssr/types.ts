@@ -1,8 +1,3 @@
-/**
- * Type definitions for SSR module.
- * @module
- */
-
 import type * as React from "react";
 
 export interface MDXRenderOptions {

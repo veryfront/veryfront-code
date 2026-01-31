@@ -29,13 +29,15 @@ export default tool({
 
     return {
       opportunities: response.records.map((opportunity) => {
-        const additionalFields = fields
-          ? Object.fromEntries(
-              fields
-                .filter((field) => opportunity[field] !== undefined)
-                .map((field) => [field, opportunity[field]]),
-            )
-          : undefined;
+        let additionalFields: Record<string, unknown> | undefined;
+
+        if (fields) {
+          additionalFields = Object.fromEntries(
+            fields
+              .filter((field) => opportunity[field] !== undefined)
+              .map((field) => [field, opportunity[field]]),
+          );
+        }
 
         return {
           id: opportunity.Id,

@@ -37,7 +37,6 @@ describe("cli/ui/layout", () => {
 
     it("should truncate text longer than maxWidth", () => {
       const result = truncate("hello world", 8);
-      // Should be 7 visible chars + ellipsis
       assertEquals(stripAnsi(result).length <= 8, true);
     });
 
@@ -52,31 +51,25 @@ describe("cli/ui/layout", () => {
 
     it("should handle width of 1 with default ellipsis", () => {
       const result = truncate("hello world", 1);
-      // Result should have visible length <= 1
       assertEquals(visibleLength(result) <= 1, true);
     });
   });
 
   describe("pad", () => {
     it("should left-pad by default", () => {
-      const result = pad("hi", 5);
-      assertEquals(result, "hi   ");
+      assertEquals(pad("hi", 5), "hi   ");
     });
 
     it("should right-pad", () => {
-      const result = pad("hi", 5, "right");
-      assertEquals(result, "   hi");
+      assertEquals(pad("hi", 5, "right"), "   hi");
     });
 
     it("should center-pad", () => {
-      const result = pad("hi", 6, "center");
-      assertEquals(result, "  hi  ");
+      assertEquals(pad("hi", 6, "center"), "  hi  ");
     });
 
     it("should center-pad with odd padding", () => {
-      const result = pad("hi", 5, "center");
-      // 3 padding chars: floor(3/2)=1 left, 2 right
-      assertEquals(result, " hi  ");
+      assertEquals(pad("hi", 5, "center"), " hi  ");
     });
 
     it("should not pad if text is already wide enough", () => {
@@ -84,35 +77,29 @@ describe("cli/ui/layout", () => {
     });
 
     it("should handle ANSI codes in text", () => {
-      const result = pad("\x1b[31mhi\x1b[0m", 5);
-      assertEquals(visibleLength(result), 5);
+      assertEquals(visibleLength(pad("\x1b[31mhi\x1b[0m", 5)), 5);
     });
   });
 
   describe("wrap", () => {
     it("should not wrap text shorter than maxWidth", () => {
-      const result = wrap("hello", 20);
-      assertEquals(result, ["hello"]);
+      assertEquals(wrap("hello", 20), ["hello"]);
     });
 
     it("should wrap long text at word boundaries", () => {
-      const result = wrap("hello world foo bar", 11);
-      assertEquals(result, ["hello world", "foo bar"]);
+      assertEquals(wrap("hello world foo bar", 11), ["hello world", "foo bar"]);
     });
 
     it("should handle single long word", () => {
-      const result = wrap("superlongword", 5);
-      assertEquals(result, ["superlongword"]);
+      assertEquals(wrap("superlongword", 5), ["superlongword"]);
     });
 
     it("should return original text for maxWidth <= 0", () => {
-      const result = wrap("hello world", 0);
-      assertEquals(result, ["hello world"]);
+      assertEquals(wrap("hello world", 0), ["hello world"]);
     });
 
     it("should wrap each word separately when maxWidth is very small", () => {
-      const result = wrap("a b c", 1);
-      assertEquals(result, ["a", "b", "c"]);
+      assertEquals(wrap("a b c", 1), ["a", "b", "c"]);
     });
   });
 

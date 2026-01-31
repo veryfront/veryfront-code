@@ -9,14 +9,12 @@ export function executeTool(
 ): Promise<unknown> {
   const tool = toolRegistry.get(toolId);
 
-  if (!tool) {
-    throw toError(
-      createError({
-        type: "agent",
-        message: `Tool "${toolId}" not found`,
-      }),
-    );
-  }
+  if (tool) return tool.execute(input, context);
 
-  return tool.execute(input, context);
+  throw toError(
+    createError({
+      type: "agent",
+      message: `Tool "${toolId}" not found`,
+    }),
+  );
 }

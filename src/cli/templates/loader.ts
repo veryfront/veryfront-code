@@ -16,17 +16,19 @@ interface TemplateManifest {
 
 const typedManifest = manifest as TemplateManifest;
 
+function getSortedFiles(entry: { files: Record<string, string> }): TemplateFile[] {
+  return Object.entries(entry.files)
+    .map(([path, content]) => ({ path, content }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+}
+
 export function loadTemplateFromDirectory(
   templateName: string,
 ): Promise<TemplateFile[]> {
   const entry = typedManifest.templates[templateName];
   if (!entry) return Promise.resolve([]);
 
-  const files = Object.entries(entry.files)
-    .map(([path, content]) => ({ path, content }))
-    .sort((a, b) => a.path.localeCompare(b.path));
-
-  return Promise.resolve(files);
+  return Promise.resolve(getSortedFiles(entry));
 }
 
 export function getTemplateDirectory(templateName: string): string {
@@ -46,9 +48,7 @@ export function getIntegrationTemplate(
   const entry = typedManifest.templates[`integration:${integrationName}`];
   if (!entry) return null;
 
-  return Object.entries(entry.files)
-    .map(([path, content]) => ({ path, content }))
-    .sort((a, b) => a.path.localeCompare(b.path));
+  return getSortedFiles(entry);
 }
 
 export function listTemplates(): string[] {

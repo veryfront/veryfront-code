@@ -27,21 +27,27 @@ function maskHttpUrls(code: string): UrlMaskResult {
 
 function unmaskHttpUrls(code: string, urlMap: Map<string, string>): string {
   let result = code;
+
   for (const [placeholder, url] of urlMap) {
     result = result.replaceAll(placeholder, url);
   }
+
   return result;
 }
 
 export async function initLexer(): Promise<void> {
-  if (!initPromise) {
-    // es-module-lexer@1.5 exports init as a Promise (not a function) in ESM build
-    // but some typings expect a function. Handle both to avoid type errors.
-    const anyInit = init as unknown;
-    initPromise = typeof anyInit === "function"
-      ? (anyInit as () => Promise<void>)()
-      : (anyInit as Promise<void>);
+  if (initPromise) {
+    await initPromise;
+    return;
   }
+
+  // es-module-lexer@1.5 exports init as a Promise (not a function) in ESM build
+  // but some typings expect a function. Handle both to avoid type errors.
+  const anyInit = init as unknown;
+  initPromise = typeof anyInit === "function"
+    ? (anyInit as () => Promise<void>)()
+    : (anyInit as Promise<void>);
+
   await initPromise;
 }
 
@@ -55,6 +61,29 @@ export type ImportSpecifier = {
   a: number; // assert index
 };
 
+function logParseError(error: unknown, code: string): void {
+  const errorMsg = error instanceof Error ? error.message : String(error);
+  const match = errorMsg.match(/@:(\d+):(\d+)/);
+  if (!match) return;
+
+  const line = Number.parseInt(match[1] ?? "", 10);
+  const col = Number.parseInt(match[2] ?? "", 10);
+  const lines = code.split("\n");
+  const start = Math.max(0, line - 3);
+
+  const context = lines
+    .slice(start, line + 2)
+    .map((l, i) => {
+      const lineNum = start + i + 1;
+      const prefix = lineNum === line ? ">>> " : "    ";
+      const snippet = l.length > 200 ? `${l.substring(0, 200)}...` : l;
+      return `${prefix}${lineNum}: ${snippet}`;
+    })
+    .join("\n");
+
+  logger.error("[es-module-lexer] Parse error", { line, col, context });
+}
+
 export async function parseImports(code: string): Promise<readonly ImportSpecifier[]> {
   await initLexer();
 
@@ -64,28 +93,7 @@ export async function parseImports(code: string): Promise<readonly ImportSpecifi
   try {
     [imports] = parse(masked);
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    const match = errorMsg.match(/@:(\d+):(\d+)/);
-
-    if (match) {
-      const line = Number.parseInt(match[1] ?? "", 10);
-      const col = Number.parseInt(match[2] ?? "", 10);
-      const lines = masked.split("\n");
-      const start = Math.max(0, line - 3);
-
-      const context = lines
-        .slice(start, line + 2)
-        .map((l, i) => {
-          const lineNum = start + i + 1;
-          const prefix = lineNum === line ? ">>> " : "    ";
-          const snippet = l.length > 200 ? `${l.substring(0, 200)}...` : l;
-          return `${prefix}${lineNum}: ${snippet}`;
-        })
-        .join("\n");
-
-      logger.error("[es-module-lexer] Parse error", { line, col, context });
-    }
-
+    logParseError(error, masked);
     throw error;
   }
 
@@ -119,24 +127,26 @@ export async function replaceSpecifiers(
     if (!imp?.n) continue;
 
     const originalSpecifier = unmaskHttpUrls(imp.n, urlMap);
-    const replacement = replacer(originalSpecifier, imp.d > -1);
+    const isDynamic = imp.d > -1;
+    const replacement = replacer(originalSpecifier, isDynamic);
 
     if (!replacement || replacement === originalSpecifier) continue;
 
+    if (!isDynamic) {
+      result = result.substring(0, imp.s) + replacement + result.substring(imp.e);
+      continue;
+    }
+
     // For dynamic imports with string literals, es-module-lexer's s/e include the quotes.
     // We need to preserve the quote style when replacing.
-    const isDynamic = imp.d > -1;
-    if (isDynamic) {
-      const quote = result[imp.s];
-      if (quote === '"' || quote === "'" || quote === "`") {
-        result = result.substring(0, imp.s) + quote + replacement + quote + result.substring(imp.e);
-      } else {
-        // Dynamic import with expression, not string literal - shouldn't happen if n is defined
-        result = result.substring(0, imp.s) + replacement + result.substring(imp.e);
-      }
-    } else {
-      result = result.substring(0, imp.s) + replacement + result.substring(imp.e);
+    const quote = result[imp.s];
+    if (quote === '"' || quote === "'" || quote === "`") {
+      result = result.substring(0, imp.s) + quote + replacement + quote + result.substring(imp.e);
+      continue;
     }
+
+    // Dynamic import with expression, not string literal - shouldn't happen if n is defined
+    result = result.substring(0, imp.s) + replacement + result.substring(imp.e);
   }
 
   return unmaskHttpUrls(result, urlMap);

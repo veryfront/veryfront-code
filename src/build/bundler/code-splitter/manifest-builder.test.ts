@@ -49,8 +49,7 @@ describe("build/bundler/code-splitter/manifest-builder", () => {
 
   describe("calculateFileHash", () => {
     it("should return 8-char hex hash", async () => {
-      const content = new TextEncoder().encode("hello world");
-      const hash = await calculateFileHash(content);
+      const hash = await calculateFileHash(new TextEncoder().encode("hello world"));
       assertEquals(hash.length, 8);
       assertEquals(/^[0-9a-f]{8}$/.test(hash), true);
     });

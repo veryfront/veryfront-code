@@ -33,8 +33,10 @@ describe("MDX module path cache", () => {
 
       assertEquals(cacheB.get("_vf_modules/pages/about.js"), undefined);
     } finally {
-      await remove(cacheDirA, { recursive: true });
-      await remove(cacheDirB, { recursive: true });
+      await Promise.all([
+        remove(cacheDirA, { recursive: true }),
+        remove(cacheDirB, { recursive: true }),
+      ]);
       clearModulePathCache();
     }
   });

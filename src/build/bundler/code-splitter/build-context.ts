@@ -22,7 +22,7 @@ export function getExternalDependencies(
   customExternal: string[] = [],
   moduleResolution: "cdn" | "self-hosted" | "bundled" = "cdn",
 ): string[] {
-  const baseExternal = [
+  const external = [
     "react",
     "react-dom",
     "react-dom/client",
@@ -31,10 +31,11 @@ export function getExternalDependencies(
   ];
 
   if (moduleResolution !== "bundled") {
-    baseExternal.push(...VERYFRONT_CLIENT_MODULES);
+    external.push(...VERYFRONT_CLIENT_MODULES);
   }
 
-  return [...baseExternal, ...customExternal];
+  external.push(...customExternal);
+  return external;
 }
 
 /** Creates a browser shim file for global compatibility */
@@ -64,11 +65,11 @@ export async function createBuildContext(
   entryPoints: Record<string, string>,
 ): Promise<BuildContext> {
   const moduleResolution = options.moduleResolution ?? "cdn";
-  const externalDependencies = getExternalDependencies(
-    options.external,
-    moduleResolution,
-  );
+  const external = getExternalDependencies(options.external, moduleResolution);
   const shimFile = await createShimFile(options.outDir);
+
+  const isProduction = options.mode === "production";
+  const isDevelopment = options.mode === "development";
 
   return context({
     entryPoints,
@@ -79,17 +80,17 @@ export async function createBuildContext(
     platform: "browser",
     outdir: options.outDir,
     metafile: true,
-    minify: options.mode === "production",
-    sourcemap: options.mode === "development",
-    treeShaking: options.mode === "production",
+    minify: isProduction,
+    sourcemap: isDevelopment,
+    treeShaking: isProduction,
     chunkNames: "chunks/[name]-[hash]",
     entryNames: "[name]",
     assetNames: "assets/[name]-[hash]",
-    external: externalDependencies,
+    external,
     inject: [shimFile],
     define: {
       "process.env.NODE_ENV": JSON.stringify(options.mode),
-      __DEV__: JSON.stringify(options.mode === "development"),
+      __DEV__: JSON.stringify(isDevelopment),
     },
     plugins: [createSplitterPlugin(options.projectDir)],
   });

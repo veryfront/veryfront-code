@@ -7,11 +7,10 @@
 import { assertEquals, assertExists } from "@veryfront/testing/assert";
 import { afterAll, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { DataFetcher, type PageWithData } from "@veryfront/data";
-import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 import { delay } from "@std/async";
+import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
 describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false }, () => {
-  // Clean up renderer intervals to prevent resource leaks
   afterAll(async () => {
     await cleanupBundler();
   });
@@ -27,11 +26,7 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const pageModule: PageWithData = {
         default: () => null,
         getStaticPaths: () => ({
-          paths: [
-            { params: { id: "1" } },
-            { params: { id: "2" } },
-            { params: { id: "3" } },
-          ],
+          paths: [{ params: { id: "1" } }, { params: { id: "2" } }, { params: { id: "3" } }],
           fallback: false,
         }),
       };
@@ -39,8 +34,8 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals(result!.paths.length, 3);
-      assertEquals(result!.fallback, false);
+      assertEquals(result.paths.length, 3);
+      assertEquals(result.fallback, false);
     });
 
     it("should handle slug-based dynamic routes", async () => {
@@ -59,19 +54,15 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals(result!.paths.length, 3);
-      assertEquals(result!.paths[0]?.params.slug, "hello-world");
+      assertEquals(result.paths.length, 3);
+      assertEquals(result.paths[0]?.params.slug, "hello-world");
     });
 
     it("should handle numeric IDs", async () => {
       const pageModule: PageWithData = {
         default: () => null,
         getStaticPaths: () => ({
-          paths: [
-            { params: { id: "123" } },
-            { params: { id: "456" } },
-            { params: { id: "789" } },
-          ],
+          paths: [{ params: { id: "123" } }, { params: { id: "456" } }, { params: { id: "789" } }],
           fallback: false,
         }),
       };
@@ -79,8 +70,8 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals(result!.paths.length, 3);
-      assertEquals(result!.paths[2]?.params.id, "789");
+      assertEquals(result.paths.length, 3);
+      assertEquals(result.paths[2]?.params.id, "789");
     });
   });
 
@@ -101,9 +92,9 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals(result!.paths.length, 3);
-      assertEquals(result!.paths[0]?.params.category, "tech");
-      assertEquals(result!.paths[0]?.params.slug, "ai-trends");
+      assertEquals(result.paths.length, 3);
+      assertEquals(result.paths[0]?.params.category, "tech");
+      assertEquals(result.paths[0]?.params.slug, "ai-trends");
     });
 
     it("should handle deeply nested paths", async () => {
@@ -121,10 +112,10 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals(result!.paths.length, 2);
-      assertEquals(result!.paths[0]?.params.org, "acme");
-      assertEquals(result!.paths[0]?.params.issue, "42");
-      assertEquals(result!.fallback, "blocking");
+      assertEquals(result.paths.length, 2);
+      assertEquals(result.paths[0]?.params.org, "acme");
+      assertEquals(result.paths[0]?.params.issue, "42");
+      assertEquals(result.fallback, "blocking");
     });
   });
 
@@ -145,9 +136,9 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals(result!.paths.length, 3);
-      assertEquals(Array.isArray(result!.paths[0]?.params.slug), true);
-      assertEquals((result!.paths[2]?.params.slug as string[]).length, 3);
+      assertEquals(result.paths.length, 3);
+      assertEquals(Array.isArray(result.paths[0]?.params.slug), true);
+      assertEquals((result.paths[2]?.params.slug as string[]).length, 3);
     });
 
     it("should handle optional catch-all routes", async () => {
@@ -166,8 +157,8 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals(result!.paths.length, 3);
-      assertEquals((result!.paths[0]?.params.slug as string[]).length, 0);
+      assertEquals(result.paths.length, 3);
+      assertEquals((result.paths[0]?.params.slug as string[]).length, 0);
     });
   });
 
@@ -184,7 +175,7 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals(result!.fallback, false);
+      assertEquals(result.fallback, false);
     });
 
     it("should support fallback: true", async () => {
@@ -199,7 +190,7 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals(result!.fallback, true);
+      assertEquals(result.fallback, true);
     });
 
     it('should support fallback: "blocking"', async () => {
@@ -214,7 +205,7 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals(result!.fallback, "blocking");
+      assertEquals(result.fallback, "blocking");
     });
   });
 
@@ -223,13 +214,9 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const pageModule: PageWithData = {
         default: () => null,
         getStaticPaths: async () => {
-          // Simulate fetching from API
           await delay(10);
           return {
-            paths: [
-              { params: { id: "async-1" } },
-              { params: { id: "async-2" } },
-            ],
+            paths: [{ params: { id: "async-1" } }, { params: { id: "async-2" } }],
             fallback: false,
           };
         },
@@ -238,29 +225,26 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals(result!.paths.length, 2);
-      assertEquals(result!.paths[0]?.params.id, "async-1");
+      assertEquals(result.paths.length, 2);
+      assertEquals(result.paths[0]?.params.id, "async-1");
     });
 
     it("should handle paths from external API", async () => {
-      // Simulate fetching blog posts from CMS
-      const fetchPosts = async () => {
+      async function fetchPosts(): Promise<Array<{ id: string; slug: string }>> {
         await delay(5);
         return [
           { id: "post-1", slug: "first-post" },
           { id: "post-2", slug: "second-post" },
           { id: "post-3", slug: "third-post" },
         ];
-      };
+      }
 
       const pageModule: PageWithData = {
         default: () => null,
         getStaticPaths: async () => {
           const posts = await fetchPosts();
           return {
-            paths: posts.map((post) => ({
-              params: { slug: post.slug },
-            })),
+            paths: posts.map((post) => ({ params: { slug: post.slug } })),
             fallback: "blocking",
           };
         },
@@ -269,8 +253,8 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals(result!.paths.length, 3);
-      assertEquals(result!.paths[1]?.params.slug, "second-post");
+      assertEquals(result.paths.length, 3);
+      assertEquals(result.paths[1]?.params.slug, "second-post");
     });
   });
 
@@ -287,8 +271,8 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals(result!.paths.length, 0);
-      assertEquals(result!.fallback, true);
+      assertEquals(result.paths.length, 0);
+      assertEquals(result.fallback, true);
     });
 
     it("should handle special characters in params", async () => {
@@ -308,8 +292,8 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals(result!.paths.length, 4);
-      assertEquals(result!.paths[2]?.params.slug, "test.html");
+      assertEquals(result.paths.length, 4);
+      assertEquals(result.paths[2]?.params.slug, "test.html");
     });
 
     it("should handle unicode characters in slugs", async () => {
@@ -328,8 +312,8 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals(result!.paths.length, 3);
-      assertEquals(result!.paths[0]?.params.slug, "こんにちは");
+      assertEquals(result.paths.length, 3);
+      assertEquals(result.paths[0]?.params.slug, "こんにちは");
     });
 
     it("should handle very long slugs", async () => {
@@ -345,16 +329,14 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals((result!.paths[0]?.params.slug as string).length, 200);
+      assertEquals((result.paths[0]?.params.slug as string).length, 200);
     });
 
     it("should handle large number of paths", async () => {
       const pageModule: PageWithData = {
         default: () => null,
         getStaticPaths: () => ({
-          paths: Array.from({ length: 1000 }, (_, i) => ({
-            params: { id: String(i) },
-          })),
+          paths: Array.from({ length: 1000 }, (_, i) => ({ params: { id: String(i) } })),
           fallback: false,
         }),
       };
@@ -362,8 +344,8 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals(result!.paths.length, 1000);
-      assertEquals(result!.paths[999]?.params.id, "999");
+      assertEquals(result.paths.length, 1000);
+      assertEquals(result.paths[999]?.params.id, "999");
     });
 
     it("should return null when getStaticPaths is undefined", async () => {
@@ -384,15 +366,16 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
         },
       };
 
-      // Should throw the error (after logging it)
-      let thrown = false;
+      let thrownError: Error | null = null;
+
       try {
         await fetcher.getStaticPaths(pageModule);
       } catch (error) {
-        thrown = true;
-        assertEquals((error as Error).message, "API fetch failed");
+        thrownError = error as Error;
       }
-      assertEquals(thrown, true);
+
+      assertExists(thrownError);
+      assertEquals(thrownError.message, "API fetch failed");
     });
   });
 
@@ -401,10 +384,7 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       const pageModule: PageWithData<{ title: string; content: string }> = {
         default: () => null,
         getStaticPaths: () => ({
-          paths: [
-            { params: { id: "1" } },
-            { params: { id: "2" } },
-          ],
+          paths: [{ params: { id: "1" } }, { params: { id: "2" } }],
           fallback: false,
         }),
         getStaticData: (ctx) => ({
@@ -415,12 +395,10 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
         }),
       };
 
-      // Get paths
       const paths = await fetcher.getStaticPaths(pageModule);
       assertExists(paths);
       assertEquals(paths.paths.length, 2);
 
-      // Get data for each path
       const data1 = await fetcher.fetchData(
         pageModule,
         {
@@ -433,10 +411,7 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       );
 
       assertEquals((data1.props as { title: string; content: string }).title, "Post 1");
-      assertEquals(
-        (data1.props as { title: string; content: string }).content,
-        "Content for post 1",
-      );
+      assertEquals((data1.props as { title: string; content: string }).content, "Content for post 1");
     });
   });
 
@@ -450,7 +425,7 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
         }),
         getStaticData: () => ({
           props: { timestamp: Date.now() },
-          revalidate: 60, // Revalidate every 60 seconds
+          revalidate: 60,
         }),
       };
 

@@ -28,12 +28,11 @@ export async function requestWithRetry(
   const urlObj = new URL(url);
   const urlPath = urlObj.pathname;
   const { maxRetries, initialDelay, maxDelay } = retryConfig;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
   // Note: We only trace the individual fetch attempts (HTTP_CLIENT_FETCH),
   // not the outer retry wrapper, to reduce span nesting and trace size.
   let lastError: Error | null = null;
-
-  const timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const controller = new AbortController();
@@ -96,8 +95,7 @@ export async function requestWithRetry(
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
 
-      // Check if this was a timeout
-      const isTimeout = error instanceof Error && error.name === "AbortError";
+      const isTimeout = lastError.name === "AbortError";
       if (isTimeout) {
         logger.warn("[VeryfrontAPIClient] Request timed out", {
           url: url.replace(/token=[^&]+/, "token=***"),
@@ -117,7 +115,7 @@ export async function requestWithRetry(
         break;
       }
 
-      const delay = Math.min(initialDelay * Math.pow(2, attempt), maxDelay);
+      const delay = Math.min(initialDelay * 2 ** attempt, maxDelay);
 
       recordApiRetry();
 
@@ -129,7 +127,7 @@ export async function requestWithRetry(
         timeout: isTimeout,
       });
 
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
     } finally {
       clearTimeout(timeoutId);
     }

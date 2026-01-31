@@ -102,7 +102,8 @@ export class ImageOptimizer {
         logger.debug(`Optimizing: ${relPath}`);
 
         try {
-          if (!this.sharp) {
+          const sharp = this.sharp;
+          if (!sharp) {
             throw toError(
               createError({
                 type: "build",
@@ -122,11 +123,11 @@ export class ImageOptimizer {
           }
 
           const imageBuffer = await this.fs.readFile(imagePath);
-          const image = this.sharp(imageBuffer);
+          const image = sharp(imageBuffer);
           const metadata = await image.metadata();
 
           const variants = await generateImageVariants(
-            this.sharp,
+            sharp,
             image,
             relPath,
             metadata,
@@ -166,8 +167,8 @@ export class ImageOptimizer {
 
   private getTotalVariants(): number {
     let total = 0;
-    for (const metadata of this.imageManifest.values()) {
-      total += metadata.variants.length;
+    for (const { variants } of this.imageManifest.values()) {
+      total += variants.length;
     }
     return total;
   }
@@ -177,9 +178,9 @@ export class ImageOptimizer {
     const totalVariants = this.getTotalVariants();
 
     let totalSize = 0;
-    for (const metadata of this.imageManifest.values()) {
-      for (const variant of metadata.variants) {
-        totalSize += variant.fileSize;
+    for (const { variants } of this.imageManifest.values()) {
+      for (const { fileSize } of variants) {
+        totalSize += fileSize;
       }
     }
 

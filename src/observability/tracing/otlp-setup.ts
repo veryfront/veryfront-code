@@ -1,4 +1,4 @@
-/**
+/**************************
  * OpenTelemetry OTLP Setup for Grafana Cloud
  *
  * Configures the OTLP exporter to send traces to Grafana Cloud.
@@ -7,19 +7,15 @@
  * - OTEL_SERVICE_NAME: Service name for traces
  * - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP endpoint (e.g., https://otlp-gateway-prod-eu-west-2.grafana.net/otlp)
  * - OTEL_EXPORTER_OTLP_HEADERS: Auth headers (e.g., Authorization=Basic ...)
- */
+ **************************/
 
-import { serverLogger as logger } from "#veryfront/utils";
 import { getOtelTracingConfig } from "#veryfront/config/env.ts";
+import { serverLogger as logger } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
-
-let initialized = false;
 
 interface ShutdownableProvider {
   shutdown(): Promise<void>;
 }
-
-let tracerProvider: ShutdownableProvider | null = null;
 
 export interface OTLPConfig {
   serviceName: string;
@@ -28,15 +24,16 @@ export interface OTLPConfig {
   enabled: boolean;
 }
 
+let initialized = false;
+let tracerProvider: ShutdownableProvider | null = null;
+
 let traceApi: typeof import("@opentelemetry/api") | null = null;
 let propagationApi: typeof import("@opentelemetry/core") | null = null;
 
 function parseHeaders(headerString: string | undefined): Record<string, string> {
   if (!headerString) return {};
 
-  if (headerString.startsWith("Basic ")) {
-    return { Authorization: headerString };
-  }
+  if (headerString.startsWith("Basic ")) return { Authorization: headerString };
 
   if (headerString.startsWith("Authorization=")) {
     return { Authorization: headerString.substring("Authorization=".length) };
@@ -66,6 +63,22 @@ async function ensureApis(): Promise<void> {
   if (traceApi && propagationApi) return;
   traceApi = await import("@opentelemetry/api");
   propagationApi = await import("@opentelemetry/core");
+}
+
+function getServiceName(): string {
+  const tracingConfig = getOtelTracingConfig();
+  return tracingConfig.serviceName || "veryfront-renderer";
+}
+
+function setSpanErrorStatus(span: import("@opentelemetry/api").Span, error: unknown): void {
+  if (!traceApi) return;
+
+  span.setStatus({
+    code: traceApi.SpanStatusCode.ERROR,
+    message: error instanceof Error ? error.message : String(error),
+  });
+
+  if (error instanceof Error) span.recordException(error);
 }
 
 export async function initializeOTLP(): Promise<void> {
@@ -151,11 +164,6 @@ export function isOTLPEnabled(): boolean {
   return initialized && tracerProvider !== null;
 }
 
-/**
- * Execute an async function within a new span.
- * Creates a child span of the current active span.
- * If tracing is disabled, just executes the function.
- */
 export async function withSpan<T>(
   name: string,
   fn: () => Promise<T>,
@@ -163,9 +171,7 @@ export async function withSpan<T>(
 ): Promise<T> {
   if (!traceApi || !isOTLPEnabled()) return await fn();
 
-  const tracingConfig = getOtelTracingConfig();
-  const serviceName = tracingConfig.serviceName || "veryfront-renderer";
-  const tracer = traceApi.trace.getTracer(serviceName);
+  const tracer = traceApi.trace.getTracer(getServiceName());
   const parentContext = traceApi.context.active();
 
   const span = tracer.startSpan(
@@ -181,20 +187,13 @@ export async function withSpan<T>(
     span.setStatus({ code: traceApi.SpanStatusCode.OK });
     return result;
   } catch (error) {
-    span.setStatus({
-      code: traceApi.SpanStatusCode.ERROR,
-      message: error instanceof Error ? error.message : String(error),
-    });
-    if (error instanceof Error) span.recordException(error);
+    setSpanErrorStatus(span, error);
     throw error;
   } finally {
     span.end();
   }
 }
 
-/**
- * Execute a sync function within a new span.
- */
 export function withSpanSync<T>(
   name: string,
   fn: () => T,
@@ -202,9 +201,7 @@ export function withSpanSync<T>(
 ): T {
   if (!traceApi || !isOTLPEnabled()) return fn();
 
-  const tracingConfig = getOtelTracingConfig();
-  const serviceName = tracingConfig.serviceName || "veryfront-renderer";
-  const tracer = traceApi.trace.getTracer(serviceName);
+  const tracer = traceApi.trace.getTracer(getServiceName());
   const parentContext = traceApi.context.active();
 
   const span = tracer.startSpan(
@@ -218,20 +215,13 @@ export function withSpanSync<T>(
     span.setStatus({ code: traceApi.SpanStatusCode.OK });
     return result;
   } catch (error) {
-    span.setStatus({
-      code: traceApi.SpanStatusCode.ERROR,
-      message: error instanceof Error ? error.message : String(error),
-    });
-    if (error instanceof Error) span.recordException(error);
+    setSpanErrorStatus(span, error);
     throw error;
   } finally {
     span.end();
   }
 }
 
-/**
- * Extract trace context from incoming request headers
- */
 export function extractContext(headers: Headers): unknown {
   if (!traceApi || !propagationApi) return traceApi?.context?.active();
 
@@ -247,9 +237,6 @@ export function extractContext(headers: Headers): unknown {
   );
 }
 
-/**
- * Inject trace context into outgoing request headers
- */
 export function injectContext(headers: Headers): void {
   if (!traceApi || !propagationApi) return;
 
@@ -263,9 +250,6 @@ export function injectContext(headers: Headers): void {
   for (const [k, v] of Object.entries(carrier)) headers.set(k, v);
 }
 
-/**
- * Start a server span for an incoming HTTP request
- */
 export function startServerSpan(
   method: string,
   path: string,
@@ -273,9 +257,7 @@ export function startServerSpan(
 ): { span: unknown; context: unknown } | null {
   if (!traceApi || !isOTLPEnabled()) return null;
 
-  const tracingConfig = getOtelTracingConfig();
-  const serviceName = tracingConfig.serviceName || "veryfront-renderer";
-  const tracer = traceApi.trace.getTracer(serviceName);
+  const tracer = traceApi.trace.getTracer(getServiceName());
   const ctx = (parentContext || traceApi.context.active()) as import("@opentelemetry/api").Context;
 
   const span = tracer.startSpan(`${method} ${path}`, { kind: traceApi.SpanKind.SERVER }, ctx);
@@ -285,9 +267,6 @@ export function startServerSpan(
   return { span, context: traceApi.trace.setSpan(ctx, span) };
 }
 
-/**
- * End a span with status code and optional error
- */
 export function endServerSpan(span: unknown, statusCode: number, error?: Error): void {
   if (!span || !traceApi) return;
 
@@ -297,18 +276,20 @@ export function endServerSpan(span: unknown, statusCode: number, error?: Error):
   if (error) {
     s.setStatus({ code: traceApi.SpanStatusCode.ERROR, message: error.message });
     s.recordException(error);
-  } else if (statusCode >= 400) {
-    s.setStatus({ code: traceApi.SpanStatusCode.ERROR });
-  } else {
-    s.setStatus({ code: traceApi.SpanStatusCode.OK });
+    s.end();
+    return;
   }
 
+  if (statusCode >= 400) {
+    s.setStatus({ code: traceApi.SpanStatusCode.ERROR });
+    s.end();
+    return;
+  }
+
+  s.setStatus({ code: traceApi.SpanStatusCode.OK });
   s.end();
 }
 
-/**
- * Set attributes on a span
- */
 export function setSpanAttributes(
   span: unknown,
   attributes: Record<string, string | number | boolean>,
@@ -319,10 +300,6 @@ export function setSpanAttributes(
   for (const [key, value] of Object.entries(attributes)) s.setAttribute(key, value);
 }
 
-/**
- * Set attributes on the currently active span (if any).
- * Useful for adding response metadata inside withSpan callbacks.
- */
 export function setActiveSpanAttributes(
   attributes: Record<string, string | number | boolean>,
 ): void {
@@ -334,17 +311,11 @@ export function setActiveSpanAttributes(
   for (const [key, value] of Object.entries(attributes)) span.setAttribute(key, value);
 }
 
-/**
- * Execute a function within a span context
- */
 export async function withContext<T>(spanContext: unknown, fn: () => Promise<T>): Promise<T> {
   if (!traceApi) return await fn();
   return await traceApi.context.with(spanContext as import("@opentelemetry/api").Context, fn);
 }
 
-/**
- * Get current trace context info (for logging correlation)
- */
 export function getTraceContext(): { traceId?: string; spanId?: string } {
   if (!traceApi) return {};
 
@@ -355,9 +326,6 @@ export function getTraceContext(): { traceId?: string; spanId?: string } {
   return { traceId: ctx.traceId, spanId: ctx.spanId };
 }
 
-/**
- * Initialize OTLP with API loading for span creation
- */
 export async function initializeOTLPWithApis(): Promise<void> {
   await initializeOTLP();
   if (isOTLPEnabled()) await ensureApis();

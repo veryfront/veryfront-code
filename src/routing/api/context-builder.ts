@@ -37,6 +37,10 @@ export function createContext(
   fs: FileSystemAdapter,
 ): APIContext {
   const url = new URL(request.url);
+  const json = (data: unknown, init?: ResponseInit): Response =>
+    createResponse(JSON.stringify(data), "application/json", init);
+  const text = (data: string, init?: ResponseInit): Response =>
+    createResponse(data, "text/plain", init);
 
   return {
     request,
@@ -46,9 +50,8 @@ export function createContext(
     cookies: parseCookies(request.headers.get("cookie") ?? ""),
     headers: request.headers,
     url,
-    json: (data: unknown, init?: ResponseInit) =>
-      createResponse(JSON.stringify(data), "application/json", init),
-    text: (data: string, init?: ResponseInit) => createResponse(data, "text/plain", init),
+    json,
+    text,
     fs,
   };
 }

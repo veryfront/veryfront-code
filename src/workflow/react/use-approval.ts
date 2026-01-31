@@ -40,7 +40,11 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
-  useEffect(() => {
+  const toError = useCallback((err: unknown): Error => {
+    return err instanceof Error ? err : new Error(String(err));
+  }, []);
+
+  useEffect((): void => {
     if (!runId || !approvalId) return;
 
     async function fetchApproval(): Promise<void> {
@@ -54,8 +58,8 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
         const data: PendingApproval = await response.json();
         setApproval(data);
         setError(null);
-      } catch (error) {
-        const fetchError = error instanceof Error ? error : new Error(String(error));
+      } catch (err) {
+        const fetchError = toError(err);
         setError(fetchError);
         onError?.(fetchError);
       } finally {
@@ -64,7 +68,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
     }
 
     fetchApproval();
-  }, [runId, approvalId, apiBase, onError]);
+  }, [runId, approvalId, apiBase, onError, toError]);
 
   const submitDecision = useCallback(
     async (decision: ApprovalDecision): Promise<void> => {
@@ -97,8 +101,8 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
         });
 
         onDecision?.(decision);
-      } catch (error) {
-        const submitError = error instanceof Error ? error : new Error(String(error));
+      } catch (err) {
+        const submitError = toError(err);
         setError(submitError);
         onError?.(submitError);
         throw submitError;
@@ -106,24 +110,24 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
         setIsSubmitting(false);
       }
     },
-    [runId, approvalId, apiBase, onDecision, onError],
+    [runId, approvalId, apiBase, onDecision, onError, toError],
   );
 
   const approve = useCallback(
     async (comment?: string): Promise<void> => {
-      await submitDecision({ approved: true, approver, comment });
+      return submitDecision({ approved: true, approver, comment });
     },
     [submitDecision, approver],
   );
 
   const reject = useCallback(
     async (comment?: string): Promise<void> => {
-      await submitDecision({ approved: false, approver, comment });
+      return submitDecision({ approved: false, approver, comment });
     },
     [submitDecision, approver],
   );
 
-  const status = approval?.status;
+  const isPending = approval?.status === "pending";
 
   return {
     approval,
@@ -133,7 +137,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
     isSubmitting,
     isLoading,
     error,
-    isPending: status === "pending",
-    isResolved: status !== "pending",
+    isPending,
+    isResolved: !isPending,
   };
 }

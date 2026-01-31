@@ -54,7 +54,7 @@ describe("remark-headings", () => {
     const headings = expectHeadings(file);
     assertEquals(headings.length, 1);
 
-    const first = headings[0];
+    const [first] = headings;
     assertExists(first);
     assertEquals(first.text, "Hello World");
     assertEquals(first.id, "hello-world");
@@ -142,10 +142,10 @@ describe("remark-headings", () => {
 
     runPlugin(tree, file);
 
-    assertExists(heading.data);
-    const data = heading.data as HeadingData;
+    const data = heading.data as HeadingData | undefined;
+    assertExists(data);
     assertExists(data.hProperties);
-    assertEquals(data.hProperties?.id, "test-heading");
+    assertEquals(data.hProperties.id, "test-heading");
   });
 
   it("preserves heading levels", () => {
@@ -197,14 +197,11 @@ describe("remark-headings", () => {
     runPlugin(tree, file);
 
     const exportNode = tree.children[0] as MdxExportNode;
-    assertExists(exportNode.data);
-    assertExists(exportNode.data.estree);
-    assertEquals(exportNode.data.estree?.type, "Program");
+    const estree = exportNode.data?.estree;
+    assertExists(estree);
+    assertEquals(estree.type, "Program");
 
-    const body = exportNode.data.estree?.body;
-    assertExists(body);
-
-    const firstStatement = body[0];
+    const [firstStatement] = estree.body;
     assertExists(firstStatement);
     assertEquals(firstStatement.type, "ExportNamedDeclaration");
   });
@@ -225,7 +222,7 @@ describe("remark-headings", () => {
     runPlugin(tree, file);
 
     const headings = expectHeadings(file);
-    const first = headings[0];
+    const [first] = headings;
     assertExists(first);
     assertEquals(first.text, "Hello Bold World");
     assertEquals(first.id, "hello-bold-world");
@@ -258,7 +255,7 @@ describe("remark-headings", () => {
     runPlugin(tree, file);
 
     const headings = expectHeadings(file);
-    const first = headings[0];
+    const [first] = headings;
     assertExists(first);
     assertEquals(first.text, "Text with italic and code");
     assertExists(first.id);
@@ -273,11 +270,8 @@ describe("remark-headings", () => {
     const file2 = new VFile();
     runPlugin(tree2, file2);
 
-    const headings1 = expectHeadings(file1);
-    const headings2 = expectHeadings(file2);
-
-    const first1 = headings1[0];
-    const first2 = headings2[0];
+    const [first1] = expectHeadings(file1);
+    const [first2] = expectHeadings(file2);
     assertExists(first1);
     assertExists(first2);
     assertEquals(first1.id, "same");

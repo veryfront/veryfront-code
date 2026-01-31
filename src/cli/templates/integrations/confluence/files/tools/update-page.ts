@@ -2,6 +2,15 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { formatAsStorage, getPage, updatePage } from "../../lib/confluence-client.ts";
 
+function toStorageContent(content?: string): string | undefined {
+  if (!content) return undefined;
+
+  const trimmed = content.trim();
+  if (trimmed.startsWith("<")) return content;
+
+  return formatAsStorage(content);
+}
+
 export default tool({
   id: "update-page",
   description:
@@ -23,12 +32,7 @@ export default tool({
   }),
   async execute({ pageId, title, content, versionMessage }) {
     const currentPage = await getPage(pageId, ["version"]);
-
-    const storageContent = content
-      ? content.trim().startsWith("<")
-        ? content
-        : formatAsStorage(content)
-      : undefined;
+    const storageContent = toStorageContent(content);
 
     const updatedPage = await updatePage(pageId, {
       title,

@@ -78,26 +78,30 @@ export function useAgent(options: UseAgentOptions): UseAgentResult {
           );
         }
 
-        const data: {
+        const data = (await response.json()) as {
           messages?: Message[];
           toolCalls?: ToolCall[];
           status?: AgentStatus;
           thinking?: string;
-        } = await response.json();
+        };
 
-        setMessages(data.messages ?? []);
-        setToolCalls(data.toolCalls ?? []);
-        setStatus(data.status ?? "completed");
+        const nextMessages = data.messages ?? [];
+        const nextToolCalls = data.toolCalls ?? [];
+        const nextStatus = data.status ?? "completed";
+
+        setMessages(nextMessages);
+        setToolCalls(nextToolCalls);
+        setStatus(nextStatus);
         setThinking(data.thinking);
 
-        for (const tc of data.toolCalls ?? []) {
+        for (const tc of nextToolCalls) {
           options.onToolCall?.(tc);
           if (tc.result) options.onToolResult?.(tc, tc.result);
         }
-      } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return;
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return;
 
-        const nextError = ensureError(error);
+        const nextError = ensureError(err);
         setError(nextError);
         setStatus("error");
         options.onError?.(nextError);

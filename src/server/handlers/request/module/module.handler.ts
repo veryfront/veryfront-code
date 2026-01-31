@@ -29,7 +29,6 @@ export class ModuleHandler extends BaseHandler {
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const pathname = new URL(req.url).pathname;
     const { createResponseBuilder, respond, logDebug, getErrorMessage } = this.helpers;
-
     const proxyOptions = { requireToken: true };
 
     if (pathname === "/_vf_modules/_batch") {
@@ -44,14 +43,7 @@ export class ModuleHandler extends BaseHandler {
       return this.withProxyContext(
         ctx,
         () =>
-          handleModuleServer(
-            req,
-            ctx,
-            createResponseBuilder,
-            respond,
-            logDebug,
-            getErrorMessage,
-          ),
+          handleModuleServer(req, ctx, createResponseBuilder, respond, logDebug, getErrorMessage),
         proxyOptions,
       );
     }
@@ -59,14 +51,7 @@ export class ModuleHandler extends BaseHandler {
     if (pathname.startsWith("/_veryfront/modules/")) {
       return this.withProxyContext(
         ctx,
-        () =>
-          handleVirtualModule(
-            req,
-            ctx,
-            createResponseBuilder,
-            respond,
-            getErrorMessage,
-          ),
+        () => handleVirtualModule(req, ctx, createResponseBuilder, respond, getErrorMessage),
         proxyOptions,
       );
     }
@@ -74,15 +59,7 @@ export class ModuleHandler extends BaseHandler {
     if (pathname.startsWith("/_veryfront/pages/")) {
       return this.withProxyContext(
         ctx,
-        () =>
-          handlePageModule(
-            req,
-            pathname,
-            ctx,
-            createResponseBuilder,
-            respond,
-            getErrorMessage,
-          ),
+        () => handlePageModule(req, pathname, ctx, createResponseBuilder, respond, getErrorMessage),
         proxyOptions,
       );
     }
@@ -91,14 +68,7 @@ export class ModuleHandler extends BaseHandler {
       return this.withProxyContext(
         ctx,
         () =>
-          handleDataEndpoint(
-            req,
-            pathname,
-            ctx,
-            createResponseBuilder,
-            respond,
-            getErrorMessage,
-          ),
+          handleDataEndpoint(req, pathname, ctx, createResponseBuilder, respond, getErrorMessage),
         proxyOptions,
       );
     }

@@ -1,8 +1,8 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { detectRuntime, getAdapter } from "./detect.ts";
 import type { RuntimeId } from "./base.ts";
-import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 
 function getExpectedRuntime(): RuntimeId {
   if (isDeno) return "deno";
@@ -12,30 +12,27 @@ function getExpectedRuntime(): RuntimeId {
 }
 
 const expectedRuntime = getExpectedRuntime();
+const validRuntimes: Array<RuntimeId | "unknown"> = [
+  "deno",
+  "node",
+  "bun",
+  "cloudflare",
+  "unknown",
+];
 
 describe("detect.ts", () => {
   describe("detectRuntime", () => {
     it("should return a valid runtime identifier", () => {
       const runtime = detectRuntime();
-      const validRuntimes: Array<RuntimeId | "unknown"> = [
-        "deno",
-        "node",
-        "bun",
-        "cloudflare",
-        "unknown",
-      ];
-
       assertEquals(validRuntimes.includes(runtime), true);
     });
 
     it("should detect current runtime in this test environment", () => {
-      const runtime = detectRuntime();
-      assertEquals(runtime, expectedRuntime);
+      assertEquals(detectRuntime(), expectedRuntime);
     });
 
     it("should return string type", () => {
-      const runtime = detectRuntime();
-      assertEquals(typeof runtime, "string");
+      assertEquals(typeof detectRuntime(), "string");
     });
   });
 
@@ -59,8 +56,7 @@ describe("detect.ts", () => {
     });
 
     it("should return adapter with correct capabilities", async () => {
-      const adapter = await getAdapter();
-      const { capabilities } = adapter;
+      const { capabilities } = await getAdapter();
 
       assertEquals(typeof capabilities.typescript, "boolean");
       assertEquals(typeof capabilities.jsx, "boolean");

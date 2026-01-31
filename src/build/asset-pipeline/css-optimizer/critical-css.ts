@@ -16,7 +16,7 @@ export function extractCriticalCSS(
 
   return withSpan(
     "build.asset.extractCriticalCSS",
-    async () => {
+    async (): Promise<CriticalCSSResult> => {
       logger.debug(`Extracting critical CSS from ${cssPath}`);
 
       const css = await fs.readTextFile(cssPath);

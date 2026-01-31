@@ -102,9 +102,7 @@ function hasMorePages(pages?: IntercomResponse<unknown>["pages"]): boolean {
 
 async function intercomFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with Intercom. Please connect your account.");
-  }
+  if (!token) throw new Error("Not authenticated with Intercom. Please connect your account.");
 
   const response = await fetch(`${INTERCOM_BASE_URL}${endpoint}`, {
     ...options,
@@ -117,34 +115,26 @@ async function intercomFetch<T>(endpoint: string, options: RequestInit = {}): Pr
     },
   });
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({} as Record<string, unknown>));
-    const message =
-      (error as { errors?: Array<{ message?: string }>; message?: string }).errors?.[0]?.message ??
-      (error as { message?: string }).message ??
-      response.statusText;
+  if (response.ok) return (await response.json()) as T;
 
-    throw new Error(`Intercom API error: ${response.status} ${message}`);
-  }
+  const error = (await response.json().catch(() => ({}))) as {
+    errors?: Array<{ message?: string }>;
+    message?: string;
+  };
 
-  return response.json() as Promise<T>;
+  const message = error.errors?.[0]?.message ?? error.message ?? response.statusText;
+  throw new Error(`Intercom API error: ${response.status} ${message}`);
 }
 
 export async function listContacts(
   options: { page?: number; perPage?: number } = {},
 ): Promise<{ contacts: IntercomContact[]; hasMore: boolean }> {
-  const params = new URLSearchParams({
-    per_page: String(options.perPage ?? 50),
-  });
-
+  const params = new URLSearchParams({ per_page: String(options.perPage ?? 50) });
   if (options.page) params.set("page", String(options.page));
 
   const response = await intercomFetch<IntercomResponse<IntercomContact[]>>(`/contacts?${params}`);
 
-  return {
-    contacts: response.data ?? [],
-    hasMore: hasMorePages(response.pages),
-  };
+  return { contacts: response.data ?? [], hasMore: hasMorePages(response.pages) };
 }
 
 export async function getContact(contactId: string): Promise<IntercomContact> {
@@ -154,24 +144,12 @@ export async function getContact(contactId: string): Promise<IntercomContact> {
 export async function searchContacts(query: { email?: string; name?: string }): Promise<IntercomContact[]> {
   const value: Array<Record<string, unknown>> = [];
 
-  if (query.email) {
-    value.push({ field: "email", operator: "=", value: query.email });
-  }
-
-  if (query.name) {
-    value.push({ field: "name", operator: "~", value: query.name });
-  }
-
-  const searchQuery = {
-    query: {
-      operator: "AND",
-      value,
-    },
-  };
+  if (query.email) value.push({ field: "email", operator: "=", value: query.email });
+  if (query.name) value.push({ field: "name", operator: "~", value: query.name });
 
   const response = await intercomFetch<IntercomResponse<IntercomContact[]>>("/contacts/search", {
     method: "POST",
-    body: JSON.stringify(searchQuery),
+    body: JSON.stringify({ query: { operator: "AND", value } }),
   });
 
   return response.data ?? [];
@@ -192,10 +170,7 @@ export async function listConversations(
     `/conversations?${params}`,
   );
 
-  return {
-    conversations: response.data ?? [],
-    hasMore: hasMorePages(response.pages),
-  };
+  return { conversations: response.data ?? [], hasMore: hasMorePages(response.pages) };
 }
 
 export async function getConversation(conversationId: string): Promise<IntercomConversation> {
@@ -208,21 +183,18 @@ export async function sendMessage(options: {
   messageType?: "comment" | "note";
   adminId?: string;
 }): Promise<IntercomConversation> {
-  if (!options.conversationId) {
-    throw new Error("conversationId is required to send a message");
-  }
+  if (!options.conversationId) throw new Error("conversationId is required to send a message");
 
-  const body: Record<string, unknown> = {
+  const payload: Record<string, unknown> = {
     message_type: options.messageType ?? "comment",
     type: "admin",
     body: options.body,
+    ...(options.adminId ? { admin_id: options.adminId } : {}),
   };
-
-  if (options.adminId) body.admin_id = options.adminId;
 
   return intercomFetch<IntercomConversation>(`/conversations/${options.conversationId}/reply`, {
     method: "POST",
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
 }
 
@@ -236,10 +208,7 @@ export async function createMessage(options: {
   const messageBody: IntercomMessageRequest = {
     message_type: options.messageType,
     body: options.body,
-    from: {
-      type: "admin",
-      id: options.fromId,
-    },
+    from: { type: "admin", id: options.fromId },
   };
 
   if (options.contactId) {

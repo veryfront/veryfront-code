@@ -89,7 +89,7 @@ export function createMockAgent(
 
       const text = options.responseFunc
         ? await options.responseFunc(inputStr)
-        : (options.response ?? `Mock response for: ${inputStr.slice(0, 50)}...`);
+        : options.response ?? `Mock response for: ${inputStr.slice(0, 50)}...`;
 
       const now = Date.now();
 
@@ -144,7 +144,7 @@ export function createMockTool(
     executeFunc?: (args: Record<string, unknown>) => unknown | Promise<unknown>;
   } = {},
 ): Tool {
-  const mockSchema = { parse: (x: unknown) => x } as unknown as import("zod").z.ZodSchema;
+  const mockSchema = { parse: (x: unknown) => x } as import("zod").z.ZodSchema;
 
   return {
     id,
@@ -152,7 +152,7 @@ export function createMockTool(
     description: options.description ?? `Mock tool: ${id}`,
     inputSchema: mockSchema,
     async execute(args: Record<string, unknown>) {
-      if (options.executeFunc) return await options.executeFunc(args);
+      if (options.executeFunc) return options.executeFunc(args);
       return options.result ?? { success: true, tool: id, args };
     },
   };

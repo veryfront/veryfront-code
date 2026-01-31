@@ -43,8 +43,7 @@ describe("hydration-script-builder/dev-component-manifest", () => {
     });
 
     it("should handle config with dev but no components", () => {
-      const config = { dev: {} };
-      const result = generateDevComponentManifestScript(config as any);
+      const result = generateDevComponentManifestScript({ dev: {} } as any);
       assertEquals(result.includes("window.__veryfrontComponents = []"), true);
     });
 
@@ -55,8 +54,7 @@ describe("hydration-script-builder/dev-component-manifest", () => {
         },
       };
       const result = generateDevComponentManifestScript(config as any);
-      const expected = JSON.stringify(config.dev.components);
-      assertEquals(result.includes(expected), true);
+      assertEquals(result.includes(JSON.stringify(config.dev.components)), true);
     });
   });
 });

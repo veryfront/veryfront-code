@@ -19,13 +19,16 @@ export const listAPIKeys = tool({
       const client = getAnthropicAdminClient();
       const { api_keys } = await client.listAPIKeys(workspaceId);
 
-      const active = api_keys.filter(key => key.status === 'active').length;
-      const revoked = api_keys.filter(key => key.status === 'revoked').length;
+      let active = 0;
+      let revoked = 0;
+      const by_type: Record<string, number> = {};
 
-      const by_type = api_keys.reduce<Record<string, number>>((acc, key) => {
-        acc[key.key_type] = (acc[key.key_type] ?? 0) + 1;
-        return acc;
-      }, {});
+      for (const key of api_keys) {
+        if (key.status === 'active') active += 1;
+        if (key.status === 'revoked') revoked += 1;
+
+        by_type[key.key_type] = (by_type[key.key_type] ?? 0) + 1;
+      }
 
       return {
         success: true,

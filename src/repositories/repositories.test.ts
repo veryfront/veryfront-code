@@ -45,36 +45,32 @@ describe("Repository Types", () => {
 });
 
 describe("MemoryCacheRepository", () => {
+  function createCtx(): ReturnType<typeof createRepositoryContext> {
+    return createRepositoryContext("test", "preview", "v1");
+  }
+
   it("gets and sets values", async () => {
-    const ctx = createRepositoryContext("test", "preview", "v1");
-    const cache = new MemoryCacheRepository({ context: ctx });
+    const cache = new MemoryCacheRepository({ context: createCtx() });
 
     await cache.set("key1", "value1");
-    const result = await cache.get("key1");
-    expect(result).toBe("value1");
+    expect(await cache.get("key1")).toBe("value1");
   });
 
   it("returns null for missing keys", async () => {
-    const ctx = createRepositoryContext("test", "preview", "v1");
-    const cache = new MemoryCacheRepository({ context: ctx });
-
-    const result = await cache.get("nonexistent");
-    expect(result).toBe(null);
+    const cache = new MemoryCacheRepository({ context: createCtx() });
+    expect(await cache.get("nonexistent")).toBe(null);
   });
 
   it("deletes values", async () => {
-    const ctx = createRepositoryContext("test", "preview", "v1");
-    const cache = new MemoryCacheRepository({ context: ctx });
+    const cache = new MemoryCacheRepository({ context: createCtx() });
 
     await cache.set("key1", "value1");
     await cache.delete("key1");
-    const result = await cache.get("key1");
-    expect(result).toBe(null);
+    expect(await cache.get("key1")).toBe(null);
   });
 
   it("deletes by prefix", async () => {
-    const ctx = createRepositoryContext("test", "preview", "v1");
-    const cache = new MemoryCacheRepository({ context: ctx });
+    const cache = new MemoryCacheRepository({ context: createCtx() });
 
     await cache.set("pages/index", "page1");
     await cache.set("pages/about", "page2");
@@ -89,8 +85,7 @@ describe("MemoryCacheRepository", () => {
   });
 
   it("tracks stats", async () => {
-    const ctx = createRepositoryContext("test", "preview", "v1");
-    const cache = new MemoryCacheRepository({ context: ctx });
+    const cache = new MemoryCacheRepository({ context: createCtx() });
 
     await cache.set("key1", "value1");
     await cache.get("key1"); // hit
@@ -105,8 +100,7 @@ describe("MemoryCacheRepository", () => {
   });
 
   it("supports factory function", async () => {
-    const ctx = createRepositoryContext("test", "preview", "v1");
-    const cache = createMemoryCacheRepository(ctx, { maxEntries: 100 });
+    const cache = createMemoryCacheRepository(createCtx(), { maxEntries: 100 });
 
     await cache.set("key", "value");
     expect(await cache.get("key")).toBe("value");
@@ -139,8 +133,7 @@ describe("MockFileSystemRepository", () => {
     expect(readCalls).toHaveLength(1);
     expect(readCalls[0]?.args).toEqual(["test.txt"]);
 
-    const existsCalls = mockFs.getCalls("exists");
-    expect(existsCalls).toHaveLength(1);
+    expect(mockFs.getCalls("exists")).toHaveLength(1);
   });
 
   it("throws for missing files", async () => {
@@ -177,7 +170,7 @@ describe("MockCacheRepository", () => {
   it("supports initial values", async () => {
     const mockCache = new MockCacheRepository({
       context: createMockRepositoryContext(),
-      initial: { "key1": "value1", "key2": "value2" },
+      initial: { key1: "value1", key2: "value2" },
     });
 
     expect(await mockCache.get("key1")).toBe("value1");
@@ -186,15 +179,21 @@ describe("MockCacheRepository", () => {
 });
 
 describe("extractRepositoryContext", () => {
-  it("extracts context from handler with projectSlug", () => {
-    const handlerCtx: Partial<HandlerContext> = {
-      projectSlug: "my-project",
+  function createBaseHandlerCtx(): Partial<HandlerContext> {
+    return {
       projectDir: "/path/to/project",
-      resolvedEnvironment: "preview",
-      releaseId: "release-123",
       adapter: {} as HandlerContext["adapter"],
       securityConfig: null,
       cspUserHeader: null,
+    };
+  }
+
+  it("extracts context from handler with projectSlug", () => {
+    const handlerCtx: Partial<HandlerContext> = {
+      ...createBaseHandlerCtx(),
+      projectSlug: "my-project",
+      resolvedEnvironment: "preview",
+      releaseId: "release-123",
     };
 
     const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
@@ -204,12 +203,7 @@ describe("extractRepositoryContext", () => {
   });
 
   it("uses defaults for missing fields", () => {
-    const handlerCtx: Partial<HandlerContext> = {
-      projectDir: "/path/to/project",
-      adapter: {} as HandlerContext["adapter"],
-      securityConfig: null,
-      cspUserHeader: null,
-    };
+    const handlerCtx: Partial<HandlerContext> = createBaseHandlerCtx();
 
     const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
     expect(ctx.projectId).toBe("unknown");
@@ -219,12 +213,15 @@ describe("extractRepositoryContext", () => {
 
   it("extracts environment from requestContext.mode", () => {
     const handlerCtx: Partial<HandlerContext> = {
+      ...createBaseHandlerCtx(),
       projectSlug: "my-project",
-      projectDir: "/path/to/project",
-      requestContext: { mode: "production", token: "", slug: "", branch: null, isLocalDev: false },
-      adapter: {} as HandlerContext["adapter"],
-      securityConfig: null,
-      cspUserHeader: null,
+      requestContext: {
+        mode: "production",
+        token: "",
+        slug: "",
+        branch: null,
+        isLocalDev: false,
+      },
     };
 
     const ctx = extractRepositoryContext(handlerCtx as HandlerContext);

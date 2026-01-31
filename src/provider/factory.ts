@@ -21,9 +21,6 @@ import {
 import { ProjectScopedRegistryManager } from "#veryfront/ai/registry-manager.ts";
 
 const providerManager = new ProjectScopedRegistryManager<Provider>("provider");
-
-// Track auto-initialization state per project
-const autoInitializedProjects = new Set<string>();
 let defaultProviderName = "openai";
 
 class ProviderRegistry {
@@ -33,8 +30,7 @@ class ProviderRegistry {
     fromEnv = false,
   ): void {
     try {
-      const provider = createProvider();
-      providerManager.register(name, provider);
+      providerManager.register(name, createProvider());
       if (fromEnv) {
         agentLogger.debug(`Auto-initialized ${name} provider from environment`);
       }
@@ -49,8 +45,7 @@ class ProviderRegistry {
     createProvider: () => Provider,
   ): void {
     try {
-      const provider = createProvider();
-      providerManager.registerShared(name, provider);
+      providerManager.registerShared(name, createProvider());
       agentLogger.debug(`Registered shared ${name} provider`);
     } catch (error) {
       agentLogger.warn(`Failed to register shared ${name} provider:`, error);
@@ -58,15 +53,14 @@ class ProviderRegistry {
   }
 
   private autoInitializeFromEnv(): void {
-    // Check environment for API keys and auto-register providers
     const openaiEnv = getOpenAIEnvConfig();
-    const openaiApiKey = openaiEnv.apiKey;
-    if (openaiApiKey && !providerManager.has("openai")) {
+    if (openaiEnv.apiKey && !providerManager.has("openai")) {
+      const apiKey = openaiEnv.apiKey;
       this.registerProvider(
         "openai",
         () =>
           new OpenAIProvider({
-            apiKey: openaiApiKey,
+            apiKey,
             baseURL: openaiEnv.baseURL,
             organizationId: openaiEnv.organizationId,
           }),
@@ -75,13 +69,13 @@ class ProviderRegistry {
     }
 
     const anthropicEnv = getAnthropicEnvConfig();
-    const anthropicApiKey = anthropicEnv.apiKey;
-    if (anthropicApiKey && !providerManager.has("anthropic")) {
+    if (anthropicEnv.apiKey && !providerManager.has("anthropic")) {
+      const apiKey = anthropicEnv.apiKey;
       this.registerProvider(
         "anthropic",
         () =>
           new AnthropicProvider({
-            apiKey: anthropicApiKey,
+            apiKey,
             baseURL: anthropicEnv.baseURL,
           }),
         true,
@@ -89,36 +83,34 @@ class ProviderRegistry {
     }
 
     const googleEnv = getGoogleGenAIEnvConfig();
-    const googleApiKey = googleEnv.apiKey;
-    if (googleApiKey && !providerManager.has("google")) {
+    if (googleEnv.apiKey && !providerManager.has("google")) {
+      const apiKey = googleEnv.apiKey;
       this.registerProvider(
         "google",
-        () => new GoogleProvider({ apiKey: googleApiKey }),
+        () => new GoogleProvider({ apiKey }),
         true,
       );
     }
   }
 
   initialize(config: ProvidersConfig): void {
-    if (config.default) {
-      defaultProviderName = config.default;
-    }
+    if (config.default) defaultProviderName = config.default;
 
-    const openaiConfig = config.openai;
-    if (openaiConfig) {
+    if (config.openai) {
+      const openaiConfig = config.openai;
       this.registerProvider("openai", () => new OpenAIProvider(openaiConfig));
     }
 
-    const anthropicConfig = config.anthropic;
-    if (anthropicConfig) {
+    if (config.anthropic) {
+      const anthropicConfig = config.anthropic;
       this.registerProvider(
         "anthropic",
         () => new AnthropicProvider(anthropicConfig),
       );
     }
 
-    const googleConfig = config.google;
-    if (googleConfig) {
+    if (config.google) {
+      const googleConfig = config.google;
       this.registerProvider("google", () => new GoogleProvider(googleConfig));
     }
   }
@@ -129,13 +121,13 @@ class ProviderRegistry {
    */
   initializeSharedFromEnv(): void {
     const openaiEnv = getOpenAIEnvConfig();
-    const openaiKey = openaiEnv.apiKey;
-    if (openaiKey) {
+    if (openaiEnv.apiKey) {
+      const apiKey = openaiEnv.apiKey;
       this.registerProviderShared(
         "openai",
         () =>
           new OpenAIProvider({
-            apiKey: openaiKey,
+            apiKey,
             baseURL: openaiEnv.baseURL,
             organizationId: openaiEnv.organizationId,
           }),
@@ -143,24 +135,24 @@ class ProviderRegistry {
     }
 
     const anthropicEnv = getAnthropicEnvConfig();
-    const anthropicKey = anthropicEnv.apiKey;
-    if (anthropicKey) {
+    if (anthropicEnv.apiKey) {
+      const apiKey = anthropicEnv.apiKey;
       this.registerProviderShared(
         "anthropic",
         () =>
           new AnthropicProvider({
-            apiKey: anthropicKey,
+            apiKey,
             baseURL: anthropicEnv.baseURL,
           }),
       );
     }
 
     const googleEnv = getGoogleGenAIEnvConfig();
-    const googleKey = googleEnv.apiKey;
-    if (googleKey) {
+    if (googleEnv.apiKey) {
+      const apiKey = googleEnv.apiKey;
       this.registerProviderShared(
         "google",
-        () => new GoogleProvider({ apiKey: googleKey }),
+        () => new GoogleProvider({ apiKey }),
       );
     }
   }
@@ -175,7 +167,9 @@ class ProviderRegistry {
       createError({
         type: "agent",
         message: `Provider "${name}" not found. Available providers: ${
-          providerManager.getAllIds().join(", ")
+          providerManager
+            .getAllIds()
+            .join(", ")
         }`,
       }),
     );
@@ -194,7 +188,6 @@ class ProviderRegistry {
     }
 
     const [providerName, modelName] = parts;
-
     if (!providerName || !modelName) {
       throw toError(
         createError({
@@ -231,15 +224,13 @@ class ProviderRegistry {
    */
   clearAll(): void {
     providerManager.clearAll();
-    autoInitializedProjects.clear();
   }
 
-  getStats() {
+  getStats(): ReturnType<typeof providerManager.getStats> {
     return providerManager.getStats();
   }
 }
 
-// Singleton instance - maintains same interface but now project-scoped internally
 export const providerRegistry = new ProviderRegistry();
 
 export function initializeProviders(config: ProvidersConfig): void {

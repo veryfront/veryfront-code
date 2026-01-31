@@ -1,8 +1,8 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { z } from "zod";
-import { parseJsonBody, parseQueryParams } from "./parsers.ts";
 import { ValidationError } from "./errors.ts";
+import { parseJsonBody, parseQueryParams } from "./parsers.ts";
 
 describe("parseJsonBody", () => {
   const schema = z.object({
@@ -10,24 +10,23 @@ describe("parseJsonBody", () => {
     age: z.number(),
   });
 
-  it("should parse valid JSON body", async () => {
-    const body = JSON.stringify({ name: "Alice", age: 30 });
-    const request = new Request("http://localhost/test", {
+  function createJsonRequest(body: string): Request {
+    return new Request("http://localhost/test", {
       method: "POST",
       body,
       headers: { "content-type": "application/json" },
     });
+  }
+
+  it("should parse valid JSON body", async () => {
+    const request = createJsonRequest(JSON.stringify({ name: "Alice", age: 30 }));
 
     const result = await parseJsonBody(request, schema);
     assertEquals(result, { name: "Alice", age: 30 });
   });
 
   it("should throw ValidationError for invalid JSON", async () => {
-    const request = new Request("http://localhost/test", {
-      method: "POST",
-      body: "not json",
-      headers: { "content-type": "application/json" },
-    });
+    const request = createJsonRequest("not json");
 
     await assertRejects(
       () => parseJsonBody(request, schema),
@@ -37,12 +36,9 @@ describe("parseJsonBody", () => {
   });
 
   it("should throw ValidationError for schema mismatch", async () => {
-    const body = JSON.stringify({ name: "Alice", age: "not-a-number" });
-    const request = new Request("http://localhost/test", {
-      method: "POST",
-      body,
-      headers: { "content-type": "application/json" },
-    });
+    const request = createJsonRequest(
+      JSON.stringify({ name: "Alice", age: "not-a-number" }),
+    );
 
     await assertRejects(
       () => parseJsonBody(request, schema),
@@ -52,12 +48,7 @@ describe("parseJsonBody", () => {
   });
 
   it("should throw ValidationError for missing required fields", async () => {
-    const body = JSON.stringify({ name: "Alice" });
-    const request = new Request("http://localhost/test", {
-      method: "POST",
-      body,
-      headers: { "content-type": "application/json" },
-    });
+    const request = createJsonRequest(JSON.stringify({ name: "Alice" }));
 
     await assertRejects(
       () => parseJsonBody(request, schema),
@@ -82,13 +73,11 @@ describe("parseQueryParams", () => {
   it("should throw ValidationError for missing required params", () => {
     const request = new Request("http://localhost/search?page=2");
 
-    try {
-      parseQueryParams(request, schema);
-      throw new Error("Should have thrown");
-    } catch (error) {
-      assertEquals(error instanceof ValidationError, true);
-      assertEquals((error as ValidationError).message, "Query parameter validation failed");
-    }
+    assertThrows(
+      () => parseQueryParams(request, schema),
+      ValidationError,
+      "Query parameter validation failed",
+    );
   });
 
   it("should handle repeated query params as arrays", () => {

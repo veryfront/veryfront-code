@@ -42,6 +42,7 @@ describe("build/production-build/manifest", () => {
         enablePrefetch: true,
         enableCompression: true,
       });
+
       assertEquals(result.features.codeSplitting, true);
       assertEquals(result.features.prefetching, true);
       assertEquals(result.features.compression, true);
@@ -52,10 +53,11 @@ describe("build/production-build/manifest", () => {
     it("should map routes correctly", () => {
       const result = generateManifest(baseOptions);
       assertEquals(result.routes.length, 2);
-      const first = result.routes[0];
-      const second = result.routes[1];
+
+      const [first, second] = result.routes;
       assertExists(first);
       assertExists(second);
+
       assertEquals(first.path, "/");
       assertEquals(first.slug, "index");
       assertEquals(second.path, "/about");
@@ -73,7 +75,9 @@ describe("build/production-build/manifest", () => {
           },
         ],
       });
+
       assertEquals(result.routes.length, 3);
+
       const route = result.routes[2];
       assertExists(route);
       assertEquals(route.path, "/api/data");
@@ -94,24 +98,27 @@ describe("build/production-build/manifest", () => {
         chunks: { "chunk-a.js": { file: "chunk-a.js" } },
         shared: ["shared.js"],
       };
+
       const result = generateManifest({
         ...baseOptions,
         enableSplitting: true,
         chunkManifest,
       });
+
       assertEquals(result.chunks !== null, true);
+
       const route = result.routes[0];
       assertExists(route);
       assertEquals(route.chunks, ["chunk-a.js"]);
     });
 
     it("should return null chunks for invalid manifest", () => {
-      const invalidManifest = JSON.parse('{"invalid": true}');
       const result = generateManifest({
         ...baseOptions,
         enableSplitting: true,
-        chunkManifest: invalidManifest,
+        chunkManifest: { invalid: true },
       });
+
       assertEquals(result.chunks, null);
     });
   });

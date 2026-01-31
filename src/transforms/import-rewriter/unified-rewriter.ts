@@ -6,7 +6,7 @@
  */
 
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { applyRewrites, parseAllImports, type ParsedImports } from "./parse-cache.ts";
+import { applyRewrites, parseAllImports } from "./parse-cache.ts";
 import {
   aliasStrategy,
   bareStrategy,
@@ -58,29 +58,21 @@ export class UnifiedImportRewriter {
     return withSpan(
       "transform.import-rewriter",
       async () => {
-        // Single parse for all strategies
         const parsed = await parseAllImports(code);
+        if (parsed.imports.length === 0) return code;
 
-        if (parsed.imports.length === 0) {
-          return code;
-        }
-
-        // Apply strategies to each import
         const rewrites = new Map<number, { specifier?: string | null; statement?: string }>();
 
         for (let i = 0; i < parsed.imports.length; i++) {
           const imp = parsed.imports[i]!;
-          const result = this.rewriteImport(imp.specifier, imp, ctx, parsed, code);
+          const result = this.rewriteImport(imp.specifier, imp, ctx);
 
           if (result.specifier !== null || result.statement !== undefined) {
             rewrites.set(i, result);
           }
         }
 
-        if (rewrites.size === 0) {
-          return code;
-        }
-
+        if (rewrites.size === 0) return code;
         return applyRewrites(code, parsed, rewrites);
       },
       {
@@ -105,28 +97,25 @@ export class UnifiedImportRewriter {
       raw: unknown;
     },
     ctx: RewriteContext,
-    _parsed: ParsedImports,
-    _code: string,
   ): RewriteResult {
     for (const strategy of this.strategies) {
-      if (strategy.matches(specifier, ctx)) {
-        const result = strategy.rewrite(
-          {
-            specifier: info.specifier,
-            isDynamic: info.isDynamic,
-            start: info.start,
-            end: info.end,
-            statementStart: info.statementStart,
-            statementEnd: info.statementEnd,
-            raw: info.raw as import("./types.ts").ImportSpecifierInfo["raw"],
-          },
-          ctx,
-        );
+      if (!strategy.matches(specifier, ctx)) continue;
 
-        // If strategy returns a result, use it
-        if (result.specifier !== null || result.statement !== undefined) {
-          return result;
-        }
+      const result = strategy.rewrite(
+        {
+          specifier: info.specifier,
+          isDynamic: info.isDynamic,
+          start: info.start,
+          end: info.end,
+          statementStart: info.statementStart,
+          statementEnd: info.statementEnd,
+          raw: info.raw as import("./types.ts").ImportSpecifierInfo["raw"],
+        },
+        ctx,
+      );
+
+      if (result.specifier !== null || result.statement !== undefined) {
+        return result;
       }
     }
 

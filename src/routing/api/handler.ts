@@ -26,7 +26,7 @@ export interface APIResponse {
 export type APIHandler = (ctx: APIContext) => Promise<Response> | Response;
 
 export class APIRouteHandler {
-  private router: DynamicRouter;
+  private router = new DynamicRouter();
   private routeCache = new LRUCache<string, APIRoute>({ maxEntries: 256 });
   private lastErrorMessage: string | null = null;
 
@@ -44,7 +44,6 @@ export class APIRouteHandler {
     private projectDir: string,
     adapter?: RuntimeAdapter,
   ) {
-    this.router = new DynamicRouter();
     this.adapter = adapter ?? null;
     this.adapterPromise = adapter ? Promise.resolve(adapter) : null;
   }
@@ -119,7 +118,6 @@ export class APIRouteHandler {
         }
 
         const match = this.router.match(pathname);
-
         if (!match) {
           logger.debug("[API] No route match", {
             pathname,
@@ -156,19 +154,9 @@ export class APIRouteHandler {
         // Note: Cannot use path-based detection (/app/) as projectDir may be '/app' in production
         const isAppRoute = /\/route\.(ts|js|tsx|jsx)$/.test(match.route.page);
 
-        let response: Response;
-        if (isAppRoute) {
-          response = await executeAppRoute(handler, request, match, pathname, adapter);
-        } else {
-          response = await executePagesRoute(
-            handler,
-            request,
-            match,
-            pathname,
-            adapter,
-            this.projectDir,
-          );
-        }
+        const response = isAppRoute
+          ? await executeAppRoute(handler, request, match, pathname, adapter)
+          : await executePagesRoute(handler, request, match, pathname, adapter, this.projectDir);
 
         const corsResponse = await applyCORSHeaders({
           request,
@@ -248,10 +236,7 @@ export class APIRouteHandler {
   private async ensureCorsConfig(adapter: RuntimeAdapter): Promise<void> {
     if (this.corsConfigLoaded) return;
 
-    if (!this.corsConfigPromise) {
-      this.corsConfigPromise = this.loadCorsConfig(adapter);
-    }
-
+    this.corsConfigPromise ??= this.loadCorsConfig(adapter);
     await this.corsConfigPromise;
   }
 
@@ -271,10 +256,7 @@ export class APIRouteHandler {
   private async ensureConfig(adapter: RuntimeAdapter): Promise<void> {
     if (this.config) return;
 
-    if (!this.configPromise) {
-      this.configPromise = this.loadFullConfig(adapter);
-    }
-
+    this.configPromise ??= this.loadFullConfig(adapter);
     await this.configPromise;
   }
 

@@ -1,6 +1,8 @@
 export class PageHandler {
   handle(pathname: string, searchParams: URLSearchParams): Response {
-    return new Response(this.buildHtml(pathname, searchParams), {
+    const html = this.buildHtml(pathname, searchParams);
+
+    return new Response(html, {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
   }

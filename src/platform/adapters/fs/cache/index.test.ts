@@ -3,12 +3,12 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileCache, estimateSize, FileCache, LRUTracker } from "./index.ts";
 
 describe("fs/cache/index.ts exports", () => {
-  const cases: Array<{ name: string; value: unknown }> = [
+  const cases = [
     { name: "FileCache", value: FileCache },
     { name: "createFileCache", value: createFileCache },
     { name: "estimateSize", value: estimateSize },
     { name: "LRUTracker", value: LRUTracker },
-  ];
+  ] as const;
 
   for (const { name, value } of cases) {
     describe(name, () => {

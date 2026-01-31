@@ -46,7 +46,7 @@ export class SSROrchestrator {
   ): Promise<SSRRenderingResult> {
     logger.debug("[SSROrchestrator] performSSRRendering called", {
       elementType: getElementTypeName(pageElement),
-      hasChildren: !!(pageElement?.props as Record<string, unknown>)?.children,
+      hasChildren: !!(pageElement.props as Record<string, unknown>)?.children,
     });
 
     const validatedElement = this.config.elementValidator.ensureValidReactElement(
@@ -61,21 +61,20 @@ export class SSROrchestrator {
     const wantsStream = options?.delivery === "stream";
 
     // Use AsyncLocalStorage-based head collection for multi-tenant safety
-    const { result: renderResult, head: collectedHead } = await runWithHeadCollector(
-      () =>
-        withSpan(
-          SpanNames.SSR_ORCHESTRATOR_RENDER,
-          () =>
-            this.config.ssrRenderer.renderToHTML(validatedElement, {
-              mode: this.config.mode,
-              wantsStream,
-              debugMode: this.config.debugMode,
-            }),
-          {
-            "ssr.wants_stream": wantsStream,
-            "ssr.mode": this.config.mode,
-          },
-        ),
+    const { result: renderResult, head: collectedHead } = await runWithHeadCollector(() =>
+      withSpan(
+        SpanNames.SSR_ORCHESTRATOR_RENDER,
+        () =>
+          this.config.ssrRenderer.renderToHTML(validatedElement, {
+            mode: this.config.mode,
+            wantsStream,
+            debugMode: this.config.debugMode,
+          }),
+        {
+          "ssr.wants_stream": wantsStream,
+          "ssr.mode": this.config.mode,
+        },
+      )
     );
 
     const { html, stream } = renderResult;
@@ -107,11 +106,9 @@ export class SSROrchestrator {
       return { fullHtml: html, finalStream, ssrHash };
     }
 
-    const ssrHash = await withSpan(
-      SpanNames.SSR_CONTENT_HASH,
-      () => computeHash(html),
-      { "ssr.html_length": html.length },
-    );
+    const ssrHash = await withSpan(SpanNames.SSR_CONTENT_HASH, () => computeHash(html), {
+      "ssr.html_length": html.length,
+    });
 
     const fullHtml = await withSpan(
       SpanNames.SSR_HTML_GENERATE,
@@ -126,9 +123,11 @@ export class SSROrchestrator {
       { "ssr.hash": ssrHash },
     );
 
-    const finalStream = wantsStream ? this.createStream(fullHtml) : null;
-
-    return { fullHtml, finalStream, ssrHash };
+    return {
+      fullHtml,
+      finalStream: wantsStream ? this.createStream(fullHtml) : null,
+      ssrHash,
+    };
   }
 
   private createStream(html: string): ReadableStream | null {

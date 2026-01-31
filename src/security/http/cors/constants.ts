@@ -1,10 +1,3 @@
-/**
- * CORS Constants
- * Default values and constants for CORS handling
- *
- * @module core/cors/constants
- */
-
 import { DEV_LOCALHOST_ORIGINS } from "#veryfront/config";
 
 export const DEFAULT_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];

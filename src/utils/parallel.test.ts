@@ -17,11 +17,9 @@ describe("parallel", () => {
     });
 
     it("should map items in parallel", async () => {
-      const result = await parallelMap(
-        [1, 2, 3],
-        async (x) => x * 2,
-        { semaphore: createSemaphore(10) },
-      );
+      const result = await parallelMap([1, 2, 3], async (x) => x * 2, {
+        semaphore: createSemaphore(10),
+      });
       assertEquals(result, [2, 4, 6]);
     });
 
@@ -39,6 +37,7 @@ describe("parallel", () => {
 
     it("should pass index to the mapping function", async () => {
       const indices: number[] = [];
+
       await parallelMap(
         ["a", "b", "c"],
         async (_item, index) => {
@@ -47,6 +46,7 @@ describe("parallel", () => {
         },
         { semaphore: createSemaphore(10) },
       );
+
       // All indices should be present (order may vary due to parallelism)
       assertEquals(indices.sort(), [0, 1, 2]);
     });
@@ -54,7 +54,6 @@ describe("parallel", () => {
     it("should respect semaphore concurrency limits", async () => {
       let concurrent = 0;
       let maxConcurrent = 0;
-      const sem = createSemaphore(2);
 
       await parallelMap(
         [1, 2, 3, 4],
@@ -64,7 +63,7 @@ describe("parallel", () => {
           await new Promise((r) => setTimeout(r, 30));
           concurrent--;
         },
-        { semaphore: sem },
+        { semaphore: createSemaphore(2) },
       );
 
       assertEquals(maxConcurrent, 2);
@@ -85,86 +84,69 @@ describe("parallel", () => {
     });
 
     it("should handle empty function array", async () => {
-      const result = await parallelAll(
-        [] as const,
-        { semaphore: createSemaphore(10) },
-      );
+      const result = await parallelAll([] as const, {
+        semaphore: createSemaphore(10),
+      });
       assertEquals(result, []);
     });
   });
 
   describe("parallelFind", () => {
     it("should return undefined for empty input", async () => {
-      const result = await parallelFind(
-        [],
-        async () => true,
-        { semaphore: createSemaphore(10) },
-      );
+      const result = await parallelFind([], async () => true, {
+        semaphore: createSemaphore(10),
+      });
       assertEquals(result, undefined);
     });
 
     it("should find the first matching item by original order", async () => {
-      const result = await parallelFind(
-        [1, 2, 3, 4, 5],
-        async (x) => x > 2,
-        { semaphore: createSemaphore(10) },
-      );
+      const result = await parallelFind([1, 2, 3, 4, 5], async (x) => x > 2, {
+        semaphore: createSemaphore(10),
+      });
       assertEquals(result, 3);
     });
 
     it("should return undefined when no item matches", async () => {
-      const result = await parallelFind(
-        [1, 2, 3],
-        async (x) => x > 10,
-        { semaphore: createSemaphore(10) },
-      );
+      const result = await parallelFind([1, 2, 3], async (x) => x > 10, {
+        semaphore: createSemaphore(10),
+      });
       assertEquals(result, undefined);
     });
 
     it("should find single matching item", async () => {
-      const result = await parallelFind(
-        [10, 20, 30],
-        async (x) => x === 20,
-        { semaphore: createSemaphore(10) },
-      );
+      const result = await parallelFind([10, 20, 30], async (x) => x === 20, {
+        semaphore: createSemaphore(10),
+      });
       assertEquals(result, 20);
     });
   });
 
   describe("parallelFilter", () => {
     it("should filter items based on predicate", async () => {
-      const result = await parallelFilter(
-        [1, 2, 3, 4, 5],
-        async (x) => x % 2 === 0,
-        { semaphore: createSemaphore(10) },
-      );
+      const result = await parallelFilter([1, 2, 3, 4, 5], async (x) => x % 2 === 0, {
+        semaphore: createSemaphore(10),
+      });
       assertEquals(result, [2, 4]);
     });
 
     it("should return empty array when nothing matches", async () => {
-      const result = await parallelFilter(
-        [1, 2, 3],
-        async () => false,
-        { semaphore: createSemaphore(10) },
-      );
+      const result = await parallelFilter([1, 2, 3], async () => false, {
+        semaphore: createSemaphore(10),
+      });
       assertEquals(result, []);
     });
 
     it("should return all items when everything matches", async () => {
-      const result = await parallelFilter(
-        [1, 2, 3],
-        async () => true,
-        { semaphore: createSemaphore(10) },
-      );
+      const result = await parallelFilter([1, 2, 3], async () => true, {
+        semaphore: createSemaphore(10),
+      });
       assertEquals(result, [1, 2, 3]);
     });
 
     it("should handle empty input", async () => {
-      const result = await parallelFilter(
-        [],
-        async () => true,
-        { semaphore: createSemaphore(10) },
-      );
+      const result = await parallelFilter([], async () => true, {
+        semaphore: createSemaphore(10),
+      });
       assertEquals(result, []);
     });
   });

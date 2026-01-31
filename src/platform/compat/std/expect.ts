@@ -59,11 +59,19 @@ function createNodeExpect(): ExpectFn {
       if (!result) throw new Error(message);
     }
 
-    function getMessage(
-      positive: string,
-      negative: string,
-    ): string {
+    function getMessage(positive: string, negative: string): string {
       return isNot ? negative : positive;
+    }
+
+    function getRejection(): Promise<{ rejected: boolean; error: unknown }> {
+      return (async () => {
+        try {
+          await (actual as Promise<unknown>);
+          return { rejected: false, error: undefined };
+        } catch (e) {
+          return { rejected: true, error: e };
+        }
+      })();
     }
 
     const matchers: Matchers<T> = {
@@ -377,78 +385,58 @@ function createNodeExpect(): ExpectFn {
       },
 
       get resolves(): AsyncMatchers<Awaited<T>> {
-        const promiseMatchers: AsyncMatchers<Awaited<T>> = {
+        const resolveValue = async (): Promise<Awaited<T>> => {
+          return await (actual as Promise<Awaited<T>>);
+        };
+
+        return {
           async toBe(expected: Awaited<T>) {
-            const result = await (actual as Promise<Awaited<T>>);
-            createMatchers(result, isNot).toBe(expected);
+            createMatchers(await resolveValue(), isNot).toBe(expected);
           },
           async toEqual(expected: Awaited<T>) {
-            const result = await (actual as Promise<Awaited<T>>);
-            createMatchers(result, isNot).toEqual(expected);
+            createMatchers(await resolveValue(), isNot).toEqual(expected);
           },
           async toStrictEqual(expected: Awaited<T>) {
-            const result = await (actual as Promise<Awaited<T>>);
-            createMatchers(result, isNot).toStrictEqual(expected);
+            createMatchers(await resolveValue(), isNot).toStrictEqual(expected);
           },
           async toBeTruthy() {
-            const result = await (actual as Promise<Awaited<T>>);
-            createMatchers(result, isNot).toBeTruthy();
+            createMatchers(await resolveValue(), isNot).toBeTruthy();
           },
           async toBeFalsy() {
-            const result = await (actual as Promise<Awaited<T>>);
-            createMatchers(result, isNot).toBeFalsy();
+            createMatchers(await resolveValue(), isNot).toBeFalsy();
           },
           async toBeNull() {
-            const result = await (actual as Promise<Awaited<T>>);
-            createMatchers(result, isNot).toBeNull();
+            createMatchers(await resolveValue(), isNot).toBeNull();
           },
           async toBeUndefined() {
-            const result = await (actual as Promise<Awaited<T>>);
-            createMatchers(result, isNot).toBeUndefined();
+            createMatchers(await resolveValue(), isNot).toBeUndefined();
           },
           async toBeDefined() {
-            const result = await (actual as Promise<Awaited<T>>);
-            createMatchers(result, isNot).toBeDefined();
+            createMatchers(await resolveValue(), isNot).toBeDefined();
           },
           async toBeInstanceOf(expected: new (...args: unknown[]) => unknown) {
-            const result = await (actual as Promise<Awaited<T>>);
-            createMatchers(result, isNot).toBeInstanceOf(expected);
+            createMatchers(await resolveValue(), isNot).toBeInstanceOf(expected);
           },
           async toContain(expected: unknown) {
-            const result = await (actual as Promise<Awaited<T>>);
-            createMatchers(result, isNot).toContain(expected);
+            createMatchers(await resolveValue(), isNot).toContain(expected);
           },
           async toHaveLength(expected: number) {
-            const result = await (actual as Promise<Awaited<T>>);
-            createMatchers(result, isNot).toHaveLength(expected);
+            createMatchers(await resolveValue(), isNot).toHaveLength(expected);
           },
           async toMatch(expected: string | RegExp) {
-            const result = await (actual as Promise<Awaited<T>>);
-            createMatchers(result, isNot).toMatch(expected);
+            createMatchers(await resolveValue(), isNot).toMatch(expected);
           },
           async toThrow() {
-            const result = await (actual as Promise<Awaited<T>>);
-            createMatchers(result, isNot).toThrow();
+            createMatchers(await resolveValue(), isNot).toThrow();
           },
           get not(): AsyncMatchers<Awaited<T>> {
             return createMatchers(actual, !isNot).resolves;
           },
         };
-
-        return promiseMatchers;
       },
 
       get rejects(): AsyncMatchers<unknown> {
-        const getRejection = async (): Promise<{ rejected: boolean; error: unknown }> => {
-          try {
-            await (actual as Promise<unknown>);
-            return { rejected: false, error: undefined };
-          } catch (e) {
-            return { rejected: true, error: e };
-          }
-        };
-
-        const rejectMatchers: AsyncMatchers<unknown> = {
+        return {
           async toBe(expected: unknown) {
             const { rejected, error } = await getRejection();
 
@@ -498,7 +486,7 @@ function createNodeExpect(): ExpectFn {
           },
 
           async toStrictEqual(expected: unknown) {
-            await rejectMatchers.toEqual(expected);
+            await this.toEqual(expected);
           },
 
           async toBeTruthy() {
@@ -736,8 +724,6 @@ function createNodeExpect(): ExpectFn {
             return createMatchers(actual, !isNot).rejects;
           },
         };
-
-        return rejectMatchers;
       },
 
       get not(): Matchers<T> {

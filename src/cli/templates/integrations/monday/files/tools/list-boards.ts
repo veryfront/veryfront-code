@@ -21,15 +21,13 @@ export default tool({
   async execute({ workspaceIds, limit, page }) {
     const boards = await listBoards({ workspaceIds, limit, page });
 
-    return boards.map(
-      ({ id, name, description, board_kind, state, workspace_id }) => ({
-        id,
-        name,
-        description,
-        boardKind: board_kind,
-        state,
-        workspaceId: workspace_id,
-      }),
-    );
+    return boards.map((board) => ({
+      id: board.id,
+      name: board.name,
+      description: board.description,
+      boardKind: board.board_kind,
+      state: board.state,
+      workspaceId: board.workspace_id,
+    }));
   },
 });

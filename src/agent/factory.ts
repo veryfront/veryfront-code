@@ -1,4 +1,4 @@
-import type { Agent, AgentConfig, AgentResponse, Message, ToolCall as _ToolCall } from "./types.ts";
+import type { Agent, AgentConfig, AgentResponse, Message } from "./types.ts";
 import { AgentRuntime } from "./runtime/index.ts";
 import { detectPlatform, validatePlatformCompatibility } from "../platform/core-platform.ts";
 import { registerTool } from "#veryfront/mcp";
@@ -128,7 +128,7 @@ export function agent(config: AgentConfig): Agent {
           const body: { messages?: Message[]; context?: Record<string, unknown> } = await request
             .json();
           const messages = body.messages ?? [];
-          const stream: ReadableStream<Uint8Array> = await runtime.stream(messages, body.context);
+          const stream = await runtime.stream(messages, body.context);
 
           return new Response(stream, { headers: STREAMING_HEADERS });
         },

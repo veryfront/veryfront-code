@@ -15,28 +15,33 @@ export const REACT_DEFAULT_VERSION = REACT_VERSION_19;
 // DO NOT add duplicate URL builders here - use package-registry.ts instead.
 import * as ReactRegistry from "#veryfront/transforms/esm/package-registry.ts";
 
-export const esmShReact = ReactRegistry.esmShReact;
-export const getReactImportMap = ReactRegistry.getReactImportMap;
-export const getReactUrls = ReactRegistry.getReactUrls;
+export const { esmShReact, getReactImportMap, getReactUrls } = ReactRegistry;
 
-// Named getters for convenience - delegate to ReactRegistry
-export const getReactCDNUrl = (version = REACT_DEFAULT_VERSION) =>
-  ReactRegistry.getReactUrls(version).react!;
+export function getReactCDNUrl(version = REACT_DEFAULT_VERSION): string {
+  return ReactRegistry.getReactUrls(version).react!;
+}
 
-export const getReactDOMCDNUrl = (version = REACT_DEFAULT_VERSION) =>
-  ReactRegistry.getReactUrls(version)["react-dom"]!;
+export function getReactDOMCDNUrl(version = REACT_DEFAULT_VERSION): string {
+  return ReactRegistry.getReactUrls(version)["react-dom"]!;
+}
 
-export const getReactDOMClientCDNUrl = (version = REACT_DEFAULT_VERSION) =>
-  ReactRegistry.getReactUrls(version)["react-dom/client"]!;
+export function getReactDOMClientCDNUrl(version = REACT_DEFAULT_VERSION): string {
+  return ReactRegistry.getReactUrls(version)["react-dom/client"]!;
+}
 
-export const getReactDOMServerCDNUrl = (version = REACT_DEFAULT_VERSION) =>
-  ReactRegistry.getReactUrls(version)["react-dom/server"]!;
+export function getReactDOMServerCDNUrl(version = REACT_DEFAULT_VERSION): string {
+  return ReactRegistry.getReactUrls(version)["react-dom/server"]!;
+}
 
-export const getReactJSXRuntimeCDNUrl = (version = REACT_DEFAULT_VERSION) =>
-  ReactRegistry.getReactUrls(version)["react/jsx-runtime"]!;
+export function getReactJSXRuntimeCDNUrl(version = REACT_DEFAULT_VERSION): string {
+  return ReactRegistry.getReactUrls(version)["react/jsx-runtime"]!;
+}
 
-export const getReactJSXDevRuntimeCDNUrl = (version = REACT_DEFAULT_VERSION) =>
-  ReactRegistry.getReactUrls(version)["react/jsx-dev-runtime"]!;
+export function getReactJSXDevRuntimeCDNUrl(
+  version = REACT_DEFAULT_VERSION,
+): string {
+  return ReactRegistry.getReactUrls(version)["react/jsx-dev-runtime"]!;
+}
 
 export const DEFAULT_ALLOWED_CDN_HOSTS = [ESM_CDN_BASE, DENO_STD_BASE];
 

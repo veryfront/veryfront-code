@@ -15,11 +15,6 @@ export interface MDXRenderOptions {
 }
 
 export class MDXRenderer {
-  // NOTE: We intentionally do NOT cache esmCacheDir here.
-  // Each call to loadModuleESM gets the cache dir fresh from getMdxEsmCacheDir()
-  // which uses AsyncLocalStorage for proper isolation in parallel tests.
-  // Caching it would cause race conditions where parallel tests corrupt each other's state.
-
   private moduleCache: LRUCache<string, MDXModule> = new LRUCache({
     maxEntries: MDX_RENDERER_MAX_ENTRIES,
     ttlMs: MDX_RENDERER_TTL_MS,
@@ -27,9 +22,6 @@ export class MDXRenderer {
 
   clearCache(): void {
     this.moduleCache.destroy();
-    // Note: We don't track/cleanup esmCacheDir here anymore.
-    // Each test context manages its own cache dir via AsyncLocalStorage.
-    // The temp directories are cleaned up by the test context's cleanup().
   }
 
   loadModuleESM(
@@ -40,16 +32,14 @@ export class MDXRenderer {
     projectSlug?: string,
     contentSourceId?: string,
   ): Promise<MDXModule> {
-    // Don't pass esmCacheDir - let loadModuleESM get it fresh from getMdxEsmCacheDir()
-    // which respects AsyncLocalStorage for proper test isolation
     const context: ESMLoaderContext = {
-      esmCacheDir: undefined, // Always get fresh from getMdxEsmCacheDir()
+      esmCacheDir: undefined,
       moduleCache: this.moduleCache,
       adapter,
       projectId,
       projectDir,
       projectSlug,
-      contentSourceId, // For cache isolation between preview/production
+      contentSourceId,
     };
 
     return loadModuleESM(compiledProgramCode, context);

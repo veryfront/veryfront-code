@@ -1,4 +1,4 @@
-/**
+/****
  * Production Token Store Examples
  *
  * Copy-paste implementations for different storage backends.
@@ -31,7 +31,7 @@ import { createTokenStore, tokenStore, type TokenStore } from "./token-store.ts"
 export function createVercelKVStore(): TokenStore {
   let kvPromise: Promise<typeof import("@vercel/kv")> | null = null;
 
-  async function getKV() {
+  async function getKV(): Promise<(await import("@vercel/kv")).kv> {
     kvPromise ??= import("@vercel/kv");
     return (await kvPromise).kv;
   }
@@ -71,9 +71,9 @@ export function createVercelKVStore(): TokenStore {
  * ```
  */
 export function createRedisStore(): TokenStore {
-  let clientPromise: Promise<ReturnType<typeof import("redis").createClient>> | null = null;
+  let clientPromise: Promise<ReturnType<(typeof import("redis"))["createClient"]>> | null = null;
 
-  async function getClient() {
+  async function getClient(): Promise<ReturnType<(typeof import("redis"))["createClient"]>> {
     clientPromise ??= (async () => {
       const { createClient } = await import("redis");
       const client = createClient({ url: process.env.REDIS_URL });
@@ -132,7 +132,7 @@ export function createRedisStore(): TokenStore {
 export function createPostgresStore(): TokenStore {
   let poolPromise: Promise<import("pg").Pool> | null = null;
 
-  async function getPool() {
+  async function getPool(): Promise<import("pg").Pool> {
     poolPromise ??= (async () => {
       const { Pool } = await import("pg");
       return new Pool({ connectionString: process.env.DATABASE_URL });
@@ -153,7 +153,7 @@ export function createPostgresStore(): TokenStore {
         `INSERT INTO oauth_tokens (key, value, updated_at)
          VALUES ($1, $2, NOW())
          ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
-        [key, value]
+        [key, value],
       );
     },
     async delete(key: string): Promise<void> {
@@ -211,7 +211,7 @@ export function createSQLiteStore(db: {
       await db
         .prepare(
           `INSERT OR REPLACE INTO oauth_tokens (key, value, updated_at)
-           VALUES (?, ?, strftime('%s', 'now'))`
+           VALUES (?, ?, strftime('%s', 'now'))`,
         )
         .bind(key, value)
         .run();
@@ -248,9 +248,15 @@ export function createWorkersKVStore(kv: {
   delete(key: string): Promise<void>;
 }): TokenStore {
   return createTokenStore({
-    get: (key) => kv.get(key),
-    set: (key, value) => kv.put(key, value),
-    delete: (key) => kv.delete(key),
+    get(key: string): Promise<string | null> {
+      return kv.get(key);
+    },
+    set(key: string, value: string): Promise<void> {
+      return kv.put(key, value);
+    },
+    delete(key: string): Promise<void> {
+      return kv.delete(key);
+    },
   });
 }
 
@@ -352,7 +358,7 @@ export function createDrizzleStore<T extends { key: unknown; value: unknown }>(
     delete(table: T): { where(condition: unknown): { execute(): Promise<void> } };
   },
   table: T & { key: unknown; value: unknown },
-  eq: (col: unknown, val: unknown) => unknown
+  eq: (col: unknown, val: unknown) => unknown,
 ): TokenStore {
   return createTokenStore({
     async get(key: string): Promise<string | null> {
@@ -413,7 +419,7 @@ export function createAutoStore(): TokenStore {
   console.warn(
     "[Token Store] No production storage configured. " +
       "Using in-memory storage (tokens will be lost on restart). " +
-      "Set DATABASE_URL, KV_REST_API_URL, or REDIS_URL for production."
+      "Set DATABASE_URL, KV_REST_API_URL, or REDIS_URL for production.",
   );
 
   return tokenStore;

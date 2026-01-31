@@ -10,7 +10,7 @@ export function bundleDevFile(absPath: string, ctx: HandlerContext): Promise<str
       const { build } = await import("esbuild");
       const src = await ctx.adapter.fs.readFile(absPath);
 
-      const result = await build({
+      const { outputFiles } = await build({
         bundle: true,
         write: false,
         format: "esm",
@@ -25,13 +25,10 @@ export function bundleDevFile(absPath: string, ctx: HandlerContext): Promise<str
           resolveDir: getDirectory(absPath),
           sourcefile: absPath,
         },
-        plugins: [
-          createRelativeFsPlugin(ctx.projectDir, ctx.adapter),
-          createBareExternalPlugin(),
-        ],
+        plugins: [createRelativeFsPlugin(ctx.projectDir, ctx.adapter), createBareExternalPlugin()],
       });
 
-      return result.outputFiles?.[0]?.text ?? "export default null";
+      return outputFiles?.[0]?.text ?? "export default null";
     },
     { "bundle.filePath": absPath, "bundle.projectSlug": ctx.projectSlug ?? "unknown" },
   );

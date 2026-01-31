@@ -8,5 +8,6 @@ export function minifyCSS(css: string): string {
 
 export function countUtilities(css: string): number {
   const matches = css.match(/\.[a-zA-Z0-9_-]+/g);
-  return matches ? new Set(matches).size : 0;
+  if (!matches) return 0;
+  return new Set(matches).size;
 }

@@ -32,6 +32,7 @@ export default tool({
     try {
       const slack = createSlackClient(userId);
       const channels = await slack.listChannels({ limit, excludeArchived });
+      const count = channels.length;
 
       return {
         channels: channels.map((ch: SlackChannel) => ({
@@ -42,8 +43,8 @@ export default tool({
           topic: ch.topic?.value ?? null,
           purpose: ch.purpose?.value ?? null,
         })),
-        count: channels.length,
-        message: `Found ${channels.length} channel(s).`,
+        count,
+        message: `Found ${count} channel(s).`,
       };
     } catch (error) {
       if (error instanceof Error && error.message.includes("not connected")) {
@@ -52,6 +53,7 @@ export default tool({
           connectUrl: "/api/auth/slack",
         };
       }
+
       throw error;
     }
   },

@@ -5,8 +5,7 @@ import { endRequest, isEnabled, startRequest, startTimer, timeAsync } from "./pe
 describe("perf-timer", () => {
   describe("isEnabled", () => {
     it("should return a boolean", () => {
-      const result = isEnabled();
-      assertEquals(typeof result, "boolean");
+      assertEquals(typeof isEnabled(), "boolean");
     });
   });
 
@@ -30,7 +29,7 @@ describe("perf-timer", () => {
     it("should return a no-op function", () => {
       const stop = startTimer("test-label");
       assertEquals(typeof stop, "function");
-      stop(); // should not throw
+      stop();
     });
 
     it("should accept optional parent parameter", () => {
@@ -42,26 +41,22 @@ describe("perf-timer", () => {
 
   describe("timeAsync", () => {
     it("should execute and return the result of the async function", async () => {
-      const result = await timeAsync("test", () => Promise.resolve(42));
-      assertEquals(result, 42);
+      assertEquals(await timeAsync("test", () => Promise.resolve(42)), 42);
     });
 
     it("should propagate errors from the async function", async () => {
-      let threw = false;
       try {
         await timeAsync("test", () => {
           throw new Error("test error");
         });
+        assertEquals(true, false);
       } catch (e) {
-        threw = true;
         assertEquals((e as Error).message, "test error");
       }
-      assertEquals(threw, true);
     });
 
     it("should accept optional parent parameter", async () => {
-      const result = await timeAsync("child", () => Promise.resolve("ok"), "parent");
-      assertEquals(result, "ok");
+      assertEquals(await timeAsync("child", () => Promise.resolve("ok"), "parent"), "ok");
     });
 
     it("should handle promises that resolve after delay", async () => {

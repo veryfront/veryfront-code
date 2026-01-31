@@ -1,7 +1,3 @@
-/**
- * Tests for MDX module code generator
- */
-
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { generateModuleCode } from "./code-generator.ts";
@@ -12,8 +8,7 @@ function runGenerateModuleCodeTest(
   mdxCode: string,
   assertions: (result: string) => void,
 ): void {
-  const result = generateModuleCode(frontmatter, mdxCode);
-  assertions(result);
+  assertions(generateModuleCode(frontmatter, mdxCode));
 }
 
 describe("code-generator", () => {
@@ -100,7 +95,7 @@ describe("code-generator", () => {
     it("should handle empty MDX code", () => {
       runGenerateModuleCodeTest({ title: "Test" }, "", (result) => {
         expect(result).toContain("export const frontmatter");
-        expect(result).toContain(""); // Empty string
+        expect(result).toContain("");
       });
     });
 

@@ -1,4 +1,4 @@
-/**
+/****
  * Redis Memory Backend
  *
  * Distributed memory implementation using Redis for multi-process deployments.
@@ -40,14 +40,6 @@ export interface RedisMemoryConfig extends MemoryConfigBase {
 const DEFAULT_TTL = 86400; // 24 hours
 const DEFAULT_KEY_PREFIX = "veryfront:agent:memory:";
 
-/**
- * Redis Memory - Distributed conversation storage
- *
- * Stores messages in Redis for:
- * - Multi-process deployments (clustering, serverless)
- * - Conversation persistence across restarts
- * - Horizontal scaling
- */
 export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
   private client: RedisClient;
   private agentId: string;
@@ -67,21 +59,21 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
     return `${this.keyPrefix}${this.agentId}`;
   }
 
+  private parseMessages(data: string | null): M[] {
+    if (!data) return [];
+    try {
+      return JSON.parse(data);
+    } catch {
+      return [];
+    }
+  }
+
   add(message: M): Promise<void> {
     return withSpan(
       "agent.memory.redis.add",
       async () => {
         const key = this.getKey();
-        const existingData = await this.client.get(key);
-
-        let messages: M[] = [];
-        if (existingData) {
-          try {
-            messages = JSON.parse(existingData);
-          } catch {
-            messages = [];
-          }
-        }
+        let messages = this.parseMessages(await this.client.get(key));
 
         messages.push(message);
 
@@ -106,16 +98,7 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
   getMessages(): Promise<M[]> {
     return withSpan(
       "agent.memory.redis.getMessages",
-      async () => {
-        const data = await this.client.get(this.getKey());
-        if (!data) return [];
-
-        try {
-          return JSON.parse(data);
-        } catch {
-          return [];
-        }
-      },
+      async () => this.parseMessages(await this.client.get(this.getKey())),
       { "memory.type": "redis", "memory.agent_id": this.agentId },
     );
   }
@@ -150,16 +133,15 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
       "agent.memory.redis.touch",
       async () => {
         // TTL <= 0 means no expiration, so touch is a no-op
-        if (this.ttl > 0) {
-          await this.client.expire(this.getKey(), this.ttl);
-        }
+        if (this.ttl <= 0) return;
+        await this.client.expire(this.getKey(), this.ttl);
       },
       { "memory.type": "redis", "memory.agent_id": this.agentId, "memory.ttl": this.ttl },
     );
   }
 
   private trimToTokenLimit(messages: M[]): M[] {
-    const maxTokens = this.config.maxTokens;
+    const { maxTokens } = this.config;
     if (!maxTokens) return messages;
 
     let tokenCount = estimateTokens(messages);
@@ -173,9 +155,6 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
   }
 }
 
-/**
- * Create Redis memory instance
- */
 export function createRedisMemory<M extends MinimalMessage = MinimalMessage>(
   agentId: string,
   config: RedisMemoryConfig,

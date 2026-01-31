@@ -169,11 +169,18 @@ describe("Runtime Detection", () => {
 
   it("version matches runtime", () => {
     const v = getRuntimeVersion();
+
     if (isDeno) {
       assert(v.startsWith("Deno"), "should be Deno");
-    } else if (isBun) {
+      return;
+    }
+
+    if (isBun) {
       assert(v.startsWith("Bun"), "should be Bun");
-    } else if (isNode) {
+      return;
+    }
+
+    if (isNode) {
       assert(v.startsWith("Node"), "should be Node");
     }
   });

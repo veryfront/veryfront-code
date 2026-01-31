@@ -17,34 +17,34 @@ describe(
 
       it("should clear all cache entries", () => {
         clearBatchCache();
-        const stats = getBatchCacheStats();
-        assertEquals(stats.size, 0);
+        assertEquals(getBatchCacheStats().size, 0);
       });
 
       it("should clear cache for specific project slug", () => {
-        // This tests that the function runs without error
-        // (we can't populate the cache externally since transformCache is module-private)
         clearBatchCache("my-project");
-        const stats = getBatchCacheStats();
-        assertEquals(stats.size, 0);
+        assertEquals(getBatchCacheStats().size, 0);
       });
     });
 
     describe("handleModuleBatch", () => {
       function createBatchRequest(paths?: string, extraParams?: string): Request {
-        let url = "http://localhost:8080/_vf_modules/_batch";
-        const params: string[] = [];
-        if (paths !== undefined) params.push(`paths=${paths}`);
-        if (extraParams) params.push(extraParams);
-        if (params.length > 0) url += `?${params.join("&")}`;
-        return new Request(url);
+        const url = new URL("http://localhost:8080/_vf_modules/_batch");
+
+        if (paths !== undefined) url.searchParams.set("paths", paths);
+        if (extraParams) {
+          const extra = new URLSearchParams(extraParams);
+          for (const [key, value] of extra) url.searchParams.append(key, value);
+        }
+
+        return new Request(url.toString());
       }
 
-      function createOptions(overrides: Record<string, unknown> = {}) {
-        const adapter = createMockAdapter();
+      function createOptions(
+        overrides: Record<string, unknown> = {},
+      ): Record<string, unknown> {
         return {
           projectDir: "/test-project",
-          adapter,
+          adapter: createMockAdapter(),
           projectSlug: "test",
           dev: true,
           ...overrides,
@@ -52,45 +52,37 @@ describe(
       }
 
       it("should return 400 when paths parameter is missing", async () => {
-        const req = createBatchRequest();
-        const response = await handleModuleBatch(req, createOptions());
+        const response = await handleModuleBatch(createBatchRequest(), createOptions());
         assertEquals(response.status, 400);
-        const text = await response.text();
-        assertEquals(text, "Missing 'paths' parameter");
+        assertEquals(await response.text(), "Missing 'paths' parameter");
       });
 
       it("should return 400 when paths parameter is empty string", async () => {
-        const req = createBatchRequest("");
-        const response = await handleModuleBatch(req, createOptions());
+        const response = await handleModuleBatch(createBatchRequest(""), createOptions());
         assertEquals(response.status, 400);
-        // Empty string is falsy, so hits "Missing 'paths' parameter"
-        const text = await response.text();
-        assertEquals(text, "Missing 'paths' parameter");
+        assertEquals(await response.text(), "Missing 'paths' parameter");
       });
 
       it("should return 400 when paths has only whitespace/commas", async () => {
-        const req = createBatchRequest(",,,");
-        const response = await handleModuleBatch(req, createOptions());
+        const response = await handleModuleBatch(createBatchRequest(",,,"), createOptions());
         assertEquals(response.status, 400);
-        const text = await response.text();
-        assertEquals(text, "No valid paths provided");
+        assertEquals(await response.text(), "No valid paths provided");
       });
 
       it("should return 400 when too many modules requested", async () => {
         const paths = Array.from({ length: 101 }, (_, i) => `module${i}.js`).join(",");
-        const req = createBatchRequest(paths);
-        const response = await handleModuleBatch(req, createOptions());
+        const response = await handleModuleBatch(createBatchRequest(paths), createOptions());
         assertEquals(response.status, 400);
-        const text = await response.text();
-        assertEquals(text.includes("Too many modules"), true);
+        assertEquals((await response.text()).includes("Too many modules"), true);
       });
 
       it("should return 404 when no modules could be loaded", async () => {
-        const req = createBatchRequest("nonexistent.js");
-        const response = await handleModuleBatch(req, createOptions());
+        const response = await handleModuleBatch(
+          createBatchRequest("nonexistent.js"),
+          createOptions(),
+        );
         assertEquals(response.status, 404);
-        const text = await response.text();
-        assertEquals(text, "No modules could be loaded");
+        assertEquals(await response.text(), "No modules could be loaded");
       });
 
       it("should successfully batch existing modules", async () => {
@@ -100,8 +92,7 @@ describe(
           "export default function Hello() { return null; }",
         );
 
-        const req = createBatchRequest("hello.js");
-        const response = await handleModuleBatch(req, {
+        const response = await handleModuleBatch(createBatchRequest("hello.js"), {
           projectDir: "/test-project",
           adapter,
           projectSlug: "test",
@@ -124,8 +115,7 @@ describe(
         const adapter = createMockAdapter();
         adapter.fs.files.set("/test-project/page.tsx", "export default () => null;");
 
-        const req = createBatchRequest("page.js");
-        const response = await handleModuleBatch(req, {
+        const response = await handleModuleBatch(createBatchRequest("page.js"), {
           projectDir: "/test-project",
           adapter,
           projectSlug: "test",
@@ -141,13 +131,15 @@ describe(
         const adapter = createMockAdapter();
         adapter.fs.files.set("/test-project/exists.tsx", "export const x = 1;");
 
-        const req = createBatchRequest("exists.js,missing.js");
-        const response = await handleModuleBatch(req, {
-          projectDir: "/test-project",
-          adapter,
-          projectSlug: "test",
-          dev: true,
-        });
+        const response = await handleModuleBatch(
+          createBatchRequest("exists.js,missing.js"),
+          {
+            projectDir: "/test-project",
+            adapter,
+            projectSlug: "test",
+            dev: true,
+          },
+        );
 
         assertEquals(response.status, 200);
         const code = await response.text();
@@ -159,8 +151,7 @@ describe(
         const adapter = createMockAdapter();
         adapter.fs.files.set("/test-project/comp.tsx", "export const y = 2;");
 
-        const req = createBatchRequest("comp.js");
-        const response = await handleModuleBatch(req, {
+        const response = await handleModuleBatch(createBatchRequest("comp.js"), {
           projectDir: "/test-project",
           adapter,
           projectSlug: "test",
@@ -168,8 +159,7 @@ describe(
         });
 
         assertEquals(response.status, 200);
-        const cacheControl = response.headers.get("Cache-Control");
-        assertEquals(cacheControl?.includes("immutable"), true);
+        assertEquals(response.headers.get("Cache-Control")?.includes("immutable"), true);
       });
     });
   },

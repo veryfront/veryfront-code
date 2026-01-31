@@ -27,7 +27,13 @@ export function loadComponentsUnified(
       const moduleServerUrl = options?.moduleServerUrl;
       const reactVersion = options?.reactVersion;
 
-      const transformOpts: TransformOptions = { projectId, dev, moduleServerUrl, reactVersion };
+      const transformOpts: TransformOptions = {
+        projectId,
+        dev,
+        moduleServerUrl,
+        reactVersion,
+      };
+
       const transformedComponents = await transformAllComponents(
         components,
         projectDir,
@@ -35,10 +41,7 @@ export function loadComponentsUnified(
         transformOpts,
       );
 
-      const baseTmp = await getProjectTmpDir(projectId);
-      const uniqueTmp = `unified-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      const tmpDir = join(baseTmp, uniqueTmp);
-      await adapter.fs.mkdir(tmpDir, { recursive: true });
+      const tmpDir = await createTempDir(projectId, adapter);
 
       try {
         await writeComponentFiles(tmpDir, transformedComponents, adapter);
@@ -69,6 +72,16 @@ function transformAllComponents(
   );
 }
 
+async function createTempDir(projectId: string, adapter: RuntimeAdapter): Promise<string> {
+  const baseTmp = await getProjectTmpDir(projectId);
+  const uniqueTmp = `unified-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const tmpDir = join(baseTmp, uniqueTmp);
+
+  await adapter.fs.mkdir(tmpDir, { recursive: true });
+
+  return tmpDir;
+}
+
 async function writeComponentFiles(
   tmpDir: string,
   components: TransformedComponent[],
@@ -81,8 +94,8 @@ async function writeComponentFiles(
 
 function generateEntryPoint(components: TransformedComponent[], reactVersion?: string): string {
   const version = reactVersion ?? DEFAULT_REACT_VERSION;
-  // Use centralized React URL from package-registry to ensure consistency
   const reactUrl = getReactImportMap(version).react;
+
   const imports = components
     .map((comp) => `import { default as ${comp.name} } from './${comp.name}.js'`)
     .join("\n");

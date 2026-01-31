@@ -36,20 +36,11 @@ export default tool({
       .describe("Time interval for aggregation"),
   }),
   async execute({ events, dateFrom, dateTo, interval }) {
-    const trends = await getTrends({
+    return getTrends({
       events,
       date_from: dateFrom,
       date_to: dateTo,
       interval,
     });
-
-    return trends.map(({ label, count, data, labels, days, action }) => ({
-      label,
-      count,
-      data,
-      labels,
-      days,
-      action,
-    }));
   },
 });

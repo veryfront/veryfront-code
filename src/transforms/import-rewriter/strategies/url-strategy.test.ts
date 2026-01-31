@@ -3,7 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
 import { urlStrategy } from "./url-strategy.ts";
 
-function makeCtx(overrides?: Partial<RewriteContext>): RewriteContext {
+function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
   return {
     filePath: "/project/pages/index.tsx",
     projectDir: "/project",
@@ -38,7 +38,10 @@ describe("UrlStrategy", () => {
     });
 
     it("should not match other URLs", () => {
-      assertEquals(urlStrategy.matches("https://cdn.example.com/lib.js", makeCtx()), false);
+      assertEquals(
+        urlStrategy.matches("https://cdn.example.com/lib.js", makeCtx()),
+        false,
+      );
     });
 
     it("should not match bare specifiers", () => {
@@ -48,27 +51,27 @@ describe("UrlStrategy", () => {
 
   describe("rewrite", () => {
     it("should add deps to esm.sh URL without params", () => {
-      const result = urlStrategy.rewrite(
+      const { specifier } = urlStrategy.rewrite(
         makeInfo("https://esm.sh/lodash"),
         makeCtx(),
       );
-      assertEquals(result.specifier!.includes("external=react"), true);
+      assertEquals(specifier?.includes("external=react"), true);
     });
 
     it("should return null for URLs that already have params", () => {
-      const result = urlStrategy.rewrite(
+      const { specifier } = urlStrategy.rewrite(
         makeInfo("https://esm.sh/lodash?target=es2022"),
         makeCtx(),
       );
-      assertEquals(result.specifier, null);
+      assertEquals(specifier, null);
     });
 
     it("should return null for react packages (already configured)", () => {
-      const result = urlStrategy.rewrite(
+      const { specifier } = urlStrategy.rewrite(
         makeInfo("https://esm.sh/react@19.1.1"),
         makeCtx({ reactVersion: "19.1.1" }),
       );
-      assertEquals(result.specifier, null);
+      assertEquals(specifier, null);
     });
   });
 });

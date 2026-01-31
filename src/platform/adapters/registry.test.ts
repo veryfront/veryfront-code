@@ -5,9 +5,9 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalAdapter, resetLocalAdapter, runtime } from "./registry.ts";
 import { createMockAdapter } from "./mock.ts";
-import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import type { RuntimeId } from "./base.ts";
 
 const expectedRuntime: RuntimeId = isDeno ? "deno" : isNode ? "node" : isBun ? "bun" : "deno";
@@ -49,11 +49,7 @@ describe("registry.ts", () => {
     });
 
     it("should throw on getSync before initialization", () => {
-      assertThrows(
-        () => runtime.getSync(),
-        Error,
-        "RuntimeAdapter not initialized",
-      );
+      assertThrows(() => runtime.getSync(), Error, "RuntimeAdapter not initialized");
     });
 
     it("should return adapter on getSync after initialization", async () => {
@@ -78,11 +74,7 @@ describe("registry.ts", () => {
     });
 
     it("should throw on invalid adapter", async () => {
-      await assertRejects(
-        () => runtime.set({} as any),
-        Error,
-        "Invalid adapter",
-      );
+      await assertRejects(() => runtime.set({} as any), Error, "Invalid adapter");
     });
 
     it("should replace existing adapter", async () => {

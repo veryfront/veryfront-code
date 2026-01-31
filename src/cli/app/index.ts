@@ -107,15 +107,18 @@ async function copyDirectory(src: string, dest: string): Promise<void> {
   const filesystem = fs.createFileSystem();
 
   await filesystem.mkdir(dest, { recursive: true });
+
   for await (const entry of filesystem.readDir(src)) {
     const srcPath = pathMod.join(src, entry.name);
     const destPath = pathMod.join(dest, entry.name);
+
     if (entry.isDirectory) {
       await copyDirectory(srcPath, destPath);
-    } else {
-      const content = await filesystem.readFile(srcPath);
-      await filesystem.writeFile(destPath, content);
+      continue;
     }
+
+    const content = await filesystem.readFile(srcPath);
+    await filesystem.writeFile(destPath, content);
   }
 }
 
@@ -298,6 +301,68 @@ function generateRandomSlug(): string {
   return `${adj}-${noun}`;
 }
 
+function normalizeSlug(projectName: string): string {
+  return projectName.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+}
+
+function slugToName(slug: string): string {
+  return slug
+    .split("-")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+async function createRemoteProject(token: string, slug: string): Promise<{ slug: string }> {
+  const apiUrl = getRuntimeEnv().apiUrl || "https://api.veryfront.com";
+  const response = await fetch(`${apiUrl}/projects`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ slug, name: slugToName(slug) }),
+  });
+
+  if (response.ok) return await response.json() as { slug: string };
+
+  const error = await response.json().catch(() => ({}));
+  const msg = (error as { message?: string }).message || `HTTP ${response.status}`;
+  throw new Error(msg);
+}
+
+function getLocalProjectsFromState(appState: AppState): Array<{ slug: string; path: string }> {
+  return appState.projects.items.map((item) => ({
+    slug: item.data!.slug,
+    path: item.data!.path,
+  }));
+}
+
+async function pullRemoteProject(
+  _appState: AppState,
+  update: (updater: StateUpdater) => void,
+  render: () => void,
+  focusedSlug: string,
+): Promise<void> {
+  const projectDir = join(cwd(), "projects", focusedSlug);
+  update(addLog("info", `Pulling to projects/${focusedSlug}/...`));
+  render();
+
+  try {
+    await pullCommand({
+      projectSlug: focusedSlug,
+      projectDir,
+      force: true,
+      quiet: true,
+    });
+    update(addLog("info", `Pulled to projects/${focusedSlug}/`));
+  } catch (err) {
+    update(addLog("error", `Pull failed: ${err instanceof Error ? err.message : String(err)}`));
+  }
+
+  render();
+}
+
 /**
  * Create the CLI app
  */
@@ -343,16 +408,16 @@ export function createApp(config: AppConfig): App {
   void (async () => {
     try {
       const token = await readToken();
-      if (token) {
-        const user = await validateToken(token);
-        if (user) {
-          const result = await fetchRemoteProjects();
-          state = updateRemote({
-            user,
-            projects: result.projects.map((p) => ({ id: p.id, name: p.name, slug: p.slug })),
-          })(state);
-        }
-      }
+      if (!token) return;
+
+      const user = await validateToken(token);
+      if (!user) return;
+
+      const result = await fetchRemoteProjects();
+      state = updateRemote({
+        user,
+        projects: result.projects.map((p) => ({ id: p.id, name: p.name, slug: p.slug })),
+      })(state);
     } catch {
       // Auth check failed - non-fatal
     }
@@ -488,18 +553,14 @@ export function createApp(config: AppConfig): App {
 
     options.forEach((opt, i) => {
       const isFocused = i === state.newProjectIndex;
-      const cursor = isFocused ? brand("›") : " ";
+      const cursorChar = isFocused ? brand("›") : " ";
       const num = isFocused ? brand(`[${i + 1}]`) : dim(`[${i + 1}]`);
       const label = isFocused ? opt.label : dim(opt.label);
       const desc = dim(opt.desc);
-      lines.push(`  ${cursor} ${num} ${label}  ${desc}`);
+      lines.push(`  ${cursorChar} ${num} ${label}  ${desc}`);
     });
 
-    lines.push(
-      "",
-      `  ${dim("↑↓ nav  enter select  esc back")}`,
-      "",
-    );
+    lines.push("", `  ${dim("↑↓ nav  enter select  esc back")}`, "");
 
     return lines.join("\n");
   }
@@ -516,10 +577,10 @@ export function createApp(config: AppConfig): App {
 
     providers.forEach((p, i) => {
       const isFocused = i === state.authProviderIndex;
-      const cursor = isFocused ? brand("›") : " ";
+      const cursorChar = isFocused ? brand("›") : " ";
       const num = isFocused ? brand(`[${i + 1}]`) : dim(`[${i + 1}]`);
       const label = isFocused ? p : dim(p);
-      lines.push(`${cursor} ${num} ${label}`);
+      lines.push(`${cursorChar} ${num} ${label}`);
     });
 
     lines.push("", `  ${dim("↑↓ nav  enter select  esc back")}`, "");
@@ -637,6 +698,51 @@ export function createApp(config: AppConfig): App {
     }
   }
 
+  function updateRemoteFocus(newIndex: number): void {
+    const visibleCount = 5;
+
+    let scrollOffset = state.remote.scrollOffset;
+    if (newIndex < scrollOffset) {
+      scrollOffset = newIndex;
+    } else if (newIndex >= scrollOffset + visibleCount) {
+      scrollOffset = newIndex - visibleCount + 1;
+    }
+
+    update(updateRemote({ focusedIndex: newIndex, scrollOffset }));
+  }
+
+  function moveRemoteFocusUp(): void {
+    const total = state.remote.projects.length;
+    const visibleCount = 5;
+    const newIndex = state.remote.focusedIndex > 0 ? state.remote.focusedIndex - 1 : total - 1;
+
+    let scrollOffset = state.remote.scrollOffset;
+    if (newIndex < scrollOffset) {
+      scrollOffset = newIndex;
+    } else if (newIndex === total - 1) {
+      // Wrapped to bottom
+      scrollOffset = Math.max(0, total - visibleCount);
+    }
+
+    update(updateRemote({ focusedIndex: newIndex, scrollOffset }));
+  }
+
+  function moveRemoteFocusDown(): void {
+    const total = state.remote.projects.length;
+    const visibleCount = 5;
+    const newIndex = state.remote.focusedIndex < total - 1 ? state.remote.focusedIndex + 1 : 0;
+
+    let scrollOffset = state.remote.scrollOffset;
+    if (newIndex === 0) {
+      // Wrapped to top
+      scrollOffset = 0;
+    } else if (newIndex >= scrollOffset + visibleCount) {
+      scrollOffset = newIndex - visibleCount + 1;
+    }
+
+    update(updateRemote({ focusedIndex: newIndex, scrollOffset }));
+  }
+
   async function handleKey(key: string): Promise<void> {
     if (state.input.active) {
       const result = handleInputKey(key, state.input.value, state.input.cursorPos);
@@ -679,29 +785,22 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
-    if (state.view === "templates") {
-      handleTemplatesKey(key);
-      return;
-    }
-
-    if (state.view === "examples") {
-      handleExamplesKey(key);
-      return;
-    }
-
-    if (state.view === "new-project") {
-      handleNewProjectKey(key);
-      return;
-    }
-
-    if (state.view === "auth") {
-      handleAuthKey(key);
-      return;
-    }
-
-    if (state.view === "help") {
-      update(goBack());
-      return;
+    switch (state.view) {
+      case "templates":
+        handleTemplatesKey(key);
+        return;
+      case "examples":
+        handleExamplesKey(key);
+        return;
+      case "new-project":
+        handleNewProjectKey(key);
+        return;
+      case "auth":
+        handleAuthKey(key);
+        return;
+      case "help":
+        update(goBack());
+        return;
     }
 
     // Toggle logs expanded with 'l'
@@ -724,18 +823,7 @@ export function createApp(config: AppConfig): App {
 
     if (key === "\x1b[A" || key === "k") {
       if (state.activeList === "remoteProjects") {
-        const total = state.remote.projects.length;
-        const visibleCount = 5;
-        const newIndex = state.remote.focusedIndex > 0 ? state.remote.focusedIndex - 1 : total - 1;
-        // Adjust scroll offset
-        let scrollOffset = state.remote.scrollOffset;
-        if (newIndex < scrollOffset) {
-          scrollOffset = newIndex;
-        } else if (newIndex === total - 1) {
-          // Wrapped to bottom
-          scrollOffset = Math.max(0, total - visibleCount);
-        }
-        update(updateRemote({ focusedIndex: newIndex, scrollOffset }));
+        moveRemoteFocusUp();
       } else {
         update(updateActiveList((list) => moveUp(list)));
       }
@@ -744,18 +832,7 @@ export function createApp(config: AppConfig): App {
 
     if (key === "\x1b[B" || key === "j") {
       if (state.activeList === "remoteProjects") {
-        const total = state.remote.projects.length;
-        const visibleCount = 5;
-        const newIndex = state.remote.focusedIndex < total - 1 ? state.remote.focusedIndex + 1 : 0;
-        // Adjust scroll offset
-        let scrollOffset = state.remote.scrollOffset;
-        if (newIndex === 0) {
-          // Wrapped to top
-          scrollOffset = 0;
-        } else if (newIndex >= scrollOffset + visibleCount) {
-          scrollOffset = newIndex - visibleCount + 1;
-        }
-        update(updateRemote({ focusedIndex: newIndex, scrollOffset }));
+        moveRemoteFocusDown();
       } else {
         update(updateActiveList((list) => moveDown(list, 5)));
       }
@@ -765,7 +842,7 @@ export function createApp(config: AppConfig): App {
     if (key === "\t") {
       const hasProjects = state.projects.items.length > 0;
       const hasExamples = state.examples.items.length > 0;
-      const hasRemoteProjects = state.remote.user && state.remote.projects.length > 0;
+      const hasRemoteProjects = !!state.remote.user && state.remote.projects.length > 0;
 
       // Build list of available sections in display order
       const sections: Array<"projects" | "remoteProjects" | "examples"> = [];
@@ -785,18 +862,7 @@ export function createApp(config: AppConfig): App {
     // Number keys for remote project - update focusedIndex (Enter triggers pull)
     if (key >= "1" && key <= "9" && state.activeList === "remoteProjects") {
       const num = parseInt(key, 10);
-      const total = state.remote.projects.length;
-      if (num <= total) {
-        const newIndex = num - 1;
-        const visibleCount = 5;
-        let scrollOffset = state.remote.scrollOffset;
-        if (newIndex < scrollOffset) {
-          scrollOffset = newIndex;
-        } else if (newIndex >= scrollOffset + visibleCount) {
-          scrollOffset = newIndex - visibleCount + 1;
-        }
-        update(updateRemote({ focusedIndex: newIndex, scrollOffset }));
-      }
+      if (num <= state.remote.projects.length) updateRemoteFocus(num - 1);
       return;
     }
 
@@ -808,18 +874,7 @@ export function createApp(config: AppConfig): App {
       state.activeList === "remoteProjects"
     ) {
       const num = key.charCodeAt(0) - 96 + 9; // a=10, b=11, etc.
-      const total = state.remote.projects.length;
-      if (num <= total) {
-        const newIndex = num - 1;
-        const visibleCount = 5;
-        let scrollOffset = state.remote.scrollOffset;
-        if (newIndex < scrollOffset) {
-          scrollOffset = newIndex;
-        } else if (newIndex >= scrollOffset + visibleCount) {
-          scrollOffset = newIndex - visibleCount + 1;
-        }
-        update(updateRemote({ focusedIndex: newIndex, scrollOffset }));
-      }
+      if (num <= state.remote.projects.length) updateRemoteFocus(num - 1);
       return;
     }
 
@@ -870,27 +925,10 @@ export function createApp(config: AppConfig): App {
       // Enter on remote projects: pull
       if (state.activeList === "remoteProjects") {
         const focused = state.remote.projects[state.remote.focusedIndex];
-        if (focused) {
-          const projectDir = join(cwd(), "projects", focused.slug);
-          update(addLog("info", `Pulling to projects/${focused.slug}/...`));
-          render();
-          try {
-            await pullCommand({
-              projectSlug: focused.slug,
-              projectDir,
-              force: true,
-              quiet: true,
-            });
-            update(addLog("info", `Pulled to projects/${focused.slug}/`));
-          } catch (err) {
-            update(
-              addLog("error", `Pull failed: ${err instanceof Error ? err.message : String(err)}`),
-            );
-          }
-          render();
-        }
+        if (focused) await pullRemoteProject(state, update, render, focused.slug);
         return;
       }
+
       // Enter on local projects/examples: open in browser
       const selected = getActiveSelection(state);
       if (selected?.data) await openInBrowser(selected.data, state.server.port);
@@ -907,6 +945,7 @@ export function createApp(config: AppConfig): App {
         }
         return;
       }
+
       // Otherwise open local project in browser
       const selected = getActiveSelection(state);
       if (selected?.data) await openInBrowser(selected.data, state.server.port);
@@ -923,6 +962,7 @@ export function createApp(config: AppConfig): App {
         }
         return;
       }
+
       // Otherwise open local project in Studio
       const selected = getActiveSelection(state);
       if (selected?.data) await openInStudio(selected.data);
@@ -939,6 +979,7 @@ export function createApp(config: AppConfig): App {
         }
         return;
       }
+
       // Otherwise open local project in IDE
       const selected = getActiveSelection(state);
       if (selected?.data) await openInIDE(selected.data);
@@ -971,72 +1012,53 @@ export function createApp(config: AppConfig): App {
     // Pull focused remote project
     if (key === "p" && state.activeList === "remoteProjects") {
       const focused = state.remote.projects[state.remote.focusedIndex];
-      if (focused) {
-        const projectDir = join(cwd(), "projects", focused.slug);
-        update(addLog("info", `Pulling to projects/${focused.slug}/...`));
-        render();
-        try {
-          await pullCommand({
-            projectSlug: focused.slug,
-            projectDir,
-            force: true,
-            quiet: true,
-          });
-          update(addLog("info", `Pulled to projects/${focused.slug}/`));
-        } catch (err) {
-          update(
-            addLog("error", `Pull failed: ${err instanceof Error ? err.message : String(err)}`),
-          );
-        }
-        render();
-      }
+      if (focused) await pullRemoteProject(state, update, render, focused.slug);
       return;
     }
 
     // Pull local project from remote (sync)
     if (key === "p" && state.activeList === "projects") {
       const selected = state.projects.items[state.projects.selectedIndex];
-      if (selected?.data) {
-        const { slug, path: projectDir } = selected.data;
-        update(addLog("info", `Pulling ${slug}...`));
-        render();
-        try {
-          await pullCommand({ projectSlug: slug, projectDir, force: true, quiet: true });
-          update(addLog("info", `Pulled ${slug}`));
-        } catch (err) {
-          update(
-            addLog("error", `Pull failed: ${err instanceof Error ? err.message : String(err)}`),
-          );
-        }
-        render();
+      if (!selected?.data) return;
+
+      const { slug, path: projectDir } = selected.data;
+      update(addLog("info", `Pulling ${slug}...`));
+      render();
+
+      try {
+        await pullCommand({ projectSlug: slug, projectDir, force: true, quiet: true });
+        update(addLog("info", `Pulled ${slug}`));
+      } catch (err) {
+        update(addLog("error", `Pull failed: ${err instanceof Error ? err.message : String(err)}`));
       }
+
+      render();
       return;
     }
 
     // Push local project
     if (key === "u" && state.activeList === "projects") {
       const selected = state.projects.items[state.projects.selectedIndex];
-      if (selected?.data) {
-        const { slug, path: projectDir } = selected.data;
-        update(addLog("info", `Pushing ${slug}...`));
-        render();
-        try {
-          await pushCommand({ projectSlug: slug, projectDir, force: true, quiet: true });
-          update(addLog("info", `Pushed ${slug} — merge in Studio`));
-        } catch (err) {
-          update(
-            addLog("error", `Push failed: ${err instanceof Error ? err.message : String(err)}`),
-          );
-        }
-        render();
+      if (!selected?.data) return;
+
+      const { slug, path: projectDir } = selected.data;
+      update(addLog("info", `Pushing ${slug}...`));
+      render();
+
+      try {
+        await pushCommand({ projectSlug: slug, projectDir, force: true, quiet: true });
+        update(addLog("info", `Pushed ${slug} — merge in Studio`));
+      } catch (err) {
+        update(addLog("error", `Push failed: ${err instanceof Error ? err.message : String(err)}`));
       }
-      return;
+
+      render();
     }
   }
 
   async function createProject(projectName: string, template: InitTemplate): Promise<void> {
     try {
-      state = addLog("info", `Creating project...`)(state);
+      state = addLog("info", "Creating project...")(state);
       render();
 
       const token = await readToken();
@@ -1045,32 +1067,8 @@ export function createApp(config: AppConfig): App {
         return;
       }
 
-      // Normalize slug: lowercase, alphanumeric and hyphens only
-      const normalizedSlug = projectName.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
-      // Use slug as name (capitalize first letter of each word)
-      const name = normalizedSlug
-        .split("-")
-        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-        .join(" ");
-
-      const apiUrl = getRuntimeEnv().apiUrl || "https://api.veryfront.com";
-      const response = await fetch(`${apiUrl}/projects`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({ slug: normalizedSlug, name }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        const msg = (error as { message?: string }).message || `HTTP ${response.status}`;
-        throw new Error(msg);
-      }
-
-      const { slug } = await response.json() as { slug: string };
+      const normalizedSlug = normalizeSlug(projectName);
+      const { slug } = await createRemoteProject(token, normalizedSlug);
       const projectPath = `${cwd()}/projects/${slug}`;
 
       await initCommand({
@@ -1081,12 +1079,8 @@ export function createApp(config: AppConfig): App {
         quiet: true,
       });
 
-      const currentProjects = state.projects.items.map((item) => ({
-        slug: item.data!.slug,
-        path: item.data!.path,
-      }));
+      const currentProjects = getLocalProjectsFromState(state);
       currentProjects.push({ slug, path: projectPath });
-
       state = setProjects(currentProjects)(state);
 
       // Refresh remote projects list to include the new project
@@ -1150,9 +1144,7 @@ export function createApp(config: AppConfig): App {
 
     if (key === "\r" || key === "\n") {
       const selected = state.examples.items[state.examples.selectedIndex];
-      if (selected?.data) {
-        promptForExampleProject(selected.data, () => render());
-      }
+      if (selected?.data) promptForExampleProject(selected.data, () => render());
     }
   }
 
@@ -1185,42 +1177,15 @@ export function createApp(config: AppConfig): App {
         return;
       }
 
-      // Normalize slug
-      const normalizedSlug = projectName.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
-      const name = normalizedSlug
-        .split("-")
-        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-        .join(" ");
-
-      // Create project in API
-      const apiUrl = getRuntimeEnv().apiUrl || "https://api.veryfront.com";
-      const response = await fetch(`${apiUrl}/projects`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({ slug: normalizedSlug, name }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        const msg = (error as { message?: string }).message || `HTTP ${response.status}`;
-        throw new Error(msg);
-      }
-
-      const { slug } = await response.json() as { slug: string };
+      const normalizedSlug = normalizeSlug(projectName);
+      const { slug } = await createRemoteProject(token, normalizedSlug);
       const projectPath = `${cwd()}/projects/${slug}`;
 
       // Copy example files to new project
       await copyDirectory(example.path, projectPath);
 
       // Update local projects list
-      const currentProjects = state.projects.items.map((item) => ({
-        slug: item.data!.slug,
-        path: item.data!.path,
-      }));
+      const currentProjects = getLocalProjectsFromState(state);
       currentProjects.push({ slug, path: projectPath });
       state = setProjects(currentProjects)(state);
 
@@ -1246,6 +1211,7 @@ export function createApp(config: AppConfig): App {
       render();
       return;
     }
+
     if (key === "\x1b[B" || key === "j") {
       state = {
         ...state,
@@ -1259,22 +1225,21 @@ export function createApp(config: AppConfig): App {
     if (key >= "1" && key <= "3") {
       state = { ...state, newProjectIndex: parseInt(key, 10) - 1 };
       render();
-      // Fall through to execute the selection
     }
 
     // Enter to confirm selection (or after number key press)
-    if (key === "\r" || key === "\n" || (key >= "1" && key <= "3")) {
-      switch (state.newProjectIndex) {
-        case 0:
-          update(navigateTo("templates"));
-          break;
-        case 1:
-          update(navigateTo("examples"));
-          break;
-        case 2:
-          promptForProjectName("minimal", () => render());
-          break;
-      }
+    if (key !== "\r" && key !== "\n" && !(key >= "1" && key <= "3")) return;
+
+    switch (state.newProjectIndex) {
+      case 0:
+        update(navigateTo("templates"));
+        return;
+      case 1:
+        update(navigateTo("examples"));
+        return;
+      case 2:
+        promptForProjectName("minimal", () => render());
+        return;
     }
   }
 
@@ -1294,6 +1259,7 @@ export function createApp(config: AppConfig): App {
       render();
       return;
     }
+
     if (key === "\x1b[B" || key === "j") {
       state = {
         ...state,
@@ -1311,25 +1277,25 @@ export function createApp(config: AppConfig): App {
     }
 
     // Enter to confirm selection
-    if (key === "\r" || key === "\n") {
-      const provider = providerList[state.authProviderIndex];
-      update(addLog("info", `Opening browser for ${provider} login...`));
-      update(navigateTo("dashboard"));
+    if (key !== "\r" && key !== "\n") return;
 
-      // Run login in background to keep TUI responsive
-      void (async () => {
-        const user = await login(provider);
-        if (user) {
-          const result = await fetchRemoteProjects();
-          update(updateRemote({
-            user,
-            projects: result.projects.map((p) => ({ id: p.id, name: p.name, slug: p.slug })),
-          }));
-          update(addLog("info", `Logged in as ${user.email}`));
-        }
-        render();
-      })();
-    }
+    const provider = providerList[state.authProviderIndex];
+    update(addLog("info", `Opening browser for ${provider} login...`));
+    update(navigateTo("dashboard"));
+
+    // Run login in background to keep TUI responsive
+    void (async () => {
+      const user = await login(provider);
+      if (user) {
+        const result = await fetchRemoteProjects();
+        update(updateRemote({
+          user,
+          projects: result.projects.map((p) => ({ id: p.id, name: p.name, slug: p.slug })),
+        }));
+        update(addLog("info", `Logged in as ${user.email}`));
+      }
+      render();
+    })();
   }
 
   function start(): void {
@@ -1426,12 +1392,12 @@ export function createApp(config: AppConfig): App {
             .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
             .join(" ")
             .replace(ansiPattern, "");
-          if (msg.trim()) {
-            const meta = parseRequestLog(msg);
-            state = addLog(level, msg, meta)(state);
-            logBuffer.append({ level, message: msg, source: "console" });
-            render();
-          }
+          if (!msg.trim()) return;
+
+          const meta = parseRequestLog(msg);
+          state = addLog(level, msg, meta)(state);
+          logBuffer.append({ level, message: msg, source: "console" });
+          render();
         };
 
       console.log = capture("info");

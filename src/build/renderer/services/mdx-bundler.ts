@@ -116,8 +116,8 @@ export function bundleMdx(
         const slug = getSlugFromPath(source.path);
         const meta = {
           slug,
-          title: frontmatter.title ? frontmatter.title : slug,
-          description: frontmatter.description ? frontmatter.description : "",
+          title: frontmatter.title ?? slug,
+          description: frontmatter.description ?? "",
           ...frontmatter,
         };
 
@@ -143,8 +143,7 @@ export const meta = ${JSON.stringify(meta)};
           meta: frontmatter,
         });
 
-        const imports = extractImports(moduleCode);
-        result.dependencies.set(source.path, imports);
+        result.dependencies.set(source.path, extractImports(moduleCode));
 
         logger.debug(`Bundled MDX: ${source.path} -> ${outputPath}`);
       } catch (error) {

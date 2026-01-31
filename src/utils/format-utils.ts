@@ -60,14 +60,13 @@ export function estimateSizeWithCircularHandling(value: unknown): number {
     }
 
     return val;
-  });
+  }) ?? "";
 
-  return encoder.encode(json ?? "").length;
+  return encoder.encode(json).length;
 }
 
 function estimateObjectSize(value: object): number {
   if (value instanceof ArrayBuffer) return value.byteLength;
-
   if (ArrayBuffer.isView(value)) return value.byteLength;
 
   try {

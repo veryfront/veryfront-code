@@ -33,10 +33,8 @@ function parseEnvFile(content: string, allowEmptyValues: boolean): Record<string
     let value = trimmed.slice(eqIndex + 1).trim();
     if (!value && !allowEmptyValues) continue;
 
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
+    const firstChar = value[0];
+    if ((firstChar === `"` || firstChar === `'`) && value.endsWith(firstChar)) {
       value = value.slice(1, -1);
     }
 
@@ -74,7 +72,7 @@ async function nodeLoad(options: LoadOptions = {}): Promise<Record<string, strin
 
     return parsed;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return {};
     throw error;
   }
 }

@@ -4,7 +4,7 @@
  */
 
 // Disable LRU intervals during testing to prevent resource leaks
-(globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
+globalThis.__vfDisableLruInterval = true;
 
 import { assertEquals, assertExists } from "@veryfront/testing/assert";
 import { writeTextFile } from "@veryfront/compat/fs.ts";
@@ -16,7 +16,6 @@ import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
 describe("Core Integration Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
-  // Clean up bundler intervals to prevent resource leaks
   afterAll(async () => {
     await cleanupBundler();
   });
@@ -79,7 +78,6 @@ This is a test.`,
 
       await renderer.initialize();
 
-      // Render to ensure all services are working
       const result = await renderer.renderPage("test");
       assertExists(result);
       assertExists(result.html);
@@ -107,11 +105,9 @@ This is a test.`,
 
       await renderer.initialize();
 
-      // Check virtual module system is accessible
       const vms = renderer.getVirtualModuleSystem();
       assertExists(vms);
 
-      // Render a page to ensure all services work together
       const result = await renderer.renderPage("simple");
       assertExists(result);
       assertExists(result.html);
@@ -140,19 +136,15 @@ title: Cached Page
 
       await renderer.initialize();
 
-      // First render
       const result1 = await renderer.renderPage("cached");
       assertExists(result1);
 
-      // Clear cache
       renderer.clearCache("cached");
 
-      // Second render (after cache clear)
       const result2 = await renderer.renderPage("cached");
       assertExists(result2);
       assertEquals(result2.frontmatter.title, "Cached Page");
 
-      // Clear all state
       renderer.clearAllState();
 
       await renderer.destroy();
@@ -243,10 +235,7 @@ More content.`,
       await renderer.initialize();
       await renderer.renderPage("cleanup");
 
-      // Destroy should clean up all resources
       await renderer.destroy();
-
-      // Should not throw after destroy
       await renderer.destroy();
     });
   });

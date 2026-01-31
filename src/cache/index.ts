@@ -1,7 +1,7 @@
 export * from "./backend.ts";
-export * from "./multi-tier.ts";
-export * from "./module-cache.ts";
 export * from "./hash.ts";
+export * from "./module-cache.ts";
+export * from "./multi-tier.ts";
 
 export {
   type CacheKeyContext,

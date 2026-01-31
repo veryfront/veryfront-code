@@ -6,11 +6,9 @@ import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { assertDrained, drainEventLoop } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
-import { isDeno } from "../../../../src/platform/compat/runtime.ts";
 import { delay } from "@std/async";
 
 describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
-  // Clean up renderer intervals to prevent resource leaks
   afterAll(async () => {
     await cleanupBundler();
   });
@@ -18,7 +16,6 @@ describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: fa
   describe("RSC client module", {}, () => {
     it("endpoint bundles app client component", async () => {
       await withTestContext("rsc-client-module", async (context) => {
-        // Enable RSC via config instead of env var
         await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
@@ -29,21 +26,15 @@ describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: fa
         );
 
         let h: Awaited<ReturnType<typeof startProductionServer>> | null = null;
-        try {
-          // Remove default app directory and recreate structure
-          await remove(join(context.projectDir, "app"), { recursive: true });
-          await remove(join(context.projectDir, "pages"), {
-            recursive: true,
-          });
 
-          await mkdir(join(context.projectDir, "pages"), {
-            recursive: true,
-          });
+        try {
+          await remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "pages"), { recursive: true });
+
+          await mkdir(join(context.projectDir, "pages"), { recursive: true });
           await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home\n");
-          await mkdir(join(context.projectDir, "app", "comp"), {
-            recursive: true,
-          });
-          // Simple client component
+
+          await mkdir(join(context.projectDir, "app", "comp"), { recursive: true });
           await writeTextFile(
             join(context.projectDir, "app", "comp", "Widget.tsx"),
             [
@@ -57,26 +48,24 @@ describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: fa
 
           const { getFreePort } = await import("../../../_helpers/utils.ts");
           const port = await getFreePort();
+
           h = await startProductionServer({
             projectDir: context.projectDir,
             port,
             bindAddress: "127.0.0.1",
           });
+
           await h.ready;
-          const res = await fetch(
-            `http://127.0.0.1:${port}/_veryfront/rsc/module?rel=${
-              encodeURIComponent("/comp/Widget.tsx")
-            }`,
-          );
+
+          const rel = encodeURIComponent("/comp/Widget.tsx");
+          const res = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/module?rel=${rel}`);
           const code = await res.text();
+
           assert(res.status === 200);
-          // Should be ESM code containing an export
           assert(code.includes("export"));
         } finally {
-          if (h?.stop) {
-            await h.stop();
-          }
-          // Give the server time to clean up
+          await h?.stop?.();
+
           await delay(500);
           await drainEventLoop(10, 50);
           await assertDrained({

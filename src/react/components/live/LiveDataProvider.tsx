@@ -38,13 +38,10 @@ export function LiveDataProvider({ children }: { children: React.ReactNode }): R
 
   const updateMap = useCallback(
     <K, V>(key: K, value: V, mapKey: "entities" | "components" | "styles"): void => {
-      setData((prev) => {
-        const next = { ...prev };
-        const nextMap = new Map(prev[mapKey] as Map<K, V>);
-        nextMap.set(key, value);
-        (next as unknown as Record<typeof mapKey, Map<K, V>>)[mapKey] = nextMap;
-        return next;
-      });
+      setData((prev) => ({
+        ...prev,
+        [mapKey]: new Map(prev[mapKey] as Map<K, V>).set(key, value),
+      }));
       notifySubscribers();
     },
     [notifySubscribers],
@@ -60,10 +57,9 @@ export function LiveDataProvider({ children }: { children: React.ReactNode }): R
     [updateMap],
   );
 
-  const updateStyle = useCallback(
-    (id: string, css: string): void => updateMap(id, css, "styles"),
-    [updateMap],
-  );
+  const updateStyle = useCallback((id: string, css: string): void => updateMap(id, css, "styles"), [
+    updateMap,
+  ]);
 
   const updateConfig = useCallback(
     (config: Partial<VeryfrontConfig>): void => {
@@ -113,14 +109,7 @@ export function LiveDataProvider({ children }: { children: React.ReactNode }): R
 
   return (
     <LiveDataContext.Provider
-      value={{
-        data,
-        updateEntity,
-        updateComponent,
-        updateStyle,
-        updateConfig,
-        subscribe,
-      }}
+      value={{ data, updateEntity, updateComponent, updateStyle, updateConfig, subscribe }}
     >
       {children}
     </LiveDataContext.Provider>
@@ -129,7 +118,6 @@ export function LiveDataProvider({ children }: { children: React.ReactNode }): R
 
 export function useLiveData(): LiveDataContextValue {
   const context = useContext(LiveDataContext);
-
   if (context) return context;
 
   throw toError(

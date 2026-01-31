@@ -81,7 +81,7 @@ class MockMutationObserver {
   }
 }
 
-function createLink(overrides: Partial<any> = {}): any {
+function createLink(overrides: Record<string, unknown> = {}): any {
   return {
     tagName: "A",
     href: "http://example.com/page",
@@ -95,7 +95,9 @@ function createLink(overrides: Partial<any> = {}): any {
   };
 }
 
-function createOptions(overrides: Partial<LinkObserverOptions> = {}): LinkObserverOptions {
+function createOptions(
+  overrides: Partial<LinkObserverOptions> = {},
+): LinkObserverOptions {
   return {
     rootMargin: "100px",
     delay: 100,
@@ -122,7 +124,10 @@ function setupMocks(): {
   let mockMutationObserver: MockMutationObserver | null = null;
 
   g.IntersectionObserver = class {
-    constructor(callback: IntersectionObserverCallback, options: IntersectionObserverInit) {
+    constructor(
+      callback: IntersectionObserverCallback,
+      options: IntersectionObserverInit,
+    ) {
       mockIntersectionObserver = new MockIntersectionObserver(callback, options);
       return mockIntersectionObserver;
     }
@@ -170,536 +175,528 @@ function setupMocks(): {
   };
 }
 
+function withMocks(test: (mocks: ReturnType<typeof setupMocks>) => void): void {
+  const mocks = setupMocks();
+  try {
+    test(mocks);
+  } finally {
+    mocks.cleanup();
+  }
+}
+
+async function withMocksAsync(
+  test: (mocks: ReturnType<typeof setupMocks>) => Promise<void>,
+): Promise<void> {
+  const mocks = setupMocks();
+  try {
+    await test(mocks);
+  } finally {
+    mocks.cleanup();
+  }
+}
+
+function withObserver(
+  _mocks: ReturnType<typeof setupMocks>,
+  options: LinkObserverOptions,
+  prefetchedUrls: Set<string>,
+  test: (observer: LinkObserver) => void,
+): void {
+  const observer = new LinkObserver(options, prefetchedUrls);
+  try {
+    test(observer);
+  } finally {
+    observer.destroy();
+  }
+}
+
+async function withObserverAsync(
+  _mocks: ReturnType<typeof setupMocks>,
+  options: LinkObserverOptions,
+  prefetchedUrls: Set<string>,
+  test: (observer: LinkObserver) => Promise<void>,
+): Promise<void> {
+  const observer = new LinkObserver(options, prefetchedUrls);
+  try {
+    await test(observer);
+  } finally {
+    observer.destroy();
+  }
+}
+
 describe("LinkObserver", () => {
   describe("Constructor and Initialization", () => {
     it("should create LinkObserver with options and prefetchedUrls", () => {
-      const mocks = setupMocks();
-
-      const observer = new LinkObserver(createOptions(), new Set<string>());
-      assertExists(observer);
-
-      mocks.cleanup();
+      withMocks((_mocks) => {
+        const observer = new LinkObserver(createOptions(), new Set<string>());
+        assertExists(observer);
+        observer.destroy();
+      });
     });
 
     it("should initialize intersection observer with correct rootMargin", () => {
-      const mocks = setupMocks();
-
-      const observer = new LinkObserver(
-        createOptions({ rootMargin: "200px", delay: 50 }),
-        new Set<string>(),
-      );
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-      assertEquals(mockIO.options.rootMargin, "200px");
-
-      observer.destroy();
-      mocks.cleanup();
+      withMocks((mocks) => {
+        withObserver(
+          mocks,
+          createOptions({ rootMargin: "200px", delay: 50 }),
+          new Set<string>(),
+          (observer) => {
+            observer.init();
+            assertEquals(mocks.getMockIntersectionObserver().options.rootMargin, "200px");
+          },
+        );
+      });
     });
 
     it("should setup mutation observer on document.body", () => {
-      const mocks = setupMocks();
+      withMocks((mocks) => {
+        withObserver(mocks, createOptions(), new Set<string>(), (observer) => {
+          observer.init();
 
-      const observer = new LinkObserver(createOptions(), new Set<string>());
-      observer.init();
-
-      const mockMO = mocks.getMockMutationObserver();
-      assertEquals(mockMO.observedTarget, (globalThis as any).document.body);
-      assertEquals(mockMO.observerOptions?.childList, true);
-      assertEquals(mockMO.observerOptions?.subtree, true);
-
-      observer.destroy();
-      mocks.cleanup();
+          const mockMO = mocks.getMockMutationObserver();
+          assertEquals(mockMO.observedTarget, (globalThis as any).document.body);
+          assertEquals(mockMO.observerOptions?.childList, true);
+          assertEquals(mockMO.observerOptions?.subtree, true);
+        });
+      });
     });
   });
 
   describe("Link Detection and Observation", () => {
     it("should observe valid internal links on init", () => {
-      const mocks = setupMocks();
+      withMocks((mocks) => {
+        const link1 = createLink({ href: "http://example.com/page1", pathname: "/page1" });
+        const link2 = createLink({ href: "http://example.com/page2", pathname: "/page2" });
 
-      const link1 = createLink({ href: "http://example.com/page1", pathname: "/page1" });
-      const link2 = createLink({ href: "http://example.com/page2", pathname: "/page2" });
+        mocks.setDocument({
+          querySelectorAll: (selector: string) => {
+            if (selector === 'a[href^="/"], a[href^="./"]') return [link1, link2];
+            return [];
+          },
+          body: {},
+        });
 
-      mocks.setDocument({
-        querySelectorAll: (selector: string) => {
-          if (selector === 'a[href^="/"], a[href^="./"]') return [link1, link2];
-          return [];
-        },
-        body: {},
+        withObserver(mocks, createOptions(), new Set<string>(), (observer) => {
+          observer.init();
+          assertEquals(mocks.getMockIntersectionObserver().observedElements.size, 2);
+        });
       });
-
-      const observer = new LinkObserver(createOptions(), new Set<string>());
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-      assertEquals(mockIO.observedElements.size, 2);
-
-      observer.destroy();
-      mocks.cleanup();
     });
 
     it("should not observe external links", () => {
-      const mocks = setupMocks();
+      withMocks((mocks) => {
+        const externalLink = createLink({
+          href: "http://external.com/page",
+          hostname: "external.com",
+          pathname: "/page",
+        });
 
-      const externalLink = createLink({
-        href: "http://external.com/page",
-        hostname: "external.com",
-        pathname: "/page",
+        mocks.setDocument({
+          querySelectorAll: () => [externalLink],
+          body: {},
+        });
+
+        withObserver(mocks, createOptions(), new Set<string>(), (observer) => {
+          observer.init();
+          assertEquals(mocks.getMockIntersectionObserver().observedElements.size, 0);
+        });
       });
-
-      mocks.setDocument({
-        querySelectorAll: () => [externalLink],
-        body: {},
-      });
-
-      const observer = new LinkObserver(createOptions(), new Set<string>());
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-      assertEquals(mockIO.observedElements.size, 0);
-
-      observer.destroy();
-      mocks.cleanup();
     });
 
     it("should not observe links with download attribute", () => {
-      const mocks = setupMocks();
+      withMocks((mocks) => {
+        const downloadLink = createLink({
+          href: "http://example.com/file.pdf",
+          pathname: "/file.pdf",
+          hasAttribute: (attr: string) => attr === "download",
+        });
 
-      const downloadLink = createLink({
-        href: "http://example.com/file.pdf",
-        pathname: "/file.pdf",
-        hasAttribute: (attr: string) => attr === "download",
+        mocks.setDocument({
+          querySelectorAll: () => [downloadLink],
+          body: {},
+        });
+
+        withObserver(mocks, createOptions(), new Set<string>(), (observer) => {
+          observer.init();
+          assertEquals(mocks.getMockIntersectionObserver().observedElements.size, 0);
+        });
       });
-
-      mocks.setDocument({
-        querySelectorAll: () => [downloadLink],
-        body: {},
-      });
-
-      const observer = new LinkObserver(createOptions(), new Set<string>());
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-      assertEquals(mockIO.observedElements.size, 0);
-
-      observer.destroy();
-      mocks.cleanup();
     });
 
     it('should not observe links with target="_blank"', () => {
-      const mocks = setupMocks();
+      withMocks((mocks) => {
+        const blankLink = createLink({ target: "_blank" });
 
-      const blankLink = createLink({ target: "_blank" });
+        mocks.setDocument({
+          querySelectorAll: () => [blankLink],
+          body: {},
+        });
 
-      mocks.setDocument({
-        querySelectorAll: () => [blankLink],
-        body: {},
+        withObserver(mocks, createOptions(), new Set<string>(), (observer) => {
+          observer.init();
+          assertEquals(mocks.getMockIntersectionObserver().observedElements.size, 0);
+        });
       });
-
-      const observer = new LinkObserver(createOptions(), new Set<string>());
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-      assertEquals(mockIO.observedElements.size, 0);
-
-      observer.destroy();
-      mocks.cleanup();
     });
 
     it("should not observe already prefetched URLs", () => {
-      const mocks = setupMocks();
+      withMocks((mocks) => {
+        const link = createLink({
+          href: "http://example.com/prefetched",
+          pathname: "/prefetched",
+        });
 
-      const link = createLink({
-        href: "http://example.com/prefetched",
-        pathname: "/prefetched",
+        mocks.setDocument({
+          querySelectorAll: () => [link],
+          body: {},
+        });
+
+        withObserver(
+          mocks,
+          createOptions(),
+          new Set(["http://example.com/prefetched"]),
+          (observer) => {
+            observer.init();
+            assertEquals(mocks.getMockIntersectionObserver().observedElements.size, 0);
+          },
+        );
       });
-
-      mocks.setDocument({
-        querySelectorAll: () => [link],
-        body: {},
-      });
-
-      const observer = new LinkObserver(
-        createOptions(),
-        new Set(["http://example.com/prefetched"]),
-      );
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-      assertEquals(mockIO.observedElements.size, 0);
-
-      observer.destroy();
-      mocks.cleanup();
     });
 
     it("should not observe current page URL", () => {
-      const mocks = setupMocks();
+      withMocks((mocks) => {
+        const currentLink = createLink({
+          href: "http://example.com/current",
+          pathname: "/current",
+        });
 
-      const currentLink = createLink({
-        href: "http://example.com/current",
-        pathname: "/current",
+        mocks.setDocument({
+          querySelectorAll: () => [currentLink],
+          body: {},
+        });
+
+        withObserver(mocks, createOptions(), new Set<string>(), (observer) => {
+          observer.init();
+          assertEquals(mocks.getMockIntersectionObserver().observedElements.size, 0);
+        });
       });
-
-      mocks.setDocument({
-        querySelectorAll: () => [currentLink],
-        body: {},
-      });
-
-      const observer = new LinkObserver(createOptions(), new Set<string>());
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-      assertEquals(mockIO.observedElements.size, 0);
-
-      observer.destroy();
-      mocks.cleanup();
     });
 
     it("should not observe hash-only links on same page", () => {
-      const mocks = setupMocks();
+      withMocks((mocks) => {
+        const hashLink = createLink({
+          href: "http://example.com/current#section",
+          pathname: "/current",
+          hash: "#section",
+        });
 
-      const hashLink = createLink({
-        href: "http://example.com/current#section",
-        pathname: "/current",
-        hash: "#section",
+        mocks.setDocument({
+          querySelectorAll: () => [hashLink],
+          body: {},
+        });
+
+        withObserver(mocks, createOptions(), new Set<string>(), (observer) => {
+          observer.init();
+          assertEquals(mocks.getMockIntersectionObserver().observedElements.size, 0);
+        });
       });
-
-      mocks.setDocument({
-        querySelectorAll: () => [hashLink],
-        body: {},
-      });
-
-      const observer = new LinkObserver(createOptions(), new Set<string>());
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-      assertEquals(mockIO.observedElements.size, 0);
-
-      observer.destroy();
-      mocks.cleanup();
     });
 
     it("should not observe links with data-no-prefetch attribute", () => {
-      const mocks = setupMocks();
+      withMocks((mocks) => {
+        const noPrefetchLink = createLink({ dataset: { noPrefetch: true } });
 
-      const noPrefetchLink = createLink({ dataset: { noPrefetch: true } });
+        mocks.setDocument({
+          querySelectorAll: () => [noPrefetchLink],
+          body: {},
+        });
 
-      mocks.setDocument({
-        querySelectorAll: () => [noPrefetchLink],
-        body: {},
+        withObserver(mocks, createOptions(), new Set<string>(), (observer) => {
+          observer.init();
+          assertEquals(mocks.getMockIntersectionObserver().observedElements.size, 0);
+        });
       });
-
-      const observer = new LinkObserver(createOptions(), new Set<string>());
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-      assertEquals(mockIO.observedElements.size, 0);
-
-      observer.destroy();
-      mocks.cleanup();
     });
   });
 
   describe("Intersection Handling", () => {
     it("should call onLinkVisible when link becomes visible", async () => {
-      const mocks = setupMocks();
+      await withMocksAsync(async (mocks) => {
+        const link = createLink();
 
-      const link = createLink();
+        mocks.setDocument({
+          querySelectorAll: () => [link],
+          body: {},
+        });
 
-      mocks.setDocument({
-        querySelectorAll: () => [link],
-        body: {},
-      });
+        let callbackCalled = false;
 
-      let callbackCalled = false;
-      const observer = new LinkObserver(
-        createOptions({
-          delay: 0,
-          onLinkVisible: (visibleLink) => {
-            callbackCalled = true;
-            assertEquals(visibleLink.href, link.href);
+        await withObserverAsync(
+          mocks,
+          createOptions({
+            delay: 0,
+            onLinkVisible: (visibleLink) => {
+              callbackCalled = true;
+              assertEquals(visibleLink.href, link.href);
+            },
+          }),
+          new Set<string>(),
+          async (observer) => {
+            observer.init();
+            mocks.getMockIntersectionObserver().triggerIntersection(link as any, true);
+
+            await delay(10);
+
+            assertEquals(callbackCalled, true);
           },
-        }),
-        new Set<string>(),
-      );
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-      mockIO.triggerIntersection(link as any, true);
-
-      await delay(10);
-
-      assertEquals(callbackCalled, true);
-
-      observer.destroy();
-      mocks.cleanup();
+        );
+      });
     });
 
     it("should respect delay option before calling onLinkVisible", async () => {
-      const mocks = setupMocks();
+      await withMocksAsync(async (mocks) => {
+        const link = createLink();
 
-      const link = createLink();
+        mocks.setDocument({
+          querySelectorAll: () => [link],
+          body: {},
+        });
 
-      mocks.setDocument({
-        querySelectorAll: () => [link],
-        body: {},
-      });
+        const delayMs = scaleMs(50);
+        let callbackTime = 0;
 
-      const delayMs = scaleMs(50);
-      let callbackTime = 0;
-      const observer = new LinkObserver(
-        createOptions({
-          delay: delayMs,
-          onLinkVisible: () => {
-            callbackTime = Date.now();
+        await withObserverAsync(
+          mocks,
+          createOptions({
+            delay: delayMs,
+            onLinkVisible: () => {
+              callbackTime = Date.now();
+            },
+          }),
+          new Set<string>(),
+          async (observer) => {
+            observer.init();
+
+            const startTime = Date.now();
+            mocks.getMockIntersectionObserver().triggerIntersection(link as any, true);
+
+            await delay(100);
+
+            assertEquals(callbackTime - startTime >= delayMs, true);
           },
-        }),
-        new Set<string>(),
-      );
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-      const startTime = Date.now();
-      mockIO.triggerIntersection(link as any, true);
-
-      await delay(100);
-
-      assertEquals(callbackTime - startTime >= delayMs, true);
-
-      observer.destroy();
-      mocks.cleanup();
+        );
+      });
     });
 
     it("should not call onLinkVisible when link is not intersecting", async () => {
-      const mocks = setupMocks();
+      await withMocksAsync(async (mocks) => {
+        const link = createLink();
 
-      const link = createLink();
+        mocks.setDocument({
+          querySelectorAll: () => [link],
+          body: {},
+        });
 
-      mocks.setDocument({
-        querySelectorAll: () => [link],
-        body: {},
-      });
+        let callbackCalled = false;
 
-      let callbackCalled = false;
-      const observer = new LinkObserver(
-        createOptions({
-          delay: 0,
-          onLinkVisible: () => {
-            callbackCalled = true;
+        await withObserverAsync(
+          mocks,
+          createOptions({
+            delay: 0,
+            onLinkVisible: () => {
+              callbackCalled = true;
+            },
+          }),
+          new Set<string>(),
+          async (observer) => {
+            observer.init();
+            mocks.getMockIntersectionObserver().triggerIntersection(link as any, false);
+
+            await delay(10);
+
+            assertEquals(callbackCalled, false);
           },
-        }),
-        new Set<string>(),
-      );
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-      mockIO.triggerIntersection(link as any, false);
-
-      await delay(10);
-
-      assertEquals(callbackCalled, false);
-
-      observer.destroy();
-      mocks.cleanup();
+        );
+      });
     });
   });
 
   describe("Dynamic Link Detection", () => {
     it("should observe new links added via mutation observer", () => {
-      const mocks = setupMocks();
+      withMocks((mocks) => {
+        mocks.setDocument({
+          querySelectorAll: () => [],
+          body: {},
+        });
 
-      mocks.setDocument({
-        querySelectorAll: () => [],
-        body: {},
+        withObserver(mocks, createOptions(), new Set<string>(), (observer) => {
+          observer.init();
+
+          const mockIO = mocks.getMockIntersectionObserver();
+
+          const newLink = {
+            nodeType: 1,
+            ...createLink({
+              href: "http://example.com/new-page",
+              pathname: "/new-page",
+            }),
+            querySelectorAll: () => [],
+          };
+
+          mocks.getMockMutationObserver().triggerMutation([newLink as any]);
+
+          assertEquals(mockIO.observedElements.has(newLink as any), true);
+        });
       });
-
-      const observer = new LinkObserver(createOptions(), new Set<string>());
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-
-      const newLink = {
-        nodeType: 1,
-        ...createLink({
-          href: "http://example.com/new-page",
-          pathname: "/new-page",
-        }),
-        querySelectorAll: () => [],
-      };
-
-      const mockMO = mocks.getMockMutationObserver();
-      mockMO.triggerMutation([newLink as any]);
-
-      assertEquals(mockIO.observedElements.has(newLink as any), true);
-
-      observer.destroy();
-      mocks.cleanup();
     });
 
     it("should observe links inside newly added containers", () => {
-      const mocks = setupMocks();
+      withMocks((mocks) => {
+        mocks.setDocument({
+          querySelectorAll: () => [],
+          body: {},
+        });
 
-      mocks.setDocument({
-        querySelectorAll: () => [],
-        body: {},
+        withObserver(mocks, createOptions(), new Set<string>(), (observer) => {
+          observer.init();
+
+          const mockIO = mocks.getMockIntersectionObserver();
+
+          const innerLink = createLink({
+            href: "http://example.com/inner",
+            pathname: "/inner",
+          });
+
+          const newContainer = {
+            nodeType: 1,
+            tagName: "DIV",
+            querySelectorAll: (selector: string) => {
+              if (selector === 'a[href^="/"], a[href^="./"]') return [innerLink];
+              return [];
+            },
+          };
+
+          mocks.getMockMutationObserver().triggerMutation([newContainer as any]);
+
+          assertEquals(mockIO.observedElements.has(innerLink as any), true);
+        });
       });
-
-      const observer = new LinkObserver(createOptions(), new Set<string>());
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-
-      const innerLink = createLink({
-        href: "http://example.com/inner",
-        pathname: "/inner",
-      });
-
-      const newContainer = {
-        nodeType: 1,
-        tagName: "DIV",
-        querySelectorAll: (selector: string) => {
-          if (selector === 'a[href^="/"], a[href^="./"]') return [innerLink];
-          return [];
-        },
-      };
-
-      const mockMO = mocks.getMockMutationObserver();
-      mockMO.triggerMutation([newContainer as any]);
-
-      assertEquals(mockIO.observedElements.has(innerLink as any), true);
-
-      observer.destroy();
-      mocks.cleanup();
     });
 
     it("should not observe invalid nodes added via mutation observer", () => {
-      const mocks = setupMocks();
+      withMocks((mocks) => {
+        mocks.setDocument({
+          querySelectorAll: () => [],
+          body: {},
+        });
 
-      mocks.setDocument({
-        querySelectorAll: () => [],
-        body: {},
+        withObserver(mocks, createOptions(), new Set<string>(), (observer) => {
+          observer.init();
+
+          const textNode = { nodeType: 3 };
+          mocks.getMockMutationObserver().triggerMutation([textNode as any]);
+
+          assertEquals(mocks.getMockIntersectionObserver().observedElements.size, 0);
+        });
       });
-
-      const observer = new LinkObserver(createOptions(), new Set<string>());
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-
-      const textNode = { nodeType: 3 };
-
-      const mockMO = mocks.getMockMutationObserver();
-      mockMO.triggerMutation([textNode as any]);
-
-      assertEquals(mockIO.observedElements.size, 0);
-
-      observer.destroy();
-      mocks.cleanup();
     });
   });
 
   describe("Cleanup and Destroy", () => {
     it("should disconnect observers on destroy", () => {
-      const mocks = setupMocks();
+      withMocks((mocks) => {
+        mocks.setDocument({
+          querySelectorAll: () => [],
+          body: {},
+        });
 
-      mocks.setDocument({
-        querySelectorAll: () => [],
-        body: {},
+        const observer = new LinkObserver(createOptions(), new Set<string>());
+        observer.init();
+
+        const mockIO = mocks.getMockIntersectionObserver();
+        const mockMO = mocks.getMockMutationObserver();
+
+        assertEquals(mockIO.observedElements.size >= 0, true);
+        assertEquals(mockMO.observedTarget !== null, true);
+
+        observer.destroy();
+
+        assertEquals(mockIO.observedElements.size, 0);
+        assertEquals(mockMO.observedTarget, null);
       });
-
-      const observer = new LinkObserver(createOptions(), new Set<string>());
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-      const mockMO = mocks.getMockMutationObserver();
-
-      assertEquals(mockIO.observedElements.size >= 0, true);
-      assertEquals(mockMO.observedTarget !== null, true);
-
-      observer.destroy();
-
-      assertEquals(mockIO.observedElements.size, 0);
-      assertEquals(mockMO.observedTarget, null);
-
-      mocks.cleanup();
     });
 
     it("should be safe to call destroy multiple times", () => {
-      const mocks = setupMocks();
+      withMocks((mocks) => {
+        mocks.setDocument({
+          querySelectorAll: () => [],
+          body: {},
+        });
 
-      mocks.setDocument({
-        querySelectorAll: () => [],
-        body: {},
+        const observer = new LinkObserver(createOptions(), new Set<string>());
+        observer.init();
+
+        observer.destroy();
+        observer.destroy();
+        observer.destroy();
+
+        const mockIO = mocks.getMockIntersectionObserver();
+        const mockMO = mocks.getMockMutationObserver();
+
+        assertEquals(mockIO.observedElements.size, 0);
+        assertEquals(mockMO.observedTarget, null);
       });
-
-      const observer = new LinkObserver(createOptions(), new Set<string>());
-      observer.init();
-
-      observer.destroy();
-      observer.destroy();
-      observer.destroy();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-      const mockMO = mocks.getMockMutationObserver();
-
-      assertEquals(mockIO.observedElements.size, 0);
-      assertEquals(mockMO.observedTarget, null);
-
-      mocks.cleanup();
     });
   });
 
   describe("Edge Cases", () => {
     it("should handle empty document", () => {
-      const mocks = setupMocks();
+      withMocks((mocks) => {
+        mocks.setDocument({
+          querySelectorAll: () => [],
+          body: {},
+        });
 
-      mocks.setDocument({
-        querySelectorAll: () => [],
-        body: {},
+        withObserver(mocks, createOptions(), new Set<string>(), (observer) => {
+          observer.init();
+          assertEquals(mocks.getMockIntersectionObserver().observedElements.size, 0);
+        });
       });
-
-      const observer = new LinkObserver(createOptions(), new Set<string>());
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-      assertEquals(mockIO.observedElements.size, 0);
-
-      observer.destroy();
-      mocks.cleanup();
     });
 
     it("should handle multiple links becoming visible simultaneously", async () => {
-      const mocks = setupMocks();
+      await withMocksAsync(async (mocks) => {
+        const link1 = createLink({ href: "http://example.com/page1", pathname: "/page1" });
+        const link2 = createLink({ href: "http://example.com/page2", pathname: "/page2" });
 
-      const link1 = createLink({ href: "http://example.com/page1", pathname: "/page1" });
-      const link2 = createLink({ href: "http://example.com/page2", pathname: "/page2" });
+        mocks.setDocument({
+          querySelectorAll: () => [link1, link2],
+          body: {},
+        });
 
-      mocks.setDocument({
-        querySelectorAll: () => [link1, link2],
-        body: {},
-      });
+        const calledLinks: HTMLAnchorElement[] = [];
 
-      const calledLinks: HTMLAnchorElement[] = [];
-      const observer = new LinkObserver(
-        createOptions({
-          delay: 0,
-          onLinkVisible: (link) => {
-            calledLinks.push(link);
+        await withObserverAsync(
+          mocks,
+          createOptions({
+            delay: 0,
+            onLinkVisible: (link) => {
+              calledLinks.push(link);
+            },
+          }),
+          new Set<string>(),
+          async (observer) => {
+            observer.init();
+
+            const mockIO = mocks.getMockIntersectionObserver();
+            mockIO.triggerIntersection(link1 as any, true);
+            mockIO.triggerIntersection(link2 as any, true);
+
+            await delay(10);
+
+            assertEquals(calledLinks.length, 2);
           },
-        }),
-        new Set<string>(),
-      );
-      observer.init();
-
-      const mockIO = mocks.getMockIntersectionObserver();
-      mockIO.triggerIntersection(link1 as any, true);
-      mockIO.triggerIntersection(link2 as any, true);
-
-      await delay(10);
-
-      assertEquals(calledLinks.length, 2);
-
-      observer.destroy();
-      mocks.cleanup();
+        );
+      });
     });
   });
 });

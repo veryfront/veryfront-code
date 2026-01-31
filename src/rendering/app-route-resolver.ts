@@ -89,32 +89,34 @@ async function tryDynamicMatch(
       // Exact match failed, try dynamic segments
     }
 
-    let dynamicDirName: string | null = null;
-    let isCatchAll = false;
+    const dynamic = await findDynamicDir(currentDir, adapter);
+    if (!dynamic) return null;
 
-    try {
-      const entries = await adapter.fs.readDir(currentDir);
-      for await (const entry of entries) {
-        if (!entry.isDirectory || !isDynamicSegment(entry.name)) continue;
-
-        dynamicDirName = entry.name;
-        isCatchAll = entry.name.startsWith("[...");
-        break;
-      }
-    } catch {
-      // adapter.fs.readDir failed - no fallback to Deno for npm compatibility
-    }
-
-    if (!dynamicDirName) return null;
-
-    currentDir = join(currentDir, dynamicDirName);
-    if (isCatchAll) break;
+    currentDir = join(currentDir, dynamic.name);
+    if (dynamic.isCatchAll) break;
   }
 
   for (const ext of [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"]) {
     const pageFile = join(currentDir, `page${ext}`);
     const entity = await tryLoadPageFile(pageFile, slug, adapter);
     if (entity) return entity;
+  }
+
+  return null;
+}
+
+async function findDynamicDir(
+  dir: string,
+  adapter: RuntimeAdapter,
+): Promise<{ name: string; isCatchAll: boolean } | null> {
+  try {
+    const entries = await adapter.fs.readDir(dir);
+    for await (const entry of entries) {
+      if (!entry.isDirectory || !isDynamicSegment(entry.name)) continue;
+      return { name: entry.name, isCatchAll: entry.name.startsWith("[...") };
+    }
+  } catch {
+    // adapter.fs.readDir failed - no fallback to Deno for npm compatibility
   }
 
   return null;

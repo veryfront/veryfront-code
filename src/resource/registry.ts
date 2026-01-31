@@ -1,4 +1,4 @@
-/**
+/****
  * Resource Registry
  *
  * Project-scoped registry for MCP resources. Each project has its own
@@ -29,7 +29,7 @@ class ResourceRegistryClass {
   }
 
   findByPattern(uri: string): Resource | undefined {
-    for (const resource of this.getAll().values()) {
+    for (const resource of resourceManager.getAll().values()) {
       if (this.matchesPattern(uri, resource.pattern)) return resource;
     }
     return undefined;
@@ -70,10 +70,9 @@ class ResourceRegistryClass {
     resourceManager.clearAll();
   }
 
-  getStats() {
+  getStats(): ReturnType<typeof resourceManager.getStats> {
     return resourceManager.getStats();
   }
 }
 
-// Singleton instance - maintains same interface but now project-scoped internally
 export const resourceRegistry = new ResourceRegistryClass();

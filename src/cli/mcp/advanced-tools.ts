@@ -1,12 +1,5 @@
-/**
- * Advanced MCP Tools for Coding Agents
- *
- * Barrel re-export aggregating all tool modules.
- */
-
 import type { MCPTool } from "./tools.ts";
 
-import { vfGetSkillReference, vfGetSkills } from "./tools/skill-tools.ts";
 import {
   vfCreateProject,
   vfListExamples,
@@ -15,13 +8,6 @@ import {
   vfListUsecases,
 } from "./tools/catalog-tools.ts";
 import {
-  vfGetComponentTree,
-  vfGetProjectContext,
-  vfListLocalProjects,
-  vfListRoutes,
-} from "./tools/project-tools.ts";
-import { vfGetConventions, vfScaffold } from "./tools/scaffold-tools.ts";
-import {
   vfGetDebugContext,
   vfGetFlywheelStatus,
   vfHotReload,
@@ -29,6 +15,14 @@ import {
   vfTriggerHmr,
   vfWaitForReady,
 } from "./tools/dev-tools.ts";
+import {
+  vfGetComponentTree,
+  vfGetProjectContext,
+  vfListLocalProjects,
+  vfListRoutes,
+} from "./tools/project-tools.ts";
+import { vfGetConventions, vfScaffold } from "./tools/scaffold-tools.ts";
+import { vfGetSkillReference, vfGetSkills } from "./tools/skill-tools.ts";
 
 export const advancedTools: MCPTool[] = [
   vfGetSkills,

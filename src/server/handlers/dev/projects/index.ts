@@ -52,12 +52,14 @@ export class ProjectsHandler extends BaseHandler {
 
     if (pathname.startsWith("/_projects/ui/")) {
       const response = await handleProjectsUI(req);
-      return response ? this.respond(response) : this.notFound();
+      if (response) return this.respond(response);
+      return this.notFound();
     }
 
     if (pathname.startsWith("/_projects/api/")) {
       const response = await handleProjectsAPI(req, ctx);
-      return response ? this.respond(response) : this.notFound();
+      if (response) return this.respond(response);
+      return this.notFound();
     }
 
     return this.notFound();

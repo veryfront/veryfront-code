@@ -11,14 +11,12 @@ describe("modules/module-resolver", () => {
       virtualModules?: Map<string, string>;
       files?: Record<string, string>;
     } = {},
-  ) {
+  ): ModuleResolver {
     const adapter = createMockAdapter();
     const projectDir = opts.projectDir ?? "/project";
 
-    if (opts.files) {
-      for (const [path, content] of Object.entries(opts.files)) {
-        adapter.fs.files.set(path, content);
-      }
+    for (const [path, content] of Object.entries(opts.files ?? {})) {
+      adapter.fs.files.set(path, content);
     }
 
     return new ModuleResolver({
@@ -31,8 +29,9 @@ describe("modules/module-resolver", () => {
 
   describe("resolve - virtual modules", () => {
     it("should resolve virtual modules", async () => {
-      const virtualModules = new Map([["virtual:theme", "export const theme = {}"]]);
-      const resolver = createResolver({ virtualModules });
+      const resolver = createResolver({
+        virtualModules: new Map([["virtual:theme", "export const theme = {}"]]),
+      });
 
       const result = await resolver.resolve("virtual:theme");
       assertEquals(result?.type, "virtual");
@@ -42,8 +41,9 @@ describe("modules/module-resolver", () => {
     });
 
     it("should return virtual module for empty string content", async () => {
-      const virtualModules = new Map([["virtual:empty", ""]]);
-      const resolver = createResolver({ virtualModules });
+      const resolver = createResolver({
+        virtualModules: new Map([["virtual:empty", ""]]),
+      });
 
       const result = await resolver.resolve("virtual:empty");
       assertEquals(result?.type, "virtual");
@@ -54,7 +54,7 @@ describe("modules/module-resolver", () => {
   describe("resolve - import map", () => {
     it("should resolve import map entries to external URLs", async () => {
       const resolver = createResolver({
-        importMap: { "react": "https://esm.sh/react@18" },
+        importMap: { react: "https://esm.sh/react@18" },
       });
 
       const result = await resolver.resolve("react");
@@ -202,7 +202,6 @@ describe("modules/module-resolver", () => {
       await resolver.resolve("virtual:a");
       resolver.clearCache();
 
-      // After clearing, should still resolve (just re-caches)
       const result = await resolver.resolve("virtual:a");
       assertEquals(result?.content, "a");
     });
@@ -220,7 +219,6 @@ describe("modules/module-resolver", () => {
 
       resolver.clearCache("theme");
 
-      // Both should still resolve after pattern clear
       const theme = await resolver.resolve("virtual:theme");
       const utils = await resolver.resolve("virtual:utils");
       assertEquals(theme?.content, "theme");
@@ -247,7 +245,6 @@ describe("modules/module-resolver", () => {
       resolver.removeVirtualModule("virtual:removable");
 
       const result = await resolver.resolve("virtual:removable");
-      // After removal, it should try as npm since it doesn't start with ./ or /
       assertEquals(result?.type, "npm");
     });
 

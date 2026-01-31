@@ -17,17 +17,14 @@ export default tool({
       .describe('Parent folder ID where the file should be uploaded (default: "root")'),
   }),
   async execute({ fileName, content, parentFolderId }) {
-    const trimmedName = fileName.trim();
+    const name = fileName.trim();
 
-    if (!trimmedName) {
-      throw new Error("Filename cannot be empty");
-    }
-
-    if (trimmedName.includes("/") || trimmedName.includes("\\")) {
+    if (!name) throw new Error("Filename cannot be empty");
+    if (name.includes("/") || name.includes("\\")) {
       throw new Error("Filename cannot contain path separators");
     }
 
-    const result = await uploadFile(trimmedName, content, parentFolderId);
+    const result = await uploadFile(name, content, parentFolderId);
     const size = result.size ?? 0;
 
     return {

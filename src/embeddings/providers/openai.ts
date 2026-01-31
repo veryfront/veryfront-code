@@ -33,10 +33,7 @@ export class OpenAIEmbeddingProvider extends BaseEmbeddingProvider {
     const model = request.model ?? this.config.model ?? this.defaultModel;
     const dimension = request.dimension ?? this.config.dimension ?? this.defaultDimension;
 
-    const body: Record<string, unknown> = {
-      model,
-      input: request.inputs,
-    };
+    const body: Record<string, unknown> = { model, input: request.inputs };
 
     if (model.startsWith("text-embedding-3")) {
       body.dimensions = dimension;
@@ -45,7 +42,7 @@ export class OpenAIEmbeddingProvider extends BaseEmbeddingProvider {
     return body;
   }
 
-  protected transformResponse(response: unknown, _model: string): EmbeddingResponse {
+  protected transformResponse(response: unknown): EmbeddingResponse {
     const parsed = OpenAIEmbeddingResponseSchema.parse(response);
     const dimension = parsed.data[0]?.embedding.length ?? this.defaultDimension;
 

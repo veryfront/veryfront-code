@@ -9,6 +9,29 @@ import { ReloadNotifier } from "../reload-notifier.ts";
 
 const METRICS_LOG_INTERVAL = 10;
 
+/**
+ * Patterns for paths that should NOT trigger HMR updates.
+ * These are generated/cached files that change during normal operation
+ * but don't represent actual source code changes.
+ */
+const IGNORED_PATH_PATTERNS = [
+  ".cache/",
+  ".cache\\",
+  "node_modules/",
+  "node_modules\\",
+  ".git/",
+  ".git\\",
+  ".veryfront/",
+  ".veryfront\\",
+];
+
+/**
+ * Check if a path should be ignored for HMR purposes.
+ */
+function shouldIgnorePath(path: string): boolean {
+  return IGNORED_PATH_PATTERNS.some((pattern) => path.includes(pattern));
+}
+
 export class FileWatchSetup {
   private fileWatcher?: { close(): void };
   private watcherController?: AbortController;
@@ -26,27 +49,7 @@ export class FileWatchSetup {
 
   async setup(): Promise<void> {
     try {
-      const potentialPaths = [
-        this.projectDir,
-        join(this.projectDir, "pages"),
-        join(this.projectDir, "components"),
-        join(this.projectDir, "styles"),
-        join(this.projectDir, "public"),
-        join(this.projectDir, "app"),
-      ];
-
-      const watchPaths: string[] = [];
-      for (const path of potentialPaths) {
-        try {
-          if (!(await this.adapter.fs.exists(path))) continue;
-
-          const stat = await this.adapter.fs.stat(path);
-          if (stat.isDirectory) watchPaths.push(path);
-        } catch (error) {
-          logger.debug(`[HMR] Directory not found, skipping: ${path}`, error);
-        }
-      }
-
+      const watchPaths = await this.getWatchPaths();
       if (watchPaths.length === 0) {
         logger.warn("[HMR] No directories found to watch");
         return;
@@ -74,22 +77,50 @@ export class FileWatchSetup {
     }
   }
 
+  private async getWatchPaths(): Promise<string[]> {
+    const potentialPaths = [
+      this.projectDir,
+      join(this.projectDir, "pages"),
+      join(this.projectDir, "components"),
+      join(this.projectDir, "styles"),
+      join(this.projectDir, "public"),
+      join(this.projectDir, "app"),
+    ];
+
+    const watchPaths: string[] = [];
+    for (const path of potentialPaths) {
+      try {
+        if (!(await this.adapter.fs.exists(path))) continue;
+
+        const stat = await this.adapter.fs.stat(path);
+        if (stat.isDirectory) watchPaths.push(path);
+      } catch (error) {
+        logger.debug(`[HMR] Directory not found, skipping: ${path}`, error);
+      }
+    }
+
+    return watchPaths;
+  }
+
   private async processFileWatcher(
     watcher: AsyncIterable<{ kind: string; paths: string[] }>,
     signal: AbortSignal,
   ): Promise<void> {
     try {
-      for await (const event of watcher) {
+      for await (const { paths } of watcher) {
         if (signal.aborted) break;
 
         try {
-          const { paths } = event;
+          // Filter out paths that shouldn't trigger HMR (cache, node_modules, etc.)
+          const relevantPaths = paths.filter((p) => !shouldIgnorePath(p));
+          if (relevantPaths.length === 0) continue;
+
           if (this.optimizedWatcher) {
-            this.optimizedWatcher.handleChange(paths);
+            this.optimizedWatcher.handleChange(relevantPaths);
             continue;
           }
 
-          await this.handleImmediateFileChange(paths);
+          await this.handleImmediateFileChange(relevantPaths);
         } catch (error) {
           logger.error("[HMR] Failed to handle file change", error);
         }

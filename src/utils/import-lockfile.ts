@@ -50,6 +50,7 @@ export type FSAdapter = {
 
 function createPlatformFSAdapter(): FSAdapter {
   const fs = createFileSystem();
+
   return {
     readFile(path: string): Promise<string> {
       return fs.readTextFile(path);
@@ -76,18 +77,21 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     if (cache) return cache;
 
     try {
-      if (!(await fs.exists(lockfilePath))) return null;
+      const exists = await fs.exists(lockfilePath);
+      if (!exists) return null;
 
       const content = await fs.readFile(lockfilePath);
-      cache = JSON.parse(content) as LockfileData;
+      const parsed = JSON.parse(content) as LockfileData;
 
-      if (cache.version !== LOCKFILE_VERSION) {
+      if (parsed.version !== LOCKFILE_VERSION) {
         logger.warn(
-          `[lockfile] Version mismatch, expected ${LOCKFILE_VERSION}, got ${cache.version}`,
+          `[lockfile] Version mismatch, expected ${LOCKFILE_VERSION}, got ${parsed.version}`,
         );
         cache = createEmptyLockfile();
+        return cache;
       }
 
+      cache = parsed;
       return cache;
     } catch (e) {
       logger.debug(`[lockfile] Could not read lockfile: ${e}`);
@@ -105,7 +109,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
       ),
     };
 
-    await fs.writeFile(lockfilePath, JSON.stringify(sorted, null, 2) + "\n");
+    await fs.writeFile(lockfilePath, `${JSON.stringify(sorted, null, 2)}\n`);
     dirty = false;
     logger.debug(`[lockfile] Written ${Object.keys(data.imports).length} entries`);
   }
@@ -132,7 +136,9 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     dirty = false;
 
     if (!fs.remove) return;
-    if (!(await fs.exists(lockfilePath))) return;
+
+    const exists = await fs.exists(lockfilePath);
+    if (!exists) return;
 
     await fs.remove(lockfilePath);
   }
@@ -237,6 +243,7 @@ export function extractImports(content: string): ParsedImport[] {
     for (const match of content.matchAll(regex)) {
       const specifier = match[1];
       if (!specifier || seen.has(specifier)) continue;
+
       seen.add(specifier);
       imports.push({ specifier, type });
     }
@@ -251,7 +258,6 @@ export function extractImports(content: string): ParsedImport[] {
 
 export function resolveImportUrl(specifier: string, baseUrl: string): string | null {
   if (specifier.startsWith("http://") || specifier.startsWith("https://")) return specifier;
-
   if (!specifier.startsWith("./") && !specifier.startsWith("../")) return null;
 
   try {

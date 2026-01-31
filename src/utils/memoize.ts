@@ -35,32 +35,35 @@ function memoizeWithCache<Args extends unknown[], Result>(
 
   return (...args: Args): Result | Promise<Result> => {
     const key = keyHasher(...args);
+
     if (cache.has(key)) {
       return cache.get(key)!;
     }
 
+    const existing = inflight.get(key);
+    if (existing) return existing;
+
     const result = fn(...args);
 
-    if (result instanceof Promise) {
-      // Deduplicate concurrent async calls for the same key
-      const existing = inflight.get(key);
-      if (existing) return existing;
+    if (!(result instanceof Promise)) {
+      cache.set(key, result);
+      return result;
+    }
 
-      const promise = result.then((resolved) => {
+    const promise = result.then(
+      (resolved) => {
         cache.set(key, resolved);
         inflight.delete(key);
         return resolved;
-      }, (error) => {
+      },
+      (error) => {
         inflight.delete(key);
         throw error;
-      });
+      },
+    );
 
-      inflight.set(key, promise);
-      return promise;
-    }
-
-    cache.set(key, result);
-    return result;
+    inflight.set(key, promise);
+    return promise;
   };
 }
 

@@ -50,13 +50,13 @@ export function rehypeNodePositions(
         );
       }
 
-      if (options.filePath) {
-        attributes.push({
-          type: "mdxJsxAttribute",
-          name: "data-node-file",
-          value: options.filePath,
-        });
-      }
+      if (!options.filePath) return;
+
+      attributes.push({
+        type: "mdxJsxAttribute",
+        name: "data-node-file",
+        value: options.filePath,
+      });
     });
   };
 }

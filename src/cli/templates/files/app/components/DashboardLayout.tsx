@@ -1,6 +1,5 @@
 'use client';
 
-import * as React from 'react';
 import { useAuth } from './AuthProvider.tsx';
 
 const navigation = [
@@ -28,7 +27,6 @@ const navigation = [
 
 export function DashboardLayout({ children }: { children: React.ReactNode }): React.ReactElement {
   const { user, logout } = useAuth();
-
   const userInitial = user?.name?.[0]?.toUpperCase() ?? 'U';
 
   return (

@@ -38,7 +38,7 @@ export default tool({
       lastActivityAt: project.last_activity_at,
     }));
 
-    if (mappedProjects.length === 0) {
+    if (!mappedProjects.length) {
       return {
         message: "No projects found matching the criteria.",
         count: 0,

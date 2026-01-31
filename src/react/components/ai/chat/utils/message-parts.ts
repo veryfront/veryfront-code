@@ -12,18 +12,19 @@ import type {
 
 /** Get text content from UIMessage parts */
 export function getTextContent(message: UIMessage): string {
-  return message.parts
-    .filter((p): p is UIMessagePart & { type: "text" } => p.type === "text")
-    .map((p) => p.text)
-    .join("");
+  let text = "";
+
+  for (const part of message.parts) {
+    if (part.type === "text") text += part.text;
+  }
+
+  return text;
 }
 
 /** Check if a part is a tool part */
 export function isToolPart(part: UIMessagePart): part is ToolUIPart | DynamicToolUIPart {
-  return (
-    (part.type.startsWith("tool-") && part.type !== "tool-result") ||
-    part.type === "dynamic-tool"
-  );
+  if (part.type === "dynamic-tool") return true;
+  return part.type.startsWith("tool-") && part.type !== "tool-result";
 }
 
 /** Check if a part is a reasoning part */
@@ -49,11 +50,11 @@ export function groupPartsInOrder(parts: UIMessagePart[]): PartGroup[] {
   const groups: PartGroup[] = [];
   let textBuffer = "";
 
-  const flushText = (): void => {
+  function flushText(): void {
     if (!textBuffer) return;
     groups.push({ type: "text", content: textBuffer });
     textBuffer = "";
-  };
+  }
 
   for (const part of parts) {
     if (part.type === "text") {
@@ -61,21 +62,26 @@ export function groupPartsInOrder(parts: UIMessagePart[]): PartGroup[] {
       continue;
     }
 
+    // Skip tool-result parts without flushing text buffer
+    if (part.type === "tool-result") {
+      continue;
+    }
+
+    flushText();
+
     if (isToolPart(part)) {
-      flushText();
       groups.push({ type: "tool", tool: part });
       continue;
     }
 
     if (isReasoningPart(part)) {
-      flushText();
       groups.push({
         type: "reasoning",
         text: part.text,
         isStreaming: part.state === "streaming",
       });
     }
-    // Skip tool-result and other non-renderable parts
+    // Skip other non-renderable parts
   }
 
   flushText();

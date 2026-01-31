@@ -27,8 +27,7 @@ export class OpenAPIHandler extends BaseHandler {
 
   protected override shouldHandle(req: Request, ctx: HandlerContext): boolean {
     const { pathname } = new URL(req.url);
-    const jsonPath = ctx.config?.openapi?.paths?.json ?? DEFAULT_JSON_PATH;
-    const yamlPath = ctx.config?.openapi?.paths?.yaml ?? DEFAULT_YAML_PATH;
+    const { jsonPath, yamlPath } = this.getPaths(ctx);
 
     return pathname === jsonPath || pathname === yamlPath;
   }
@@ -37,7 +36,7 @@ export class OpenAPIHandler extends BaseHandler {
     if (!this.shouldHandle(req, ctx)) return this.continue();
 
     const url = new URL(req.url);
-    const yamlPath = ctx.config?.openapi?.paths?.yaml ?? DEFAULT_YAML_PATH;
+    const { yamlPath } = this.getPaths(ctx);
     const isYaml = url.pathname === yamlPath;
 
     try {
@@ -72,13 +71,18 @@ export class OpenAPIHandler extends BaseHandler {
     }
   }
 
+  private getPaths(ctx: HandlerContext): { jsonPath: string; yamlPath: string } {
+    const jsonPath = ctx.config?.openapi?.paths?.json ?? DEFAULT_JSON_PATH;
+    const yamlPath = ctx.config?.openapi?.paths?.yaml ?? DEFAULT_YAML_PATH;
+
+    return { jsonPath, yamlPath };
+  }
+
   private async getOrGenerateSpec(ctx: HandlerContext, url: URL): Promise<OpenAPISpec> {
     const isDev = ctx.requestContext?.isLocalDev ?? false;
     const currentKey = `${ctx.projectDir}:${ctx.projectSlug || "default"}`;
 
-    if (!isDev && this.cachedSpec && this.cacheKey === currentKey) {
-      return this.cachedSpec;
-    }
+    if (!isDev && this.cachedSpec && this.cacheKey === currentKey) return this.cachedSpec;
 
     const router = new DynamicRouter();
     const pagesDir = ctx.config?.directories?.pages ?? "pages";
@@ -86,23 +90,20 @@ export class OpenAPIHandler extends BaseHandler {
 
     await this.tryDiscover(async () => {
       const apiDir = join(ctx.projectDir, pagesDir, "api");
-      if (await ctx.adapter.fs.exists(apiDir)) {
-        await discoverPagesRoutes(router, apiDir, "/api", ctx.adapter);
-      }
+      if (!(await ctx.adapter.fs.exists(apiDir))) return;
+      await discoverPagesRoutes(router, apiDir, "/api", ctx.adapter);
     });
 
     await this.tryDiscover(async () => {
       const appApiDir = join(ctx.projectDir, appDirName, "api");
-      if (await ctx.adapter.fs.exists(appApiDir)) {
-        await discoverAppRoutes(router, appApiDir, "/api", ctx.adapter);
-      }
+      if (!(await ctx.adapter.fs.exists(appApiDir))) return;
+      await discoverAppRoutes(router, appApiDir, "/api", ctx.adapter);
     });
 
     await this.tryDiscover(async () => {
       const appDir = join(ctx.projectDir, appDirName);
-      if (await ctx.adapter.fs.exists(appDir)) {
-        await discoverAppRoutes(router, appDir, "", ctx.adapter);
-      }
+      if (!(await ctx.adapter.fs.exists(appDir))) return;
+      await discoverAppRoutes(router, appDir, "", ctx.adapter);
     });
 
     const serverUrl = `${url.protocol}//${url.host}`;

@@ -14,11 +14,6 @@ import {
 import { VERSION } from "#veryfront/utils/version.ts";
 import { FRAMEWORK_ROOT, HASH_SEED_FNV1A } from "../constants.ts";
 
-// ──────────────────────────────────────────────────────────────
-// Pure-logic duplicates from the source for isolated unit testing
-// (these are non-exported helpers)
-// ──────────────────────────────────────────────────────────────
-
 function getTransformCacheKey(
   projectId: string,
   normalizedPath: string,
@@ -39,29 +34,30 @@ const VERYFRONT_IMPORT_MAP: Record<string, string> = {
 };
 
 function rewriteVeryfrontImports(code: string): string {
-  return code.replace(/from\s+["'](veryfront\/[^"']+)["']/g, (_match, specifier: string) => {
-    const mapped = VERYFRONT_IMPORT_MAP[specifier];
-    return `from "${mapped ?? specifier}"`;
-  });
+  return code.replace(
+    /from\s+["'](veryfront\/[^"']+)["']/g,
+    (_match, specifier: string) => `from "${VERYFRONT_IMPORT_MAP[specifier] ?? specifier}"`,
+  );
 }
 
 function normalizePath(modulePath: string, parentModulePath?: string): string {
-  let normalizedPath = modulePath.replace(/^\//, "");
-  if (!parentModulePath) return normalizedPath;
-  if (!modulePath.startsWith("./") && !modulePath.startsWith("../")) return normalizedPath;
+  const stripped = modulePath.replace(/^\//, "");
+  if (!parentModulePath) return stripped;
+
+  const isRelative = modulePath.startsWith("./") || modulePath.startsWith("../");
+  if (!isRelative) return stripped;
 
   const parentDir = parentModulePath.replace(/\/[^/]+$/, "");
-  // Simple posix-like join for testing
   const parts = [...parentDir.split("/"), ...modulePath.split("/")];
-  const resolved: string[] = [];
-  for (const p of parts) {
-    if (p === "..") resolved.pop();
-    else if (p !== ".") resolved.push(p);
-  }
-  normalizedPath = resolved.join("/");
 
-  if (!normalizedPath.startsWith("_vf_modules/")) normalizedPath = `_vf_modules/${normalizedPath}`;
-  return normalizedPath;
+  const resolved: string[] = [];
+  for (const part of parts) {
+    if (part === "..") resolved.pop();
+    else if (part !== ".") resolved.push(part);
+  }
+
+  const joined = resolved.join("/");
+  return joined.startsWith("_vf_modules/") ? joined : `_vf_modules/${joined}`;
 }
 
 function findNestedImports(moduleCode: string): {
@@ -74,13 +70,12 @@ function findNestedImports(moduleCode: string): {
   const vfModules: Array<{ original: string; path: string }> = [];
   const relative: Array<{ original: string; path: string }> = [];
 
-  let match: RegExpExecArray | null;
-  while ((match = VF_MODULE_IMPORT_PATTERN.exec(moduleCode)) !== null) {
+  for (const match of moduleCode.matchAll(VF_MODULE_IMPORT_PATTERN)) {
     const path = match[1];
     if (path) vfModules.push({ original: match[0], path: path.replace(/^\//, "") });
   }
 
-  while ((match = RELATIVE_IMPORT_PATTERN.exec(moduleCode)) !== null) {
+  for (const match of moduleCode.matchAll(RELATIVE_IMPORT_PATTERN)) {
     const path = match[1];
     if (path) relative.push({ original: match[0], path });
   }
@@ -91,27 +86,28 @@ function findNestedImports(moduleCode: string): {
 function hasUnresolvedImports(moduleCode: string): { count: number; paths: string[] } {
   const UNRESOLVED_VF_MODULES_PATTERN = /from\s+["'](\/?_vf_modules\/[^"']+)["']/g;
   const matches = [...moduleCode.matchAll(UNRESOLVED_VF_MODULES_PATTERN)];
+
   return {
     count: matches.length,
-    paths: matches.map((m) => m[1]).filter((p): p is string => p !== undefined).slice(0, 5),
+    paths: matches
+      .map((m) => m[1])
+      .filter((p): p is string => p !== undefined)
+      .slice(0, 5),
   };
 }
 
 function hashString(input: string): string {
   let hash = HASH_SEED_FNV1A >>> 0;
+
   for (let i = 0; i < input.length; i++) {
     hash ^= input.charCodeAt(i);
     hash = Math.imul(hash, 16777619);
   }
+
   return (hash >>> 0).toString(16);
 }
 
-// ──────────────────────────────────────────────────────────────
-// Tests
-// ──────────────────────────────────────────────────────────────
-
 describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () => {
-  // ── getTransformCacheKey ──
   describe("getTransformCacheKey", () => {
     it("includes version, project, path, and hash", () => {
       const key = getTransformCacheKey("proj1", "_vf_modules/pages/index.js", "abc123");
@@ -131,7 +127,6 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     });
   });
 
-  // ── getVersionedPathCacheKey ──
   describe("getVersionedPathCacheKey", () => {
     it("prefixes with version", () => {
       const key = getVersionedPathCacheKey("_vf_modules/pages/index.js");
@@ -139,7 +134,6 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     });
   });
 
-  // ── rewriteVeryfrontImports ──
   describe("rewriteVeryfrontImports", () => {
     it("rewrites known veryfront/* imports to /_vf_modules/ paths", () => {
       const code = `import Head from "veryfront/head";`;
@@ -187,7 +181,6 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     });
   });
 
-  // ── normalizePath ──
   describe("normalizePath", () => {
     it("strips leading slash", () => {
       assertEquals(normalizePath("/_vf_modules/pages/index.js"), "_vf_modules/pages/index.js");
@@ -220,7 +213,6 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     });
   });
 
-  // ── findNestedImports ──
   describe("findNestedImports", () => {
     it("finds /_vf_modules/ imports", () => {
       const code = `import Foo from "/_vf_modules/components/Foo.js";`;
@@ -263,7 +255,6 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     });
   });
 
-  // ── hasUnresolvedImports ──
   describe("hasUnresolvedImports", () => {
     it("detects unresolved /_vf_modules/ imports", () => {
       const code = `import Foo from "/_vf_modules/components/Foo.js";`;
@@ -289,7 +280,6 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     });
   });
 
-  // ── hashString ──
   describe("hashString (FNV-1a)", () => {
     it("returns hex string", () => {
       const h = hashString("test");
@@ -310,7 +300,6 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     });
   });
 
-  // ── createModuleFetcherContext ──
   describe("createModuleFetcherContext", () => {
     const mockAdapter = {
       env: { get: (_key: string) => undefined },
@@ -375,9 +364,8 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     });
   });
 
-  // ── rewriteDntImports ──
   describe("rewriteDntImports", () => {
-    const frameworkPath = "/usr/local/lib/node_modules/veryfront/src/react/router/index.ts";
+    const frameworkPath = "/usr/local/lib/node_modules/veryfront/src/react/router/index.tsx";
     const projectPath = "/app/project/components/Button.tsx";
 
     it("rewrites relative _dnt.polyfills.js import for framework files", () => {
@@ -399,7 +387,6 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     it("rewrites side-effect _dnt.polyfills.js import (no from)", () => {
       const code = `import "../../../_dnt.polyfills.js";\nimport "../../../_dnt.polyfills.js";`;
       const result = rewriteDntImports(code, frameworkPath);
-      // Both side-effect imports should be rewritten
       const matches = result.match(/file:\/\//g);
       assertEquals(matches?.length, 2);
     });
@@ -427,7 +414,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       assertEquals(result.includes(`from "react"`), true);
       assertEquals(result.includes("../../../_dnt.polyfills.js"), false);
       assertEquals(result.includes("../../_dnt.shims.js"), false);
-      assertEquals((result.match(/file:\/\//g) || []).length, 2);
+      assertEquals((result.match(/file:\/\//g) ?? []).length, 2);
     });
 
     it("rewrites node_modules paths even if not under FRAMEWORK_ROOT", () => {
@@ -438,9 +425,6 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     });
 
     it("does not rewrite project files under FRAMEWORK_ROOT in local dev", () => {
-      // In local dev, project source files live under FRAMEWORK_ROOT/projects/
-      // but should NOT be treated as framework files (only FRAMEWORK_ROOT/src/ is rewritten)
-      // Use imported FRAMEWORK_ROOT from constants.ts to match actual function behavior
       const localProjectPath = join(FRAMEWORK_ROOT, "projects/codersociety/components/Header.tsx");
       const code = `import { Logo } from "../elements/Logo.js";\nexport const foo = 1;`;
       const result = rewriteDntImports(code, localProjectPath);
@@ -448,8 +432,6 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     });
 
     it("rewrites framework src files under FRAMEWORK_ROOT", () => {
-      // Framework source files under FRAMEWORK_ROOT/src/ SHOULD be rewritten
-      // Use imported FRAMEWORK_ROOT from constants.ts to match actual function behavior
       const frameworkSrcPath = join(FRAMEWORK_ROOT, "src/react/components/Head.tsx");
       const code = `import "../../../_dnt.polyfills.js";\nexport const foo = 1;`;
       const result = rewriteDntImports(code, frameworkSrcPath);
@@ -458,18 +440,15 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     });
   });
 
-  // ── render sessions ──
   describe("render sessions", () => {
     it("startRenderSession and endRenderSession lifecycle", () => {
       const sessionId = `test-session-${Date.now()}`;
       startRenderSession(sessionId, "test-project", "/");
-      // Should not throw
       endRenderSession(sessionId);
     });
 
     it("endRenderSession with unknown session does not throw", () => {
       endRenderSession("nonexistent-session-id");
-      // Should not throw
     });
 
     it("can start multiple sessions", () => {

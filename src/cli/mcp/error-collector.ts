@@ -58,7 +58,7 @@ export class ErrorCollector {
     };
 
     if (this.errors.size >= this.maxErrors) {
-      const oldestId = this.errors.keys().next().value as string | undefined;
+      const oldestId = this.errors.keys().next().value;
       if (oldestId) this.errors.delete(oldestId);
     }
 
@@ -117,29 +117,29 @@ export class ErrorCollector {
   }
 
   getAll(filter?: ErrorFilter): DevError[] {
-    let errors = Array.from(this.errors.values());
+    const errors = Array.from(this.errors.values());
     if (!filter) return errors;
 
     const { type, file, since } = filter;
 
-    if (type) {
-      const types = Array.isArray(type) ? type : [type];
-      errors = errors.filter((e) => types.includes(e.type));
-    }
-
-    if (file) {
-      if (typeof file === "string") {
-        errors = errors.filter((e) => e.file === file);
-      } else {
-        errors = errors.filter((e) => (e.file ? file.test(e.file) : false));
+    return errors.filter((e) => {
+      if (type) {
+        const types = Array.isArray(type) ? type : [type];
+        if (!types.includes(e.type)) return false;
       }
-    }
 
-    if (since) {
-      errors = errors.filter((e) => e.timestamp >= since);
-    }
+      if (file) {
+        if (typeof file === "string") {
+          if (e.file !== file) return false;
+        } else if (!e.file || !file.test(e.file)) {
+          return false;
+        }
+      }
 
-    return errors;
+      if (since && e.timestamp < since) return false;
+
+      return true;
+    });
   }
 
   get(id: string): DevError | undefined {
@@ -216,28 +216,26 @@ export function parseCompileError(output: string): Partial<DevError> | null {
   const tsMatch = output.match(
     /^(.+?)\((\d+),(\d+)\):\s*error\s+\w+:\s*(.+)$/m,
   );
-  if (tsMatch) {
-    const [, file, line = "0", column = "0", message] = tsMatch;
+  if (tsMatch && tsMatch[1] && tsMatch[2] && tsMatch[3] && tsMatch[4]) {
     return {
       type: "compile",
-      file,
-      line: parseInt(line, 10),
-      column: parseInt(column, 10),
-      message,
+      file: tsMatch[1],
+      line: parseInt(tsMatch[2], 10),
+      column: parseInt(tsMatch[3], 10),
+      message: tsMatch[4],
     };
   }
 
   const esbuildMatch = output.match(
     /^ERROR:\s*\[([^\]]+):(\d+):(\d+)\]\s*(.+)$/m,
   );
-  if (esbuildMatch) {
-    const [, file, line = "0", column = "0", message] = esbuildMatch;
+  if (esbuildMatch && esbuildMatch[1] && esbuildMatch[2] && esbuildMatch[3] && esbuildMatch[4]) {
     return {
       type: "bundle",
-      file,
-      line: parseInt(line, 10),
-      column: parseInt(column, 10),
-      message,
+      file: esbuildMatch[1],
+      line: parseInt(esbuildMatch[2], 10),
+      column: parseInt(esbuildMatch[3], 10),
+      message: esbuildMatch[4],
     };
   }
 

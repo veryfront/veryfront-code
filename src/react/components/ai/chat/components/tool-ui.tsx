@@ -40,7 +40,6 @@ const TOOL_STATUS_CONFIG: Record<string, { label: string; icon: React.ReactNode 
   error: { label: "Error", icon: <XCircleIcon className="size-3.5 text-red-600" /> },
 };
 
-/** Tool call status badge component (AI Elements style) */
 export function ToolStatusBadge({ state }: { state: string }): React.JSX.Element {
   const config = TOOL_STATUS_CONFIG[state];
 
@@ -96,9 +95,6 @@ function formatJsonWithHighlight(obj: unknown): React.ReactNode {
   );
 }
 
-/**
- * Render output as table if it's an array of objects
- */
 function renderOutputAsTable(output: unknown): React.ReactNode | null {
   if (!Array.isArray(output) || output.length === 0) return null;
 
@@ -124,15 +120,19 @@ function renderOutputAsTable(output: unknown): React.ReactNode | null {
           </tr>
         </thead>
         <tbody>
-          {output.map((row, i) => (
-            <tr key={i} className="border-b border-neutral-100 dark:border-neutral-800">
-              {keys.map((key) => (
-                <td key={key} className="px-4 py-2 text-neutral-700 dark:text-neutral-300">
-                  {String((row as Record<string, unknown>)?.[key] ?? "")}
-                </td>
-              ))}
-            </tr>
-          ))}
+          {output.map((row, i) => {
+            const record = row as Record<string, unknown> | null;
+
+            return (
+              <tr key={i} className="border-b border-neutral-100 dark:border-neutral-800">
+                {keys.map((key) => (
+                  <td key={key} className="px-4 py-2 text-neutral-700 dark:text-neutral-300">
+                    {String(record?.[key] ?? "")}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -150,7 +150,7 @@ export function ToolCallCard({
 }): React.JSX.Element {
   const [isExpanded, setIsExpanded] = React.useState(true);
 
-  const tableOutput = tool.output !== undefined ? renderOutputAsTable(tool.output) : null;
+  const tableOutput = tool.output === undefined ? null : renderOutputAsTable(tool.output);
 
   return (
     <div className="not-prose w-full rounded-md border border-border bg-card">
@@ -172,9 +172,9 @@ export function ToolCallCard({
         />
       </button>
 
-      {isExpanded && (
+      {!isExpanded ? null : (
         <div className="border-t border-border">
-          {tool.input !== undefined && (
+          {tool.input === undefined ? null : (
             <div className="space-y-2 overflow-hidden p-4">
               <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
                 Parameters
@@ -185,7 +185,7 @@ export function ToolCallCard({
             </div>
           )}
 
-          {tool.output !== undefined && (
+          {tool.output === undefined ? null : (
             <div className="space-y-2 p-4 border-t border-border">
               <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
                 Result
@@ -196,7 +196,7 @@ export function ToolCallCard({
             </div>
           )}
 
-          {tool.errorText && (
+          {!tool.errorText ? null : (
             <div className="space-y-2 p-4 border-t border-border">
               <h4 className="font-medium text-destructive text-xs uppercase tracking-wide">
                 Error

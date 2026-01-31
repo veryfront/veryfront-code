@@ -11,7 +11,7 @@ export function renderMDXToReactAsync(
 ): Promise<React.ReactElement> {
   return withSpan(
     "mdx.renderToReact",
-    async () => {
+    async (): Promise<React.ReactElement> => {
       try {
         const cacheKey = await hashCode(compiledCode);
         const module = await loadCompiledMDXModule(compiledCode, cacheKey);
@@ -26,7 +26,7 @@ export function renderMDXToReactAsync(
         }
 
         const mergedProps: Record<string, unknown> = {
-          ...(options as Record<string, unknown>),
+          ...options,
           frontmatter: {
             ...(module.frontmatter ?? {}),
             ...(options.frontmatter ?? {}),
@@ -46,7 +46,6 @@ export function renderMDXToReactAsync(
   );
 }
 
-// Hex lookup table for efficient byte-to-hex conversion
 const HEX_CHARS = "0123456789abcdef";
 
 async function hashCode(code: string): Promise<string> {
@@ -54,7 +53,6 @@ async function hashCode(code: string): Promise<string> {
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const bytes = new Uint8Array(hashBuffer);
 
-  // Single-pass hex encoding without intermediate array allocations
   let hex = "";
   for (let i = 0; i < 8; i++) {
     const byte = bytes[i]!;

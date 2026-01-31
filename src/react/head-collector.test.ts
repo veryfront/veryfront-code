@@ -5,37 +5,35 @@ import { collectHead, hasCollectedHead, runWithHeadCollector } from "./head-coll
 describe("head-collector", () => {
   describe("collectHead", () => {
     it("collects title", async () => {
-      const { head } = await runWithHeadCollector(() => {
-        collectHead({ title: "My Page" });
-      });
+      const { head } = await runWithHeadCollector(() => collectHead({ title: "My Page" }));
       assertEquals(head.title, "My Page");
     });
 
     it("collects description from direct field", async () => {
-      const { head } = await runWithHeadCollector(() => {
-        collectHead({ description: "Page description" });
-      });
+      const { head } = await runWithHeadCollector(() =>
+        collectHead({ description: "Page description" })
+      );
       assertEquals(head.description, "Page description");
     });
 
     it("collects description from meta tag", async () => {
-      const { head } = await runWithHeadCollector(() => {
+      const { head } = await runWithHeadCollector(() =>
         collectHead({
           metas: [{ name: "description", content: "Meta description" }],
-        });
-      });
+        })
+      );
       assertEquals(head.description, "Meta description");
     });
 
     it("collects meta tags", async () => {
-      const { head } = await runWithHeadCollector(() => {
+      const { head } = await runWithHeadCollector(() =>
         collectHead({
           metas: [
             { name: "author", content: "John Doe" },
             { property: "og:title", content: "OG Title" },
           ],
-        });
-      });
+        })
+      );
 
       assertEquals(head.metas.length, 2);
       assertEquals(head.metas[0], { name: "author", content: "John Doe" });
@@ -43,23 +41,23 @@ describe("head-collector", () => {
     });
 
     it("collects link tags", async () => {
-      const { head } = await runWithHeadCollector(() => {
+      const { head } = await runWithHeadCollector(() =>
         collectHead({
           links: [
             { rel: "stylesheet", href: "/style.css" },
             { rel: "icon", href: "/favicon.ico" },
           ],
-        });
-      });
+        })
+      );
 
       assertEquals(head.links.length, 2);
       assertEquals(head.links[0], { rel: "stylesheet", href: "/style.css" });
     });
 
     it("collects style tags", async () => {
-      const { head } = await runWithHeadCollector(() => {
-        collectHead({ styles: [".foo { color: red; }"] });
-      });
+      const { head } = await runWithHeadCollector(() =>
+        collectHead({ styles: [".foo { color: red; }"] })
+      );
 
       assertEquals(head.styles.length, 1);
       assertEquals(head.styles[0], ".foo { color: red; }");
@@ -83,6 +81,7 @@ describe("head-collector", () => {
         collectHead({ title: "First" });
         collectHead({ title: "Second" });
       });
+
       assertEquals(head.title, "Second");
     });
   });
@@ -168,9 +167,7 @@ describe("head-collector", () => {
 
   describe("collectHead outside context", () => {
     it("silently ignores calls outside context", () => {
-      // Should not throw
       collectHead({ title: "Orphan" });
-      // No way to verify it was ignored, but no crash is success
     });
   });
 });

@@ -1,8 +1,3 @@
-/**
- * Unit tests for studio command
- * @module cli/commands/studio.test
- */
-
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildStudioUrl } from "./studio.ts";
@@ -32,6 +27,7 @@ describe("buildStudioUrl", () => {
       branch: "main",
       file: "/pages/index.mdx",
     });
+
     assertStringIncludes(url, "branch=main");
     assertStringIncludes(url, "path=%2Fpages%2Findex.mdx");
   });
@@ -44,9 +40,6 @@ describe("buildStudioUrl", () => {
   });
 
   it("handles empty options", () => {
-    assertEquals(
-      buildStudioUrl("test", {}),
-      "https://veryfront.com/projects/test",
-    );
+    assertEquals(buildStudioUrl("test", {}), "https://veryfront.com/projects/test");
   });
 });

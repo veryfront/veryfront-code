@@ -64,7 +64,28 @@ export async function instrumentBatch<T>(
   });
 
   try {
-    await processBatches(items, batchSize, totalBatches, processor, operationName);
+    for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+      const start = batchIndex * batchSize;
+      const end = Math.min(start + batchSize, items.length);
+      const batch = items.slice(start, end);
+
+      const batchItemSpan = startSpan(`${operationName}.batch`, {
+        kind: "internal",
+        attributes: {
+          "batch.index": batchIndex,
+          "batch.items": batch.length,
+        },
+      });
+
+      try {
+        await Promise.all(batch.map((item, index) => processor(item, start + index)));
+        endSpan(batchItemSpan);
+      } catch (error) {
+        endSpan(batchItemSpan, error as Error);
+        throw error;
+      }
+    }
+
     endSpan(batchSpan);
   } catch (error) {
     endSpan(batchSpan, error as Error);
@@ -82,46 +103,5 @@ function createSpan(spanName: string, args: unknown[], options?: InstrumentOptio
 }
 
 function recordDuration(span: Span | null, startTime: number): void {
-  const duration = performance.now() - startTime;
-  setSpanAttributes(span, { duration_ms: Math.floor(duration) });
-}
-
-async function processBatches<T>(
-  items: T[],
-  batchSize: number,
-  totalBatches: number,
-  processor: (item: T, index: number) => Promise<void>,
-  operationName: string,
-): Promise<void> {
-  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-    await processSingleBatch(items, batchSize, batchIndex, processor, operationName);
-  }
-}
-
-async function processSingleBatch<T>(
-  items: T[],
-  batchSize: number,
-  batchIndex: number,
-  processor: (item: T, index: number) => Promise<void>,
-  operationName: string,
-): Promise<void> {
-  const start = batchIndex * batchSize;
-  const end = Math.min(start + batchSize, items.length);
-  const batch = items.slice(start, end);
-
-  const batchItemSpan = startSpan(`${operationName}.batch`, {
-    kind: "internal",
-    attributes: {
-      "batch.index": batchIndex,
-      "batch.items": batch.length,
-    },
-  });
-
-  try {
-    await Promise.all(batch.map((item, index) => processor(item, start + index)));
-    endSpan(batchItemSpan);
-  } catch (error) {
-    endSpan(batchItemSpan, error as Error);
-    throw error;
-  }
+  setSpanAttributes(span, { duration_ms: Math.floor(performance.now() - startTime) });
 }

@@ -5,19 +5,9 @@ export interface IconProps {
   className?: string;
 }
 
-type SvgProps = {
-  className?: string;
-  viewBox: string;
-  fill: string;
-  stroke: string;
-  strokeWidth: string;
-  strokeLinecap: "round";
-  strokeLinejoin: "round";
-};
+type SvgProps = React.PropsWithChildren<{ className?: string }>;
 
-function Svg(
-  { className, children }: React.PropsWithChildren<Pick<SvgProps, "className">>,
-): React.ReactElement {
+function Svg({ className, children }: SvgProps): React.ReactElement {
   return React.createElement(
     "svg",
     {

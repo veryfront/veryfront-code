@@ -11,7 +11,15 @@ import {
 describe("AI_TOOLS registry", () => {
   it("should have all required tools", () => {
     const ids = AI_TOOLS.map((t) => t.id);
-    const expected = ["cursor", "claude-code", "skill", "copilot", "windsurf", "agents"] as const;
+    const expected = [
+      "cursor",
+      "claude-code",
+      "skill",
+      "copilot",
+      "windsurf",
+      "agents",
+    ] as const;
+
     for (const id of expected) {
       assertEquals(ids.includes(id), true);
     }
@@ -24,6 +32,7 @@ describe("AI_TOOLS registry", () => {
       assertEquals(typeof tool.file, "string");
       assertEquals(typeof tool.description, "string");
       assertEquals(typeof tool.template, "string");
+
       assertEquals(tool.id.length > 0, true);
       assertEquals(tool.label.length > 0, true);
       assertEquals(tool.file.length > 0, true);
@@ -40,6 +49,7 @@ describe("getAllToolIds", () => {
   it("should return all tool IDs", () => {
     const ids = getAllToolIds();
     assertEquals(ids.length, AI_TOOLS.length);
+
     const expected = ["cursor", "claude-code"] as const;
     for (const id of expected) {
       assertEquals(ids.includes(id), true);
@@ -73,14 +83,23 @@ describe("getToolById", () => {
 
 describe("isValidToolId", () => {
   it("should return true for valid IDs", () => {
-    const valid = ["cursor", "claude-code", "skill", "copilot", "windsurf", "agents"] as const;
+    const valid = [
+      "cursor",
+      "claude-code",
+      "skill",
+      "copilot",
+      "windsurf",
+      "agents",
+    ] as const;
+
     for (const id of valid) {
       assertEquals(isValidToolId(id), true);
     }
   });
 
   it("should return false for invalid IDs", () => {
-    for (const id of ["invalid", "", "CURSOR", "Cursor"]) {
+    const invalid = ["invalid", "", "CURSOR", "Cursor"] as const;
+    for (const id of invalid) {
       assertEquals(isValidToolId(id), false);
     }
   });

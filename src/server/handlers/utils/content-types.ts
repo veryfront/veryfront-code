@@ -93,6 +93,7 @@ export function isCompressible(contentType: string): boolean {
   if (contentType.startsWith("text/")) return true;
   if (COMPRESSIBLE_PATTERNS.some((p) => contentType.includes(p))) return true;
   if (COMPRESSED_PATTERNS.some((p) => contentType.includes(p))) return false;
+  // Unknown types are not compressible by default
   return false;
 }
 
@@ -101,7 +102,6 @@ export function isCacheable(contentType: string): boolean {
   if (contentType.startsWith("font/")) return true;
   if (contentType.includes("javascript")) return true;
   if (contentType.includes("css")) return true;
-  if (contentType.includes("html")) return false;
-  if (contentType.includes("json")) return false;
+  // HTML and JSON are not cacheable, and unknown types default to false
   return false;
 }

@@ -10,17 +10,19 @@ export async function computeDepsHash(
   try {
     const hashPromises: Promise<string>[] = [];
 
+    const layoutCode = layoutBundle?.compiledCode ?? "";
     if (layoutBundle) {
-      hashPromises.push(computeHash(String(layoutBundle.compiledCode ?? "")));
+      hashPromises.push(computeHash(String(layoutCode)));
     }
 
     for (const item of nestedLayouts) {
       if (!item) continue;
 
-      if (item.componentPath) {
+      const componentPath = item.componentPath;
+      if (componentPath) {
         hashPromises.push(
           adapter.fs
-            .readFile(item.componentPath)
+            .readFile(componentPath)
             .then((src) => computeHash(src))
             .catch((e) => {
               logger.debug("[layout] reading tsx layout for dep hash failed", e as Error);

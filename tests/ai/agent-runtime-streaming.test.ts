@@ -19,28 +19,27 @@ type Provider = {
 };
 
 function assert(condition: unknown, message?: string): void {
-  if (!condition) {
-    throw new Error(message || "Assertion failed");
-  }
+  if (!condition) throw new Error(message || "Assertion failed");
 }
 
 function assertEquals<T>(actual: T, expected: T, message?: string): void {
   const pass = typeof actual === "object" && typeof expected === "object"
     ? JSON.stringify(actual) === JSON.stringify(expected)
     : actual === expected;
-  if (!pass) {
-    throw new Error(
-      message || `Assertion failed: ${JSON.stringify(actual)} !== ${JSON.stringify(expected)}`,
-    );
-  }
+
+  if (pass) return;
+
+  throw new Error(
+    message || `Assertion failed: ${JSON.stringify(actual)} !== ${JSON.stringify(expected)}`,
+  );
 }
 
 function createStreamFromChunks(chunks: string[]): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+
   return new ReadableStream({
     start(controller) {
-      for (const chunk of chunks) {
-        controller.enqueue(new TextEncoder().encode(chunk));
-      }
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
       controller.close();
     },
   });
@@ -55,79 +54,79 @@ function createMockProvider(events: Array<Record<string, unknown>>): Provider {
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     }),
     stream: async () => {
-      const payload = events.map((e) => JSON.stringify(e)).join("\n") + "\n";
+      const payload = `${events.map((e) => JSON.stringify(e)).join("\n")}\n`;
       const mid = Math.floor(payload.length / 2);
-      // Intentionally split JSON in the middle to simulate chunk boundaries
       return createStreamFromChunks([payload.slice(0, mid), payload.slice(mid)]);
     },
-  } as unknown as Provider;
+  };
+}
+
+function restoreEnv(key: string, originalValue: string | undefined): void {
+  if (originalValue === undefined) {
+    deleteEnv(key);
+    return;
+  }
+  setEnv(key, originalValue);
 }
 
 describe("AgentRuntime streaming JSON buffering", () => {
   it("should parse content and tool events even when JSON is split across chunks", async () => {
-    // Save original env values to restore later
     const originalLogLevel = getEnv("LOG_LEVEL");
     const originalNodeEnv = getEnv("NODE_ENV");
 
-    // Set env to suppress logging during test
     setEnv("LOG_LEVEL", "silent");
     setEnv("NODE_ENV", "test");
 
-    const { AgentRuntime } = await import("../../src/agent/runtime/index.ts");
+    try {
+      const { AgentRuntime } = await import("../../src/agent/runtime/index.ts");
 
-    const baseConfig: AgentConfig = {
-      id: "test-agent",
-      model: "mock/model",
-      system: "You are a tester",
-      memory: { type: "conversation", maxTokens: 4000 },
-    };
-    const provider = createMockProvider([
-      { type: "content", content: "Hello" },
-      { type: "tool_call_start", toolCall: { id: "1", name: "testTool" } },
-      { type: "tool_call_delta", id: "1", arguments: '{"x":1}' },
-      { type: "tool_call_complete", toolCall: { id: "1", name: "testTool", arguments: '{"x":1}' } },
-      { type: "finish", finishReason: "stop" },
-    ]);
+      const baseConfig: AgentConfig = {
+        id: "test-agent",
+        model: "mock/model",
+        system: "You are a tester",
+        memory: { type: "conversation", maxTokens: 4000 },
+      };
 
-    const runtime = new AgentRuntime("test", baseConfig);
-    const messages: Message[] = [{ id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] }];
-    const controller = {
-      enqueue: (_chunk: Uint8Array) => {},
-      close: () => {},
-    } as unknown as ReadableStreamDefaultController;
+      const provider = createMockProvider([
+        { type: "content", content: "Hello" },
+        { type: "tool_call_start", toolCall: { id: "1", name: "testTool" } },
+        { type: "tool_call_delta", id: "1", arguments: '{"x":1}' },
+        { type: "tool_call_complete", toolCall: { id: "1", name: "testTool", arguments: '{"x":1}' } },
+        { type: "finish", finishReason: "stop" },
+      ]);
 
-    // @ts-ignore access private for test
-    const response = await runtime["executeAgentLoopStreaming"](
-      provider as any,
-      "mock/model",
-      "sys",
-      messages,
-      controller,
-      new TextEncoder(),
-    );
+      const runtime = new AgentRuntime("test", baseConfig);
+      const messages: Message[] = [{ id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] }];
+      const controller = {
+        enqueue: (_chunk: Uint8Array) => {},
+        close: () => {},
+      } as unknown as ReadableStreamDefaultController;
 
-    assert(response.text.includes("Hello"), "should include streamed content");
-    // No tool execution because finishReason=stop, but assistant message should carry parsed tool-call parts
-    // AI SDK v5 uses tool-${toolName} pattern (e.g., "tool-testTool")
-    const assistant = response.messages.find((m: Message) => m.role === "assistant");
-    const toolCallParts = assistant?.parts.filter(
-      (p: MessagePart): p is ToolCallPart => p.type.startsWith("tool-") && p.type !== "tool-result",
-    );
-    assert(toolCallParts && toolCallParts.length === 1, "assistant tool-call parts captured");
-    const tc = toolCallParts![0]!;
-    assertEquals(tc.toolName, "testTool");
-    assertEquals(getToolArguments(tc), { x: 1 });
+      // @ts-ignore access private for test
+      const response = await runtime["executeAgentLoopStreaming"](
+        provider as any,
+        "mock/model",
+        "sys",
+        messages,
+        controller,
+        new TextEncoder(),
+      );
 
-    // Restore original env values
-    if (originalLogLevel === undefined) {
-      deleteEnv("LOG_LEVEL");
-    } else {
-      setEnv("LOG_LEVEL", originalLogLevel);
-    }
-    if (originalNodeEnv === undefined) {
-      deleteEnv("NODE_ENV");
-    } else {
-      setEnv("NODE_ENV", originalNodeEnv);
+      assert(response.text.includes("Hello"), "should include streamed content");
+
+      const assistant = response.messages.find((m: Message) => m.role === "assistant");
+      const toolCallParts = assistant?.parts.filter(
+        (p: MessagePart): p is ToolCallPart => p.type.startsWith("tool-") && p.type !== "tool-result",
+      );
+
+      assert(toolCallParts?.length === 1, "assistant tool-call parts captured");
+
+      const tc = toolCallParts[0];
+      assertEquals(tc.toolName, "testTool");
+      assertEquals(getToolArguments(tc), { x: 1 });
+    } finally {
+      restoreEnv("LOG_LEVEL", originalLogLevel);
+      restoreEnv("NODE_ENV", originalNodeEnv);
     }
   });
 });

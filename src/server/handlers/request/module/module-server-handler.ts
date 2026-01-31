@@ -37,11 +37,7 @@ export function handleModuleServer(
 
         return respond(response);
       } catch (error) {
-        logDebug(
-          "module server error",
-          { error: getErrorMessage(error) },
-          ctx,
-        );
+        logDebug("module server error", { error: getErrorMessage(error) }, ctx);
 
         return respond(
           ResponseBuilder.error(500, "Module Server Error", req, {
@@ -51,6 +47,9 @@ export function handleModuleServer(
         );
       }
     },
-    { "module.path": url.pathname, "module.projectSlug": ctx.projectSlug || "unknown" },
+    {
+      "module.path": url.pathname,
+      "module.projectSlug": ctx.projectSlug || "unknown",
+    },
   );
 }

@@ -8,10 +8,10 @@ export type CompileMDXFunction = (
 ) => Promise<MdxBundle>;
 
 export class CompilerService {
-  private _compileMDX: CompileMDXFunction | null = null;
+  private compileFn: CompileMDXFunction | null = null;
 
   setCompileMDX(fn: CompileMDXFunction): void {
-    this._compileMDX = fn;
+    this.compileFn = fn;
   }
 
   compileMDX(
@@ -19,8 +19,7 @@ export class CompilerService {
     frontmatter?: Record<string, unknown>,
     filePath?: string,
   ): Promise<MdxBundle> {
-    const compile = this._compileMDX;
-    if (!compile) {
+    if (!this.compileFn) {
       throw toError(
         createError({
           type: "render",
@@ -29,7 +28,7 @@ export class CompilerService {
       );
     }
 
-    return compile(content, frontmatter, filePath);
+    return this.compileFn(content, frontmatter, filePath);
   }
 
   getCompileFunction(): CompileMDXFunction {

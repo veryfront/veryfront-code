@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { delay } from "#std/async.ts";
-import { MDXCacheAdapter } from "./mdx-cache-adapter.ts";
+import { MDXCacheAdapter, type MDXCompilationResult } from "./mdx-cache-adapter.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import type { MDXCompilationResult } from "./mdx-cache-adapter.ts";
 import {
   type BundleManifestStore,
   InMemoryBundleManifestStore,
@@ -24,7 +23,9 @@ describe("MDXCacheAdapter", () => {
     },
   };
 
-  function createBundle(overrides: Partial<MDXCompilationResult> = {}): MDXCompilationResult {
+  function createBundle(
+    overrides: Partial<MDXCompilationResult> = {},
+  ): MDXCompilationResult {
     return {
       compiledCode: "export default function() {}",
       frontmatter: {},
@@ -103,7 +104,10 @@ describe("MDXCacheAdapter", () => {
     });
 
     it("should preserve frontmatter on cache hit", async () => {
-      const frontmatter = { title: "Custom Title", description: "Custom Description" };
+      const frontmatter = {
+        title: "Custom Title",
+        description: "Custom Description",
+      };
 
       await adapter.setCachedBundle(testContent, testBundle, "test.mdx");
       const cached = await adapter.getCachedBundle(testContent, frontmatter);
@@ -112,7 +116,9 @@ describe("MDXCacheAdapter", () => {
     });
 
     it("should handle cache miss with frontmatter", async () => {
-      const result = await adapter.getCachedBundle(testContent, { title: "Custom Title" });
+      const result = await adapter.getCachedBundle(testContent, {
+        title: "Custom Title",
+      });
       expect(result).toBeUndefined();
     });
 
@@ -194,13 +200,11 @@ describe("MDXCacheAdapter", () => {
     it("should invalidate specific bundle by content", async () => {
       await adapter.setCachedBundle(testContent, testBundle, "test.mdx");
 
-      let cached = await adapter.getCachedBundle(testContent);
-      expect(cached).toBeDefined();
+      expect(await adapter.getCachedBundle(testContent)).toBeDefined();
 
       await adapter.invalidateBundle(testContent);
 
-      cached = await adapter.getCachedBundle(testContent);
-      expect(cached).toBeUndefined();
+      expect(await adapter.getCachedBundle(testContent)).toBeUndefined();
     });
 
     it("should invalidate all bundles for a source file", async () => {
@@ -220,13 +224,11 @@ describe("MDXCacheAdapter", () => {
       await adapter.setCachedBundle("# Page 2", testBundle, "page2.mdx");
       await adapter.setCachedBundle("# Page 3", testBundle, "page3.mdx");
 
-      const statsBefore = await adapter.getStats();
-      expect(statsBefore.totalBundles).toBeGreaterThan(0);
+      expect((await adapter.getStats()).totalBundles).toBeGreaterThan(0);
 
       await adapter.clearAll();
 
-      const statsAfter = await adapter.getStats();
-      expect(statsAfter.totalBundles).toBe(0);
+      expect((await adapter.getStats()).totalBundles).toBe(0);
     });
   });
 
@@ -320,9 +322,7 @@ describe("MDXCacheAdapter", () => {
       await devAdapter.computeHash(content);
 
       await devAdapter.setCachedBundle(content, createBundle(), "dev.mdx");
-      const cached = await devAdapter.getCachedBundle(content);
-
-      expect(cached).toBeDefined();
+      expect(await devAdapter.getCachedBundle(content)).toBeDefined();
     });
 
     it("should use production mode cache key", async () => {
@@ -334,8 +334,7 @@ describe("MDXCacheAdapter", () => {
       const content = "# Prod Test";
       await prodAdapter.setCachedBundle(content, createBundle(), "prod.mdx");
 
-      const cached = await prodAdapter.getCachedBundle(content);
-      expect(cached).toBeDefined();
+      expect(await prodAdapter.getCachedBundle(content)).toBeDefined();
     });
 
     it("should not share cache between modes", async () => {
@@ -352,11 +351,8 @@ describe("MDXCacheAdapter", () => {
       const content = "# Shared Content";
       await devAdapter.setCachedBundle(content, createBundle(), "test.mdx");
 
-      const prodCached = await prodAdapter.getCachedBundle(content);
-      expect(prodCached).toBeUndefined();
-
-      const devCached = await devAdapter.getCachedBundle(content);
-      expect(devCached).toBeDefined();
+      expect(await prodAdapter.getCachedBundle(content)).toBeUndefined();
+      expect(await devAdapter.getCachedBundle(content)).toBeDefined();
     });
   });
 

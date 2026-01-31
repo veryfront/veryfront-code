@@ -1,20 +1,13 @@
-/**
+/**************************************************
  * Canonical Path Resolution
  * @module security/path-validation/canonical
- */
+ **************************************************/
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 import { isWithinDirectory, normalizeSeparators, resolvePathSegments } from "./normalization.ts";
 import { PathValidationError, type ValidationResult } from "./types.ts";
 
-/**
- * Get canonical path by resolving symlinks
- * Falls back to path resolution if adapter not available
- *
- * Note: This function is intentionally not traced - it's a fast synchronous
- * path operation (< 1ms) and tracing adds noise without value.
- */
 export async function getCanonicalPath(
   path: string,
   adapter?: RuntimeAdapter,
@@ -34,9 +27,6 @@ export async function getCanonicalPath(
   }
 }
 
-/**
- * Validate path against allowed directories
- */
 export function validateAllowedDirs(
   canonicalPath: string,
   baseDir: string,
@@ -53,11 +43,7 @@ export function validateAllowedDirs(
     };
   }
 
-  if (!allowedDirs?.length) {
-    return { valid: true, canonicalPath };
-  }
-
-  if (normalizedPath === normalizedBase) {
+  if (!allowedDirs?.length || normalizedPath === normalizedBase) {
     return { valid: true, canonicalPath };
   }
 

@@ -6,6 +6,5 @@ export type {
   PageWithData,
   StaticPathsResult,
 } from "./types.ts";
-
 export { DataFetcher } from "./data-fetcher.ts";
 export { notFound, redirect } from "./helpers.ts";

@@ -5,19 +5,14 @@ import { formatUserError } from "#veryfront/errors/user-friendly/index.ts";
 import { exitProcess } from "../utils/index.ts";
 
 export async function handleStudioCommand(args: ParsedArgs): Promise<void> {
-  const project = args._[1];
-  const branch = args.branch;
-  const file = args.file;
+  const project = typeof args._[1] === "string" ? args._[1] : undefined;
+  const branch = typeof args.branch === "string" ? args.branch : undefined;
+  const file = typeof args.file === "string" ? args.file : undefined;
 
   try {
-    await studioCommand({
-      project: typeof project === "string" ? project : undefined,
-      branch: typeof branch === "string" ? branch : undefined,
-      file: typeof file === "string" ? file : undefined,
-    });
+    await studioCommand({ project, branch, file });
   } catch (error) {
-    const formattedError = error instanceof Error ? formatUserError(error) : String(error);
-    cliLogger.error(formattedError);
+    cliLogger.error(error instanceof Error ? formatUserError(error) : String(error));
     exitProcess(1);
   }
 }

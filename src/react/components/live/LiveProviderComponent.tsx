@@ -15,6 +15,8 @@ export function LiveProviderComponent({
   children,
   providers = [],
 }: LiveProviderComponentProps): React.ReactElement {
+  if (providers.length === 0) return <>{children}</>;
+
   let content = children;
 
   for (let i = providers.length - 1; i >= 0; i--) {

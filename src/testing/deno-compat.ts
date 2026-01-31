@@ -96,12 +96,11 @@ export async function waitFor(
   const timeout = scaleMs(options?.timeout ?? 5000, 10);
   const interval = scaleMs(options?.interval ?? 100, 5);
   const message = options?.message ?? "Condition not met within timeout";
-
   const start = Date.now();
 
   while (Date.now() - start < timeout) {
     if (await condition()) return;
-    await new Promise((resolve) => setTimeout(resolve, interval));
+    await new Promise<void>((resolve) => setTimeout(resolve, interval));
   }
 
   throw new Error(`${message} (timeout: ${timeout}ms)`);

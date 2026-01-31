@@ -1,8 +1,5 @@
 import { serverLogger as logger } from "#veryfront/utils";
 
-/**
- * Filters props for client components, removing children and non-serializable values.
- */
 export function serializeProps(props: Record<string, unknown>): Record<string, unknown> {
   const serializable: Record<string, unknown> = {};
 
@@ -20,9 +17,6 @@ export function serializeProps(props: Record<string, unknown>): Record<string, u
   return serializable;
 }
 
-/**
- * Stringify props with safe handling of circular references.
- */
 export function stringifyProps(props: Record<string, unknown>): string {
   const seen = new WeakSet<object>();
 
@@ -35,17 +29,23 @@ export function stringifyProps(props: Record<string, unknown>): string {
   });
 }
 
-/**
- * Check if a value is JSON-serializable.
- */
 function isSerializable(value: unknown, seen: WeakSet<object> = new WeakSet()): boolean {
   if (value == null) return true;
 
-  const type = typeof value;
-
-  if (type === "string" || type === "number" || type === "boolean") return true;
-  if (type === "function" || type === "symbol" || type === "bigint") return false;
-  if (type !== "object") return false;
+  switch (typeof value) {
+    case "string":
+    case "number":
+    case "boolean":
+      return true;
+    case "function":
+    case "symbol":
+    case "bigint":
+      return false;
+    case "object":
+      break;
+    default:
+      return false;
+  }
 
   const obj = value as object;
   if (seen.has(obj)) return false;

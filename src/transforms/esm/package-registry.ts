@@ -1,4 +1,4 @@
-/**
+/****
  * Central package version and URL registry.
  *
  * Re-exports from the unified import-rewriter module.
@@ -6,6 +6,7 @@
  */
 
 import { rendererLogger } from "#veryfront/utils";
+import { VERSION } from "#veryfront/utils/version.ts";
 import {
   buildReactUrl,
   CSSTYPE_VERSION,
@@ -33,6 +34,7 @@ export function isValidReactVersion(version: string): boolean {
 export function normalizeReactVersion(version: string | undefined): string {
   if (!version) return DEFAULT_REACT_VERSION;
   if (isValidReactVersion(version)) return version;
+
   rendererLogger.warn(
     `Invalid React version format "${version}" (expected X.Y.Z). Using default: ${DEFAULT_REACT_VERSION}`,
   );
@@ -46,8 +48,6 @@ export function getReactVersion(): string {
   return DEFAULT_REACT_VERSION;
 }
 
-import { VERSION } from "#veryfront/utils/version.ts";
-
 /**
  * Transform cache version - now uses the application VERSION for consistent
  * cache invalidation on deployments.
@@ -59,7 +59,12 @@ export const TRANSFORM_CACHE_VERSION = VERSION;
 /**
  * Build esm.sh URL with deps=csstype for React packages.
  */
-export function esmShReact(pkg: string, version: string, path = "", external = false): string {
+export function esmShReact(
+  pkg: string,
+  version: string,
+  path = "",
+  external = false,
+): string {
   return buildReactUrl(
     pkg as "react" | "react-dom",
     version,
@@ -71,7 +76,11 @@ export function esmShReact(pkg: string, version: string, path = "", external = f
 /**
  * Generate esm.sh URL for browser.
  */
-export function getEsmShUrl(pkg: string, version: string, external?: readonly string[]): string {
+export function getEsmShUrl(
+  pkg: string,
+  version: string,
+  external?: readonly string[],
+): string {
   const params = ["target=es2022"];
   if (external?.length) params.push(`external=${external.join(",")}`);
   return `https://esm.sh/${pkg}@${version}?${params.join("&")}`;

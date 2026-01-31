@@ -9,10 +9,6 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { MCPTool } from "../tools.ts";
 import { directoryExists, fileExists, formatError, getFs } from "./helpers.ts";
 
-// ============================================================================
-// Skill Parsing Helpers
-// ============================================================================
-
 function parseSkillFrontmatter(
   content: string,
 ): { metadata: Record<string, unknown>; body: string } {
@@ -44,14 +40,27 @@ function getSkillsDir(): string {
 }
 
 function parseToolsFromMetadata(metadata: Record<string, unknown>): string[] | undefined {
-  const metadataObj = metadata.metadata as Record<string, unknown> | undefined;
-  if (!metadataObj?.tools) return undefined;
-  return String(metadataObj.tools).split(",").map((t) => t.trim());
+  const tools = (metadata.metadata as Record<string, unknown> | undefined)?.tools;
+  if (!tools) return undefined;
+  return String(tools)
+    .split(",")
+    .map((t) => t.trim());
 }
 
-// ============================================================================
-// Tool: vf_get_skills
-// ============================================================================
+async function getSkillReferences(skillName: string): Promise<string[] | undefined> {
+  const fs = getFs();
+  const refsDir = join(getSkillsDir(), skillName, "references");
+  if (!await directoryExists(refsDir)) return undefined;
+
+  const references: string[] = [];
+  for await (const entry of fs.readDir(refsDir)) {
+    if (entry.isFile && entry.name.endsWith(".md")) {
+      references.push(`references/${entry.name}`);
+    }
+  }
+
+  return references.length ? references : undefined;
+}
 
 const getSkillsInput = z.object({
   name: z.string().optional().describe(
@@ -98,29 +107,15 @@ export const vfGetSkills: MCPTool<GetSkillsInput, GetSkillsResult> = {
             const content = await fs.readTextFile(skillPath);
             const { metadata, body } = parseSkillFrontmatter(content);
 
-            const references: string[] = [];
-            const refsDir = join(skillsDir, input.name, "references");
-            if (await directoryExists(refsDir)) {
-              for await (const entry of fs.readDir(refsDir)) {
-                if (entry.isFile && entry.name.endsWith(".md")) {
-                  references.push(
-                    `references/${entry.name}`,
-                  );
-                }
-              }
-            }
-
-            const tools = parseToolsFromMetadata(metadata);
-
             return {
               skill: {
                 name: String(metadata.name || input.name),
                 description: String(metadata.description || ""),
                 license: metadata.license ? String(metadata.license) : undefined,
                 compatibility: metadata.compatibility ? String(metadata.compatibility) : undefined,
-                tools,
+                tools: parseToolsFromMetadata(metadata),
                 content: body,
-                references: references.length ? references : undefined,
+                references: await getSkillReferences(input.name),
               },
             };
           }
@@ -137,14 +132,13 @@ export const vfGetSkills: MCPTool<GetSkillsInput, GetSkillsResult> = {
             try {
               const content = await fs.readTextFile(skillPath);
               const { metadata } = parseSkillFrontmatter(content);
-              const tools = parseToolsFromMetadata(metadata);
 
               skills.push({
                 name: String(metadata.name || entry.name),
                 description: String(metadata.description || "No description"),
                 license: metadata.license ? String(metadata.license) : undefined,
                 compatibility: metadata.compatibility ? String(metadata.compatibility) : undefined,
-                tools,
+                tools: parseToolsFromMetadata(metadata),
               });
             } catch {
               // Skip invalid skills
@@ -159,10 +153,6 @@ export const vfGetSkills: MCPTool<GetSkillsInput, GetSkillsResult> = {
       { "tool.skill_name": input.name ?? "list_all" },
     ),
 };
-
-// ============================================================================
-// Tool: vf_get_skill_reference
-// ============================================================================
 
 const getSkillReferenceInput = z.object({
   skill: z.string().describe("Skill name"),

@@ -14,14 +14,10 @@ export default tool({
   }),
   async execute({ includeDetails }) {
     const databases = await listDatabases();
-
     const count = databases.length;
 
     if (!includeDetails) {
-      return {
-        count,
-        databases: databases.map((db) => db.name),
-      };
+      return { count, databases: databases.map((db) => db.name) };
     }
 
     return {
@@ -30,7 +26,7 @@ export default tool({
         name: db.name,
         createdOn: db.created_on,
         owner: db.owner,
-        comment: db.comment || null,
+        comment: db.comment ?? null,
       })),
     };
   },

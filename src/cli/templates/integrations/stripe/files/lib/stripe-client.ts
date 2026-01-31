@@ -109,17 +109,13 @@ function addCreatedParams(
 ): void {
   if (!created) return;
 
-  if (created.gt) params["created[gt]"] = created.gt;
-  if (created.gte) params["created[gte]"] = created.gte;
-  if (created.lt) params["created[lt]"] = created.lt;
-  if (created.lte) params["created[lte]"] = created.lte;
+  if (created.gt != null) params["created[gt]"] = created.gt;
+  if (created.gte != null) params["created[gte]"] = created.gte;
+  if (created.lt != null) params["created[lt]"] = created.lt;
+  if (created.lte != null) params["created[lte]"] = created.lte;
 }
 
-function flattenToFormData(
-  formData: URLSearchParams,
-  obj: Record<string, unknown>,
-  prefix = "",
-): void {
+function flattenToFormData(formData: URLSearchParams, obj: Record<string, unknown>, prefix = ""): void {
   for (const [key, value] of Object.entries(obj)) {
     const formKey = prefix ? `${prefix}[${key}]` : key;
 
@@ -139,13 +135,11 @@ async function stripeFetch<T>(
   const apiKey = getApiKey();
   if (!apiKey) throw new Error("Not authenticated with Stripe. Please set STRIPE_SECRET_KEY.");
 
-  let url = `${STRIPE_BASE_URL}${endpoint}`;
+  const url = new URL(`${STRIPE_BASE_URL}${endpoint}`);
   if (options.params) {
-    const params = new URLSearchParams();
     for (const [key, value] of Object.entries(options.params)) {
-      params.append(key, String(value));
+      url.searchParams.append(key, String(value));
     }
-    url += `?${params.toString()}`;
   }
 
   const headers: Record<string, string> = {
@@ -155,9 +149,9 @@ async function stripeFetch<T>(
   };
 
   let body = options.body;
-  if (options.method === "POST" && typeof options.body === "string") {
+  if (options.method === "POST" && typeof body === "string") {
     try {
-      const jsonBody = JSON.parse(options.body) as Record<string, unknown>;
+      const jsonBody = JSON.parse(body) as Record<string, unknown>;
       const formData = new URLSearchParams();
       flattenToFormData(formData, jsonBody);
       body = formData.toString();
@@ -167,15 +161,17 @@ async function stripeFetch<T>(
     }
   }
 
-  const response = await fetch(url, { ...options, headers, body });
+  const response = await fetch(url.toString(), { ...options, headers, body });
   const data = await response.json();
 
-  if (!response.ok) {
-    const error = data as StripeError;
-    throw new Error(`Stripe API error: ${response.status} ${error.error?.message || response.statusText}`);
-  }
+  if (response.ok) return data as T;
 
-  return data as T;
+  const error = data as StripeError;
+  throw new Error(`Stripe API error: ${response.status} ${error.error?.message ?? response.statusText}`);
+}
+
+function buildListParams(options?: { limit?: number }): Record<string, string | number> {
+  return { limit: options?.limit ?? 10 };
 }
 
 export async function listCustomers(options?: {
@@ -183,7 +179,7 @@ export async function listCustomers(options?: {
   email?: string;
   created?: { gt?: number; gte?: number; lt?: number; lte?: number };
 }): Promise<StripeCustomer[]> {
-  const params: Record<string, string | number> = { limit: options?.limit || 10 };
+  const params = buildListParams(options);
 
   if (options?.email) params.email = options.email;
   addCreatedParams(params, options?.created);
@@ -214,10 +210,7 @@ export function updateCustomer(
     metadata?: Record<string, string>;
   },
 ): Promise<StripeCustomer> {
-  return stripeFetch<StripeCustomer>(`/customers/${customerId}`, {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
+  return stripeFetch<StripeCustomer>(`/customers/${customerId}`, { method: "POST", body: JSON.stringify(data) });
 }
 
 export async function listPaymentIntents(options?: {
@@ -225,7 +218,7 @@ export async function listPaymentIntents(options?: {
   customer?: string;
   created?: { gt?: number; gte?: number; lt?: number; lte?: number };
 }): Promise<StripePaymentIntent[]> {
-  const params: Record<string, string | number> = { limit: options?.limit || 10 };
+  const params = buildListParams(options);
 
   if (options?.customer) params.customer = options.customer;
   addCreatedParams(params, options?.created);
@@ -264,7 +257,7 @@ export async function listSubscriptions(options?: {
     | "paused";
   created?: { gt?: number; gte?: number; lt?: number; lte?: number };
 }): Promise<StripeSubscription[]> {
-  const params: Record<string, string | number> = { limit: options?.limit || 10 };
+  const params = buildListParams(options);
 
   if (options?.customer) params.customer = options.customer;
   if (options?.status) params.status = options.status;
@@ -287,7 +280,7 @@ export async function listBalanceTransactions(options?: {
   created?: { gt?: number; gte?: number; lt?: number; lte?: number };
   type?: string;
 }): Promise<StripeBalanceTransaction[]> {
-  const params: Record<string, string | number> = { limit: options?.limit || 10 };
+  const params = buildListParams(options);
 
   addCreatedParams(params, options?.created);
   if (options?.type) params.type = options.type;

@@ -1,8 +1,6 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
-// ---- Inline reimplementations of non-exported pure helpers ----
-
 type ScriptModuleOutput =
   | string
   | Response
@@ -15,14 +13,14 @@ function extractHtmlAndMetadata(output: ScriptModuleOutput): {
 } {
   if (typeof output === "string") return { htmlBody: output, outputMetadata: {} };
 
-  if (output && typeof output === "object" && "html" in output && typeof output.html === "string") {
-    return {
-      htmlBody: output.html,
-      outputMetadata: output.frontmatter || output.meta || {},
-    };
-  }
-
   if (output && typeof output === "object") {
+    if ("html" in output && typeof output.html === "string") {
+      return {
+        htmlBody: output.html,
+        outputMetadata: output.frontmatter ?? output.meta ?? {},
+      };
+    }
+
     return {
       htmlBody: `<pre>${JSON.stringify(output, null, 2)}</pre>`,
       outputMetadata: {},
@@ -47,8 +45,8 @@ function buildPageContext(
   const flatParams: Record<string, string> = params
     ? Object.fromEntries(
       Object.entries(params)
-        .map(([k, v]) => [k, Array.isArray(v) ? v[0] : v])
-        .filter((entry): entry is [string, string] => entry[1] !== undefined),
+        .map(([k, v]) => [k, Array.isArray(v) ? v[0] : v] as const)
+        .filter(([, v]): v is string => v !== undefined),
     )
     : {};
 
@@ -56,35 +54,30 @@ function buildPageContext(
     params: flatParams,
     slug,
     path: pageInfo.entity.path,
-    frontmatter: pageInfo.entity.frontmatter || {},
+    frontmatter: pageInfo.entity.frontmatter ?? {},
   };
 }
 
 function normalizeModulePath(modulePath: string, projectDir: string): string {
-  let normalized = modulePath;
-  if (!modulePath.startsWith("/") && projectDir) {
-    normalized = `${projectDir}/${modulePath}`;
-  }
-  return normalized;
+  if (modulePath.startsWith("/") || !projectDir) return modulePath;
+  return `${projectDir}/${modulePath}`;
 }
 
 function createFileUrl(path: string): string {
-  const cacheBuster = `?v=12345`;
+  const cacheBuster = "?v=12345";
   return path.startsWith("file://") ? `${path}${cacheBuster}` : `file://${path}${cacheBuster}`;
 }
 
 function rewriteNpmImports(code: string): string {
-  // Simulating Deno environment
-  const NPM_REWRITES = [
+  const rewrites: Array<{ pattern: RegExp; replacement: string }> = [
     { pattern: /from\s+["']ai["']/g, replacement: 'from "npm:ai@latest"' },
     { pattern: /from\s+["']zod["']/g, replacement: 'from "npm:zod@latest"' },
   ];
 
-  let result = code;
-  for (const { pattern, replacement } of NPM_REWRITES) {
-    result = result.replace(pattern, replacement);
-  }
-  return result;
+  return rewrites.reduce(
+    (result, { pattern, replacement }) => result.replace(pattern, replacement),
+    code,
+  );
 }
 
 function getStringMeta(meta: Record<string, unknown>, key: string): string | undefined {
@@ -93,8 +86,6 @@ function getStringMeta(meta: Record<string, unknown>, key: string): string | und
 }
 
 const APP_COMPONENT_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"];
-
-// ---- Tests ----
 
 describe("script-page-handling helpers", () => {
   describe("extractHtmlAndMetadata", () => {
@@ -143,11 +134,7 @@ describe("script-page-handling helpers", () => {
     });
 
     it("should throw for null output", () => {
-      assertThrows(
-        () => extractHtmlAndMetadata(null),
-        Error,
-        "Unsupported",
-      );
+      assertThrows(() => extractHtmlAndMetadata(null), Error, "Unsupported");
     });
   });
 
@@ -221,7 +208,6 @@ describe("script-page-handling helpers", () => {
       const url = createFileUrl("file:///tmp/module.mjs");
       assertEquals(url.startsWith("file:///tmp/module.mjs"), true);
       assertEquals(url.indexOf("file://"), 0);
-      // Should not have file://file://
       assertEquals(url.includes("file://file://"), false);
     });
   });

@@ -11,11 +11,12 @@ export async function POST(request: Request): Promise<Response> {
 
   const apiKey = (body as { apiKey?: unknown })?.apiKey;
 
-  if (typeof apiKey !== "string" || !apiKey) {
+  if (typeof apiKey !== "string" || apiKey.length === 0) {
     return Response.json({ error: "API key is required" }, { status: 400 });
   }
 
-  if (!apiKey.startsWith("sk_test_") && !apiKey.startsWith("sk_live_")) {
+  const isValidPrefix = apiKey.startsWith("sk_test_") || apiKey.startsWith("sk_live_");
+  if (!isValidPrefix) {
     return Response.json(
       {
         error:

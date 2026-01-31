@@ -59,10 +59,22 @@ export default tool({
   }> {
     const client = createDocsClient(DEFAULT_USER_ID);
 
-    if ("operation" in input) {
-      const { documentId, operation } = input;
+    if (!("operation" in input)) {
+      const { documentId, requests } = input;
+      const result = await client.updateDocument(documentId, requests as Request[]);
 
-      if (operation.type === "insertText") {
+      return {
+        documentId: result.documentId,
+        success: true,
+        replies: result.replies,
+        writeControl: result.writeControl,
+      };
+    }
+
+    const { documentId, operation } = input;
+
+    switch (operation.type) {
+      case "insertText": {
         const params = operation.insertText;
         if (!params) throw new Error("insertText parameters required");
 
@@ -70,7 +82,7 @@ export default tool({
         return { documentId: result.documentId, success: true, replies: result.replies };
       }
 
-      if (operation.type === "deleteContent") {
+      case "deleteContent": {
         const params = operation.deleteContent;
         if (!params) throw new Error("deleteContent parameters required");
 
@@ -78,7 +90,7 @@ export default tool({
         return { documentId: result.documentId, success: true, replies: result.replies };
       }
 
-      if (operation.type === "replaceAllText") {
+      case "replaceAllText": {
         const params = operation.replaceAllText;
         if (!params) throw new Error("replaceAllText parameters required");
 
@@ -91,17 +103,8 @@ export default tool({
         return { documentId: result.documentId, success: true, replies: result.replies };
       }
 
-      throw new Error(`Unknown operation type: ${operation.type}`);
+      default:
+        throw new Error(`Unknown operation type: ${operation.type}`);
     }
-
-    const { documentId, requests } = input;
-    const result = await client.updateDocument(documentId, requests as Request[]);
-
-    return {
-      documentId: result.documentId,
-      success: true,
-      replies: result.replies,
-      writeControl: result.writeControl,
-    };
   },
 });

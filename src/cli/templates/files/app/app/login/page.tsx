@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
 import { login } from "../../lib/auth-client.ts";
 
 export default function LoginPage(): React.JSX.Element {
@@ -44,11 +44,11 @@ export default function LoginPage(): React.JSX.Element {
 
         <div className="bg-white dark:bg-neutral-800 rounded-2xl border border-neutral-200 dark:border-neutral-700 p-6">
           <form onSubmit={handleSubmit} className="space-y-4">
-            {error ? (
+            {error && (
               <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm">
                 {error}
               </div>
-            ) : null}
+            )}
 
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">

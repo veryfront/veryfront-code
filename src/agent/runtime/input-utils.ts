@@ -19,10 +19,9 @@ export function normalizeInput(input: string | Message[]): Message[] {
       throw new Error("Message id cannot be empty.");
     }
 
-    const id = msg.id ?? `msg_${now}_${index}`;
     return {
       ...msg,
-      id,
+      id: msg.id ?? `msg_${now}_${index}`,
       timestamp: msg.timestamp ?? now,
     };
   });

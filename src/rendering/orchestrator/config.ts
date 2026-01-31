@@ -78,8 +78,8 @@ export class ConfigurationManager {
       return isAbsolute(contextCacheDir) ? contextCacheDir : join(this.projectDir, contextCacheDir);
     }
 
-    const baseDirFromEnv = this.adapter.env?.get?.("VERYFRONT_CACHE_DIR") ??
-      this.adapter.env?.get?.("VF_CACHE_DIR");
+    const env = this.adapter.env;
+    const baseDirFromEnv = env?.get?.("VERYFRONT_CACHE_DIR") ?? env?.get?.("VF_CACHE_DIR");
     const configDir = this.config.cache?.dir;
 
     if (

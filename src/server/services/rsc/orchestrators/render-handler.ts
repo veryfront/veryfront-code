@@ -40,9 +40,8 @@ export class RenderHandler {
       );
     }
 
-    const module: unknown = await import(componentPath);
-    const moduleObj = module as Record<string, unknown>;
-    const Component = (moduleObj.default || moduleObj.Page || module) as unknown;
+    const module = (await import(componentPath)) as Record<string, unknown>;
+    const Component = (module.default ?? module.Page ?? module) as unknown;
 
     if (typeof Component !== "function") {
       throw toError(

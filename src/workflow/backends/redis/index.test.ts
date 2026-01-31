@@ -1,4 +1,4 @@
-/**
+/****
  * Redis Workflow Backend Tests
  *
  * Tests RedisBackend using a mock RedisAdapter to validate
@@ -14,10 +14,6 @@ import { RedisBackend } from "./index.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import type { PendingApproval, WorkflowRun } from "../../types.ts";
 
-// ---------------------------------------------------------------------------
-// Mock Redis Adapter
-// ---------------------------------------------------------------------------
-
 class MockRedisAdapter implements RedisAdapter {
   store = new Map<string, string>();
   hashes = new Map<string, Map<string, string>>();
@@ -28,8 +24,12 @@ class MockRedisAdapter implements RedisAdapter {
   groups = new Map<string, Set<string>>();
 
   hset(key: string, fields: Record<string, string>): Promise<number> {
-    if (!this.hashes.has(key)) this.hashes.set(key, new Map());
-    const map = this.hashes.get(key)!;
+    let map = this.hashes.get(key);
+    if (!map) {
+      map = new Map();
+      this.hashes.set(key, map);
+    }
+
     let added = 0;
     for (const [k, v] of Object.entries(fields)) {
       if (!map.has(k)) added++;
@@ -40,24 +40,29 @@ class MockRedisAdapter implements RedisAdapter {
 
   hgetall(key: string): Promise<Record<string, string>> {
     const map = this.hashes.get(key);
-    if (!map) return Promise.resolve({});
-    return Promise.resolve(Object.fromEntries(map));
+    return Promise.resolve(map ? Object.fromEntries(map) : {});
   }
 
   hdel(key: string, ...fields: string[]): Promise<number> {
     const map = this.hashes.get(key);
     if (!map) return Promise.resolve(0);
+
     let removed = 0;
     for (const field of fields) {
       if (map.delete(field)) removed++;
     }
     if (map.size === 0) this.hashes.delete(key);
+
     return Promise.resolve(removed);
   }
 
   sadd(key: string, ...members: string[]): Promise<number> {
-    if (!this.sets.has(key)) this.sets.set(key, new Set());
-    const set = this.sets.get(key)!;
+    let set = this.sets.get(key);
+    if (!set) {
+      set = new Set();
+      this.sets.set(key, set);
+    }
+
     let added = 0;
     for (const m of members) {
       if (!set.has(m)) added++;
@@ -69,6 +74,7 @@ class MockRedisAdapter implements RedisAdapter {
   srem(key: string, ...members: string[]): Promise<number> {
     const set = this.sets.get(key);
     if (!set) return Promise.resolve(0);
+
     let removed = 0;
     for (const m of members) {
       if (set.delete(m)) removed++;
@@ -97,9 +103,8 @@ class MockRedisAdapter implements RedisAdapter {
   }
 
   exists(key: string): Promise<number> {
-    return Promise.resolve(
-      (this.store.has(key) || this.hashes.has(key) || this.lists.has(key)) ? 1 : 0,
-    );
+    const exists = this.store.has(key) || this.hashes.has(key) || this.lists.has(key);
+    return Promise.resolve(exists ? 1 : 0);
   }
 
   set(
@@ -117,8 +122,12 @@ class MockRedisAdapter implements RedisAdapter {
   }
 
   rpush(key: string, ...values: string[]): Promise<number> {
-    if (!this.lists.has(key)) this.lists.set(key, []);
-    const list = this.lists.get(key)!;
+    let list = this.lists.get(key);
+    if (!list) {
+      list = [];
+      this.lists.set(key, list);
+    }
+
     list.push(...values);
     return Promise.resolve(list.length);
   }
@@ -126,6 +135,7 @@ class MockRedisAdapter implements RedisAdapter {
   lindex(key: string, index: number): Promise<string | null> {
     const list = this.lists.get(key);
     if (!list) return Promise.resolve(null);
+
     const i = index < 0 ? list.length + index : index;
     return Promise.resolve(list[i] ?? null);
   }
@@ -133,6 +143,7 @@ class MockRedisAdapter implements RedisAdapter {
   lrange(key: string, start: number, stop: number): Promise<string[]> {
     const list = this.lists.get(key);
     if (!list) return Promise.resolve([]);
+
     const end = stop < 0 ? list.length + stop + 1 : stop + 1;
     return Promise.resolve(list.slice(start, end));
   }
@@ -144,13 +155,13 @@ class MockRedisAdapter implements RedisAdapter {
   }
 
   llen(key: string): Promise<number> {
-    const list = this.lists.get(key);
-    return Promise.resolve(list?.length ?? 0);
+    return Promise.resolve(this.lists.get(key)?.length ?? 0);
   }
 
   keys(pattern: string): Promise<string[]> {
     const prefix = pattern.replace("*", "");
     const all: string[] = [];
+
     for (const k of this.hashes.keys()) {
       if (k.startsWith(prefix)) all.push(k);
     }
@@ -160,45 +171,39 @@ class MockRedisAdapter implements RedisAdapter {
     for (const k of this.store.keys()) {
       if (k.startsWith(prefix)) all.push(k);
     }
+
     return Promise.resolve(all);
   }
 
-  xadd(
-    key: string,
-    _id: string,
-    fields: Record<string, string>,
-  ): Promise<string> {
-    if (!this.streams.has(key)) this.streams.set(key, []);
+  xadd(key: string, _id: string, fields: Record<string, string>): Promise<string> {
+    let stream = this.streams.get(key);
+    if (!stream) {
+      stream = [];
+      this.streams.set(key, stream);
+    }
+
     const msgId = `${Date.now()}-0`;
-    this.streams.get(key)!.push({ id: msgId, data: fields });
+    stream.push({ id: msgId, data: fields });
     return Promise.resolve(msgId);
   }
 
   xreadgroup(
-    _streams: Array<{ key: string; xid: string }>,
-    _options: {
-      group: string;
-      consumer: string;
-      block?: number;
-      count?: number;
-    },
+    streams: Array<{ key: string; xid: string }>,
+    _options: { group: string; consumer: string; block?: number; count?: number },
   ): Promise<
     Array<{ key: string; messages: Array<{ id: string; data: Record<string, string> }> }>
   > {
-    const streamKey = _streams[0]?.key;
+    const streamKey = streams[0]?.key;
     if (!streamKey) return Promise.resolve([]);
+
     const streamData = this.streams.get(streamKey);
-    if (!streamData || streamData.length === 0) return Promise.resolve([]);
+    if (!streamData?.length) return Promise.resolve([]);
+
     const msg = streamData.shift()!;
     return Promise.resolve([{ key: streamKey, messages: [{ id: msg.id, data: msg.data }] }]);
   }
 
-  xgroupCreate(
-    _key: string,
-    _group: string,
-    _id: string,
-    _mkstream?: boolean,
-  ): Promise<string> {
+  xgroupCreate(_key: string, _group: string, _id: string, _mkstream?: boolean): Promise<string> {
     return Promise.resolve("OK");
   }
 
@@ -222,11 +227,7 @@ class MockRedisAdapter implements RedisAdapter {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-
-function createTestRun(id: string, overrides?: Partial<WorkflowRun>): WorkflowRun {
+function createTestRun(id: string, overrides: Partial<WorkflowRun> = {}): WorkflowRun {
   return {
     id,
     workflowId: "wf-1",
@@ -241,10 +242,6 @@ function createTestRun(id: string, overrides?: Partial<WorkflowRun>): WorkflowRu
     ...overrides,
   };
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("RedisBackend", () => {
   let backend: RedisBackend;
@@ -261,8 +258,6 @@ describe("RedisBackend", () => {
     });
   });
 
-  // ---- Configuration ----
-
   describe("constructor defaults", () => {
     it("should set default config values", () => {
       const b = new RedisBackend({ client: mockRedis as unknown as RedisAdapter });
@@ -270,26 +265,20 @@ describe("RedisBackend", () => {
     });
   });
 
-  // ---- Initialize ----
-
   describe("initialize", () => {
     it("should create consumer group", async () => {
       await backend.initialize();
-      // Should not throw
     });
 
     it("should be idempotent", async () => {
       await backend.initialize();
-      await backend.initialize(); // second call is a no-op
+      await backend.initialize();
     });
   });
 
-  // ---- Run CRUD ----
-
   describe("createRun / getRun", () => {
     it("should create and retrieve a run", async () => {
-      const run = createTestRun("run-1");
-      await backend.createRun(run);
+      await backend.createRun(createTestRun("run-1"));
 
       const retrieved = await backend.getRun("run-1");
       assertExists(retrieved);
@@ -303,11 +292,12 @@ describe("RedisBackend", () => {
     });
 
     it("should serialize and deserialize dates correctly", async () => {
-      const run = createTestRun("run-dates", {
-        startedAt: new Date("2025-06-15T12:00:00Z"),
-        completedAt: new Date("2025-06-15T12:30:00Z"),
-      });
-      await backend.createRun(run);
+      await backend.createRun(
+        createTestRun("run-dates", {
+          startedAt: new Date("2025-06-15T12:00:00Z"),
+          completedAt: new Date("2025-06-15T12:30:00Z"),
+        }),
+      );
 
       const retrieved = await backend.getRun("run-dates");
       assertExists(retrieved);
@@ -316,11 +306,12 @@ describe("RedisBackend", () => {
     });
 
     it("should serialize output and error as JSON", async () => {
-      const run = createTestRun("run-output", {
-        output: { result: "hello" },
-        error: { message: "boom" },
-      });
-      await backend.createRun(run);
+      await backend.createRun(
+        createTestRun("run-output", {
+          output: { result: "hello" },
+          error: { message: "boom" },
+        }),
+      );
 
       const retrieved = await backend.getRun("run-output");
       assertExists(retrieved);
@@ -331,9 +322,7 @@ describe("RedisBackend", () => {
 
   describe("updateRun", () => {
     it("should update status and update index sets", async () => {
-      const run = createTestRun("run-u1");
-      await backend.createRun(run);
-
+      await backend.createRun(createTestRun("run-u1"));
       await backend.updateRun("run-u1", { status: "running", startedAt: new Date() });
 
       const updated = await backend.getRun("run-u1");
@@ -360,16 +349,15 @@ describe("RedisBackend", () => {
     });
 
     it("should no-op for non-existent run", async () => {
-      await backend.deleteRun("missing"); // should not throw
+      await backend.deleteRun("missing");
     });
   });
-
-  // ---- Listing / Counting ----
 
   describe("listRuns", () => {
     it("should list all runs", async () => {
       await backend.createRun(createTestRun("run-a"));
       await backend.createRun(createTestRun("run-b"));
+
       const runs = await backend.listRuns({});
       assertEquals(runs.length, 2);
     });
@@ -377,6 +365,7 @@ describe("RedisBackend", () => {
     it("should filter by workflowId", async () => {
       await backend.createRun(createTestRun("run-a"));
       await backend.createRun(createTestRun("run-b", { workflowId: "other" }));
+
       const runs = await backend.listRuns({ workflowId: "wf-1" });
       assertEquals(runs.length, 1);
       assertEquals(runs[0]!.id, "run-a");
@@ -385,6 +374,7 @@ describe("RedisBackend", () => {
     it("should filter by status", async () => {
       await backend.createRun(createTestRun("run-a"));
       await backend.createRun(createTestRun("run-b", { status: "running" }));
+
       const runs = await backend.listRuns({ status: "running" });
       assertEquals(runs.length, 1);
     });
@@ -393,6 +383,7 @@ describe("RedisBackend", () => {
       await backend.createRun(createTestRun("run-1"));
       await backend.createRun(createTestRun("run-2"));
       await backend.createRun(createTestRun("run-3"));
+
       const runs = await backend.listRuns({ limit: 1, offset: 1 });
       assertEquals(runs.length, 1);
     });
@@ -405,8 +396,6 @@ describe("RedisBackend", () => {
       assertEquals(await backend.countRuns({}), 2);
     });
   });
-
-  // ---- Checkpoints ----
 
   describe("checkpoints", () => {
     it("should save and retrieve checkpoints", async () => {
@@ -451,17 +440,17 @@ describe("RedisBackend", () => {
     });
   });
 
-  // ---- Approvals ----
-
   describe("approvals", () => {
-    const makeApproval = (id: string): PendingApproval => ({
-      id,
-      nodeId: "wait-node",
-      status: "pending",
-      message: "Approve this?",
-      payload: { reason: "test" },
-      requestedAt: new Date("2025-01-01T00:00:00Z"),
-    });
+    function makeApproval(id: string): PendingApproval {
+      return {
+        id,
+        nodeId: "wait-node",
+        status: "pending",
+        message: "Approve this?",
+        payload: { reason: "test" },
+        requestedAt: new Date("2025-01-01T00:00:00Z"),
+      };
+    }
 
     it("should save and retrieve pending approvals", async () => {
       await backend.createRun(createTestRun("run-ap"));
@@ -497,7 +486,6 @@ describe("RedisBackend", () => {
         comment: "OK",
       });
 
-      // After approval, it should no longer appear as "pending"
       const pending = await backend.getPendingApprovals("run-ap4");
       assertEquals(pending.length, 0);
     });
@@ -511,8 +499,6 @@ describe("RedisBackend", () => {
       );
     });
   });
-
-  // ---- Queue Operations ----
 
   describe("enqueue / dequeue", () => {
     it("should enqueue and dequeue a job", async () => {
@@ -534,12 +520,9 @@ describe("RedisBackend", () => {
     });
   });
 
-  // ---- Lock Operations ----
-
   describe("locking", () => {
     it("should acquire and release a lock", async () => {
-      const acquired = await backend.acquireLock("run-lock", 5000);
-      assertEquals(acquired, true);
+      assertEquals(await backend.acquireLock("run-lock", 5000), true);
       assertEquals(await backend.isLocked("run-lock"), true);
 
       await backend.releaseLock("run-lock");
@@ -553,17 +536,13 @@ describe("RedisBackend", () => {
 
     it("should extend an existing lock", async () => {
       await backend.acquireLock("run-lock3", 5000);
-      const extended = await backend.extendLock("run-lock3", 10000);
-      assertEquals(extended, true);
+      assertEquals(await backend.extendLock("run-lock3", 10000), true);
     });
 
     it("should fail to extend non-existent lock", async () => {
-      const extended = await backend.extendLock("no-such-lock", 10000);
-      assertEquals(extended, false);
+      assertEquals(await backend.extendLock("no-such-lock", 10000), false);
     });
   });
-
-  // ---- Health Check ----
 
   describe("healthCheck", () => {
     it("should return true for healthy connection", async () => {
@@ -571,36 +550,22 @@ describe("RedisBackend", () => {
     });
   });
 
-  // ---- Destroy ----
-
   describe("destroy", () => {
     it("should clean up resources", async () => {
       await backend.destroy();
-      // After destroy, creating a new backend should work
       assertExists(backend);
     });
   });
 
-  // ---- Deserialization error handling ----
-
   describe("deserialization errors", () => {
     it("should throw on missing id field", async () => {
-      // Manually put bad data
       mockRedis.hashes.set("test:run:bad1", new Map([["workflowId", "wf"]]));
-      await assertRejects(
-        () => backend.getRun("bad1"),
-        Error,
-        "missing 'id'",
-      );
+      await assertRejects(() => backend.getRun("bad1"), Error, "missing 'id'");
     });
 
     it("should throw on missing workflowId field", async () => {
       mockRedis.hashes.set("test:run:bad2", new Map([["id", "bad2"]]));
-      await assertRejects(
-        () => backend.getRun("bad2"),
-        Error,
-        "missing 'workflowId'",
-      );
+      await assertRejects(() => backend.getRun("bad2"), Error, "missing 'workflowId'");
     });
 
     it("should throw on invalid status", async () => {
@@ -612,11 +577,7 @@ describe("RedisBackend", () => {
           ["status", "invalidStatus"],
         ]),
       );
-      await assertRejects(
-        () => backend.getRun("bad3"),
-        Error,
-        "unknown status",
-      );
+      await assertRejects(() => backend.getRun("bad3"), Error, "unknown status");
     });
 
     it("should throw on invalid JSON in fields", async () => {
@@ -629,15 +590,9 @@ describe("RedisBackend", () => {
           ["input", "{invalid-json"],
         ]),
       );
-      await assertRejects(
-        () => backend.getRun("bad4"),
-        Error,
-        "failed to parse",
-      );
+      await assertRejects(() => backend.getRun("bad4"), Error, "failed to parse");
     });
   });
-
-  // ---- Nack ----
 
   describe("nack", () => {
     it("should re-enqueue a failed run", async () => {
@@ -650,19 +605,15 @@ describe("RedisBackend", () => {
     });
 
     it("should no-op for non-existent run", async () => {
-      await backend.nack("missing"); // should not throw
+      await backend.nack("missing");
     });
   });
-
-  // ---- Acknowledge ----
 
   describe("acknowledge", () => {
     it("should resolve without error", async () => {
-      await backend.acknowledge("run-ack"); // no-op
+      await backend.acknowledge("run-ack");
     });
   });
-
-  // ---- TTL on runs ----
 
   describe("runTtl config", () => {
     it("should set expire when runTtl is configured", async () => {
@@ -673,12 +624,9 @@ describe("RedisBackend", () => {
       });
       await ttlBackend.createRun(createTestRun("run-ttl"));
 
-      // Check that expire was called
       assertEquals(mockRedis.expiries.has("ttl:run:run-ttl"), true);
     });
   });
-
-  // ---- List pending approvals ----
 
   describe("listPendingApprovals", () => {
     it("should list approvals across runs", async () => {

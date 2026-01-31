@@ -30,14 +30,12 @@ export class RedisRateLimitStore implements RateLimitStore {
 
   private ensureClient(): Promise<RedisClient> {
     if (this.client) return Promise.resolve(this.client);
-    if (this.clientPromise) return this.clientPromise;
-
-    this.clientPromise = this.connectClient();
+    this.clientPromise ??= this.connectClient();
     return this.clientPromise;
   }
 
   private async connectClient(): Promise<RedisClient> {
-    let createClient: ((options: { url?: string }) => RedisClient) | undefined;
+    let createClient: (options: { url?: string }) => RedisClient;
 
     try {
       const redisClientModule = ["npm:@redis/client", "@1.5.8"].join("");

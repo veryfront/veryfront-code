@@ -54,10 +54,10 @@ function isValidChunkManifest(manifest: unknown): manifest is ChunkManifest {
   const m = manifest as Record<string, unknown>;
   return (
     typeof m.version === "string" &&
-    !!m.routes &&
     typeof m.routes === "object" &&
-    !!m.chunks &&
+    m.routes !== null &&
     typeof m.chunks === "object" &&
+    m.chunks !== null &&
     Array.isArray(m.shared)
   );
 }
@@ -81,10 +81,10 @@ export function generateManifest(options: ManifestOptions): BuildManifest {
     bundlerLogger.warn("Invalid chunk manifest structure, chunks will be disabled");
   }
 
-  const getChunksForRoute = (path: string): string[] => {
+  function getChunksForRoute(path: string): string[] {
     if (!enableSplitting || !validatedManifest) return [];
     return validatedManifest.routes[path]?.chunks ?? [];
-  };
+  }
 
   return {
     version: "2.0.0",

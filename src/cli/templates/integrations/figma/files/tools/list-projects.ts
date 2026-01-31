@@ -22,9 +22,7 @@ export default tool({
     const projects = allProjects.slice(0, limit);
 
     if (!includeFiles) {
-      return {
-        projects: projects.map(({ id, name }) => ({ id, name })),
-      };
+      return { projects: projects.map(({ id, name }) => ({ id, name })) };
     }
 
     const projectsWithFiles = await Promise.all(
@@ -39,12 +37,7 @@ export default tool({
             url: `https://www.figma.com/file/${file.key}`,
           }));
 
-          return {
-            id,
-            name,
-            fileCount: files.length,
-            recentFiles,
-          };
+          return { id, name, fileCount: files.length, recentFiles };
         } catch (error) {
           return {
             id,
@@ -57,9 +50,6 @@ export default tool({
       }),
     );
 
-    return {
-      projects: projectsWithFiles,
-      totalProjects: projects.length,
-    };
+    return { projects: projectsWithFiles, totalProjects: projects.length };
   },
 });

@@ -84,7 +84,8 @@ export function createWorkflow(
             await withSpan(
               `agent.composition.workflow.step.${step.name}`,
               async () => {
-                if (step.skip && (await step.skip(result.context))) {
+                const shouldSkip = await step.skip?.(result.context);
+                if (shouldSkip) {
                   result.steps.push({ name: step.name, output: "", skipped: true });
                   setActiveSpanAttributes({ "workflow.step.skipped": true });
                   return;
@@ -164,7 +165,7 @@ class AgentRegistryClass {
     agentManager.clearAll();
   }
 
-  getStats() {
+  getStats(): ReturnType<typeof agentManager.getStats> {
     return agentManager.getStats();
   }
 }

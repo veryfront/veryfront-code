@@ -1,7 +1,3 @@
-/**
- * Tests for Singleflight utility.
- */
-
 import { assertEquals, assertRejects } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
 import { Singleflight } from "../../src/utils/singleflight.ts";
@@ -11,31 +7,20 @@ describe("Singleflight", () => {
     const flight = new Singleflight<string>();
     let callCount = 0;
 
-    const operation = async () => {
+    const operation = async (): Promise<string> => {
       callCount++;
       await new Promise((resolve) => setTimeout(resolve, 50));
       return `result-${callCount}`;
     };
 
-    // Start 5 concurrent operations for the same key
-    const promises = [
-      flight.do("key1", operation),
-      flight.do("key1", operation),
-      flight.do("key1", operation),
-      flight.do("key1", operation),
-      flight.do("key1", operation),
-    ];
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () => flight.do("key1", operation)),
+    );
 
-    const results = await Promise.all(promises);
+    for (const result of results) {
+      assertEquals(result, "result-1");
+    }
 
-    // All results should be the same (from the single operation)
-    assertEquals(results[0], "result-1");
-    assertEquals(results[1], "result-1");
-    assertEquals(results[2], "result-1");
-    assertEquals(results[3], "result-1");
-    assertEquals(results[4], "result-1");
-
-    // Operation should only have been called once
     assertEquals(callCount, 1);
   });
 
@@ -43,21 +28,19 @@ describe("Singleflight", () => {
     const flight = new Singleflight<string>();
     const callCounts = new Map<string, number>();
 
-    const operation = (key: string) => async () => {
-      const count = (callCounts.get(key) || 0) + 1;
+    const operation = (key: string) => async (): Promise<string> => {
+      const count = (callCounts.get(key) ?? 0) + 1;
       callCounts.set(key, count);
       await new Promise((resolve) => setTimeout(resolve, 10));
       return `${key}-${count}`;
     };
 
-    // Start operations for different keys concurrently
     const [result1, result2, result3] = await Promise.all([
       flight.do("key1", operation("key1")),
       flight.do("key2", operation("key2")),
       flight.do("key3", operation("key3")),
     ]);
 
-    // Each key should have its own result (called once each)
     assertEquals(callCounts.get("key1"), 1);
     assertEquals(callCounts.get("key2"), 1);
     assertEquals(callCounts.get("key3"), 1);
@@ -70,29 +53,22 @@ describe("Singleflight", () => {
     const flight = new Singleflight<string>();
     let callCount = 0;
 
-    const failingOperation = async () => {
+    const failingOperation = async (): Promise<string> => {
       callCount++;
       await new Promise((resolve) => setTimeout(resolve, 10));
       throw new Error("Test error");
     };
 
-    // Start concurrent operations that will fail
-    const promises = [
+    const promises = Array.from({ length: 3 }, () =>
       flight.do("key1", failingOperation),
-      flight.do("key1", failingOperation),
-      flight.do("key1", failingOperation),
-    ];
+    );
 
-    // All promises should reject with the same error
-    for (const promise of promises) {
-      await assertRejects(
-        () => promise,
-        Error,
-        "Test error",
-      );
-    }
+    await Promise.all(
+      promises.map((promise) =>
+        assertRejects(() => promise, Error, "Test error")
+      ),
+    );
 
-    // Operation should only have been called once
     assertEquals(callCount, 1);
   });
 
@@ -100,20 +76,13 @@ describe("Singleflight", () => {
     const flight = new Singleflight<string>();
     let callCount = 0;
 
-    const operation = async () => {
+    const operation = async (): Promise<string> => {
       callCount++;
       return `result-${callCount}`;
     };
 
-    // First operation
-    const result1 = await flight.do("key1", operation);
-    assertEquals(result1, "result-1");
-
-    // Second operation for the same key (after first completes)
-    const result2 = await flight.do("key1", operation);
-    assertEquals(result2, "result-2");
-
-    // Both operations should have run
+    assertEquals(await flight.do("key1", operation), "result-1");
+    assertEquals(await flight.do("key1", operation), "result-2");
     assertEquals(callCount, 2);
   });
 
@@ -123,19 +92,16 @@ describe("Singleflight", () => {
     assertEquals(flight.has("key1"), false);
     assertEquals(flight.size, 0);
 
-    // Start an operation
-    const promise = flight.do("key1", async () => {
+    const promise = flight.do("key1", async (): Promise<string> => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       return "result";
     });
 
-    // Should be in-flight
     assertEquals(flight.has("key1"), true);
     assertEquals(flight.size, 1);
 
     await promise;
 
-    // Should no longer be in-flight
     assertEquals(flight.has("key1"), false);
     assertEquals(flight.size, 0);
   });
@@ -143,8 +109,7 @@ describe("Singleflight", () => {
   it("should clean up after error", async () => {
     const flight = new Singleflight<string>();
 
-    // Start a failing operation
-    const promise = flight.do("key1", async () => {
+    const promise = flight.do("key1", async (): Promise<string> => {
       await new Promise((resolve) => setTimeout(resolve, 10));
       throw new Error("Test error");
     });
@@ -157,7 +122,6 @@ describe("Singleflight", () => {
       // Expected error
     }
 
-    // Should be cleaned up after error
     assertEquals(flight.has("key1"), false);
     assertEquals(flight.size, 0);
   });

@@ -30,7 +30,7 @@ const navigation = [
 ];
 
 export function Sidebar(): React.JSX.Element {
-  const [pathname, setPathname] = React.useState<string>("/");
+  const [pathname, setPathname] = React.useState("/");
 
   React.useEffect(() => {
     setPathname(window.location.pathname);
@@ -47,18 +47,16 @@ export function Sidebar(): React.JSX.Element {
             <ul className="space-y-0.5">
               {section.items.map((item) => {
                 const isActive = pathname === item.href;
+                const className = [
+                  "block px-3 py-1.5 text-sm rounded-lg transition-colors",
+                  isActive
+                    ? "bg-blue-500/10 text-blue-500 font-medium"
+                    : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800",
+                ].join(" ");
 
                 return (
                   <li key={item.href}>
-                    <a
-                      href={item.href}
-                      className={[
-                        "block px-3 py-1.5 text-sm rounded-lg transition-colors",
-                        isActive
-                          ? "bg-blue-500/10 text-blue-500 font-medium"
-                          : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800",
-                      ].join(" ")}
-                    >
+                    <a href={item.href} className={className}>
                       {item.title}
                     </a>
                   </li>

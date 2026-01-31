@@ -50,10 +50,8 @@ export class CheckpointManager {
   }
 
   async getAll(runId: string): Promise<Checkpoint[]> {
-    const getCheckpoints = this.config.backend.getCheckpoints;
-    if (getCheckpoints) {
-      return getCheckpoints(runId);
-    }
+    const { getCheckpoints } = this.config.backend;
+    if (getCheckpoints) return getCheckpoints(runId);
 
     const latest = await this.getLatest(runId);
     return latest ? [latest] : [];
@@ -85,12 +83,13 @@ export class CheckpointManager {
     const { nodeId: completedNodeId, nodeStates } = checkpoint;
 
     const nodeIndex = new Map<string, number>();
-    nodes.forEach((node, index) => nodeIndex.set(node.id, index));
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      if (node) nodeIndex.set(node.id, i);
+    }
 
     const checkpointIndex = nodeIndex.get(completedNodeId);
-    if (checkpointIndex === undefined) {
-      return nodes[0]?.id ?? null;
-    }
+    if (checkpointIndex === undefined) return nodes[0]?.id ?? null;
 
     for (let i = checkpointIndex + 1; i < nodes.length; i++) {
       const node = nodes[i];
@@ -115,16 +114,16 @@ export class CheckpointManager {
 
     if (config.checkpoint !== undefined) return config.checkpoint;
 
+    if (config.type === "step") {
+      return "agent" in config && !!config.agent;
+    }
+
     const checkpointDefaults: Record<string, boolean> = {
       wait: true,
       parallel: true,
       subWorkflow: true,
       branch: false,
     };
-
-    if (config.type === "step") {
-      return "agent" in config && !!config.agent;
-    }
 
     return checkpointDefaults[config.type] ?? false;
   }
@@ -150,10 +149,10 @@ export class CheckpointManager {
       return;
     }
 
-    if (backend.deleteCheckpoint) {
-      for (const id of idsToDelete) {
-        await backend.deleteCheckpoint(runId, id);
-      }
+    if (!backend.deleteCheckpoint) return;
+
+    for (const id of idsToDelete) {
+      await backend.deleteCheckpoint(runId, id);
     }
   }
 }

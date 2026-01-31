@@ -36,9 +36,13 @@ export const ISSUES_DIR = "issues";
  */
 export function parseFrontmatter(content: string): { frontmatter: string; body: string } | null {
   const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!match || !match[1] || match[2] === undefined) return null;
+  if (!match) return null;
 
-  return { frontmatter: match[1], body: match[2].trim() };
+  const frontmatter = match[1];
+  const body = match[2];
+
+  if (!frontmatter || body === undefined) return null;
+  return { frontmatter, body: body.trim() };
 }
 
 /**
@@ -52,12 +56,12 @@ export function parseYaml(yaml: string): Record<string, unknown> {
   let arrayValues: string[] = [];
   let inArray = false;
 
-  const flushArray = (): void => {
+  function flushArray(): void {
     if (!inArray || !currentKey) return;
     result[currentKey] = arrayValues;
     arrayValues = [];
     inArray = false;
-  };
+  }
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -65,8 +69,7 @@ export function parseYaml(yaml: string): Record<string, unknown> {
 
     if (/^\s+-\s+/.test(line)) {
       const itemValue = line.replace(/^\s+-\s+/, "").trim();
-      const cleanValue = itemValue.replace(/^["']|["']$/g, "");
-      arrayValues.push(cleanValue);
+      arrayValues.push(itemValue.replace(/^["']|["']$/g, ""));
       continue;
     }
 
@@ -88,12 +91,11 @@ export function parseYaml(yaml: string): Record<string, unknown> {
     }
 
     if (value.startsWith("[") && value.endsWith("]")) {
-      const items = value
+      result[key] = value
         .slice(1, -1)
         .split(",")
         .map((s) => s.trim().replace(/^["']|["']$/g, ""))
         .filter(Boolean);
-      result[key] = items;
       continue;
     }
 
@@ -119,7 +121,7 @@ export function serializeYaml(metadata: IssueMetadata): string {
   lines.push(`title: "${metadata.title.replace(/"/g, '\\"')}"`);
   lines.push(`state: ${metadata.state}`);
   lines.push(
-    metadata.labels.length > 0
+    metadata.labels.length
       ? `labels: [${metadata.labels.map((l) => `"${l}"`).join(", ")}]`
       : "labels: []",
   );
@@ -127,7 +129,7 @@ export function serializeYaml(metadata: IssueMetadata): string {
   if (metadata.milestone) lines.push(`milestone: ${metadata.milestone}`);
 
   lines.push(
-    metadata.assignees.length > 0
+    metadata.assignees.length
       ? `assignees: [${metadata.assignees.map((a) => `"${a}"`).join(", ")}]`
       : "assignees: []",
   );
@@ -142,8 +144,7 @@ export function serializeYaml(metadata: IssueMetadata): string {
  * Serialize issue to markdown file content
  */
 export function serializeIssue(issue: Issue): string {
-  const yaml = serializeYaml(issue.metadata);
-  return `---\n${yaml}\n---\n\n${issue.body}`;
+  return `---\n${serializeYaml(issue.metadata)}\n---\n\n${issue.body}`;
 }
 
 /**
@@ -153,10 +154,8 @@ export function parseIssue(content: string, path: string): Issue | null {
   const parsed = parseFrontmatter(content);
   if (!parsed) return null;
 
-  const rawMetadata = parseYaml(parsed.frontmatter);
-
   try {
-    const metadata = validateMetadata(rawMetadata);
+    const metadata = validateMetadata(parseYaml(parsed.frontmatter));
     return { metadata, body: parsed.body, path };
   } catch {
     return null;
@@ -216,8 +215,7 @@ export class IssuesManager {
     const validated = createIssueSchema.parse(options);
     await this.ensureDir();
 
-    const existingIds = await this.listIds();
-    const id = generateIssueId(validated.prefix as IssuePrefix, existingIds);
+    const id = generateIssueId(validated.prefix as IssuePrefix, await this.listIds());
     const now = new Date().toISOString();
 
     const metadata: IssueMetadata = {
@@ -269,9 +267,7 @@ export class IssuesManager {
       updated_at: new Date().toISOString(),
     };
 
-    if (validated.milestone !== undefined) {
-      metadata.milestone = validated.milestone ?? undefined;
-    }
+    if (validated.milestone !== undefined) metadata.milestone = validated.milestone ?? undefined;
 
     const issue: Issue = {
       metadata,
@@ -321,7 +317,6 @@ export class IssuesManager {
       }
 
       if (validated.milestone && issue.metadata.milestone !== validated.milestone) continue;
-
       if (validated.assignee && !issue.metadata.assignees.includes(validated.assignee)) continue;
 
       issues.push(issue);
@@ -331,9 +326,12 @@ export class IssuesManager {
     const sortDir = validated.sortDirection ?? "desc";
 
     issues.sort((a, b) => {
-      const cmp = sortKey === "id"
-        ? a.metadata.id.localeCompare(b.metadata.id)
-        : String(a.metadata[sortKey]).localeCompare(String(b.metadata[sortKey]));
+      let cmp: number;
+      if (sortKey === "id") {
+        cmp = a.metadata.id.localeCompare(b.metadata.id);
+      } else {
+        cmp = String(a.metadata[sortKey]).localeCompare(String(b.metadata[sortKey]));
+      }
       return sortDir === "desc" ? -cmp : cmp;
     });
 
@@ -364,8 +362,7 @@ export class IssuesManager {
     const issue = await this.get(id);
     if (!issue) return null;
 
-    const newLabels = [...new Set([...issue.metadata.labels, ...labels])];
-    return this.update(id, { labels: newLabels });
+    return this.update(id, { labels: [...new Set([...issue.metadata.labels, ...labels])] });
   }
 
   /**
@@ -375,8 +372,7 @@ export class IssuesManager {
     const issue = await this.get(id);
     if (!issue) return null;
 
-    const newLabels = issue.metadata.labels.filter((l) => !labels.includes(l));
-    return this.update(id, { labels: newLabels });
+    return this.update(id, { labels: issue.metadata.labels.filter((l) => !labels.includes(l)) });
   }
 }
 

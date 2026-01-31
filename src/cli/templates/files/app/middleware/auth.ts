@@ -1,11 +1,10 @@
 import { verifySession } from "../lib/auth.ts";
 
-export async function requireAuth(
-  request: Request
-): Promise<
+type RequireAuthResult =
   | { ok: true; session: Awaited<ReturnType<typeof verifySession>> }
-  | { ok: false; response: Response }
-> {
+  | { ok: false; response: Response };
+
+export async function requireAuth(request: Request): Promise<RequireAuthResult> {
   const cookie = request.headers.get("cookie");
   const token = cookie
     ?.split("; ")
@@ -17,7 +16,7 @@ export async function requireAuth(
       ok: false,
       response: Response.json(
         { error: "Authentication required" },
-        { status: 401 }
+        { status: 401 },
       ),
     };
   }

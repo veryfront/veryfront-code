@@ -20,8 +20,12 @@ export function generateProdHydrationScript(
     const root = document.getElementById('root');
     if (!root) return;
 
-    const tree = React.createElement(App, {},
-      React.createElement(Layout, {},
+    const tree = React.createElement(
+      App,
+      {},
+      React.createElement(
+        Layout,
+        {},
         React.createElement(Page, ${pageProps})
       )
     );
@@ -30,7 +34,7 @@ export function generateProdHydrationScript(
     // Suppress recoverable hydration errors - common with animation libraries
     ReactDOM.hydrateRoot(root, tree, {
       identifierPrefix: 'vf',
-      onRecoverableError: () => {} // Silently ignore hydration mismatches
+      onRecoverableError: () => {}, // Silently ignore hydration mismatches
     });
   </script>`;
 }

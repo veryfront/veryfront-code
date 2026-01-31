@@ -74,9 +74,9 @@ export class ComponentRegistry {
         const code = (error as NodeJS.ErrnoException | undefined)?.code;
         const isNotFound = code === "ENOENT" ||
           (error instanceof Error && error.name === "NotFound");
-        if (!isNotFound) {
-          logger.warn(`Failed to discover components in ${fullPath}:`, error);
-        }
+        if (isNotFound) continue;
+
+        logger.warn(`Failed to discover components in ${fullPath}:`, error);
       }
     }
 
@@ -171,9 +171,6 @@ export class ComponentRegistry {
     return undefined;
   }
 
-  /**
-   * Get all components as MDXComponents record (for MDX rendering)
-   */
   getAllAsComponents(): Record<string, React.ComponentType<unknown>> {
     const components: Record<string, React.ComponentType<unknown>> = {};
 
@@ -241,11 +238,7 @@ export class ComponentRegistry {
           type: "component",
         });
       } catch {
-        components.push({
-          name,
-          path: info.path,
-          type: "component",
-        });
+        components.push({ name, path: info.path, type: "component" });
       }
     }
 

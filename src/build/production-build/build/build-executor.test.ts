@@ -24,16 +24,12 @@ describe("BuildExecutor", () => {
     });
 
     it("should require projectDir", () => {
-      const options: Partial<BuildExecutorOptions> = {
-        projectDir: "/path/to/project",
-      };
+      const options: Partial<BuildExecutorOptions> = { projectDir: "/path/to/project" };
       assertEquals(options.projectDir, "/path/to/project");
     });
 
     it("should require outputDir", () => {
-      const options: Partial<BuildExecutorOptions> = {
-        outputDir: "/path/to/output",
-      };
+      const options: Partial<BuildExecutorOptions> = { outputDir: "/path/to/output" };
       assertEquals(options.outputDir, "/path/to/output");
     });
 
@@ -58,9 +54,7 @@ describe("BuildExecutor", () => {
     });
 
     it("should require baseUrl", () => {
-      const options: Partial<BuildExecutorOptions> = {
-        baseUrl: "http://localhost:3000",
-      };
+      const options: Partial<BuildExecutorOptions> = { baseUrl: "http://localhost:3000" };
       assertEquals(options.baseUrl, "http://localhost:3000");
     });
 
@@ -77,11 +71,7 @@ describe("BuildExecutor", () => {
     });
 
     it("should have totalSize", () => {
-      const result: BuildResult = {
-        pages: 0,
-        totalSize: 1024000,
-        ssgPaths: [],
-      };
+      const result: BuildResult = { pages: 0, totalSize: 1024000, ssgPaths: [] };
       assertEquals(result.totalSize, 1024000);
     });
 
@@ -104,14 +94,7 @@ describe("BuildExecutor", () => {
       const result: BuildResult = {
         pages: 25,
         totalSize: 2500000,
-        ssgPaths: [
-          "/",
-          "/about",
-          "/contact",
-          "/blog",
-          "/blog/post-1",
-          "/blog/post-2",
-        ],
+        ssgPaths: ["/", "/about", "/contact", "/blog", "/blog/post-1", "/blog/post-2"],
       };
 
       assertEquals(result.pages, 25);

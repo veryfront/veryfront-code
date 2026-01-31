@@ -18,34 +18,34 @@ export default tool({
     data: z.record(z.unknown()).describe("The data to update as key-value pairs"),
   }),
   async execute({ tableName, id, filter, data }) {
-    try {
-      if (id == null && filter == null) {
-        return {
-          success: false,
-          tableName,
-          error: "Either id or filter must be provided",
-          message: "You must specify either an id or filter conditions to update rows",
-        };
-      }
+    if (id == null && filter == null) {
+      return {
+        success: false,
+        tableName,
+        error: "Either id or filter must be provided",
+        message: "You must specify either an id or filter conditions to update rows",
+      };
+    }
 
+    try {
       if (id != null) {
-        const result = await updateRow(tableName, id, data);
+        const row = await updateRow(tableName, id, data);
         return {
           success: true,
           tableName,
           rowsUpdated: 1,
-          row: result,
+          row,
           message: `Successfully updated row with id ${id} in ${tableName}`,
         };
       }
 
-      const results = await updateRows(tableName, filter!, data);
+      const rows = await updateRows(tableName, filter, data);
       return {
         success: true,
         tableName,
-        rowsUpdated: results.length,
-        rows: results,
-        message: `Successfully updated ${results.length} row(s) in ${tableName}`,
+        rowsUpdated: rows.length,
+        rows,
+        message: `Successfully updated ${rows.length} row(s) in ${tableName}`,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";

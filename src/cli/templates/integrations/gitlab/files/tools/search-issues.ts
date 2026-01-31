@@ -33,7 +33,7 @@ export default tool({
       perPage: limit,
     });
 
-    if (!issues.length) {
+    if (issues.length === 0) {
       return {
         message: "No issues found matching the criteria.",
         count: 0,
@@ -46,7 +46,7 @@ export default tool({
       issues: issues.map((issue) => {
         const description = issue.description ?? "";
         const truncatedDescription =
-          description.substring(0, 200) + (description.length > 200 ? "..." : "");
+          description.length > 200 ? `${description.substring(0, 200)}...` : description;
 
         return {
           id: issue.id,
@@ -55,10 +55,7 @@ export default tool({
           title: issue.title,
           state: issue.state,
           labels: issue.labels,
-          assignees: issue.assignees.map((a) => ({
-            username: a.username,
-            name: a.name,
-          })),
+          assignees: issue.assignees.map(({ username, name }) => ({ username, name })),
           author: {
             username: issue.author.username,
             name: issue.author.name,

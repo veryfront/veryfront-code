@@ -18,10 +18,10 @@ export function zodToJsonSchema(schema: z.ZodTypeAny): JsonSchema {
     throw new Error("Invalid Zod schema: missing _def property");
   }
 
-  const details = unwrapSchema(schema);
-  const json = convert(details.schema);
+  const { schema: unwrapped, nullable } = unwrapSchema(schema);
+  const json = convert(unwrapped);
 
-  return details.nullable ? { anyOf: [json, { type: "null" }] } : json;
+  return nullable ? { anyOf: [json, { type: "null" }] } : json;
 }
 
 export function isOptionalSchema(schema: z.ZodTypeAny): boolean {
@@ -32,27 +32,34 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
   switch (schema._def.typeName) {
     case ZodFirstPartyTypeKind.ZodString:
       return { type: "string" };
+
     case ZodFirstPartyTypeKind.ZodNumber:
       return { type: "number" };
+
     case ZodFirstPartyTypeKind.ZodBoolean:
       return { type: "boolean" };
+
     case ZodFirstPartyTypeKind.ZodBigInt:
       return { type: "integer" };
+
     case ZodFirstPartyTypeKind.ZodLiteral: {
       const literal = (schema as z.ZodLiteral<unknown>)._def.value;
       return { const: literal, type: getLiteralType(literal) };
     }
+
     case ZodFirstPartyTypeKind.ZodEnum:
       return {
         type: "string",
         enum: (schema as z.ZodEnum<[string, ...string[]]>)._def.values,
       };
+
     case ZodFirstPartyTypeKind.ZodNativeEnum:
       return {
         enum: Object.values((schema as z.ZodNativeEnum<any>)._def.values).filter(
           (value) => typeof value !== "number",
         ),
       };
+
     case ZodFirstPartyTypeKind.ZodObject: {
       const obj = schema as z.ZodObject<any>;
       const properties: Record<string, JsonSchema> = {};
@@ -68,15 +75,19 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
 
       const json: JsonSchema = { type: "object", properties };
       if (required.length) json.required = required;
+
       return json;
     }
+
     case ZodFirstPartyTypeKind.ZodArray: {
       const array = schema as z.ZodArray<z.ZodTypeAny>;
       return { type: "array", items: zodToJsonSchema(array._def.type) };
     }
+
     case ZodFirstPartyTypeKind.ZodTuple: {
       const tuple = schema as z.ZodTuple;
       const items = tuple._def.items;
+
       return {
         type: "array",
         prefixItems: items.map((item) => zodToJsonSchema(item)),
@@ -84,21 +95,25 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
         maxItems: items.length,
       };
     }
+
     case ZodFirstPartyTypeKind.ZodUnion: {
       const union = schema as z.ZodUnion<[z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]>;
       return { anyOf: union._def.options.map((option) => zodToJsonSchema(option)) };
     }
+
     case ZodFirstPartyTypeKind.ZodDiscriminatedUnion: {
       const union = schema as z.ZodDiscriminatedUnion<string, z.ZodObject<any>[]>;
       return {
         anyOf: Array.from(union._def.options.values()).map((option) => zodToJsonSchema(option)),
       };
     }
+
     case ZodFirstPartyTypeKind.ZodRecord:
       return {
         type: "object",
         additionalProperties: zodToJsonSchema((schema as z.ZodRecord<any>)._def.valueType),
       };
+
     case ZodFirstPartyTypeKind.ZodDefault: {
       const def = schema as z.ZodDefault<z.ZodTypeAny>;
       const inner = zodToJsonSchema(def._def.innerType);
@@ -110,10 +125,13 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
 
       return inner;
     }
+
     case ZodFirstPartyTypeKind.ZodLazy:
       return convert((schema as z.ZodLazy<any>)._def.getter());
+
     case ZodFirstPartyTypeKind.ZodEffects:
       return convert((schema as z.ZodEffects<any>)._def.schema);
+
     default:
       return { type: "object" };
   }
@@ -131,14 +149,17 @@ function unwrapSchema(
       case ZodFirstPartyTypeKind.ZodNullable:
         nullable = true;
         current = (current as z.ZodNullable<z.ZodTypeAny>)._def.innerType;
-        continue;
+        break;
+
       case ZodFirstPartyTypeKind.ZodOptional:
         optional = true;
         current = (current as z.ZodOptional<z.ZodTypeAny>)._def.innerType;
-        continue;
+        break;
+
       case ZodFirstPartyTypeKind.ZodEffects:
         current = (current as z.ZodEffects<any>)._def.schema;
-        continue;
+        break;
+
       default:
         return { schema: current, nullable, optional };
     }

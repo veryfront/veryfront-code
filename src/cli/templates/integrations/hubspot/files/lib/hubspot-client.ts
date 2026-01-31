@@ -80,9 +80,7 @@ function buildQueryString(options: {
   if (options.after) params.set("after", options.after);
 
   const properties =
-    options.properties && options.properties.length > 0
-      ? options.properties
-      : options.defaultProperties;
+    options.properties?.length ? options.properties : options.defaultProperties;
 
   for (const prop of properties) params.append("properties", prop);
 
@@ -106,9 +104,9 @@ async function hubspotFetch<T>(endpoint: string, options: RequestInit = {}): Pro
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({} as { message?: string }));
+    const error = (await response.json().catch(() => ({}))) as { message?: string };
     throw new Error(
-      `HubSpot API error: ${response.status} ${error.message || response.statusText}`,
+      `HubSpot API error: ${response.status} ${error.message ?? response.statusText}`,
     );
   }
 
@@ -192,10 +190,9 @@ export function searchContacts(options: {
   after?: string;
 }): Promise<HubSpotResponse<HubSpotContact>> {
   const body: Record<string, unknown> = {
-    properties:
-      options.properties && options.properties.length > 0
-        ? options.properties
-        : ["email", "firstname", "lastname", "phone", "company", "jobtitle"],
+    properties: options.properties?.length
+      ? options.properties
+      : ["email", "firstname", "lastname", "phone", "company", "jobtitle"],
   };
 
   if (options.filterGroups) body.filterGroups = options.filterGroups;
@@ -320,16 +317,16 @@ export function formatContactName(contact: HubSpotContact): string {
     (p): p is string => Boolean(p),
   );
 
-  if (parts.length > 0) return parts.join(" ");
-  return contact.properties.email || "Unnamed Contact";
+  if (parts.length) return parts.join(" ");
+  return contact.properties.email ?? "Unnamed Contact";
 }
 
 export function formatCompanyName(company: HubSpotCompany): string {
-  return company.properties.name || company.properties.domain || "Unnamed Company";
+  return company.properties.name ?? company.properties.domain ?? "Unnamed Company";
 }
 
 export function formatDealName(deal: HubSpotDeal): string {
-  return deal.properties.dealname || "Unnamed Deal";
+  return deal.properties.dealname ?? "Unnamed Deal";
 }
 
 export type { HubSpotCompany, HubSpotContact, HubSpotDeal, HubSpotResponse };

@@ -3,15 +3,19 @@ import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { TracingManager } from "./manager.ts";
 
+async function importTracingModule(): Promise<Record<string, unknown>> {
+  return await import("./index.ts");
+}
+
+async function assertExportedFunction(name: string): Promise<void> {
+  const mod = await importTracingModule();
+  const value = mod[name];
+  assertExists(value, `${name} should be exported`);
+  assertEquals(typeof value, "function", "Should be a function");
+}
+
 describe("Tracing Module", () => {
   describe("Module Exports", () => {
-    async function assertExportedFunction(name: string): Promise<void> {
-      const mod = await import("./index.ts");
-      const value = (mod as Record<string, unknown>)[name];
-      assertExists(value, `${name} should be exported`);
-      assertEquals(typeof value, "function", "Should be a function");
-    }
-
     it("should export initTracing function", async () => {
       await assertExportedFunction("initTracing");
     });
@@ -106,11 +110,7 @@ describe("Tracing Module", () => {
       };
 
       for (const [key, value] of Object.entries(expected)) {
-        assertEquals(
-          (SpanNames as Record<string, string>)[key],
-          value,
-          `${key} span name`,
-        );
+        assertEquals((SpanNames as Record<string, string>)[key], value, `${key} span name`);
       }
     });
   });

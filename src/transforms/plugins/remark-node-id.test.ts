@@ -3,6 +3,8 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { remarkAddNodeId } from "./remark-node-id.ts";
 import type { Paragraph, Root } from "mdast";
 
+type TestFile = { data: { nodeMap?: Map<number, unknown>; nodeCount?: number } };
+
 function createParagraph(text: string): Paragraph {
   return {
     type: "paragraph",
@@ -11,15 +13,19 @@ function createParagraph(text: string): Paragraph {
 }
 
 function createTree(...nodes: Root["children"]): Root {
-  return {
-    type: "root",
-    children: nodes,
-  };
+  return { type: "root", children: nodes };
 }
 
-function runPlugin(tree: Root, file: any, options?: Parameters<typeof remarkAddNodeId>[0]): void {
-  const plugin = remarkAddNodeId(options as any);
-  plugin(tree, file);
+function createFile(): TestFile {
+  return { data: {} };
+}
+
+function runPlugin(
+  tree: Root,
+  file: any,
+  options?: Parameters<typeof remarkAddNodeId>[0],
+): void {
+  remarkAddNodeId(options)(tree, file);
 }
 
 function getNodeId(node: any): unknown {
@@ -30,10 +36,9 @@ function getHProperties(node: any): any {
   return node?.data?.hProperties;
 }
 
-type TestFile = { data: { nodeMap?: Map<number, unknown>; nodeCount?: number } };
-
-function createFile(): TestFile {
-  return { data: {} };
+function assertSkippedFirstNode(tree: Root): void {
+  assertEquals(getNodeId(tree.children[0] as any), undefined);
+  assertExists(getNodeId(tree.children[1] as any));
 }
 
 describe("remark-node-id", () => {
@@ -63,9 +68,7 @@ describe("remark-node-id", () => {
     runPlugin(tree, file);
 
     const ids = (tree.children as any[]).map(getNodeId);
-    const uniqueIds = new Set(ids);
-
-    assertEquals(ids.length, uniqueIds.size);
+    assertEquals(ids.length, new Set(ids).size);
   });
 
   it("uses custom prefix", () => {
@@ -123,10 +126,7 @@ describe("remark-node-id", () => {
   });
 
   it("stores node count in file data", () => {
-    const tree = createTree(
-      createParagraph("First"),
-      createParagraph("Second"),
-    );
+    const tree = createTree(createParagraph("First"), createParagraph("Second"));
     const file = createFile();
 
     runPlugin(tree, file);
@@ -137,59 +137,51 @@ describe("remark-node-id", () => {
   });
 
   it("skips yaml nodes", () => {
-    const yamlNode = {
-      type: "yaml",
-      value: "title: test",
-    };
-    const tree = createTree(yamlNode as any, createParagraph("Test"));
+    const tree = createTree(
+      { type: "yaml", value: "title: test" } as any,
+      createParagraph("Test"),
+    );
     const file = createFile();
 
     runPlugin(tree, file);
 
-    assertEquals(getNodeId(tree.children[0] as any), undefined);
-    assertExists(getNodeId(tree.children[1] as any));
+    assertSkippedFirstNode(tree);
   });
 
   it("skips toml nodes", () => {
-    const tomlNode = {
-      type: "toml",
-      value: 'title = "test"',
-    };
-    const tree = createTree(tomlNode as any, createParagraph("Test"));
+    const tree = createTree(
+      { type: "toml", value: 'title = "test"' } as any,
+      createParagraph("Test"),
+    );
     const file = createFile();
 
     runPlugin(tree, file);
 
-    assertEquals(getNodeId(tree.children[0] as any), undefined);
-    assertExists(getNodeId(tree.children[1] as any));
+    assertSkippedFirstNode(tree);
   });
 
   it("skips mdxjsEsm nodes", () => {
-    const mdxNode = {
-      type: "mdxjsEsm",
-      value: "export const x = 1",
-    };
-    const tree = createTree(mdxNode as any, createParagraph("Test"));
+    const tree = createTree(
+      { type: "mdxjsEsm", value: "export const x = 1" } as any,
+      createParagraph("Test"),
+    );
     const file = createFile();
 
     runPlugin(tree, file);
 
-    assertEquals(getNodeId(tree.children[0] as any), undefined);
-    assertExists(getNodeId(tree.children[1] as any));
+    assertSkippedFirstNode(tree);
   });
 
   it("skips mdxjsFlow nodes", () => {
-    const mdxFlow = {
-      type: "mdxjsFlow",
-      value: "const x = 1",
-    };
-    const tree = createTree(mdxFlow as any, createParagraph("Test"));
+    const tree = createTree(
+      { type: "mdxjsFlow", value: "const x = 1" } as any,
+      createParagraph("Test"),
+    );
     const file = createFile();
 
     runPlugin(tree, file);
 
-    assertEquals(getNodeId(tree.children[0] as any), undefined);
-    assertExists(getNodeId(tree.children[1] as any));
+    assertSkippedFirstNode(tree);
   });
 
   it("handles nodes without position", () => {
@@ -235,9 +227,7 @@ describe("remark-node-id", () => {
 
   it("preserves existing hProperties", () => {
     const para = createParagraph("Test");
-    para.data = {
-      hProperties: { className: "existing" },
-    };
+    para.data = { hProperties: { className: "existing" } };
     const tree = createTree(para);
     const file = createFile();
 
@@ -249,10 +239,7 @@ describe("remark-node-id", () => {
   });
 
   it("handles empty tree", () => {
-    const tree: Root = {
-      type: "root",
-      children: [],
-    };
+    const tree: Root = { type: "root", children: [] };
     const file = createFile();
 
     runPlugin(tree, file);
@@ -286,12 +273,13 @@ describe("remark-node-id", () => {
   });
 
   it("stores node value in map if present", () => {
-    const codeNode = {
-      type: "code",
-      lang: "js",
-      value: 'console.log("test")',
-    };
-    const tree = createTree(codeNode as any);
+    const tree = createTree(
+      {
+        type: "code",
+        lang: "js",
+        value: 'console.log("test")',
+      } as any,
+    );
     const file = createFile();
 
     runPlugin(tree, file);

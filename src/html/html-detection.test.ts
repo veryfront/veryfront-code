@@ -2,9 +2,11 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isFullHTMLDocument } from "./html-detection.ts";
 
+type TestCase = { name: string; html: string; expected: boolean };
+
 describe("html-detection", () => {
   describe("isFullHTMLDocument", () => {
-    const cases: Array<{ name: string; html: string; expected: boolean }> = [
+    const cases: TestCase[] = [
       {
         name: "should detect full HTML5 document",
         html: `<!DOCTYPE html>
@@ -81,9 +83,9 @@ describe("html-detection", () => {
       },
     ];
 
-    for (const { name, html, expected } of cases) {
-      it(name, () => {
-        assertEquals(isFullHTMLDocument(html), expected);
+    for (const testCase of cases) {
+      it(testCase.name, () => {
+        assertEquals(isFullHTMLDocument(testCase.html), testCase.expected);
       });
     }
   });

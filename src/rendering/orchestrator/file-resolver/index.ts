@@ -18,9 +18,7 @@ const COMPONENT_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 export function getLocalLibDir(): string {
   const currentFile = new URL(import.meta.url).pathname;
   const srcIndex = currentFile.indexOf("/src/");
-  if (srcIndex !== -1) {
-    return `${currentFile.substring(0, srcIndex)}/src/lib`;
-  }
+  if (srcIndex !== -1) return `${currentFile.substring(0, srcIndex)}/src/lib`;
 
   return currentFile.replace(
     /\/src\/rendering\/orchestrator\/file-resolver\/index\.ts$/,
@@ -54,9 +52,7 @@ export async function findSourceFile(
 
   const withoutComponents = basePath.replace(/^components\//, "");
   if (withoutComponents !== basePath) {
-    candidates.push(
-      ...buildCandidatePaths(projectDir, withoutComponents, SOURCE_EXTENSIONS),
-    );
+    candidates.push(...buildCandidatePaths(projectDir, withoutComponents, SOURCE_EXTENSIONS));
   }
 
   const result = await findFirstExisting(candidates, (p) => adapter.fs.stat(p));

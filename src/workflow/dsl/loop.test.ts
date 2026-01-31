@@ -9,10 +9,11 @@ describe("workflow/dsl/loop", () => {
         while: () => true,
         steps: [],
       });
+
       assertEquals(node.id, "my-loop");
       assertEquals(node.config.type, "loop");
-      assertEquals((node.config as { maxIterations: number }).maxIterations, 10);
-      assertEquals((node.config as { checkpoint: boolean }).checkpoint, true);
+      assertEquals(node.config.maxIterations, 10);
+      assertEquals(node.config.checkpoint, true);
     });
 
     it("should accept custom maxIterations", () => {
@@ -21,15 +22,12 @@ describe("workflow/dsl/loop", () => {
         steps: [],
         maxIterations: 50,
       });
-      assertEquals((node.config as { maxIterations: number }).maxIterations, 50);
+
+      assertEquals(node.config.maxIterations, 50);
     });
 
     it("should throw for empty id", () => {
-      assertThrows(
-        () => loop("", { while: () => true, steps: [] }),
-        Error,
-        "non-empty",
-      );
+      assertThrows(() => loop("", { while: () => true, steps: [] }), Error, "non-empty");
     });
 
     it("should throw for missing while condition", () => {
@@ -74,16 +72,18 @@ describe("workflow/dsl/loop", () => {
         steps: [],
         checkpoint: false,
       });
-      assertEquals((node.config as { checkpoint: boolean }).checkpoint, false);
+
+      assertEquals(node.config.checkpoint, false);
     });
   });
 
   describe("times", () => {
     it("should create a loop with count-based iteration", () => {
       const node = times("repeat-3", 3, []);
+
       assertEquals(node.id, "repeat-3");
       assertEquals(node.config.type, "loop");
-      assertEquals((node.config as { maxIterations: number }).maxIterations, 3);
+      assertEquals(node.config.maxIterations, 3);
     });
   });
 });

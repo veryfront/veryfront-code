@@ -139,6 +139,22 @@ export default defineConfig({
   console.log("  npm run dev  # or: deno task dev\n");
 }
 
+function showRuntimeCommandHelp(command: string, args: string[]): void {
+  const joinedArgs = args.join(" ");
+  console.log(`
+The '${command}' command requires the Veryfront development server.
+
+For Deno (recommended):
+  deno run -A npm:veryfront@^${VERSION} ${joinedArgs}
+
+For Node.js, install dependencies first:
+  npm install
+  npx veryfront@^${VERSION} ${joinedArgs}
+
+Note: dev/build/preview commands work best with Deno runtime.
+`);
+}
+
 async function main(): Promise<void> {
   const args = getArgs();
   const { command, flags, positional } = parseArgs(args);
@@ -179,18 +195,7 @@ async function main(): Promise<void> {
   ]);
 
   if (runtimeCommands.has(command)) {
-    console.log(`
-The '${command}' command requires the Veryfront development server.
-
-For Deno (recommended):
-  deno run -A npm:veryfront@^${VERSION} ${args.join(" ")}
-
-For Node.js, install dependencies first:
-  npm install
-  npx veryfront@^${VERSION} ${args.join(" ")}
-
-Note: dev/build/preview commands work best with Deno runtime.
-`);
+    showRuntimeCommandHelp(command, args);
     exit(0);
   }
 

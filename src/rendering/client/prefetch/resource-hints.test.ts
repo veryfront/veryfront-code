@@ -6,7 +6,6 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ResourceHintsManager } from "./resource-hints.ts";
-import type { ResourceHint as _ResourceHint } from "./resource-hints.ts";
 
 class MockDOMParser {
   parseFromString(html: string, _mimeType: DOMParserSupportedType): Document {
@@ -81,6 +80,7 @@ function setupMocks(): {
     },
     createElement: (tagName: string) => {
       const attributes: Record<string, string> = { rel: "", href: "" };
+
       return {
         tagName,
         attributes,
@@ -116,6 +116,15 @@ function setupMocks(): {
   };
 }
 
+function withMocks(test: (mocks: ReturnType<typeof setupMocks>) => void): void {
+  const mocks = setupMocks();
+  try {
+    test(mocks);
+  } finally {
+    mocks.cleanup();
+  }
+}
+
 describe("ResourceHintsManager", () => {
   describe("Constructor", () => {
     it("should create ResourceHintsManager instance", () => {
@@ -124,293 +133,284 @@ describe("ResourceHintsManager", () => {
     });
 
     it("should initialize with empty applied hints set", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks((mocks) => {
+        const manager = new ResourceHintsManager();
 
-      manager.applyResourceHints([{ type: "prefetch", href: "http://example.com/page" }]);
+        manager.applyResourceHints([{ type: "prefetch", href: "http://example.com/page" }]);
 
-      assertEquals(mocks.getCreatedElements().length, 1);
-      mocks.cleanup();
+        assertEquals(mocks.getCreatedElements().length, 1);
+      });
     });
   });
 
   describe("Apply Resource Hints", () => {
     it("should apply prefetch hint", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks((mocks) => {
+        const manager = new ResourceHintsManager();
 
-      manager.applyResourceHints([{ type: "prefetch", href: "http://example.com/page" }]);
+        manager.applyResourceHints([{ type: "prefetch", href: "http://example.com/page" }]);
 
-      const [el] = mocks.getCreatedElements();
-      assertEquals(mocks.getCreatedElements().length, 1);
-      assertEquals(el?.attributes.rel, "prefetch");
-      assertEquals(el?.attributes.href, "http://example.com/page");
-
-      mocks.cleanup();
+        const [el] = mocks.getCreatedElements();
+        assertEquals(mocks.getCreatedElements().length, 1);
+        assertEquals(el?.attributes.rel, "prefetch");
+        assertEquals(el?.attributes.href, "http://example.com/page");
+      });
     });
 
     it("should apply preload hint with as attribute", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks((mocks) => {
+        const manager = new ResourceHintsManager();
 
-      manager.applyResourceHints([
-        { type: "preload", href: "http://example.com/script.js", as: "script" },
-      ]);
+        manager.applyResourceHints([
+          { type: "preload", href: "http://example.com/script.js", as: "script" },
+        ]);
 
-      const [el] = mocks.getCreatedElements();
-      assertEquals(mocks.getCreatedElements().length, 1);
-      assertEquals(el?.attributes.rel, "preload");
-      assertEquals(el?.attributes.href, "http://example.com/script.js");
-      assertEquals(el?.attributes.as, "script");
-
-      mocks.cleanup();
+        const [el] = mocks.getCreatedElements();
+        assertEquals(mocks.getCreatedElements().length, 1);
+        assertEquals(el?.attributes.rel, "preload");
+        assertEquals(el?.attributes.href, "http://example.com/script.js");
+        assertEquals(el?.attributes.as, "script");
+      });
     });
 
     it("should apply dns-prefetch hint", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks((mocks) => {
+        const manager = new ResourceHintsManager();
 
-      manager.applyResourceHints([{ type: "dns-prefetch", href: "http://cdn.example.com" }]);
+        manager.applyResourceHints([{ type: "dns-prefetch", href: "http://cdn.example.com" }]);
 
-      const [el] = mocks.getCreatedElements();
-      assertEquals(mocks.getCreatedElements().length, 1);
-      assertEquals(el?.attributes.rel, "dns-prefetch");
-      assertEquals(el?.attributes.href, "http://cdn.example.com");
-
-      mocks.cleanup();
+        const [el] = mocks.getCreatedElements();
+        assertEquals(mocks.getCreatedElements().length, 1);
+        assertEquals(el?.attributes.rel, "dns-prefetch");
+        assertEquals(el?.attributes.href, "http://cdn.example.com");
+      });
     });
 
     it("should apply preconnect hint with crossorigin", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks((mocks) => {
+        const manager = new ResourceHintsManager();
 
-      manager.applyResourceHints([
-        { type: "preconnect", href: "http://api.example.com", crossOrigin: "anonymous" },
-      ]);
+        manager.applyResourceHints([
+          { type: "preconnect", href: "http://api.example.com", crossOrigin: "anonymous" },
+        ]);
 
-      const [el] = mocks.getCreatedElements();
-      assertEquals(mocks.getCreatedElements().length, 1);
-      assertEquals(el?.attributes.rel, "preconnect");
-      assertEquals(el?.attributes.href, "http://api.example.com");
-      assertEquals(el?.attributes.crossorigin, "anonymous");
-
-      mocks.cleanup();
+        const [el] = mocks.getCreatedElements();
+        assertEquals(mocks.getCreatedElements().length, 1);
+        assertEquals(el?.attributes.rel, "preconnect");
+        assertEquals(el?.attributes.href, "http://api.example.com");
+        assertEquals(el?.attributes.crossorigin, "anonymous");
+      });
     });
 
     it("should apply hint with media attribute", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks((mocks) => {
+        const manager = new ResourceHintsManager();
 
-      manager.applyResourceHints([
-        { type: "preload", href: "http://example.com/style.css", as: "style", media: "print" },
-      ]);
+        manager.applyResourceHints([
+          { type: "preload", href: "http://example.com/style.css", as: "style", media: "print" },
+        ]);
 
-      const [el] = mocks.getCreatedElements();
-      assertEquals(mocks.getCreatedElements().length, 1);
-      assertEquals(el?.attributes.media, "print");
-
-      mocks.cleanup();
+        const [el] = mocks.getCreatedElements();
+        assertEquals(mocks.getCreatedElements().length, 1);
+        assertEquals(el?.attributes.media, "print");
+      });
     });
 
     it("should apply multiple hints", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks((mocks) => {
+        const manager = new ResourceHintsManager();
 
-      manager.applyResourceHints([
-        { type: "dns-prefetch", href: "http://cdn.example.com" },
-        { type: "preconnect", href: "http://api.example.com" },
-        { type: "prefetch", href: "http://example.com/page" },
-      ]);
+        manager.applyResourceHints([
+          { type: "dns-prefetch", href: "http://cdn.example.com" },
+          { type: "preconnect", href: "http://api.example.com" },
+          { type: "prefetch", href: "http://example.com/page" },
+        ]);
 
-      assertEquals(mocks.getCreatedElements().length, 3);
-      mocks.cleanup();
+        assertEquals(mocks.getCreatedElements().length, 3);
+      });
     });
 
     it("should not apply duplicate hints", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks((mocks) => {
+        const manager = new ResourceHintsManager();
 
-      manager.applyResourceHints([
-        { type: "prefetch", href: "http://example.com/page" },
-        { type: "prefetch", href: "http://example.com/page" },
-      ]);
+        manager.applyResourceHints([
+          { type: "prefetch", href: "http://example.com/page" },
+          { type: "prefetch", href: "http://example.com/page" },
+        ]);
 
-      assertEquals(mocks.getCreatedElements().length, 1);
-      mocks.cleanup();
+        assertEquals(mocks.getCreatedElements().length, 1);
+      });
     });
 
     it("should not apply hint if already exists in DOM", () => {
-      const mocks = setupMocks();
-      (globalThis as any).document.querySelector = (selector: string) => {
-        if (selector === 'link[rel="prefetch"][href="http://example.com/page"]') {
-          return { rel: "prefetch", href: "http://example.com/page" };
-        }
-        return null;
-      };
+      withMocks((mocks) => {
+        (globalThis as any).document.querySelector = (selector: string) => {
+          if (selector === 'link[rel="prefetch"][href="http://example.com/page"]') {
+            return { rel: "prefetch", href: "http://example.com/page" };
+          }
+          return null;
+        };
 
-      const manager = new ResourceHintsManager();
-      manager.applyResourceHints([{ type: "prefetch", href: "http://example.com/page" }]);
+        const manager = new ResourceHintsManager();
+        manager.applyResourceHints([{ type: "prefetch", href: "http://example.com/page" }]);
 
-      assertEquals(mocks.getCreatedElements().length, 0);
-      mocks.cleanup();
+        assertEquals(mocks.getCreatedElements().length, 0);
+      });
     });
 
     it("should track applied hints across multiple calls", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks((mocks) => {
+        const manager = new ResourceHintsManager();
 
-      manager.applyResourceHints([{ type: "prefetch", href: "http://example.com/page1" }]);
-      manager.applyResourceHints([
-        { type: "prefetch", href: "http://example.com/page1" },
-        { type: "prefetch", href: "http://example.com/page2" },
-      ]);
+        manager.applyResourceHints([{ type: "prefetch", href: "http://example.com/page1" }]);
+        manager.applyResourceHints([
+          { type: "prefetch", href: "http://example.com/page1" },
+          { type: "prefetch", href: "http://example.com/page2" },
+        ]);
 
-      assertEquals(mocks.getCreatedElements().length, 2);
-      mocks.cleanup();
+        assertEquals(mocks.getCreatedElements().length, 2);
+      });
     });
   });
 
   describe("Extract Resource Hints", () => {
     it("should extract script tags as prefetch hints", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks(() => {
+        const manager = new ResourceHintsManager();
 
-      const hints = manager.extractResourceHints(
-        '<script src="http://example.com/app.js"></script>',
-        new Set<string>(),
-      );
+        const hints = manager.extractResourceHints(
+          '<script src="http://example.com/app.js"></script>',
+          new Set<string>(),
+        );
 
-      assertEquals(hints.length, 1);
-      assertEquals(hints[0]?.type, "prefetch");
-      assertEquals(hints[0]?.href, "http://example.com/app.js");
-      assertEquals(hints[0]?.as, "script");
-
-      mocks.cleanup();
+        assertEquals(hints.length, 1);
+        assertEquals(hints[0]?.type, "prefetch");
+        assertEquals(hints[0]?.href, "http://example.com/app.js");
+        assertEquals(hints[0]?.as, "script");
+      });
     });
 
     it("should extract stylesheet links as prefetch hints", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks(() => {
+        const manager = new ResourceHintsManager();
 
-      const hints = manager.extractResourceHints(
-        '<link rel="stylesheet" href="http://example.com/style.css">',
-        new Set<string>(),
-      );
+        const hints = manager.extractResourceHints(
+          '<link rel="stylesheet" href="http://example.com/style.css">',
+          new Set<string>(),
+        );
 
-      assertEquals(hints.length, 1);
-      assertEquals(hints[0]?.type, "prefetch");
-      assertEquals(hints[0]?.href, "http://example.com/style.css");
-      assertEquals(hints[0]?.as, "style");
-
-      mocks.cleanup();
+        assertEquals(hints.length, 1);
+        assertEquals(hints[0]?.type, "prefetch");
+        assertEquals(hints[0]?.href, "http://example.com/style.css");
+        assertEquals(hints[0]?.as, "style");
+      });
     });
 
     it("should extract existing preload links", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks(() => {
+        const manager = new ResourceHintsManager();
 
-      const hints = manager.extractResourceHints(
-        '<link rel="preload" href="http://example.com/font.woff2" as="font">',
-        new Set<string>(),
-      );
+        const hints = manager.extractResourceHints(
+          '<link rel="preload" href="http://example.com/font.woff2" as="font">',
+          new Set<string>(),
+        );
 
-      assertEquals(hints.length, 1);
-      assertEquals(hints[0]?.type, "preload");
-      assertEquals(hints[0]?.href, "http://example.com/font.woff2");
-      assertEquals(hints[0]?.as, "font");
-
-      mocks.cleanup();
+        assertEquals(hints.length, 1);
+        assertEquals(hints[0]?.type, "preload");
+        assertEquals(hints[0]?.href, "http://example.com/font.woff2");
+        assertEquals(hints[0]?.as, "font");
+      });
     });
 
     it("should extract existing prefetch links", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks(() => {
+        const manager = new ResourceHintsManager();
 
-      const hints = manager.extractResourceHints(
-        '<link rel="prefetch" href="http://example.com/next-page" as="document">',
-        new Set<string>(),
-      );
+        const hints = manager.extractResourceHints(
+          '<link rel="prefetch" href="http://example.com/next-page" as="document">',
+          new Set<string>(),
+        );
 
-      assertEquals(hints.length, 1);
-      assertEquals(hints[0]?.type, "prefetch");
-      assertEquals(hints[0]?.href, "http://example.com/next-page");
-
-      mocks.cleanup();
+        assertEquals(hints.length, 1);
+        assertEquals(hints[0]?.type, "prefetch");
+        assertEquals(hints[0]?.href, "http://example.com/next-page");
+      });
     });
 
     it("should skip already prefetched URLs", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks(() => {
+        const manager = new ResourceHintsManager();
 
-      const hints = manager.extractResourceHints(
-        '<script src="http://example.com/app.js"></script>',
-        new Set(["http://example.com/app.js"]),
-      );
+        const hints = manager.extractResourceHints(
+          '<script src="http://example.com/app.js"></script>',
+          new Set(["http://example.com/app.js"]),
+        );
 
-      assertEquals(hints.length, 0);
-      mocks.cleanup();
+        assertEquals(hints.length, 0);
+      });
     });
 
     it("should extract multiple resource types", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks(() => {
+        const manager = new ResourceHintsManager();
 
-      const hints = manager.extractResourceHints(
-        `
+        const hints = manager.extractResourceHints(
+          `
         <script src="http://example.com/app.js"></script>
         <link rel="stylesheet" href="http://example.com/style.css">
         <link rel="preload" href="http://example.com/font.woff2" as="font">
       `,
-        new Set<string>(),
-      );
+          new Set<string>(),
+        );
 
-      assertEquals(hints.length, 3);
-      mocks.cleanup();
+        assertEquals(hints.length, 3);
+      });
     });
 
     it("should handle parsing errors gracefully", () => {
-      const mocks = setupMocks();
-      (globalThis as any).DOMParser = class {
-        parseFromString(): never {
-          throw new Error("Parse error");
-        }
-      };
+      withMocks(() => {
+        (globalThis as any).DOMParser = class {
+          parseFromString(): never {
+            throw new Error("Parse error");
+          }
+        };
 
-      const manager = new ResourceHintsManager();
-      const hints = manager.extractResourceHints("<invalid-html", new Set<string>());
+        const manager = new ResourceHintsManager();
+        const hints = manager.extractResourceHints("<invalid-html", new Set<string>());
 
-      assertEquals(hints.length, 0);
-      mocks.cleanup();
+        assertEquals(hints.length, 0);
+      });
     });
 
     it("should handle empty HTML", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks(() => {
+        const manager = new ResourceHintsManager();
 
-      const hints = manager.extractResourceHints("", new Set<string>());
+        const hints = manager.extractResourceHints("", new Set<string>());
 
-      assertEquals(hints.length, 0);
-      mocks.cleanup();
+        assertEquals(hints.length, 0);
+      });
     });
 
     it("should skip resources without href/src", () => {
-      const mocks = setupMocks();
-      (globalThis as any).DOMParser = class {
-        parseFromString(): { querySelectorAll: (selector: string) => any[] } {
-          return {
-            querySelectorAll: (selector: string) => {
-              if (selector === "script[src]") return [{ src: "" }];
-              return [];
-            },
-          };
-        }
-      };
+      withMocks(() => {
+        (globalThis as any).DOMParser = class {
+          parseFromString(): { querySelectorAll: (selector: string) => any[] } {
+            return {
+              querySelectorAll: (selector: string) => {
+                if (selector === "script[src]") return [{ src: "" }];
+                return [];
+              },
+            };
+          }
+        };
 
-      const manager = new ResourceHintsManager();
-      const hints = manager.extractResourceHints('<script src=""></script>', new Set<string>());
+        const manager = new ResourceHintsManager();
+        const hints = manager.extractResourceHints('<script src=""></script>', new Set<string>());
 
-      assertEquals(hints.length, 0);
-      mocks.cleanup();
+        assertEquals(hints.length, 0);
+      });
     });
   });
 
@@ -538,24 +538,23 @@ describe("ResourceHintsManager", () => {
 
   describe("Edge Cases", () => {
     it("should handle hints without optional attributes", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks((mocks) => {
+        const manager = new ResourceHintsManager();
 
-      manager.applyResourceHints([{ type: "prefetch", href: "http://example.com/page" }]);
+        manager.applyResourceHints([{ type: "prefetch", href: "http://example.com/page" }]);
 
-      const [el] = mocks.getCreatedElements();
-      assertEquals(mocks.getCreatedElements().length, 1);
-      assertEquals(el?.attributes.rel, "prefetch");
-
-      mocks.cleanup();
+        const [el] = mocks.getCreatedElements();
+        assertEquals(mocks.getCreatedElements().length, 1);
+        assertEquals(el?.attributes.rel, "prefetch");
+      });
     });
 
     it("should handle complex HTML with nested elements", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks(() => {
+        const manager = new ResourceHintsManager();
 
-      const hints = manager.extractResourceHints(
-        `
+        const hints = manager.extractResourceHints(
+          `
         <html>
           <head>
             <script src="http://example.com/app.js"></script>
@@ -567,60 +566,57 @@ describe("ResourceHintsManager", () => {
           </body>
         </html>
       `,
-        new Set<string>(),
-      );
+          new Set<string>(),
+        );
 
-      assertEquals(hints.length >= 1, true);
-      mocks.cleanup();
+        assertEquals(hints.length >= 1, true);
+      });
     });
 
     it("should handle URLs with query parameters", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks((mocks) => {
+        const manager = new ResourceHintsManager();
 
-      manager.applyResourceHints([{ type: "prefetch", href: "http://example.com/page?v=1.0" }]);
+        manager.applyResourceHints([{ type: "prefetch", href: "http://example.com/page?v=1.0" }]);
 
-      const [el] = mocks.getCreatedElements();
-      assertEquals(el?.attributes.href, "http://example.com/page?v=1.0");
-
-      mocks.cleanup();
+        const [el] = mocks.getCreatedElements();
+        assertEquals(el?.attributes.href, "http://example.com/page?v=1.0");
+      });
     });
 
     it("should handle URLs with hash fragments", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks((mocks) => {
+        const manager = new ResourceHintsManager();
 
-      manager.applyResourceHints([{ type: "prefetch", href: "http://example.com/page#section" }]);
+        manager.applyResourceHints([{ type: "prefetch", href: "http://example.com/page#section" }]);
 
-      const [el] = mocks.getCreatedElements();
-      assertEquals(el?.attributes.href, "http://example.com/page#section");
-
-      mocks.cleanup();
+        const [el] = mocks.getCreatedElements();
+        assertEquals(el?.attributes.href, "http://example.com/page#section");
+      });
     });
 
     it("should handle relative URLs", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks((mocks) => {
+        const manager = new ResourceHintsManager();
 
-      manager.applyResourceHints([{ type: "prefetch", href: "/assets/app.js" }]);
+        manager.applyResourceHints([{ type: "prefetch", href: "/assets/app.js" }]);
 
-      const [el] = mocks.getCreatedElements();
-      assertEquals(el?.attributes.href, "/assets/app.js");
-
-      mocks.cleanup();
+        const [el] = mocks.getCreatedElements();
+        assertEquals(el?.attributes.href, "/assets/app.js");
+      });
     });
 
     it("should differentiate hints by type and href", () => {
-      const mocks = setupMocks();
-      const manager = new ResourceHintsManager();
+      withMocks((mocks) => {
+        const manager = new ResourceHintsManager();
 
-      manager.applyResourceHints([
-        { type: "prefetch", href: "http://example.com/page" },
-        { type: "preload", href: "http://example.com/page", as: "document" },
-      ]);
+        manager.applyResourceHints([
+          { type: "prefetch", href: "http://example.com/page" },
+          { type: "preload", href: "http://example.com/page", as: "document" },
+        ]);
 
-      assertEquals(mocks.getCreatedElements().length, 2);
-      mocks.cleanup();
+        assertEquals(mocks.getCreatedElements().length, 2);
+      });
     });
   });
 });

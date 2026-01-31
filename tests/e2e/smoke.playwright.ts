@@ -1,4 +1,4 @@
-/**
+/****
  * E2E Smoke Tests
  *
  * Pre-push smoke tests for the Veryfront renderer.
@@ -54,6 +54,18 @@ const MODES = [
   { name: "preview", getUrl: (subdomain: string) => `http://${subdomain}.preview.lvh.me:8080` },
 ];
 
+async function expectPageRenders(page: import("@playwright/test").Page): Promise<void> {
+  const body = await page.locator("body").innerHTML();
+  expect(body.length).toBeGreaterThan(0);
+}
+
+function getHydrationErrors(errors: string[]): string[] {
+  return errors.filter(
+    (e) =>
+      e.includes("hydrat") || e.includes("Minified React error") || e.includes("did not match"),
+  );
+}
+
 /**
  * Test each project in each mode
  */
@@ -62,36 +74,23 @@ for (const subdomain of PROJECTS) {
     test.describe(`${subdomain} (${mode.name})`, () => {
       const baseUrl = mode.getUrl(subdomain);
 
-      /**
-       * Basic smoke test: page loads without errors
-       */
       test("page loads without errors", async ({ page }) => {
         const errors = setupErrorCollection(page);
 
         const response = await page.goto(`${baseUrl}/`);
         await page.waitForLoadState("networkidle");
 
-        // Assert: no 5xx errors
         expect(response?.status()).toBeLessThan(500);
-
-        // Assert: page has content
-        const body = await page.locator("body").innerHTML();
-        expect(body.length).toBeGreaterThan(0);
-
-        // Assert: no console errors
+        await expectPageRenders(page);
         expect(errors).toEqual([]);
       });
 
-      /**
-       * Hydration test: React hydration works without errors
-       */
       test("hydration works", async ({ page }) => {
         const errors = setupErrorCollection(page);
 
         await page.goto(`${baseUrl}/`);
         await page.waitForLoadState("networkidle");
 
-        // Try to interact with an element to trigger hydration errors
         const interactive = page.locator("button, a[href], [onclick]").first();
         if ((await interactive.count()) > 0) {
           try {
@@ -102,116 +101,73 @@ for (const subdomain of PROJECTS) {
           }
         }
 
-        // Assert: no hydration-related errors
-        const hydrationErrors = errors.filter(
-          (e) =>
-            e.includes("hydrat") ||
-            e.includes("Minified React error") ||
-            e.includes("did not match"),
-        );
-        expect(hydrationErrors).toEqual([]);
+        expect(getHydrationErrors(errors)).toEqual([]);
       });
 
-      /**
-       * Dark mode test: color_mode=dark applies correctly
-       */
       test("color_mode=dark works", async ({ page }) => {
         const errors = setupErrorCollection(page);
 
-        // Check SSR value before hydration
         const response = await page.goto(`${baseUrl}/?color_mode=dark`);
         const html = await response?.text();
         expect(html).toContain('data-theme="dark"');
 
-        // Wait for hydration to complete
         await page.waitForLoadState("networkidle");
 
-        // Client: data-theme should still be dark after hydration (no revert)
         // Use .first() to handle pages with nested <html> elements (e.g., veryfront-managed)
         await expect(page.locator("html").first()).toHaveAttribute("data-theme", "dark");
 
-        // Page should still render correctly
-        const body = await page.locator("body").innerHTML();
-        expect(body.length).toBeGreaterThan(0);
-
-        // No console errors
+        await expectPageRenders(page);
         expect(errors).toEqual([]);
       });
 
-      /**
-       * Light mode test: color_mode=light applies correctly
-       */
       test("color_mode=light works", async ({ page }) => {
         const errors = setupErrorCollection(page);
 
-        // Check SSR value before hydration
         const response = await page.goto(`${baseUrl}/?color_mode=light`);
         const html = await response?.text();
         expect(html).toContain('data-theme="light"');
 
-        // Wait for hydration to complete
         await page.waitForLoadState("networkidle");
 
-        // Client: data-theme should still be light after hydration (no revert)
         // Use .first() to handle pages with nested <html> elements (e.g., veryfront-managed)
         await expect(page.locator("html").first()).toHaveAttribute("data-theme", "light");
 
-        // Page should still render correctly
-        const body = await page.locator("body").innerHTML();
-        expect(body.length).toBeGreaterThan(0);
-
-        // No console errors
+        await expectPageRenders(page);
         expect(errors).toEqual([]);
       });
 
-      // Production-only tests
       if (mode.name === "production") {
-        /**
-         * Studio embed test: studio_embed=true injects bridge script
-         */
         test("studio_embed=true works", async ({ page }) => {
           const errors = setupErrorCollection(page);
 
           await page.goto(`${baseUrl}/?studio_embed=true`);
           await page.waitForLoadState("networkidle");
 
-          // Page should still render correctly
-          const body = await page.locator("body").innerHTML();
-          expect(body.length).toBeGreaterThan(0);
+          await expectPageRenders(page);
 
-          // Studio bridge should be present (postMessage communication script)
-          // Check for StudioBridge in any script content
           const pageContent = await page.content();
-          const hasStudioBridge = pageContent.includes("StudioBridge") ||
+          const hasStudioBridge =
+            pageContent.includes("StudioBridge") ||
             pageContent.includes("studio-bridge") ||
             pageContent.includes("parent.postMessage");
           expect(hasStudioBridge).toBeTruthy();
 
-          // No console errors
           expect(errors).toEqual([]);
         });
       }
 
-      // Preview-only tests
       if (mode.name === "preview") {
-        /**
-         * Preview HMR test: preview mode includes HMR script
-         */
         test("HMR script present", async ({ page }) => {
           const errors = setupErrorCollection(page);
 
           await page.goto(`${baseUrl}/`);
           await page.waitForLoadState("networkidle");
 
-          // Page should still render correctly
-          const body = await page.locator("body").innerHTML();
-          expect(body.length).toBeGreaterThan(0);
+          await expectPageRenders(page);
 
-          // Preview HMR script should be present
           const hmrScript = page.locator('script[src*="preview-hmr.js"]');
           await expect(hmrScript).toBeAttached();
 
-          // No console errors
           expect(errors).toEqual([]);
         });
       }
@@ -219,9 +175,6 @@ for (const subdomain of PROJECTS) {
   }
 }
 
-/**
- * Summary test to verify test execution
- */
 test("smoke test summary", async () => {
   console.log(`\nSmoke tests completed for ${PROJECTS.length} projects in ${MODES.length} modes:`);
   for (const subdomain of PROJECTS) {

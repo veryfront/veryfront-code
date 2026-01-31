@@ -3,28 +3,23 @@ import type { FrontmatterMetadata, LogContext, MDXModule } from "./types.ts";
 import { extractBalancedBlock, parseJsonish } from "./string-parser.ts";
 
 export function extractFrontmatter(moduleCode: string): FrontmatterMetadata | undefined {
+  const fmIndex = moduleCode.search(/(?:export\s+)?const\s+frontmatter\s*=\s*/);
+  if (fmIndex < 0) return undefined;
+
+  const braceStart = moduleCode.indexOf("{", fmIndex);
+  if (braceStart < 0) return undefined;
+
+  const raw = extractBalancedBlock(moduleCode, braceStart, "{", "}");
+  if (!raw) return undefined;
+
+  const jsonish = raw
+    .replace(/([^\s"{[:,]+)\s*:/g, '"$1":')
+    .replace(/'([^']*)'/g, '"$1"');
+
   try {
-    const fmIndex = moduleCode.search(/(?:export\s+)?const\s+frontmatter\s*=\s*/);
-    if (fmIndex < 0) return undefined;
-
-    const braceStart = moduleCode.indexOf("{", fmIndex);
-    if (braceStart < 0) return undefined;
-
-    const raw = extractBalancedBlock(moduleCode, braceStart, "{", "}");
-    if (!raw) return undefined;
-
-    const jsonish = raw
-      .replace(/([^\s"{[:,]+)\s*:/g, '"$1":')
-      .replace(/'([^']*)'/g, '"$1"');
-
-    try {
-      return JSON.parse(jsonish) as FrontmatterMetadata;
-    } catch (e) {
-      logger.debug("[mdx] frontmatter JSON parse failed", e as LogContext);
-      return undefined;
-    }
+    return JSON.parse(jsonish) as FrontmatterMetadata;
   } catch (e) {
-    logger.debug("[mdx] frontmatter extraction failed", e as LogContext);
+    logger.debug("[mdx] frontmatter JSON parse failed", e as LogContext);
     return undefined;
   }
 }
@@ -60,25 +55,25 @@ export function extractMetadata(moduleCode: string): Partial<MDXModule> {
 
     const value = match[1];
 
-    switch (key) {
-      case "title":
-      case "description":
-      case "date":
-        exports[key] = value;
-        break;
-      case "draft":
-        exports[key] = value === "true";
-        break;
-      case "layout":
-        if (value !== undefined) exports[key] = parseLayoutValue(value);
-        break;
-      default:
-        try {
-          if (value !== undefined) exports[key] = parseJsonish(value) as never;
-        } catch (e) {
-          logger.warn(`Failed to parse ${String(key)}`, e);
-        }
-        break;
+    if (key === "title" || key === "description" || key === "date") {
+      exports[key] = value;
+      continue;
+    }
+
+    if (key === "draft") {
+      exports[key] = value === "true";
+      continue;
+    }
+
+    if (key === "layout") {
+      if (value !== undefined) exports[key] = parseLayoutValue(value);
+      continue;
+    }
+
+    try {
+      if (value !== undefined) exports[key] = parseJsonish(value) as never;
+    } catch (e) {
+      logger.warn(`Failed to parse ${String(key)}`, e);
     }
   }
 

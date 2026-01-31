@@ -15,22 +15,24 @@ describe("Veryfront Router", () => {
   let env: DOMEnvironment;
   let rootElement: HTMLElement;
 
-  beforeEach(() => {
-    env = setupDOMEnvironment({
-      url: "http://localhost:3000/",
-    });
+  function createRoot(): HTMLElement {
+    const el = document.createElement("div");
+    el.id = "root";
+    document.body.appendChild(el);
+    return el;
+  }
 
-    // Create root element
-    rootElement = document.createElement("div");
-    rootElement.id = "root";
-    document.body.appendChild(rootElement);
+  function removeRoot(): void {
+    rootElement.parentElement?.removeChild(rootElement);
+  }
+
+  beforeEach(() => {
+    env = setupDOMEnvironment({ url: "http://localhost:3000/" });
+    rootElement = createRoot();
   });
 
   afterEach(() => {
-    if (rootElement && rootElement.parentElement) {
-      document.body.removeChild(rootElement);
-    }
-
+    removeRoot();
     env.cleanup();
   });
 
@@ -62,33 +64,26 @@ describe("Veryfront Router", () => {
       const router = new VeryfrontRouter();
       router.init();
 
-      // Should create React root
       assertEquals(mockRoots.has(rootElement), true);
 
       router.destroy();
     });
 
     it("should handle missing root element gracefully", () => {
-      document.body.removeChild(rootElement);
+      removeRoot();
 
       const router = new VeryfrontRouter();
       router.init();
 
-      // Should not throw
       assertExists(router);
 
       router.destroy();
 
-      // Re-add for cleanup
-      rootElement = document.createElement("div");
-      rootElement.id = "root";
-      document.body.appendChild(rootElement);
+      rootElement = createRoot();
     });
 
     it("should load global router options", () => {
-      (globalThis as any).__VERYFRONT_ROUTER_OPTS__ = {
-        prefetchDelay: 500,
-      };
+      (globalThis as any).__VERYFRONT_ROUTER_OPTS__ = { prefetchDelay: 500 };
 
       const router = new VeryfrontRouter();
       assertExists(router);
@@ -116,7 +111,6 @@ describe("Veryfront Router", () => {
 
       await router.navigate("/new-page");
 
-      // Should update history
       assertEquals((globalThis as any).location.pathname, "/new-page");
 
       router.destroy();
@@ -194,7 +188,7 @@ describe("Veryfront Router", () => {
       await router.navigate("/error");
 
       assertExists(errorCaptured);
-      assertEquals((errorCaptured as Error).message, "Network error");
+      assertEquals(errorCaptured?.message, "Network error");
 
       router.destroy();
     });
@@ -209,7 +203,6 @@ describe("Veryfront Router", () => {
 
       await router.navigate("/page", false);
 
-      // Pathname should not change
       assertEquals((globalThis as any).location.pathname, originalPathname);
 
       router.destroy();
@@ -223,8 +216,7 @@ describe("Veryfront Router", () => {
 
       try {
         await router.navigate("/not-found");
-        // Should handle error
-      } catch (_error) {
+      } catch {
         // Expected to fail
       }
 
@@ -246,7 +238,6 @@ describe("Veryfront Router", () => {
       const router = new VeryfrontRouter();
       router.init();
 
-      // Should cache the current page
       assertExists(router);
 
       document.body.removeChild(pageDataScript);
@@ -267,7 +258,6 @@ describe("Veryfront Router", () => {
       await router.navigate("/cached");
       await router.navigate("/cached");
 
-      // Should only fetch once
       assertEquals(fetchCount, 1);
 
       router.destroy();
@@ -284,7 +274,6 @@ describe("Veryfront Router", () => {
 
       await router.prefetch("/prefetch");
 
-      // Track if additional fetch happens (it shouldn't)
       let additionalFetchCount = 0;
       env.fetchMock.set("/prefetch", () => {
         additionalFetchCount++;
@@ -293,8 +282,6 @@ describe("Veryfront Router", () => {
 
       await router.navigate("/prefetch");
 
-      // Should use cache, not fetch again
-      // Note: The first prefetch already happened, so this should be 0 additional fetches
       assertEquals(additionalFetchCount, 0);
 
       router.destroy();
@@ -310,7 +297,6 @@ describe("Veryfront Router", () => {
 
       router.destroy();
 
-      // Cache should be cleared
       assertExists(router);
     });
   });
@@ -330,14 +316,9 @@ describe("Veryfront Router", () => {
         new Response('<div id="root">Internal</div>', { status: 200 }),
       );
 
-      const clickEvent = new MouseEvent("click", {
-        bubbles: true,
-        cancelable: true,
-      });
-
+      const clickEvent = new MouseEvent("click", { bubbles: true, cancelable: true });
       link.dispatchEvent(clickEvent);
 
-      // Give time for navigation
       await delay(100);
 
       document.body.removeChild(link);
@@ -353,14 +334,9 @@ describe("Veryfront Router", () => {
       link.textContent = "External Link";
       document.body.appendChild(link);
 
-      const clickEvent = new MouseEvent("click", {
-        bubbles: true,
-        cancelable: true,
-      });
-
+      const clickEvent = new MouseEvent("click", { bubbles: true, cancelable: true });
       const prevented = !link.dispatchEvent(clickEvent);
 
-      // Should not be prevented
       assertEquals(prevented, false);
 
       document.body.removeChild(link);
@@ -377,14 +353,9 @@ describe("Veryfront Router", () => {
       link.textContent = "New Tab Link";
       document.body.appendChild(link);
 
-      const clickEvent = new MouseEvent("click", {
-        bubbles: true,
-        cancelable: true,
-      });
-
+      const clickEvent = new MouseEvent("click", { bubbles: true, cancelable: true });
       const prevented = !link.dispatchEvent(clickEvent);
 
-      // Should not be prevented
       assertEquals(prevented, false);
 
       document.body.removeChild(link);
@@ -400,14 +371,9 @@ describe("Veryfront Router", () => {
       link.textContent = "Hash Link";
       document.body.appendChild(link);
 
-      const clickEvent = new MouseEvent("click", {
-        bubbles: true,
-        cancelable: true,
-      });
-
+      const clickEvent = new MouseEvent("click", { bubbles: true, cancelable: true });
       const prevented = !link.dispatchEvent(clickEvent);
 
-      // Should not be prevented
       assertEquals(prevented, false);
 
       document.body.removeChild(link);
@@ -424,12 +390,11 @@ describe("Veryfront Router", () => {
       env.fetchMock.set("/page2", new Response('<div id="root">Page 2</div>', { status: 200 }));
 
       await router.navigate("/page1");
-      await router.navigate("/page2"); // Simulate back button
-      (globalThis as any).location.pathname = "/page1";
-      const popstateEvent = new PopStateEvent("popstate", {});
-      globalThis.dispatchEvent(popstateEvent);
+      await router.navigate("/page2");
 
-      // Give time for navigation
+      (globalThis as any).location.pathname = "/page1";
+      globalThis.dispatchEvent(new PopStateEvent("popstate", {}));
+
       await delay(100);
 
       router.destroy();
@@ -440,17 +405,17 @@ describe("Veryfront Router", () => {
       router.init();
 
       env.fetchMock.set("/page1", new Response('<div id="root">Page 1</div>', { status: 200 }));
-      env.fetchMock.set("/page2", new Response('<div id="root">Page 2</div>', { status: 200 })); // Set scroll position
+      env.fetchMock.set("/page2", new Response('<div id="root">Page 2</div>', { status: 200 }));
+
       (globalThis as any).scrollY = 500;
 
       await router.navigate("/page1");
       (globalThis as any).scrollY = 0;
-      await router.navigate("/page2"); // Simulate back
-      (globalThis as any).location.pathname = "/page1";
-      const popstateEvent = new PopStateEvent("popstate", {});
-      globalThis.dispatchEvent(popstateEvent);
+      await router.navigate("/page2");
 
-      // Give time for scroll restoration
+      (globalThis as any).location.pathname = "/page1";
+      globalThis.dispatchEvent(new PopStateEvent("popstate", {}));
+
       await delay(200);
 
       router.destroy();
@@ -471,14 +436,9 @@ describe("Veryfront Router", () => {
 
       env.fetchMock.set("/hover", new Response('<div id="root">Hover</div>', { status: 200 }));
 
-      const mouseoverEvent = new MouseEvent("mouseover", {
-        bubbles: true,
-        cancelable: true,
-      });
-
+      const mouseoverEvent = new MouseEvent("mouseover", { bubbles: true, cancelable: true });
       link.dispatchEvent(mouseoverEvent);
 
-      // Wait for prefetch delay
       await delay(100);
 
       document.body.removeChild(link);
@@ -501,14 +461,9 @@ describe("Veryfront Router", () => {
         new Response('<div id="root">Prefetch</div>', { status: 200 }),
       );
 
-      const mouseoverEvent = new MouseEvent("mouseover", {
-        bubbles: true,
-        cancelable: true,
-      });
-
+      const mouseoverEvent = new MouseEvent("mouseover", { bubbles: true, cancelable: true });
       link.dispatchEvent(mouseoverEvent);
 
-      // Wait for prefetch
       await delay(200);
 
       document.body.removeChild(link);
@@ -533,11 +488,7 @@ describe("Veryfront Router", () => {
       link.setAttribute("data-prefetch", "false");
       document.body.appendChild(link);
 
-      const mouseoverEvent = new MouseEvent("mouseover", {
-        bubbles: true,
-        cancelable: true,
-      });
-
+      const mouseoverEvent = new MouseEvent("mouseover", { bubbles: true, cancelable: true });
       link.dispatchEvent(mouseoverEvent);
 
       await delay(200);
@@ -566,8 +517,6 @@ describe("Veryfront Router", () => {
       router.init();
 
       await router.navigate("/page");
-
-      // Give time for transition
       await delay(200);
 
       assertEquals(document.title, "New Title");
@@ -591,8 +540,6 @@ describe("Veryfront Router", () => {
       router.init();
 
       await router.navigate("/page");
-
-      // Give time for meta tag updates
       await delay(200);
 
       const metaTag = document.querySelector('meta[name="description"]');
@@ -608,8 +555,6 @@ describe("Veryfront Router", () => {
       router.init();
 
       await router.navigate("/error");
-
-      // Give time for error display
       await delay(200);
 
       router.destroy();
@@ -631,9 +576,7 @@ describe("Veryfront Router", () => {
 
       const navigationPromise = router.navigate("/slow");
 
-      // Check loading state
       await delay(50);
-
       await navigationPromise;
 
       document.body.removeChild(loadingIndicator);
@@ -652,12 +595,7 @@ describe("Veryfront Router", () => {
 
       router.destroy();
 
-      // Click should not be intercepted after destroy
-      const clickEvent = new MouseEvent("click", {
-        bubbles: true,
-        cancelable: true,
-      });
-
+      const clickEvent = new MouseEvent("click", { bubbles: true, cancelable: true });
       const prevented = !link.dispatchEvent(clickEvent);
 
       assertEquals(prevented, false);
@@ -671,7 +609,6 @@ describe("Veryfront Router", () => {
 
       router.destroy();
 
-      // Should not throw
       assertExists(router);
     });
 
@@ -685,14 +622,13 @@ describe("Veryfront Router", () => {
 
       router.destroy();
 
-      // Cache should be cleared
       assertExists(router);
     });
   });
 
   describe("Edge Cases", () => {
     it("should handle navigation without root element", async () => {
-      document.body.removeChild(rootElement);
+      removeRoot();
 
       const router = new VeryfrontRouter();
       router.init();
@@ -701,15 +637,11 @@ describe("Veryfront Router", () => {
 
       await router.navigate("/page");
 
-      // Should not crash
       assertExists(router);
 
       router.destroy();
 
-      // Re-add for cleanup
-      rootElement = document.createElement("div");
-      rootElement.id = "root";
-      document.body.appendChild(rootElement);
+      rootElement = createRoot();
     });
 
     it("should handle invalid JSON in page data", () => {
@@ -722,7 +654,6 @@ describe("Veryfront Router", () => {
       const router = new VeryfrontRouter();
       router.init();
 
-      // Should not crash
       assertExists(router);
 
       document.body.removeChild(pageDataScript);
@@ -736,10 +667,8 @@ describe("Veryfront Router", () => {
       const router = new VeryfrontRouter();
       router.init();
 
-      // Start concurrent navigations
       await Promise.all([router.navigate("/page1"), router.navigate("/page2")]);
 
-      // Should handle gracefully
       assertExists(router);
 
       router.destroy();
@@ -753,7 +682,6 @@ describe("Veryfront Router", () => {
 
       await router.navigate("/empty");
 
-      // Should handle gracefully
       assertExists(router);
 
       router.destroy();

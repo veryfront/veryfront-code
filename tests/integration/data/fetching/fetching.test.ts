@@ -1,17 +1,6 @@
-/**
+/***********************
  * Comprehensive Tests for Data Fetching System (fetching.ts)
- *
- * Coverage areas:
- * - Basic data fetching (development vs production mode)
- * - Cache hit/miss scenarios
- * - ISR revalidation (stale-while-revalidate pattern)
- * - Error handling in getServerData/getStaticData
- * - Cache key generation and clearing
- * - Static paths generation and errors
- * - Edge cases: null results, redirects, notFound responses
- * - Background revalidation logic
- * - RuntimeAdapter integration
- */
+ ***********************/
 
 // Disable LRU interval to prevent resource leaks in tests
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
@@ -32,7 +21,6 @@ import { delay } from "@std/async";
 
 type StaticDataContext = Omit<DataContext, "request" | "query">;
 
-// Helper to run tests with production mode cache context
 function withProductionContext<T>(fn: () => T | Promise<T>): T | Promise<T> {
   return runWithCacheKeyContext(
     { projectId: "test-project", mode: "production", versionId: "rel_test" },
@@ -40,7 +28,6 @@ function withProductionContext<T>(fn: () => T | Promise<T>): T | Promise<T> {
   );
 }
 
-// Test utilities
 function makeContext(
   url: string,
   params: Record<string, string | string[]> = {},
@@ -66,7 +53,6 @@ function makeMockAdapter(envVars: Record<string, string> = {}): Partial<RuntimeA
   } as Partial<RuntimeAdapter>;
 }
 
-// Type-safe helper for accessing dynamic props
 // deno-lint-ignore no-explicit-any
 function getProp<T>(obj: any, key: string): T {
   return obj?.[key];
@@ -75,14 +61,12 @@ function getProp<T>(obj: any, key: string): T {
 describe("DataFetcher - Comprehensive Tests", () => {
   describe("DataFetcher - Basic Initialization", () => {
     it("should create a DataFetcher without adapter", () => {
-      const fetcher = new DataFetcher();
-      assertExists(fetcher);
+      assertExists(new DataFetcher());
     });
 
     it("should create a DataFetcher with adapter", () => {
       const adapter = makeMockAdapter();
-      const fetcher = new DataFetcher(adapter as RuntimeAdapter);
-      assertExists(fetcher);
+      assertExists(new DataFetcher(adapter as RuntimeAdapter));
     });
   });
 
@@ -96,33 +80,20 @@ describe("DataFetcher - Comprehensive Tests", () => {
     });
 
     describe("No data fetching methods", () => {
+      const pageModule: PageWithData = { default: () => null };
+
       it("should return empty props when page has no data methods", async () => {
-        const pageModule: PageWithData = {
-          default: () => null,
-        };
-
         const result = await fetcher.fetchData(pageModule, context);
-
         assertEquals(result, { props: {} });
       });
 
       it("should return empty props in development mode with no data methods", async () => {
-        const pageModule: PageWithData = {
-          default: () => null,
-        };
-
         const result = await fetcher.fetchData(pageModule, context, "development");
-
         assertEquals(result, { props: {} });
       });
 
       it("should return empty props in production mode with no data methods", async () => {
-        const pageModule: PageWithData = {
-          default: () => null,
-        };
-
         const result = await fetcher.fetchData(pageModule, context, "production");
-
         assertEquals(result, { props: {} });
       });
     });
@@ -356,11 +327,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
         },
       };
 
-      await assertRejects(
-        () => fetcher.fetchData(pageModule, context),
-        Error,
-        "Server error",
-      );
+      await assertRejects(() => fetcher.fetchData(pageModule, context), Error, "Server error");
     });
 
     it("should propagate async errors from getServerData", async () => {
@@ -381,7 +348,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
 
     it("should not log errors when VERYFRONT_DEBUG is not set", async () => {
       const adapter = makeMockAdapter({});
-      const fetcher = new DataFetcher(adapter as RuntimeAdapter);
+      const debugFetcher = new DataFetcher(adapter as RuntimeAdapter);
 
       const pageModule: PageWithData = {
         default: () => null,
@@ -391,7 +358,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
       };
 
       await assertRejects(
-        () => fetcher.fetchData(pageModule, context),
+        () => debugFetcher.fetchData(pageModule, context),
         Error,
         "Silent error",
       );
@@ -399,7 +366,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
 
     it("should handle errors when VERYFRONT_DEBUG is enabled", async () => {
       const adapter = makeMockAdapter({ VERYFRONT_DEBUG: "true" });
-      const fetcher = new DataFetcher(adapter as RuntimeAdapter);
+      const debugFetcher = new DataFetcher(adapter as RuntimeAdapter);
 
       const pageModule: PageWithData = {
         default: () => null,
@@ -408,11 +375,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
         },
       };
 
-      await assertRejects(
-        () => fetcher.fetchData(pageModule, context),
-        Error,
-        "Debug error",
-      );
+      await assertRejects(() => debugFetcher.fetchData(pageModule, context), Error, "Debug error");
     });
   });
 
@@ -509,7 +472,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
 
     it("should handle errors when VERYFRONT_DEBUG is enabled for static data", async () => {
       const adapter = makeMockAdapter({ VERYFRONT_DEBUG: "true" });
-      const fetcher = new DataFetcher(adapter as RuntimeAdapter);
+      const debugFetcher = new DataFetcher(adapter as RuntimeAdapter);
 
       const pageModule: PageWithData = {
         default: () => null,
@@ -519,7 +482,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
       };
 
       await assertRejects(
-        () => fetcher.fetchData(pageModule, context, "production"),
+        () => debugFetcher.fetchData(pageModule, context, "production"),
         Error,
         "Debug static error",
       );
@@ -693,12 +656,8 @@ describe("DataFetcher - Comprehensive Tests", () => {
           },
         };
 
-        const context1 = makeContext("http://localhost/page", {
-          path: ["a", "b", "c"],
-        });
-        const context2 = makeContext("http://localhost/page", {
-          path: ["a", "b", "c"],
-        });
+        const context1 = makeContext("http://localhost/page", { path: ["a", "b", "c"] });
+        const context2 = makeContext("http://localhost/page", { path: ["a", "b", "c"] });
 
         const result1 = await fetcher.fetchData(pageModule, context1, "production");
         const result2 = await fetcher.fetchData(pageModule, context2, "production");
@@ -721,12 +680,8 @@ describe("DataFetcher - Comprehensive Tests", () => {
           },
         };
 
-        const context1 = makeContext("http://localhost/page", {
-          path: ["a", "b", "c"],
-        });
-        const context2 = makeContext("http://localhost/page", {
-          path: ["a", "b", "d"],
-        });
+        const context1 = makeContext("http://localhost/page", { path: ["a", "b", "c"] });
+        const context2 = makeContext("http://localhost/page", { path: ["a", "b", "d"] });
 
         const result1 = await fetcher.fetchData(pageModule, context1, "production");
         const result2 = await fetcher.fetchData(pageModule, context2, "production");
@@ -755,10 +710,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
           default: () => null,
           getStaticData: () => {
             callCount++;
-            return {
-              props: { count: callCount },
-              revalidate: false,
-            };
+            return { props: { count: callCount }, revalidate: false };
           },
         };
 
@@ -780,31 +732,23 @@ describe("DataFetcher - Comprehensive Tests", () => {
           default: () => null,
           getStaticData: () => {
             callCount++;
-            return {
-              props: { count: callCount },
-              revalidate: 0.05, // 50ms
-            };
+            return { props: { count: callCount }, revalidate: 0.05 };
           },
         };
 
         const result1 = await fetcher.fetchData(pageModule, context, "production");
         assertEquals(getProp<number>(result1.props, "count"), 1);
 
-        // Within revalidation window - should return cached
         const result2 = await fetcher.fetchData(pageModule, context, "production");
         assertEquals(getProp<number>(result2.props, "count"), 1);
 
-        // Wait for revalidation window to pass
         await delay(60);
 
-        // Should trigger background revalidation but return stale
         const result3 = await fetcher.fetchData(pageModule, context, "production");
         assertEquals(getProp<number>(result3.props, "count"), 1);
 
-        // Wait for background revalidation to complete
         await delay(50);
 
-        // Should now have fresh data
         const result4 = await fetcher.fetchData(pageModule, context, "production");
         assertEquals(getProp<number>(result4.props, "count"), 2);
       });
@@ -821,7 +765,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
             await delay(30);
             return {
               props: { count: callCount, timestamp: Date.now() },
-              revalidate: 0.05, // 50ms
+              revalidate: 0.05,
             };
           },
         };
@@ -831,15 +775,12 @@ describe("DataFetcher - Comprehensive Tests", () => {
 
         await delay(60);
 
-        // Should return stale data immediately
         const result2 = await fetcher.fetchData(pageModule, context, "production");
         assertEquals(getProp<number>(result2.props, "timestamp"), timestamp1);
         assertEquals(getProp<number>(result2.props, "count"), 1);
 
-        // Wait for background revalidation
         await delay(50);
 
-        // Should have new data
         const result3 = await fetcher.fetchData(pageModule, context, "production");
         assertEquals(getProp<number>(result3.props, "count"), 2);
       });
@@ -854,27 +795,21 @@ describe("DataFetcher - Comprehensive Tests", () => {
           getStaticData: async () => {
             callCount++;
             await delay(50);
-            return {
-              props: { count: callCount },
-              revalidate: 0.01, // 10ms
-            };
+            return { props: { count: callCount }, revalidate: 0.01 };
           },
         };
 
         await fetcher.fetchData(pageModule, context, "production");
         await delay(20);
 
-        // Make multiple requests during revalidation
         await Promise.all([
           fetcher.fetchData(pageModule, context, "production"),
           fetcher.fetchData(pageModule, context, "production"),
           fetcher.fetchData(pageModule, context, "production"),
         ]);
 
-        // Wait for revalidation to complete
         await delay(100);
 
-        // Should only have been called twice (initial + one revalidation)
         assertEquals(callCount, 2);
       });
     });
@@ -887,9 +822,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
           default: () => null,
           getStaticData: () => {
             callCount++;
-            return {
-              props: { count: callCount },
-            };
+            return { props: { count: callCount } };
           },
         };
 
@@ -909,13 +842,8 @@ describe("DataFetcher - Comprehensive Tests", () => {
           default: () => null,
           getStaticData: () => {
             callCount++;
-            if (callCount === 2) {
-              throw new Error("Revalidation error");
-            }
-            return {
-              props: { count: callCount },
-              revalidate: 0.05,
-            };
+            if (callCount === 2) throw new Error("Revalidation error");
+            return { props: { count: callCount }, revalidate: 0.05 };
           },
         };
 
@@ -924,14 +852,11 @@ describe("DataFetcher - Comprehensive Tests", () => {
 
         await delay(60);
 
-        // Should return stale data
         const result2 = await fetcher.fetchData(pageModule, context, "production");
         assertEquals(getProp<number>(result2.props, "count"), 1);
 
-        // Wait for failed revalidation
         await delay(50);
 
-        // Should still have old data
         const result3 = await fetcher.fetchData(pageModule, context, "production");
         assertEquals(getProp<number>(result3.props, "count"), 1);
       });
@@ -951,16 +876,13 @@ describe("DataFetcher - Comprehensive Tests", () => {
       await withProductionContext(async () => {
         const pageModule: PageWithData = {
           default: () => null,
-          getStaticData: () => ({
-            props: { timestamp: Date.now() },
-          }),
+          getStaticData: () => ({ props: { timestamp: Date.now() } }),
         };
 
         const result1 = await fetcher.fetchData(pageModule, context, "production");
         const timestamp1 = getProp<number>(result1.props, "timestamp");
 
         fetcher.clearCache();
-
         await delay(10);
 
         const result2 = await fetcher.fetchData(pageModule, context, "production");
@@ -974,9 +896,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
       await withProductionContext(async () => {
         const pageModule: PageWithData = {
           default: () => null,
-          getStaticData: () => ({
-            props: { timestamp: Date.now() },
-          }),
+          getStaticData: () => ({ props: { timestamp: Date.now() } }),
         };
 
         const context1 = makeContext("http://localhost/page1", { id: "1" });
@@ -989,7 +909,6 @@ describe("DataFetcher - Comprehensive Tests", () => {
         const timestamp2 = getProp<number>(result2.props, "timestamp");
 
         fetcher.clearCache("page1");
-
         await delay(10);
 
         const result3 = await fetcher.fetchData(pageModule, context1, "production");
@@ -1004,9 +923,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
       await withProductionContext(async () => {
         const pageModule: PageWithData = {
           default: () => null,
-          getStaticData: () => ({
-            props: { timestamp: Date.now() },
-          }),
+          getStaticData: () => ({ props: { timestamp: Date.now() } }),
         };
 
         const contexts = [
@@ -1015,9 +932,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
           makeContext("http://localhost/about", { id: "1" }),
         ];
 
-        await Promise.all(
-          contexts.map((ctx: DataContext) => fetcher.fetchData(pageModule, ctx, "production")),
-        );
+        await Promise.all(contexts.map((ctx) => fetcher.fetchData(pageModule, ctx, "production")));
 
         fetcher.clearCache("blog");
 
@@ -1051,9 +966,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
         };
 
         await fetcher.fetchData(pageModule, context, "production");
-
         fetcher.clearCache("nonexistent");
-
         await fetcher.fetchData(pageModule, context, "production");
 
         assertEquals(callCount, 1);
@@ -1077,11 +990,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
       const pageModule: PageWithData = {
         default: () => null,
         getStaticPaths: () => ({
-          paths: [
-            { params: { id: "1" } },
-            { params: { id: "2" } },
-            { params: { id: "3" } },
-          ],
+          paths: [{ params: { id: "1" } }, { params: { id: "2" } }, { params: { id: "3" } }],
           fallback: false,
         }),
       };
@@ -1101,10 +1010,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
         default: () => null,
         getStaticPaths: async () => {
           await delay(10);
-          return {
-            paths: [{ params: { slug: "test" } }],
-            fallback: "blocking",
-          };
+          return { paths: [{ params: { slug: "test" } }], fallback: "blocking" };
         },
       };
 
@@ -1118,10 +1024,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
     it("should handle fallback: true", async () => {
       const pageModule: PageWithData = {
         default: () => null,
-        getStaticPaths: () => ({
-          paths: [],
-          fallback: true,
-        }),
+        getStaticPaths: () => ({ paths: [], fallback: true }),
       };
 
       const paths = await fetcher.getStaticPaths(pageModule);
@@ -1133,10 +1036,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
     it("should handle fallback: blocking", async () => {
       const pageModule: PageWithData = {
         default: () => null,
-        getStaticPaths: () => ({
-          paths: [],
-          fallback: "blocking",
-        }),
+        getStaticPaths: () => ({ paths: [], fallback: "blocking" }),
       };
 
       const paths = await fetcher.getStaticPaths(pageModule);
@@ -1148,10 +1048,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
     it("should handle empty paths array", async () => {
       const pageModule: PageWithData = {
         default: () => null,
-        getStaticPaths: () => ({
-          paths: [],
-          fallback: false,
-        }),
+        getStaticPaths: () => ({ paths: [], fallback: false }),
       };
 
       const paths = await fetcher.getStaticPaths(pageModule);
@@ -1161,12 +1058,8 @@ describe("DataFetcher - Comprehensive Tests", () => {
     });
 
     it("should return null when no getStaticPaths", async () => {
-      const pageModule: PageWithData = {
-        default: () => null,
-      };
-
+      const pageModule: PageWithData = { default: () => null };
       const paths = await fetcher.getStaticPaths(pageModule);
-
       assertEquals(paths, null);
     });
 
@@ -1193,10 +1086,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
     it("should handle array params in static paths", async () => {
       const pageModule: PageWithData = {
         default: () => null,
-        getStaticPaths: () => ({
-          paths: [{ params: { path: ["a", "b", "c"] } }],
-          fallback: false,
-        }),
+        getStaticPaths: () => ({ paths: [{ params: { path: ["a", "b", "c"] } }], fallback: false }),
       };
 
       const paths = await fetcher.getStaticPaths(pageModule);
@@ -1214,11 +1104,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
         },
       };
 
-      await assertRejects(
-        () => fetcher.getStaticPaths(pageModule),
-        Error,
-        "Static paths error",
-      );
+      await assertRejects(() => fetcher.getStaticPaths(pageModule), Error, "Static paths error");
     });
 
     it("should propagate async errors from getStaticPaths", async () => {
@@ -1241,21 +1127,18 @@ describe("DataFetcher - Comprehensive Tests", () => {
   describe("DataFetcher - Helper Functions", () => {
     it("should create redirect response", () => {
       const result = redirect("/new-location");
-
       assertEquals(result.redirect?.destination, "/new-location");
       assertEquals(result.redirect?.permanent, false);
     });
 
     it("should create permanent redirect response", () => {
       const result = redirect("/new-location", true);
-
       assertEquals(result.redirect?.destination, "/new-location");
       assertEquals(result.redirect?.permanent, true);
     });
 
     it("should create notFound response", () => {
       const result = notFound();
-
       assertEquals(result.notFound, true);
     });
   });
@@ -1272,26 +1155,20 @@ describe("DataFetcher - Comprehensive Tests", () => {
     it("should handle null props", async () => {
       const pageModule: PageWithData = {
         default: () => null,
-        getServerData: () => ({
-          props: null as unknown as Record<string, unknown>,
-        }),
+        getServerData: () => ({ props: null as unknown as Record<string, unknown> }),
       };
 
       const result = await fetcher.fetchData(pageModule, context);
-
       assertEquals(result.props, {});
     });
 
     it("should handle undefined props", async () => {
       const pageModule: PageWithData = {
         default: () => null,
-        getServerData: () => ({
-          props: undefined as unknown as Record<string, unknown>,
-        }),
+        getServerData: () => ({ props: undefined as unknown as Record<string, unknown> }),
       };
 
       const result = await fetcher.fetchData(pageModule, context);
-
       assertEquals(result.props, {});
     });
 
@@ -1303,10 +1180,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
           default: () => null,
           getStaticData: () => {
             callCount++;
-            return {
-              props: { count: callCount },
-              revalidate: 0,
-            };
+            return { props: { count: callCount }, revalidate: 0 };
           },
         };
 
@@ -1329,14 +1203,10 @@ describe("DataFetcher - Comprehensive Tests", () => {
       await withProductionContext(async () => {
         const pageModule: PageWithData = {
           default: () => null,
-          getStaticData: () => ({
-            props: { data: "test" },
-            revalidate: 86400, // 24 hours
-          }),
+          getStaticData: () => ({ props: { data: "test" }, revalidate: 86400 }),
         };
 
         const result = await fetcher.fetchData(pageModule, context, "production");
-
         assertEquals(getProp<string>(result.props, "data"), "test");
       });
     });
@@ -1357,16 +1227,8 @@ describe("DataFetcher - Comprehensive Tests", () => {
           slug: "hello-world@2024",
         });
 
-        const result1 = await fetcher.fetchData(
-          pageModule,
-          specialContext,
-          "production",
-        );
-        const result2 = await fetcher.fetchData(
-          pageModule,
-          specialContext,
-          "production",
-        );
+        const result1 = await fetcher.fetchData(pageModule, specialContext, "production");
+        const result2 = await fetcher.fetchData(pageModule, specialContext, "production");
 
         assertEquals(getProp<number>(result1.props, "count"), 1);
         assertEquals(getProp<number>(result2.props, "count"), 1);
@@ -1392,7 +1254,6 @@ describe("DataFetcher - Comprehensive Tests", () => {
         const result1 = await fetcher.fetchData(pageModule, context1, "production");
         const result2 = await fetcher.fetchData(pageModule, context2, "production");
 
-        // Cache key is based on pathname and params, not protocol, so they share cache
         assertEquals(callCount, 1);
         assertEquals(getProp<number>(result1.props, "count"), 1);
         assertEquals(getProp<number>(result2.props, "count"), 1);
@@ -1417,7 +1278,6 @@ describe("DataFetcher - Comprehensive Tests", () => {
         const result1 = await fetcher.fetchData(pageModule, context1, "production");
         const result2 = await fetcher.fetchData(pageModule, context2, "production");
 
-        // Cache key is based on pathname and params, not host, so they share cache
         assertEquals(callCount, 1);
         assertEquals(getProp<number>(result1.props, "count"), 1);
         assertEquals(getProp<number>(result2.props, "count"), 1);
@@ -1443,10 +1303,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
           fetcher.fetchData(pageModule, context, "production"),
         ]);
 
-        // All concurrent requests race - they don't wait for each other, so all execute
-        // First one to finish sets cache, but others may have already started
         assertEquals(callCount >= 1, true);
-        // All results should have values (whether from concurrent executions or cache)
         assertExists(getProp<number>(results[0]?.props, "count"));
         assertExists(getProp<number>(results[1]?.props, "count"));
         assertExists(getProp<number>(results[2]?.props, "count"));
@@ -1457,18 +1314,11 @@ describe("DataFetcher - Comprehensive Tests", () => {
       await withProductionContext(async () => {
         const pageModule: PageWithData = {
           default: () => null,
-          getStaticData: (ctx: StaticDataContext) => ({
-            props: { params: ctx.params },
-          }),
+          getStaticData: (ctx: StaticDataContext) => ({ props: { params: ctx.params } }),
         };
 
         const emptyContext = makeContext("http://localhost/page", {});
-
-        const result = await fetcher.fetchData(
-          pageModule,
-          emptyContext,
-          "production",
-        );
+        const result = await fetcher.fetchData(pageModule, emptyContext, "production");
 
         assertEquals(getProp<Record<string, unknown>>(result.props, "params"), {});
       });
@@ -1488,10 +1338,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
       const pageModule: PageWithData<Props> = {
         default: () => null,
         getServerData: (): DataResult<Props> => ({
-          props: {
-            title: "Test",
-            count: 42,
-          },
+          props: { title: "Test", count: 42 },
         }),
       };
 
@@ -1513,10 +1360,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
       const pageModule: PageWithData<Props> = {
         default: () => null,
         getStaticData: (): DataResult<Props> => ({
-          props: {
-            slug: "test",
-            data: { id: 1, name: "Test Post" },
-          },
+          props: { slug: "test", data: { id: 1, name: "Test Post" } },
         }),
       };
 

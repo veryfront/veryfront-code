@@ -1,9 +1,3 @@
-/**
- * FileSystem Repository Exports
- *
- * @module repositories/filesystem
- */
-
 export {
   createFileSystemRepository,
   SecureFsRepository,

@@ -27,7 +27,7 @@ export function cors(config?: boolean | CORSConfig): MiddlewareHandler {
     }
 
     const response = await next();
-    if (!response) return response;
+    if (!response) return undefined;
 
     return (await applyCORSHeaders({ request, response, config })) ?? response;
   };

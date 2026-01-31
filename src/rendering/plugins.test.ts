@@ -13,18 +13,21 @@ import {
   remarkMdxRemoveParagraphs,
 } from "./plugins.ts";
 
-function runRemark(tree: any, file: any, plugins: any[]): void {
+type Plugin = ((...args: any[]) => void) | (() => (...args: any[]) => void);
+
+function runPlugins(plugins: Plugin[], ...args: any[]): void {
   for (const p of plugins) {
-    const plugin = typeof p === "function" ? p() : p;
-    plugin(tree, file);
+    const plugin = typeof p === "function" ? (p as any)() : p;
+    plugin(...args);
   }
 }
 
-function runRehype(tree: any, plugins: any[]): void {
-  for (const p of plugins) {
-    const plugin = typeof p === "function" ? p() : p;
-    plugin(tree);
-  }
+function runRemark(tree: any, file: any, plugins: Plugin[]): void {
+  runPlugins(plugins, tree, file);
+}
+
+function runRehype(tree: any, plugins: Plugin[]): void {
+  runPlugins(plugins, tree);
 }
 
 describe("plugins", () => {

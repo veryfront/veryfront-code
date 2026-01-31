@@ -34,16 +34,12 @@ describe("observability/auto-instrument/orchestrator", () => {
     });
 
     it("should initialize with tracing disabled", async () => {
-      await initAutoInstrumentation({
-        tracing: { enabled: false },
-      });
+      await initAutoInstrumentation({ tracing: { enabled: false } });
       assertEquals(isAutoInstrumentEnabled(), true);
     });
 
     it("should initialize with metrics disabled", async () => {
-      await initAutoInstrumentation({
-        metrics: { enabled: false },
-      });
+      await initAutoInstrumentation({ metrics: { enabled: false } });
       assertEquals(isAutoInstrumentEnabled(), true);
     });
 
@@ -60,12 +56,9 @@ describe("observability/auto-instrument/orchestrator", () => {
     });
 
     it("should not reinitialize if already initialized", async () => {
-      await initAutoInstrumentation({
-        tracing: { enabled: false },
-      });
+      await initAutoInstrumentation({ tracing: { enabled: false } });
       assertEquals(isAutoInstrumentEnabled(), true);
 
-      // Second call should be a no-op
       await initAutoInstrumentation({
         tracing: { enabled: true, exporter: "console" },
       });

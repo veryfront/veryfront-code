@@ -37,19 +37,16 @@ describe("hydration-script-builder/prod-scripts", () => {
 
     it("should include router script content", () => {
       const result = getProdScripts("page");
-      // Router script includes MODULE_SERVER_URL
       assertEquals(result.includes("MODULE_SERVER_URL"), true);
     });
 
     it("should include loader script content", () => {
       const result = getProdScripts("page");
-      // Loader script includes loadComponent
       assertEquals(result.includes("loadComponent"), true);
     });
 
     it("should include renderer script content", () => {
       const result = getProdScripts("page");
-      // Renderer script includes renderPage
       assertEquals(result.includes("renderPage"), true);
     });
   });

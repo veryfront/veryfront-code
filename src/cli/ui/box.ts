@@ -105,8 +105,12 @@ export function box(content: string, options: BoxOptions = {}): string {
   const boxWidth = width ? Math.max(width, innerWidth + 2) : innerWidth + 2;
   const actualInnerWidth = boxWidth - 2;
 
-  const bc = (text: string): string => (borderColor ? `${borderColor}${text}${RESET}` : text);
-  const tc = (text: string): string => (titleColor ? `${titleColor}${text}${RESET}` : text);
+  const colorize = (
+    color: string,
+    text: string,
+  ): string => (color ? `${color}${text}${RESET}` : text);
+  const bc = (text: string): string => colorize(borderColor, text);
+  const tc = (text: string): string => colorize(titleColor, text);
 
   const result: string[] = [];
 
@@ -125,7 +129,6 @@ export function box(content: string, options: BoxOptions = {}): string {
       left = remainingWidth;
       right = 0;
     } else {
-      left = 0;
       right = remainingWidth;
     }
 
@@ -138,9 +141,7 @@ export function box(content: string, options: BoxOptions = {}): string {
     );
   } else {
     result.push(
-      bc(border.topLeft) +
-        bc(repeat(border.horizontal, actualInnerWidth)) +
-        bc(border.topRight),
+      bc(border.topLeft) + bc(repeat(border.horizontal, actualInnerWidth)) + bc(border.topRight),
     );
   }
 
@@ -159,8 +160,7 @@ export function box(content: string, options: BoxOptions = {}): string {
   for (let i = 0; i < paddingY; i++) result.push(emptyLine);
 
   result.push(
-    bc(border.bottomLeft) +
-      bc(repeat(border.horizontal, actualInnerWidth)) +
+    bc(border.bottomLeft) + bc(repeat(border.horizontal, actualInnerWidth)) +
       bc(border.bottomRight),
   );
 
@@ -185,22 +185,16 @@ export function joinHorizontal(
   const paddedItems = itemLines.map((itemLns, idx) => {
     const width = itemWidths[idx] ?? 0;
     const padCount = maxHeight - itemLns.length;
-    const blank = repeat(" ", width);
-
     if (padCount <= 0) return itemLns;
 
-    if (align === "bottom") {
-      return [...Array(padCount).fill(blank), ...itemLns];
-    }
+    const blank = repeat(" ", width);
+
+    if (align === "bottom") return [...Array(padCount).fill(blank), ...itemLns];
 
     if (align === "center") {
       const top = Math.floor(padCount / 2);
       const bottom = padCount - top;
-      return [
-        ...Array(top).fill(blank),
-        ...itemLns,
-        ...Array(bottom).fill(blank),
-      ];
+      return [...Array(top).fill(blank), ...itemLns, ...Array(bottom).fill(blank)];
     }
 
     return [...itemLns, ...Array(padCount).fill(blank)];
@@ -210,10 +204,9 @@ export function joinHorizontal(
   const result: string[] = [];
 
   for (let i = 0; i < maxHeight; i++) {
-    const lineParts = paddedItems.map((item, idx) => {
-      const line = item[i] ?? "";
-      return pad(line, itemWidths[idx] ?? 0, "left");
-    });
+    const lineParts = paddedItems.map((item, idx) =>
+      pad(item[i] ?? "", itemWidths[idx] ?? 0, "left")
+    );
     result.push(lineParts.join(gapStr));
   }
 

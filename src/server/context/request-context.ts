@@ -27,18 +27,14 @@ export function createRequestContext(
   const { hostname } = new URL(req.url);
   const parsed = parseProjectDomain(hostname);
 
-  // Check both hostname and x-environment header for preview mode
   const xEnvironment = req.headers.get("x-environment");
   const forwardedHost = req.headers.get("x-forwarded-host");
 
-  let mode: "preview" | "production" = "production";
-  if (
-    hostname.includes(".preview.") ||
-    forwardedHost?.includes(".preview.") ||
-    xEnvironment === "preview"
-  ) {
-    mode = "preview";
-  }
+  const mode: "preview" | "production" = hostname.includes(".preview.") ||
+      forwardedHost?.includes(".preview.") ||
+      xEnvironment === "preview"
+    ? "preview"
+    : "production";
 
   return {
     token: req.headers.get("x-token") ?? getEnv("VERYFRONT_API_TOKEN") ?? "",
@@ -49,7 +45,9 @@ export function createRequestContext(
   };
 }
 
-export function getCacheStrategy(ctx: RequestContext): "none" | "invalidate" | "immutable" {
+export function getCacheStrategy(
+  ctx: RequestContext,
+): "none" | "invalidate" | "immutable" {
   if (ctx.isLocalDev) return "none";
   if (ctx.mode === "preview") return "invalidate";
   return "immutable";
@@ -60,7 +58,6 @@ export function shouldEnableCache(ctx: RequestContext): boolean {
 }
 
 export function shouldUseNoCacheHeaders(ctx?: RequestContext): boolean {
-  if (!ctx) return true;
-  if (ctx.isLocalDev) return true;
+  if (!ctx || ctx.isLocalDev) return true;
   return ctx.mode === "preview";
 }

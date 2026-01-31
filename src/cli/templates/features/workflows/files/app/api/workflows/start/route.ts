@@ -2,8 +2,7 @@ import { dataProcessingPipeline } from "../../../../workflows/index.ts";
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const body = await req.json();
-    const sourceUrl = body?.sourceUrl;
+    const { sourceUrl } = (await req.json()) ?? {};
 
     if (!sourceUrl) {
       return Response.json({ error: "sourceUrl is required" }, { status: 400 });
@@ -11,9 +10,7 @@ export async function POST(req: Request): Promise<Response> {
 
     const runId = crypto.randomUUID();
 
-    console.log(
-      `Starting workflow ${dataProcessingPipeline.id} with run ID: ${runId}`,
-    );
+    console.log(`Starting workflow ${dataProcessingPipeline.id} with run ID: ${runId}`);
 
     return Response.json({
       success: true,

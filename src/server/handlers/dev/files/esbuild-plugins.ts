@@ -91,10 +91,12 @@ export interface BareExternalPluginOptions {
 }
 
 function isBareImport(path: string): boolean {
-  return !path.startsWith(".") &&
+  return (
+    !path.startsWith(".") &&
     !path.startsWith("/") &&
     !path.startsWith("http://") &&
-    !path.startsWith("https://");
+    !path.startsWith("https://")
+  );
 }
 
 function toEsmUrl(path: string): string {
@@ -104,12 +106,49 @@ function toEsmUrl(path: string): string {
 function resolveAsExternalOrHttps(
   path: string,
   bundle: boolean,
-): { path: string; external: true } | {
-  path: string;
-  namespace: "https";
-} {
+): { path: string; external: true } | { path: string; namespace: "https" } {
   if (bundle) return { path, namespace: "https" };
   return { path, external: true };
+}
+
+async function loadFromLockfile(
+  lockfile: LockfileManager,
+  url: string,
+  strict: boolean,
+): Promise<
+  { contents: string; loader: "js" } | { errors: { text: string; location: null }[] } | null
+> {
+  const cached = await lockfile.get(url);
+  if (!cached) return null;
+
+  logger.debug(`[bare-ext] lockfile hit: ${url}`);
+
+  try {
+    const response = await fetch(cached.resolved);
+    if (!response.ok) return null;
+
+    const contents = await response.text();
+    const integrity = await computeIntegrity(contents);
+
+    if (integrity === cached.integrity) return { contents, loader: "js" };
+
+    if (strict) {
+      return {
+        errors: [
+          {
+            text: `Integrity mismatch for ${url}: expected ${cached.integrity}, got ${integrity}`,
+            location: null,
+          },
+        ],
+      };
+    }
+
+    logger.warn(`[bare-ext] integrity mismatch, refetching: ${url}`);
+    return null;
+  } catch {
+    logger.warn(`[bare-ext] cached URL failed, refetching: ${url}`);
+    return null;
+  }
 }
 
 /** Create bare module external plugin that rewrites npm imports to esm.sh URLs */
@@ -137,35 +176,8 @@ export function createBareExternalPlugin(
 
       build.onLoad({ filter: /.*/, namespace: "https" }, async (args: OnLoadArgs) => {
         if (lockfile) {
-          const cached = await lockfile.get(args.path);
-          if (cached) {
-            logger.debug(`[bare-ext] lockfile hit: ${args.path}`);
-            try {
-              const response = await fetch(cached.resolved);
-              if (response.ok) {
-                const contents = await response.text();
-                const integrity = await computeIntegrity(contents);
-
-                if (integrity === cached.integrity) return { contents, loader: "js" };
-
-                if (strict) {
-                  return {
-                    errors: [
-                      {
-                        text:
-                          `Integrity mismatch for ${args.path}: expected ${cached.integrity}, got ${integrity}`,
-                        location: null,
-                      },
-                    ],
-                  };
-                }
-
-                logger.warn(`[bare-ext] integrity mismatch, refetching: ${args.path}`);
-              }
-            } catch {
-              logger.warn(`[bare-ext] cached URL failed, refetching: ${args.path}`);
-            }
-          }
+          const cachedResult = await loadFromLockfile(lockfile, args.path, strict);
+          if (cachedResult) return cachedResult;
         }
 
         try {

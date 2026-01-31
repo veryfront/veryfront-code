@@ -6,7 +6,8 @@ export default async function Archive(): Promise<JSX.Element> {
 
   const postsByYear = posts.reduce<Record<number, typeof posts>>((acc, post) => {
     const year = new Date(post.date).getFullYear();
-    (acc[year] ??= []).push(post);
+    acc[year] ??= [];
+    acc[year].push(post);
     return acc;
   }, {});
 

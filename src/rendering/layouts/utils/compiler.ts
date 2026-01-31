@@ -15,7 +15,7 @@ export async function compileMDXLayouts(
     (layout) => layout.kind === "mdx" && layout.path && !layout.bundle,
   );
 
-  if (mdxLayouts.length === 0) return;
+  if (!mdxLayouts.length) return;
 
   const bundles = await parallelMap(mdxLayouts, async (layout) => {
     const path = layout.path!;

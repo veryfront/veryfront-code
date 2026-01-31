@@ -22,12 +22,9 @@ describe("Semaphore", () => {
       return concurrent;
     };
 
-    await Promise.all([
-      sem.acquire(operation),
-      sem.acquire(operation),
-      sem.acquire(operation),
-      sem.acquire(operation),
-    ]);
+    await Promise.all(
+      Array.from({ length: 4 }, () => sem.acquire(operation)),
+    );
 
     assertEquals(maxConcurrent, 2);
   });
@@ -41,7 +38,6 @@ describe("Semaphore", () => {
       "fail",
     );
 
-    // Should be able to acquire again
     const result = await sem.acquire(() => Promise.resolve("ok"));
     assertEquals(result, "ok");
   });
@@ -50,38 +46,38 @@ describe("Semaphore", () => {
     const sem = new Semaphore(3);
     assertEquals(sem.active, 0);
 
-    let resolveOp!: () => void;
-    const promise = sem.acquire(() =>
-      new Promise<void>((r) => {
-        resolveOp = r;
-      })
+    let resolveOp: (() => void) | undefined;
+    const promise = sem.acquire(
+      () =>
+        new Promise<void>((r) => {
+          resolveOp = r;
+        }),
     );
 
-    // Give microtask a tick
     await new Promise((r) => setTimeout(r, 0));
     assertEquals(sem.active, 1);
 
-    resolveOp();
+    resolveOp?.();
     await promise;
     assertEquals(sem.active, 0);
   });
 
   it("should track waiting count", async () => {
     const sem = new Semaphore(1);
-    let resolveFirst!: () => void;
+    let resolveFirst: (() => void) | undefined;
 
-    const first = sem.acquire(() =>
-      new Promise<void>((r) => {
-        resolveFirst = r;
-      })
+    const first = sem.acquire(
+      () =>
+        new Promise<void>((r) => {
+          resolveFirst = r;
+        }),
     );
 
-    // Start a second acquire that will wait
     const second = sem.acquire(() => Promise.resolve());
     await new Promise((r) => setTimeout(r, 0));
     assertEquals(sem.waitingCount, 1);
 
-    resolveFirst();
+    resolveFirst?.();
     await first;
     await second;
     assertEquals(sem.waitingCount, 0);
@@ -90,12 +86,12 @@ describe("Semaphore", () => {
   it("should timeout if acquireTimeoutMs is set and exceeded", async () => {
     const sem = new Semaphore(1, { acquireTimeoutMs: 50, name: "test-sem" });
 
-    // Fill the semaphore
-    let resolveBlock!: () => void;
-    const blocking = sem.acquire(() =>
-      new Promise<void>((r) => {
-        resolveBlock = r;
-      })
+    let resolveBlock: (() => void) | undefined;
+    const blocking = sem.acquire(
+      () =>
+        new Promise<void>((r) => {
+          resolveBlock = r;
+        }),
     );
 
     await assertRejects(
@@ -103,7 +99,7 @@ describe("Semaphore", () => {
       SemaphoreTimeoutError,
     );
 
-    resolveBlock();
+    resolveBlock?.();
     await blocking;
   });
 });

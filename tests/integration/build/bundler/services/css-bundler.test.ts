@@ -1,15 +1,3 @@
-/**
- * CSS Bundler Tests
- *
- * Comprehensive tests for CSS bundling service covering:
- * - CSS bundling pipeline
- * - Minification in production mode
- * - Import processing
- * - Variable extraction
- * - Error handling
- * - Cache integration
- */
-
 import { assertEquals, assertExists } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
 import {
@@ -22,6 +10,15 @@ import type {
   BundlerOptions,
 } from "../../../../../src/build/renderer/types/bundler-types.ts";
 import { withTestContext } from "../../../../_helpers/context.ts";
+
+function createResult(): BundleResult {
+  return {
+    outputs: new Map(),
+    errors: [],
+    warnings: [],
+    dependencies: new Map(),
+  };
+}
 
 describe("CSS Bundler", () => {
   describe("bundleCss", () => {
@@ -43,26 +40,18 @@ describe("CSS Bundler", () => {
           mode: "development",
         };
 
-        const result: BundleResult = {
-          outputs: new Map(),
-          errors: [],
-          warnings: [],
-          dependencies: new Map(),
-        };
+        const result = createResult();
 
         bundleCss(source, options, result);
 
-        // Should add output
-        assertExists(result.outputs.get(source.path));
-        const output = result.outputs.get(source.path)!;
+        const output = result.outputs.get(source.path);
+        assertExists(output);
         assertEquals(output.type, "css");
         assertEquals(output.path, source.path);
 
         // In dev mode, CSS should not be minified
         assertEquals(output.content.includes("padding"), true);
         assertEquals(output.content.includes("margin"), true);
-
-        return Promise.resolve();
       });
     });
 
@@ -89,12 +78,7 @@ describe("CSS Bundler", () => {
           mode: "production",
         };
 
-        const result: BundleResult = {
-          outputs: new Map(),
-          errors: [],
-          warnings: [],
-          dependencies: new Map(),
-        };
+        const result = createResult();
 
         bundleCss(source, options, result);
 
@@ -110,8 +94,6 @@ describe("CSS Bundler", () => {
         // Should preserve selectors and properties
         assertEquals(minified.includes(".container"), true);
         assertEquals(minified.includes("padding"), true);
-
-        return Promise.resolve();
       });
     });
 
@@ -135,12 +117,7 @@ describe("CSS Bundler", () => {
           mode: "production",
         };
 
-        const result: BundleResult = {
-          outputs: new Map(),
-          errors: [],
-          warnings: [],
-          dependencies: new Map(),
-        };
+        const result = createResult();
 
         bundleCss(source, options, result);
 
@@ -151,8 +128,6 @@ describe("CSS Bundler", () => {
         assertEquals(output.content.includes("url(icon.svg)"), true);
         assertEquals(output.content.includes('url("'), false);
         assertEquals(output.content.includes("url('"), false);
-
-        return Promise.resolve();
       });
     });
 
@@ -174,12 +149,7 @@ describe("CSS Bundler", () => {
           mode: "production",
         };
 
-        const result: BundleResult = {
-          outputs: new Map(),
-          errors: [],
-          warnings: [],
-          dependencies: new Map(),
-        };
+        const result = createResult();
 
         bundleCss(source, options, result);
 
@@ -189,8 +159,6 @@ describe("CSS Bundler", () => {
         assertEquals(output.content.includes(";}"), false);
         // Should have just }
         assertEquals(output.content.includes("}"), true);
-
-        return Promise.resolve();
       });
     });
 
@@ -211,20 +179,13 @@ describe("CSS Bundler", () => {
           mode: "production",
         };
 
-        const result: BundleResult = {
-          outputs: new Map(),
-          errors: [],
-          warnings: [],
-          dependencies: new Map(),
-        };
+        const result = createResult();
 
         // Should not throw - just process as best as possible
         bundleCss(source, options, result);
 
         // Should have output even for malformed CSS
         assertExists(result.outputs.get(source.path));
-
-        return Promise.resolve();
       });
     });
 
@@ -241,19 +202,12 @@ describe("CSS Bundler", () => {
           mode: "production",
         };
 
-        const result: BundleResult = {
-          outputs: new Map(),
-          errors: [],
-          warnings: [],
-          dependencies: new Map(),
-        };
+        const result = createResult();
 
         bundleCss(source, options, result);
 
         const output = result.outputs.get(source.path)!;
         assertEquals(output.content, "");
-
-        return Promise.resolve();
       });
     });
   });
@@ -361,7 +315,10 @@ describe("CSS Bundler", () => {
       const variables = extractCssVariables(css);
 
       assertEquals(variables["shadow"], "0 2px 4px rgba(0, 0, 0, 0.1)");
-      assertEquals(variables["gradient"], "linear-gradient(to right, #ff0000, #00ff00)");
+      assertEquals(
+        variables["gradient"],
+        "linear-gradient(to right, #ff0000, #00ff00)",
+      );
     });
 
     it("handles CSS without variables", () => {
@@ -404,7 +361,10 @@ describe("CSS Bundler", () => {
       const variables = extractCssVariables(css);
 
       assertEquals(variables["primary-button-bg-color"], "#007bff");
-      assertEquals(variables["font-family-sans-serif"], '"Helvetica Neue", sans-serif');
+      assertEquals(
+        variables["font-family-sans-serif"],
+        '"Helvetica Neue", sans-serif',
+      );
     });
   });
 
@@ -440,12 +400,7 @@ describe("CSS Bundler", () => {
           mode: "production",
         };
 
-        const result: BundleResult = {
-          outputs: new Map(),
-          errors: [],
-          warnings: [],
-          dependencies: new Map(),
-        };
+        const result = createResult();
 
         bundleCss(source, options, result);
 
@@ -466,8 +421,6 @@ describe("CSS Bundler", () => {
         const variables = extractCssVariables(source.content);
         assertEquals(variables["primary"], "#007bff");
         assertEquals(variables["spacing"], "1rem");
-
-        return Promise.resolve();
       });
     });
   });

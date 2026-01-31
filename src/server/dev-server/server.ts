@@ -179,12 +179,13 @@ export class DevServer {
     // creates a new Request object, which breaks Deno.upgradeWebSocket() - it needs
     // the original request to maintain the connection.
     const baseHandler = (req: Request) => this.pipeline.execute(req, this.adapter.env.toObject());
-    const handler = this.options.requestInterceptor
+    const interceptor = this.options.requestInterceptor;
+    const handler = interceptor
       ? async (req: Request) => {
         const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
         if (isWebSocketUpgrade) return baseHandler(req);
 
-        const interceptedReq = await this.options.requestInterceptor!(req);
+        const interceptedReq = await interceptor(req);
         return baseHandler(interceptedReq);
       }
       : baseHandler;
@@ -238,7 +239,7 @@ export class DevServer {
     await this.fileWatchSetup.setup();
   }
 
-  getFileWatcherMetrics() {
+  getFileWatcherMetrics(): ReturnType<FileWatchSetup["getMetrics"]> | null {
     return this.fileWatchSetup?.getMetrics() ?? null;
   }
 

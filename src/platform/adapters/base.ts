@@ -1,6 +1,6 @@
-/**
+/***********************
  * Runtime identifier for platform-specific code paths
- */
+ ***********************/
 export type RuntimeId = "deno" | "node" | "bun" | "cloudflare" | "memory";
 
 /**
@@ -19,7 +19,6 @@ export interface RuntimeAdapter {
   /** Runtime capabilities for feature detection */
   readonly capabilities: RuntimeCapabilities;
 
-  // Core adapters (required)
   /** Filesystem operations */
   fs: FileSystemAdapter;
 
@@ -29,13 +28,11 @@ export interface RuntimeAdapter {
   /** HTTP server operations */
   server: ServerAdapter;
 
-  // HTTP server
   serve(
     handler: (request: Request) => Promise<Response> | Response,
     options: ServeOptions,
   ): Promise<Server>;
 
-  // Optional adapters
   /** Shell operations (sync fs for CLI) */
   shell?: ShellAdapter;
 
@@ -45,7 +42,6 @@ export interface RuntimeAdapter {
   /** File watcher (not available on Workers) */
   watcher?: FileWatcherAdapter;
 
-  // Lifecycle hooks
   /** Initialize the adapter (called once before first use) */
   initialize?(): Promise<void>;
 

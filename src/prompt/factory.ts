@@ -7,12 +7,16 @@ export function prompt(config: PromptConfig): Prompt {
   return {
     id,
     description: config.description,
-
     async getContent(variables?: Record<string, unknown>): Promise<string> {
       const vars = variables ?? {};
 
-      if (config.content) return interpolateVariables(config.content, vars);
-      if (config.generate) return await config.generate(vars);
+      if (config.content) {
+        return interpolateVariables(config.content, vars);
+      }
+
+      if (config.generate) {
+        return config.generate(vars);
+      }
 
       throw toError(
         createError({

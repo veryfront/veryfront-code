@@ -55,10 +55,8 @@ export interface EntityTypeInfo {
   isPage: boolean;
 }
 
-// File extension regex - must end with a valid extension
 const FILE_PATH_REGEX = /\.(mdx?|tsx?|jsx?)$/;
 
-// Zod schema for Frontmatter values - matches the index signature
 const FrontmatterValueSchema = z.union([
   z.string(),
   z.number(),
@@ -67,18 +65,11 @@ const FrontmatterValueSchema = z.union([
   z.undefined(),
 ]);
 
-/**
- * Zod schema for Frontmatter validation.
- */
 export const FrontmatterSchema: z.ZodType<Frontmatter> = z.record(
   z.string(),
   FrontmatterValueSchema,
 );
 
-/**
- * Zod schema for Entity validation.
- * Used to catch programming errors early when entities are created or transformed.
- */
 export const EntitySchema: z.ZodType<Entity> = z.object({
   id: z.string().uuid("Entity id must be a valid UUID"),
   path: z
@@ -98,22 +89,13 @@ export const EntitySchema: z.ZodType<Entity> = z.object({
   isPage: z.boolean().optional(),
 });
 
-/**
- * Validate an Entity object and throw if invalid.
- * Use this at system boundaries where entities are created from external data.
- */
 export function validateEntity(entity: unknown): Entity {
   return EntitySchema.parse(entity);
 }
 
-/**
- * Safely validate an Entity, returning result or null.
- * Use for optional validation where you want to handle errors gracefully.
- */
 export function safeValidateEntity(entity: unknown): Entity | null {
   const result = EntitySchema.safeParse(entity);
-  if (!result.success) return null;
-  return result.data;
+  return result.success ? result.data : null;
 }
 
 function detectFileKind(ext?: string): "mdx" | "tsx" | undefined {

@@ -48,6 +48,11 @@ export default defineTool({
     try {
       const client = getZendeskClient();
 
+      let requester: TicketData["requester"];
+      if (input.requesterName && input.requesterEmail) {
+        requester = { name: input.requesterName, email: input.requesterEmail };
+      }
+
       const ticketData: TicketData = {
         subject: input.subject,
         comment: { body: input.body },
@@ -55,10 +60,7 @@ export default defineTool({
         type: input.type,
         tags: input.tags,
         assignee_id: input.assigneeId,
-        requester:
-          input.requesterName && input.requesterEmail
-            ? { name: input.requesterName, email: input.requesterEmail }
-            : undefined,
+        requester,
       };
 
       const ticket = await client.createTicket(ticketData);

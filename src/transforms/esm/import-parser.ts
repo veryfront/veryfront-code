@@ -83,7 +83,7 @@ export async function parseLocalImports(
     }
 
     if (specifier.startsWith("@/")) {
-      const aliasPath = specifier.substring(2);
+      const aliasPath = specifier.slice(2);
       const resolved = await resolveAliasImportPath(aliasPath, projectDir, adapter);
       if (resolved) {
         localImports.push({ specifier, absolutePath: resolved });
@@ -98,17 +98,17 @@ export async function parseLocalImports(
       continue;
     }
 
-    if (isCrossProjectImport(specifier)) {
-      const parsed = parseCrossProjectImport(specifier);
-      if (parsed) {
-        crossProjectImports.push({
-          specifier,
-          projectSlug: parsed.projectSlug,
-          version: parsed.version,
-          path: parsed.path,
-        });
-      }
-    }
+    if (!isCrossProjectImport(specifier)) continue;
+
+    const parsed = parseCrossProjectImport(specifier);
+    if (!parsed) continue;
+
+    crossProjectImports.push({
+      specifier,
+      projectSlug: parsed.projectSlug,
+      version: parsed.version,
+      path: parsed.path,
+    });
   }
 
   return { imports: localImports, crossProjectImports, missing: missingImports };
@@ -116,12 +116,7 @@ export async function parseLocalImports(
 
 async function checkFileExists(path: string, adapter?: RuntimeAdapter): Promise<boolean> {
   try {
-    if (adapter?.fs.stat) {
-      const stat = await adapter.fs.stat(path);
-      return stat.isFile;
-    }
-
-    const fs = createFileSystem();
+    const fs = adapter?.fs.stat ? adapter.fs : createFileSystem();
     const stat = await fs.stat(path);
     return stat.isFile;
   } catch {
@@ -156,15 +151,12 @@ async function resolveLocalImportPath(
     if (await checkFileExists(candidate, adapter)) return candidate;
   }
 
-  const indexCandidates = EXTENSIONS.map((ext) => basePath + "/index" + ext);
-  const results = await Promise.all(
-    indexCandidates.map(async (path) => ({
-      path,
-      exists: await checkFileExists(path, adapter),
-    })),
-  );
+  for (const ext of EXTENSIONS) {
+    const candidate = `${basePath}/index${ext}`;
+    if (await checkFileExists(candidate, adapter)) return candidate;
+  }
 
-  return results.find((r) => r.exists)?.path ?? null;
+  return null;
 }
 
 async function resolveAliasImportPath(
@@ -173,22 +165,14 @@ async function resolveAliasImportPath(
   adapter?: RuntimeAdapter,
 ): Promise<string | null> {
   const normalizedPath = basePath.replace(/^\/+/, "");
+  const fs = createFileSystem();
+  const projectNormalizedDir = projectDir.replace(/\/+$/, "");
 
   if (normalizedPath.startsWith("lib/")) {
-    const fs = createFileSystem();
-    const candidates = EXTENSIONS.map((ext) => join(FRAMEWORK_ROOT, "src", normalizedPath + ext));
-    const results = await Promise.all(
-      candidates.map(async (path) => {
-        try {
-          const stat = await fs.stat(path);
-          return stat.isFile ? path : null;
-        } catch {
-          return null;
-        }
-      }),
+    const found = await findFirstExistingFile(
+      EXTENSIONS.map((ext) => join(FRAMEWORK_ROOT, "src", normalizedPath + ext)),
+      fs,
     );
-
-    const found = results.find((r) => r !== null);
     if (found) return found;
   }
 
@@ -205,9 +189,6 @@ async function resolveAliasImportPath(
       // Fall through to manual resolution
     }
   }
-
-  const fs = createFileSystem();
-  const projectNormalizedDir = projectDir.replace(/\/+$/, "");
 
   if (HAS_EXTENSION_RE.test(normalizedPath)) {
     const absolutePath = join(projectNormalizedDir, normalizedPath);
@@ -227,8 +208,15 @@ async function resolveAliasImportPath(
       : []),
   ];
 
+  return await findFirstExistingFile(candidates, fs);
+}
+
+async function findFirstExistingFile(
+  paths: string[],
+  fs: ReturnType<typeof createFileSystem>,
+): Promise<string | null> {
   const results = await Promise.all(
-    candidates.map(async (path) => {
+    paths.map(async (path) => {
       try {
         const stat = await fs.stat(path);
         return stat.isFile ? path : null;

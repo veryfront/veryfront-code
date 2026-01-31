@@ -85,7 +85,7 @@ export const checkQueryStatus = tool({
       };
     }
 
-    if (status.code !== "000000" && status.code) {
+    if (status.code && status.code !== "000000") {
       return {
         status: "failed",
         code: status.code,
@@ -101,16 +101,24 @@ export const checkQueryStatus = tool({
       nullable: col.nullable,
     }));
 
-    const rows =
-      status.data && status.resultSetMetaData
-        ? status.data.map((row) => {
-            const obj: Record<string, unknown> = {};
-            rowType.forEach((col, index) => {
-              obj[col.name] = row[index];
-            });
-            return obj;
-          })
-        : [];
+    if (!status.data || !status.resultSetMetaData) {
+      return {
+        status: "completed",
+        columns,
+        rowCount: status.resultSetMetaData?.numRows ?? 0,
+        rows: [],
+        stats: status.stats,
+        statementHandle,
+      };
+    }
+
+    const rows = status.data.map((row) => {
+      const obj: Record<string, unknown> = {};
+      rowType.forEach((col, index) => {
+        obj[col.name] = row[index];
+      });
+      return obj;
+    });
 
     return {
       status: "completed",

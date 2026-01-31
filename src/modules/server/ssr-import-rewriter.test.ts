@@ -116,7 +116,6 @@ describe("modules/server/ssr-import-rewriter", () => {
     it("should not rewrite relative imports without .js extension", () => {
       const code = `import { fn } from "./mod";`;
       const result = applySSRImportRewrites(code, { cacheBuster: 1000 });
-      // relative import regex requires .js extension
       assertEquals(result.includes("./mod?ssr"), false);
     });
   });

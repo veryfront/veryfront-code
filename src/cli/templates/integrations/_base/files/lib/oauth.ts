@@ -11,7 +11,7 @@ export interface OAuthProvider {
 }
 
 function getExpiresAt(expiresIn: unknown): number | undefined {
-  if (typeof expiresIn !== "number" || !expiresIn) return undefined;
+  if (typeof expiresIn !== "number" || expiresIn <= 0) return undefined;
   return Date.now() + expiresIn * 1000;
 }
 
@@ -71,7 +71,7 @@ export async function exchangeCodeForTokens(
     accessToken: data.access_token,
     refreshToken: data.refresh_token,
     expiresAt: getExpiresAt(data.expires_in),
-    tokenType: data.token_type || "Bearer",
+    tokenType: data.token_type ?? "Bearer",
     scope: data.scope,
   };
 }
@@ -93,9 +93,9 @@ export async function refreshAccessToken(
 
   return {
     accessToken: data.access_token,
-    refreshToken: data.refresh_token || refreshToken,
+    refreshToken: data.refresh_token ?? refreshToken,
     expiresAt: getExpiresAt(data.expires_in),
-    tokenType: data.token_type || "Bearer",
+    tokenType: data.token_type ?? "Bearer",
     scope: data.scope,
   };
 }

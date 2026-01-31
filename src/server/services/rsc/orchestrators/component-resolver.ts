@@ -40,11 +40,8 @@ export async function resolveComponentPath(
     if (rootMatch) return rootMatch;
   }
 
-  return findFirstExistingPath(
-    projectDir,
-    FILE_PATTERNS.map((pattern) => pattern.replace("{path}", cleanPath)),
-    fsAdapter,
-  );
+  const patterns = FILE_PATTERNS.map((pattern) => pattern.replace("{path}", cleanPath));
+  return findFirstExistingPath(projectDir, patterns, fsAdapter);
 }
 
 function cleanPathname(pathname: string): string {
@@ -64,9 +61,9 @@ async function findFirstExistingPath(
   return null;
 }
 
-async function fileExists(path: string, fsAdapter?: FileSystemAdapter): Promise<boolean> {
+async function fileExists(filePath: string, fsAdapter?: FileSystemAdapter): Promise<boolean> {
   try {
-    const stat = fsAdapter ? await fsAdapter.stat(path) : await fs.stat(path);
+    const stat = fsAdapter ? await fsAdapter.stat(filePath) : await fs.stat(filePath);
     return stat.isFile;
   } catch {
     return false;

@@ -43,7 +43,6 @@ export function extractChunkName(file: string): string {
 
 /** Calculates SHA-256 hash of file content (returns first 8 hex chars) */
 export async function calculateFileHash(content: Uint8Array): Promise<string> {
-  // Use slice() to get a view that's guaranteed to be ArrayBuffer, not SharedArrayBuffer
   const hashBuffer = await crypto.subtle.digest("SHA-256", content.slice());
   return Array.from(new Uint8Array(hashBuffer), (b) => b.toString(16).padStart(2, "0"))
     .join("")
@@ -57,10 +56,9 @@ export function isCriticalImport(path: string): boolean {
 
 /** Gets preload hints for critical imports */
 export function getPreloadHints(output: MetafileOutput, outDir: string): string[] {
-  return (
-    output.imports
-      ?.filter((imp) => isCriticalImport(imp.path))
-      .map((imp) => relative(outDir, imp.path)) ?? []
+  const imports = output.imports ?? [];
+  return imports.filter((imp) => isCriticalImport(imp.path)).map((imp) =>
+    relative(outDir, imp.path)
   );
 }
 

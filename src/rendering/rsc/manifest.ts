@@ -30,16 +30,15 @@ export async function buildRscModules(
 
   return Promise.all(
     allEntries.map(async (e) => {
-      const exportsList = await (async (): Promise<string[]> => {
-        try {
-          const text = await adapter.fs.readFile(e.path);
-          const names = extractExportNames(text);
-          return names.length > 0 ? ["default", ...names] : ["default"];
-        } catch {
-          // ignore read errors; use default only
-          return ["default"];
-        }
-      })();
+      let exportsList: string[] = ["default"];
+
+      try {
+        const text = await adapter.fs.readFile(e.path);
+        const names = extractExportNames(text);
+        if (names.length > 0) exportsList = ["default", ...names];
+      } catch {
+        // ignore read errors; use default only
+      }
 
       return {
         id: e.id,

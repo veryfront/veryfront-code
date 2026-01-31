@@ -13,10 +13,33 @@ function createAdapter(): MultiProjectFSAdapter {
   });
 }
 
-function assertMethod(adapter: MultiProjectFSAdapter, name: keyof MultiProjectFSAdapter): void {
+function assertMethod(
+  adapter: MultiProjectFSAdapter,
+  name: keyof MultiProjectFSAdapter,
+): void {
   const value = adapter[name];
   assertExists(value);
   assertEquals(typeof value, "function");
+}
+
+function withAdapter(fn: (adapter: MultiProjectFSAdapter) => void): void {
+  const adapter = createAdapter();
+  try {
+    fn(adapter);
+  } finally {
+    adapter.dispose();
+  }
+}
+
+async function withAdapterAsync(
+  fn: (adapter: MultiProjectFSAdapter) => Promise<void>,
+): Promise<void> {
+  const adapter = createAdapter();
+  try {
+    await fn(adapter);
+  } finally {
+    adapter.dispose();
+  }
 }
 
 describe("MultiProjectFSAdapter", () => {
@@ -29,84 +52,62 @@ describe("MultiProjectFSAdapter", () => {
 
   describe("instance", () => {
     it("should be instantiable with minimal config", () => {
-      const adapter = createAdapter();
-      assertExists(adapter);
-      adapter.dispose();
+      withAdapter((adapter) => {
+        assertExists(adapter);
+      });
     });
 
     it("should have initialize method", () => {
-      const adapter = createAdapter();
-      assertMethod(adapter, "initialize");
-      adapter.dispose();
+      withAdapter((adapter) => assertMethod(adapter, "initialize"));
     });
 
     it("should have readFile method", () => {
-      const adapter = createAdapter();
-      assertMethod(adapter, "readFile");
-      adapter.dispose();
+      withAdapter((adapter) => assertMethod(adapter, "readFile"));
     });
 
     it("should have readTextFile method", () => {
-      const adapter = createAdapter();
-      assertMethod(adapter, "readTextFile");
-      adapter.dispose();
+      withAdapter((adapter) => assertMethod(adapter, "readTextFile"));
     });
 
     it("should have exists method", () => {
-      const adapter = createAdapter();
-      assertMethod(adapter, "exists");
-      adapter.dispose();
+      withAdapter((adapter) => assertMethod(adapter, "exists"));
     });
 
     it("should have stat method", () => {
-      const adapter = createAdapter();
-      assertMethod(adapter, "stat");
-      adapter.dispose();
+      withAdapter((adapter) => assertMethod(adapter, "stat"));
     });
 
     it("should have readdir method", () => {
-      const adapter = createAdapter();
-      assertMethod(adapter, "readdir");
-      adapter.dispose();
+      withAdapter((adapter) => assertMethod(adapter, "readdir"));
     });
 
     it("should have resolveFile method", () => {
-      const adapter = createAdapter();
-      assertMethod(adapter, "resolveFile");
-      adapter.dispose();
+      withAdapter((adapter) => assertMethod(adapter, "resolveFile"));
     });
 
     it("should have dispose method", () => {
-      const adapter = createAdapter();
-      assertMethod(adapter, "dispose");
-      adapter.dispose();
+      withAdapter((adapter) => assertMethod(adapter, "dispose"));
     });
 
     it("should have runWithContext method", () => {
-      const adapter = createAdapter();
-      assertMethod(adapter, "runWithContext");
-      adapter.dispose();
+      withAdapter((adapter) => assertMethod(adapter, "runWithContext"));
     });
 
     it("should have getManagerStats method", () => {
-      const adapter = createAdapter();
-      assertMethod(adapter, "getManagerStats");
-      adapter.dispose();
+      withAdapter((adapter) => assertMethod(adapter, "getManagerStats"));
     });
 
     it("should return manager stats", () => {
-      const adapter = createAdapter();
-      const stats = adapter.getManagerStats();
-      assertExists(stats);
-      assertEquals(stats.adapters, 0);
-      assertExists(stats.stats);
-      adapter.dispose();
+      withAdapter((adapter) => {
+        const stats = adapter.getManagerStats();
+        assertExists(stats);
+        assertEquals(stats.adapters, 0);
+        assertExists(stats.stats);
+      });
     });
 
     it("initialize should resolve immediately", async () => {
-      const adapter = createAdapter();
-      await adapter.initialize();
-      adapter.dispose();
+      await withAdapterAsync((adapter) => adapter.initialize());
     });
   });
 });
@@ -118,9 +119,9 @@ describe("isMultiProjectAdapter", () => {
   });
 
   it("should return true for MultiProjectFSAdapter instance", () => {
-    const adapter = createAdapter();
-    assertEquals(isMultiProjectAdapter(adapter), true);
-    adapter.dispose();
+    withAdapter((adapter) => {
+      assertEquals(isMultiProjectAdapter(adapter), true);
+    });
   });
 
   it("should return false for non-MultiProjectFSAdapter", () => {

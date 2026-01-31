@@ -157,13 +157,12 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
   console.log("Let's set up your project.");
 
   const templateChoice = await select("What would you like to build?", [...TEMPLATES], 0);
+  const template = templateChoice as InitTemplate | undefined;
 
-  if (!templateChoice) {
+  if (!template) {
     logger.warn("No template selected, using minimal");
     return { template: "minimal", integrations: [], skipped: false };
   }
-
-  const template = templateChoice as InitTemplate;
 
   if (template !== "ai") {
     const templateLabel = TEMPLATES.find((t) => t.value === template)?.label ?? template;

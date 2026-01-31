@@ -1,7 +1,7 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { readBodyWithLimit, validateRequestLimits } from "./limits.ts";
 import { ValidationError } from "./errors.ts";
+import { readBodyWithLimit, validateRequestLimits } from "./limits.ts";
 
 describe("security/input-validation/limits", () => {
   describe("validateRequestLimits", () => {
@@ -9,13 +9,13 @@ describe("security/input-validation/limits", () => {
       const req = new Request("http://localhost/api/data", {
         headers: { "Content-Length": "100" },
       });
-      // Should not throw
+
       validateRequestLimits(req);
     });
 
     it("should reject URLs that are too long", () => {
-      const longUrl = "http://localhost/" + "a".repeat(10000);
-      const req = new Request(longUrl);
+      const req = new Request("http://localhost/" + "a".repeat(10000));
+
       assertThrows(
         () => validateRequestLimits(req, { maxUrlLength: 100 }),
         ValidationError,
@@ -28,6 +28,7 @@ describe("security/input-validation/limits", () => {
         method: "POST",
         headers: { "Content-Length": "999999999" },
       });
+
       assertThrows(
         () => validateRequestLimits(req, { maxBodySize: 1000 }),
         ValidationError,
@@ -40,6 +41,7 @@ describe("security/input-validation/limits", () => {
         method: "POST",
         headers: { "Content-Length": "not-a-number" },
       });
+
       assertThrows(
         () => validateRequestLimits(req),
         ValidationError,
@@ -49,10 +51,13 @@ describe("security/input-validation/limits", () => {
 
     it("should reject oversized headers", () => {
       const headers: Record<string, string> = {};
+
       for (let i = 0; i < 100; i++) {
         headers[`X-Custom-Header-${i}`] = "x".repeat(1000);
       }
+
       const req = new Request("http://localhost/", { headers });
+
       assertThrows(
         () => validateRequestLimits(req, { maxHeaderSize: 1000 }),
         ValidationError,
@@ -67,7 +72,9 @@ describe("security/input-validation/limits", () => {
         method: "POST",
         body: "hello world",
       });
+
       const text = await readBodyWithLimit(req, 1024);
+
       assertEquals(text, "hello world");
     });
 
@@ -76,6 +83,7 @@ describe("security/input-validation/limits", () => {
         method: "POST",
         body: "x".repeat(100),
       });
+
       await assertRejects(
         () => readBodyWithLimit(req, 10),
         ValidationError,
@@ -85,6 +93,7 @@ describe("security/input-validation/limits", () => {
 
     it("should reject request with no body", async () => {
       const req = new Request("http://localhost/");
+
       await assertRejects(
         () => readBodyWithLimit(req),
         ValidationError,

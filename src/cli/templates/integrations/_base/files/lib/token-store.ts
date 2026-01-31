@@ -45,6 +45,11 @@ export interface TokenStoreConfig {
   delete: (key: string) => Promise<void>;
 }
 
+const AUTO_KEY_STORAGE = "__veryfront_auto_encryption_key__";
+const TOKENS_KEY = "__veryfront_oauth_tokens__";
+
+const globalStore = globalThis as Record<string, unknown>;
+
 // ============================================================================
 // Encryption Utilities
 // ============================================================================
@@ -56,10 +61,7 @@ export async function encryptToken(token: OAuthToken): Promise<string> {
   const data = new TextEncoder().encode(JSON.stringify(token));
   const iv = crypto.getRandomValues(new Uint8Array(12));
 
-  const cryptoKey = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, false, [
-    "encrypt",
-  ]);
-
+  const cryptoKey = await crypto.subtle.importKey("raw", key, "AES-GCM", false, ["encrypt"]);
   const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, cryptoKey, data);
 
   const combined = new Uint8Array(iv.length + encrypted.byteLength);
@@ -91,10 +93,7 @@ export async function decryptToken(encrypted: string): Promise<OAuthToken | null
     const iv = combined.slice(0, 12);
     const ciphertext = combined.slice(12);
 
-    const cryptoKey = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, false, [
-      "decrypt",
-    ]);
-
+    const cryptoKey = await crypto.subtle.importKey("raw", key, "AES-GCM", false, ["decrypt"]);
     const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, cryptoKey, ciphertext);
 
     return JSON.parse(new TextDecoder().decode(decrypted)) as OAuthToken;
@@ -103,11 +102,6 @@ export async function decryptToken(encrypted: string): Promise<OAuthToken | null
     return null;
   }
 }
-
-const AUTO_KEY_STORAGE = "__veryfront_auto_encryption_key__";
-const TOKENS_KEY = "__veryfront_oauth_tokens__";
-
-const globalStore = globalThis as Record<string, unknown>;
 
 export function generateEncryptionKey(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -118,7 +112,7 @@ export function generateEncryptionKey(): string {
 
 function getEnvVar(name: string): string | undefined {
   if (typeof process !== "undefined") return process.env?.[name];
-  return (globalThis as any).Deno?.env?.get(name);
+  return (globalThis as { Deno?: { env?: { get?: (key: string) => string | undefined } } }).Deno?.env?.get?.(name);
 }
 
 function hexToKeyBytes(keyHex: string): Uint8Array | null {
@@ -157,7 +151,7 @@ export function getStorageMode(): StorageMode {
   const env =
     typeof process !== "undefined"
       ? process.env
-      : ((globalThis as any).Deno?.env?.toObject() as Record<string, string> | undefined) ?? {};
+      : (globalThis as { Deno?: { env?: { toObject?: () => Record<string, string> } } }).Deno?.env?.toObject?.() ?? {};
 
   if (env.DATABASE_URL) return "database";
   if (env.KV_REST_API_URL) return "kv";
@@ -173,14 +167,18 @@ export function isEncryptionEnabled(): boolean {
 // In-Memory Store (Development)
 // ============================================================================
 
-const tokens = (globalStore[TOKENS_KEY] as Map<string, OAuthToken> | undefined) ?? new Map();
+const tokens = (globalStore[TOKENS_KEY] as Map<string, OAuthToken> | undefined) ?? new Map<string, OAuthToken>();
 globalStore[TOKENS_KEY] = tokens;
 
 function getKey(userId: string, service: string): string {
   return `${userId}:${service}`;
 }
 
-async function isConnected(store: Pick<TokenStore, "getToken">, userId: string, service: string): Promise<boolean> {
+async function isConnected(
+  store: Pick<TokenStore, "getToken">,
+  userId: string,
+  service: string,
+): Promise<boolean> {
   const token = await store.getToken(userId, service);
   return !!token && (!token.expiresAt || token.expiresAt > Date.now());
 }
@@ -235,12 +233,10 @@ export function createTokenStore(config: TokenStoreConfig): TokenStore {
 
 export const tokenStore: TokenStore = inMemoryStore;
 
-if (typeof process !== "undefined" && process.env?.NODE_ENV !== "production") {
-  if (getStorageMode() === "memory") {
-    console.warn(
-      "[Token Store] Using in-memory storage (development mode). " +
-        "Tokens will be lost on restart. " +
-        "Set DATABASE_URL, KV_REST_API_URL, or REDIS_URL for production.",
-    );
-  }
+if (typeof process !== "undefined" && process.env?.NODE_ENV !== "production" && getStorageMode() === "memory") {
+  console.warn(
+    "[Token Store] Using in-memory storage (development mode). " +
+      "Tokens will be lost on restart. " +
+      "Set DATABASE_URL, KV_REST_API_URL, or REDIS_URL for production.",
+  );
 }

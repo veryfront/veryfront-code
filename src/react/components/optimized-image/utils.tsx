@@ -27,24 +27,27 @@ export function ResponsiveImageContainer({
   className?: string;
   style?: React.CSSProperties;
 }): React.ReactElement {
-  const containerStyle: React.CSSProperties = {
-    position: "relative",
-    width: "100%",
-    paddingBottom: getAspectRatioPadding(width, height),
-    ...style,
-  };
-
-  const contentStyle: React.CSSProperties = {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    width: "100%",
-    height: "100%",
-  };
-
   return (
-    <div className={className} style={containerStyle}>
-      <div style={contentStyle}>{children}</div>
+    <div
+      className={className}
+      style={{
+        position: "relative",
+        width: "100%",
+        paddingBottom: getAspectRatioPadding(width, height),
+        ...style,
+      }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 }

@@ -24,20 +24,43 @@ import type {
 } from "../../../../../src/build/renderer/types/bundler-types.ts";
 import { withTestContext } from "../../../../_helpers/context.ts";
 
+function createResult(): BundleResult {
+  return {
+    outputs: new Map(),
+    errors: [],
+    warnings: [],
+    dependencies: new Map(),
+  };
+}
+
+function createOptions(
+  projectDir: string,
+  mode: BundlerOptions["mode"],
+  overrides: Partial<BundlerOptions> = {},
+): BundlerOptions {
+  return {
+    sources: [],
+    projectDir,
+    mode,
+    ...overrides,
+  };
+}
+
+function getOutputPath(sourcePath: string): string {
+  return sourcePath.replace(/\.(tsx?|jsx?)$/, ".js");
+}
+
 describe(
   "Script Bundler",
   { sanitizeOps: false, sanitizeResources: false },
   () => {
     afterAll(async () => {
-      // Only stop esbuild if a test explicitly opted to keep it alive
-      if (!(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) {
-        await esbuild.stop();
-      }
+      if ((globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) return;
+      await esbuild.stop();
     });
 
     describe("bundleScript", { sanitizeOps: false, sanitizeResources: false }, () => {
       it("bundles all file types (JS/TS/JSX/TSX)", async () => {
-        // Batched test for all file type bundling - reduces esbuild invocation overhead
         await withTestContext("script-all-types", async (context) => {
           const testCases = [
             {
@@ -49,9 +72,8 @@ describe(
                 }
                 export default greet;
               `,
-              external: [],
+              external: [] as string[],
               checks: (content: string) => {
-                // JS should be bundled
                 assertExists(content);
               },
             },
@@ -67,9 +89,8 @@ describe(
                   return { name, age };
                 }
               `,
-              external: [],
+              external: [] as string[],
               checks: (content: string) => {
-                // Should remove type annotations
                 assertEquals(content.includes("interface User"), false);
               },
             },
@@ -84,7 +105,6 @@ describe(
               `,
               external: ["react"],
               checks: (content: string) => {
-                // Should transform JSX
                 assertEquals(content.includes("<button"), false);
               },
             },
@@ -103,7 +123,6 @@ describe(
               `,
               external: ["react"],
               checks: (content: string) => {
-                // Should remove TypeScript types
                 assertEquals(content.includes("interface ButtonProps"), false);
                 assertEquals(content.includes("React.FC"), false);
               },
@@ -117,25 +136,15 @@ describe(
               type: testCase.type,
             };
 
-            const options: BundlerOptions = {
-              sources: [],
-              projectDir: context.projectDir,
-              mode: "development",
-              external: testCase.external.length > 0 ? testCase.external : undefined,
-            };
+            const options = createOptions(context.projectDir, "development", {
+              external: testCase.external.length ? testCase.external : undefined,
+            });
 
-            const result: BundleResult = {
-              outputs: new Map(),
-              errors: [],
-              warnings: [],
-              dependencies: new Map(),
-            };
-
+            const result = createResult();
             const fileCache = new Map<string, string>();
 
             await bundleScript(source, options, result, esbuild, fileCache);
 
-            // Check for build errors
             assertEquals(
               result.errors.length,
               0,
@@ -144,16 +153,13 @@ describe(
               }`,
             );
 
-            // Should create output
-            const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
+            const outputPath = getOutputPath(source.path);
             const output = result.outputs.get(outputPath);
             assertExists(output, `No output generated for ${testCase.type}`);
             assertEquals(output.type, "js");
 
-            // Run type-specific checks
             testCase.checks(output.content);
 
-            // Should track dependencies
             assertExists(result.dependencies.get(source.path));
           }
         });
@@ -173,31 +179,16 @@ describe(
             type: "js",
           };
 
-          const options: BundlerOptions = {
-            sources: [],
-            projectDir: context.projectDir,
-            mode: "production",
-          };
-
-          const result: BundleResult = {
-            outputs: new Map(),
-            errors: [],
-            warnings: [],
-            dependencies: new Map(),
-          };
-
+          const options = createOptions(context.projectDir, "production");
+          const result = createResult();
           const fileCache = new Map<string, string>();
 
           await bundleScript(source, options, result, esbuild, fileCache);
 
-          const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
-          const output = result.outputs.get(outputPath)!;
+          const output = result.outputs.get(getOutputPath(source.path))!;
 
-          // Should be minified
           assertEquals(output.content.includes("// This is a comment"), false);
           assertEquals(output.content.includes("\n\n"), false);
-
-          // Should be compact
           assertEquals(output.content.length < 100, true);
         });
       });
@@ -212,27 +203,13 @@ describe(
             type: "ts",
           };
 
-          const options: BundlerOptions = {
-            sources: [],
-            projectDir: context.projectDir,
-            mode: "development",
-          };
-
-          const result: BundleResult = {
-            outputs: new Map(),
-            errors: [],
-            warnings: [],
-            dependencies: new Map(),
-          };
-
+          const options = createOptions(context.projectDir, "development");
+          const result = createResult();
           const fileCache = new Map<string, string>();
 
           await bundleScript(source, options, result, esbuild, fileCache);
 
-          const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
-          const output = result.outputs.get(outputPath)!;
-
-          // Should include inline source map
+          const output = result.outputs.get(getOutputPath(source.path))!;
           assertEquals(output.content.includes("sourceMappingURL=data:"), true);
         });
       });
@@ -247,27 +224,13 @@ describe(
             type: "ts",
           };
 
-          const options: BundlerOptions = {
-            sources: [],
-            projectDir: context.projectDir,
-            mode: "production",
-          };
-
-          const result: BundleResult = {
-            outputs: new Map(),
-            errors: [],
-            warnings: [],
-            dependencies: new Map(),
-          };
-
+          const options = createOptions(context.projectDir, "production");
+          const result = createResult();
           const fileCache = new Map<string, string>();
 
           await bundleScript(source, options, result, esbuild, fileCache);
 
-          const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
-          const output = result.outputs.get(outputPath)!;
-
-          // Should not include source map
+          const output = result.outputs.get(getOutputPath(source.path))!;
           assertEquals(output.content.includes("sourceMappingURL"), false);
         });
       });
@@ -287,28 +250,15 @@ describe(
             type: "js",
           };
 
-          const options: BundlerOptions = {
-            sources: [],
-            projectDir: context.projectDir,
-            mode: "development",
+          const options = createOptions(context.projectDir, "development", {
             external: ["react", "lodash"],
-          };
-
-          const result: BundleResult = {
-            outputs: new Map(),
-            errors: [],
-            warnings: [],
-            dependencies: new Map(),
-          };
-
+          });
+          const result = createResult();
           const fileCache = new Map<string, string>();
 
           await bundleScript(source, options, result, esbuild, fileCache);
 
-          const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
-          const output = result.outputs.get(outputPath)!;
-
-          // Should preserve external imports
+          const output = result.outputs.get(getOutputPath(source.path))!;
           assertEquals(output.content.includes("react") || output.content.includes("React"), true);
         });
       });
@@ -324,22 +274,10 @@ describe(
             type: "js",
           };
 
-          const options: BundlerOptions = {
-            sources: [],
-            projectDir: context.projectDir,
-            mode: "development",
-          };
-
-          const result: BundleResult = {
-            outputs: new Map(),
-            errors: [],
-            warnings: [],
-            dependencies: new Map(),
-          };
-
+          const options = createOptions(context.projectDir, "development");
+          const result = createResult();
           const fileCache = new Map<string, string>();
 
-          // Add dependency to cache
           fileCache.set(
             join(context.projectDir, "utils.js"),
             'export const helper = () => "help";',
@@ -347,20 +285,13 @@ describe(
 
           await bundleScript(source, options, result, esbuild, fileCache);
 
-          // Should add source to cache
           assertEquals(fileCache.has(source.path), true);
-
-          // Should create output or have dependency errors
-          const _outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
-          // Since utils.js is in cache but may not resolve properly, output may not exist
-          // The important thing is the cache was used
           assertEquals(fileCache.size > 0, true);
         });
       });
 
       it("handles CSS imports via plugin", async () => {
         await withTestContext("script-css-import", async (context) => {
-          // Create CSS file
           await writeTextFile(
             join(context.projectDir, "styles.css"),
             ".button { color: blue; }",
@@ -375,33 +306,17 @@ describe(
             type: "js",
           };
 
-          const options: BundlerOptions = {
-            sources: [],
-            projectDir: context.projectDir,
-            mode: "development",
-          };
-
-          const result: BundleResult = {
-            outputs: new Map(),
-            errors: [],
-            warnings: [],
-            dependencies: new Map(),
-          };
-
+          const options = createOptions(context.projectDir, "development");
+          const result = createResult();
           const fileCache = new Map<string, string>();
 
           await bundleScript(source, options, result, esbuild, fileCache);
 
-          // The bundler processes CSS files through the CSS plugin
-          // This test verifies the plugin system works
           const cssPath = join(context.projectDir, "styles.css");
-
-          // Check if CSS was added to outputs or if bundling succeeded/failed gracefully
           const hasCssOutput = result.outputs.has(cssPath);
           const hasAnyOutput = result.outputs.size > 0;
           const hasError = result.errors.length > 0;
 
-          // At least one of these should be true (output created OR error captured)
           assertEquals(hasCssOutput || hasAnyOutput || hasError, true);
         });
       });
@@ -419,27 +334,13 @@ describe(
             type: "js",
           };
 
-          const options: BundlerOptions = {
-            sources: [],
-            projectDir: context.projectDir,
-            mode: "development",
-          };
-
-          const result: BundleResult = {
-            outputs: new Map(),
-            errors: [],
-            warnings: [],
-            dependencies: new Map(),
-          };
-
+          const options = createOptions(context.projectDir, "development");
+          const result = createResult();
           const fileCache = new Map<string, string>();
 
           await bundleScript(source, options, result, esbuild, fileCache);
 
-          const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
-          const output = result.outputs.get(outputPath)!;
-
-          // Should preserve dynamic import
+          const output = result.outputs.get(getOutputPath(source.path))!;
           assertEquals(output.content.includes("import("), true);
         });
       });
@@ -455,28 +356,13 @@ describe(
             type: "js",
           };
 
-          const options: BundlerOptions = {
-            sources: [],
-            projectDir: context.projectDir,
-            mode: "production",
-          };
-
-          const result: BundleResult = {
-            outputs: new Map(),
-            errors: [],
-            warnings: [],
-            dependencies: new Map(),
-          };
-
+          const options = createOptions(context.projectDir, "production");
+          const result = createResult();
           const fileCache = new Map<string, string>();
 
           await bundleScript(source, options, result, esbuild, fileCache);
 
-          const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
-          const output = result.outputs.get(outputPath)!;
-
-          // Should replace process.env.NODE_ENV with 'production'
-          // Minified output may optimize the entire expression
+          const output = result.outputs.get(getOutputPath(source.path))!;
           assertEquals(output.content.length > 0, true);
         });
       });
@@ -493,29 +379,14 @@ describe(
             type: "js",
           };
 
-          const options: BundlerOptions = {
-            sources: [],
-            projectDir: context.projectDir,
-            mode: "development",
-          };
-
-          const result: BundleResult = {
-            outputs: new Map(),
-            errors: [],
-            warnings: [],
-            dependencies: new Map(),
-          };
-
+          const options = createOptions(context.projectDir, "development");
+          const result = createResult();
           const fileCache = new Map<string, string>();
 
           await bundleScript(source, options, result, esbuild, fileCache);
 
-          // Should have errors
           assertEquals(result.errors.length > 0, true);
-
-          // Should not create output
-          const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
-          assertEquals(result.outputs.has(outputPath), false);
+          assertEquals(result.outputs.has(getOutputPath(source.path)), false);
         });
       });
 
@@ -530,24 +401,12 @@ describe(
             type: "js",
           };
 
-          const options: BundlerOptions = {
-            sources: [],
-            projectDir: context.projectDir,
-            mode: "development",
-          };
-
-          const result: BundleResult = {
-            outputs: new Map(),
-            errors: [],
-            warnings: [],
-            dependencies: new Map(),
-          };
-
+          const options = createOptions(context.projectDir, "development");
+          const result = createResult();
           const fileCache = new Map<string, string>();
 
           await bundleScript(source, options, result, esbuild, fileCache);
 
-          // Should collect warnings (if any)
           assertEquals(Array.isArray(result.warnings), true);
         });
       });
@@ -559,7 +418,7 @@ describe(
             { ext: "ts", content: "export const x: number = 1;" },
             { ext: "jsx", content: "export const el = <div />;" },
             { ext: "tsx", content: "export const el: JSX.Element = <div />;" },
-          ];
+          ] as const;
 
           for (const testCase of testCases) {
             const source = {
@@ -568,26 +427,18 @@ describe(
               type: testCase.ext,
             };
 
-            const options: BundlerOptions = {
-              sources: [],
-              projectDir: context.projectDir,
-              mode: "development",
+            const options = createOptions(context.projectDir, "development", {
               external: ["react"],
-            };
-
-            const result: BundleResult = {
-              outputs: new Map(),
-              errors: [],
-              warnings: [],
-              dependencies: new Map(),
-            };
-
+            });
+            const result = createResult();
             const fileCache = new Map<string, string>();
 
             await bundleScript(source, options, result, esbuild, fileCache);
 
-            const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
-            assertExists(result.outputs.get(outputPath), `Failed for ${testCase.ext}`);
+            assertExists(
+              result.outputs.get(getOutputPath(source.path)),
+              `Failed for ${testCase.ext}`,
+            );
           }
         });
       });
@@ -602,49 +453,31 @@ describe(
             type: "js",
           };
 
-          // Test browser platform (ESM)
-          const browserOptions: BundlerOptions = {
-            sources: [],
-            projectDir: context.projectDir,
-            mode: "development",
-            platform: "browser",
-          };
+          const browserResult = createResult();
+          await bundleScript(
+            source,
+            createOptions(context.projectDir, "development", { platform: "browser" }),
+            browserResult,
+            esbuild,
+            new Map(),
+          );
 
-          const browserResult: BundleResult = {
-            outputs: new Map(),
-            errors: [],
-            warnings: [],
-            dependencies: new Map(),
-          };
-
-          await bundleScript(source, browserOptions, browserResult, esbuild, new Map());
-
-          const browserOutput = browserResult.outputs.get(
-            source.path.replace(/\.(tsx?|jsx?)$/, ".js"),
-          )!;
+          const outputPath = getOutputPath(source.path);
+          const browserOutput = browserResult.outputs.get(outputPath)!;
           assertExists(browserOutput);
 
-          // Test node platform (CJS)
-          const nodeOptions: BundlerOptions = {
-            sources: [],
-            projectDir: context.projectDir,
-            mode: "development",
-            platform: "node",
-          };
+          const nodeResult = createResult();
+          await bundleScript(
+            source,
+            createOptions(context.projectDir, "development", { platform: "node" }),
+            nodeResult,
+            esbuild,
+            new Map(),
+          );
 
-          const nodeResult: BundleResult = {
-            outputs: new Map(),
-            errors: [],
-            warnings: [],
-            dependencies: new Map(),
-          };
-
-          await bundleScript(source, nodeOptions, nodeResult, esbuild, new Map());
-
-          const nodeOutput = nodeResult.outputs.get(source.path.replace(/\.(tsx?|jsx?)$/, ".js"))!;
+          const nodeOutput = nodeResult.outputs.get(outputPath)!;
           assertExists(nodeOutput);
 
-          // Node output should use CommonJS
           assertEquals(
             nodeOutput.content.includes("exports") || nodeOutput.content.includes("module.exports"),
             true,
@@ -671,27 +504,13 @@ describe(
             type: "js",
           };
 
-          const options: BundlerOptions = {
-            sources: [],
-            projectDir: context.projectDir,
-            mode: "production",
-          };
-
-          const result: BundleResult = {
-            outputs: new Map(),
-            errors: [],
-            warnings: [],
-            dependencies: new Map(),
-          };
-
+          const options = createOptions(context.projectDir, "production");
+          const result = createResult();
           const fileCache = new Map<string, string>();
 
           await bundleScript(source, options, result, esbuild, fileCache);
 
-          const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
-          const output = result.outputs.get(outputPath)!;
-
-          // With tree shaking, output should be very small
+          const output = result.outputs.get(getOutputPath(source.path))!;
           assertEquals(output.content.length < 200, true);
         });
       });
@@ -708,27 +527,13 @@ describe(
             type: "js",
           };
 
-          const prodOptions: BundlerOptions = {
-            sources: [],
-            projectDir: context.projectDir,
-            mode: "production",
-          };
-
-          const result: BundleResult = {
-            outputs: new Map(),
-            errors: [],
-            warnings: [],
-            dependencies: new Map(),
-          };
-
+          const options = createOptions(context.projectDir, "production");
+          const result = createResult();
           const fileCache = new Map<string, string>();
 
-          await bundleScript(source, prodOptions, result, esbuild, fileCache);
+          await bundleScript(source, options, result, esbuild, fileCache);
 
-          const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
-          const output = result.outputs.get(outputPath)!;
-
-          // Should target es2020 (modern features supported)
+          const output = result.outputs.get(getOutputPath(source.path))!;
           assertExists(output.content);
         });
       });

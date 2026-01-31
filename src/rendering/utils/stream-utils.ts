@@ -82,21 +82,24 @@ export async function streamToString(
   const reader = stream.getReader();
   const binaryChunks: Uint8Array[] = [];
   let totalBytes = 0;
+  const decoder = new TextDecoder();
 
   let timedOut = false;
   const timeoutId = setTimeout(() => {
     timedOut = true;
-    reader.cancel("Stream read timeout").catch(() => {/* SILENT: stream already closed */});
+    reader.cancel("Stream read timeout").catch(() => {
+      /* SILENT: stream already closed */
+    });
   }, timeoutMs);
 
-  const throwTimeout = (): never => {
-    const partial = new TextDecoder().decode(concatUint8Arrays(binaryChunks, totalBytes));
+  function throwTimeout(): never {
+    const partial = decoder.decode(concatUint8Arrays(binaryChunks, totalBytes));
     logger.error("STREAM_TIMEOUT stream read timed out", {
       timeoutMs,
       partialLength: partial.length,
     });
     throw new StreamTimeoutError(timeoutMs, partial);
-  };
+  }
 
   try {
     while (true) {
@@ -107,13 +110,13 @@ export async function streamToString(
       if (timedOut) throwTimeout();
       if (done) break;
 
-      if (value) {
-        binaryChunks.push(value);
-        totalBytes += value.byteLength;
-      }
+      if (!value) continue;
+
+      binaryChunks.push(value);
+      totalBytes += value.byteLength;
     }
 
-    return new TextDecoder().decode(concatUint8Arrays(binaryChunks, totalBytes));
+    return decoder.decode(concatUint8Arrays(binaryChunks, totalBytes));
   } finally {
     clearTimeout(timeoutId);
     try {

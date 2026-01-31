@@ -66,17 +66,20 @@ export async function analyzeChunksCommand(
     if (avgUsage > 3) {
       cliLogger.info(
         `Average shared dependency usage (${
-          avgUsage.toFixed(2)
+          avgUsage.toFixed(
+            2,
+          )
         }) suggests splitting common UI modules.`,
       );
     }
 
-    const hasHeavyDeps = Array.from(analysis.sharedDeps.keys()).some(
-      (dep) =>
+    const hasHeavyDeps = Array.from(analysis.sharedDeps.keys()).some((dep) => {
+      return (
         dep.includes("@mui/") ||
         dep.includes("framer-motion") ||
-        dep.includes("three"),
-    );
+        dep.includes("three")
+      );
+    });
 
     if (hasHeavyDeps) {
       cliLogger.info(

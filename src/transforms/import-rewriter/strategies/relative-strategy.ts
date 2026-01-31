@@ -1,10 +1,3 @@
-/**
- * Relative import rewriting strategy.
- *
- * Priority: 3
- * Handles: ./foo, ../bar
- */
-
 import type {
   ImportRewriteStrategy,
   ImportSpecifierInfo,
@@ -22,9 +15,8 @@ export class RelativeStrategy implements ImportRewriteStrategy {
   }
 
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
-    const specifier = info.specifier;
+    const { specifier } = info;
 
-    // Normalize extension for TypeScript/JSX files
     const rewrittenSpecifier = /\.(tsx?|jsx)$/.test(specifier)
       ? normalizeExtension(specifier)
       : specifier;
@@ -35,15 +27,13 @@ export class RelativeStrategy implements ImportRewriteStrategy {
     // causing multiple React instances (bundled-in vs esm.sh) and breaking hooks.
     if (ctx.moduleServerUrl) {
       const relativeFilePath = this.getRelativeFilePath(ctx.filePath, ctx.projectDir);
-      const fileDir = relativeFilePath.substring(0, relativeFilePath.lastIndexOf("/"));
+      const fileDir = relativeFilePath.slice(0, relativeFilePath.lastIndexOf("/"));
       const resolvedPath = this.resolveRelativePath(fileDir, rewrittenSpecifier);
       return { specifier: buildModuleServerUrl(ctx.moduleServerUrl, resolvedPath) };
     }
 
-    // No module server URL: just normalize the extension
-    if (/\.(tsx?|jsx|mdx)$/.test(specifier)) {
-      return { specifier: rewrittenSpecifier };
-    }
+    if (/\.(tsx?|jsx|mdx)$/.test(specifier)) return { specifier: rewrittenSpecifier };
+
     return { specifier: null };
   }
 
@@ -51,26 +41,23 @@ export class RelativeStrategy implements ImportRewriteStrategy {
     const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
 
     if (filePath.startsWith(normalizedProjectDir)) {
-      return filePath.substring(normalizedProjectDir.length + 1);
+      return filePath.slice(normalizedProjectDir.length + 1);
     }
 
     if (!filePath.startsWith("/")) return filePath;
 
     const pathParts = filePath.split("/");
     const projectParts = normalizedProjectDir.split("/");
-    const lastProjectPart = projectParts[projectParts.length - 1];
+    const lastProjectPart = projectParts.at(-1);
     const projectIndex = lastProjectPart ? pathParts.indexOf(lastProjectPart) : -1;
 
-    if (projectIndex >= 0) {
-      return pathParts.slice(projectIndex + 1).join("/");
-    }
+    if (projectIndex >= 0) return pathParts.slice(projectIndex + 1).join("/");
 
     return filePath;
   }
 
   private resolveRelativePath(currentDir: string, importPath: string): string {
-    const baseParts = currentDir.split("/").filter(Boolean);
-    const resolvedParts = [...baseParts];
+    const resolvedParts = currentDir.split("/").filter(Boolean);
 
     for (const part of importPath.split("/").filter(Boolean)) {
       if (part === "..") resolvedParts.pop();

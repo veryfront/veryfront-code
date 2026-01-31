@@ -41,16 +41,19 @@ export default tool({
       const spaceUsage = await getSpaceUsage();
       const used = spaceUsage.used;
       const allocated = spaceUsage.allocation.allocated ?? 0;
+      const hasAllocated = allocated > 0;
 
       result.storage = {
         used,
         usedFormatted: formatFileSize(used),
         allocated,
-        allocatedFormatted: allocated ? formatFileSize(allocated) : "N/A",
+        allocatedFormatted: hasAllocated ? formatFileSize(allocated) : "N/A",
         allocationType: spaceUsage.allocation[".tag"],
-        percentUsed: allocated ? Math.round((used / allocated) * 100) : 0,
-        available: allocated ? allocated - used : 0,
-        availableFormatted: allocated ? formatFileSize(allocated - used) : "N/A",
+        percentUsed: hasAllocated ? Math.round((used / allocated) * 100) : 0,
+        available: hasAllocated ? allocated - used : 0,
+        availableFormatted: hasAllocated
+          ? formatFileSize(allocated - used)
+          : "N/A",
       };
     } catch (error) {
       result.storageError =

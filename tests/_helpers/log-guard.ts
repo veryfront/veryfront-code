@@ -250,29 +250,33 @@ const allowedWarnings: string[] = [
   "Network error",
 ];
 
+function argsToText(args: unknown[]): string {
+  return args.map((a) => String(a ?? "")).join(" ");
+}
+
 function isAllowed(args: unknown[]): boolean {
-  // Join all arguments to get the full message
-  const text = args.map((a) => String(a ?? "")).join(" ");
+  const text = argsToText(args);
   return allowedWarnings.some((s) => text.includes(s));
 }
 
+function installGuard(
+  type: "warn" | "error",
+  originalFn: (...args: unknown[]) => void,
+): (...args: unknown[]) => void {
+  return (...args: unknown[]): void => {
+    if (!args.length || !isAllowed(args)) {
+      throw new Error(`Unexpected console.${type} in test: ${argsToText(args)}`);
+    }
+
+    originalFn(...args);
+  };
+}
+
 // Install log guard immediately at module load
-console.warn = ((...args: unknown[]) => {
-  if (!args.length || !isAllowed(args)) {
-    // Fail fast with explicit error
-    throw new Error(`Unexpected console.warn in test: ${args.map((a) => String(a)).join(" ")}`);
-  }
-  return original.warn.apply(console, args as Parameters<typeof console.warn>);
-}) as typeof console.warn;
+console.warn = installGuard("warn", original.warn) as typeof console.warn;
+console.error = installGuard("error", original.error) as typeof console.error;
 
-console.error = ((...args: unknown[]) => {
-  if (!args.length || !isAllowed(args)) {
-    throw new Error(`Unexpected console.error in test: ${args.map((a) => String(a)).join(" ")}`);
-  }
-  return original.error.apply(console, args as Parameters<typeof console.error>);
-}) as typeof console.error;
-
-export function restoreLogs() {
+export function restoreLogs(): void {
   console.log = original.log;
   console.warn = original.warn;
   console.error = original.error;

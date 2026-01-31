@@ -64,6 +64,33 @@ function buildListParams(options: ListFilesOptions): URLSearchParams {
   return params;
 }
 
+function mapProjectFile<T extends ProjectFile>(file: T): ProjectFile {
+  return {
+    id: file.id,
+    version_id: file.version_id,
+    path: file.path,
+    content: file.content,
+    type: file.type,
+    size: file.size,
+    updated_at: file.updated_at,
+  };
+}
+
+async function listAllFiles(
+  list: (cursor?: string) => Promise<FileListResult>,
+): Promise<ProjectFile[]> {
+  const allFiles: ProjectFile[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const result = await list(cursor);
+    allFiles.push(...result.files);
+    cursor = result.page_info.next ?? undefined;
+  } while (cursor);
+
+  return allFiles;
+}
+
 export class VeryfrontAPIOperations {
   private tokenProvider: TokenProvider;
 
@@ -135,14 +162,7 @@ export class VeryfrontAPIOperations {
     const response = ListBranchFilesResponseSchema.parse(raw);
 
     return {
-      files: response.data.map((f) => ({
-        id: f.id,
-        path: f.path,
-        content: f.content,
-        type: f.type,
-        size: f.size,
-        updated_at: f.updated_at,
-      })),
+      files: response.data.map(mapProjectFile),
       page_info: response.page_info,
     };
   }
@@ -152,18 +172,9 @@ export class VeryfrontAPIOperations {
     branchName = "main",
     options: Omit<ListFilesOptions, "cursor"> = {},
   ): Promise<ProjectFile[]> {
-    const allFiles: ProjectFile[] = [];
-    let cursor: string | undefined;
-
-    do {
-      const result = await this.listBranchFiles(projectRef, branchName, {
-        ...options,
-        cursor,
-        limit: 100,
-      });
-      allFiles.push(...result.files);
-      cursor = result.page_info.next ?? undefined;
-    } while (cursor);
+    const allFiles = await listAllFiles((cursor) =>
+      this.listBranchFiles(projectRef, branchName, { ...options, cursor, limit: 100 })
+    );
 
     logger.debug("[API] listAllBranchFiles DONE", {
       projectRef,
@@ -174,11 +185,7 @@ export class VeryfrontAPIOperations {
     return allFiles;
   }
 
-  getBranchFile(
-    projectRef: string,
-    branchName: string,
-    pathOrId: string,
-  ): Promise<FileDetail> {
+  getBranchFile(projectRef: string, branchName: string, pathOrId: string): Promise<FileDetail> {
     return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
@@ -226,15 +233,7 @@ export class VeryfrontAPIOperations {
     const response = ListEnvironmentFilesResponseSchema.parse(raw);
 
     return {
-      files: response.data.map((f) => ({
-        id: f.id,
-        version_id: f.version_id,
-        path: f.path,
-        content: f.content,
-        type: f.type,
-        size: f.size,
-        updated_at: f.updated_at,
-      })),
+      files: response.data.map(mapProjectFile),
       page_info: response.page_info,
       release_id: response.release_id,
       release_version: response.release_version,
@@ -248,18 +247,9 @@ export class VeryfrontAPIOperations {
     environmentName = "production",
     options: Omit<ListFilesOptions, "cursor"> = {},
   ): Promise<ProjectFile[]> {
-    const allFiles: ProjectFile[] = [];
-    let cursor: string | undefined;
-
-    do {
-      const result = await this.listEnvironmentFiles(projectRef, environmentName, {
-        ...options,
-        cursor,
-        limit: 100,
-      });
-      allFiles.push(...result.files);
-      cursor = result.page_info.next ?? undefined;
-    } while (cursor);
+    const allFiles = await listAllFiles((cursor) =>
+      this.listEnvironmentFiles(projectRef, environmentName, { ...options, cursor, limit: 100 })
+    );
 
     logger.debug("[API] listAllEnvironmentFiles", {
       projectRef,
@@ -319,15 +309,7 @@ export class VeryfrontAPIOperations {
     const response = ListReleaseFilesResponseSchema.parse(raw);
 
     return {
-      files: response.data.map((f) => ({
-        id: f.id,
-        version_id: f.version_id,
-        path: f.path,
-        content: f.content,
-        type: f.type,
-        size: f.size,
-        updated_at: f.updated_at,
-      })),
+      files: response.data.map(mapProjectFile),
       page_info: response.page_info,
       release_id: response.release_id,
       release_version: response.release_version,
@@ -339,20 +321,9 @@ export class VeryfrontAPIOperations {
     version = "latest",
     options: Omit<ListFilesOptions, "cursor"> = {},
   ): Promise<ProjectFile[]> {
-    const allFiles: ProjectFile[] = [];
-    let cursor: string | undefined;
-
-    do {
-      const result = await this.listReleaseFiles(projectRef, version, {
-        ...options,
-        cursor,
-        limit: 100,
-      });
-      allFiles.push(...result.files);
-      cursor = result.page_info.next ?? undefined;
-    } while (cursor);
-
-    return allFiles;
+    return listAllFiles((cursor) =>
+      this.listReleaseFiles(projectRef, version, { ...options, cursor, limit: 100 })
+    );
   }
 
   getReleaseFile(projectRef: string, version: string, pathOrId: string): Promise<FileDetail> {
@@ -442,10 +413,8 @@ export class VeryfrontAPIOperations {
   private request(endpoint: string): Promise<unknown> {
     return withSpan(
       SpanNames.API_REQUEST,
-      () => {
-        const url = `${this.apiBaseUrl}${endpoint}`;
-        return requestWithRetry(url, this.tokenProvider(), this.retryConfig);
-      },
+      () =>
+        requestWithRetry(`${this.apiBaseUrl}${endpoint}`, this.tokenProvider(), this.retryConfig),
       { "api.endpoint": endpoint, "api.base_url": this.apiBaseUrl },
     );
   }

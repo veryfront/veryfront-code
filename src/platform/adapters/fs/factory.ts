@@ -24,6 +24,7 @@ import { clearDomainCache } from "../../../server/utils/domain-lookup.ts";
 
 export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
   const type = config.type ?? "local";
+  const proxyMode = config.veryfront?.proxyMode ?? false;
 
   return withSpan(
     "platform.fs.createAdapter",
@@ -60,7 +61,7 @@ export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
           },
         };
 
-        if (config.veryfront?.proxyMode) {
+        if (proxyMode) {
           const { MultiProjectFSAdapter } = await import("./veryfront/multi-project-adapter.ts");
           const adapter = new MultiProjectFSAdapter(configWithCallbacks);
           await adapter.initialize?.();
@@ -98,6 +99,6 @@ export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
         }),
       );
     },
-    { "fs.adapter.type": type, "fs.adapter.proxyMode": config.veryfront?.proxyMode ?? false },
+    { "fs.adapter.type": type, "fs.adapter.proxyMode": proxyMode },
   );
 }

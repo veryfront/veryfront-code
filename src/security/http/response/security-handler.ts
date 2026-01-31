@@ -1,19 +1,13 @@
-/**
- * Security headers handler (CSP, COOP, CORP, COEP) with nonce-based CSP
- */
-
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { recordSecurityHeaders } from "#veryfront/observability";
 import type { SecurityConfig } from "./types.ts";
 
-/** Generate cryptographic nonce for CSP */
 export function generateNonce(): string {
   const array = new Uint8Array(16);
   crypto.getRandomValues(array);
   return btoa(String.fromCharCode(...array));
 }
 
-/** Build Content Security Policy header with nonce */
 export function buildCSP(
   _isDev: boolean,
   nonce: string,
@@ -24,30 +18,24 @@ export function buildCSP(
   const envCsp = adapter?.env?.get?.("VERYFRONT_CSP");
   if (envCsp?.trim()) return envCsp.replace(/{NONCE}/g, nonce);
 
-  if (cspUserHeader?.trim()) {
-    return cspUserHeader.replace(/{NONCE}/g, nonce);
-  }
+  if (cspUserHeader?.trim()) return cspUserHeader.replace(/{NONCE}/g, nonce);
 
   const cfgCsp = config?.csp;
-  if (cfgCsp && typeof cfgCsp === "object") {
-    const pieces: string[] = [];
+  if (!cfgCsp || typeof cfgCsp !== "object") return "";
 
-    for (const [k, v] of Object.entries(cfgCsp)) {
-      if (v === undefined) continue;
+  const pieces: string[] = [];
 
-      const key = k.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
-      const val = Array.isArray(v) ? v.join(" ") : String(v);
-      pieces.push(`${key} ${val}`.replace(/{NONCE}/g, nonce));
-    }
+  for (const [k, v] of Object.entries(cfgCsp)) {
+    if (v === undefined) continue;
 
-    if (pieces.length) return pieces.join("; ");
+    const key = k.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+    const val = Array.isArray(v) ? v.join(" ") : String(v);
+    pieces.push(`${key} ${val}`.replace(/{NONCE}/g, nonce));
   }
 
-  // Return empty string - CSP disabled by default
-  return "";
+  return pieces.length ? pieces.join("; ") : "";
 }
 
-/** Get security header value from config or environment */
 export function getSecurityHeader(
   headerName: string,
   defaultValue: string,
@@ -61,7 +49,6 @@ export function getSecurityHeader(
   return (typeof configValue === "string" ? configValue : undefined) ?? envValue ?? defaultValue;
 }
 
-/** Apply security headers to Headers object with nonce */
 export function applySecurityHeaders(
   headers: Headers,
   isDev: boolean,
@@ -85,9 +72,6 @@ export function applySecurityHeaders(
 
   headers.set("X-Content-Type-Options", getHeaderOverride("x-content-type-options") ?? "nosniff");
 
-  // X-Frame-Options: Block iframe embedding by default for security
-  // Allow embedding on veryfront domains (for Studio) and in development
-  // Projects can customize via config.headers["x-frame-options"]
   if (!isDev && !isVeryfrontDomain) {
     headers.set("X-Frame-Options", getHeaderOverride("x-frame-options") ?? "DENY");
   }
@@ -97,10 +81,8 @@ export function applySecurityHeaders(
   const csp = buildCSP(isDev, nonce, cspUserHeader, config, adapter);
   if (csp) headers.set("Content-Security-Policy", csp);
 
-  // Set HSTS (Strict-Transport-Security) for HTTPS connections
-  // Only set in production to enforce HTTPS
   if (!isDev) {
-    const hstsMaxAge = config?.hsts?.maxAge ?? 31536000; // 1 year default
+    const hstsMaxAge = config?.hsts?.maxAge ?? 31536000;
     const hstsIncludeSubDomains = config?.hsts?.includeSubDomains ?? true;
     const hstsPreload = config?.hsts?.preload ?? false;
 
@@ -114,7 +96,6 @@ export function applySecurityHeaders(
     );
   }
 
-  // Set COOP, CORP, COEP (skip COOP in dev - browsers ignore it for non-trustworthy origins)
   const coop = isDev ? "" : getSecurityHeader("COOP", "same-origin", config, adapter);
   const corp = getSecurityHeader("CORP", "same-origin", config, adapter);
   const coep = getSecurityHeader("COEP", "", config, adapter);

@@ -88,7 +88,10 @@ export class ApprovalManager {
       status: "pending",
     };
 
-    logger.debug("[ApprovalManager] Creating approval", { approvalId: approval.id, runId: run.id });
+    logger.debug("[ApprovalManager] Creating approval", {
+      approvalId: approval.id,
+      runId: run.id,
+    });
 
     await this.config.backend.savePendingApproval(run.id, approval);
 
@@ -113,7 +116,6 @@ export class ApprovalManager {
     runId: string,
     approvalId: string,
   ): Promise<PendingApproval | null> {
-    // Call method on the backend directly to preserve 'this' binding
     if (this.config.backend.getPendingApproval) {
       return this.config.backend.getPendingApproval(runId, approvalId);
     }
@@ -164,34 +166,32 @@ export class ApprovalManager {
     }
 
     const decidedAt = new Date();
-    const updatedContext = {
-      ...run.context,
-      [approval.nodeId]: {
-        approved: decision.approved,
-        approver: decision.approver,
-        comment: decision.comment,
-        decidedAt: decidedAt.toISOString(),
-      },
-    };
-
-    const updatedNodeStates = {
-      ...run.nodeStates,
-      [approval.nodeId]: {
-        nodeId: approval.nodeId,
-        status: "completed" as const,
-        output: {
-          approved: decision.approved,
-          approver: decision.approver,
-          comment: decision.comment,
-        },
-        attempt: 1,
-        completedAt: decidedAt,
-      },
+    const decisionContext = {
+      approved: decision.approved,
+      approver: decision.approver,
+      comment: decision.comment,
+      decidedAt: decidedAt.toISOString(),
     };
 
     await this.config.backend.updateRun(runId, {
-      context: updatedContext,
-      nodeStates: updatedNodeStates,
+      context: {
+        ...run.context,
+        [approval.nodeId]: decisionContext,
+      },
+      nodeStates: {
+        ...run.nodeStates,
+        [approval.nodeId]: {
+          nodeId: approval.nodeId,
+          status: "completed",
+          output: {
+            approved: decision.approved,
+            approver: decision.approver,
+            comment: decision.comment,
+          },
+          attempt: 1,
+          completedAt: decidedAt,
+        },
+      },
     });
 
     if (decision.approved) {
@@ -254,7 +254,9 @@ export class ApprovalManager {
   }): Promise<Array<{ runId: string; approval: PendingApproval }>> {
     const list = this.config.backend.listPendingApprovals;
     if (!list) {
-      logger.warn("[ApprovalManager] listPendingApprovals not supported by backend");
+      logger.warn(
+        "[ApprovalManager] listPendingApprovals not supported by backend",
+      );
       return Promise.resolve([]);
     }
 
@@ -280,7 +282,9 @@ export class ApprovalManager {
         continue;
       }
 
-      logger.debug("[ApprovalManager] Expiring approval", { approvalId: approval.id });
+      logger.debug("[ApprovalManager] Expiring approval", {
+        approvalId: approval.id,
+      });
 
       await this.config.backend.updateApproval(runId, approval.id, {
         approved: false,

@@ -22,6 +22,8 @@ export function ReasoningCard({
     return () => clearTimeout(timer);
   }, [isStreaming, isOpen]);
 
+  const label = isStreaming ? <Shimmer>Thinking...</Shimmer> : <span>Thought process</span>;
+
   return (
     <div className="not-prose mb-4">
       <button
@@ -30,17 +32,19 @@ export function ReasoningCard({
         className="flex w-full items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground"
       >
         <BrainIcon className="size-4" />
-        {isStreaming ? <Shimmer>Thinking...</Shimmer> : <span>Thought process</span>}
+        {label}
         <ChevronDownIcon
           className={cn("size-4 transition-transform", isOpen && "rotate-180")}
         />
       </button>
 
-      {isOpen && (
-        <div className="mt-4 text-sm text-muted-foreground border-l-2 border-muted pl-4 ml-2">
-          <Markdown className="text-sm">{text}</Markdown>
-        </div>
-      )}
+      {isOpen
+        ? (
+          <div className="mt-4 text-sm text-muted-foreground border-l-2 border-muted pl-4 ml-2">
+            <Markdown className="text-sm">{text}</Markdown>
+          </div>
+        )
+        : null}
     </div>
   );
 }

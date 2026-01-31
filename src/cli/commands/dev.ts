@@ -74,7 +74,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       const isProxyMode = config?.fs?.veryfront?.proxyMode === true;
       const projectSlug = config?.fs?.veryfront?.projectSlug ?? env.projectSlug;
 
-      if (config) runAIConfigValidation(config);
+      runAIConfigValidation(config);
 
       try {
         await discoverAll({ baseDir: projectDir, verbose: false });
@@ -187,124 +187,136 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
 
       registerTerminationSignals(() => void shutdown());
 
-      if (!isProxyMode) {
-        const serverUrl = `http://veryfront.me:${finalPort}`;
+      if (isProxyMode) {
+        return {
+          ready: devServer.ready,
+          done,
+          stop: shutdown,
+        };
+      }
 
-        console.log();
+      const serverUrl = `http://veryfront.me:${finalPort}`;
+
+      console.log();
+      console.log(
+        banner({
+          title: "Veryfront Code",
+          subtitle: "is running",
+          info: {
+            url: serverUrl,
+            ...(projectSlug ? { project: projectSlug } : {}),
+            ...(mcpServer ? { mcp: `http://veryfront.me:${mcpPort}/mcp` } : {}),
+          },
+        }),
+      );
+      console.log();
+      console.log(`  ${success("✓")} Server ready at ${brand(serverUrl)}`);
+      if (mcpServer) {
         console.log(
-          banner({
-            title: "Veryfront Code",
-            subtitle: "is running",
-            info: {
-              url: serverUrl,
-              ...(projectSlug ? { project: projectSlug } : {}),
-              ...(mcpServer ? { mcp: `http://veryfront.me:${mcpPort}/mcp` } : {}),
-            },
-          }),
+          `  ${success("✓")} MCP ready at ${brand(`http://veryfront.me:${mcpPort}/mcp`)}`,
         );
-        console.log();
-        console.log(`  ${success("✓")} Server ready at ${brand(serverUrl)}`);
-        if (mcpServer) {
-          console.log(
-            `  ${success("✓")} MCP ready at ${brand(`http://veryfront.me:${mcpPort}/mcp`)}`,
-          );
-        }
-        console.log();
+      }
+      console.log();
 
-        // Context-aware next step hint
-        if (!user) {
-          console.log(`  ${dim("To sync with Veryfront: press")} ${brand("a")} ${dim("to login")}`);
-        } else if (projects.length > 0) {
-          console.log(`  ${success("✓")} Logged in as ${user.email}`);
-          console.log(
-            `  ${dim("Press")} ${brand("s")} ${dim("to select a project, then")} ${brand("p")} ${
-              dim("to pull")
-            }`,
-          );
-        } else {
-          console.log(`  ${success("✓")} Logged in as ${user.email}`);
-          console.log(`  ${dim("Press")} ${brand("s")} ${dim("to see your projects")}`);
-        }
-        console.log();
+      // Context-aware next step hint
+      if (!user) {
+        console.log(`  ${dim("To sync with Veryfront: press")} ${brand("a")} ${dim("to login")}`);
+      } else if (projects.length > 0) {
+        console.log(`  ${success("✓")} Logged in as ${user.email}`);
+        console.log(
+          `  ${dim("Press")} ${brand("s")} ${dim("to select a project, then")} ${brand("p")} ${
+            dim(
+              "to pull",
+            )
+          }`,
+        );
+      } else {
+        console.log(`  ${success("✓")} Logged in as ${user.email}`);
+        console.log(`  ${dim("Press")} ${brand("s")} ${dim("to see your projects")}`);
+      }
+      console.log();
 
-        if (!demoMode) {
-          keyboardHandler = createKeyboardHandler({
-            onOpen: () => void openBrowser(serverUrl),
-            onClear: () => console.clear(),
-            onQuit: () => void shutdown(),
-            onAuth: async () => {
-              if (user) {
-                console.log(
-                  `  ${dim("Logged in as")} ${user.email} ${dim("— press s to select project")}`,
-                );
-                return;
-              }
-              console.log(`  ${dim("Opening browser...")}`);
-              const result = await login();
-              if (result) {
-                user = result;
-                const projectResult = await fetchRemoteProjects();
-                projects = projectResult.projects;
-                console.log(
-                  `  ${success("✓")} ${user.email} ${dim(`— ${projects.length} projects`)}`,
-                );
-              }
-            },
-            onSync: () => {
-              if (!user) {
-                console.log(`  ${dim("Press")} ${brand("a")} ${dim("to login")}`);
-                return;
-              }
-              if (projects.length === 0) {
-                console.log(`  ${dim("No projects")}`);
-                return;
-              }
-              projects.forEach((p, i) => {
-                const active = selectedProject?.id === p.id;
-                console.log(
-                  `  ${active ? success("●") : dim("○")} ${brand(String(i + 1))} ${p.name}`,
-                );
-              });
-            },
-            onNumber: async (n) => {
-              const project = projects[n - 1];
-              if (!project) return;
-              selectedProject = project;
-              console.log(`  ${success("●")} ${project.name} ${dim("— pulling...")}`);
-              await runSyncAction(
-                () =>
-                  pullCommand({ projectSlug: project.slug, projectDir, force: true, quiet: true }),
-                `Ready ${dim("— p pull / u push")}`,
+      if (!demoMode) {
+        keyboardHandler = createKeyboardHandler({
+          onOpen: () => void openBrowser(serverUrl),
+          onClear: () => console.clear(),
+          onQuit: () => void shutdown(),
+          onAuth: async () => {
+            if (user) {
+              console.log(
+                `  ${dim("Logged in as")} ${user.email} ${dim("— press s to select project")}`,
               );
-            },
-            onPull: async () => {
-              const project = selectedProject;
-              if (!project) {
-                console.log(`  ${dim("Press s to select project")}`);
-                return;
-              }
-              console.log(`  ${dim("Pulling...")}`);
-              await runSyncAction(
-                () =>
-                  pullCommand({ projectSlug: project.slug, projectDir, force: true, quiet: true }),
-                "Pulled",
-              );
-            },
-            onPush: async () => {
-              if (!selectedProject) {
-                console.log(`  ${dim("Press s to select project")}`);
-                return;
-              }
-              console.log(`  ${dim("Pushing...")}`);
-              await runSyncAction(
-                () => pushCommand({ projectDir, force: true, quiet: true }),
-                `Pushed ${dim("— merge in Studio")}`,
-              );
-            },
-          });
+              return;
+            }
 
-          keyboardHandler.start();
-        }
+            console.log(`  ${dim("Opening browser...")}`);
+            const result = await login();
+            if (!result) return;
+
+            user = result;
+            const projectResult = await fetchRemoteProjects();
+            projects = projectResult.projects;
+            console.log(`  ${success("✓")} ${user.email} ${dim(`— ${projects.length} projects`)}`);
+          },
+          onSync: () => {
+            if (!user) {
+              console.log(`  ${dim("Press")} ${brand("a")} ${dim("to login")}`);
+              return;
+            }
+
+            if (projects.length === 0) {
+              console.log(`  ${dim("No projects")}`);
+              return;
+            }
+
+            projects.forEach((p, i) => {
+              const active = selectedProject?.id === p.id;
+              console.log(
+                `  ${active ? success("●") : dim("○")} ${brand(String(i + 1))} ${p.name}`,
+              );
+            });
+          },
+          onNumber: async (n) => {
+            const project = projects[n - 1];
+            if (!project) return;
+
+            selectedProject = project;
+            console.log(`  ${success("●")} ${project.name} ${dim("— pulling...")}`);
+            await runSyncAction(
+              () =>
+                pullCommand({ projectSlug: project.slug, projectDir, force: true, quiet: true }),
+              `Ready ${dim("— p pull / u push")}`,
+            );
+          },
+          onPull: async () => {
+            const project = selectedProject;
+            if (!project) {
+              console.log(`  ${dim("Press s to select project")}`);
+              return;
+            }
+
+            console.log(`  ${dim("Pulling...")}`);
+            await runSyncAction(
+              () =>
+                pullCommand({ projectSlug: project.slug, projectDir, force: true, quiet: true }),
+              "Pulled",
+            );
+          },
+          onPush: async () => {
+            if (!selectedProject) {
+              console.log(`  ${dim("Press s to select project")}`);
+              return;
+            }
+
+            console.log(`  ${dim("Pushing...")}`);
+            await runSyncAction(
+              () => pushCommand({ projectDir, force: true, quiet: true }),
+              `Pushed ${dim("— merge in Studio")}`,
+            );
+          },
+        });
+
+        keyboardHandler.start();
       }
 
       return {

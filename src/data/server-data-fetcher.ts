@@ -16,10 +16,8 @@ export class ServerDataFetcher {
     }
 
     const pathname = context.url?.pathname ?? "unknown";
-    // Extract projectId from request headers (set by proxy) or use default
     const projectId = context.request?.headers?.get("x-project-id") ?? "default";
 
-    // Circuit breaker per project to prevent cascade failures
     const circuitBreaker = getCircuitBreaker(`data-fetch:${projectId}`, {
       failureThreshold: 5,
       resetTimeoutMs: 30_000,
@@ -32,10 +30,12 @@ export class ServerDataFetcher {
         const start = performance.now();
 
         try {
-          // Wrap the data fetch in circuit breaker
+          const getServerData = pageModule.getServerData;
+          if (!getServerData) throw new Error(`No getServerData function on ${pathname}`);
+
           const result = await circuitBreaker.execute(() =>
             withTimeoutThrow(
-              Promise.resolve(pageModule.getServerData!(context)),
+              Promise.resolve(getServerData(context)),
               DATA_FETCH_TIMEOUT_MS,
               `getServerData for ${pathname}`,
             )
@@ -44,10 +44,7 @@ export class ServerDataFetcher {
           if (result.redirect) return { redirect: result.redirect };
           if (result.notFound) return { notFound: true };
 
-          return {
-            props: result.props ?? {},
-            revalidate: result.revalidate,
-          };
+          return { props: result.props ?? {}, revalidate: result.revalidate };
         } catch (error) {
           const durationMs = Math.round(performance.now() - start);
 
@@ -57,16 +54,19 @@ export class ServerDataFetcher {
               projectId,
               retryAfterMs: error.nextAttemptMs,
             });
-          } else if (error instanceof TimeoutError) {
+            throw error;
+          }
+
+          if (error instanceof TimeoutError) {
             serverLogger.error("DATA_FETCH_TIMEOUT getServerData timed out", {
               pathname,
               durationMs,
               timeoutMs: DATA_FETCH_TIMEOUT_MS,
             });
-          } else {
-            this.logError("DATA_FETCH_ERROR getServerData failed", error, { pathname, durationMs });
+            throw error;
           }
 
+          this.logError("DATA_FETCH_ERROR getServerData failed", error, { pathname, durationMs });
           throw error;
         }
       },

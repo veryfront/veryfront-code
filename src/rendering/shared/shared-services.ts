@@ -42,7 +42,7 @@ export async function initializeSharedServices(
 
   initializationPromise = withSpan(
     SpanNames.SHARED_SERVICES_INIT,
-    async () => {
+    async (): Promise<SharedServices> => {
       logger.debug("[SharedServices] Initializing shared renderer services");
       const startTime = performance.now();
 
@@ -62,9 +62,8 @@ export async function initializeSharedServices(
         compilerService: new CompilerService(),
       };
 
-      const duration = performance.now() - startTime;
       logger.debug("[SharedServices] Shared services initialized", {
-        duration: `${duration.toFixed(2)}ms`,
+        duration: `${(performance.now() - startTime).toFixed(2)}ms`,
       });
 
       return sharedServices;

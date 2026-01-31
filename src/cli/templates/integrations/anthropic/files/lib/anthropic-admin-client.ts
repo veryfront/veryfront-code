@@ -113,7 +113,13 @@ export class AnthropicAdminClient {
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
+      let errorData: any = {};
+      try {
+        errorData = await response.json();
+      } catch {
+        // ignore
+      }
+
       throw new AnthropicAdminError(
         errorData?.error?.message ?? `API request failed: ${response.statusText}`,
         response.status,
@@ -124,27 +130,15 @@ export class AnthropicAdminClient {
     return response.json();
   }
 
-  /**
-   * List all workspaces in the organization
-   */
   async listWorkspaces(): Promise<{ workspaces: AnthropicWorkspace[] }> {
     return this.request('/workspaces');
   }
 
-  /**
-   * Get details for a specific workspace
-   */
   async getWorkspace(workspaceId: string): Promise<AnthropicWorkspace> {
     if (!workspaceId) throw new AnthropicAdminError('workspaceId is required');
     return this.request(`/workspaces/${workspaceId}`);
   }
 
-  /**
-   * Get API usage statistics for a date range
-   *
-   * @param options - Usage query options
-   * @returns Usage records grouped by date, workspace, and model
-   */
   async getUsage(options: AnthropicUsageOptions): Promise<{
     usage: AnthropicUsageRecord[];
     total_cost_usd: number;
@@ -155,7 +149,6 @@ export class AnthropicAdminClient {
       throw new AnthropicAdminError('startDate and endDate are required');
     }
 
-    // Validate date format (YYYY-MM-DD)
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
     if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
       throw new AnthropicAdminError('Dates must be in YYYY-MM-DD format');
@@ -173,31 +166,19 @@ export class AnthropicAdminClient {
     return this.request(`/usage?${params.toString()}`);
   }
 
-  /**
-   * List API keys for the organization or a specific workspace
-   */
   async listAPIKeys(workspaceId?: string): Promise<{ api_keys: AnthropicAPIKey[] }> {
     const endpoint = workspaceId ? `/workspaces/${workspaceId}/api-keys` : '/api-keys';
     return this.request(endpoint);
   }
 
-  /**
-   * List all members in the organization
-   */
   async listMembers(): Promise<{ members: AnthropicMember[] }> {
     return this.request('/members');
   }
 
-  /**
-   * Get organization details and settings
-   */
   async getOrganization(): Promise<AnthropicOrganization> {
     return this.request('/organization');
   }
 
-  /**
-   * Create a new API key (admin functionality)
-   */
   async createAPIKey(data: {
     name: string;
     workspace_id?: string;
@@ -209,9 +190,6 @@ export class AnthropicAdminClient {
     });
   }
 
-  /**
-   * Revoke an API key
-   */
   async revokeAPIKey(keyId: string): Promise<{ success: boolean }> {
     if (!keyId) throw new AnthropicAdminError('keyId is required');
 
@@ -221,9 +199,6 @@ export class AnthropicAdminClient {
   }
 }
 
-/**
- * Get a singleton instance of the Anthropic Admin client
- */
 let client: AnthropicAdminClient | null = null;
 
 export function getAnthropicAdminClient(): AnthropicAdminClient {

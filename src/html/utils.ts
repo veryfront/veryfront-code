@@ -16,11 +16,7 @@ export function buildRootAttributes(slug: string, mode: string, noLayout: boolea
   ]);
 }
 
-export function buildContentAttributes(
-  slug: string,
-  noLayout: boolean,
-  ssrHash?: string,
-): string {
+export function buildContentAttributes(slug: string, noLayout: boolean, ssrHash?: string): string {
   return joinAttributes([
     'id="veryfront-content"',
     `data-slug="${slug || ""}"`,
@@ -231,12 +227,16 @@ export interface BuildImportMapOptions {
   customImports?: Record<string, string>;
 }
 
+function isImportMapOnlyOptions(
+  options: BuildImportMapOptions | Record<string, string>,
+): options is Record<string, string> {
+  return !("projectDir" in options) && !("config" in options) && !("customImports" in options);
+}
+
 export async function buildImportMapJson(
   options?: BuildImportMapOptions | Record<string, string>,
 ): Promise<string> {
-  if (
-    options && !("projectDir" in options) && !("config" in options) && !("customImports" in options)
-  ) {
+  if (options && isImportMapOnlyOptions(options)) {
     const imports = options;
     if (Object.keys(imports).length > 0) {
       return JSON.stringify({ imports }, null, 2);
@@ -261,9 +261,12 @@ export async function buildImportMapJson(
     return JSON.stringify({ imports }, null, 2);
   }
 
-  let imports = mode === "self-hosted"
-    ? getSelfHostedImportMap(versions)
-    : getCdnImportMap(versions, config?.client?.cdn?.provider ?? "esm.sh");
+  let imports: Record<string, string>;
+  if (mode === "self-hosted") {
+    imports = getSelfHostedImportMap(versions);
+  } else {
+    imports = getCdnImportMap(versions, config?.client?.cdn?.provider ?? "esm.sh");
+  }
 
   imports["@/"] = "/_vf_modules/";
 

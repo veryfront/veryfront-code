@@ -3,8 +3,8 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 export interface HMRServerOptions {
   port: number;
   projectDir: string;
-  reactRefresh?: boolean;
   adapter: RuntimeAdapter;
+  reactRefresh?: boolean;
   maxMessageSize?: number;
   maxMessagesPerMinute?: number;
   signal?: AbortSignal;

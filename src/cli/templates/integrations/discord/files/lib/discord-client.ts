@@ -121,10 +121,8 @@ async function discordFetch<T>(endpoint: string, options: RequestInit = {}): Pro
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({} as { message?: string }));
-    throw new Error(
-      `Discord API error: ${response.status} ${error.message ?? response.statusText}`,
-    );
+    const error = (await response.json().catch(() => ({}))) as { message?: string };
+    throw new Error(`Discord API error: ${response.status} ${error.message ?? response.statusText}`);
   }
 
   return response.json();
@@ -220,11 +218,7 @@ export function getGuildMembers(
     after?: string;
   },
 ): Promise<DiscordGuildMember[]> {
-  const query = buildQuery(
-    { limit: options?.limit, after: options?.after },
-    { limit: 1000 },
-  );
-
+  const query = buildQuery({ limit: options?.limit, after: options?.after }, { limit: 1000 });
   return discordFetch(`/guilds/${guildId}/members${query}`);
 }
 
@@ -252,21 +246,21 @@ export function getGuildIconUrl(guild: DiscordGuild, size: number = 128): string
   return getCdnAssetUrl("icons", guild.id, guild.icon, size);
 }
 
-export function getChannelTypeName(type: number): string {
-  const types: Record<number, string> = {
-    0: "Text",
-    1: "DM",
-    2: "Voice",
-    3: "Group DM",
-    4: "Category",
-    5: "Announcement",
-    10: "Announcement Thread",
-    11: "Public Thread",
-    12: "Private Thread",
-    13: "Stage Voice",
-    14: "Directory",
-    15: "Forum",
-  };
+const CHANNEL_TYPE_NAMES: Record<number, string> = {
+  0: "Text",
+  1: "DM",
+  2: "Voice",
+  3: "Group DM",
+  4: "Category",
+  5: "Announcement",
+  10: "Announcement Thread",
+  11: "Public Thread",
+  12: "Private Thread",
+  13: "Stage Voice",
+  14: "Directory",
+  15: "Forum",
+};
 
-  return types[type] ?? "Unknown";
+export function getChannelTypeName(type: number): string {
+  return CHANNEL_TYPE_NAMES[type] ?? "Unknown";
 }

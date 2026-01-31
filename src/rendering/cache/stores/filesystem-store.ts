@@ -23,9 +23,10 @@ export class FilesystemCacheStore implements CacheStore {
   }
 
   async get(key: string): Promise<CachePayload | undefined> {
+    const file = await this.readFileForKey(key);
+    if (!file) return undefined;
+
     try {
-      const file = await this.readFileForKey(key);
-      if (!file) return undefined;
       return JSON.parse(file) as CachePayload;
     } catch {
       return undefined;
@@ -60,6 +61,7 @@ export class FilesystemCacheStore implements CacheStore {
       for await (const entry of fs.readDir(this.baseDir)) {
         if (!entry.isFile || !entry.name.endsWith(".json")) continue;
         if (!entry.name.startsWith(encodedPrefix)) continue;
+
         await fs.remove(join(this.baseDir, entry.name));
         deleted++;
       }

@@ -1,7 +1,3 @@
-/**************************
- * Shared types for CLI templates
- **************************/
-
 export interface TemplateFile {
   path: string;
   content: string;
@@ -30,10 +26,6 @@ export type TemplateName =
   | "pages-router"
   | "app-router";
 
-// ============================================================================
-// Composable Features (--with flag support)
-// ============================================================================
-
 export type FeatureName = "ai" | "auth" | "workflows" | "mdx" | "redis" | "blob";
 
 export interface FeatureConfig {
@@ -52,10 +44,6 @@ export interface ResolvedFeature {
   config: FeatureConfig;
   files: TemplateFile[];
 }
-
-// ============================================================================
-// Service Integrations (--integrations flag support)
-// ============================================================================
 
 export type IntegrationName =
   | "gmail"
@@ -149,10 +137,6 @@ export interface ResolvedIntegration {
   config: IntegrationConfig;
   files: TemplateFile[];
 }
-
-// ============================================================================
-// Use-Case Templates (--usecase flag support)
-// ============================================================================
 
 export type UseCaseName =
   | "productivity"

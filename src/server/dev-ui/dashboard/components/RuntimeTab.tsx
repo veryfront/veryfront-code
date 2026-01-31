@@ -34,7 +34,7 @@ export function RuntimeTab(): React.JSX.Element {
   const [subTab, setSubTab] = useState<SubTab>("metrics");
   const [metrics, setMetrics] = useState<Record<string, number | unknown>>({});
   const [memory, setMemory] = useState<MemoryData | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   function loadData(): void {
@@ -59,26 +59,24 @@ export function RuntimeTab(): React.JSX.Element {
     return () => clearInterval(interval);
   }, []);
 
-  if (!memory) {
-    if (loading) {
-      return (
-        <PageLayout title="Runtime" description="Metrics, memory, and caches">
-          <Card>
-            <LoadingState message="Loading runtime info..." />
-          </Card>
-        </PageLayout>
-      );
-    }
+  if (!memory && loading) {
+    return (
+      <PageLayout title="Runtime" description="Metrics, memory, and caches">
+        <Card>
+          <LoadingState message="Loading runtime info..." />
+        </Card>
+      </PageLayout>
+    );
+  }
 
-    if (error) {
-      return (
-        <PageLayout title="Runtime" description="Metrics, memory, and caches">
-          <Card>
-            <ErrorState error={error} />
-          </Card>
-        </PageLayout>
-      );
-    }
+  if (!memory && error) {
+    return (
+      <PageLayout title="Runtime" description="Metrics, memory, and caches">
+        <Card>
+          <ErrorState error={error} />
+        </Card>
+      </PageLayout>
+    );
   }
 
   const metricsCount = Object.keys(metrics).length;

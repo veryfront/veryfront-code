@@ -22,32 +22,18 @@ export default tool({
   async execute({ type, pageSize, pageNumber }) {
     const meetings = await listMeetings({ type, pageSize, pageNumber });
 
-    return meetings.map(
-      ({
-        id,
-        uuid,
-        topic,
-        type: meetingType,
-        start_time,
-        duration,
-        timezone,
-        agenda,
-        join_url,
-        password,
-        status,
-      }) => ({
-        id,
-        uuid,
-        topic,
-        type: meetingType,
-        startTime: start_time,
-        duration,
-        timezone,
-        agenda,
-        joinUrl: join_url,
-        password,
-        status,
-      }),
-    );
+    return meetings.map((meeting) => ({
+      id: meeting.id,
+      uuid: meeting.uuid,
+      topic: meeting.topic,
+      type: meeting.type,
+      startTime: meeting.start_time,
+      duration: meeting.duration,
+      timezone: meeting.timezone,
+      agenda: meeting.agenda,
+      joinUrl: meeting.join_url,
+      password: meeting.password,
+      status: meeting.status,
+    }));
   },
 });

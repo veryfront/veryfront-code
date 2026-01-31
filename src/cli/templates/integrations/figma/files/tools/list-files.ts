@@ -16,8 +16,8 @@ export default tool({
   }),
   async execute({ teamId, projectId, limit }) {
     if (projectId) {
-      const response = await getProjectFiles(projectId);
-      return response.files.slice(0, limit).map((file) => ({
+      const { files } = await getProjectFiles(projectId);
+      return files.slice(0, limit).map((file) => ({
         key: file.key,
         name: file.name,
         thumbnailUrl: file.thumbnail_url,
@@ -26,9 +26,9 @@ export default tool({
       }));
     }
 
-    const response = await getTeamProjects(teamId);
+    const { projects } = await getTeamProjects(teamId);
     return {
-      projects: response.projects.slice(0, limit).map((project) => ({
+      projects: projects.slice(0, limit).map((project) => ({
         id: project.id,
         name: project.name,
       })),

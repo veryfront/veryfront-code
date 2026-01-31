@@ -24,7 +24,7 @@ const AuthContext = createContext<AuthContextType>({
 
 export function AuthProvider({ children }: { children: React.ReactNode }): React.ReactNode {
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let active = true;
@@ -35,13 +35,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
         if (!res.ok) return;
 
         const data = await res.json();
-        if (active && data?.user) setUser(data.user);
+        if (!active) return;
+
+        if (data?.user) setUser(data.user);
       } finally {
         if (active) setLoading(false);
       }
     }
 
-    loadUser();
+    void loadUser();
 
     return () => {
       active = false;

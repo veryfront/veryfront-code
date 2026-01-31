@@ -4,17 +4,17 @@ import { ErrorCode, VeryfrontError } from "./types.ts";
 
 describe("errors/types", () => {
   describe("ErrorCode enum", () => {
-    it("should have FILE_NOT_FOUND", () => {
-      assertEquals(ErrorCode.FILE_NOT_FOUND, "FILE_NOT_FOUND");
-    });
+    const cases: Array<[ErrorCode, string]> = [
+      [ErrorCode.FILE_NOT_FOUND, "FILE_NOT_FOUND"],
+      [ErrorCode.RENDER_ERROR, "RENDER_ERROR"],
+      [ErrorCode.SERVICE_OVERLOADED, "SERVICE_OVERLOADED"],
+    ];
 
-    it("should have RENDER_ERROR", () => {
-      assertEquals(ErrorCode.RENDER_ERROR, "RENDER_ERROR");
-    });
-
-    it("should have SERVICE_OVERLOADED", () => {
-      assertEquals(ErrorCode.SERVICE_OVERLOADED, "SERVICE_OVERLOADED");
-    });
+    for (const [code, expected] of cases) {
+      it(`should have ${expected}`, () => {
+        assertEquals(code, expected);
+      });
+    }
   });
 
   describe("VeryfrontError", () => {

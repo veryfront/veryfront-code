@@ -24,9 +24,7 @@ describe("server/dev-server/error-overlay/html-template", () => {
 
   describe("generateErrorHTML", () => {
     it("should include error type and message", () => {
-      const html = generateErrorHTML(
-        { type: "build", error: new Error("Syntax error") },
-      );
+      const html = generateErrorHTML({ type: "build", error: new Error("Syntax error") });
       assertEquals(html.includes("Build Error"), true);
       assertEquals(html.includes("Syntax error"), true);
     });
@@ -54,15 +52,12 @@ describe("server/dev-server/error-overlay/html-template", () => {
     });
 
     it("should omit suggestion section when not provided", () => {
-      const html = generateErrorHTML(
-        { type: "build", error: new Error("oops") },
-      );
+      const html = generateErrorHTML({ type: "build", error: new Error("oops") });
       assertEquals(html.includes("Suggestion:"), false);
     });
 
     it("should include stack trace", () => {
-      const err = new Error("test");
-      const html = generateErrorHTML({ type: "runtime", error: err });
+      const html = generateErrorHTML({ type: "runtime", error: new Error("test") });
       assertEquals(html.includes("Stack Trace"), true);
     });
 

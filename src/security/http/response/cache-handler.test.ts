@@ -54,19 +54,13 @@ describe("security/http/response/cache-handler", () => {
 
       it("should fallback for unknown string preset", () => {
         // TypeScript wouldn't normally allow this but testing runtime behavior
-        assertEquals(
-          buildCacheControl("unknown" as "short"),
-          "public, max-age=0",
-        );
+        assertEquals(buildCacheControl("unknown" as never), "public, max-age=0");
       });
     });
 
     describe("object config", () => {
       it("should build public cache with maxAge", () => {
-        assertEquals(
-          buildCacheControl({ maxAge: 3600 }),
-          "public, max-age=3600",
-        );
+        assertEquals(buildCacheControl({ maxAge: 3600 }), "public, max-age=3600");
       });
 
       it("should build private cache", () => {
@@ -97,6 +91,7 @@ describe("security/http/response/cache-handler", () => {
           immutable: true,
           mustRevalidate: true,
         });
+
         assert(result.includes("private"));
         assert(result.includes("max-age=3600"));
         assert(result.includes("immutable"));

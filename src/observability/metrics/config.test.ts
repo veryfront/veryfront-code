@@ -2,6 +2,12 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEFAULT_CONFIG, loadConfig } from "./config.ts";
 
+type RuntimeAdapter = import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
+
+function adapterWithEnv(env: { get: (key: string) => string | undefined }): RuntimeAdapter {
+  return { env } as unknown as RuntimeAdapter;
+}
+
 describe("observability/metrics/config", () => {
   describe("DEFAULT_CONFIG", () => {
     it("should have expected defaults", () => {
@@ -39,12 +45,8 @@ describe("observability/metrics/config", () => {
           return vars[key];
         },
       };
-      const result = loadConfig(
-        {},
-        {
-          env: mockEnv,
-        } as unknown as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
-      );
+
+      const result = loadConfig({}, adapterWithEnv(mockEnv));
       assertEquals(result.enabled, true);
       assertEquals(result.endpoint, "http://localhost:4318");
       assertEquals(result.exporter, "otlp");
@@ -54,12 +56,8 @@ describe("observability/metrics/config", () => {
       const mockEnv = {
         get: (key: string) => (key === "VERYFRONT_OTEL" ? "1" : undefined),
       };
-      const result = loadConfig(
-        {},
-        {
-          env: mockEnv,
-        } as unknown as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
-      );
+
+      const result = loadConfig({}, adapterWithEnv(mockEnv));
       assertEquals(result.enabled, true);
     });
 
@@ -67,12 +65,8 @@ describe("observability/metrics/config", () => {
       const mockEnv = {
         get: (key: string) => (key === "OTEL_METRICS_EXPORTER" ? "bad" : undefined),
       };
-      const result = loadConfig(
-        {},
-        {
-          env: mockEnv,
-        } as unknown as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
-      );
+
+      const result = loadConfig({}, adapterWithEnv(mockEnv));
       assertEquals(result.exporter, "console");
     });
 
@@ -86,12 +80,8 @@ describe("observability/metrics/config", () => {
           return vars[key];
         },
       };
-      const result = loadConfig(
-        {},
-        {
-          env: mockEnv,
-        } as unknown as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
-      );
+
+      const result = loadConfig({}, adapterWithEnv(mockEnv));
       // Both are provided; the general endpoint is applied first,
       // then metrics endpoint overrides if truthy
       assertEquals(result.endpoint !== undefined, true);

@@ -1,4 +1,4 @@
-/** Structured error handling with logging for silent failure operations */
+/******** Structured error handling with logging for silent failure operations */
 
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { getErrorMessage } from "./veryfront-error.ts";
@@ -33,7 +33,7 @@ function logError(
 ): void {
   const message = getErrorMessage(error);
   const logData: Record<string, unknown> = {
-    ...context.details,
+    ...(context.details ?? {}),
     path: context.path,
     slug: context.slug,
     errorMessage: message,

@@ -28,43 +28,40 @@ export async function validateConfig(config: unknown): Promise<void> {
   }
 
   const cfg = config as Record<string, unknown>;
+
   const dev = cfg.dev;
+  const port = dev && typeof dev === "object" ? (dev as Record<string, unknown>).port : undefined;
 
-  if (dev && typeof dev === "object") {
-    const port = (dev as Record<string, unknown>).port;
+  if (port !== undefined) {
+    const { MIN_PORT, MAX_PORT } = await import("../utils/constants/network.ts");
 
-    if (port !== undefined) {
-      const { MIN_PORT, MAX_PORT } = await import("../utils/constants/network.ts");
-
-      if (typeof port !== "number" || port < MIN_PORT || port > MAX_PORT) {
-        throw toError(
-          createError({
-            type: "config",
-            message: `dev.port must be a number between ${MIN_PORT} and ${MAX_PORT}`,
-            context: {
-              field: "dev.port",
-              value: port,
-              expected: `number between ${MIN_PORT} and ${MAX_PORT}`,
-            },
-          }),
-        );
-      }
+    if (typeof port !== "number" || port < MIN_PORT || port > MAX_PORT) {
+      throw toError(
+        createError({
+          type: "config",
+          message: `dev.port must be a number between ${MIN_PORT} and ${MAX_PORT}`,
+          context: {
+            field: "dev.port",
+            value: port,
+            expected: `number between ${MIN_PORT} and ${MAX_PORT}`,
+          },
+        }),
+      );
     }
   }
 
   const build = cfg.build;
+  const outDir = build && typeof build === "object"
+    ? (build as Record<string, unknown>).outDir
+    : undefined;
 
-  if (build && typeof build === "object") {
-    const outDir = (build as Record<string, unknown>).outDir;
-
-    if (outDir !== undefined && typeof outDir !== "string") {
-      throw toError(
-        createError({
-          type: "config",
-          message: "build.outDir must be a string",
-          context: { field: "build.outDir", value: outDir, expected: "string" },
-        }),
-      );
-    }
+  if (outDir !== undefined && typeof outDir !== "string") {
+    throw toError(
+      createError({
+        type: "config",
+        message: "build.outDir must be a string",
+        context: { field: "build.outDir", value: outDir, expected: "string" },
+      }),
+    );
   }
 }

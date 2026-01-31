@@ -27,15 +27,10 @@ export class HealthHandler extends BaseHandler {
   };
 
   private async checkReadiness(ctx: HandlerContext): Promise<boolean> {
-    if (!serverInitialized || !ctx.adapter) {
-      return false;
-    }
+    if (!serverInitialized || !ctx.adapter) return false;
 
     try {
-      const isProxyMode = ctx.config?.fs?.veryfront?.proxyMode === true;
-      if (isProxyMode) {
-        return true;
-      }
+      if (ctx.config?.fs?.veryfront?.proxyMode === true) return true;
 
       const projectDirStat = await ctx.adapter.fs.stat(ctx.projectDir);
       return !!projectDirStat?.isDirectory;
@@ -45,9 +40,7 @@ export class HealthHandler extends BaseHandler {
   }
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    if (!this.shouldHandle(req, ctx)) {
-      return this.continue();
-    }
+    if (!this.shouldHandle(req, ctx)) return this.continue();
 
     const pathname = new URL(req.url).pathname;
     const builder = this.createResponseBuilder(ctx)
@@ -60,29 +53,31 @@ export class HealthHandler extends BaseHandler {
 
     if (pathname === "/readyz") {
       const isReady = await this.checkReadiness(ctx);
-      const status = isReady ? HTTP_OK : HTTP_UNAVAILABLE;
-      return this.respond(builder.text(isReady ? "ready" : "not-ready", status));
+      return this.respond(
+        builder.text(isReady ? "ready" : "not-ready", isReady ? HTTP_OK : HTTP_UNAVAILABLE),
+      );
     }
 
-    if (pathname === "/_health") {
-      const hasStaticBuild = await this.hasDistDirectory(ctx);
-      const tracingDegraded = isTracingDegraded();
+    if (pathname !== "/_health") return this.continue();
 
-      const payload = {
-        status: tracingDegraded ? "degraded" : "ok",
-        timestamp: new Date().toISOString(),
-        mode: hasStaticBuild ? "static+ssr" : "ssr",
-        version: VERSION,
-        tracing: {
-          enabled: isTracingEnabled(),
-          degraded: tracingDegraded,
+    const hasStaticBuild = await this.hasDistDirectory(ctx);
+    const tracingDegraded = isTracingDegraded();
+
+    return this.respond(
+      builder.withCache("no-cache").json(
+        {
+          status: tracingDegraded ? "degraded" : "ok",
+          timestamp: new Date().toISOString(),
+          mode: hasStaticBuild ? "static+ssr" : "ssr",
+          version: VERSION,
+          tracing: {
+            enabled: isTracingEnabled(),
+            degraded: tracingDegraded,
+          },
         },
-      };
-
-      return this.respond(builder.withCache("no-cache").json(payload, HTTP_OK));
-    }
-
-    return this.continue();
+        HTTP_OK,
+      ),
+    );
   }
 
   private async hasDistDirectory(ctx: HandlerContext): Promise<boolean> {

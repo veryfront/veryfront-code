@@ -127,12 +127,12 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
 
   async readFile(path: string): Promise<string> {
     this.assertDeno("readFile");
-    return await Deno.readTextFile(path);
+    return Deno.readTextFile(path);
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
     this.assertDeno("readFileBytes");
-    return await Deno.readFile(path);
+    return Deno.readFile(path);
   }
 
   async writeFile(path: string, content: string): Promise<void> {
@@ -186,7 +186,7 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
 
   async makeTempDir(prefix: string): Promise<string> {
     this.assertDeno("makeTempDir");
-    return await Deno.makeTempDir({ prefix });
+    return Deno.makeTempDir({ prefix });
   }
 
   watch(paths: string | string[], options?: WatchOptions): FileWatcher {
@@ -263,7 +263,6 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
 
 class DenoEnvironmentAdapter implements EnvironmentAdapter {
   get(key: string): string | undefined {
-    // Check both Deno and Deno.env exist to handle partial mocks
     if (typeof Deno === "undefined" || typeof Deno.env === "undefined") return undefined;
     return Deno.env.get(key);
   }
@@ -292,10 +291,14 @@ class DenoServerAdapter implements ServerAdapter {
 }
 
 class DenoShellAdapter implements ShellAdapter {
-  statSync(path: string): { isFile: boolean; isDirectory: boolean } {
+  private assertDeno(method: string): void {
     if (typeof Deno === "undefined") {
-      throw new Error("DenoShellAdapter.statSync() can only be used in Deno runtime");
+      throw new Error(`DenoShellAdapter.${method}() can only be used in Deno runtime`);
     }
+  }
+
+  statSync(path: string): { isFile: boolean; isDirectory: boolean } {
+    this.assertDeno("statSync");
     try {
       const stat = Deno.statSync(path);
       return { isFile: stat.isFile, isDirectory: stat.isDirectory };
@@ -310,9 +313,7 @@ class DenoShellAdapter implements ShellAdapter {
   }
 
   readFileSync(path: string): string {
-    if (typeof Deno === "undefined") {
-      throw new Error("DenoShellAdapter.readFileSync() can only be used in Deno runtime");
-    }
+    this.assertDeno("readFileSync");
     try {
       return Deno.readTextFileSync(path);
     } catch (error) {
@@ -381,19 +382,18 @@ export class DenoAdapter implements RuntimeAdapter {
     const { port = DEFAULT_PORT, hostname = "localhost", onListen } = options;
 
     const controller = new AbortController();
-    const signal = options.signal || controller.signal;
+    const signal = options.signal ?? controller.signal;
 
     const envOverlay = getEnvOverlayStorage();
     const envStore = envOverlay?.getStore();
 
-    let wrappedHandler = handler;
-    if (envOverlay && envStore) {
-      wrappedHandler = (request: Request) => {
+    const wrappedHandler = envOverlay && envStore
+      ? (request: Request) => {
         if (envOverlay.run) return envOverlay.run(envStore, () => handler(request));
         envOverlay.enterWith?.(envStore);
         return handler(request);
-      };
-    }
+      }
+      : handler;
 
     const server = Deno.serve({
       port,
@@ -412,8 +412,12 @@ export class DenoAdapter implements RuntimeAdapter {
       },
     });
 
-    const controllerToPass = options.signal ? undefined : controller;
-    this.activeServer = new DenoServer(server, hostname, port, controllerToPass);
+    this.activeServer = new DenoServer(
+      server,
+      hostname,
+      port,
+      options.signal ? undefined : controller,
+    );
     return Promise.resolve(this.activeServer);
   }
 

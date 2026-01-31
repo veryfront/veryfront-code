@@ -16,6 +16,12 @@ describe("rendering/element-validator/element-normalizer", () => {
     inspectionOptions,
   };
 
+  const inspectionEnabledOptions: NormalizationOptions = {
+    inspectionEnabled: true,
+    debugMode: false,
+    inspectionOptions,
+  };
+
   describe("ensureValidReactElement", () => {
     it("should return a React element as-is when given a valid element", () => {
       const el = React.createElement("div", null, "Hello");
@@ -62,25 +68,16 @@ describe("rendering/element-validator/element-normalizer", () => {
 
     it("should perform deep inspection when enabled", () => {
       const el = React.createElement("div", null, "Hello");
-      const opts: NormalizationOptions = {
-        inspectionEnabled: true,
-        debugMode: false,
-        inspectionOptions,
-      };
-      const result = ensureValidReactElement(el, opts);
+      const result = ensureValidReactElement(el, inspectionEnabledOptions);
       assertEquals(React.isValidElement(result), true);
     });
 
     it("should throw during deep inspection of invalid objects", () => {
       const invalidChild = { some: "object" };
       const el = React.createElement("div", null, invalidChild as unknown as React.ReactNode);
-      const opts: NormalizationOptions = {
-        inspectionEnabled: true,
-        debugMode: false,
-        inspectionOptions,
-      };
+
       assertThrows(
-        () => ensureValidReactElement(el, opts),
+        () => ensureValidReactElement(el, inspectionEnabledOptions),
         Error,
         "Invalid React child",
       );
@@ -88,12 +85,12 @@ describe("rendering/element-validator/element-normalizer", () => {
 
     it("should log final element check in debug mode", () => {
       const el = React.createElement("div", null, "test");
-      const debugOpts: NormalizationOptions = {
+      const debugOptions: NormalizationOptions = {
         inspectionEnabled: false,
         debugMode: true,
         inspectionOptions,
       };
-      const result = ensureValidReactElement(el, debugOpts);
+      const result = ensureValidReactElement(el, debugOptions);
       assertEquals(React.isValidElement(result), true);
     });
   });

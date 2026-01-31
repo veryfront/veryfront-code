@@ -47,15 +47,15 @@ async function supabaseFetch<T>(
   });
 
   if (!response.ok) {
-    const error = (await response.json().catch(() => ({}))) as Partial<SupabaseError>;
+    const payload = (await response.json().catch(() => ({}))) as Partial<SupabaseError>;
     const message =
-      error.message ?? `Supabase API error: ${response.status} ${response.statusText}`;
+      payload.message ?? `Supabase API error: ${response.status} ${response.statusText}`;
 
-    const error: SupabaseError = new Error(message);
-    err.code = error.code;
-    err.details = error.details;
-    err.hint = error.hint;
-    throw error;
+    const err = new Error(message) as SupabaseError;
+    err.code = payload.code;
+    err.details = payload.details;
+    err.hint = payload.hint;
+    throw err;
   }
 
   const text = await response.text();
@@ -121,8 +121,9 @@ export async function queryTable<T = Record<string, unknown>>(
   params.append("select", options.select ?? "*");
 
   if (options.filter) {
-    const filterParams = buildFilterParams(options.filter);
-    for (const [key, value] of filterParams.entries()) params.append(key, value);
+    for (const [key, value] of buildFilterParams(options.filter).entries()) {
+      params.append(key, value);
+    }
   }
 
   if (options.order) {

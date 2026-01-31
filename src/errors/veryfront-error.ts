@@ -110,15 +110,14 @@ export function toError(veryfrontError: VeryfrontErrorData): Error {
 
   // Capture stack at call site, excluding toError from the trace
   // This makes debugging easier by showing where createError+toError was called
-  if (Error.captureStackTrace) {
-    Error.captureStackTrace(error, toError);
-  }
+  if (Error.captureStackTrace) Error.captureStackTrace(error, toError);
 
   Object.defineProperty(error, "context", {
     value: veryfrontError,
     enumerable: false,
     configurable: true,
   });
+
   return error;
 }
 
@@ -127,7 +126,6 @@ export function fromError(error: unknown): VeryfrontErrorData | null {
 
   const context = (error as { context?: unknown }).context;
   if (!context || typeof context !== "object") return null;
-
   if (!("type" in context) || !("message" in context)) return null;
 
   return context as VeryfrontErrorData;
@@ -138,7 +136,7 @@ export function logError(
   logger?: { error: (msg: string, ...args: unknown[]) => void },
 ): void {
   const log = logger ?? console;
-  const context = "context" in error ? error.context : {};
+  const context = "context" in error ? error.context : undefined;
   log.error(`[${error.type}] ${error.message}`, context ?? {});
 }
 

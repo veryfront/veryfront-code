@@ -17,15 +17,15 @@ type MockClientOverrides = Partial<{
 function createMockClient(overrides: MockClientOverrides = {}): ApiClient {
   return {
     get: async <T>(path: string, params?: Record<string, string>): Promise<T> => {
-      const result = overrides.get ? await overrides.get(path, params) : { data: [] };
+      const result = await (overrides.get?.(path, params) ?? Promise.resolve({ data: [] }));
       return result as T;
     },
     post: async <T>(path: string, body?: unknown): Promise<T> => {
-      const result = overrides.post ? await overrides.post(path, body) : {};
+      const result = await (overrides.post?.(path, body) ?? Promise.resolve({}));
       return result as T;
     },
     put: async <T>(path: string, body?: unknown): Promise<T> => {
-      const result = overrides.put ? await overrides.put(path, body) : {};
+      const result = await (overrides.put?.(path, body) ?? Promise.resolve({}));
       return result as T;
     },
     patch: <T>(): Promise<T> => Promise.resolve({} as T),

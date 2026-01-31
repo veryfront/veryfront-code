@@ -3,7 +3,12 @@ import { z } from "zod";
 import { getContact } from "../../lib/intercom-client.ts";
 
 function toIsoOrNull(timestamp?: number | null): string | null {
-  return timestamp ? new Date(timestamp * 1000).toISOString() : null;
+  if (!timestamp) return null;
+  return new Date(timestamp * 1000).toISOString();
+}
+
+function toIso(timestamp: number): string {
+  return new Date(timestamp * 1000).toISOString();
 }
 
 export default tool({
@@ -23,8 +28,8 @@ export default tool({
       role: contact.role,
       externalId: contact.external_id,
       avatar: contact.avatar,
-      createdAt: new Date(contact.created_at * 1000).toISOString(),
-      updatedAt: new Date(contact.updated_at * 1000).toISOString(),
+      createdAt: toIso(contact.created_at),
+      updatedAt: toIso(contact.updated_at),
       signedUpAt: toIsoOrNull(contact.signed_up_at),
       lastSeenAt: toIsoOrNull(contact.last_seen_at),
       ownerId: contact.owner_id,

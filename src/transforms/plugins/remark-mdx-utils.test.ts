@@ -12,16 +12,16 @@ function createCode(lang: string, value: string, meta?: string): Code {
   return { type: "code", lang, value, meta };
 }
 
-function createParagraph(...children: any[]): Paragraph {
+function createParagraph(...children: Paragraph["children"]): Paragraph {
   return { type: "paragraph", children };
 }
 
-function createTree(...nodes: any[]): Root {
+function createTree(...nodes: Root["children"]): Root {
   return { type: "root", children: nodes };
 }
 
 function createEmptyTree(): Root {
-  return { type: "root", children: [] };
+  return createTree();
 }
 
 describe("remark-mdx-utils", () => {

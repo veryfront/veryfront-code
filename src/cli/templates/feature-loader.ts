@@ -34,9 +34,7 @@ export function getFeatureDirectory(featureName: string): string {
   const isWindows = typeof process !== "undefined" && process.platform === "win32";
 
   let moduleDir = isFile ? moduleUrl.pathname : moduleUrl.href;
-  if (isFile && isWindows && moduleDir.startsWith("/")) {
-    moduleDir = moduleDir.slice(1);
-  }
+  if (isFile && isWindows && moduleDir.startsWith("/")) moduleDir = moduleDir.slice(1);
 
   return pathHelper.join(moduleDir, "features", featureName);
 }
@@ -93,8 +91,8 @@ export async function resolveFeatures(
   const errors: string[] = [];
   const resolved = new Set<FeatureName>();
   const ordered: FeatureName[] = [];
-
   const configs = new Map<FeatureName, FeatureConfig>();
+
   for (const name of requestedFeatures) {
     const config = await loadFeatureConfig(name);
     if (!config) {
@@ -112,7 +110,7 @@ export async function resolveFeatures(
     }
   }
 
-  const visit = (name: FeatureName): boolean => {
+  function visit(name: FeatureName): boolean {
     if (resolved.has(name)) return true;
 
     const config = configs.get(name);
@@ -129,11 +127,9 @@ export async function resolveFeatures(
     resolved.add(name);
     ordered.push(name);
     return true;
-  };
-
-  for (const name of requestedFeatures) {
-    visit(name);
   }
+
+  for (const name of requestedFeatures) visit(name);
 
   return { ordered, errors };
 }
@@ -164,6 +160,10 @@ export function mergeDependencies(
   return { ...baseDeps, ...featureDeps };
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * Deep merge config objects
  */
@@ -176,16 +176,12 @@ export function mergeConfig(
   for (const [key, value] of Object.entries(overlay)) {
     const existing = result[key];
 
-    const canDeepMerge = typeof value === "object" &&
-      value !== null &&
-      !Array.isArray(value) &&
-      typeof existing === "object" &&
-      existing !== null &&
-      !Array.isArray(existing);
+    if (isPlainObject(value) && isPlainObject(existing)) {
+      result[key] = mergeConfig(existing, value);
+      continue;
+    }
 
-    result[key] = canDeepMerge
-      ? mergeConfig(existing as Record<string, unknown>, value as Record<string, unknown>)
-      : value;
+    result[key] = value;
   }
 
   return result;

@@ -19,23 +19,27 @@ export default tool({
 
     return {
       count: results.length,
-      flags: results.map((flag) => ({
-        id: flag.id,
-        name: flag.name,
-        key: flag.key,
-        active: flag.active,
-        deleted: flag.deleted,
-        isSimpleFlag: flag.is_simple_flag,
-        rolloutPercentage: flag.rollout_percentage,
-        createdAt: formatDate(flag.created_at),
-        createdBy: flag.created_by
+      flags: results.map((flag) => {
+        const createdBy = flag.created_by
           ? {
               name: flag.created_by.first_name,
               email: flag.created_by.email,
             }
-          : null,
-        filters: flag.filters,
-      })),
+          : null;
+
+        return {
+          id: flag.id,
+          name: flag.name,
+          key: flag.key,
+          active: flag.active,
+          deleted: flag.deleted,
+          isSimpleFlag: flag.is_simple_flag,
+          rolloutPercentage: flag.rollout_percentage,
+          createdAt: formatDate(flag.created_at),
+          createdBy,
+          filters: flag.filters,
+        };
+      }),
     };
   },
 });

@@ -37,23 +37,24 @@ export function useWorkflowStart<TInput = unknown>(
         });
 
         if (!response.ok) {
-          const errorData: { message?: string } = await response
-            .json()
-            .catch(() => ({}));
+          const errorData = (await response.json().catch(() => ({}))) as {
+            message?: string;
+          };
+
           throw new Error(
             errorData.message ?? `Failed to start workflow: ${response.status}`,
           );
         }
 
-        const data: { runId?: string; id?: string } = await response.json();
+        const data = (await response.json()) as { runId?: string; id?: string };
         const runId = data.runId ?? data.id ?? "";
 
         setLastRunId(runId);
         onStart?.(runId);
 
         return runId;
-      } catch (error) {
-        const startError = error instanceof Error ? error : new Error(String(error));
+      } catch (err) {
+        const startError = err instanceof Error ? err : new Error(String(err));
         setError(startError);
         onError?.(startError);
         throw startError;

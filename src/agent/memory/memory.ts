@@ -1,12 +1,3 @@
-/****
- * Agent Memory System
- *
- * Manages conversation history with different strategies:
- * - Conversation: Keep all messages
- * - Buffer: Keep last N messages
- * - Summary: Summarize old messages to save tokens
- */
-
 import {
   estimateTokens,
   getTextFromMemoryParts,
@@ -18,7 +9,6 @@ import {
 } from "./memory-interface.ts";
 import { withSpan, withSpanSync } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-// Re-export from interface for backwards compatibility
 export {
   estimateTokens,
   type Memory,
@@ -27,16 +17,10 @@ export {
   type MinimalMessage,
 };
 
-/**
- * Conversation Memory - Keeps all messages
- */
 export class ConversationMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
   private messages: M[] = [];
-  private config: MemoryConfigBase;
 
-  constructor(config: MemoryConfigBase) {
-    this.config = config;
-  }
+  constructor(private config: MemoryConfigBase) {}
 
   add(message: M): Promise<void> {
     return withSpan(
@@ -44,8 +28,9 @@ export class ConversationMemory<M extends MinimalMessage = MinimalMessage> imple
       async () => {
         this.messages.push(message);
 
-        if (this.config.maxMessages && this.messages.length > this.config.maxMessages) {
-          this.messages = this.messages.slice(-this.config.maxMessages);
+        const maxMessages = this.config.maxMessages;
+        if (maxMessages && this.messages.length > maxMessages) {
+          this.messages = this.messages.slice(-maxMessages);
         }
 
         if (this.config.maxTokens) {
@@ -107,16 +92,11 @@ export class ConversationMemory<M extends MinimalMessage = MinimalMessage> imple
   }
 }
 
-/**
- * Buffer Memory - Keeps last N messages
- */
 export class BufferMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
   private messages: M[] = [];
-  private config: MemoryConfigBase;
   private bufferSize: number;
 
-  constructor(config: MemoryConfigBase) {
-    this.config = config;
+  constructor(private config: MemoryConfigBase) {
     this.bufferSize = config.maxMessages || 10;
   }
 
@@ -173,18 +153,12 @@ export class BufferMemory<M extends MinimalMessage = MinimalMessage> implements 
   }
 }
 
-/**
- * Summary Memory - Summarizes old messages
- * (Simplified version - full implementation would use LLM for summarization)
- */
 export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
   private messages: M[] = [];
   private summary = "";
-  private config: MemoryConfigBase;
   private summaryThreshold: number;
 
-  constructor(config: MemoryConfigBase) {
-    this.config = config;
+  constructor(private config: MemoryConfigBase) {
     this.summaryThreshold = config.maxMessages || 20;
   }
 
@@ -266,9 +240,8 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
 
     const topics = toSummarize
       .filter((m) => m.role === "user")
-      .map((m) =>
-        getTextFromMemoryParts(m.parts as Array<{ type: string; text?: string }>).substring(0, 50)
-      )
+      .map((m) => getTextFromMemoryParts(m.parts as Array<{ type: string; text?: string }>))
+      .map((text) => text.substring(0, 50))
       .join("; ");
 
     this.summary = `Discussed: ${topics}`;
@@ -278,9 +251,6 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
   }
 }
 
-/**
- * Create memory instance based on config
- */
 export function createMemory<M extends MinimalMessage = MinimalMessage>(
   config: MemoryConfigBase,
 ): Memory<M> {

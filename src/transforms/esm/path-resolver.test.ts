@@ -13,9 +13,9 @@ describe("transforms/esm/path-resolver", () => {
     });
 
     it("should reject regular imports", () => {
-      assertEquals(isCrossProjectImport("react"), false);
-      assertEquals(isCrossProjectImport("./local"), false);
-      assertEquals(isCrossProjectImport("@/alias"), false);
+      for (const specifier of ["react", "./local", "@/alias"]) {
+        assertEquals(isCrossProjectImport(specifier), false);
+      }
     });
 
     it("should detect semver-range cross-project imports", () => {
@@ -43,9 +43,9 @@ describe("transforms/esm/path-resolver", () => {
     });
 
     it("should return null for non-cross-project specifiers", () => {
-      assertEquals(parseCrossProjectImport("react"), null);
-      assertEquals(parseCrossProjectImport("./local"), null);
-      assertEquals(parseCrossProjectImport("@/alias"), null);
+      for (const specifier of ["react", "./local", "@/alias"]) {
+        assertEquals(parseCrossProjectImport(specifier), null);
+      }
     });
 
     it("should handle nested paths", () => {

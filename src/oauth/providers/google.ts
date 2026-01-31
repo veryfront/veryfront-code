@@ -13,7 +13,7 @@ const googleBase = {
     access_type: "offline",
     prompt: "consent",
   },
-};
+} satisfies Partial<OAuthServiceConfig>;
 
 export const gmailConfig: OAuthServiceConfig = {
   ...googleBase,

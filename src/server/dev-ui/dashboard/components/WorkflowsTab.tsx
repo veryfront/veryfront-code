@@ -138,20 +138,22 @@ function WorkflowDetail({
         </Card>
       </div>
 
-      {workflow.nodeTypes.length > 0 && (
-        <Card title="Node Types" className="mb-6">
-          <div className="p-4 flex flex-wrap gap-2">
-            {workflow.nodeTypes.map((type) => (
-              <span
-                key={type}
-                className="px-2.5 py-1 bg-purple-50 text-purple-700 text-sm font-medium rounded-full"
-              >
-                {type}
-              </span>
-            ))}
-          </div>
-        </Card>
-      )}
+      {workflow.nodeTypes.length > 0
+        ? (
+          <Card title="Node Types" className="mb-6">
+            <div className="p-4 flex flex-wrap gap-2">
+              {workflow.nodeTypes.map((type) => (
+                <span
+                  key={type}
+                  className="px-2.5 py-1 bg-purple-50 text-purple-700 text-sm font-medium rounded-full"
+                >
+                  {type}
+                </span>
+              ))}
+            </div>
+          </Card>
+        )
+        : null}
 
       <Card title="Workflow Steps" className="mb-6">
         {workflow.nodes.length > 0
@@ -179,39 +181,43 @@ function WorkflowDetail({
                       </div>
 
                       <div className="text-sm text-gray-600 space-y-1">
-                        {node.agent && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-400">Agent:</span>
-                            {agentMap.has(node.agent)
-                              ? (
-                                <button
-                                  type="button"
-                                  onClick={() => onNavigateToAgent?.(node.agent)}
-                                  className="text-sky-600 hover:underline"
-                                >
-                                  {node.agent}
-                                </button>
-                              )
-                              : <span className="text-red-500">{node.agent} (not found)</span>}
-                          </div>
-                        )}
+                        {node.agent
+                          ? (
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-400">Agent:</span>
+                              {agentMap.has(node.agent)
+                                ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => onNavigateToAgent?.(node.agent)}
+                                    className="text-sky-600 hover:underline"
+                                  >
+                                    {node.agent}
+                                  </button>
+                                )
+                                : <span className="text-red-500">{node.agent} (not found)</span>}
+                            </div>
+                          )
+                          : null}
 
-                        {node.tool && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-400">Tool:</span>
-                            {toolMap.has(node.tool)
-                              ? (
-                                <button
-                                  type="button"
-                                  onClick={() => onNavigateToTool?.(node.tool)}
-                                  className="text-sky-600 hover:underline"
-                                >
-                                  {node.tool}
-                                </button>
-                              )
-                              : <span className="text-red-500">{node.tool} (not found)</span>}
-                          </div>
-                        )}
+                        {node.tool
+                          ? (
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-400">Tool:</span>
+                              {toolMap.has(node.tool)
+                                ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => onNavigateToTool?.(node.tool)}
+                                    className="text-sky-600 hover:underline"
+                                  >
+                                    {node.tool}
+                                  </button>
+                                )
+                                : <span className="text-red-500">{node.tool} (not found)</span>}
+                            </div>
+                          )
+                          : null}
 
                         {node.dependsOn?.length
                           ? (
@@ -256,13 +262,15 @@ function WorkflowDetail({
           )}
       </Card>
 
-      {workflow.nodes.length > 0 && (
-        <Card title="Workflow Flow" className="mb-6">
-          <div className="p-4 font-mono text-sm bg-gray-50 overflow-x-auto">
-            <WorkflowDAG nodes={workflow.nodes} />
-          </div>
-        </Card>
-      )}
+      {workflow.nodes.length > 0
+        ? (
+          <Card title="Workflow Flow" className="mb-6">
+            <div className="p-4 font-mono text-sm bg-gray-50 overflow-x-auto">
+              <WorkflowDAG nodes={workflow.nodes} />
+            </div>
+          </Card>
+        )
+        : null}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card title={`Agents Used (${workflow.agentRefs.length})`}>
@@ -281,7 +289,7 @@ function WorkflowDetail({
                         >
                           {agentId}
                         </button>
-                        {agent && <div className="text-xs text-gray-500">{agent.model}</div>}
+                        {agent ? <div className="text-xs text-gray-500">{agent.model}</div> : null}
                       </div>
                       {agent
                         ? <span className="w-2 h-2 rounded-full bg-green-500" title="Found" />
@@ -310,11 +318,13 @@ function WorkflowDetail({
                         >
                           {toolId}
                         </button>
-                        {tool && (
-                          <div className="text-xs text-gray-500 truncate max-w-[200px]">
-                            {tool.description}
-                          </div>
-                        )}
+                        {tool
+                          ? (
+                            <div className="text-xs text-gray-500 truncate max-w-[200px]">
+                              {tool.description}
+                            </div>
+                          )
+                          : null}
                       </div>
                       {tool
                         ? <span className="w-2 h-2 rounded-full bg-green-500" title="Found" />
@@ -552,9 +562,7 @@ function WorkflowDAG({ nodes }: { nodes: NodeInfo[] }): React.ReactElement {
 
   for (const node of nodes) {
     for (const dep of node.dependsOn || []) {
-      const deps = dependentsMap.get(dep) || [];
-      deps.push(node.id);
-      dependentsMap.set(dep, deps);
+      dependentsMap.get(dep)?.push(node.id);
     }
   }
 
@@ -566,12 +574,12 @@ function WorkflowDAG({ nodes }: { nodes: NodeInfo[] }): React.ReactElement {
   for (const id of queue) levels.set(id, 0);
 
   while (queue.length > 0) {
-    const current = queue.shift() as string;
+    const current = queue.shift();
+    if (!current) continue;
 
     for (const dependent of dependentsMap.get(current) || []) {
       const deps = dependsOnMap.get(dependent) || [];
-      const allDepsResolved = deps.every((d) => levels.has(d));
-      if (!allDepsResolved || levels.has(dependent)) continue;
+      if (levels.has(dependent) || !deps.every((d) => levels.has(d))) continue;
 
       const maxDepLevel = Math.max(...deps.map((d) => levels.get(d) ?? 0));
       levels.set(dependent, maxDepLevel + 1);
@@ -582,9 +590,9 @@ function WorkflowDAG({ nodes }: { nodes: NodeInfo[] }): React.ReactElement {
   const levelGroups = new Map<number, NodeInfo[]>();
   for (const node of nodes) {
     const level = levels.get(node.id) ?? 0;
-    const group = levelGroups.get(level) || [];
-    group.push(node);
-    levelGroups.set(level, group);
+    const group = levelGroups.get(level);
+    if (group) group.push(node);
+    else levelGroups.set(level, [node]);
   }
 
   const maxLevel = Math.max(...Array.from(levels.values()), 0);

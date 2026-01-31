@@ -29,33 +29,19 @@ export default defineTool({
       return {
         count: tickets.length,
         query: input.query,
-        tickets: tickets.map(
-          ({
-            id,
-            subject,
-            description,
-            status,
-            priority,
-            type,
-            requester_id,
-            assignee_id,
-            tags,
-            created_at,
-            updated_at,
-          }) => ({
-            id,
-            subject,
-            description,
-            status,
-            priority,
-            type,
-            requester_id,
-            assignee_id,
-            tags,
-            created_at,
-            updated_at,
-          }),
-        ),
+        tickets: tickets.map((ticket) => ({
+          id: ticket.id,
+          subject: ticket.subject,
+          description: ticket.description,
+          status: ticket.status,
+          priority: ticket.priority,
+          type: ticket.type,
+          requester_id: ticket.requester_id,
+          assignee_id: ticket.assignee_id,
+          tags: ticket.tags,
+          created_at: ticket.created_at,
+          updated_at: ticket.updated_at,
+        })),
       };
     } catch (error) {
       return {

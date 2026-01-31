@@ -7,16 +7,18 @@
 import { isDeno } from "./runtime.ts";
 
 // Node.js process global type declaration
-declare const process: {
-  stdin: {
-    setRawMode?(enabled: boolean): void;
-    resume(): void;
-    pause(): void;
-    on(event: string, listener: (data: Uint8Array) => void): void;
-    once(event: string, listener: (data: Uint8Array) => void): void;
-    off(event: string, listener: (data: Uint8Array) => void): void;
-  };
-} | undefined;
+declare const process:
+  | {
+    stdin: {
+      setRawMode?(enabled: boolean): void;
+      resume(): void;
+      pause(): void;
+      on(event: string, listener: (data: Uint8Array) => void): void;
+      once(event: string, listener: (data: Uint8Array) => void): void;
+      off(event: string, listener: (data: Uint8Array) => void): void;
+    };
+  }
+  | undefined;
 
 /**
  * Set raw mode on stdin (enables character-by-character input)
@@ -27,10 +29,11 @@ export function setRawMode(enabled: boolean): void {
     return;
   }
 
-  if (typeof process === "undefined" || !process.stdin?.setRawMode) return;
+  const stdin = process?.stdin;
+  if (!stdin?.setRawMode) return;
 
-  process.stdin.setRawMode(enabled);
-  if (enabled) process.stdin.resume();
+  stdin.setRawMode(enabled);
+  if (enabled) stdin.resume();
 }
 
 /**
@@ -57,7 +60,8 @@ export function getStdinReader(): StdinReader {
     };
   }
 
-  if (typeof process === "undefined" || !process.stdin) {
+  const stdin = process?.stdin;
+  if (!stdin) {
     return {
       read: () => Promise.resolve({ value: undefined, done: true }),
       releaseLock: () => {},
@@ -68,7 +72,7 @@ export function getStdinReader(): StdinReader {
   let resolveRead: ((result: { value: Uint8Array | undefined; done: boolean }) => void) | null =
     null;
 
-  const onData = (data: Uint8Array) => {
+  function onData(data: Uint8Array): void {
     const chunk = new Uint8Array(data);
     if (resolveRead) {
       resolveRead({ value: chunk, done: false });
@@ -76,16 +80,16 @@ export function getStdinReader(): StdinReader {
       return;
     }
     buffer.push(chunk);
-  };
+  }
 
-  const onEnd = () => {
+  function onEnd(): void {
     if (!resolveRead) return;
     resolveRead({ value: undefined, done: true });
     resolveRead = null;
-  };
+  }
 
-  process.stdin.on("data", onData);
-  process.stdin.on("end", onEnd);
+  stdin.on("data", onData);
+  stdin.on("end", onEnd);
 
   return {
     read(): Promise<{ value: Uint8Array | undefined; done: boolean }> {
@@ -97,8 +101,8 @@ export function getStdinReader(): StdinReader {
       });
     },
     releaseLock(): void {
-      process.stdin.off("data", onData);
-      process.stdin.off("end", onEnd);
+      stdin.off("data", onData);
+      stdin.off("end", onEnd);
       buffer = [];
       resolveRead = null;
     },
@@ -111,7 +115,7 @@ export function getStdinReader(): StdinReader {
  */
 export function waitForKeypress(): Promise<void> {
   return new Promise((resolve) => {
-    if (typeof Deno !== "undefined" && Deno.stdin) {
+    if (isDeno) {
       Deno.stdin.setRaw(true);
       const reader = Deno.stdin.readable.getReader();
 
@@ -123,16 +127,17 @@ export function waitForKeypress(): Promise<void> {
       return;
     }
 
-    if (!process?.stdin) {
+    const stdin = process?.stdin;
+    if (!stdin) {
       resolve();
       return;
     }
 
-    process.stdin.setRawMode?.(true);
-    process.stdin.resume();
-    process.stdin.once("data", () => {
-      process.stdin.setRawMode?.(false);
-      process.stdin.pause();
+    stdin.setRawMode?.(true);
+    stdin.resume();
+    stdin.once("data", () => {
+      stdin.setRawMode?.(false);
+      stdin.pause();
       resolve();
     });
   });
@@ -143,11 +148,6 @@ const CTRL_C = 0x03;
 const ENTER_CR = 0x0d;
 const ENTER_LF = 0x0a;
 
-/**
- * Wait for Enter key or Ctrl+C.
- * Returns true if Enter was pressed (continue), false if Ctrl+C (exit).
- * Works in both Deno and Node.js.
- */
 /**
  * Buffer for escape sequences that may arrive in separate reads.
  * Arrow keys (\x1b[A) can arrive as "\x1b" then "[A" - this combines them.
@@ -183,25 +183,29 @@ export function createEscapeBuffer(onTimeout: (key: string) => void): EscapeBuff
       return result;
     }
 
-    if (input === ESC) {
-      pending = input;
-      timeoutId = setTimeout(() => {
-        const key = pending;
-        clear();
-        if (key) onTimeout(key);
-      }, ESC_TIMEOUT_MS);
-      return null;
-    }
+    if (input !== ESC) return input;
 
-    return input;
+    pending = input;
+    timeoutId = setTimeout(() => {
+      const key = pending;
+      clear();
+      if (key) onTimeout(key);
+    }, ESC_TIMEOUT_MS);
+
+    return null;
   }
 
   return { push, clear };
 }
 
+/**
+ * Wait for Enter key or Ctrl+C.
+ * Returns true if Enter was pressed (continue), false if Ctrl+C (exit).
+ * Works in both Deno and Node.js.
+ */
 export function waitForEnterOrExit(): Promise<boolean> {
   return new Promise((resolve) => {
-    if (typeof Deno !== "undefined" && Deno.stdin) {
+    if (isDeno) {
       Deno.stdin.setRaw(true);
       const reader = Deno.stdin.readable.getReader();
 
@@ -211,7 +215,7 @@ export function waitForEnterOrExit(): Promise<boolean> {
         resolve(result);
       };
 
-      const readKey = async () => {
+      const readKey = async (): Promise<void> => {
         const { value } = await reader.read();
         const key = value?.[0];
         if (key === undefined) return;
@@ -233,12 +237,12 @@ export function waitForEnterOrExit(): Promise<boolean> {
       return;
     }
 
-    if (!process?.stdin) {
+    const stdin = process?.stdin;
+    if (!stdin) {
       resolve(false);
       return;
     }
 
-    const stdin = process.stdin;
     stdin.setRawMode?.(true);
     stdin.resume();
 
@@ -255,9 +259,7 @@ export function waitForEnterOrExit(): Promise<boolean> {
         cleanup(false);
         return;
       }
-      if (key === ENTER_CR || key === ENTER_LF) {
-        cleanup(true);
-      }
+      if (key === ENTER_CR || key === ENTER_LF) cleanup(true);
     };
 
     stdin.on("data", onData);

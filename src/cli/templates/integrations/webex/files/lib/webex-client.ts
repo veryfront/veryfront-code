@@ -76,12 +76,22 @@ async function webexFetch<T>(
     const error = (await response.json().catch(() => ({}))) as {
       message?: string;
     };
+
     throw new Error(
       `Webex API error: ${response.status} ${error.message ?? response.statusText}`,
     );
   }
 
   return response.json() as Promise<T>;
+}
+
+function setOptionalParam(
+  params: URLSearchParams,
+  key: string,
+  value: string | number | undefined,
+): void {
+  if (value === undefined) return;
+  params.set(key, String(value));
 }
 
 export async function getMe(): Promise<WebexPerson> {
@@ -100,15 +110,16 @@ export async function listMeetings(options?: {
 }): Promise<WebexMeeting[]> {
   const params = new URLSearchParams();
 
-  if (options?.max) params.set("max", String(options.max));
-  if (options?.from) params.set("from", options.from);
-  if (options?.to) params.set("to", options.to);
-  if (options?.meetingType) params.set("meetingType", options.meetingType);
-  if (options?.state) params.set("state", options.state);
+  setOptionalParam(params, "max", options?.max);
+  setOptionalParam(params, "from", options?.from);
+  setOptionalParam(params, "to", options?.to);
+  setOptionalParam(params, "meetingType", options?.meetingType);
+  setOptionalParam(params, "state", options?.state);
 
   const response = await webexFetch<{ items?: WebexMeeting[] }>(
     `/meetings?${params}`,
   );
+
   return response.items ?? [];
 }
 
@@ -137,15 +148,16 @@ export async function createMeeting(options: {
     start: options.start,
     end: options.end,
     timezone: options.timezone ?? "UTC",
-    ...(options.agenda ? { agenda: options.agenda } : {}),
-    ...(options.enabledAutoRecordMeeting !== undefined
-      ? { enabledAutoRecordMeeting: options.enabledAutoRecordMeeting }
-      : {}),
-    ...(options.allowAnyUserToBeCoHost !== undefined
-      ? { allowAnyUserToBeCoHost: options.allowAnyUserToBeCoHost }
-      : {}),
-    ...(options.invitees?.length ? { invitees: options.invitees } : {}),
   };
+
+  if (options.agenda) body.agenda = options.agenda;
+  if (options.enabledAutoRecordMeeting !== undefined) {
+    body.enabledAutoRecordMeeting = options.enabledAutoRecordMeeting;
+  }
+  if (options.allowAnyUserToBeCoHost !== undefined) {
+    body.allowAnyUserToBeCoHost = options.allowAnyUserToBeCoHost;
+  }
+  if (options.invitees?.length) body.invitees = options.invitees;
 
   return webexFetch<WebexMeeting>("/meetings", {
     method: "POST",
@@ -190,9 +202,9 @@ export async function listRooms(options?: {
 }): Promise<WebexRoom[]> {
   const params = new URLSearchParams();
 
-  if (options?.max) params.set("max", String(options.max));
-  if (options?.type) params.set("type", options.type);
-  if (options?.sortBy) params.set("sortBy", options.sortBy);
+  setOptionalParam(params, "max", options?.max);
+  setOptionalParam(params, "type", options?.type);
+  setOptionalParam(params, "sortBy", options?.sortBy);
 
   const response = await webexFetch<{ items?: WebexRoom[] }>(`/rooms?${params}`);
   return response.items ?? [];
@@ -254,15 +266,14 @@ export async function listMessages(options: {
 }): Promise<WebexMessage[]> {
   const params = new URLSearchParams({ roomId: options.roomId });
 
-  if (options.max) params.set("max", String(options.max));
-  if (options.before) params.set("before", options.before);
-  if (options.beforeMessage) {
-    params.set("beforeMessage", options.beforeMessage);
-  }
+  setOptionalParam(params, "max", options.max);
+  setOptionalParam(params, "before", options.before);
+  setOptionalParam(params, "beforeMessage", options.beforeMessage);
 
   const response = await webexFetch<{ items?: WebexMessage[] }>(
     `/messages?${params}`,
   );
+
   return response.items ?? [];
 }
 

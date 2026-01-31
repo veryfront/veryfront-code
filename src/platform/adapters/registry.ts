@@ -39,12 +39,15 @@ class AdapterRegistry {
     if (this.instance && this.initialized) return this.instance;
     if (this.initializationPromise) return this.initializationPromise;
 
-    this.initializationPromise = withSpan("platform.registry.get", () => this.doInitialize());
+    const initializationPromise = withSpan("platform.registry.get", () => this.doInitialize());
+    this.initializationPromise = initializationPromise;
 
     try {
-      return await this.initializationPromise;
+      return await initializationPromise;
     } catch (error) {
-      this.initializationPromise = null;
+      if (this.initializationPromise === initializationPromise) {
+        this.initializationPromise = null;
+      }
       throw error;
     }
   }
@@ -122,7 +125,7 @@ class AdapterRegistry {
           }
         } catch (error) {
           this.instance = oldAdapter;
-          this.initialized = !!oldAdapter;
+          this.initialized = oldAdapter != null;
           throw error;
         }
       },
@@ -141,7 +144,7 @@ class AdapterRegistry {
   }
 
   isInitialized(): boolean {
-    return !!this.instance && this.initialized;
+    return this.instance != null && this.initialized;
   }
 
   reset(): Promise<void> {

@@ -96,7 +96,7 @@ const INTEGRATION_ICONS: Record<string, string> = {
 function generateIntegrationsStatusRoute(integrations: ResolvedIntegration[]): string {
   const integrationEntries = integrations
     .map((integration) => {
-      const icon = INTEGRATION_ICONS[integration.config.name] || "default";
+      const icon = INTEGRATION_ICONS[integration.config.name] ?? "default";
       return `  { id: "${integration.config.name}", name: "${integration.config.displayName}", icon: "${icon}" },`;
     })
     .join("\n");
@@ -141,17 +141,15 @@ export async function GET(_req: Request) {
 
 function validateOrThrow<T extends string>(
   kind: "features" | "integrations",
-  values: string[],
+  values: T[],
   validate: (values: T[]) => { valid: boolean; errors: string[] },
 ): void {
-  if (values.length === 0) return;
+  if (!values.length) return;
 
-  const validation = validate(values as T[]);
+  const validation = validate(values);
   if (validation.valid) return;
 
-  for (const error of validation.errors) {
-    logger.error(error);
-  }
+  for (const error of validation.errors) logger.error(error);
 
   throw toError(
     createError({
@@ -163,9 +161,9 @@ function validateOrThrow<T extends string>(
 
 function dedupeEnvVars(envVars: EnvVarConfig[]): EnvVarConfig[] {
   const seen = new Set<string>();
-  return envVars.filter((envVar) => {
-    if (seen.has(envVar.name)) return false;
-    seen.add(envVar.name);
+  return envVars.filter(({ name }) => {
+    if (seen.has(name)) return false;
+    seen.add(name);
     return true;
   });
 }
@@ -177,17 +175,15 @@ export async function initCommand(options: InitOptions): Promise<void> {
   const { name, features = [], quiet = false } = options;
   let { integrations = [] } = options;
 
-  const log = (msg: string): void => {
+  function log(msg: string): void {
     if (!quiet) logger.info(msg);
-  };
+  }
 
   let template: InitTemplate;
   if (shouldRunWizard(options)) {
     const wizardResult = await runInteractiveWizard();
     template = wizardResult.template;
-    if (wizardResult.integrations.length > 0) {
-      integrations = wizardResult.integrations;
-    }
+    if (wizardResult.integrations.length) integrations = wizardResult.integrations;
   } else {
     template = options.template ?? "ai";
   }
@@ -198,8 +194,8 @@ export async function initCommand(options: InitOptions): Promise<void> {
   validateOrThrow("features", features, validateFeatures);
   validateOrThrow("integrations", integrations, validateIntegrations);
 
-  const featuresStr = features.length > 0 ? ` with features: ${features.join(", ")}` : "";
-  const integrationsStr = integrations.length > 0
+  const featuresStr = features.length ? ` with features: ${features.join(", ")}` : "";
+  const integrationsStr = integrations.length
     ? ` with integrations: ${integrations.join(", ")}`
     : "";
 
@@ -230,12 +226,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
   const allEnvVars: EnvVarConfig[] = templateConfig?.envVars ? [...templateConfig.envVars] : [];
   const featureTips: string[] = [];
 
-  if (features.length > 0) {
+  if (features.length) {
     const { ordered, errors } = await resolveFeatures(features);
-    if (errors.length > 0) {
-      for (const error of errors) {
-        logger.error(error);
-      }
+    if (errors.length) {
+      for (const error of errors) logger.error(error);
       throw toError(
         createError({
           type: "config",
@@ -256,26 +250,19 @@ export async function initCommand(options: InitOptions): Promise<void> {
       logger.debug(`Loading feature: ${featureName} (${feature.files.length} files)`);
       templateFiles = mergeFiles(templateFiles, feature.files);
 
-      if (feature.config.envVars) {
-        allEnvVars.push(...feature.config.envVars);
-      }
-
-      if (feature.config.tips) {
-        featureTips.push(...feature.config.tips);
-      }
+      if (feature.config.envVars) allEnvVars.push(...feature.config.envVars);
+      if (feature.config.tips) featureTips.push(...feature.config.tips);
     }
   }
 
-  if (integrations.length > 0) {
+  if (integrations.length) {
     logger.debug(`Loading integrations: ${integrations.join(", ")}`);
 
     templateFiles = mergeFiles(templateFiles, getIntegrationBaseFiles());
     templateFiles = mergeFiles(templateFiles, await loadIntegrationBaseFilesFromDirectory());
 
     const baseConfig = await loadIntegrationBaseConfig();
-    if (baseConfig?.envVars) {
-      allEnvVars.push(...baseConfig.envVars);
-    }
+    if (baseConfig?.envVars) allEnvVars.push(...baseConfig.envVars);
 
     const {
       integrations: loadedIntegrations,
@@ -283,25 +270,22 @@ export async function initCommand(options: InitOptions): Promise<void> {
       errors: integrationErrors,
     } = await loadIntegrations(integrations);
 
-    if (integrationErrors.length > 0) {
-      for (const error of integrationErrors) {
-        logger.warn(error);
-      }
+    if (integrationErrors.length) {
+      for (const error of integrationErrors) logger.warn(error);
     }
 
     templateFiles = mergeFiles(templateFiles, integrationFiles);
 
     for (const integration of loadedIntegrations) {
-      if (integration.config.envVars) {
-        allEnvVars.push(...integration.config.envVars);
-      }
+      if (integration.config.envVars) allEnvVars.push(...integration.config.envVars);
     }
 
-    const statusRouteFile: TemplateFile = {
-      path: "app/api/integrations/status/route.ts",
-      content: generateIntegrationsStatusRoute(loadedIntegrations),
-    };
-    templateFiles = mergeFiles(templateFiles, [statusRouteFile]);
+    templateFiles = mergeFiles(templateFiles, [
+      {
+        path: "app/api/integrations/status/route.ts",
+        content: generateIntegrationsStatusRoute(loadedIntegrations),
+      },
+    ]);
 
     logger.debug(
       `Loaded ${loadedIntegrations.length} integrations with ${integrationFiles.length} files`,
@@ -312,9 +296,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     featureTips.push("Connect services at /api/auth/<service>");
   }
 
-  if (name) {
-    await ensureDir(projectDir);
-  }
+  if (name) await ensureDir(projectDir);
 
   for (const file of templateFiles as TemplateFile[]) {
     if (file.path === ".env" || file.path === ".env.example") continue;
@@ -322,9 +304,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     const filePath = join(projectDir, file.path);
     const fileDir = join(projectDir, ...file.path.split("/").slice(0, -1));
 
-    if (fileDir !== projectDir) {
-      await ensureDir(fileDir);
-    }
+    if (fileDir !== projectDir) await ensureDir(fileDir);
 
     await fs.writeTextFile(filePath, file.content);
     logger.debug(`Created file: ${file.path}`);
@@ -335,7 +315,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     await createPackageJson(projectDir, name);
   }
 
-  if (allEnvVars.length > 0) {
+  if (allEnvVars.length) {
     const envResult = await promptForEnvVars(dedupeEnvVars(allEnvVars), {
       skipPrompt: options.skipEnvPrompt,
       prefilledValues: options.env,
@@ -411,8 +391,6 @@ export async function initCommand(options: InitOptions): Promise<void> {
   const displayFeatureTips = (options as InitOptions & { _featureTips?: string[] })._featureTips;
   if (displayFeatureTips?.length) {
     log(`\n${cyan("Feature tips:")}`);
-    for (const tip of displayFeatureTips) {
-      log(`  - ${tip}`);
-    }
+    for (const tip of displayFeatureTips) log(`  - ${tip}`);
   }
 }

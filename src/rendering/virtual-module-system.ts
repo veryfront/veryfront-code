@@ -59,12 +59,14 @@ export class VirtualModuleSystem {
         /from\s+"https?:\/\/[^"']+react@[^"']+\/jsx-dev-runtime"/g,
         'from "react/jsx-dev-runtime"',
       )
-      .replace(/from\s+["']\.\/(\w+)\.tsx["']/g, 'from "/_veryfront/modules/component:$1"')
-      .replace(/from\s+["']\.\/(\w+)\.jsx["']/g, 'from "/_veryfront/modules/component:$1"')
-      .replace(/from\s+["']\.\/(\w+)["']/g, 'from "/_veryfront/modules/component:$1"')
-      .replace(/import\(["']\.\/(\w+)\.tsx["']\)/g, 'import("/_veryfront/modules/component:$1")')
-      .replace(/import\(["']\.\/(\w+)\.jsx["']\)/g, 'import("/_veryfront/modules/component:$1")')
-      .replace(/import\(["']\.\/(\w+)["']\)/g, 'import("/_veryfront/modules/component:$1")');
+      .replace(
+        /from\s+["']\.\/(\w+)(?:\.(?:t|j)sx)?["']/g,
+        'from "/_veryfront/modules/component:$1"',
+      )
+      .replace(
+        /import\(["']\.\/(\w+)(?:\.(?:t|j)sx)?["']\)/g,
+        'import("/_veryfront/modules/component:$1")',
+      );
 
     this.modules.set(id, {
       id,
@@ -86,10 +88,7 @@ export class VirtualModuleSystem {
 
     const moduleId = decodeURIComponent(url.pathname.slice(this.baseUrl.length + 1));
     const module = this.modules.get(moduleId);
-
-    if (!module) {
-      return new Response("Module not found", { status: 404 });
-    }
+    if (!module) return new Response("Module not found", { status: 404 });
 
     return new Response(module.transformed ?? module.source, {
       headers: {

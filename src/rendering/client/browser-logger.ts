@@ -18,24 +18,45 @@ class ConditionalBrowserLogger implements BrowserLogger {
     private level: LogLevel,
   ) {}
 
+  private log(
+    minLevel: LogLevel,
+    fn: ((...args: unknown[]) => void) | undefined,
+    message: string,
+    ...args: unknown[]
+  ): void {
+    if (this.level > minLevel) return;
+    fn?.(message, ...args);
+  }
+
   debug(message: string, ...args: unknown[]): void {
-    if (this.level > LogLevel.DEBUG) return;
-    console.debug?.(`[${this.prefix}] DEBUG: ${message}`, ...args);
+    this.log(
+      LogLevel.DEBUG,
+      console.debug,
+      `[${this.prefix}] DEBUG: ${message}`,
+      ...args,
+    );
   }
 
   info(message: string, ...args: unknown[]): void {
-    if (this.level > LogLevel.INFO) return;
-    console.log?.(`[${this.prefix}] ${message}`, ...args);
+    this.log(LogLevel.INFO, console.log, `[${this.prefix}] ${message}`, ...args);
   }
 
   warn(message: string, ...args: unknown[]): void {
-    if (this.level > LogLevel.WARN) return;
-    console.warn?.(`[${this.prefix}] WARN: ${message}`, ...args);
+    this.log(
+      LogLevel.WARN,
+      console.warn,
+      `[${this.prefix}] WARN: ${message}`,
+      ...args,
+    );
   }
 
   error(message: string, ...args: unknown[]): void {
-    if (this.level > LogLevel.ERROR) return;
-    console.error?.(`[${this.prefix}] ERROR: ${message}`, ...args);
+    this.log(
+      LogLevel.ERROR,
+      console.error,
+      `[${this.prefix}] ERROR: ${message}`,
+      ...args,
+    );
   }
 }
 
@@ -49,7 +70,7 @@ interface VeryfrontGlobal {
 function getBrowserLogLevel(): LogLevel {
   if (typeof window === "undefined") return LogLevel.WARN;
 
-  const g = globalThis as unknown as VeryfrontGlobal;
+  const g = globalThis as VeryfrontGlobal;
   const isDevelopment = g.__VERYFRONT_DEV__ || g.__RSC_DEV__;
   if (!isDevelopment) return LogLevel.WARN;
 

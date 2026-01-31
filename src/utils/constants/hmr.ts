@@ -17,8 +17,8 @@ export const HMR_MESSAGE_TYPES = {
   PONG: "pong",
 } as const;
 
-export function isValidHMRMessageType(type: string): type is keyof typeof HMR_MESSAGE_TYPES {
-  return Object.values(HMR_MESSAGE_TYPES).includes(
-    type as (typeof HMR_MESSAGE_TYPES)[keyof typeof HMR_MESSAGE_TYPES],
-  );
+export function isValidHMRMessageType(
+  type: string,
+): type is (typeof HMR_MESSAGE_TYPES)[keyof typeof HMR_MESSAGE_TYPES] {
+  return Object.values(HMR_MESSAGE_TYPES).includes(type as any);
 }

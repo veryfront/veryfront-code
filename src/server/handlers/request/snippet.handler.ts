@@ -1,10 +1,3 @@
-/**
- * Snippet Handler
- *
- * Handles preview requests for component snippets (@/ prefixed paths).
- * These are MDX files that get compiled and rendered as standalone component previews.
- */
-
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { serverLogger as logger } from "#veryfront/utils";
@@ -12,7 +5,6 @@ import { renderSnippet } from "#veryfront/rendering/snippet-renderer.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { VeryfrontAPIError } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
 
-// Priority 450 - before static (500) to handle @/ component previews first
 const PRIORITY_SNIPPET = 450;
 
 export class SnippetHandler extends BaseHandler {
@@ -24,7 +16,7 @@ export class SnippetHandler extends BaseHandler {
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const url = new URL(req.url);
-    const pathname = url.pathname;
+    const { pathname } = url;
 
     if (!pathname.startsWith("/@/") && !pathname.startsWith("/@components/")) {
       return Promise.resolve(this.continue());
@@ -49,7 +41,7 @@ export class SnippetHandler extends BaseHandler {
         }
 
         const moduleServerUrl = this.getModuleServerUrl(ctx.moduleServerUrl, url);
-        const pageId = url.searchParams.get("page_id") || undefined;
+        const pageId = url.searchParams.get("page_id") ?? undefined;
         const isDev = ctx.requestContext?.isLocalDev ?? false;
 
         const result = await renderSnippet(content, {
@@ -84,9 +76,7 @@ export class SnippetHandler extends BaseHandler {
             .withContentType("text/html; charset=utf-8", result.html, 200),
         );
       } catch (error) {
-        const is404 = error instanceof VeryfrontAPIError && error.status === 404;
-
-        if (is404) {
+        if (error instanceof VeryfrontAPIError && error.status === 404) {
           logger.debug("[SnippetHandler] Snippet file not found", { filePath });
         } else {
           logger.error("[SnippetHandler] Error rendering snippet", {
@@ -102,13 +92,11 @@ export class SnippetHandler extends BaseHandler {
   }
 
   private resolveFilePath(pathname: string): string {
-    if (pathname.startsWith("/@components/")) {
-      let filePath = pathname.replace("/@components/", "components/");
-      if (!filePath.endsWith(".snippet.mdx")) filePath += ".snippet.mdx";
-      return filePath;
-    }
+    if (!pathname.startsWith("/@components/")) return pathname.replace("/@/", "");
 
-    return pathname.replace("/@/", "");
+    let filePath = pathname.replace("/@components/", "components/");
+    if (!filePath.endsWith(".snippet.mdx")) filePath += ".snippet.mdx";
+    return filePath;
   }
 
   private getModuleServerUrl(moduleServerUrl: string | undefined, url: URL): string {

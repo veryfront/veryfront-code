@@ -35,7 +35,8 @@ export function compileMDXFile(
         logger.debug("MDX compiled output (first 500 chars):", compiledCode.substring(0, 500));
 
         const moduleCode = generateModuleCode(frontmatter, transformImports(compiledCode));
-        const finalCode = transformFinalImports(await transpileCode(moduleCode, options));
+        const transpiledCode = await transpileCode(moduleCode, options);
+        const finalCode = transformFinalImports(transpiledCode);
 
         const outputPath = await writeCompiledFile(filePath, finalCode, options);
 

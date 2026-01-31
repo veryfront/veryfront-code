@@ -11,9 +11,7 @@ export function generateDevClientRendererScript(nonce?: string): string {
     import { PageContextProvider } from 'veryfront/context';
 
     ${getRouterScript()}
-
     ${getLoaderScript()}
-
     ${getRendererScript()}
   </script>`;
 }

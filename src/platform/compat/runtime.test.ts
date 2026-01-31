@@ -72,9 +72,6 @@ describe("Runtime Detection", () => {
   });
 
   describe("testDenoCompiledDetection (binary name detection)", () => {
-    // The most robust detection method: check if the binary name is "deno"/"deno.exe".
-    // If NOT, it's a compiled binary. This works regardless of installation path.
-
     it("should NOT detect standard Deno runtime (binary named 'deno')", () => {
       const denoPaths = [
         "/home/user/.deno/bin/deno",
@@ -82,15 +79,22 @@ describe("Runtime Detection", () => {
         "/opt/homebrew/bin/deno",
         "C:\\Users\\dev\\.deno\\bin\\deno.exe",
       ];
+
       for (const path of denoPaths) {
-        const result = testDenoCompiledDetection(path);
-        assertEquals(result, false, `${path} should NOT be detected as compiled`);
+        assertEquals(
+          testDenoCompiledDetection(path),
+          false,
+          `${path} should NOT be detected as compiled`,
+        );
       }
     });
 
     it("should detect compiled binary named 'veryfront' (production case)", () => {
-      const result = testDenoCompiledDetection("/app/veryfront");
-      assertEquals(result, true, "veryfront binary should be detected as compiled");
+      assertEquals(
+        testDenoCompiledDetection("/app/veryfront"),
+        true,
+        "veryfront binary should be detected as compiled",
+      );
     });
 
     it("should detect any custom-named compiled binary", () => {
@@ -100,28 +104,38 @@ describe("Runtime Detection", () => {
         "/home/user/projects/server",
         "C:\\Program Files\\myapp\\server.exe",
       ];
+
       for (const path of compiledPaths) {
-        const result = testDenoCompiledDetection(path);
-        assertEquals(result, true, `${path} should be detected as compiled`);
+        assertEquals(
+          testDenoCompiledDetection(path),
+          true,
+          `${path} should be detected as compiled`,
+        );
       }
     });
 
     it("should detect compiled binary in folder with 'deno' in path", () => {
-      // This was a bug in the old path-based detection
-      const result = testDenoCompiledDetection("/home/user/projects/deno-myproject/server");
-      assertEquals(result, true, "Binary in deno-* folder should still be detected as compiled");
+      assertEquals(
+        testDenoCompiledDetection("/home/user/projects/deno-myproject/server"),
+        true,
+        "Binary in deno-* folder should still be detected as compiled",
+      );
     });
 
     it("should detect compiled binary with 'deno-' prefix in name", () => {
-      // e.g., someone compiles their app as "deno-fresh"
-      const result = testDenoCompiledDetection("/usr/local/bin/deno-fresh");
-      assertEquals(result, true, "Binary named deno-fresh should be detected as compiled");
+      assertEquals(
+        testDenoCompiledDetection("/usr/local/bin/deno-fresh"),
+        true,
+        "Binary named deno-fresh should be detected as compiled",
+      );
     });
 
     it("should detect compiled binary in .deno folder", () => {
-      // Compiled app placed in .deno folder (unusual but valid)
-      const result = testDenoCompiledDetection("/var/lib/deno/compiled/myapp");
-      assertEquals(result, true, "Compiled app in deno folder should be detected");
+      assertEquals(
+        testDenoCompiledDetection("/var/lib/deno/compiled/myapp"),
+        true,
+        "Compiled app in deno folder should be detected",
+      );
     });
 
     it("should handle undefined/null/empty gracefully", () => {
@@ -145,37 +159,23 @@ describe("Runtime Detection", () => {
   });
 
   describe("integration: HTTP import caching decision", () => {
-    // This test validates the fix for the production bug where esm.sh imports failed
-    // because isDenoCompiled was incorrectly returning false for compiled binaries.
-    //
-    // The http-cache.ts and loader.ts use this logic:
-    //   const canDoNativeHttpImports = isDeno && !isDenoCompiled;
-    //   if (canDoNativeHttpImports) return code; // skip caching
-    //
-    // When isDenoCompiled is TRUE (compiled binary), canDoNativeHttpImports is FALSE,
-    // so HTTP imports ARE cached to local files (correct behavior).
-
     it("should detect production binary 'veryfront' as compiled (enables HTTP caching)", () => {
-      // Production binary path from logs: /app/veryfront
       const isCompiled = testDenoCompiledDetection("/app/veryfront");
       assertEquals(isCompiled, true, "Production binary should be detected as compiled");
 
-      // Simulate the http-cache decision logic
-      const isDeno = true; // We're in Deno
+      const isDeno = true;
       const canDoNativeHttpImports = isDeno && !isCompiled;
       assertEquals(
         canDoNativeHttpImports,
         false,
         "Compiled binary should NOT be able to do native HTTP imports",
       );
-      // When canDoNativeHttpImports is false, HTTP imports ARE cached (correct)
     });
 
     it("should detect standard Deno as NOT compiled (skips HTTP caching)", () => {
       const isCompiled = testDenoCompiledDetection("/home/user/.deno/bin/deno");
       assertEquals(isCompiled, false, "Standard Deno should NOT be detected as compiled");
 
-      // Simulate the http-cache decision logic
       const isDeno = true;
       const canDoNativeHttpImports = isDeno && !isCompiled;
       assertEquals(
@@ -183,7 +183,6 @@ describe("Runtime Detection", () => {
         true,
         "Standard Deno CAN do native HTTP imports",
       );
-      // When canDoNativeHttpImports is true, HTTP imports are NOT cached (correct for dev)
     });
   });
 });

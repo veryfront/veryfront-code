@@ -49,18 +49,21 @@ export default function ClientComponent({ data }) {
     ],
   ),
 
-  [ErrorCode.INVALID_USE_CLIENT]: createErrorSolution(ErrorCode.INVALID_USE_CLIENT, {
-    title: "Invalid 'use client' directive",
-    message: "'use client' directive is not properly placed.",
-    steps: [
-      "Place 'use client' at the very top of file",
-      "Must be before any imports",
-      'Use exact string: "use client"',
-    ],
-    example: `'use client'  // Must be first line
+  [ErrorCode.INVALID_USE_CLIENT]: createErrorSolution(
+    ErrorCode.INVALID_USE_CLIENT,
+    {
+      title: "Invalid 'use client' directive",
+      message: "'use client' directive is not properly placed.",
+      steps: [
+        "Place 'use client' at the very top of file",
+        "Must be before any imports",
+        'Use exact string: "use client"',
+      ],
+      example: `'use client'  // Must be first line
 
 import React from 'react'`,
-  }),
+    },
+  ),
 
   [ErrorCode.INVALID_USE_SERVER]: createSimpleError(
     ErrorCode.INVALID_USE_SERVER,

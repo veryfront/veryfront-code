@@ -47,6 +47,20 @@ function captureOutput(fn: () => void): { stdout: string; stderr: string } {
   return { stdout, stderr };
 }
 
+async function withMockPrompt<T>(
+  mock: (message?: string) => string | null,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const originalPrompt = globalThis.prompt;
+  globalThis.prompt = mock;
+
+  try {
+    return await fn();
+  } finally {
+    globalThis.prompt = originalPrompt;
+  }
+}
+
 describe("showLogo", () => {
   it("outputs Veryfront in cyan", () => {
     const { stdout } = captureOutput(showLogo);
@@ -178,44 +192,25 @@ describe("formatBytes", () => {
   });
 });
 
-const hasPrompt = typeof globalThis.prompt === "function";
-const promptTestIt = hasPrompt ? it : it.skip;
+const promptTestIt = typeof globalThis.prompt === "function" ? it : it.skip;
 
 describe("promptUser", () => {
   promptTestIt("reads from stdin", async () => {
-    const originalPrompt = globalThis.prompt;
-    globalThis.prompt = (_message?: string) => "test input";
-
-    try {
-      const result = await promptUser("Enter something:");
-      assertEquals(result, "test input");
-    } finally {
-      globalThis.prompt = originalPrompt;
-    }
+    const result = await withMockPrompt(() => "test input", () => promptUser("Enter something:"));
+    assertEquals(result, "test input");
   });
 
   promptTestIt("handles empty input", async () => {
-    const originalPrompt = globalThis.prompt;
-    globalThis.prompt = (_message?: string) => null;
-
-    try {
-      const result = await promptUser("Enter something:");
-      assertEquals(result, "");
-    } finally {
-      globalThis.prompt = originalPrompt;
-    }
+    const result = await withMockPrompt(() => null, () => promptUser("Enter something:"));
+    assertEquals(result, "");
   });
 
   promptTestIt("trims whitespace", async () => {
-    const originalPrompt = globalThis.prompt;
-    globalThis.prompt = (_message?: string) => "  test with spaces  ";
-
-    try {
-      const result = await promptUser("Enter something:");
-      assertEquals(result, "test with spaces");
-    } finally {
-      globalThis.prompt = originalPrompt;
-    }
+    const result = await withMockPrompt(
+      () => "  test with spaces  ",
+      () => promptUser("Enter something:"),
+    );
+    assertEquals(result, "test with spaces");
   });
 });
 

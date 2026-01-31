@@ -119,11 +119,12 @@ export type SpecifierType =
   | "url" // https://esm.sh/..., http://...
   | "unknown";
 
+const CROSS_PROJECT_RE = /^[a-z0-9-]+(?:@[\d^~x][\d.x^~-]*)?\/@\//;
+
 /**
  * Classify a specifier for strategy matching.
  */
 export function classifySpecifier(specifier: string): SpecifierType {
-  // React and React-DOM packages
   if (
     specifier === "react" ||
     specifier === "react-dom" ||
@@ -133,38 +134,24 @@ export function classifySpecifier(specifier: string): SpecifierType {
     return "react";
   }
 
-  // URL imports (esm.sh, CDN, etc.)
   if (specifier.startsWith("http://") || specifier.startsWith("https://")) {
     return "url";
   }
 
-  // Veryfront framework imports
   if (
+    specifier === "veryfront" ||
+    specifier === "@veryfront" ||
     specifier.startsWith("#veryfront/") ||
     specifier.startsWith("veryfront/") ||
-    specifier.startsWith("@veryfront/") ||
-    specifier === "veryfront" ||
-    specifier === "@veryfront"
+    specifier.startsWith("@veryfront/")
   ) {
     return "veryfront";
   }
 
-  // Path alias imports
-  if (specifier.startsWith("@/")) {
-    return "alias";
-  }
+  if (specifier.startsWith("@/")) return "alias";
+  if (specifier.startsWith("./") || specifier.startsWith("../")) return "relative";
+  if (CROSS_PROJECT_RE.test(specifier)) return "cross-project";
 
-  // Relative imports
-  if (specifier.startsWith("./") || specifier.startsWith("../")) {
-    return "relative";
-  }
-
-  // Cross-project imports (project@version/@/path or project/@/path)
-  if (/^[a-z0-9-]+(?:@[\d^~x][\d.x^~-]*)?\/@\//.test(specifier)) {
-    return "cross-project";
-  }
-
-  // Bare specifiers (npm packages)
   return "bare";
 }
 

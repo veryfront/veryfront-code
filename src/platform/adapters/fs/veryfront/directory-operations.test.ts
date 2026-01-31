@@ -5,11 +5,9 @@ import { DirectoryOperations } from "./directory-operations.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 
 describe("DirectoryOperations", () => {
-  describe("class", () => {
-    it("should export DirectoryOperations class", () => {
-      assertExists(DirectoryOperations);
-      assertEquals(typeof DirectoryOperations, "function");
-    });
+  it("should export DirectoryOperations class", () => {
+    assertExists(DirectoryOperations);
+    assertEquals(typeof DirectoryOperations, "function");
   });
 
   describe("methods", () => {

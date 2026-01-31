@@ -17,19 +17,20 @@ export function buildCurrentParts(
   addReasoningParts(orderedParts, reasoningBlocks);
   addToolParts(orderedParts, toolCalls);
 
-  return orderedParts.sort((a, b) => a.order - b.order).map(({ part }) => part);
+  orderedParts.sort((a, b) => a.order - b.order);
+  return orderedParts.map(({ part }) => part);
 }
 
 function addTextParts(
   orderedParts: OrderedPart[],
   textBlocks: Map<string, TextBlock>,
 ): void {
-  for (const block of textBlocks.values()) {
-    if (!block.text || block.order === null) continue;
+  for (const { text, order, state } of textBlocks.values()) {
+    if (!text || order === null) continue;
 
     orderedParts.push({
-      order: block.order,
-      part: { type: "text", text: block.text, state: block.state },
+      order,
+      part: { type: "text", text, state },
     });
   }
 }
@@ -38,13 +39,13 @@ function addReasoningParts(
   orderedParts: OrderedPart[],
   reasoningBlocks: Map<string, OrderedReasoning>,
 ): void {
-  for (const reasoning of reasoningBlocks.values()) {
+  for (const { order, text, isComplete } of reasoningBlocks.values()) {
     orderedParts.push({
-      order: reasoning.order,
+      order,
       part: {
         type: "reasoning",
-        text: reasoning.text,
-        state: reasoning.isComplete ? "done" : "streaming",
+        text,
+        state: isComplete ? "done" : "streaming",
       },
     });
   }
@@ -64,17 +65,10 @@ function addToolParts(
       errorText: tool.error,
     };
 
-    if (tool.dynamic) {
-      orderedParts.push({
-        order: tool.order,
-        part: { type: "dynamic-tool", ...base },
-      });
-      continue;
-    }
+    const part: UIMessagePart = tool.dynamic
+      ? { type: "dynamic-tool", ...base }
+      : ({ type: `tool-${tool.toolName}`, ...base } as ToolUIPart);
 
-    orderedParts.push({
-      order: tool.order,
-      part: { type: `tool-${tool.toolName}`, ...base } as ToolUIPart,
-    });
+    orderedParts.push({ order: tool.order, part });
   }
 }

@@ -4,12 +4,12 @@ import * as React from 'react';
 import { MDXProvider } from '@mdx-js/react';
 
 const components = {
-  pre: ({ children, ...props }: React.ComponentProps<'pre'>) => (
+  pre: ({ children, ...props }: React.ComponentProps<'pre'>): React.JSX.Element => (
     <pre {...props} className="bg-gray-100 p-4 rounded-lg overflow-x-auto">
       {children}
     </pre>
   ),
-  code: ({ children, ...props }: React.ComponentProps<'code'>) => (
+  code: ({ children, ...props }: React.ComponentProps<'code'>): React.JSX.Element => (
     <code {...props} className="bg-gray-100 px-1 py-0.5 rounded text-sm">
       {children}
     </code>

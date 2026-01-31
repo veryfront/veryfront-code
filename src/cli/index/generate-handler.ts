@@ -10,10 +10,11 @@ import { exitProcess } from "../utils/index.ts";
 import type { GenerateCommandArgs } from "./types.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 
+const VALID_TYPES = ["page", "layout", "provider", "api", "integration"] as const;
+
 export async function handleGenerateCommand(args: GenerateCommandArgs): Promise<void> {
   const type = args._[1];
   const name = args._[2];
-  const validTypes = ["page", "layout", "provider", "api", "integration"];
 
   // Integration type doesn't require a name (prompts interactively)
   if (type === "integration") {
@@ -21,7 +22,9 @@ export async function handleGenerateCommand(args: GenerateCommandArgs): Promise<
     return;
   }
 
-  if (!type || !name || typeof type !== "string" || !validTypes.includes(type)) {
+  if (
+    typeof type !== "string" || !VALID_TYPES.includes(type as typeof VALID_TYPES[number]) || !name
+  ) {
     showCommandHelp("generate");
     exitProcess(2);
     return;

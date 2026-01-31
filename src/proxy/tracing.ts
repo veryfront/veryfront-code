@@ -1,9 +1,10 @@
-/**
+/****
  * OpenTelemetry OTLP tracing for proxy.
  * Env: OTEL_TRACES_ENABLED, OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_HEADERS
  */
 
 import type { Context, Span, Tracer } from "@opentelemetry/api";
+import denoConfig from "../../deno.json" with { type: "json" };
 
 // Inline cross-runtime getEnv to avoid dependency on src/platform/compat (not copied in Docker)
 function getEnv(key: string): string | undefined {
@@ -11,13 +12,11 @@ function getEnv(key: string): string | undefined {
   if (typeof Deno !== "undefined" && Deno.env?.get) {
     return Deno.env.get(key);
   }
+
   // Node.js / Bun
   const nodeProcess = (globalThis as { process?: { env?: Record<string, string> } }).process;
   return nodeProcess?.env?.[key];
 }
-
-// Import version from root deno.json (the source of truth)
-import denoConfig from "../../deno.json" with { type: "json" };
 
 // Get version from environment variable or root deno.json
 const VERYFRONT_VERSION: string = getEnv("VERYFRONT_VERSION") ??
@@ -30,18 +29,18 @@ let tracer: Tracer | null = null;
 interface OTLPConfig {
   serviceName: string;
   endpoint: string;
-  headers?: Record<string, string>;
+  headers: Record<string, string>;
   enabled: boolean;
 }
 
 function parseHeaders(headerString: string | undefined): Record<string, string> {
   if (!headerString) return {};
+
   const headers: Record<string, string> = {};
   for (const part of headerString.split(",")) {
     const [key, ...valueParts] = part.split("=");
-    if (key && valueParts.length > 0) {
-      headers[key.trim()] = valueParts.join("=").trim();
-    }
+    if (!key || valueParts.length === 0) continue;
+    headers[key.trim()] = valueParts.join("=").trim();
   }
   return headers;
 }
@@ -95,6 +94,7 @@ export async function initializeOTLP(): Promise<void> {
       [ATTR_SERVICE_NAME]: config.serviceName,
       [ATTR_SERVICE_VERSION]: VERYFRONT_VERSION,
     });
+
     const exporter = new OTLPTraceExporter({
       url: `${config.endpoint}/v1/traces`,
       headers: config.headers,
@@ -121,13 +121,13 @@ export async function initializeOTLP(): Promise<void> {
 }
 
 export async function shutdownOTLP(): Promise<void> {
-  if (tracerProvider) {
-    try {
-      await tracerProvider.shutdown();
-      console.log("[otel] Shutdown complete");
-    } catch (error) {
-      console.warn("[otel] Shutdown error", { error });
-    }
+  if (!tracerProvider) return;
+
+  try {
+    await tracerProvider.shutdown();
+    console.log("[otel] Shutdown complete");
+  } catch (error) {
+    console.warn("[otel] Shutdown error", { error });
   }
 }
 
@@ -135,11 +135,23 @@ export function isOTLPEnabled(): boolean {
   return initialized && tracerProvider !== null;
 }
 
+function getPropagator(): import("@opentelemetry/core").W3CTraceContextPropagator | null {
+  if (!propagationApi) return null;
+  return new propagationApi.W3CTraceContextPropagator();
+}
+
 export function extractContext(headers: Headers): Context | undefined {
-  if (!traceApi || !propagationApi) return undefined;
+  if (!traceApi) return undefined;
+
+  const propagator = getPropagator();
+  if (!propagator) return undefined;
+
   const carrier: Record<string, string> = {};
-  headers.forEach((v, k) => (carrier[k.toLowerCase()] = v));
-  return new propagationApi.W3CTraceContextPropagator().extract(
+  headers.forEach((v, k) => {
+    carrier[k.toLowerCase()] = v;
+  });
+
+  return propagator.extract(
     traceApi.context.active(),
     carrier,
     traceApi.defaultTextMapGetter,
@@ -147,14 +159,21 @@ export function extractContext(headers: Headers): Context | undefined {
 }
 
 export function injectContext(headers: Headers): void {
-  if (!traceApi || !propagationApi) return;
+  if (!traceApi) return;
+
+  const propagator = getPropagator();
+  if (!propagator) return;
+
   const carrier: Record<string, string> = {};
-  new propagationApi.W3CTraceContextPropagator().inject(
+  propagator.inject(
     traceApi.context.active(),
     carrier,
     traceApi.defaultTextMapSetter,
   );
-  Object.entries(carrier).forEach(([k, v]) => headers.set(k, v));
+
+  for (const [k, v] of Object.entries(carrier)) {
+    headers.set(k, v);
+  }
 }
 
 export function startServerSpan(
@@ -163,20 +182,28 @@ export function startServerSpan(
   parentContext?: Context,
 ): { span: Span; context: Context } | null {
   if (!traceApi || !tracer) return null;
-  const ctx = parentContext || traceApi.context.active();
+
+  const ctx = parentContext ?? traceApi.context.active();
   const span = tracer.startSpan(`${method} ${path}`, { kind: traceApi.SpanKind.SERVER }, ctx);
   return { span, context: traceApi.trace.setSpan(ctx, span) };
 }
 
 export function endSpan(span: Span | undefined, statusCode: number, error?: Error): void {
   if (!span || !traceApi) return;
+
   span.setAttribute("http.status_code", statusCode);
+
   if (error) {
     span.setStatus({ code: traceApi.SpanStatusCode.ERROR, message: error.message });
     span.recordException(error);
-  } else if (statusCode >= 400) {
+    span.end();
+    return;
+  }
+
+  if (statusCode >= 400) {
     span.setStatus({ code: traceApi.SpanStatusCode.ERROR });
   }
+
   span.end();
 }
 
@@ -187,8 +214,10 @@ export function withContext<T>(spanContext: Context, fn: () => Promise<T>): Prom
 
 export function getTraceContext(): { traceId?: string; spanId?: string } {
   if (!traceApi) return {};
+
   const span = traceApi.trace.getSpan(traceApi.context.active());
   if (!span) return {};
+
   const ctx = span.spanContext();
   return { traceId: ctx.traceId, spanId: ctx.spanId };
 }
@@ -214,15 +243,14 @@ export async function withSpan<T>(
   fn: () => Promise<T>,
   attributes?: Record<string, string | number | boolean>,
 ): Promise<T> {
-  if (!traceApi || !tracer) {
-    return await fn();
-  }
+  if (!traceApi || !tracer) return await fn();
 
   const parentContext = traceApi.context.active();
-  const span = tracer.startSpan(name, {
-    kind: traceApi.SpanKind.INTERNAL,
-    attributes,
-  }, parentContext);
+  const span = tracer.startSpan(
+    name,
+    { kind: traceApi.SpanKind.INTERNAL, attributes },
+    parentContext,
+  );
 
   const spanContext = traceApi.trace.setSpan(parentContext, span);
 
@@ -235,9 +263,7 @@ export async function withSpan<T>(
       code: traceApi.SpanStatusCode.ERROR,
       message: error instanceof Error ? error.message : String(error),
     });
-    if (error instanceof Error) {
-      span.recordException(error);
-    }
+    if (error instanceof Error) span.recordException(error);
     throw error;
   } finally {
     span.end();

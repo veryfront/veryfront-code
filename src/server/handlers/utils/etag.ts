@@ -11,7 +11,7 @@ function computeHash(content: string | Uint8Array): number {
   }
 
   for (let i = 0; i < content.length; i++) {
-    hash = ((hash << 5) + hash) ^ content[i]!;
+    hash = ((hash << 5) + hash) ^ (content[i] ?? 0);
   }
 
   return hash >>> 0;

@@ -13,13 +13,14 @@ interface ZodLikeSchema {
   parse?: (input: unknown) => void;
 }
 
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function hasValidZodTypeName(schema: unknown): schema is ZodLikeSchema {
-  return (
-    schema !== null &&
-    typeof schema === "object" &&
-    "_def" in schema &&
-    !!(schema as ZodLikeSchema)._def?.typeName
-  );
+  if (schema === null || typeof schema !== "object") return false;
+  if (!("_def" in schema)) return false;
+  return !!(schema as ZodLikeSchema)._def?.typeName;
 }
 
 function getSchemaShape(schema: ZodLikeSchema): Record<string, unknown> | null {
@@ -53,8 +54,10 @@ function convertSchemaToJson(
     ? { type: "object", properties: {}, additionalProperties: true }
     : { type: "object", properties: {} };
 
-  const formatErrorMessage = (error: unknown): string =>
-    error instanceof Error ? error.message : String(error);
+  const usePermissiveFallback = (message: string): JsonSchema => {
+    agentLogger.info(message);
+    return fallbackSchema;
+  };
 
   if (hasValidZodTypeName(schema)) {
     try {
@@ -68,8 +71,7 @@ function convertSchemaToJson(
       return result;
     } catch (error) {
       if (permissive) {
-        agentLogger.info(`[${logPrefix}] Using permissive schema for "${toolId}"`);
-        return fallbackSchema;
+        return usePermissiveFallback(`[${logPrefix}] Using permissive schema for "${toolId}"`);
       }
 
       throw toError(
@@ -93,8 +95,7 @@ function convertSchemaToJson(
       return result;
     } catch (error) {
       if (permissive) {
-        agentLogger.info(`[${logPrefix}] Using permissive schema for "${toolId}"`);
-        return fallbackSchema;
+        return usePermissiveFallback(`[${logPrefix}] Using permissive schema for "${toolId}"`);
       }
 
       throw toError(
@@ -107,8 +108,7 @@ function convertSchemaToJson(
   }
 
   if (permissive) {
-    agentLogger.info(`[${logPrefix}] Using fully dynamic schema for "${toolId}"`);
-    return fallbackSchema;
+    return usePermissiveFallback(`[${logPrefix}] Using fully dynamic schema for "${toolId}"`);
   }
 
   throw toError(
@@ -121,6 +121,7 @@ function convertSchemaToJson(
 }
 
 let toolIdCounter = 0;
+
 function generateToolId(): string {
   return `tool_${Date.now()}_${toolIdCounter++}`;
 }
@@ -145,6 +146,7 @@ export function tool<TInput = unknown, TOutput = unknown>(
     inputSchemaJson,
     execute: async (input: TInput, context?: ToolExecutionContext) => {
       const schema = config.inputSchema as ZodLikeSchema;
+
       if (typeof schema?.parse === "function") {
         try {
           schema.parse(input);
@@ -152,9 +154,7 @@ export function tool<TInput = unknown, TOutput = unknown>(
           throw toError(
             createError({
               type: "agent",
-              message: `Tool "${id}" input validation failed: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
+              message: `Tool "${id}" input validation failed: ${formatErrorMessage(error)}`,
             }),
           );
         }

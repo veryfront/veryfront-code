@@ -52,16 +52,10 @@ interface IntegrationConfig {
   envVarPrefix: string;
 }
 
-/**
- * Check if we're in an interactive terminal
- */
 function canRunPrompts(): boolean {
   return !(isCiEnv() || isDenoTestingEnv()) && checkIsInteractive();
 }
 
-/**
- * Prompt for text input (cross-runtime)
- */
 function promptText(question: string, defaultValue?: string): Promise<string> {
   const defaultHint = defaultValue ? dim(` (${defaultValue})`) : "";
   const fullQuestion = `${cyan("?")} ${question}${defaultHint}`;
@@ -79,9 +73,6 @@ function validateIntegrationName(name: string): void {
   }
 }
 
-/**
- * Run the integration generator
- */
 export async function generateIntegration(
   projectDir: string,
   options: IntegrationGeneratorOptions = {},
@@ -112,21 +103,25 @@ export async function generateIntegration(
 }
 
 function getNonInteractiveConfig(options: IntegrationGeneratorOptions): IntegrationConfig {
-  if (!options.name || !options.displayName || !options.authType) {
+  const { name, displayName, authType } = options;
+
+  if (!name || !displayName || !authType) {
     throw new Error(
       "Non-interactive mode requires --name, --display-name, and --auth-type options",
     );
   }
 
+  const normalizedName = name.toLowerCase();
+
   return {
-    name: options.name.toLowerCase(),
-    displayName: options.displayName,
-    authType: options.authType,
-    apiBaseUrl: options.apiBaseUrl || `https://api.${options.name}.com`,
+    name: normalizedName,
+    displayName,
+    authType,
+    apiBaseUrl: options.apiBaseUrl ?? `https://api.${name}.com`,
     authorizationUrl: options.authorizationUrl,
     tokenUrl: options.tokenUrl,
     scopes: parseScopes(options.scopes),
-    envVarPrefix: options.name.toUpperCase(),
+    envVarPrefix: name.toUpperCase(),
   };
 }
 
@@ -137,49 +132,49 @@ async function getInteractiveConfig(
   console.log(green("Integration Generator"));
   console.log("Let's create a new service integration.\n");
 
-  const name = options.name || await promptText(
-    "Integration name (lowercase, e.g., twilio, zendesk):",
-  );
+  const name = options.name ??
+    await promptText("Integration name (lowercase, e.g., twilio, zendesk):");
   validateIntegrationName(name);
 
-  const displayName = options.displayName || await promptText(
-    "Display name:",
-    name.charAt(0).toUpperCase() + name.slice(1),
-  );
+  const displayName = options.displayName ??
+    await promptText(
+      "Display name:",
+      name.charAt(0).toUpperCase() + name.slice(1),
+    );
 
-  const authType = options.authType || (await select(
-    "Authentication type:",
-    [
-      { value: "oauth2", label: "OAuth 2.0", description: "For services with OAuth flow" },
-      { value: "api-key", label: "API Key", description: "For services with API key auth" },
-    ],
-    0,
-  ) as "oauth2" | "api-key" | null) || "oauth2";
+  let authType = options.authType;
+  if (!authType) {
+    const selected = await select(
+      "Authentication type:",
+      [
+        { value: "oauth2", label: "OAuth 2.0", description: "For services with OAuth flow" },
+        { value: "api-key", label: "API Key", description: "For services with API key auth" },
+      ],
+      0,
+    );
+    authType = (selected as "oauth2" | "api-key" | null) ?? "oauth2";
+  }
 
-  const apiBaseUrl = options.apiBaseUrl || await promptText(
-    "API base URL:",
-    `https://api.${name}.com`,
-  );
+  const apiBaseUrl = options.apiBaseUrl ??
+    await promptText("API base URL:", `https://api.${name}.com`);
 
   let authorizationUrl: string | undefined;
   let tokenUrl: string | undefined;
   let scopes: string[] = [];
 
   if (authType === "oauth2") {
-    authorizationUrl = options.authorizationUrl || await promptText(
-      "OAuth authorization URL:",
-      `https://${name}.com/oauth/authorize`,
-    );
+    authorizationUrl = options.authorizationUrl ??
+      await promptText(
+        "OAuth authorization URL:",
+        `https://${name}.com/oauth/authorize`,
+      );
 
-    tokenUrl = options.tokenUrl || await promptText(
-      "OAuth token URL:",
-      `https://${name}.com/oauth/token`,
-    );
+    tokenUrl = options.tokenUrl ??
+      await promptText("OAuth token URL:", `https://${name}.com/oauth/token`);
 
-    const scopesInput = options.scopes || await promptText(
-      "OAuth scopes (comma-separated, or leave empty):",
-    );
-    scopes = scopesInput ? scopesInput.split(",").map((s) => s.trim()) : [];
+    const scopesInput = options.scopes ??
+      await promptText("OAuth scopes (comma-separated, or leave empty):");
+    scopes = scopesInput ? parseScopes(scopesInput) : [];
   }
 
   return {
@@ -194,9 +189,6 @@ async function getInteractiveConfig(
   };
 }
 
-/**
- * Create all integration files
- */
 async function createIntegrationFiles(
   projectDir: string,
   config: IntegrationConfig,
@@ -220,9 +212,6 @@ async function createIntegrationFiles(
   await createEnvExample(projectDir, config);
 }
 
-/**
- * Create OAuth2-specific files
- */
 async function createOAuth2Files(
   projectDir: string,
   baseDir: string,
@@ -264,8 +253,9 @@ export function clearTokens(): void {
   tokenData = null;
 }
 `;
-  await fs.writeTextFile(join(baseDir, "lib", "token-store.ts"), tokenStore);
-  cliLogger.debug(`Created ${join(baseDir, "lib", "token-store.ts")}`);
+  const tokenStorePath = join(baseDir, "lib", "token-store.ts");
+  await fs.writeTextFile(tokenStorePath, tokenStore);
+  cliLogger.debug(`Created ${tokenStorePath}`);
 
   const oauthRoute = `/**
  * ${config.displayName} OAuth initialization route
@@ -366,9 +356,6 @@ export async function GET(request: Request): Promise<Response> {
   cliLogger.debug("Created OAuth callback route");
 }
 
-/**
- * Create API key-specific files
- */
 async function createApiKeyFiles(baseDir: string, config: IntegrationConfig): Promise<void> {
   const tokenStore = `/**
  * API key accessor for ${config.displayName}
@@ -386,13 +373,11 @@ export function requireApiKey(): string {
   return key;
 }
 `;
-  await fs.writeTextFile(join(baseDir, "lib", "token-store.ts"), tokenStore);
-  cliLogger.debug(`Created ${join(baseDir, "lib", "token-store.ts")}`);
+  const tokenStorePath = join(baseDir, "lib", "token-store.ts");
+  await fs.writeTextFile(tokenStorePath, tokenStore);
+  cliLogger.debug(`Created ${tokenStorePath}`);
 }
 
-/**
- * Create the API client file
- */
 async function createClientFile(baseDir: string, config: IntegrationConfig): Promise<void> {
   const tokenImport = config.authType === "oauth2"
     ? `import { getAccessToken } from "./token-store.ts";`
@@ -496,22 +481,23 @@ export async function searchItems(query: string): Promise<unknown[]> {
 }
 
 function getToolInputSchema(toolFile: string): string {
-  if (toolFile === "list-items.ts") {
-    return `limit: z.number().optional().describe("Maximum number of items to return"),
+  switch (toolFile) {
+    case "list-items.ts":
+      return `limit: z.number().optional().describe("Maximum number of items to return"),
     offset: z.number().optional().describe("Number of items to skip"),`;
+    case "get-item.ts":
+      return `id: z.string().describe("The ID of the item to retrieve"),`;
+    case "search.ts":
+      return `query: z.string().describe("Search query"),`;
+    default:
+      return "";
   }
-  if (toolFile === "get-item.ts") {
-    return `id: z.string().describe("The ID of the item to retrieve"),`;
-  }
-  if (toolFile === "search.ts") {
-    return `query: z.string().describe("Search query"),`;
-  }
-  return "";
 }
 
 function getToolExecuteBody(toolFile: string): string {
-  if (toolFile === "list-items.ts") {
-    return `const items = await listItems({
+  switch (toolFile) {
+    case "list-items.ts":
+      return `const items = await listItems({
         limit: input.limit,
         offset: input.offset,
       });
@@ -520,28 +506,24 @@ function getToolExecuteBody(toolFile: string): string {
         items,
         count: items.length,
       };`;
-  }
-  if (toolFile === "get-item.ts") {
-    return `const item = await getItem(input.id);
+    case "get-item.ts":
+      return `const item = await getItem(input.id);
       return {
         success: true,
         item,
       };`;
-  }
-  if (toolFile === "search.ts") {
-    return `const results = await searchItems(input.query);
+    case "search.ts":
+      return `const results = await searchItems(input.query);
       return {
         success: true,
         results,
         count: results.length,
       };`;
+    default:
+      return "";
   }
-  return "";
 }
 
-/**
- * Create tool skeleton files
- */
 async function createToolSkeletons(baseDir: string, config: IntegrationConfig): Promise<void> {
   const tools = [
     {
@@ -599,9 +581,6 @@ export default tool({
   }
 }
 
-/**
- * Create .env.example entry
- */
 async function createEnvExample(projectDir: string, config: IntegrationConfig): Promise<void> {
   const envExamplePath = join(projectDir, ".env.example");
 
@@ -628,9 +607,6 @@ ${config.envVarPrefix}_API_KEY=your_api_key
   }
 }
 
-/**
- * Ensure directory exists
- */
 async function ensureDir(path: string): Promise<void> {
   try {
     await fs.mkdir(path, { recursive: true });

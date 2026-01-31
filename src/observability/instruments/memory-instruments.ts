@@ -1,12 +1,16 @@
 import type { Meter, ObservableGauge, ObservableResult } from "@opentelemetry/api";
+import { getV8FlagsEnv } from "#veryfront/config/env.ts";
 import { getMemoryUsage } from "../metrics/config.ts";
 import type { MetricsConfig } from "../metrics/types.ts";
-import { getV8FlagsEnv } from "#veryfront/config/env.ts";
 
-const V8_HEAP_LIMIT_MB = (() => {
+let _v8HeapLimitMB: number | undefined;
+function getV8HeapLimitMB(): number {
+  if (_v8HeapLimitMB !== undefined) return _v8HeapLimitMB;
   const match = getV8FlagsEnv().match(/--max-old-space-size=(\d+)/);
-  return match?.[1] ? parseInt(match[1], 10) : 5120; // Default from values.yaml
-})();
+  const value = match?.[1];
+  _v8HeapLimitMB = value ? parseInt(value, 10) : 5120; // Default from values.yaml
+  return _v8HeapLimitMB;
+}
 
 export interface MemoryInstruments {
   memoryUsageGauge: ObservableGauge | null;
@@ -34,25 +38,19 @@ export function createMemoryInstruments(meter: Meter, config: MetricsConfig): Me
     description: "Memory usage (RSS)",
     unit: "bytes",
   });
-  addMemoryCallback(memoryUsageGauge, (result, memoryUsage) => {
-    result.observe(memoryUsage.rss);
-  });
+  addMemoryCallback(memoryUsageGauge, (result, memoryUsage) => result.observe(memoryUsage.rss));
 
   const heapUsageGauge = meter.createObservableGauge(`${config.prefix}.memory.heap`, {
     description: "V8 heap memory used",
     unit: "bytes",
   });
-  addMemoryCallback(heapUsageGauge, (result, memoryUsage) => {
-    result.observe(memoryUsage.heapUsed);
-  });
+  addMemoryCallback(heapUsageGauge, (result, memoryUsage) => result.observe(memoryUsage.heapUsed));
 
   const heapTotalGauge = meter.createObservableGauge(`${config.prefix}.memory.heap_total`, {
     description: "V8 heap memory allocated",
     unit: "bytes",
   });
-  addMemoryCallback(heapTotalGauge, (result, memoryUsage) => {
-    result.observe(memoryUsage.heapTotal);
-  });
+  addMemoryCallback(heapTotalGauge, (result, memoryUsage) => result.observe(memoryUsage.heapTotal));
 
   // Heap utilization as percentage of configured limit
   // This is the key metric for autoscaling decisions
@@ -62,7 +60,7 @@ export function createMemoryInstruments(meter: Meter, config: MetricsConfig): Me
   });
   addMemoryCallback(heapPercentGauge, (result, memoryUsage) => {
     const heapUsedMB = memoryUsage.heapUsed / (1024 * 1024);
-    const percent = (heapUsedMB / V8_HEAP_LIMIT_MB) * 100;
+    const percent = (heapUsedMB / getV8HeapLimitMB()) * 100;
     result.observe(Math.round(percent * 100) / 100);
   });
 

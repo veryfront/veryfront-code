@@ -23,13 +23,12 @@ describe("parseTargetFlag", () => {
 
   it("should parse all targets", () => {
     const targets = parseTargetFlag("all");
-    assertEquals(targets.includes("cursor"), true);
-    assertEquals(targets.includes("claude-code"), true);
-    assertEquals(targets.includes("skill"), true);
-    assertEquals(targets.includes("copilot"), true);
-    assertEquals(targets.includes("windsurf"), true);
-    assertEquals(targets.includes("agents"), true);
-    assertEquals(targets.length, 6);
+    const expected = ["cursor", "claude-code", "skill", "copilot", "windsurf", "agents"];
+
+    for (const target of expected) {
+      assertEquals(targets.includes(target), true);
+    }
+    assertEquals(targets.length, expected.length);
   });
 
   it("should handle whitespace", () => {
@@ -57,7 +56,7 @@ describe("parseTargetFlag", () => {
 });
 
 describe("installTargets", () => {
-  let tempDir: string;
+  let tempDir = "";
 
   beforeEach(async () => {
     tempDir = await makeTempDir();
@@ -87,9 +86,7 @@ describe("installTargets", () => {
 
   it("should install copilot with nested directory", async () => {
     await installTargets(["copilot"], { cwd: tempDir, force: true });
-    const content = await readTextFile(
-      `${tempDir}/.github/copilot-instructions.md`,
-    );
+    const content = await readTextFile(`${tempDir}/.github/copilot-instructions.md`);
     assertEquals(content.includes("Veryfront"), true);
   });
 
@@ -106,10 +103,7 @@ describe("installTargets", () => {
   });
 
   it("should install multiple targets", async () => {
-    await installTargets(["cursor", "claude-code", "skill"], {
-      cwd: tempDir,
-      force: true,
-    });
+    await installTargets(["cursor", "claude-code", "skill"], { cwd: tempDir, force: true });
     assertEquals(await exists(`${tempDir}/.cursorrules`), true);
     assertEquals(await exists(`${tempDir}/.claude/CLAUDE.md`), true);
     assertEquals(await exists(`${tempDir}/SKILL.md`), true);
@@ -130,16 +124,10 @@ describe("installTargets", () => {
   });
 
   it("should throw for empty targets", async () => {
-    await assertRejects(
-      () => installTargets([], { cwd: tempDir }),
-      Error,
-    );
+    await assertRejects(() => installTargets([], { cwd: tempDir }), Error);
   });
 
   it("should throw for invalid targets", async () => {
-    await assertRejects(
-      () => installTargets(["invalid" as never], { cwd: tempDir }),
-      Error,
-    );
+    await assertRejects(() => installTargets(["invalid" as never], { cwd: tempDir }), Error);
   });
 });

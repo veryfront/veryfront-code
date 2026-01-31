@@ -125,24 +125,14 @@ export function memoryUsage(): {
   external: number;
 } {
   if (IS_DENO) {
-    const usage = Deno.memoryUsage();
-    return {
-      rss: usage.rss,
-      heapTotal: usage.heapTotal,
-      heapUsed: usage.heapUsed,
-      external: usage.external,
-    };
+    const { rss, heapTotal, heapUsed, external } = Deno.memoryUsage();
+    return { rss, heapTotal, heapUsed, external };
   }
 
   if (!hasNodeProcess) throw new Error("memoryUsage() is not supported in this runtime");
 
-  const usage = nodeProcess!.memoryUsage();
-  return {
-    rss: usage.rss,
-    heapTotal: usage.heapTotal,
-    heapUsed: usage.heapUsed,
-    external: usage.external || 0,
-  };
+  const { rss, heapTotal, heapUsed, external } = nodeProcess!.memoryUsage();
+  return { rss, heapTotal, heapUsed, external: external || 0 };
 }
 
 /**
@@ -172,18 +162,18 @@ export function getTerminalSize(): { columns: number; rows: number } {
 
   if (IS_DENO) {
     try {
-      const size = Deno.consoleSize();
-      return { columns: size.columns, rows: size.rows };
+      const { columns, rows } = Deno.consoleSize();
+      return { columns, rows };
     } catch {
       return defaultSize;
     }
   }
 
-  if (hasNodeProcess) {
-    const cols = nodeProcess!.stdout?.columns;
-    const rows = nodeProcess!.stdout?.rows;
-    if (cols && rows) return { columns: cols, rows };
-  }
+  if (!hasNodeProcess) return defaultSize;
+
+  const columns = nodeProcess!.stdout?.columns;
+  const rows = nodeProcess!.stdout?.rows;
+  if (columns && rows) return { columns, rows };
 
   return defaultSize;
 }
@@ -310,6 +300,7 @@ export function unrefTimer(timerId: ReturnType<typeof setInterval>): void {
     Deno.unrefTimer(timerId as number);
     return;
   }
+
   if (timerId && typeof timerId === "object" && "unref" in timerId) {
     (timerId as { unref: () => void }).unref();
   }
@@ -390,8 +381,8 @@ export async function writeStdoutAsync(data: Uint8Array): Promise<number> {
  * Returns null in environments where prompt is not available (e.g., Node.js ESM).
  */
 export function promptSync(message?: string): string | null {
-  if (typeof globalThis.prompt === "function") return globalThis.prompt(message ?? "") ?? null;
-  return null;
+  if (typeof globalThis.prompt !== "function") return null;
+  return globalThis.prompt(message ?? "") ?? null;
 }
 
 // ============================================================================
@@ -512,8 +503,8 @@ export async function runCommand(
     let stderr: string | undefined;
 
     if (capture) {
-      if (proc.stdout) stdout = await readStreamToString(proc.stdout);
-      if (proc.stderr) stderr = await readStreamToString(proc.stderr);
+      stdout = proc.stdout ? await readStreamToString(proc.stdout) : undefined;
+      stderr = proc.stderr ? await readStreamToString(proc.stderr) : undefined;
     }
 
     return { success: code === 0, code, stdout, stderr };
@@ -521,10 +512,7 @@ export async function runCommand(
 
   if (!hasNodeProcess) return { success: false, code: 1 };
 
-  const childProcess = await dynamicImport<typeof import("node:child_process")>(
-    "node:child_process",
-  );
-  const { spawn } = childProcess;
+  const { spawn } = await dynamicImport<typeof import("node:child_process")>("node:child_process");
 
   const nodeStdio: [
     "ignore" | "inherit" | "pipe",

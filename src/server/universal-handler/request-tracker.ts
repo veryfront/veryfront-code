@@ -43,15 +43,15 @@ class RequestTracker {
       if (this.inFlight.size === 0) return;
 
       const now = performance.now();
-      const requests = Array.from(this.inFlight.values()).map((r) => ({
-        requestId: r.requestId,
-        projectSlug: r.projectSlug,
-        path: r.path,
-        method: r.method,
-        elapsedMs: Math.round(now - r.startTime),
-      }));
-
-      requests.sort((a, b) => b.elapsedMs - a.elapsedMs);
+      const requests = Array.from(this.inFlight.values())
+        .map((r) => ({
+          requestId: r.requestId,
+          projectSlug: r.projectSlug,
+          path: r.path,
+          method: r.method,
+          elapsedMs: Math.round(now - r.startTime),
+        }))
+        .sort((a, b) => b.elapsedMs - a.elapsedMs);
 
       logger.info("[RequestTracker] In-flight requests status", {
         inFlightCount: this.inFlight.size,
@@ -99,13 +99,13 @@ class RequestTracker {
       });
 
       tracked.slowTimer = setTimeout(() => {
-        const elapsedMs = Math.round(performance.now() - startTime);
+        const verySlowElapsedMs = Math.round(performance.now() - startTime);
         logger.error("[RequestTracker] Very slow request - likely stuck", {
           requestId,
           projectSlug,
           path,
           method,
-          elapsedMs,
+          elapsedMs: verySlowElapsedMs,
           inFlightCount: this.inFlight.size,
         });
       }, VERY_SLOW_REQUEST_THRESHOLD_MS - SLOW_REQUEST_THRESHOLD_MS);
@@ -135,12 +135,10 @@ class RequestTracker {
     if (timedOut) this.totalTimedOut++;
     else this.totalCompleted++;
 
-    // Skip logging internal module requests entirely (too noisy)
     const isModuleRequest = tracked.path.startsWith("/_vf_modules/") ||
       tracked.path.startsWith("/_veryfront/");
 
     if (isModuleRequest) {
-      // Only log modules at debug level, and only if slow
       if (durationMs > 100) {
         logger.debug(`${tracked.method} ${tracked.path} ${statusCode} ${durationMs}ms`);
       }
@@ -166,12 +164,7 @@ class RequestTracker {
     return Array.from(this.inFlight.values());
   }
 
-  getStats(): {
-    inFlight: number;
-    total: number;
-    completed: number;
-    timedOut: number;
-  } {
+  getStats(): { inFlight: number; total: number; completed: number; timedOut: number } {
     return {
       inFlight: this.inFlight.size,
       total: this.totalRequests,
@@ -197,12 +190,13 @@ class RequestTracker {
       const elapsedMs = Date.now() - startTime;
 
       if (elapsedMs >= timeoutMs) {
+        const now = performance.now();
         const remainingRequests = Array.from(this.inFlight.values()).map((r) => ({
           requestId: r.requestId,
           projectSlug: r.projectSlug,
           path: r.path,
           method: r.method,
-          elapsedMs: Math.round(performance.now() - r.startTime),
+          elapsedMs: Math.round(now - r.startTime),
         }));
 
         logger.warn(

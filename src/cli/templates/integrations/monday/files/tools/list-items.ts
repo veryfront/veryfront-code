@@ -7,12 +7,7 @@ export default tool({
   description: "List items from a Monday.com board. Items are the rows in a board.",
   inputSchema: z.object({
     boardId: z.string().describe("The ID of the board to list items from"),
-    limit: z
-      .number()
-      .min(1)
-      .max(100)
-      .default(50)
-      .describe("Maximum number of items to return"),
+    limit: z.number().min(1).max(100).default(50).describe("Maximum number of items to return"),
     page: z.number().min(1).default(1).describe("Page number for pagination"),
   }),
   async execute({ boardId, limit, page }) {

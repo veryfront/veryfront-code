@@ -31,12 +31,12 @@ export const listS3ObjectsTool = tool({
       return {
         success: true,
         message: `Found ${count} object${count === 1 ? '' : 's'} in bucket "${bucket}"${prefixMessage}.`,
-        objects: objects.map((obj) => ({
-          key: obj.key,
-          size: obj.size,
-          lastModified: obj.lastModified?.toISOString(),
-          etag: obj.etag,
-          storageClass: obj.storageClass,
+        objects: objects.map(({ key, size, lastModified, etag, storageClass }) => ({
+          key,
+          size,
+          lastModified: lastModified?.toISOString(),
+          etag,
+          storageClass,
         })),
         count,
         bucket,

@@ -30,21 +30,24 @@ async function fetchToken(
   body: Record<string, string>,
   errorPrefix: string,
 ): Promise<any> {
-  const response = await fetch(provider.tokenUrl, buildTokenRequest(provider, body));
+  const response = await fetch(
+    provider.tokenUrl,
+    buildTokenRequest(provider, body),
+  );
 
-  if (response.ok) {
-    return response.json();
-  }
+  if (response.ok) return response.json();
 
   const error = await response.text();
   throw new Error(`${errorPrefix}: ${response.status} - ${error}`);
 }
 
 function toOAuthToken(data: any, fallbackRefreshToken?: string): OAuthToken {
+  const expiresIn = data.expires_in;
+
   return {
     accessToken: data.access_token,
     refreshToken: data.refresh_token ?? fallbackRefreshToken,
-    expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
+    expiresAt: expiresIn ? Date.now() + expiresIn * 1000 : undefined,
     tokenType: data.token_type ?? "Bearer",
     scope: data.scope,
   };
@@ -114,9 +117,8 @@ export async function getValidToken(
     ? token.expiresAt < Date.now() + 5 * 60 * 1000
     : false;
 
-  if (!isExpired || !token.refreshToken) {
-    return token.accessToken;
-  }
+  if (!isExpired) return token.accessToken;
+  if (!token.refreshToken) return token.accessToken;
 
   try {
     const newToken = await refreshAccessToken(provider, token.refreshToken);

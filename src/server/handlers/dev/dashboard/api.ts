@@ -143,8 +143,8 @@ function handleListTools(): Response {
     id,
     type: t.type,
     description: t.description,
-    schema: t.inputSchemaJson || null,
-    mcp: t.mcp || { enabled: true },
+    schema: t.inputSchemaJson ?? null,
+    mcp: t.mcp ?? { enabled: true },
   }));
   return jsonResponse({ tools: list, count: list.length });
 }
@@ -155,7 +155,7 @@ function handleListResources(): Response {
     id,
     pattern: r.pattern,
     description: r.description,
-    mcp: r.mcp || { enabled: true },
+    mcp: r.mcp ?? { enabled: true },
   }));
   return jsonResponse({ resources: list, count: list.length });
 }
@@ -189,9 +189,9 @@ function handleListAgents(): Response {
       model: agent.config.model,
       system,
       tools,
-      memory: cfg.memory || null,
-      streaming: cfg.streaming || false,
-      maxSteps: cfg.maxSteps || null,
+      memory: cfg.memory ?? null,
+      streaming: cfg.streaming ?? false,
+      maxSteps: cfg.maxSteps ?? null,
     };
   });
 
@@ -211,12 +211,12 @@ function handleListWorkflows(): Response {
 
 async function handleExecuteTool(req: Request): Promise<Response> {
   try {
-    const { toolId, args } = await req.json();
+    const { toolId, args } = (await req.json()) as { toolId?: string; args?: unknown };
     if (!toolId) return errorResponse("toolId is required", 400);
     if (!toolRegistry.get(toolId)) return errorResponse(`Tool not found: ${toolId}`, 404);
 
     const startTime = Date.now();
-    const result = await executeTool(toolId, args || {});
+    const result = await executeTool(toolId, (args as Record<string, unknown>) ?? {});
     return jsonResponse({ success: true, toolId, result, duration: Date.now() - startTime });
   } catch (error) {
     return errorResponse(getErrorMessage(error));
@@ -225,7 +225,7 @@ async function handleExecuteTool(req: Request): Promise<Response> {
 
 async function handleReadResource(req: Request): Promise<Response> {
   try {
-    const { uri } = await req.json();
+    const { uri } = (await req.json()) as { uri?: string };
     if (!uri) return errorResponse("uri is required", 400);
 
     const resource = resourceRegistry.findByPattern(uri);
@@ -249,10 +249,13 @@ async function handleReadResource(req: Request): Promise<Response> {
 
 async function handleRenderPrompt(req: Request): Promise<Response> {
   try {
-    const { promptId, variables } = await req.json();
+    const { promptId, variables } = (await req.json()) as {
+      promptId?: string;
+      variables?: Record<string, unknown>;
+    };
     if (!promptId) return errorResponse("promptId is required", 400);
 
-    const vars = variables || {};
+    const vars = variables ?? {};
     const content = await promptRegistry.getContent(promptId, vars);
     if (content === undefined) return errorResponse(`Prompt not found: ${promptId}`, 404);
 
@@ -279,7 +282,6 @@ function getDevWorkflowClient(): WorkflowClient {
     },
   });
 
-  // Register all workflows from the global registry
   for (const id of workflowRegistry.getAllIds()) {
     const definition = workflowRegistry.getDefinition(id);
     if (definition) devWorkflowClient.register(definition);
@@ -290,7 +292,7 @@ function getDevWorkflowClient(): WorkflowClient {
 
 async function handleStartWorkflow(req: Request): Promise<Response> {
   try {
-    const { workflowId, input } = await req.json();
+    const { workflowId, input } = (await req.json()) as { workflowId?: string; input?: unknown };
     if (!workflowId) return errorResponse("workflowId is required", 400);
     if (!workflowRegistry.has(workflowId)) {
       return errorResponse(`Workflow not found: ${workflowId}`, 404);
@@ -298,9 +300,9 @@ async function handleStartWorkflow(req: Request): Promise<Response> {
 
     const client = getDevWorkflowClient();
     const startTime = Date.now();
-    const handle = await client.start(workflowId, input || {});
+    const handle = await client.start(workflowId, (input as Record<string, unknown>) ?? {});
 
-    const timeoutMs = 30000; // 30 seconds timeout for dev testing
+    const timeoutMs = 30000;
     const result = await Promise.race([
       handle.result(),
       new Promise((_, reject) =>
@@ -314,10 +316,10 @@ async function handleStartWorkflow(req: Request): Promise<Response> {
       success: true,
       workflowId,
       runId: handle.runId,
-      status: run?.status || "completed",
+      status: run?.status ?? "completed",
       result,
       duration: Date.now() - startTime,
-      nodeStates: run?.nodeStates || {},
+      nodeStates: run?.nodeStates ?? {},
     });
   } catch (error) {
     const message = getErrorMessage(error);
@@ -344,7 +346,7 @@ function handleListHandlers(ctx: HandlerContext): Response {
   const handlers = registry.getHandlers().map((h) => ({
     name: h.metadata.name,
     priority: h.metadata.priority,
-    patterns: (h.metadata.patterns || []).map((p) => ({
+    patterns: (h.metadata.patterns ?? []).map((p) => ({
       ...p,
       pattern: p.pattern instanceof RegExp ? p.pattern.source : p.pattern,
     })),
@@ -367,8 +369,9 @@ async function handleListFiles(req: Request, ctx: HandlerContext): Promise<Respo
   if (!adapter?.fs) return errorResponse("No file adapter available", 500);
   if (!projectDir) return errorResponse("No project directory configured", 500);
 
-  const relativePath = new URL(req.url).searchParams.get("path") || "";
+  const relativePath = new URL(req.url).searchParams.get("path") ?? "";
   if (relativePath.includes("..")) return errorResponse("Invalid path", 400);
+
   const fullPath = relativePath ? `${projectDir}/${relativePath}` : projectDir;
 
   try {
@@ -401,13 +404,13 @@ async function handleReadFileContent(req: Request, ctx: HandlerContext): Promise
   if (!adapter?.fs) return errorResponse("No file adapter available", 500);
   if (!projectDir) return errorResponse("No project directory configured", 500);
 
-  const relativePath = new URL(req.url).searchParams.get("path") || "";
+  const relativePath = new URL(req.url).searchParams.get("path") ?? "";
   if (!relativePath) return errorResponse("path parameter is required", 400);
   if (relativePath.includes("..")) return errorResponse("Invalid path", 400);
 
   try {
     const content = await adapter.fs.readFile(`${projectDir}/${relativePath}`);
-    const extension = relativePath.split(".").pop() || "";
+    const extension = relativePath.split(".").pop() ?? "";
 
     if (!TEXT_EXTENSIONS.has(extension.toLowerCase())) {
       return jsonResponse({
@@ -441,11 +444,9 @@ function handleGetInfrastructure(): Response {
     configured: providers.some((p) => p.name === name),
   }));
 
-  const workflowNodeTypes = ["step", "parallel", "branch", "wait"];
-
   return jsonResponse({
     providers: allProviders,
-    workflowNodeTypes,
+    workflowNodeTypes: ["step", "parallel", "branch", "wait"],
     timestamp: new Date().toISOString(),
   });
 }
@@ -505,7 +506,7 @@ function getStageDescription(name: string): string {
     RESOLVE_BARE: "npm → esm.sh URLs",
     FINALIZE: "Final cleanup",
   };
-  return descriptions[name] || name;
+  return descriptions[name] ?? name;
 }
 
 function getCategoryFromCode(code: string): string {
@@ -533,7 +534,7 @@ function handleGetErrors(): Response {
   }));
 
   const categories = errors.reduce<Record<string, number>>((acc, err) => {
-    acc[err.category] = (acc[err.category] || 0) + 1;
+    acc[err.category] = (acc[err.category] ?? 0) + 1;
     return acc;
   }, {});
 
@@ -574,8 +575,8 @@ function handleLiveLogs(req: Request): Response {
   const buffer = getLogBuffer();
   const entries = buffer.query({
     level: level as import("../../../../cli/mcp/log-buffer.ts").LogLevel | undefined,
-    source: source ?? undefined,
-    pattern: pattern ?? undefined,
+    source,
+    pattern,
     limit: limit ? parseInt(limit, 10) : undefined,
     since: since ? parseInt(since, 10) : undefined,
   });
@@ -590,7 +591,7 @@ function handleLiveLogs(req: Request): Response {
 
 async function handleHmrTrigger(req: Request): Promise<Response> {
   try {
-    const body = await req.json().catch(() => ({})) as { path?: string };
+    const body = (await req.json().catch(() => ({}))) as { path?: string };
     const changedPaths = body.path ? [body.path] : undefined;
 
     const listenerCount = ReloadNotifier.getListenerCount();
@@ -633,7 +634,7 @@ function handleGetConfig(ctx: HandlerContext): Response {
   return jsonResponse({
     featureFlags,
     environment: safeEnvVars,
-    projectDir: ctx.projectDir || "(unknown)",
+    projectDir: ctx.projectDir ?? "(unknown)",
     isLocalDev: ctx.requestContext?.isLocalDev ?? false,
     timestamp: new Date().toISOString(),
   });

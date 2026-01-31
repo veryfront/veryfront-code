@@ -51,7 +51,7 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
     const entry = map.get(key);
     if (!entry) return undefined;
 
-    if (entry.expiry && Date.now() > entry.expiry) {
+    if (entry.expiry != null && Date.now() > entry.expiry) {
       map.delete(key);
       return undefined;
     }
@@ -59,31 +59,26 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
     return entry.value;
   }
 
-  getBundleMetadata(key: string): Promise<BundleMetadata | undefined> {
-    return Promise.resolve(this.getIfNotExpired(this.metadata, key));
+  async getBundleMetadata(key: string): Promise<BundleMetadata | undefined> {
+    return this.getIfNotExpired(this.metadata, key);
   }
 
-  setBundleMetadata(key: string, metadata: BundleMetadata, ttlMs?: number): Promise<void> {
-    const expiry = ttlMs ? Date.now() + ttlMs : undefined;
+  async setBundleMetadata(key: string, metadata: BundleMetadata, ttlMs?: number): Promise<void> {
+    const expiry = ttlMs != null ? Date.now() + ttlMs : undefined;
     this.metadata.set(key, { value: metadata, expiry });
 
-    let keys = this.sourceIndex.get(metadata.source);
-    if (!keys) {
-      keys = new Set<string>();
-      this.sourceIndex.set(metadata.source, keys);
-    }
+    const keys = this.sourceIndex.get(metadata.source) ?? new Set<string>();
     keys.add(key);
-    return Promise.resolve();
+    this.sourceIndex.set(metadata.source, keys);
   }
 
-  getBundleCode(hash: string): Promise<BundleCode | undefined> {
-    return Promise.resolve(this.getIfNotExpired(this.code, hash));
+  async getBundleCode(hash: string): Promise<BundleCode | undefined> {
+    return this.getIfNotExpired(this.code, hash);
   }
 
-  setBundleCode(hash: string, code: BundleCode, ttlMs?: number): Promise<void> {
-    const expiry = ttlMs ? Date.now() + ttlMs : undefined;
+  async setBundleCode(hash: string, code: BundleCode, ttlMs?: number): Promise<void> {
+    const expiry = ttlMs != null ? Date.now() + ttlMs : undefined;
     this.code.set(hash, { value: code, expiry });
-    return Promise.resolve();
   }
 
   async deleteBundle(key: string): Promise<void> {
@@ -112,18 +107,17 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
     return keysArray.length;
   }
 
-  clear(): Promise<void> {
+  async clear(): Promise<void> {
     this.metadata.clear();
     this.code.clear();
     this.sourceIndex.clear();
-    return Promise.resolve();
   }
 
-  isAvailable(): Promise<boolean> {
-    return Promise.resolve(true);
+  async isAvailable(): Promise<boolean> {
+    return true;
   }
 
-  getStats(): Promise<{
+  async getStats(): Promise<{
     totalBundles: number;
     totalSize: number;
     oldestBundle?: number;
@@ -143,12 +137,12 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
         : Math.max(newestBundle, value.compiledAt);
     }
 
-    return Promise.resolve({
+    return {
       totalBundles: this.metadata.size,
       totalSize,
       oldestBundle,
       newestBundle,
-    });
+    };
   }
 }
 

@@ -84,11 +84,7 @@ export class TemporalAdapter implements WorkflowBackend {
     throw new Error("TemporalAdapter.getPendingApprovals not implemented");
   }
 
-  updateApproval(
-    _runId: string,
-    _approvalId: string,
-    _decision: ApprovalDecision,
-  ): Promise<void> {
+  updateApproval(_runId: string, _approvalId: string, _decision: ApprovalDecision): Promise<void> {
     throw new Error("TemporalAdapter.updateApproval not implemented");
   }
 

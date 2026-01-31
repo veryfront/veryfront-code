@@ -1,6 +1,5 @@
 export function escapeHTML(str: string): string {
-  if (str == null) return "";
-  return String(str)
+  return String(str ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -12,6 +11,6 @@ export const escapeHtml = escapeHTML;
 
 export function buildAttributes(attrs: Record<string, string>): string {
   return Object.entries(attrs)
-    .map(([key, value]) => `${key}="${escapeHTML(String(value))}"`)
+    .map(([key, value]) => `${key}="${escapeHTML(value)}"`)
     .join(" ");
 }

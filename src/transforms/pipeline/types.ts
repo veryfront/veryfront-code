@@ -1,4 +1,4 @@
-/**
+/****
  * Transform pipeline types.
  *
  * Defines the plugin-based architecture for ESM transforms.

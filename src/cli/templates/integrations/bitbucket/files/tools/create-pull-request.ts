@@ -33,7 +33,6 @@ export default tool({
     },
     context,
   ) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = context?.userId ?? "current-user";
 
     try {
@@ -69,6 +68,7 @@ export default tool({
           connectUrl: "/api/auth/bitbucket",
         };
       }
+
       throw error;
     }
   },

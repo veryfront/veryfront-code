@@ -21,14 +21,12 @@ function getProps<T>(result: DataResult): T {
 describe("DataFetcher", () => {
   describe("constructor", () => {
     it("should create instance without adapter", () => {
-      const fetcher = new DataFetcher();
-      assertExists(fetcher);
+      assertExists(new DataFetcher());
     });
 
     it("should create instance with adapter", () => {
       const mockAdapter = { env: { get: () => undefined } } as any;
-      const fetcher = new DataFetcher(mockAdapter);
-      assertExists(fetcher);
+      assertExists(new DataFetcher(mockAdapter));
     });
   });
 
@@ -57,8 +55,7 @@ describe("DataFetcher", () => {
           "development",
         );
 
-        const props = getProps<{ source: string }>(result);
-        assertEquals(props.source, "server");
+        assertEquals(getProps<{ source: string }>(result).source, "server");
       });
 
       it("should fallback to getStaticData if getServerData not defined", async () => {
@@ -74,8 +71,7 @@ describe("DataFetcher", () => {
           "development",
         );
 
-        const props = getProps<{ source: string }>(result);
-        assertEquals(props.source, "static");
+        assertEquals(getProps<{ source: string }>(result).source, "static");
       });
     });
 
@@ -94,8 +90,7 @@ describe("DataFetcher", () => {
           "production",
         );
 
-        const props = getProps<{ source: string }>(result);
-        assertEquals(props.source, "static");
+        assertEquals(getProps<{ source: string }>(result).source, "static");
       });
 
       it("should use getServerData if getStaticData not defined in production", async () => {
@@ -111,8 +106,7 @@ describe("DataFetcher", () => {
           "production",
         );
 
-        const props = getProps<{ source: string }>(result);
-        assertEquals(props.source, "server");
+        assertEquals(getProps<{ source: string }>(result).source, "server");
       });
     });
 
@@ -126,8 +120,7 @@ describe("DataFetcher", () => {
 
       const result = await fetcher.fetchData(pageModule, createContext());
 
-      const props = getProps<{ source: string }>(result);
-      assertEquals(props.source, "server");
+      assertEquals(getProps<{ source: string }>(result).source, "server");
     });
 
     it("should handle redirect from data function", async () => {
@@ -248,12 +241,10 @@ describe("DataFetcher", () => {
       });
 
       const devResult = await fetcher.fetchData(pageModule, context, "development");
-      const devProps = getProps<{ title: string }>(devResult);
-      assertEquals(devProps.title, "Server: 1");
+      assertEquals(getProps<{ title: string }>(devResult).title, "Server: 1");
 
       const prodResult = await fetcher.fetchData(pageModule, context, "production");
-      const prodProps = getProps<{ title: string }>(prodResult);
-      assertEquals(prodProps.title, "Static: 1");
+      assertEquals(getProps<{ title: string }>(prodResult).title, "Static: 1");
 
       const paths = await fetcher.getStaticPaths(pageModule);
       assertEquals(paths?.paths.length, 2);

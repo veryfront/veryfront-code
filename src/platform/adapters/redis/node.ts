@@ -1,17 +1,6 @@
-/**
- * Node.js Redis Adapter
- *
- * Adapter for the Node.js 'redis' package.
- *
- * @module platform/adapters/redis/node
- */
-
 import type { RedisAdapter } from "./interface.ts";
 import type { NodeRedisClient } from "./types.ts";
 
-/**
- * Adapter for Node.js 'redis' package
- */
 export class NodeRedisAdapter implements RedisAdapter {
   constructor(private client: NodeRedisClient) {}
 
@@ -86,8 +75,6 @@ export class NodeRedisAdapter implements RedisAdapter {
 
     if (!result) return [];
 
-    // Normalize output
-    // node-redis v4 returns: Array<{ name: string, messages: Array<{ id: string, message: Record<string, string> }> }>
     return result.map((stream) => ({
       key: stream.name,
       messages: stream.messages.map((msg) => ({ id: msg.id, data: msg.message })),
@@ -115,11 +102,11 @@ export class NodeRedisAdapter implements RedisAdapter {
     value: string,
     options?: { nx?: boolean; px?: number; ex?: number },
   ): Promise<string | null> {
-    const opts: { NX?: true; PX?: number; EX?: number } = {};
-
-    if (options?.nx) opts.NX = true;
-    if (options?.px) opts.PX = options.px;
-    if (options?.ex) opts.EX = options.ex;
+    const opts: { NX?: true; PX?: number; EX?: number } = {
+      NX: options?.nx ? true : undefined,
+      PX: options?.px,
+      EX: options?.ex,
+    };
 
     return this.client.set(key, value, opts);
   }
@@ -128,11 +115,11 @@ export class NodeRedisAdapter implements RedisAdapter {
     return this.client.get(key);
   }
 
-  async quit(): Promise<void> {
-    await this.client.quit();
+  quit(): Promise<void> {
+    return this.client.quit();
   }
 
-  async disconnect(): Promise<void> {
-    await this.client.disconnect();
+  disconnect(): Promise<void> {
+    return this.client.disconnect();
   }
 }

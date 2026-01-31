@@ -60,7 +60,8 @@ async function freshdeskFetch<T>(endpoint: string, options: RequestInit = {}): P
 
 function buildEndpoint(path: string, params: URLSearchParams): string {
   const queryString = params.toString();
-  return queryString ? `${path}?${queryString}` : path;
+  if (!queryString) return path;
+  return `${path}?${queryString}`;
 }
 
 export async function listTickets(
@@ -102,9 +103,10 @@ export async function createTicket(options: {
     email: options.email,
     priority: options.priority ?? 1,
     status: options.status ?? 2,
-    ...(options.type ? { type: options.type } : {}),
-    ...(options.tags ? { tags: options.tags } : {}),
   };
+
+  if (options.type) body.type = options.type;
+  if (options.tags) body.tags = options.tags;
 
   return freshdeskFetch<FreshdeskTicket>("/tickets", {
     method: "POST",
@@ -123,14 +125,14 @@ export async function updateTicket(
     tags?: string[];
   },
 ): Promise<FreshdeskTicket> {
-  const body: Record<string, unknown> = {
-    ...(updates.subject !== undefined ? { subject: updates.subject } : {}),
-    ...(updates.description !== undefined ? { description: updates.description } : {}),
-    ...(updates.status !== undefined ? { status: updates.status } : {}),
-    ...(updates.priority !== undefined ? { priority: updates.priority } : {}),
-    ...(updates.type !== undefined ? { type: updates.type } : {}),
-    ...(updates.tags !== undefined ? { tags: updates.tags } : {}),
-  };
+  const body: Record<string, unknown> = {};
+
+  if (updates.subject !== undefined) body.subject = updates.subject;
+  if (updates.description !== undefined) body.description = updates.description;
+  if (updates.status !== undefined) body.status = updates.status;
+  if (updates.priority !== undefined) body.priority = updates.priority;
+  if (updates.type !== undefined) body.type = updates.type;
+  if (updates.tags !== undefined) body.tags = updates.tags;
 
   return freshdeskFetch<FreshdeskTicket>(`/tickets/${ticketId}`, {
     method: "PUT",

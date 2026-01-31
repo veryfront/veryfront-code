@@ -4,7 +4,6 @@ import { join } from "@veryfront/compat/path";
 import { describe, it } from "@veryfront/testing/bdd";
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-import { isDeno } from "../../../src/platform/compat/runtime.ts";
 
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
 // See: https://github.com/facebook/react/issues/24669
@@ -17,7 +16,6 @@ describe(
   () => {
     it("nested layout wraps page content", async () => {
       await withTestContext("tsx-layout-wrap", async (context) => {
-        // Remove default app directory to use Pages Router
         await remove(join(context.projectDir, "app"), { recursive: true });
 
         const pages = join(context.projectDir, "pages", "blog");
@@ -47,6 +45,7 @@ describe(
           projectDir: context.projectDir,
           mode: "development",
         });
+
         const result = await renderer.renderPage("blog/index");
         assertStringIncludes(result.html, 'id="root-layout"');
         assertStringIncludes(result.html, 'id="blog-main"');

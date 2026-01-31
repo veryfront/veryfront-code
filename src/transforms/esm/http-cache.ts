@@ -46,24 +46,21 @@ const BATCH_FETCH_CHUNK_SIZE = 100;
  * Returns the decompressed string, or null if decompression fails.
  */
 function decodeGzipContent(content: string): string | null {
-  let base64Data: string;
-  if (content.startsWith("gz:")) {
-    base64Data = content.slice(3);
-  } else if (content.startsWith("gzip:")) {
-    base64Data = content.slice(5);
-  } else {
-    return null;
-  }
+  const base64Data = content.startsWith("gz:")
+    ? content.slice(3)
+    : content.startsWith("gzip:")
+    ? content.slice(5)
+    : null;
+
+  if (!base64Data) return null;
 
   try {
-    // Decode base64 to binary
     const binaryString = atob(base64Data);
     const bytes = new Uint8Array(binaryString.length);
     for (let i = 0; i < binaryString.length; i++) {
       bytes[i] = binaryString.charCodeAt(i);
     }
 
-    // Decompress gzip
     const decompressed = gunzipSync(bytes);
     return new TextDecoder().decode(decompressed);
   } catch (error) {
@@ -82,7 +79,6 @@ function looksLikeHtmlNotJs(content: string): boolean {
     trimmed.startsWith("<!DOCTYPE") ||
     trimmed.startsWith("<html") ||
     trimmed.startsWith("<HTML") ||
-    // esm.sh error pages often have this pattern
     /<title>ESM[^<]*<\/title>/i.test(content.slice(0, 500))
   );
 }
@@ -92,14 +88,12 @@ function looksLikeHtmlNotJs(content: string): boolean {
  * Returns [decodedContent, wasGzipped] tuple.
  */
 function maybeDecodeGzip(content: string): [string, boolean] {
-  if (content.startsWith("gz:") || content.startsWith("gzip:")) {
-    const decoded = decodeGzipContent(content);
-    if (decoded) {
-      return [decoded, true];
-    }
-    // Decoding failed, return original (will be handled as invalid)
-    return [content, false];
-  }
+  if (!content.startsWith("gz:") && !content.startsWith("gzip:")) return [content, false];
+
+  const decoded = decodeGzipContent(content);
+  if (decoded) return [decoded, true];
+
+  // Decoding failed, return original (will be handled as invalid)
   return [content, false];
 }
 
@@ -120,7 +114,8 @@ const getDistributedCache = createDistributedCacheAccessor(
  * - hasIncompatibleFilePaths(): Rejects paths from different environments
  * - gzip detection: Handles corrupted content
  */
-const distributedKey = (prefix: string, hash: string | number) => `${VERSION}:${prefix}:${hash}`;
+const distributedKey = (prefix: string, hash: string | number): string =>
+  `${VERSION}:${prefix}:${hash}`;
 
 /**
  * Check if cached HTTP bundle code has file:// paths from a different environment.
@@ -135,26 +130,22 @@ const distributedKey = (prefix: string, hash: string | number) => `${VERSION}:${
  * the 'g' flag would cause interleaved exec() calls to skip paths.
  */
 function hasIncompatibleFilePaths(code: string, localCacheDir: string): boolean {
-  // Create a NEW regex for each call to avoid race conditions with concurrent calls.
-  // Global regexes maintain lastIndex state that can interleave between concurrent calls.
   const filePathPattern = /file:\/\/([^"'\s]+)/gi;
 
-  // Extract all file:// paths
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = filePathPattern.exec(code)) !== null) {
-    const path = match[1] as string;
-    // Check if this path is for an HTTP bundle (veryfront-http-bundle directory)
-    if (path.includes("veryfront-http-bundle")) {
-      // The path should start with our local cache directory
-      if (!path.startsWith(localCacheDir)) {
-        logger.debug("[HTTP-CACHE] Bundle has incompatible file path from different environment", {
-          path,
-          expectedDir: localCacheDir,
-        });
-        return true;
-      }
+    const path = match[1]!;
+    if (!path.includes("veryfront-http-bundle")) continue;
+
+    if (!path.startsWith(localCacheDir)) {
+      logger.debug("[HTTP-CACHE] Bundle has incompatible file path from different environment", {
+        path,
+        expectedDir: localCacheDir,
+      });
+      return true;
     }
   }
+
   return false;
 }
 
@@ -165,14 +156,15 @@ function extractBundleDeps(code: string): Array<{ path: string; hash: string }> 
   const depPattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-(\d+)\.mjs)/gi;
   const deps: Array<{ path: string; hash: string }> = [];
   const seen = new Set<string>();
-  let match;
+
+  let match: RegExpExecArray | null;
   while ((match = depPattern.exec(code)) !== null) {
     const hash = match[2]!;
-    if (!seen.has(hash)) {
-      seen.add(hash);
-      deps.push({ path: match[1]!, hash });
-    }
+    if (seen.has(hash)) continue;
+    seen.add(hash);
+    deps.push({ path: match[1]!, hash });
   }
+
   return deps;
 }
 
@@ -201,7 +193,6 @@ async function validateBundleDepsExist(
   const absoluteCacheDir = ensureAbsoluteDir(cacheDir);
   const fs = createFileSystem();
 
-  // Track all seen hashes to avoid duplicate work
   const seen = new Set<string>();
   const pending = [...deps];
 
@@ -209,11 +200,8 @@ async function validateBundleDepsExist(
     const batch = pending.splice(0, pending.length).filter((d) => !seen.has(d.hash));
     if (batch.length === 0) break;
 
-    for (const { hash } of batch) {
-      seen.add(hash);
-    }
+    for (const { hash } of batch) seen.add(hash);
 
-    // Check which bundles exist locally
     const localChecks = await Promise.all(
       batch.map(async ({ hash }) => ({
         hash,
@@ -223,17 +211,15 @@ async function validateBundleDepsExist(
 
     const missingDeps = localChecks.filter((c) => !c.exists);
     if (missingDeps.length === 0) {
-      // All in this batch exist locally, check for transitive deps
       for (const { hash } of batch) {
         try {
           const code = await fs.readTextFile(join(absoluteCacheDir, `http-${hash}.mjs`));
-          const transitiveDeps = extractBundleDeps(code);
-          for (const dep of transitiveDeps) {
-            if (!seen.has(dep.hash)) {
-              pending.push(dep);
-            }
+          for (const dep of extractBundleDeps(code)) {
+            if (!seen.has(dep.hash)) pending.push(dep);
           }
-        } catch { /* ignore read errors */ }
+        } catch {
+          /* ignore read errors */
+        }
       }
       continue;
     }
@@ -246,7 +232,6 @@ async function validateBundleDepsExist(
       return false;
     }
 
-    // Recover missing deps from distributed cache to local disk
     logger.debug("[HTTP-CACHE] Recovering missing deps from Redis", {
       count: missingDeps.length,
       hashes: missingDeps.map((d) => d.hash),
@@ -259,31 +244,28 @@ async function validateBundleDepsExist(
         return false;
       }
 
-      // Decode gzip if needed
       const [code, wasGzipped] = maybeDecodeGzip(rawCode);
       if (code.startsWith("gz:") || code.startsWith("gzip:")) {
         logger.debug("[HTTP-CACHE] Failed to decode gzip dep, rejecting cache", { hash });
         return false;
       }
 
-      // Check for incompatible file paths
       if (hasIncompatibleFilePaths(code, absoluteCacheDir)) {
         logger.debug("[HTTP-CACHE] Dep has incompatible paths, rejecting cache", { hash });
         return false;
       }
 
-      // Write the recovered dep to disk
       const canonicalPath = join(absoluteCacheDir, `http-${hash}.mjs`);
       try {
         await fs.mkdir(absoluteCacheDir, { recursive: true });
         await fs.writeTextFile(canonicalPath, code);
-        if (wasGzipped) {
-          logger.debug("[HTTP-CACHE] Recovered dep from Redis (gzip decoded)", { hash });
-        } else {
-          logger.debug("[HTTP-CACHE] Recovered dep from Redis", { hash });
-        }
+        logger.debug(
+          wasGzipped
+            ? "[HTTP-CACHE] Recovered dep from Redis (gzip decoded)"
+            : "[HTTP-CACHE] Recovered dep from Redis",
+          { hash },
+        );
 
-        // Update LRU cache
         const originalUrl = await distributed.get(distributedKey("hash", hash));
         if (originalUrl) {
           const normalizedUrl = normalizeHttpUrl(originalUrl);
@@ -291,12 +273,8 @@ async function validateBundleDepsExist(
           getCachedPaths().set(cacheKey, canonicalPath);
         }
 
-        // Queue transitive deps for recovery
-        const transitiveDeps = extractBundleDeps(code);
-        for (const dep of transitiveDeps) {
-          if (!seen.has(dep.hash)) {
-            pending.push(dep);
-          }
+        for (const dep of extractBundleDeps(code)) {
+          if (!seen.has(dep.hash)) pending.push(dep);
         }
       } catch (error) {
         logger.error("[HTTP-CACHE] Failed to write recovered dep", { hash, error });
@@ -378,12 +356,14 @@ export function __injectCachesForTests(
     injectedLastDistributedRefresh = null;
     return;
   }
+
   if (caches.cachedPaths !== undefined) injectedCachedPaths = caches.cachedPaths;
   if (caches.processingStack !== undefined) injectedProcessingStack = caches.processingStack;
   if (caches.lastDistributedRefresh !== undefined) {
     injectedLastDistributedRefresh = caches.lastDistributedRefresh;
   }
 }
+
 const DISTRIBUTED_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 /** Per-request accumulator for bundle metadata during cacheHttpImportsToLocal. */
@@ -409,8 +389,6 @@ function isReactCoreUrl(url: string): boolean {
     const parsed = new URL(url);
     if (!parsed.hostname.includes("esm.sh")) return false;
 
-    // Extract package name from esm.sh pathname
-    // Formats: /react@version, /v150/react@version, /stable/react@version
     const pathname = parsed.pathname.replace(/^\/(v\d+|stable)\//, "/");
     const match = pathname.match(/^\/(react|react-dom)(@[\d.]+)?(?:\/|$|\?)/);
     return match !== null;
@@ -483,8 +461,6 @@ function resolveBareSpecifier(
   importMap: ImportMapConfig,
   reactVersion: string = REACT_VERSION,
 ): string {
-  // Use esm.sh URLs for React - NO npm: specifiers per plan requirements.
-  // All packages use external=react to share the same React instance.
   const reactMap = getReactImportMap(reactVersion);
   const reactMapped = reactMap[specifier];
   if (reactMapped) return reactMapped;
@@ -508,18 +484,11 @@ function resolveBareSpecifier(
 async function cacheHttpModule(url: string, options: CacheOptions): Promise<string | null> {
   const normalizedUrl = normalizeHttpUrl(url);
 
-  // For Deno runtime (not compiled): Skip React core modules (prevents multiple instances).
-  // All packages use external=react and import from the same esm.sh URL.
-  // For Node.js and compiled Deno binaries: Must cache React to disk because they can't
-  // dynamically import HTTP URLs at runtime.
-  // The cached esm.sh bundles are ESM-compatible and work with dynamic import().
   const canDoNativeHttpImports = isDeno && !isDenoCompiled;
   if (canDoNativeHttpImports && isReactCoreUrl(normalizedUrl)) {
     logger.debug(
       "[HTTP-CACHE] Skipping React core module for Deno runtime (prevents multiple instances)",
-      {
-        url: normalizedUrl,
-      },
+      { url: normalizedUrl },
     );
     return null;
   }
@@ -533,21 +502,19 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
     getCachedPaths().delete(cacheKey);
   }
 
-  const cachePath = join(cacheDir, `http-${simpleHash(normalizedUrl)}.mjs`);
+  const hash = simpleHash(normalizedUrl);
+  const cachePath = join(cacheDir, `http-${hash}.mjs`);
   const fs = createFileSystem();
 
   if (await exists(cachePath)) {
     getCachedPaths().set(cacheKey, cachePath);
 
-    // Refresh distributed cache TTL so bundles outlive transforms that reference them.
-    // Without this, bundles expire (24h) while SSR transforms (6h) are still valid.
     const distributed = await getDistributedCache();
     if (distributed) {
-      const hash = simpleHash(normalizedUrl);
       const hashStr = String(hash);
       const now = Date.now();
       const lastRefresh = getLastDistributedRefresh().get(hashStr);
-      const needsRefresh = !lastRefresh || (now - lastRefresh > DISTRIBUTED_REFRESH_INTERVAL_MS);
+      const needsRefresh = !lastRefresh || now - lastRefresh > DISTRIBUTED_REFRESH_INTERVAL_MS;
 
       if (needsRefresh) {
         try {
@@ -564,7 +531,6 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
           getLastDistributedRefresh().set(hashStr, now);
           logger.debug("[HTTP-CACHE] Refreshed distributed cache TTL", { hash });
 
-          // Co-refresh manifest TTL when any bundle is refreshed
           const manifestId = getManifestIdForHash(hashStr);
           if (manifestId) {
             refreshManifestTTL(manifestId).catch((err) => {
@@ -580,12 +546,11 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
       }
     }
 
-    // Record bundle metadata for manifest creation
-    const accumulatorAfterHit = bundleAccumulatorStorage.getStore();
-    if (accumulatorAfterHit) {
+    const accumulator = bundleAccumulatorStorage.getStore();
+    if (accumulator) {
       const stat = await createFileSystem().stat(cachePath);
-      accumulatorAfterHit.push({
-        hash: String(simpleHash(normalizedUrl)),
+      accumulator.push({
+        hash: String(hash),
         url: normalizedUrl,
         sizeBytes: stat?.size ?? 0,
       });
@@ -602,51 +567,34 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   }
 
   const distributed = await getDistributedCache();
-  const hash = simpleHash(normalizedUrl);
   if (distributed) {
     try {
-      // Use hash-based key instead of raw URL to comply with API cache key constraints.
-      // API cache keys only allow: alphanumeric, underscore, colon, dot, asterisk, hyphen, slash.
-      // URLs contain invalid characters like @, ?, =, &, etc.
       const rawCachedCode = await distributed.get(distributedKey("url", hash));
       if (rawCachedCode) {
-        // Try to decode gzip-compressed content if present
         const [cachedCode, wasGzipped] = maybeDecodeGzip(rawCachedCode);
 
-        // If it was gzip but decoding failed, the content is still gzip-prefixed
         if (cachedCode.startsWith("gz:") || cachedCode.startsWith("gzip:")) {
           logger.warn("[HTTP-CACHE] Failed to decode gzip content, will re-fetch", {
             url: normalizedUrl,
             hash,
             preview: cachedCode.substring(0, 50),
           });
-          // Fall through to network fetch
         } else if (hasIncompatibleFilePaths(cachedCode, cacheDir)) {
-          // Cached bundle has file:// paths from a different environment (e.g., /app/...)
-          // Skip the cached code and re-fetch from network to get correct local paths
           logger.warn("[HTTP-CACHE] Cached code has incompatible file paths, will re-fetch", {
             url: normalizedUrl,
             hash,
             localCacheDir: cacheDir,
           });
-          // Fall through to network fetch
         } else if (looksLikeHtmlNotJs(cachedCode)) {
-          // Cached content is HTML (likely an esm.sh error page), not JavaScript.
-          // This can happen if esm.sh returned an error page that was incorrectly cached.
-          // The cache version (HTTP_CACHE_VERSION) will invalidate on next deployment.
           logger.warn("[HTTP-CACHE] Cached content is HTML not JavaScript, will re-fetch", {
             url: normalizedUrl,
             hash,
             preview: cachedCode.slice(0, 100),
           });
-          // Fall through to network fetch
         } else {
-          // Validate that all file:// deps in the cached code exist or can be recovered.
-          // Without this check, a bundle loaded from Redis might reference child bundles
-          // whose TTLs expired, causing "Missing HTTP bundles after transform" errors.
           const depPattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
           const deps: Array<{ path: string; hash: string }> = [];
-          let depMatch;
+          let depMatch: RegExpExecArray | null;
           while ((depMatch = depPattern.exec(cachedCode)) !== null) {
             deps.push({ path: depMatch[1]!, hash: depMatch[2]! });
           }
@@ -659,32 +607,25 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
                 hash,
                 missingDeps: deps.length,
               });
-              // Fall through to network fetch, which will recursively fetch all deps
             } else {
-              // All deps exist or were recovered, use the cached code
-              if (wasGzipped) {
-                logger.debug("[HTTP-CACHE] Distributed cache hit (gzip decoded)", {
-                  url: normalizedUrl,
-                  hash,
-                });
-              } else {
-                logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl, hash });
-              }
+              logger.debug(
+                wasGzipped
+                  ? "[HTTP-CACHE] Distributed cache hit (gzip decoded)"
+                  : "[HTTP-CACHE] Distributed cache hit",
+                { url: normalizedUrl, hash },
+              );
               await fs.mkdir(cacheDir, { recursive: true });
               await fs.writeTextFile(cachePath, cachedCode);
               getCachedPaths().set(cacheKey, cachePath);
               return cachePath;
             }
           } else {
-            // No bundle deps, use the cached code directly
-            if (wasGzipped) {
-              logger.debug("[HTTP-CACHE] Distributed cache hit (gzip decoded, no deps)", {
-                url: normalizedUrl,
-                hash,
-              });
-            } else {
-              logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl, hash });
-            }
+            logger.debug(
+              wasGzipped
+                ? "[HTTP-CACHE] Distributed cache hit (gzip decoded, no deps)"
+                : "[HTTP-CACHE] Distributed cache hit",
+              { url: normalizedUrl, hash },
+            );
             await fs.mkdir(cacheDir, { recursive: true });
             await fs.writeTextFile(cachePath, cachedCode);
             getCachedPaths().set(cacheKey, cachePath);
@@ -727,16 +668,8 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
 
   let code = await response.text();
 
-  // Validate response is JavaScript, not an HTML error page.
-  // esm.sh can return HTTP 200 with HTML error pages when packages fail to build.
-  // These HTML pages would be cached and cause parse errors later.
-  const contentType = response.headers.get("content-type") || "";
-  const isHtmlContent = contentType.includes("text/html") ||
-    code.trimStart().startsWith("<!DOCTYPE") ||
-    code.trimStart().startsWith("<html") ||
-    code.trimStart().startsWith("<HTML") ||
-    // esm.sh error pages often have this pattern
-    /<title>ESM[^<]*<\/title>/i.test(code.slice(0, 500));
+  const contentType = response.headers.get("content-type") ?? "";
+  const isHtmlContent = contentType.includes("text/html") || looksLikeHtmlNotJs(code);
 
   if (isHtmlContent) {
     logger.error("[HTTP-CACHE] Received HTML instead of JavaScript, likely an esm.sh error page", {
@@ -760,18 +693,6 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   await fs.writeTextFile(cachePath, code);
 
   if (distributed) {
-    // Store code by hash-based keys to comply with API cache key constraints.
-    // API cache keys only allow: alphanumeric, underscore, colon, dot, asterisk, hyphen, slash.
-    // URLs contain invalid characters (@, ?, =, &, etc.) so we use hashes instead.
-    //
-    // Keys stored:
-    // - url:{hash}  - primary lookup key (replaces raw URL)
-    // - code:{hash} - direct code recovery by hash
-    // - hash:{hash} - URL mapping for debugging
-    //
-    // IMPORTANT: await the writes so other pods can recover this bundle immediately.
-    // Without await, a transform referencing this bundle could reach Redis before
-    // the bundle code does, causing ensureHttpBundlesExist on another pod to miss.
     try {
       await Promise.all([
         distributed.set(distributedKey("url", hash), code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
@@ -789,10 +710,9 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
 
   getCachedPaths().set(cacheKey, cachePath);
 
-  // Record bundle metadata for manifest creation
-  const accumulatorAfterWrite = bundleAccumulatorStorage.getStore();
-  if (accumulatorAfterWrite) {
-    accumulatorAfterWrite.push({
+  const accumulator = bundleAccumulatorStorage.getStore();
+  if (accumulator) {
+    accumulator.push({
       hash: String(hash),
       url: normalizedUrl,
       sizeBytes: code.length,
@@ -809,19 +729,12 @@ async function resolveSpecifier(
 ): Promise<string | null> {
   if (isExternalScheme(specifier) || isInternalBare(specifier)) return null;
 
-  // For Deno runtime (not compiled): Keep npm: specifiers as-is (Deno resolves them natively with auto-dedup)
-  // For other runtimes and compiled binaries: Convert to esm.sh and cache locally (or return bare specifier for React)
   if (specifier.startsWith("npm:")) {
     const canDoNativeNpmImports = isDeno && !isDenoCompiled;
-    if (canDoNativeNpmImports) {
-      return specifier; // Let Deno's native npm resolution handle it
-    }
-    const bareSpecifier = specifier.slice(4); // Remove "npm:" prefix
-    const esmShUrl = `https://esm.sh/${bareSpecifier}`;
-    const cached = await cacheHttpModule(esmShUrl, options);
-    // For React packages, cacheHttpModule returns null to prevent multiple instances.
-    // Return the bare specifier so transformReactToLocalPaths can resolve it to a local file:// path.
-    // For non-React packages, return the cached file:// path.
+    if (canDoNativeNpmImports) return specifier;
+
+    const bareSpecifier = specifier.slice(4);
+    const cached = await cacheHttpModule(`https://esm.sh/${bareSpecifier}`, options);
     return cached ? `file://${cached}` : bareSpecifier;
   }
 
@@ -831,15 +744,11 @@ async function resolveSpecifier(
   }
 
   if (isRelative(specifier)) {
-    // Skip /_vf_modules/ paths - these are framework module URLs served locally
     if (specifier.startsWith("/_vf_modules/")) return null;
-
     if (!baseUrl || !isHttpUrl(baseUrl)) return null;
 
     const resolved = new URL(specifier, baseUrl).toString();
 
-    // For Deno runtime (not compiled): Return the full esm.sh URL for React core (not cached, to prevent multiple instances).
-    // For Node.js and compiled Deno binaries: Cache React like other modules (they can't import HTTP URLs).
     const canDoNativeHttpImports = isDeno && !isDenoCompiled;
     if (canDoNativeHttpImports && isReactCoreUrl(resolved)) {
       return normalizeHttpUrl(resolved);
@@ -861,7 +770,7 @@ async function buildReplacements(
   options: CacheOptions,
 ): Promise<Map<string, string>> {
   const imports = await parseImports(code);
-  const uniqueSpecifiers = [...new Set(imports.filter((imp) => imp.n).map((imp) => imp.n!))];
+  const uniqueSpecifiers = [...new Set(imports.map((imp) => imp.n).filter(Boolean))] as string[];
 
   const results = await Promise.all(
     uniqueSpecifiers.map(async (specifier) => ({
@@ -903,12 +812,9 @@ export function cacheHttpImportsToLocal(
   code: string,
   options: CacheOptions,
 ): Promise<CacheHttpImportsResult> {
-  // Run inside AsyncLocalStorage so each concurrent call gets its own accumulator
   return bundleAccumulatorStorage.run([], async () => {
     const replacements = await buildReplacements(code, undefined, options);
-    if (replacements.size === 0) {
-      return { code };
-    }
+    if (replacements.size === 0) return { code };
 
     logger.debug("[HTTP-CACHE] Cached HTTP imports", { count: replacements.size });
 
@@ -917,23 +823,21 @@ export function cacheHttpImportsToLocal(
       (specifier) => replacements.get(specifier) ?? null,
     );
 
-    // Create and store bundle manifest if bundles were cached
     const bundles = bundleAccumulatorStorage.getStore();
-    if (bundles && bundles.length > 0) {
-      try {
-        const manifest = await createBundleManifest(bundles);
-        await storeBundleManifest(manifest);
-        logger.debug("[HTTP-CACHE] Created bundle manifest", {
-          manifestId: manifest.manifestId.slice(0, 12),
-          bundleCount: bundles.length,
-        });
-        return { code: rewrittenCode, bundleManifestId: manifest.manifestId };
-      } catch (error) {
-        logger.debug("[HTTP-CACHE] Failed to create bundle manifest", { error });
-      }
-    }
+    if (!bundles?.length) return { code: rewrittenCode };
 
-    return { code: rewrittenCode };
+    try {
+      const manifest = await createBundleManifest(bundles);
+      await storeBundleManifest(manifest);
+      logger.debug("[HTTP-CACHE] Created bundle manifest", {
+        manifestId: manifest.manifestId.slice(0, 12),
+        bundleCount: bundles.length,
+      });
+      return { code: rewrittenCode, bundleManifestId: manifest.manifestId };
+    } catch (error) {
+      logger.debug("[HTTP-CACHE] Failed to create bundle manifest", { error });
+      return { code: rewrittenCode };
+    }
   });
 }
 
@@ -980,40 +884,31 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
   const fs = createFileSystem();
 
   try {
-    // Strategy 1: Direct code lookup by hash (preferred - no URL needed)
     const rawCachedCode = await distributed.get(distributedKey("code", hash));
     if (rawCachedCode) {
-      // Try to decode gzip-compressed content if present
       const [cachedCode, wasGzipped] = maybeDecodeGzip(rawCachedCode);
 
-      // If it was gzip but decoding failed, the content is still gzip-prefixed
       if (cachedCode.startsWith("gz:") || cachedCode.startsWith("gzip:")) {
         logger.warn("[HTTP-CACHE] Failed to decode gzip content, will re-fetch", {
           hash,
           preview: cachedCode.substring(0, 50),
         });
-        // Fall through to Strategy 2 (URL re-fetch)
       } else if (hasIncompatibleFilePaths(cachedCode, absoluteCacheDir)) {
-        // Cached bundle has file:// paths from a different environment
         logger.warn("[HTTP-CACHE] Cached code has incompatible file paths, will re-fetch", {
           hash,
           localCacheDir: absoluteCacheDir,
         });
-        // Fall through to Strategy 2 (URL re-fetch)
       } else {
-        if (wasGzipped) {
-          logger.info("[HTTP-CACHE] Recovering bundle via direct code lookup (gzip decoded)", {
-            hash,
-          });
-        } else {
-          logger.info("[HTTP-CACHE] Recovering bundle via direct code lookup", { hash });
-        }
+        logger.info(
+          wasGzipped
+            ? "[HTTP-CACHE] Recovering bundle via direct code lookup (gzip decoded)"
+            : "[HTTP-CACHE] Recovering bundle via direct code lookup",
+          { hash },
+        );
+
         await fs.mkdir(absoluteCacheDir, { recursive: true });
         await fs.writeTextFile(cachePath, cachedCode);
 
-        // Update LRU cache so subsequent lookups find this recovered bundle.
-        // Without this, getCachedPaths().get() would miss and trigger redundant recovery attempts.
-        // We need to reconstruct the original URL from the hash to build the cache key.
         const originalUrl = await distributed.get(distributedKey("hash", hash));
         if (originalUrl) {
           const normalizedUrl = normalizeHttpUrl(originalUrl);
@@ -1024,20 +919,18 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
 
         logger.info("[HTTP-CACHE] Bundle recovery successful (direct)", { hash, path: cachePath });
 
-        // Proactively recover transitive deps so the import retry doesn't
-        // fail again with a different missing bundle.
         const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
         const transitiveDeps: Array<{ path: string; hash: string }> = [];
-        let m;
+        let m: RegExpExecArray | null;
         while ((m = BUNDLE_RE.exec(cachedCode)) !== null) {
           const tHash = m[2]!;
-          if (tHash !== hash) {
-            transitiveDeps.push({
-              path: join(absoluteCacheDir, `http-${tHash}.mjs`),
-              hash: tHash,
-            });
-          }
+          if (tHash === hash) continue;
+          transitiveDeps.push({
+            path: join(absoluteCacheDir, `http-${tHash}.mjs`),
+            hash: tHash,
+          });
         }
+
         if (transitiveDeps.length > 0) {
           logger.info("[HTTP-CACHE] Recovering transitive deps from last-resort recovery", {
             count: transitiveDeps.length,
@@ -1049,7 +942,6 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
       }
     }
 
-    // Strategy 2: URL lookup then re-fetch (fallback for bundles cached before code:{hash} was added)
     const originalUrl = await distributed.get(distributedKey("hash", hash));
     if (originalUrl) {
       logger.info("[HTTP-CACHE] Recovering bundle via URL re-fetch", { hash, originalUrl });
@@ -1092,18 +984,18 @@ export async function ensureHttpBundlesExist(
   const absoluteCacheDir = ensureAbsoluteDir(cacheDir);
 
   const extractBundleRefs = (code: string): Array<{ hash: string }> => {
-    // Create regex per call to avoid shared lastIndex state across concurrent calls
     const bundleRe = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
     const refs: Array<{ hash: string }> = [];
     const dedup = new Set<string>();
-    let match;
+
+    let match: RegExpExecArray | null;
     while ((match = bundleRe.exec(code)) !== null) {
-      const hash = match[2] as string;
-      if (!dedup.has(hash)) {
-        dedup.add(hash);
-        refs.push({ hash });
-      }
+      const hash = match[2]!;
+      if (dedup.has(hash)) continue;
+      dedup.add(hash);
+      refs.push({ hash });
     }
+
     return refs;
   };
 
@@ -1115,35 +1007,31 @@ export async function ensureHttpBundlesExist(
     const batch = pending.splice(0, pending.length).filter((b) => !seen.has(b.hash));
     if (batch.length === 0) break;
 
-    for (const item of batch) {
-      seen.add(item.hash);
-    }
+    for (const item of batch) seen.add(item.hash);
 
-    // Check which bundles exist locally using canonical paths derived from
-    // cacheDir + hash. Don't trust caller-provided paths — they may reference
-    // a different pod's absolute directory.
     const existenceChecks = await Promise.all(
-      batch.map(async ({ hash }) => ({
-        hash,
-        canonicalPath: join(absoluteCacheDir, `http-${hash}.mjs`),
-        exists: await exists(join(absoluteCacheDir, `http-${hash}.mjs`)),
-      })),
+      batch.map(async ({ hash }) => {
+        const canonicalPath = join(absoluteCacheDir, `http-${hash}.mjs`);
+        return {
+          hash,
+          canonicalPath,
+          exists: await exists(canonicalPath),
+        };
+      }),
     );
 
     const presentLocally = existenceChecks.filter((b) => b.exists);
     const missing = existenceChecks.filter((b) => !b.exists);
 
-    // Scan locally-present bundles for transitive deps that may be missing.
-    // A bundle can exist on this pod while its transitive dependency does not
-    // (e.g., Pod A created bundle X which imports bundle Y; Pod B has X from
-    // a previous transform but never created Y).
     for (const { canonicalPath } of presentLocally) {
       try {
         const code = await fs.readTextFile(canonicalPath);
         for (const ref of extractBundleRefs(code)) {
           if (!seen.has(ref.hash)) pending.push(ref);
         }
-      } catch { /* ignore read errors for dep scanning */ }
+      } catch {
+        /* ignore read errors for dep scanning */
+      }
     }
 
     if (missing.length === 0) continue;
@@ -1160,29 +1048,18 @@ export async function ensureHttpBundlesExist(
       continue;
     }
 
-    // Batch fetch from distributed cache with chunking to respect API limits
     const codeKeys = missing.map((m) => distributedKey("code", m.hash));
     const codes = new Map<string, string | null>();
 
     try {
-      // Chunk the keys to respect API batch size limit (max 100 per request)
       for (let i = 0; i < codeKeys.length; i += BATCH_FETCH_CHUNK_SIZE) {
         const chunk = codeKeys.slice(i, i + BATCH_FETCH_CHUNK_SIZE);
-        let chunkResults: Map<string, string | null>;
 
-        if (distributed.getBatch) {
-          chunkResults = await distributed.getBatch(chunk);
-        } else {
-          const results = await Promise.all(
-            chunk.map(async (key) => [key, await distributed.get(key)] as const),
-          );
-          chunkResults = new Map(results);
-        }
+        const chunkResults = distributed.getBatch ? await distributed.getBatch(chunk) : new Map(
+          await Promise.all(chunk.map(async (key) => [key, await distributed.get(key)] as const)),
+        );
 
-        // Merge chunk results into main map
-        for (const [key, value] of chunkResults) {
-          codes.set(key, value);
-        }
+        for (const [key, value] of chunkResults) codes.set(key, value);
       }
     } catch (error) {
       logger.error("[HTTP-CACHE] Batch fetch from distributed cache failed", { error });
@@ -1190,56 +1067,46 @@ export async function ensureHttpBundlesExist(
       continue;
     }
 
-    // Write fetched bundles to disk using canonical paths and scan for transitive deps
     await Promise.all(
       missing.map(async ({ hash, canonicalPath }) => {
         const rawCode = codes.get(distributedKey("code", hash));
         if (!rawCode) {
-          // Try single-bundle recovery as last resort
           const recovered = await recoverHttpBundleByHash(hash, absoluteCacheDir);
           if (!recovered) {
             failed.add(hash);
-          } else {
-            // Read the recovered bundle to scan for transitive deps
-            try {
-              const recoveredCode = await fs.readTextFile(canonicalPath);
-              for (const ref of extractBundleRefs(recoveredCode)) {
-                if (!seen.has(ref.hash)) pending.push(ref);
-              }
-            } catch { /* ignore read errors for dep scanning */ }
+            return;
+          }
+
+          try {
+            const recoveredCode = await fs.readTextFile(canonicalPath);
+            for (const ref of extractBundleRefs(recoveredCode)) {
+              if (!seen.has(ref.hash)) pending.push(ref);
+            }
+          } catch {
+            /* ignore read errors for dep scanning */
           }
           return;
         }
 
-        // Try to decode gzip-compressed content if present
         const [code, wasGzipped] = maybeDecodeGzip(rawCode);
 
-        // If it was gzip but decoding failed, the content is still gzip-prefixed
         if (code.startsWith("gz:") || code.startsWith("gzip:")) {
           logger.warn("[HTTP-CACHE] Failed to decode gzip content, trying single recovery", {
             hash,
             preview: code.substring(0, 50),
           });
           const recovered = await recoverHttpBundleByHash(hash, absoluteCacheDir);
-          if (!recovered) {
-            failed.add(hash);
-          }
+          if (!recovered) failed.add(hash);
           return;
         }
 
-        // Check for file:// paths from a different environment
         if (hasIncompatibleFilePaths(code, absoluteCacheDir)) {
           logger.warn(
             "[HTTP-CACHE] Batch-fetched code has incompatible file paths, trying single recovery",
-            {
-              hash,
-              localCacheDir: absoluteCacheDir,
-            },
+            { hash, localCacheDir: absoluteCacheDir },
           );
           const recovered = await recoverHttpBundleByHash(hash, absoluteCacheDir);
-          if (!recovered) {
-            failed.add(hash);
-          }
+          if (!recovered) failed.add(hash);
           return;
         }
 
@@ -1252,9 +1119,6 @@ export async function ensureHttpBundlesExist(
           await fs.writeTextFile(canonicalPath, code);
           logger.debug("[HTTP-CACHE] Wrote bundle to disk", { hash, path: canonicalPath });
 
-          // Update LRU cache so subsequent lookups find this recovered bundle.
-          // Without this, getCachedPaths().get() would miss and trigger redundant recovery.
-          // Look up the original URL from distributed cache to build the cache key.
           const originalUrl = await distributed.get(distributedKey("hash", hash));
           if (originalUrl) {
             const normalizedUrl = normalizeHttpUrl(originalUrl);
@@ -1262,10 +1126,6 @@ export async function ensureHttpBundlesExist(
             getCachedPaths().set(cacheKey, canonicalPath);
           }
 
-          // Scan recovered code for transitive HTTP bundle dependencies.
-          // HTTP bundles import other bundles (e.g., esm.sh packages depending
-          // on other packages). Without this, Pod B recovers only the top-level
-          // bundle and gets "Module not found" for transitive deps at import time.
           for (const ref of extractBundleRefs(code)) {
             if (!seen.has(ref.hash)) pending.push(ref);
           }

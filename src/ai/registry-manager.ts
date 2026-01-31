@@ -35,30 +35,26 @@ const DEFAULT_PROJECT_ID = "__default__";
 export class ProjectScopedRegistryManager<T> {
   private registriesByProject = new Map<string, Map<string, T>>();
   private sharedRegistry = new Map<string, T>();
-  private registryName: string;
 
-  constructor(registryName: string) {
-    this.registryName = registryName;
-  }
+  constructor(private registryName: string) {}
 
   /**
    * Get the current project ID from AsyncLocalStorage context.
    * Falls back to default for CLI/test scenarios.
    */
   private getCurrentProjectId(): string {
-    const ctx = tryGetCacheKeyContext();
-    return ctx?.projectId ?? DEFAULT_PROJECT_ID;
+    return tryGetCacheKeyContext()?.projectId ?? DEFAULT_PROJECT_ID;
   }
 
   /**
    * Get or create registry for a specific project.
    */
   private getProjectRegistry(projectId: string): Map<string, T> {
-    let registry = this.registriesByProject.get(projectId);
-    if (!registry) {
-      registry = new Map();
-      this.registriesByProject.set(projectId, registry);
-    }
+    const existing = this.registriesByProject.get(projectId);
+    if (existing) return existing;
+
+    const registry = new Map<string, T>();
+    this.registriesByProject.set(projectId, registry);
     return registry;
   }
 
@@ -87,6 +83,7 @@ export class ProjectScopedRegistryManager<T> {
     if (this.sharedRegistry.has(id)) {
       agentLogger.debug(`[${this.registryName}] Shared "${id}" already registered. Overwriting.`);
     }
+
     this.sharedRegistry.set(id, item);
     agentLogger.debug(`[${this.registryName}] Registered shared "${id}"`);
   }
@@ -97,14 +94,7 @@ export class ProjectScopedRegistryManager<T> {
    */
   get(id: string): T | undefined {
     const projectId = this.getCurrentProjectId();
-    const projectRegistry = this.registriesByProject.get(projectId);
-
-    // First check project-specific registry
-    const projectItem = projectRegistry?.get(id);
-    if (projectItem !== undefined) return projectItem;
-
-    // Fall back to shared (framework-provided) items
-    return this.sharedRegistry.get(id);
+    return this.registriesByProject.get(projectId)?.get(id) ?? this.sharedRegistry.get(id);
   }
 
   /**
@@ -112,9 +102,7 @@ export class ProjectScopedRegistryManager<T> {
    */
   has(id: string): boolean {
     const projectId = this.getCurrentProjectId();
-    const projectRegistry = this.registriesByProject.get(projectId);
-
-    return (projectRegistry?.has(id) ?? false) || this.sharedRegistry.has(id);
+    return this.registriesByProject.get(projectId)?.has(id) ?? this.sharedRegistry.has(id);
   }
 
   /**
@@ -122,9 +110,9 @@ export class ProjectScopedRegistryManager<T> {
    */
   getAllIds(): string[] {
     const projectId = this.getCurrentProjectId();
-    const projectIds = Array.from(this.registriesByProject.get(projectId)?.keys() ?? []);
-    const sharedIds = Array.from(this.sharedRegistry.keys());
-    return [...new Set([...projectIds, ...sharedIds])];
+    const projectIds = this.registriesByProject.get(projectId)?.keys() ?? [];
+    const sharedIds = this.sharedRegistry.keys();
+    return Array.from(new Set([...projectIds, ...sharedIds]));
   }
 
   /**
@@ -132,14 +120,11 @@ export class ProjectScopedRegistryManager<T> {
    */
   getAll(): Map<string, T> {
     const projectId = this.getCurrentProjectId();
-    const result = new Map<string, T>(this.sharedRegistry);
     const projectRegistry = this.registriesByProject.get(projectId);
+    if (!projectRegistry) return new Map(this.sharedRegistry);
 
-    if (projectRegistry) {
-      for (const [id, item] of projectRegistry) {
-        result.set(id, item); // Project items override shared
-      }
-    }
+    const result = new Map<string, T>(this.sharedRegistry);
+    for (const [id, item] of projectRegistry) result.set(id, item); // Project items override shared
     return result;
   }
 
@@ -150,6 +135,7 @@ export class ProjectScopedRegistryManager<T> {
     const projectId = this.getCurrentProjectId();
     const registry = this.registriesByProject.get(projectId);
     if (!registry?.has(id)) return false;
+
     registry.delete(id);
     agentLogger.debug(`[${this.registryName}] Deleted "${id}" from project ${projectId}`);
     return true;
@@ -159,9 +145,7 @@ export class ProjectScopedRegistryManager<T> {
    * Clear all items for the current project.
    */
   clear(): void {
-    const projectId = this.getCurrentProjectId();
-    this.registriesByProject.delete(projectId);
-    agentLogger.debug(`[${this.registryName}] Cleared registry for project ${projectId}`);
+    this.clearProject(this.getCurrentProjectId());
   }
 
   /**
@@ -191,11 +175,11 @@ export class ProjectScopedRegistryManager<T> {
     currentProjectItems: number;
   } {
     const projectId = this.getCurrentProjectId();
-    let totalItems = this.sharedRegistry.size;
-
-    for (const registry of this.registriesByProject.values()) {
-      totalItems += registry.size;
-    }
+    const totalItems = this.sharedRegistry.size +
+      Array.from(this.registriesByProject.values()).reduce(
+        (sum, registry) => sum + registry.size,
+        0,
+      );
 
     return {
       projectCount: this.registriesByProject.size,

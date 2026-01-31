@@ -122,23 +122,22 @@ export function extractRouteParams(pageEntityId: string, slug: string): Extracte
   const pathSegments = relativePath
     .split("/")
     .map(removeFileExtension)
-    .filter((s) => s.length > 0 && s !== "page" && s !== "route");
+    .filter((segment) => segment.length > 0 && segment !== "page" && segment !== "route");
 
   const slugSegments = slug.split("/").filter(Boolean);
 
   for (let i = 0; i < pathSegments.length && i < slugSegments.length; i++) {
-    const pathSeg = pathSegments[i];
-    if (!pathSeg || !isDynamicSegment(pathSeg)) continue;
+    const pathSegment = pathSegments[i];
+    if (!pathSegment || !isDynamicSegment(pathSegment)) continue;
 
-    const paramName = extractParamName(pathSeg);
+    const paramName = extractParamName(pathSegment);
 
-    if (isCatchAllSegment(pathSeg)) {
+    if (isCatchAllSegment(pathSegment)) {
       params[paramName] = slugSegments.slice(i);
       break;
     }
 
-    const slugSeg = slugSegments[i];
-    if (slugSeg !== undefined) params[paramName] = slugSeg;
+    params[paramName] = slugSegments[i]!;
   }
 
   return { params, matched: Object.keys(params).length > 0 };
@@ -176,8 +175,8 @@ export function extractParamsFromPattern(
 
   const params: Record<string, string | string[]> = {};
 
-  const hasSpreadParam = patternParts.some(isCatchAllSegment);
-  if (!hasSpreadParam && patternParts.length !== slugParts.length) return null;
+  const hasCatchAll = patternParts.some(isCatchAllSegment);
+  if (!hasCatchAll && patternParts.length !== slugParts.length) return null;
 
   let slugIndex = 0;
 
@@ -189,13 +188,12 @@ export function extractParamsFromPattern(
 
     if (isDynamicSegment(patternPart)) {
       if (slugIndex >= slugParts.length) return null;
-      const slugPart = slugParts[slugIndex];
-      if (slugPart !== undefined) params[extractParamName(patternPart)] = slugPart;
+      params[extractParamName(patternPart)] = slugParts[slugIndex]!;
       slugIndex++;
       continue;
     }
 
-    if (slugIndex >= slugParts.length || slugParts[slugIndex] !== patternPart) return null;
+    if (slugParts[slugIndex] !== patternPart) return null;
     slugIndex++;
   }
 

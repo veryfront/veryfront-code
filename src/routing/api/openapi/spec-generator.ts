@@ -24,6 +24,7 @@ import { logger } from "#veryfront/utils";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 type HttpMethod = (typeof HTTP_METHODS)[number];
+type HttpMethodLower = Lowercase<HttpMethod>;
 
 export interface GenerateSpecOptions {
   /** API title for OpenAPI info */
@@ -54,9 +55,7 @@ export async function generateOpenAPISpec(
     tags: [],
   };
 
-  if (options?.servers?.length) {
-    spec.servers = options.servers;
-  }
+  if (options?.servers?.length) spec.servers = options.servers;
 
   const tagSet = new Set<string>();
 
@@ -107,7 +106,7 @@ async function processRoute(
     const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata | undefined;
     addTags(metadata, tagSet);
 
-    pathItem[method.toLowerCase() as Lowercase<HttpMethod>] = buildOperation(
+    pathItem[method.toLowerCase() as HttpMethodLower] = buildOperation(
       method,
       pattern,
       metadata,
@@ -122,7 +121,7 @@ async function processRoute(
   addTags(defaultMetadata, tagSet);
 
   for (const method of HTTP_METHODS) {
-    const methodKey = method.toLowerCase() as Lowercase<HttpMethod>;
+    const methodKey = method.toLowerCase() as HttpMethodLower;
     if (pathItem[methodKey]) continue;
 
     pathItem[methodKey] = buildOperation(method, pattern, defaultMetadata, pathParams);
@@ -132,8 +131,7 @@ async function processRoute(
 }
 
 function addTags(metadata: OpenAPIRouteMetadata | undefined, tagSet: Set<string>): void {
-  if (!metadata?.tags?.length) return;
-  for (const tag of metadata.tags) tagSet.add(tag);
+  for (const tag of metadata?.tags ?? []) tagSet.add(tag);
 }
 
 function buildOperation(
@@ -143,6 +141,7 @@ function buildOperation(
   pathParams: Array<{ name: string; required: boolean; catchAll: boolean }>,
 ): OpenAPIOperation {
   const openApiPath = toOpenAPIPath(pattern);
+  const supportsBody = method === "POST" || method === "PUT" || method === "PATCH";
 
   const operation: OpenAPIOperation = {
     operationId: generateOperationId(method, openApiPath),
@@ -155,13 +154,11 @@ function buildOperation(
   };
 
   for (const param of pathParams) {
-    const paramSchema = metadata?.params?.properties?.[param.name] ?? { type: "string" as const };
-
     const parameter: OpenAPIParameter = {
       name: param.name,
       in: "path",
       required: param.required,
-      schema: paramSchema,
+      schema: metadata?.params?.properties?.[param.name] ?? { type: "string" as const },
     };
 
     if (param.catchAll) {
@@ -184,7 +181,6 @@ function buildOperation(
     }
   }
 
-  const supportsBody = method === "POST" || method === "PUT" || method === "PATCH";
   if (supportsBody && metadata?.body) {
     operation.requestBody = {
       required: true,
@@ -204,9 +200,7 @@ function buildOperation(
     }
   } else {
     operation.responses = { "200": { description: "Successful response" } };
-    if (supportsBody) {
-      operation.responses["400"] = { description: "Bad request" };
-    }
+    if (supportsBody) operation.responses["400"] = { description: "Bad request" };
   }
 
   if (operation.parameters!.length === 0) delete operation.parameters;

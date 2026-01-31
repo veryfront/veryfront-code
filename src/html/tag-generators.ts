@@ -5,8 +5,9 @@ function filterAttrs(
   obj: Record<string, unknown>,
   excludeKeys: string[],
 ): Record<string, string> {
-  const entries = Object.entries(obj).filter(([key]) => !excludeKeys.includes(key));
-  return Object.fromEntries(entries) as Record<string, string>;
+  return Object.fromEntries(
+    Object.entries(obj).filter(([key]) => !excludeKeys.includes(key)),
+  ) as Record<string, string>;
 }
 
 function addNonceIfPresent(
@@ -71,7 +72,10 @@ export function generateLinkTags(metadata: HTMLMetadata): string {
   return tags.join("\n  ");
 }
 
-export function generateScriptTags(metadata: HTMLMetadata, nonce?: string): string {
+export function generateScriptTags(
+  metadata: HTMLMetadata,
+  nonce?: string,
+): string {
   const tags: string[] = [];
 
   for (const script of metadata.scripts ?? []) {
@@ -81,13 +85,13 @@ export function generateScriptTags(metadata: HTMLMetadata, nonce?: string): stri
       continue;
     }
 
-    if (script.content) {
-      const attrs = addNonceIfPresent(
-        filterAttrs(script, ["content", "src"]),
-        nonce,
-      );
-      tags.push(`<script ${buildAttributes(attrs)}>${script.content}</script>`);
-    }
+    if (!script.content) continue;
+
+    const attrs = addNonceIfPresent(
+      filterAttrs(script, ["content", "src"]),
+      nonce,
+    );
+    tags.push(`<script ${buildAttributes(attrs)}>${script.content}</script>`);
   }
 
   return tags.join("\n  ");
@@ -103,13 +107,13 @@ export function generateStyleTags(metadata: HTMLMetadata, nonce?: string): strin
       continue;
     }
 
-    if (style.content) {
-      const attrs = addNonceIfPresent(
-        filterAttrs(style, ["content", "href"]),
-        nonce,
-      );
-      tags.push(`<style ${buildAttributes(attrs)}>${style.content}</style>`);
-    }
+    if (!style.content) continue;
+
+    const attrs = addNonceIfPresent(
+      filterAttrs(style, ["content", "href"]),
+      nonce,
+    );
+    tags.push(`<style ${buildAttributes(attrs)}>${style.content}</style>`);
   }
 
   return tags.join("\n  ");

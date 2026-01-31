@@ -10,9 +10,6 @@ import { describe, it } from "@veryfront/testing/bdd";
 import { createProxyHandler, injectContextHeaders, type ProxyContext } from "./handler.ts";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 
-/**
- * Helper: Extract all proxy-injected headers from a request.
- */
 function extractProxyHeaders(req: Request): Record<string, string | null> {
   return {
     "x-token": req.headers.get("x-token"),
@@ -48,8 +45,10 @@ describe("Proxy-Renderer Mode Parity", () => {
         isLocalProject: false,
       };
 
-      const originalReq = new Request("http://my-project.preview.veryfront.com/page");
-      const injected = injectContextHeaders(originalReq, ctx);
+      const injected = injectContextHeaders(
+        new Request("http://my-project.preview.veryfront.com/page"),
+        ctx,
+      );
       const headers = extractProxyHeaders(injected);
 
       assertEquals(headers["x-token"], "preview-token-abc");
@@ -82,8 +81,7 @@ describe("Proxy-Renderer Mode Parity", () => {
         isLocalProject: false,
       };
 
-      const originalReq = new Request("http://example.com/page");
-      const injected = injectContextHeaders(originalReq, ctx);
+      const injected = injectContextHeaders(new Request("http://example.com/page"), ctx);
       const headers = extractProxyHeaders(injected);
 
       assertEquals(headers["x-token"], "oauth-token-xyz");
@@ -114,8 +112,10 @@ describe("Proxy-Renderer Mode Parity", () => {
         isLocalProject: true,
       };
 
-      const originalReq = new Request("http://local-project.lvh.me:8080/page");
-      const injected = injectContextHeaders(originalReq, ctx);
+      const injected = injectContextHeaders(
+        new Request("http://local-project.lvh.me:8080/page"),
+        ctx,
+      );
 
       assertEquals(injected.headers.get("x-project-path"), "/Users/dev/projects/local-project");
       assertEquals(injected.headers.get("x-token"), null);
@@ -139,8 +139,7 @@ describe("Proxy-Renderer Mode Parity", () => {
         isLocalProject: false,
       };
 
-      const originalReq = new Request("http://veryfront.com/");
-      const injected = injectContextHeaders(originalReq, ctx);
+      const injected = injectContextHeaders(new Request("http://veryfront.com/"), ctx);
 
       assertEquals(injected.headers.get("x-project-slug"), "");
     });
@@ -165,10 +164,11 @@ describe("Proxy-Renderer Mode Parity", () => {
 
       const originalReq = new Request("http://proj.preview.veryfront.com/page", {
         headers: {
-          "accept": "text/html",
+          accept: "text/html",
           "user-agent": "TestBot/1.0",
         },
       });
+
       const injected = injectContextHeaders(originalReq, ctx);
 
       assertEquals(injected.headers.get("accept"), "text/html");
@@ -178,22 +178,19 @@ describe("Proxy-Renderer Mode Parity", () => {
 
   describe("combined mode produces same context as split mode", () => {
     it("same headers for veryfront preview domain", async () => {
-      const { server, port } = createMockServer(
-        (req: Request) => {
-          const url = new URL(req.url);
-          if (url.pathname === "/auth/token") {
-            return Response.json({
-              access_token: "shared-token",
-              token_type: "Bearer",
-              expires_in: 3600,
-            });
-          }
-          return new Response("Not found", { status: 404 });
-        },
-      );
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/auth/token") {
+          return Response.json({
+            access_token: "shared-token",
+            token_type: "Bearer",
+            expires_in: 3600,
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      });
 
       try {
-        // Both modes use the same createProxyHandler + injectContextHeaders
         const handler = createProxyHandler({
           config: {
             apiBaseUrl: `http://127.0.0.1:${port}`,
@@ -208,19 +205,15 @@ describe("Proxy-Renderer Mode Parity", () => {
           headers: { host: "test-project.preview.veryfront.com" },
         });
 
-        // Simulate combined mode: processRequest → injectContextHeaders
         const ctx = await handler.processRequest(req);
         const injectedReq = injectContextHeaders(req, ctx);
         const headers = extractProxyHeaders(injectedReq);
 
-        // Verify all core headers are present and consistent
         assertEquals(headers["x-project-slug"], "test-project");
         assertEquals(headers["x-environment"], "preview");
         assertEquals(typeof headers["x-content-source-id"], "string");
         assertEquals(headers["x-forwarded-host"], "test-project.preview.veryfront.com");
 
-        // Split mode would do the same: processRequest → injectContextHeaders → forward
-        // The result is identical because both modes use the same functions
         assertEquals(ctx.projectSlug, "test-project");
         assertEquals(ctx.environment, "preview");
 

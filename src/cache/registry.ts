@@ -158,10 +158,9 @@ class CacheRegistry {
     let totalDeleted = 0;
 
     for (const store of this.stores.values()) {
-      totalDeleted += store.deleteWhere?.((key) => {
-        if (!isKeyForProject(key, projectId)) return false;
-        return isKeyForContentSource(key, projectId, contentSourceId);
-      }) ?? 0;
+      totalDeleted += store.deleteWhere?.((key) =>
+        isKeyForProject(key, projectId) && isKeyForContentSource(key, projectId, contentSourceId)
+      ) ?? 0;
     }
 
     logger.debug("[CacheRegistry] Deleted keys for content source", {
@@ -425,12 +424,15 @@ function getEnvironmentFromContentSourceId(
   contentSourceId: string | undefined,
 ): CacheEnvironment | null {
   if (!contentSourceId) return null;
+
   if (
-    contentSourceId.startsWith("preview-") || contentSourceId === "preview" ||
+    contentSourceId.startsWith("preview-") ||
+    contentSourceId === "preview" ||
     contentSourceId === "preview-draft"
   ) {
     return "preview";
   }
+
   if (
     contentSourceId.startsWith("release-") ||
     contentSourceId.startsWith("production-") ||
@@ -440,6 +442,7 @@ function getEnvironmentFromContentSourceId(
   ) {
     return "production";
   }
+
   return null;
 }
 
@@ -449,10 +452,7 @@ function getEnvironmentFromKey(key: string, projectId: string): CacheEnvironment
   if (parts.length < 2) return null;
 
   // Render cache keys: {projectId}:{environment}:{releaseKey}:{version}:...
-  if (
-    parts[0] === projectId &&
-    (parts[1] === "production" || parts[1] === "preview")
-  ) {
+  if (parts[0] === projectId && (parts[1] === "production" || parts[1] === "preview")) {
     return parts[1] as CacheEnvironment;
   }
 
@@ -467,10 +467,7 @@ function getEnvironmentFromKey(key: string, projectId: string): CacheEnvironment
   }
 
   // Proxy manager cache keys: proxy:{projectSlug}:{environment}:{qualifier}
-  if (
-    parts[0] === "proxy" &&
-    (parts[2] === "production" || parts[2] === "preview")
-  ) {
+  if (parts[0] === "proxy" && (parts[2] === "production" || parts[2] === "preview")) {
     return parts[2] as CacheEnvironment;
   }
 
@@ -525,9 +522,11 @@ function isKeyForContentSource(
   // File/dir/stat/list cache keys: {prefix}:{sourceType}:{projectSlug}:{qualifier}:...
   if (parts[0] === "file" || parts[0] === "stat" || parts[0] === "dir" || parts[0] === "files") {
     const sourceType = parts[1];
+
     if ((sourceType === "branch" || sourceType === "release") && parts[3]) {
       return candidates.has(parts[3]);
     }
+
     if (sourceType === "env" && parts[3]) {
       return candidates.has(parts[3]) || candidates.has(parts[4] ?? "");
     }

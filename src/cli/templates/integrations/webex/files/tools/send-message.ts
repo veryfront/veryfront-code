@@ -35,6 +35,8 @@ export default tool({
   async execute({ roomId, toPersonEmail, text, markdown }) {
     const message = await sendMessage({ roomId, toPersonEmail, text, markdown });
 
+    const destination = roomId ? `room ${roomId}` : toPersonEmail;
+
     return {
       id: message.id,
       roomId: message.roomId,
@@ -42,9 +44,7 @@ export default tool({
       markdown: message.markdown,
       personEmail: message.personEmail,
       created: message.created,
-      message: `Message sent successfully to ${
-        roomId ? `room ${roomId}` : toPersonEmail
-      }`,
+      message: `Message sent successfully to ${destination}`,
     };
   },
 });

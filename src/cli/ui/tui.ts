@@ -51,9 +51,7 @@ function getSize(): void {
 
 function render(): void {
   getSize();
-  const lines: string[] = [];
-
-  lines.push("");
+  const lines: string[] = [""];
 
   const infoKeys = Object.keys(state.info);
   if (infoKeys.length > 0) {
@@ -74,18 +72,24 @@ function render(): void {
         return `${icon} ${text}`;
       })
       .join("  ");
-    lines.push(`  ${stepLine}`);
-    lines.push("");
+    lines.push(`  ${stepLine}`, "");
   }
 
   const spinnerChar = getSpinnerFrame(spinnerFrame);
   let statusIcon = dim("○");
-  if (state.statusType === "loading") statusIcon = brand(spinnerChar);
-  else if (state.statusType === "success") statusIcon = success("●");
-  else if (state.statusType === "error") statusIcon = error("✗");
+  switch (state.statusType) {
+    case "loading":
+      statusIcon = brand(spinnerChar);
+      break;
+    case "success":
+      statusIcon = success("●");
+      break;
+    case "error":
+      statusIcon = error("✗");
+      break;
+  }
 
-  lines.push(`  ${statusIcon} ${state.status}`);
-  lines.push("");
+  lines.push(`  ${statusIcon} ${state.status}`, "");
 
   const helpParts: string[] = [];
   if (state.statusType === "success" && state.status.includes("Ready")) {
@@ -93,8 +97,7 @@ function render(): void {
   }
   if (config.showLogs !== false) helpParts.push(dim("l") + " logs");
   helpParts.push(dim("ctrl+c") + " exit");
-  lines.push(`  ${helpParts.join("  ")}`);
-  lines.push("");
+  lines.push(`  ${helpParts.join("  ")}`, "");
 
   if (config.showLogs !== false) {
     const logIcon = state.logsExpanded ? "▼" : "▶";
@@ -124,6 +127,7 @@ function render(): void {
 
 function startSpinner(): void {
   if (spinnerInterval) return;
+
   spinnerInterval = setInterval(() => {
     spinnerFrame = (spinnerFrame + 1) % SPINNER_FRAMES.length;
     render();
@@ -163,67 +167,77 @@ export function createTui(cfg: TuiConfig = {}): {
   startSpinner();
   render();
 
+  function setInfo(info: Record<string, string>): void {
+    state.info = info;
+    render();
+  }
+
+  function setSteps(steps: string[]): void {
+    state.steps = steps.map((label) => ({ label, done: false }));
+    state.currentStep = 0;
+    render();
+  }
+
+  function completeStep(): void {
+    const step = state.steps[state.currentStep];
+    if (!step) return;
+
+    step.done = true;
+    state.currentStep++;
+    render();
+  }
+
+  function setStatus(status: string, type: TuiState["statusType"] = "info"): void {
+    state.status = status;
+    state.statusType = type;
+
+    if (type === "loading") startSpinner();
+    else stopSpinner();
+
+    render();
+  }
+
+  function addLog(msg: string): void {
+    const clean = msg.replace(ANSI_REGEX, "").trim();
+    if (!clean) return;
+
+    state.logs.push(clean);
+    if (state.logsExpanded) render();
+  }
+
+  function toggleLogs(): void {
+    state.logsExpanded = !state.logsExpanded;
+    state.logScroll = 0;
+    render();
+  }
+
+  function scrollLogs(dir: "up" | "down"): void {
+    if (!state.logsExpanded) return;
+
+    if (dir === "up") {
+      if (state.logScroll < state.logs.length - 5) state.logScroll++;
+      render();
+      return;
+    }
+
+    if (state.logScroll > 0) state.logScroll--;
+    render();
+  }
+
+  function cleanup(): void {
+    stopSpinner();
+    write(cursor.show + screen.altOff);
+  }
+
   return {
-    setInfo(info: Record<string, string>): void {
-      state.info = info;
-      render();
-    },
-
-    setSteps(steps: string[]): void {
-      state.steps = steps.map((label) => ({ label, done: false }));
-      state.currentStep = 0;
-      render();
-    },
-
-    completeStep(): void {
-      const step = state.steps[state.currentStep];
-      if (!step) return;
-      step.done = true;
-      state.currentStep++;
-      render();
-    },
-
-    setStatus(status: string, type: TuiState["statusType"] = "info"): void {
-      state.status = status;
-      state.statusType = type;
-
-      if (type === "loading") startSpinner();
-      else stopSpinner();
-
-      render();
-    },
-
-    addLog(msg: string): void {
-      const clean = msg.replace(ANSI_REGEX, "").trim();
-      if (!clean) return;
-
-      state.logs.push(clean);
-      if (state.logsExpanded) render();
-    },
-
-    toggleLogs(): void {
-      state.logsExpanded = !state.logsExpanded;
-      state.logScroll = 0;
-      render();
-    },
-
-    scrollLogs(dir: "up" | "down"): void {
-      if (!state.logsExpanded) return;
-
-      if (dir === "up") {
-        if (state.logScroll < state.logs.length - 5) state.logScroll++;
-      } else {
-        if (state.logScroll > 0) state.logScroll--;
-      }
-
-      render();
-    },
-
-    cleanup(): void {
-      stopSpinner();
-      write(cursor.show + screen.altOff);
-    },
-
+    setInfo,
+    setSteps,
+    completeStep,
+    setStatus,
+    addLog,
+    toggleLogs,
+    scrollLogs,
+    cleanup,
     render,
   };
 }
@@ -232,13 +246,14 @@ export type Tui = ReturnType<typeof createTui>;
 
 export function interceptConsole(tui: Tui): () => void {
   const orig = { log: console.log, error: console.error, warn: console.warn, info: console.info };
-  const capture = (...args: unknown[]): void => {
+
+  function capture(...args: unknown[]): void {
     tui.addLog(
       args
         .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
         .join(" "),
     );
-  };
+  }
 
   console.log = capture;
   console.error = capture;

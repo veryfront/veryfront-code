@@ -1,7 +1,3 @@
-/**
- * Tests for consolidated file discovery utility
- */
-
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";

@@ -49,6 +49,12 @@ export function applyLayoutsESM(
           hasBundleCode: !!item.bundle?.compiledCode,
         });
 
+        const spanAttrs = {
+          "layout.index": i,
+          "layout.kind": item.kind,
+          "layout.path": item.componentPath || item.path || "",
+        } as const;
+
         try {
           if (item.kind === "mdx" && item.bundle?.compiledCode) {
             element = await withSpan(
@@ -65,38 +71,30 @@ export function applyLayoutsESM(
                   contentSourceId,
                   preloadedImportMap,
                 ),
-              {
-                "layout.index": i,
-                "layout.kind": "mdx",
-                "layout.path": item.componentPath || item.path || "",
-              },
+              spanAttrs,
             );
             continue;
           }
 
-          if (item.kind === "tsx") {
-            const props = item.componentPath ? layoutDataMap?.get(item.componentPath) : undefined;
-            element = await withSpan(
-              SpanNames.LAYOUT_APPLY_TSX,
-              () =>
-                applyTSXLayout(
-                  element,
-                  item,
-                  tsxLayoutModuleCache,
-                  projectDir,
-                  adapter,
-                  props,
-                  projectId,
-                  projectSlug,
-                  contentSourceId,
-                ),
-              {
-                "layout.index": i,
-                "layout.kind": "tsx",
-                "layout.path": item.componentPath || item.path || "",
-              },
-            );
-          }
+          if (item.kind !== "tsx") continue;
+
+          const props = item.componentPath ? layoutDataMap?.get(item.componentPath) : undefined;
+          element = await withSpan(
+            SpanNames.LAYOUT_APPLY_TSX,
+            () =>
+              applyTSXLayout(
+                element,
+                item,
+                tsxLayoutModuleCache,
+                projectDir,
+                adapter,
+                props,
+                projectId,
+                projectSlug,
+                contentSourceId,
+              ),
+            spanAttrs,
+          );
         } catch (e) {
           logger.error("Failed to apply nested layout:", e);
           throw e;

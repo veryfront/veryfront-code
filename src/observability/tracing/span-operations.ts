@@ -9,7 +9,7 @@ export class SpanOperations {
 
   startSpan(name: string, options: SpanOptions = {}): Span | null {
     try {
-      const span = this.tracer.startSpan(
+      return this.tracer.startSpan(
         name,
         {
           kind: this.mapSpanKind(options.kind),
@@ -17,8 +17,6 @@ export class SpanOperations {
         },
         options.parent as Context | undefined,
       );
-
-      return span;
     } catch (error) {
       logger.debug("[tracing] Failed to start span", { name, error });
       return null;

@@ -22,16 +22,10 @@ import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 import { remove, writeTextFile } from "@veryfront/testing/deno-compat";
 
-/**
- * Returns a runtime adapter for the current environment.
- */
-async function getTestAdapter(): Promise<RuntimeAdapter> {
-  return await getLocalAdapter();
+function getTestAdapter(): Promise<RuntimeAdapter> {
+  return getLocalAdapter();
 }
 
-/**
- * Creates a failing adapter to test fallback behavior
- */
 async function createFailingAdapter(): Promise<RuntimeAdapter> {
   const baseAdapter = await getLocalAdapter();
 
@@ -56,7 +50,6 @@ describe("router-detection", () => {
         const adapter = await getTestAdapter();
         const config: VeryfrontConfig = {};
 
-        // app directory already exists from test context setup
         const result = await detectAppRouter(context.projectDir, config, adapter);
 
         assertEquals(result, true);
@@ -68,7 +61,6 @@ describe("router-detection", () => {
         const adapter = await getTestAdapter();
         const config: VeryfrontConfig = {};
 
-        // Remove app directory, keep pages
         await remove(join(context.projectDir, "app"), { recursive: true });
 
         const result = await detectAppRouter(context.projectDir, config, adapter);
@@ -82,7 +74,6 @@ describe("router-detection", () => {
         const adapter = await getTestAdapter();
         const config: VeryfrontConfig = { router: "app" };
 
-        // Even without app directory, should return true
         await remove(join(context.projectDir, "app"), { recursive: true });
 
         const result = await detectAppRouter(context.projectDir, config, adapter);
@@ -96,7 +87,6 @@ describe("router-detection", () => {
         const adapter = await getTestAdapter();
         const config: VeryfrontConfig = { router: "pages" };
 
-        // Even with app directory, should return false
         const result = await detectAppRouter(context.projectDir, config, adapter);
 
         assertEquals(result, false);
@@ -108,7 +98,6 @@ describe("router-detection", () => {
         const adapter = await createFailingAdapter();
         const config: VeryfrontConfig = {};
 
-        // app directory exists via test context
         const result = await detectAppRouter(context.projectDir, config, adapter);
 
         assertEquals(result, true);
@@ -120,7 +109,6 @@ describe("router-detection", () => {
         const adapter = await createFailingAdapter();
         const config: VeryfrontConfig = {};
 
-        // Remove app directory
         await remove(join(context.projectDir, "app"), { recursive: true });
 
         const result = await detectAppRouter(context.projectDir, config, adapter);
@@ -158,7 +146,6 @@ describe("router-detection", () => {
         const adapter = await getTestAdapter();
         const slug = "blog/post";
 
-        // Create app/blog/post/page.tsx
         const pagePath = join(context.projectDir, "app", "blog", "post");
         await ensureDir(pagePath);
         await writeTextFile(
@@ -171,10 +158,10 @@ describe("router-detection", () => {
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assertEquals(entity?.entity.slug, slug);
-        assertEquals(entity?.entity.type, "page");
-        assertEquals(entity?.entity.isPage, true);
-        assertEquals(entity?.entity.isLayout, false);
+        assertEquals(entity.entity.slug, slug);
+        assertEquals(entity.entity.type, "page");
+        assertEquals(entity.entity.isPage, true);
+        assertEquals(entity.entity.isLayout, false);
       });
     });
 
@@ -183,7 +170,6 @@ describe("router-detection", () => {
         const adapter = await getTestAdapter();
         const slug = "docs/intro";
 
-        // Create app/docs/intro/page.mdx with frontmatter
         const pagePath = join(context.projectDir, "app", "docs", "intro");
         await ensureDir(pagePath);
         await writeTextFile(
@@ -203,11 +189,11 @@ Welcome to the documentation.
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assertEquals(entity?.entity.slug, slug);
-        assertEquals(entity?.entity.frontmatter.title, "Introduction");
-        assertEquals(entity?.entity.frontmatter.description, "Getting started guide");
-        assertEquals(entity?.entity.frontmatter.author, "Test Author");
-        assert(entity?.entity.content.includes("# Introduction"));
+        assertEquals(entity.entity.slug, slug);
+        assertEquals(entity.entity.frontmatter.title, "Introduction");
+        assertEquals(entity.entity.frontmatter.description, "Getting started guide");
+        assertEquals(entity.entity.frontmatter.author, "Test Author");
+        assert(entity.entity.content.includes("# Introduction"));
       });
     });
 
@@ -216,7 +202,6 @@ Welcome to the documentation.
         const adapter = await getTestAdapter();
         const slug = "";
 
-        // Create app/page.tsx
         await writeTextFile(
           join(context.projectDir, "app", "page.tsx"),
           `export default function Home() {
@@ -227,8 +212,8 @@ Welcome to the documentation.
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assertEquals(entity?.entity.slug, "");
-        assertEquals(entity?.entity.type, "page");
+        assertEquals(entity.entity.slug, "");
+        assertEquals(entity.entity.type, "page");
       });
     });
 
@@ -237,7 +222,6 @@ Welcome to the documentation.
         const adapter = await getTestAdapter();
         const slug = "test";
 
-        // Create multiple page files
         const testPath = join(context.projectDir, "app", "test");
         await ensureDir(testPath);
         await writeTextFile(join(testPath, "page.mdx"), "# MDX Page");
@@ -247,7 +231,7 @@ Welcome to the documentation.
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assert(entity?.entity.id.endsWith("page.mdx"));
+        assert(entity.entity.id.endsWith("page.mdx"));
       });
     });
 
@@ -256,17 +240,13 @@ Welcome to the documentation.
         const adapter = await getTestAdapter();
         const slug = "about";
 
-        // Create app/about.mdx (shorthand)
-        await writeTextFile(
-          join(context.projectDir, "app", "about.mdx"),
-          "# About Page",
-        );
+        await writeTextFile(join(context.projectDir, "app", "about.mdx"), "# About Page");
 
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assertEquals(entity?.entity.slug, slug);
-        assert(entity?.entity.id.endsWith("about.mdx"));
+        assertEquals(entity.entity.slug, slug);
+        assert(entity.entity.id.endsWith("about.mdx"));
       });
     });
 
@@ -287,7 +267,7 @@ Welcome to the documentation.
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assertEquals(entity?.entity.slug, slug);
+        assertEquals(entity.entity.slug, slug);
       });
     });
 
@@ -308,7 +288,7 @@ Welcome to the documentation.
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assertEquals(entity?.entity.slug, slug);
+        assertEquals(entity.entity.slug, slug);
       });
     });
 
@@ -329,7 +309,7 @@ Welcome to the documentation.
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assertEquals(entity?.entity.slug, slug);
+        assertEquals(entity.entity.slug, slug);
       });
     });
 
@@ -364,7 +344,7 @@ layout: true
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assertEquals(entity?.entity.frontmatter.layout, "default");
+        assertEquals(entity.entity.frontmatter.layout, "default");
       });
     });
 
@@ -388,7 +368,7 @@ layout: false
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assertEquals(entity?.entity.frontmatter.layout, "false");
+        assertEquals(entity.entity.frontmatter.layout, "false");
       });
     });
 
@@ -412,8 +392,8 @@ title: Standard Page
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assertEquals(entity?.entity.frontmatter.layout, undefined);
-        assertEquals(entity?.entity.frontmatter.title, "Standard Page");
+        assertEquals(entity.entity.frontmatter.layout, undefined);
+        assertEquals(entity.entity.frontmatter.title, "Standard Page");
       });
     });
 
@@ -424,16 +404,13 @@ title: Standard Page
 
         const simplePath = join(context.projectDir, "app", "simple");
         await ensureDir(simplePath);
-        await writeTextFile(
-          join(simplePath, "page.mdx"),
-          "# Simple Page\n\nNo frontmatter here.",
-        );
+        await writeTextFile(join(simplePath, "page.mdx"), "# Simple Page\n\nNo frontmatter here.");
 
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assertEquals(entity?.entity.frontmatter.layout, undefined);
-        assert(entity?.entity.content.includes("# Simple Page"));
+        assertEquals(entity.entity.frontmatter.layout, undefined);
+        assert(entity.entity.content.includes("# Simple Page"));
       });
     });
 
@@ -458,8 +435,7 @@ description: This is bad YAML
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        // Should still return entity with full content
-        assert(entity?.entity.content.includes("---"));
+        assert(entity.entity.content.includes("---"));
       });
     });
 
@@ -468,7 +444,6 @@ description: This is bad YAML
         const adapter = await getTestAdapter();
         const slug = "docs/api/reference/endpoints";
 
-        // Create deeply nested route
         const nestedPath = join(context.projectDir, "app", "docs", "api", "reference", "endpoints");
         await ensureDir(nestedPath);
         await writeTextFile(
@@ -481,7 +456,7 @@ description: This is bad YAML
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assertEquals(entity?.entity.slug, slug);
+        assertEquals(entity.entity.slug, slug);
       });
     });
 
@@ -493,18 +468,15 @@ description: This is bad YAML
         const testPath = join(context.projectDir, "app", "test");
         await ensureDir(testPath);
         const filePath = join(testPath, "page.tsx");
-        await writeTextFile(
-          filePath,
-          `export default function Test() { return <div>Test</div> }`,
-        );
+        await writeTextFile(filePath, `export default function Test() { return <div>Test</div> }`);
 
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assertEquals(entity?.entity.id, filePath);
-        assertEquals(entity?.entity.type, "page");
-        assertEquals(entity?.entity.isPage, true);
-        assertEquals(entity?.entity.isLayout, false);
+        assertEquals(entity.entity.id, filePath);
+        assertEquals(entity.entity.type, "page");
+        assertEquals(entity.entity.isPage, true);
+        assertEquals(entity.entity.isLayout, false);
       });
     });
 
@@ -513,17 +485,14 @@ description: This is bad YAML
         const adapter = await getTestAdapter();
         const slug = "fake";
 
-        // Create a directory with same name as potential file
         const fakePath = join(context.projectDir, "app", "fake");
         await ensureDir(fakePath);
 
-        // Create directory named 'page.tsx' (unusual but should handle)
         const weirdDirPath = join(fakePath, "page.tsx");
         await ensureDir(weirdDirPath);
 
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
-        // Should return null because page.tsx is a directory, not a file
         assertEquals(entity, null);
       });
     });
@@ -533,7 +502,6 @@ description: This is bad YAML
         const adapter = await getTestAdapter();
         const slug = "order";
 
-        // Create only .js file (should be found even though it's last in extension priority)
         const orderPath = join(context.projectDir, "app", "order");
         await ensureDir(orderPath);
         await writeTextFile(
@@ -544,7 +512,7 @@ description: This is bad YAML
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assert(entity?.entity.id.endsWith("page.js"));
+        assert(entity.entity.id.endsWith("page.js"));
       });
     });
 
@@ -575,9 +543,9 @@ metadata:
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assertEquals(entity?.entity.frontmatter.title, "Complex Page");
-        assertExists(entity?.entity.frontmatter.tags);
-        assertExists(entity?.entity.frontmatter.metadata);
+        assertEquals(entity.entity.frontmatter.title, "Complex Page");
+        assertExists(entity.entity.frontmatter.tags);
+        assertExists(entity.entity.frontmatter.metadata);
       });
     });
 
@@ -602,9 +570,8 @@ description:   Value with spaces
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        // Should handle whitespace in frontmatter values
-        assertEquals(entity?.entity.frontmatter.title, "Whitespace Test");
-        assert(entity?.entity.content.includes("# Whitespace Page"));
+        assertEquals(entity.entity.frontmatter.title, "Whitespace Test");
+        assert(entity.entity.content.includes("# Whitespace Page"));
       });
     });
 
@@ -627,7 +594,7 @@ description:   Value with spaces
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assert(entity?.entity.content.includes("# Empty Frontmatter"));
+        assert(entity.entity.content.includes("# Empty Frontmatter"));
       });
     });
   });
@@ -638,7 +605,6 @@ description:   Value with spaces
         const adapter = await getTestAdapter();
         const slug = "a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p/q/r/s/t/u/v/w/x/y/z";
 
-        // Should not crash even if path doesn't exist
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertEquals(entity, null);
@@ -660,7 +626,7 @@ description:   Value with spaces
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        assertEquals(entity?.entity.slug, slug);
+        assertEquals(entity.entity.slug, slug);
       });
     });
 
@@ -669,14 +635,12 @@ description:   Value with spaces
         const adapter = await getTestAdapter();
         const config: VeryfrontConfig = {};
 
-        // Make multiple concurrent calls
         const results = await Promise.all([
           detectAppRouter(context.projectDir, config, adapter),
           detectAppRouter(context.projectDir, config, adapter),
           detectAppRouter(context.projectDir, config, adapter),
         ]);
 
-        // All should return the same result
         assertEquals(results[0], results[1]);
         assertEquals(results[1], results[2]);
       });
@@ -686,7 +650,6 @@ description:   Value with spaces
       await withTestContext("router-concurrent-entities", async (context) => {
         const adapter = await getTestAdapter();
 
-        // Create test pages
         const page1Path = join(context.projectDir, "app", "page1");
         const page2Path = join(context.projectDir, "app", "page2");
         await ensureDir(page1Path);
@@ -694,7 +657,6 @@ description:   Value with spaces
         await writeTextFile(join(page1Path, "page.tsx"), "export default function P1() {}");
         await writeTextFile(join(page2Path, "page.tsx"), "export default function P2() {}");
 
-        // Resolve multiple entities concurrently
         const results = await Promise.all([
           getAppRouteEntity(context.projectDir, "page1", adapter),
           getAppRouteEntity(context.projectDir, "page2", adapter),
@@ -712,18 +674,15 @@ description:   Value with spaces
         const adapter = await getTestAdapter();
         const config: VeryfrontConfig = {};
 
-        // Create symlink to app directory (if supported)
         try {
           const appPath = join(context.projectDir, "app");
           const symlinkPath = join(context.projectDir, "app-link");
           await symlink(appPath, symlinkPath);
 
-          // Should still detect app router via original path
           const result = await detectAppRouter(context.projectDir, config, adapter);
           assertEquals(result, true);
         } catch {
           // Symlinks might not be supported on all platforms
-          // Test passes if we can't create symlink
         }
       });
     });

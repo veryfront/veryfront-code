@@ -39,10 +39,10 @@ export function RouterProvider({
   children,
   router,
 }: RouterProviderProps): React.ReactElement {
-  return React.createElement(
-    RouterContext.Provider,
-    { value: router ?? defaultRouter },
-    children,
+  return (
+    <RouterContext.Provider value={router ?? defaultRouter}>
+      {children}
+    </RouterContext.Provider>
   );
 }
 

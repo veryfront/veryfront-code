@@ -23,34 +23,19 @@ export default tool({
   async execute({ status, ownerId, stageId, limit }) {
     const deals = await listDeals({ status, ownerId, stageId, limit });
 
-    return deals.map(
-      ({
-        id,
-        title,
-        value,
-        currency,
-        status,
-        stage_id,
-        person_name,
-        org_name,
-        owner_name,
-        expected_close_date,
-        add_time,
-        update_time,
-      }) => ({
-        id,
-        title,
-        value,
-        currency,
-        status,
-        stageId: stage_id,
-        personName: person_name,
-        orgName: org_name,
-        ownerName: owner_name,
-        expectedCloseDate: expected_close_date,
-        addTime: add_time,
-        updateTime: update_time,
-      }),
-    );
+    return deals.map((deal) => ({
+      id: deal.id,
+      title: deal.title,
+      value: deal.value,
+      currency: deal.currency,
+      status: deal.status,
+      stageId: deal.stage_id,
+      personName: deal.person_name,
+      orgName: deal.org_name,
+      ownerName: deal.owner_name,
+      expectedCloseDate: deal.expected_close_date,
+      addTime: deal.add_time,
+      updateTime: deal.update_time,
+    }));
   },
 });

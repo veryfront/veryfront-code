@@ -16,13 +16,25 @@ function getItemId(item: Tool | Resource | Prompt): string {
   return "id" in item ? item.id : item.pattern;
 }
 
+function isTool(item: Tool | Resource | Prompt): item is Tool {
+  return "schema" in item;
+}
+
+function isResource(item: Tool | Resource | Prompt): item is Resource {
+  return "pattern" in item;
+}
+
+function isPrompt(item: Tool | Resource | Prompt): item is Prompt {
+  return "id" in item && !("schema" in item);
+}
+
 export function MCPTab({ tools, resources, prompts }: MCPTabProps): JSX.Element {
   const [subTab, setSubTab] = useState<SubTab>("tools");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    function handleNavigate(e: CustomEvent<{ subTab: SubTab; itemId: string }>) {
+    function handleNavigate(e: CustomEvent<{ subTab: SubTab; itemId: string }>): void {
       setSubTab(e.detail.subTab);
       setSelectedId(e.detail.itemId);
     }
@@ -32,16 +44,28 @@ export function MCPTab({ tools, resources, prompts }: MCPTabProps): JSX.Element 
     return () => globalThis.removeEventListener("mcp-navigate", listener);
   }, []);
 
-  const items: Array<Tool | Resource | Prompt> = subTab === "tools"
-    ? tools
-    : subTab === "resources"
-    ? resources
-    : prompts;
+  let items: Array<Tool | Resource | Prompt>;
+  if (subTab === "tools") items = tools;
+  else if (subTab === "resources") items = resources;
+  else items = prompts;
 
   const searchLower = search.toLowerCase();
   const filteredItems = items.filter((item) => getItemId(item).toLowerCase().includes(searchLower));
-
   const selectedItem = items.find((item) => getItemId(item) === selectedId);
+
+  function renderDetail(): JSX.Element {
+    if (!selectedItem) return <EmptyState message="Select an item to inspect" />;
+
+    if (subTab === "tools" && isTool(selectedItem)) return <ToolDetail tool={selectedItem} />;
+    if (subTab === "resources" && isResource(selectedItem)) {
+      return <ResourceDetail resource={selectedItem} />;
+    }
+    if (subTab === "prompts" && isPrompt(selectedItem)) {
+      return <PromptDetail prompt={selectedItem} />;
+    }
+
+    return <EmptyState message="Select an item to inspect" />;
+  }
 
   const sidebar = (
     <Sidebar
@@ -67,31 +91,16 @@ export function MCPTab({ tools, resources, prompts }: MCPTabProps): JSX.Element 
     />
   );
 
-  function renderDetail(): JSX.Element {
-    if (!selectedItem) return <EmptyState message="Select an item to inspect" />;
-
-    if (subTab === "tools") return <ToolDetail tool={selectedItem as Tool} />;
-    if (subTab === "resources") return <ResourceDetail resource={selectedItem as Resource} />;
-    return <PromptDetail prompt={selectedItem as Prompt} />;
-  }
-
   return <TwoColumnLayout sidebar={sidebar}>{renderDetail()}</TwoColumnLayout>;
 }
 
-/**
- * Generate example values from a JSON schema
- */
 function generateExampleFromSchema(schema: Tool["schema"]): Record<string, unknown> {
   if (!schema?.properties) return {};
 
   const example: Record<string, unknown> = {};
 
   for (const [name, prop] of Object.entries(schema.properties)) {
-    const propDef = prop as {
-      type?: string;
-      default?: unknown;
-      enum?: unknown[];
-    };
+    const propDef = prop as { type?: string; default?: unknown; enum?: unknown[] };
 
     if (propDef.default !== undefined) {
       example[name] = propDef.default;
@@ -144,7 +153,7 @@ function ToolDetail({ tool }: { tool: Tool }): JSX.Element {
     const example = generateExampleFromSchema(tool.schema);
     setArgs(JSON.stringify(example, null, 2));
     setResult(null);
-  }, [tool.id]);
+  }, [tool.id, tool.schema]);
 
   async function execute(): Promise<void> {
     let parsed: unknown;

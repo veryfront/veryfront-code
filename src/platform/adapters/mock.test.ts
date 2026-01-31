@@ -7,16 +7,14 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "./mock.ts";
 
-function collectDirEntries(
-  iter: AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>,
-): Promise<{ name: string; isFile: boolean; isDirectory: boolean }[]> {
-  const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
-  return (async () => {
-    for await (const entry of iter) {
-      entries.push({ name: entry.name, isFile: entry.isFile, isDirectory: entry.isDirectory });
-    }
-    return entries;
-  })();
+type DirEntry = { name: string; isFile: boolean; isDirectory: boolean };
+
+async function collectDirEntries(iter: AsyncIterable<DirEntry>): Promise<DirEntry[]> {
+  const entries: DirEntry[] = [];
+  for await (const entry of iter) {
+    entries.push(entry);
+  }
+  return entries;
 }
 
 describe("MockAdapter", () => {
@@ -64,11 +62,9 @@ describe("MockAdapter", () => {
     it("should throw for non-existent file", async () => {
       const adapter = createMockAdapter();
 
+      assertExists(adapter.fs.readFileBytes);
       await assertRejects(
-        () => {
-          assertExists(adapter.fs.readFileBytes);
-          return adapter.fs.readFileBytes("/missing.txt");
-        },
+        () => adapter.fs.readFileBytes("/missing.txt"),
         Error,
         "File not found: /missing.txt",
       );

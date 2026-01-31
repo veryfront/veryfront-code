@@ -21,7 +21,7 @@ describe("agent-errors", () => {
 
     it("should include context", () => {
       const error = new AgentError("Agent failed", { agentId: "123" });
-      assertEquals((error.context as Record<string, unknown>).agentId, "123");
+      assertEquals(error.context?.agentId, "123");
     });
   });
 
@@ -35,9 +35,8 @@ describe("agent-errors", () => {
 
     it("should include agentId in context", () => {
       const error = new AgentNotFoundError("agent-123", { extra: "data" });
-      const ctx = error.context as Record<string, unknown>;
-      assertEquals(ctx.agentId, "agent-123");
-      assertEquals(ctx.extra, "data");
+      assertEquals(error.context?.agentId, "agent-123");
+      assertEquals(error.context?.extra, "data");
     });
   });
 

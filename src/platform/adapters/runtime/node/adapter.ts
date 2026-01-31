@@ -37,9 +37,9 @@ export class NodeAdapter implements RuntimeAdapter {
   }
 
   async shutdown(): Promise<void> {
-    const server = this.activeServer;
-    if (!server) return;
+    if (!this.activeServer) return;
 
+    const server = this.activeServer;
     this.activeServer = null;
     await server.stop();
   }

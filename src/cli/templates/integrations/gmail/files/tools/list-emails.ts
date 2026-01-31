@@ -20,28 +20,26 @@ export default tool({
       .describe("Filter by Gmail label (e.g., 'INBOX', 'IMPORTANT', 'STARRED')"),
   }),
   execute: async ({ maxResults, unreadOnly, label }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = context?.userId ?? "current-user";
 
     try {
       const gmail = createGmailClient(userId);
 
-      const query = unreadOnly ? "is:unread" : undefined;
-      const labelIds = label ? [label] : undefined;
-
-      const list = await gmail.listMessages({ maxResults, query, labelIds });
+      const list = await gmail.listMessages({
+        maxResults,
+        query: unreadOnly ? "is:unread" : undefined,
+        labelIds: label ? [label] : undefined,
+      });
 
       if (!list.messages?.length) {
-        return {
-          emails: [],
-          message: "No emails found matching your criteria.",
-        };
+        return { emails: [], message: "No emails found matching your criteria." };
       }
 
       const emails = await Promise.all(
-        list.messages.map(async ({ id }: { id: string }) => {
+        list.messages.map(async ({ id }) => {
           const message = await gmail.getMessage(id, "metadata");
           const headers = parseEmailHeaders(message.payload?.headers ?? []);
+          const labelIds = message.labelIds ?? [];
 
           return {
             id: message.id,
@@ -51,9 +49,9 @@ export default tool({
             subject: headers.subject,
             date: headers.date,
             snippet: message.snippet,
-            isUnread: message.labelIds?.includes("UNREAD") ?? false,
-            isStarred: message.labelIds?.includes("STARRED") ?? false,
-            isImportant: message.labelIds?.includes("IMPORTANT") ?? false,
+            isUnread: labelIds.includes("UNREAD"),
+            isStarred: labelIds.includes("STARRED"),
+            isImportant: labelIds.includes("IMPORTANT"),
           };
         }),
       );

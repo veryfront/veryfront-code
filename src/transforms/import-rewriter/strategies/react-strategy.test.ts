@@ -3,7 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
 import { ReactStrategy } from "./react-strategy.ts";
 
-function makeCtx(overrides?: Partial<RewriteContext>): RewriteContext {
+function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
   return {
     filePath: "/project/pages/index.tsx",
     projectDir: "/project",
@@ -55,17 +55,17 @@ describe("ReactStrategy", () => {
   describe("rewrite", () => {
     it("should rewrite react to esm.sh URL", () => {
       const result = strategy.rewrite(makeInfo("react"), makeCtx());
-      assertEquals(result.specifier!.includes("esm.sh/react@19.1.1"), true);
+      assertEquals(result.specifier?.includes("esm.sh/react@19.1.1") ?? false, true);
     });
 
     it("should rewrite react-dom to esm.sh URL", () => {
       const result = strategy.rewrite(makeInfo("react-dom"), makeCtx());
-      assertEquals(result.specifier!.includes("esm.sh/react-dom@19.1.1"), true);
+      assertEquals(result.specifier?.includes("esm.sh/react-dom@19.1.1") ?? false, true);
     });
 
     it("should rewrite react/jsx-runtime", () => {
       const result = strategy.rewrite(makeInfo("react/jsx-runtime"), makeCtx());
-      assertEquals(result.specifier!.includes("jsx-runtime"), true);
+      assertEquals(result.specifier?.includes("jsx-runtime") ?? false, true);
     });
 
     it("should handle unknown react/* subpaths via prefix", () => {
@@ -74,9 +74,7 @@ describe("ReactStrategy", () => {
     });
 
     it("should return null for non-react specifier that somehow matches", () => {
-      // Force a specifier that passes matches but has no map entry
       const result = strategy.rewrite(makeInfo("react-dom/nonexistent-deep-path"), makeCtx());
-      // Should still return null since react-dom/ subpaths not in map return null
       assertEquals(result.specifier, null);
     });
   });

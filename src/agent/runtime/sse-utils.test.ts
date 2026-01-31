@@ -2,15 +2,19 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateMessageId, sendSSE } from "./sse-utils.ts";
 
+function createController(chunks: Uint8Array[]): ReadableStreamDefaultController {
+  return {
+    enqueue(chunk: Uint8Array) {
+      chunks.push(chunk);
+    },
+  } as unknown as ReadableStreamDefaultController;
+}
+
 describe("sse-utils", () => {
   describe("sendSSE", () => {
     it("encodes event as SSE data line", () => {
       const chunks: Uint8Array[] = [];
-      const controller = {
-        enqueue(chunk: Uint8Array) {
-          chunks.push(chunk);
-        },
-      } as unknown as ReadableStreamDefaultController;
+      const controller = createController(chunks);
       const encoder = new TextEncoder();
 
       sendSSE(controller, encoder, { type: "test", value: 42 });
@@ -22,11 +26,7 @@ describe("sse-utils", () => {
 
     it("handles nested objects in events", () => {
       const chunks: Uint8Array[] = [];
-      const controller = {
-        enqueue(chunk: Uint8Array) {
-          chunks.push(chunk);
-        },
-      } as unknown as ReadableStreamDefaultController;
+      const controller = createController(chunks);
       const encoder = new TextEncoder();
 
       sendSSE(controller, encoder, { type: "complex", data: { nested: true } });
@@ -47,9 +47,11 @@ describe("sse-utils", () => {
 
     it("generates unique ids", () => {
       const ids = new Set<string>();
+
       for (let i = 0; i < 100; i++) {
         ids.add(generateMessageId());
       }
+
       assertEquals(ids.size, 100);
     });
   });

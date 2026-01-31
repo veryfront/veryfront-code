@@ -22,15 +22,11 @@ interface ModuleResult {
   exports?: string[];
 }
 
-// Modules that were refactored to use platform compat
 const MODULES_TO_TEST = [
-  // Platform compat layer itself
   "@veryfront/platform/compat/path/index.ts",
   "@veryfront/platform/compat/process.ts",
   "@veryfront/platform/compat/fs.ts",
   "@veryfront/platform/compat/runtime.ts",
-
-  // Core modules
   "@veryfront/config/loader.ts",
   "@veryfront/utils/file-discovery.ts",
   "@veryfront/utils/cache-dir.ts",
@@ -38,8 +34,6 @@ const MODULES_TO_TEST = [
   "@veryfront/utils/memory/profiler.ts",
   "@veryfront/utils/lru-wrapper.ts",
   "@veryfront/utils/env-loader.ts",
-
-  // Module system
   "@veryfront/modules/component-registry/registry.ts",
   "@veryfront/modules/import-map/loader.ts",
   "@veryfront/modules/module-resolver.ts",
@@ -48,27 +42,19 @@ const MODULES_TO_TEST = [
   "@veryfront/modules/react-loader/component-loader.ts",
   "@veryfront/modules/react-loader/ssr-module-loader.ts",
   "@veryfront/modules/server/module-server.ts",
-
-  // Server modules
   "@veryfront/server/dev-server/middleware.ts",
   "@veryfront/server/dev-server/route-discovery.ts",
   "@veryfront/server/dev-server/file-watch-setup.ts",
   "@veryfront/server/dev-server/bundler.ts",
   "@veryfront/server/build-app-route-renderer.ts",
   "@veryfront/server/build-routes.ts",
-
-  // Rendering modules
   "@veryfront/rendering/chunk-optimizer.ts",
   "@veryfront/rendering/script-page-handling.ts",
   "@veryfront/rendering/rsc/component-analyzer.ts",
   "@veryfront/rendering/rsc/ids.ts",
-
-  // Routing modules
   "@veryfront/routing/api/route-executor.ts",
   "@veryfront/routing/api/route-discovery.ts",
   "@veryfront/routing/api/handler.ts",
-
-  // Build modules
   "@veryfront/build/utils/file-types.ts",
   "@veryfront/build/utils/asset-utils.ts",
   "@veryfront/build/compiler/mdx-compiler/directory-compiler.ts",
@@ -93,8 +79,6 @@ const MODULES_TO_TEST = [
   "@veryfront/build/production-build/asset-generation.ts",
   "@veryfront/build/production-build/client-runtime.ts",
   "@veryfront/build/production-build/static-generation.ts",
-
-  // React compat
   "@veryfront/react/compat/config-generator.ts",
 ];
 
@@ -119,8 +103,13 @@ async function testModule(modulePath: string): Promise<ModuleResult> {
 }
 
 function exitWithError(): void {
-  if (typeof Deno !== "undefined") Deno.exit(1);
-  if (typeof process !== "undefined") process.exit(1);
+  if (typeof Deno !== "undefined") {
+    Deno.exit(1);
+  }
+
+  if (typeof process !== "undefined") {
+    process.exit(1);
+  }
 }
 
 async function runSmokeTests(): Promise<void> {
@@ -148,13 +137,13 @@ async function runSmokeTests(): Promise<void> {
     console.log(`\x1b[32m✓\x1b[0m ${modulePath}`);
 
     const exportsList = result.exports ?? [];
-    if (exportsList.length === 0) continue;
-
-    console.log(
-      `  \x1b[90mExports: ${exportsList.slice(0, 5).join(", ")}${
-        exportsList.length > 5 ? "..." : ""
-      }\x1b[0m`,
-    );
+    if (exportsList.length > 0) {
+      console.log(
+        `  \x1b[90mExports: ${exportsList.slice(0, 5).join(", ")}${
+          exportsList.length > 5 ? "..." : ""
+        }\x1b[0m`,
+      );
+    }
   }
 
   console.log(`\n\x1b[1m=== Summary ===\x1b[0m`);
@@ -171,6 +160,7 @@ async function runSmokeTests(): Promise<void> {
 
   console.log(`\x1b[31mFailed: ${failed}\x1b[0m`);
   console.log(`\n\x1b[31mFailed modules:\x1b[0m`);
+
   for (const result of results) {
     if (result.success) continue;
     console.log(`  - ${result.path}`);

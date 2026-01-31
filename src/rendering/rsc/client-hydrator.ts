@@ -45,13 +45,13 @@ export class RSCHydrator {
 
   private async hydratePlaceholder(element: HTMLElement): Promise<void> {
     const componentName = element.dataset.rscComponent;
-    const propsJson = element.dataset.rscProps;
-    const instanceId = element.dataset.rscId;
-
     if (!componentName) {
       rscLogger.warn("Placeholder missing component name", element);
       return;
     }
+
+    const propsJson = element.dataset.rscProps;
+    const instanceId = element.dataset.rscId;
 
     try {
       const props = propsJson ? JSON.parse(propsJson) : {};
@@ -92,7 +92,7 @@ export class RSCHydrator {
 
     const componentPath = await this.getComponentPath(name);
     if (!componentPath) {
-      throw new FileSystemError(`Client component not found in manifest`, {
+      throw new FileSystemError("Client component not found in manifest", {
         name,
         manifest: this.manifest,
       });
@@ -138,7 +138,7 @@ export class RSCHydrator {
       const response = await fetch(this.manifestUrl);
 
       if (!response.ok) {
-        throw new NetworkError(`Failed to load manifest`, {
+        throw new NetworkError("Failed to load manifest", {
           status: response.status,
           url: this.manifestUrl,
         });
@@ -168,8 +168,7 @@ export function hydrateRSC(options?: RSCHydratorOptions): Promise<void> {
 }
 
 function autoHydrate(): void {
-  const shouldAutoHydrate = (window as WindowWithVeryfront).__RSC_AUTO_HYDRATE__ !== false;
-  if (!shouldAutoHydrate) return;
+  if ((window as WindowWithVeryfront).__RSC_AUTO_HYDRATE__ === false) return;
 
   const run = (): void => {
     hydrateRSC().catch((error) => {

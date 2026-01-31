@@ -7,9 +7,6 @@ export function parseRoute(pattern: string, page: string): Route {
 
   for (const match of pattern.matchAll(/\[\[\.\.\.(\w+)\]\]|\[\.\.\.(\w+)\]|\[(\w+)\]/g)) {
     const optionalCatchAll = match[1];
-    const catchAll = match[2];
-    const param = match[3];
-
     if (optionalCatchAll) {
       paramNames.push(optionalCatchAll);
       isOptionalCatchAll = true;
@@ -17,12 +14,14 @@ export function parseRoute(pattern: string, page: string): Route {
       continue;
     }
 
+    const catchAll = match[2];
     if (catchAll) {
       paramNames.push(catchAll);
       isCatchAll = true;
       continue;
     }
 
+    const param = match[3];
     if (param) paramNames.push(param);
   }
 

@@ -38,11 +38,9 @@ export async function pregenerateCSSFromFiles(
   options: CSSPregenerationOptions,
 ): Promise<void> {
   const { projectSlug, files, stylesheet, stylesheetPath, minify = true } = options;
-
   const startTime = performance.now();
 
   try {
-    // Extract candidates from source files
     const candidates = extractCandidatesFromFiles(files);
 
     if (candidates.size === 0) {
@@ -59,12 +57,10 @@ export async function pregenerateCSSFromFiles(
       projectSlug,
       fileCount: files.length,
       candidateCount: candidates.size,
-      hasStylesheet: !!resolvedStylesheet,
+      hasStylesheet: Boolean(resolvedStylesheet),
     });
 
-    // Generate CSS (will be cached by getProjectCSS)
     const result = await getProjectCSS(projectSlug, resolvedStylesheet, candidates, { minify });
-
     const duration = performance.now() - startTime;
 
     logger.debug("[CSSPregeneration] Complete", {
@@ -77,12 +73,12 @@ export async function pregenerateCSSFromFiles(
     });
   } catch (error) {
     const duration = performance.now() - startTime;
+
     logger.warn("[CSSPregeneration] Failed", {
       projectSlug,
       error: error instanceof Error ? error.message : String(error),
       duration: `${duration.toFixed(2)}ms`,
     });
-    // Don't rethrow - this is fire-and-forget
   }
 }
 
@@ -95,12 +91,10 @@ export function findStylesheetFromFiles(
 ): string | undefined {
   if (stylesheetPath) {
     const normalized = stylesheetPath.replace(/^\/+/, "");
-    const file = files.find((f) =>
-      !!f.content && (f.path === normalized || f.path.endsWith(`/${normalized}`))
+    const file = files.find(
+      (f) => f.content && (f.path === normalized || f.path.endsWith(`/${normalized}`)),
     );
-    if (file?.content) {
-      return file.content;
-    }
+    if (file?.content) return file.content;
   }
 
   return findGlobalStylesheet(files);
@@ -130,10 +124,8 @@ export function findGlobalStylesheet(
   ];
 
   for (const pattern of stylesheetPatterns) {
-    const file = files.find((f) => pattern.test(f.path) && f.content);
-    if (file?.content) {
-      return file.content;
-    }
+    const file = files.find((f) => f.content && pattern.test(f.path));
+    if (file?.content) return file.content;
   }
 
   return undefined;

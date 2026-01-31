@@ -28,7 +28,7 @@ export function dirname(path: string): string {
 export function basename(path: string, ext?: string): string {
   if (useNodePath()) {
     // Only pass ext if defined - Bun is strict about this parameter
-    return ext !== undefined ? nodePath!.basename(path, ext) : nodePath!.basename(path);
+    return ext === undefined ? nodePath!.basename(path) : nodePath!.basename(path, ext);
   }
 
   let normalizedPath = path;

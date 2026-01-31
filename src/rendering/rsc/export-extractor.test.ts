@@ -4,40 +4,46 @@ import { extractExportNames } from "./export-extractor.ts";
 
 describe("rendering/rsc/export-extractor", () => {
   describe("extractExportNames", () => {
+    function assertIncludes(names: string[], name: string): void {
+      assertEquals(names.includes(name), true);
+    }
+
     it("should extract default export", () => {
       const names = extractExportNames(`export default function App() {}`);
-      assertEquals(names.includes("default"), true);
+      assertIncludes(names, "default");
     });
 
     it("should extract named function exports", () => {
-      const names = extractExportNames(`export function greet() {}\nexport function farewell() {}`);
-      assertEquals(names.includes("greet"), true);
-      assertEquals(names.includes("farewell"), true);
+      const names = extractExportNames(
+        `export function greet() {}\nexport function farewell() {}`,
+      );
+      assertIncludes(names, "greet");
+      assertIncludes(names, "farewell");
     });
 
     it("should extract named class exports", () => {
       const names = extractExportNames(`export class MyComponent {}`);
-      assertEquals(names.includes("MyComponent"), true);
+      assertIncludes(names, "MyComponent");
     });
 
     it("should extract const/let/var exports", () => {
       const names = extractExportNames(
         `export const FOO = 1;\nexport let bar = 2;\nexport var baz = 3;`,
       );
-      assertEquals(names.includes("FOO"), true);
-      assertEquals(names.includes("bar"), true);
-      assertEquals(names.includes("baz"), true);
+      assertIncludes(names, "FOO");
+      assertIncludes(names, "bar");
+      assertIncludes(names, "baz");
     });
 
     it("should extract named exports from braces", () => {
       const names = extractExportNames(`const a = 1; const b = 2;\nexport { a, b };`);
-      assertEquals(names.includes("a"), true);
-      assertEquals(names.includes("b"), true);
+      assertIncludes(names, "a");
+      assertIncludes(names, "b");
     });
 
     it("should handle 'as' aliases in export braces", () => {
       const names = extractExportNames(`const foo = 1;\nexport { foo as bar };`);
-      assertEquals(names.includes("bar"), true);
+      assertIncludes(names, "bar");
     });
 
     it("should return empty array for no exports", () => {
@@ -53,10 +59,10 @@ describe("rendering/rsc/export-extractor", () => {
         export class Widget {}
       `;
       const names = extractExportNames(source);
-      assertEquals(names.includes("default"), true);
-      assertEquals(names.includes("helper"), true);
-      assertEquals(names.includes("VALUE"), true);
-      assertEquals(names.includes("Widget"), true);
+      assertIncludes(names, "default");
+      assertIncludes(names, "helper");
+      assertIncludes(names, "VALUE");
+      assertIncludes(names, "Widget");
     });
 
     it("should not duplicate names", () => {

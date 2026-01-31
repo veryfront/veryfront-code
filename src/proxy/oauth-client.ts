@@ -24,34 +24,35 @@ export interface OAuthTokenConfig {
 export async function fetchOAuthToken(
   config: OAuthTokenConfig,
 ): Promise<TokenResponse> {
-  return await withSpan(
+  return withSpan(
     ProxySpanNames.OAUTH_TOKEN_REQUEST,
-    async () => {
+    async (): Promise<TokenResponse> => {
       const url = `${config.apiBaseUrl}/auth/token`;
       const urlObj = new URL(url);
+
       const controller = new AbortController();
-      const timeoutId = setTimeout(
-        () => controller.abort(),
-        config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      );
+      const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+      const timeoutId = setTimeout((): void => controller.abort(), timeoutMs);
 
       try {
         const headers = new Headers({ "Content-Type": "application/json" });
         injectContext(headers);
 
+        const body = {
+          grant_type: "client_credentials",
+          client_id: config.clientId,
+          client_secret: config.clientSecret,
+          ...(config.projectSlug ? { project_slug: config.projectSlug } : {}),
+          ...(config.customDomain ? { custom_domain: config.customDomain } : {}),
+        };
+
         const response = await withSpan(
           ProxySpanNames.HTTP_CLIENT_FETCH,
-          () =>
+          (): Promise<Response> =>
             fetch(url, {
               method: "POST",
               headers,
-              body: JSON.stringify({
-                grant_type: "client_credentials",
-                client_id: config.clientId,
-                client_secret: config.clientSecret,
-                ...(config.projectSlug && { project_slug: config.projectSlug }),
-                ...(config.customDomain && { custom_domain: config.customDomain }),
-              }),
+              body: JSON.stringify(body),
               signal: controller.signal,
             }),
           {
@@ -62,19 +63,17 @@ export async function fetchOAuthToken(
           },
         );
 
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => "Unknown error");
-          throw new Error(
-            `OAuth token request failed: ${response.status} - ${errorText}`,
-          );
+        if (response.ok) {
+          return response.json();
         }
 
-        return response.json();
+        const errorText = await response.text().catch((): string => "Unknown error");
+        throw new Error(
+          `OAuth token request failed: ${response.status} - ${errorText}`,
+        );
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") {
-          throw new Error(
-            `OAuth token request timed out after ${config.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms`,
-          );
+          throw new Error(`OAuth token request timed out after ${timeoutMs}ms`);
         }
         throw error;
       } finally {
@@ -82,8 +81,8 @@ export async function fetchOAuthToken(
       }
     },
     {
-      "oauth.project_slug": config.projectSlug || "",
-      "oauth.custom_domain": config.customDomain || "",
+      "oauth.project_slug": config.projectSlug ?? "",
+      "oauth.custom_domain": config.customDomain ?? "",
     },
   );
 }

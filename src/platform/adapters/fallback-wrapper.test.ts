@@ -92,6 +92,7 @@ describe("fallback-wrapper", () => {
           operationName: "test-operation",
           logError: false,
         });
+        throw new Error("Should have thrown");
       } catch (error) {
         if (!(error instanceof FallbackExecutionError)) throw error;
         assertEquals(error.primaryError, primaryError);
@@ -197,7 +198,8 @@ describe("fallback-wrapper", () => {
         });
         throw new Error("Should have thrown");
       } catch (error) {
-        assertEquals((error as Error).message, "fallback-error");
+        if (!(error instanceof Error)) throw error;
+        assertEquals(error.message, "fallback-error");
       }
     });
   });

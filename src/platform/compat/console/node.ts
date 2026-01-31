@@ -22,8 +22,7 @@ let pc: PicoColors | null = null;
 async function ensurePc(): Promise<PicoColors> {
   if (pc) return pc;
 
-  const picocolorsModule = ["npm:", "picocolors"].join("");
-  const mod = await import(picocolorsModule);
+  const mod = await import("npm:picocolors@1.1.1");
   pc = mod.default as PicoColors;
 
   return pc;
@@ -50,20 +49,22 @@ export const colors: ConsoleStyler = {
   reset: lazyColor("reset"),
 };
 
-export const red = colors.red;
-export const green = colors.green;
-export const yellow = colors.yellow;
-export const blue = colors.blue;
-export const cyan = colors.cyan;
-export const magenta = colors.magenta;
-export const white = colors.white;
-export const gray = colors.gray;
-export const bold = colors.bold;
-export const dim = colors.dim;
-export const italic = colors.italic;
-export const underline = colors.underline;
-export const strikethrough = colors.strikethrough;
-export const reset = colors.reset;
+export const {
+  red,
+  green,
+  yellow,
+  blue,
+  cyan,
+  magenta,
+  white,
+  gray,
+  bold,
+  dim,
+  italic,
+  underline,
+  strikethrough,
+  reset,
+} = colors;
 
 export async function initColors(): Promise<void> {
   await ensurePc();

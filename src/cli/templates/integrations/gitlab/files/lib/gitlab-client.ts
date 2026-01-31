@@ -111,9 +111,7 @@ function buildQuery(params: URLSearchParams): string {
 
 async function gitlabFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with GitLab. Please connect your account.");
-  }
+  if (!token) throw new Error("Not authenticated with GitLab. Please connect your account.");
 
   const response = await fetch(`${GITLAB_BASE_URL}${endpoint}`, {
     ...options,
@@ -125,16 +123,16 @@ async function gitlabFetch<T>(endpoint: string, options: RequestInit = {}): Prom
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({} as Record<string, unknown>));
-    const message =
-      (error as { message?: string; error?: string }).message ??
-      (error as { message?: string; error?: string }).error ??
-      response.statusText;
+    const error = (await response.json().catch(() => ({}))) as {
+      message?: string;
+      error?: string;
+    };
 
+    const message = error.message ?? error.error ?? response.statusText;
     throw new Error(`GitLab API error: ${response.status} ${message}`);
   }
 
-  return response.json() as Promise<T>;
+  return (await response.json()) as T;
 }
 
 export function getCurrentUser(): Promise<GitLabUser> {

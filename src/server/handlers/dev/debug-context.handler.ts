@@ -53,7 +53,7 @@ export class DebugContextHandler extends BaseHandler {
             mode: ctx.requestContext.mode,
             slug: ctx.requestContext.slug,
             branch: ctx.requestContext.branch,
-            hasToken: !!ctx.requestContext.token,
+            hasToken: Boolean(ctx.requestContext.token),
           }
           : null,
         releaseId: ctx.releaseId,
@@ -68,14 +68,13 @@ export class DebugContextHandler extends BaseHandler {
     };
 
     const response = this.createResponseBuilder(ctx).withCache("no-cache").json(debugInfo, HTTP_OK);
-
     return Promise.resolve(this.respond(response));
   }
 
   private checkMultiProjectMode(ctx: HandlerContext): boolean {
     try {
       const fs = ctx.adapter?.fs as { isMultiProjectMode?: () => boolean } | undefined;
-      return typeof fs?.isMultiProjectMode === "function" && fs.isMultiProjectMode();
+      return fs?.isMultiProjectMode?.() ?? false;
     } catch {
       return false;
     }
@@ -89,11 +88,7 @@ export class DebugContextHandler extends BaseHandler {
         | { getUnderlyingAdapter?: () => { getManagerStats?: () => unknown } }
         | undefined;
 
-      if (typeof fs?.getUnderlyingAdapter !== "function") {
-        return null;
-      }
-
-      const underlying = fs.getUnderlyingAdapter() as MultiProjectFSAdapter;
+      const underlying = fs?.getUnderlyingAdapter?.() as MultiProjectFSAdapter | undefined;
       if (typeof underlying?.getManagerStats !== "function") {
         return null;
       }

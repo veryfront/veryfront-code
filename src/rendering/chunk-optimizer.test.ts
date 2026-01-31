@@ -10,7 +10,9 @@ describe("rendering/chunk-optimizer", () => {
         sharedDeps: new Map(),
         suggestedChunks: [],
       };
+
       const manifest = generateChunkManifest(analysis);
+
       assertEquals(manifest.version, "1.0");
       assertEquals(Object.keys(manifest.chunks).length, 0);
       assertEquals(Object.keys(manifest.pages).length, 0);
@@ -24,8 +26,10 @@ describe("rendering/chunk-optimizer", () => {
           { name: "common", deps: ["react", "lodash"], pages: [], benefit: 5000 },
         ],
       };
+
       const manifest = generateChunkManifest(analysis);
-      const chunk = manifest.chunks["common"];
+      const chunk = manifest.chunks.common;
+
       assertExists(chunk);
       assertEquals(chunk.deps, ["react", "lodash"]);
       assertEquals(chunk.size, 5000);
@@ -54,8 +58,10 @@ describe("rendering/chunk-optimizer", () => {
           },
         ],
       };
+
       const manifest = generateChunkManifest(analysis);
       const page = manifest.pages["/pages/index.mdx"];
+
       assertExists(page);
       assertEquals(page.chunks.includes("common"), true);
       assertEquals(page.deps.local, ["./utils"]);
@@ -85,8 +91,10 @@ describe("rendering/chunk-optimizer", () => {
           },
         ],
       };
+
       const manifest = generateChunkManifest(analysis);
       const page = manifest.pages["/pages/about.mdx"];
+
       assertExists(page);
       assertEquals(page.chunks, ["react-vendor"]);
     });

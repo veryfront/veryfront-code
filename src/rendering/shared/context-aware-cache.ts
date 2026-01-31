@@ -62,6 +62,7 @@ export class ContextAwareCacheCoordinator {
 
         if (this.isExpired(cached)) {
           await this.store.delete(cacheKey);
+
           logger.debug("[ContextAwareCache] Cache expired", {
             slug,
             projectId: ctx.projectId,
@@ -73,6 +74,7 @@ export class ContextAwareCacheCoordinator {
             projectId: ctx.projectId,
             environment: ctx.environment,
           });
+
           return { cacheKey, hit: false };
         }
 
@@ -109,13 +111,11 @@ export class ContextAwareCacheCoordinator {
     const cacheKey = this.getCacheKey(slug, ctx, colorScheme);
     const now = Date.now();
 
-    const payload: CachePayload = {
+    await this.store.set(cacheKey, {
       result: this.cloneResult(result),
       storedAt: now,
       expiresAt: this.ttlMs ? now + this.ttlMs : undefined,
-    };
-
-    await this.store.set(cacheKey, payload);
+    });
 
     logger.debug("[ContextAwareCache] Cached result", {
       slug,
@@ -225,7 +225,9 @@ export class ContextAwareCacheCoordinator {
       ssrHash: result.ssrHash,
     };
 
-    if (result.pageModule) cloned.pageModule = { ...result.pageModule };
+    if (result.pageModule) {
+      cloned.pageModule = { ...result.pageModule };
+    }
 
     return cloned;
   }

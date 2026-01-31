@@ -30,11 +30,10 @@ export class NetworkUtils {
   }
 
   shouldPrefetch(): boolean {
-    const nav = this.getNavigatorWithConnection();
-    if (nav?.connection?.saveData) return false;
+    if (this.networkInfo?.saveData) return false;
 
     const effectiveType = this.networkInfo?.effectiveType;
-    if (effectiveType !== undefined && !this.allowedNetworks.includes(effectiveType)) return false;
+    if (effectiveType != null && !this.allowedNetworks.includes(effectiveType)) return false;
 
     return true;
   }

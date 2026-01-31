@@ -13,8 +13,7 @@ export function parseCookies(cookieHeader: string): Record<string, string> {
     const name = trimmed.slice(0, separatorIndex).trim();
     if (!name) continue;
 
-    const value = trimmed.slice(separatorIndex + 1);
-    cookies[name] = decodeURIComponent(value);
+    cookies[name] = decodeURIComponent(trimmed.slice(separatorIndex + 1));
   }
 
   return cookies;

@@ -1,8 +1,8 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { loadSecurityConfig } from "./security-config.ts";
 import { DEFAULT_ALLOWED_CDN_HOSTS } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { loadSecurityConfig } from "./security-config.ts";
 
 function makeAdapter(): RuntimeAdapter {
   return {
@@ -23,9 +23,12 @@ function makeAdapter(): RuntimeAdapter {
       mkdir: () => Promise.resolve(),
       remove: () => Promise.resolve(),
       makeTempDir: () => Promise.resolve("/tmp/mock"),
-      watch: () => ({ close: () => {}, [Symbol.asyncIterator]: async function* () {} }),
+      watch: () => ({
+        close: () => {},
+        [Symbol.asyncIterator]: async function* () {},
+      }),
     },
-  } as unknown as RuntimeAdapter;
+  };
 }
 
 describe("routing/api/module-loader/security-config", () => {
@@ -33,7 +36,7 @@ describe("routing/api/module-loader/security-config", () => {
     it("should return an array of strings", async () => {
       const result = await loadSecurityConfig("/tmp/nonexistent-project", makeAdapter());
       assertEquals(Array.isArray(result), true);
-      assertEquals(result.every((h: string) => typeof h === "string"), true);
+      assertEquals(result.every((h) => typeof h === "string"), true);
     });
 
     it("should return DEFAULT_ALLOWED_CDN_HOSTS when config is not available", async () => {

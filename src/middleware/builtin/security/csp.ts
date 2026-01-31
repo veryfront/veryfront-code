@@ -18,13 +18,13 @@ export function contentSecurityPolicy(
     const nonce = options?.nonce;
     const noncePart = nonce ? ` 'nonce-${nonce}'` : "";
 
-    let csp = base.replace(
+    const cspBase = base.replace(
       /(script-src)([^;]*)/i,
       (_m, a, b) => `${a}${b}${noncePart}`,
     );
 
     const merge = options?.merge;
-    if (merge) csp = `${merge}; ${csp}`;
+    const csp = merge ? `${merge}; ${cspBase}` : cspBase;
 
     headers.set("Content-Security-Policy", csp);
     return new Response(res.body, { status: res.status, headers });

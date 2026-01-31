@@ -23,14 +23,10 @@ export function securityHeaders(options?: SecurityHeadersOptions): Middleware {
     );
 
     const csp = options?.contentSecurityPolicy;
-    if (csp) {
-      headers.set("Content-Security-Policy", buildCSPHeader(csp));
-    }
+    if (csp) headers.set("Content-Security-Policy", buildCSPHeader(csp));
 
     const hsts = options?.hsts;
-    if (hsts) {
-      headers.set("Strict-Transport-Security", buildHSTSHeader(hsts));
-    }
+    if (hsts) headers.set("Strict-Transport-Security", buildHSTSHeader(hsts));
 
     return new Response(res.body, { status: res.status, headers });
   };
@@ -40,7 +36,7 @@ function buildCSPHeader(csp: string | CSPDirectives): string {
   if (typeof csp === "string") return csp;
 
   return Object.entries(csp)
-    .map(([k, v]) => `${k} ${v}`)
+    .map(([key, value]) => `${key} ${value}`)
     .join("; ");
 }
 

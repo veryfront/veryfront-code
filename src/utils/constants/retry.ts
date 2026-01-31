@@ -1,7 +1,3 @@
-/***************
- * Retry settings
- ***************/
-
 export const DEFAULT_RETRY_MAX_ATTEMPTS = 3;
 export const DEFAULT_RETRY_INITIAL_DELAY_MS = 100;
 export const DEFAULT_RETRY_MAX_DELAY_MS = 5000;

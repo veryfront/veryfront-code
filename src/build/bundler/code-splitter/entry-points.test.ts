@@ -96,53 +96,26 @@ describe("entry-points", () => {
   });
 
   describe("convertPathToName", () => {
-    it("should convert root path to index", () => {
-      expect(convertPathToName("/")).toBe("index");
-    });
+    const cases: Array<[string, string]> = [
+      ["/", "index"],
+      ["/about", "about"],
+      ["/blog/post", "blog-post"],
+      ["/contact", "contact"],
+      ["/blog/post/detail", "blog-post-detail"],
+      ["/users/profile/settings", "users-profile-settings"],
+      ["/about/", "about-"],
+      ["about", "about"],
+      ["/blog//post", "blog--post"],
+      ["/my-blog/my-post", "my-blog-my-post"],
+      ["/2024/01", "2024-01"],
+      ["/blog/post-123", "blog-post-123"],
+    ];
 
-    it("should convert simple path", () => {
-      expect(convertPathToName("/about")).toBe("about");
-    });
-
-    it("should convert nested path with slashes to hyphens", () => {
-      expect(convertPathToName("/blog/post")).toBe("blog-post");
-    });
-
-    it("should remove leading slash", () => {
-      expect(convertPathToName("/contact")).toBe("contact");
-    });
-
-    it("should convert deep nested paths", () => {
-      expect(convertPathToName("/blog/post/detail")).toBe("blog-post-detail");
-    });
-
-    it("should handle path with multiple segments", () => {
-      expect(convertPathToName("/users/profile/settings")).toBe("users-profile-settings");
-    });
-
-    it("should handle path with trailing slash", () => {
-      expect(convertPathToName("/about/")).toBe("about-");
-    });
-
-    it("should handle path without leading slash", () => {
-      expect(convertPathToName("about")).toBe("about");
-    });
-
-    it("should handle empty path segments", () => {
-      expect(convertPathToName("/blog//post")).toBe("blog--post");
-    });
-
-    it("should preserve existing hyphens in path", () => {
-      expect(convertPathToName("/my-blog/my-post")).toBe("my-blog-my-post");
-    });
-
-    it("should handle numeric paths", () => {
-      expect(convertPathToName("/2024/01")).toBe("2024-01");
-    });
-
-    it("should handle mixed alphanumeric paths", () => {
-      expect(convertPathToName("/blog/post-123")).toBe("blog-post-123");
-    });
+    for (const [input, expected] of cases) {
+      it(`should convert ${JSON.stringify(input)} to ${JSON.stringify(expected)}`, () => {
+        expect(convertPathToName(input)).toBe(expected);
+      });
+    }
   });
 
   describe("integration", () => {

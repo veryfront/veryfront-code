@@ -12,11 +12,21 @@ export const RESET = `${ESC}[0m`;
 export const cursor = {
   hide: `${CSI}?25l`,
   show: `${CSI}?25h`,
-  moveTo: (row: number, col: number): string => `${CSI}${row};${col}H`,
-  up: (n = 1): string => `${CSI}${n}A`,
-  down: (n = 1): string => `${CSI}${n}B`,
-  right: (n = 1): string => `${CSI}${n}C`,
-  left: (n = 1): string => `${CSI}${n}D`,
+  moveTo(row: number, col: number): string {
+    return `${CSI}${row};${col}H`;
+  },
+  up(n = 1): string {
+    return `${CSI}${n}A`;
+  },
+  down(n = 1): string {
+    return `${CSI}${n}B`;
+  },
+  right(n = 1): string {
+    return `${CSI}${n}C`;
+  },
+  left(n = 1): string {
+    return `${CSI}${n}D`;
+  },
   save: `${CSI}s`,
   restore: `${CSI}u`,
 } as const;
@@ -43,12 +53,29 @@ export const style = {
   strikethrough: `${CSI}9m`,
 } as const;
 
-export const fgRgb = (r: number, g: number, b: number): string => `${CSI}38;2;${r};${g};${b}m`;
-export const bgRgb = (r: number, g: number, b: number): string => `${CSI}48;2;${r};${g};${b}m`;
-export const fg256 = (color: number): string => `${CSI}38;5;${color}m`;
-export const bg256 = (color: number): string => `${CSI}48;5;${color}m`;
-export const fg16 = (color: number): string => `${CSI}${30 + color}m`;
-export const bg16 = (color: number): string => `${CSI}${40 + color}m`;
+export function fgRgb(r: number, g: number, b: number): string {
+  return `${CSI}38;2;${r};${g};${b}m`;
+}
+
+export function bgRgb(r: number, g: number, b: number): string {
+  return `${CSI}48;2;${r};${g};${b}m`;
+}
+
+export function fg256(color: number): string {
+  return `${CSI}38;5;${color}m`;
+}
+
+export function bg256(color: number): string {
+  return `${CSI}48;5;${color}m`;
+}
+
+export function fg16(color: number): string {
+  return `${CSI}${30 + color}m`;
+}
+
+export function bg16(color: number): string {
+  return `${CSI}${40 + color}m`;
+}
 
 // deno-lint-ignore no-control-regex
 export const ANSI_REGEX = /\x1b\[[0-9;]*m/g;

@@ -12,8 +12,13 @@
  */
 export function isInRoutableDir(filePath: string | undefined): boolean {
   if (!filePath) return false;
-  return filePath.startsWith("pages/") || filePath.startsWith("app/") ||
-    filePath.includes("/pages/") || filePath.includes("/app/");
+
+  return (
+    filePath.startsWith("pages/") ||
+    filePath.startsWith("app/") ||
+    filePath.includes("/pages/") ||
+    filePath.includes("/app/")
+  );
 }
 
 /**
@@ -25,11 +30,7 @@ export function isMarkdownPreview(
   filePath: string | undefined,
   frontmatter?: Record<string, unknown>,
 ): boolean {
-  // Files in pages/ or app/ are routed normally
   if (isInRoutableDir(filePath)) return false;
-
-  // prose: false opts out of preview styling
   if (frontmatter?.prose === false) return false;
-
   return true;
 }

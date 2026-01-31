@@ -21,9 +21,6 @@ async function renderToReadableStreamImpl(
   options: SSROptions,
   server: Awaited<ReturnType<typeof getReactDOMServer>>,
 ): Promise<SSRResult> {
-  const debug = isDebugMode();
-  const start = performance.now();
-
   if (!server.renderToReadableStream) {
     throw toError(
       createError({
@@ -33,6 +30,9 @@ async function renderToReadableStreamImpl(
       }),
     );
   }
+
+  const debug = isDebugMode();
+  const start = performance.now();
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
@@ -55,6 +55,7 @@ async function renderToReadableStreamImpl(
           logger.warn("SSR_ABORT React render aborted due to timeout");
           return;
         }
+
         logger.error("SSR_ERROR React streaming error", error);
         options.onError?.(error as Error);
       },
@@ -106,8 +107,6 @@ function renderToPipeableStreamImpl(
   options: SSROptions,
   server: Awaited<ReturnType<typeof getReactDOMServer>>,
 ): Promise<SSRResult> {
-  const start = performance.now();
-
   if (!server.renderToPipeableStream) {
     throw toError(
       createError({
@@ -118,7 +117,10 @@ function renderToPipeableStreamImpl(
     );
   }
 
-  return new Promise<SSRResult>((resolve, reject) => {
+  const renderToPipeableStream = server.renderToPipeableStream;
+  const start = performance.now();
+
+  const promise = new Promise<SSRResult>((resolve, reject) => {
     let abortFn: (() => void) | undefined;
     let settled = false;
 
@@ -144,7 +146,7 @@ function renderToPipeableStreamImpl(
     }, SSR_TIMEOUT_MS);
 
     try {
-      const { pipe, abort } = server.renderToPipeableStream!(element, {
+      const { pipe, abort } = renderToPipeableStream(element, {
         bootstrapScripts: options.bootstrapScripts,
         bootstrapModules: options.bootstrapModules,
         identifierPrefix: options.identifierPrefix,
@@ -184,7 +186,9 @@ function renderToPipeableStreamImpl(
       clearTimeout(timeoutId);
       reject(error);
     }
-  }).catch(async (error) => {
+  });
+
+  return promise.catch(async (error) => {
     const durationMs = Math.round(performance.now() - start);
     const isTimeout = error instanceof Error && error.message.includes("SSR timeout");
 

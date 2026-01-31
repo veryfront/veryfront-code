@@ -18,10 +18,10 @@ export class MetricsHandler extends BaseHandler {
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const { pathname } = new URL(req.url);
+    if (pathname !== "/_metrics") return Promise.resolve(this.continue());
 
-    if (pathname !== "/_metrics") {
-      return Promise.resolve(this.continue());
-    }
+    const securityConfig = ctx.securityConfig ?? undefined;
+    const corsConfig = ctx.securityConfig?.cors;
 
     try {
       const snap = metrics.snapshot();
@@ -31,11 +31,7 @@ export class MetricsHandler extends BaseHandler {
       const response = ResponseBuilder.json(
         { counters: snap, memory, uptime: uptimeValue },
         req,
-        {
-          securityConfig: ctx.securityConfig ?? undefined,
-          corsConfig: ctx.securityConfig?.cors,
-          status: HTTP_OK,
-        },
+        { securityConfig, corsConfig, status: HTTP_OK },
       );
 
       return Promise.resolve(this.respond(response));
@@ -46,10 +42,7 @@ export class MetricsHandler extends BaseHandler {
         HTTP_INTERNAL_SERVER_ERROR,
         "Failed to gather metrics",
         req,
-        {
-          securityConfig: ctx.securityConfig ?? undefined,
-          corsConfig: ctx.securityConfig?.cors,
-        },
+        { securityConfig, corsConfig },
       );
 
       return Promise.resolve(this.respond(response));

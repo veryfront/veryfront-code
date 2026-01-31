@@ -8,13 +8,13 @@ export function wrapInHTML(content: string, options: HTMLWrapOptions): string {
     .join("\n  ");
 
   const linkTags = options.links
-    .map((link) => `<link rel="${link.rel}" href="${link.href}">`)
+    .map(({ rel, href }) => `<link rel="${rel}" href="${href}">`)
     .join("\n  ");
 
   const scriptTags = options.scripts
-    .map((script) => {
-      const typeAttr = script.type ? ` type="${script.type}"` : "";
-      return `<script src="${script.src}"${typeAttr}${nonceAttr}></script>`;
+    .map(({ src, type }) => {
+      const typeAttr = type ? ` type="${type}"` : "";
+      return `<script src="${src}"${typeAttr}${nonceAttr}></script>`;
     })
     .join("\n  ");
 

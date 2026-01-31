@@ -67,11 +67,11 @@ export function extractPathParams(pattern: string): PathParam[] {
   const params: PathParam[] = [];
   const seen = new Set<string>();
 
-  const addParam = (name: string | undefined, required: boolean, catchAll: boolean): void => {
+  function addParam(name: string | undefined, required: boolean, catchAll: boolean): void {
     if (!name || seen.has(name)) return;
     seen.add(name);
     params.push({ name, required, catchAll });
-  };
+  }
 
   for (const match of pattern.matchAll(/\[\[\.\.\.([^\]]+)\]\]/g)) {
     addParam(match[1], false, true);
@@ -83,7 +83,7 @@ export function extractPathParams(pattern: string): PathParam[] {
 
   for (const match of pattern.matchAll(/\[([^\[\]]+)\]/g)) {
     const name = match[1];
-    if (name?.startsWith("...")) continue;
+    if (!name || name.startsWith("...")) continue;
     addParam(name, true, false);
   }
 
@@ -146,9 +146,9 @@ export function filePathToPattern(filePath: string, routePrefix: string = ""): s
  * ```
  */
 export function generateOperationId(method: string, path: string): string {
-  let cleanPath = path.replace(/^\/api/, "");
-
-  cleanPath = cleanPath.replace(/\{([^}]+)\}/g, (_, param: string) => `By${capitalize(param)}`);
+  const cleanPath = path
+    .replace(/^\/api/, "")
+    .replace(/\{([^}]+)\}/g, (_, param: string) => `By${capitalize(param)}`);
 
   const segments = cleanPath
     .split("/")

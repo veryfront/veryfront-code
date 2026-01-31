@@ -29,9 +29,10 @@ export class WaitNodeHandler extends BaseNodeHandler<WaitNodeConfig> {
 
     this.callbacks?.onWaiting?.(node.id, config);
 
-    const payload = typeof config.payload === "function"
-      ? await config.payload(context)
-      : config.payload;
+    let payload = config.payload;
+    if (typeof payload === "function") {
+      payload = await payload(context);
+    }
 
     const state: NodeState = {
       nodeId: node.id,

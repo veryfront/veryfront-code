@@ -25,8 +25,11 @@ describe("GitHubDirectoryOperations", () => {
   };
 
   function createOps(): GitHubDirectoryOperations {
-    const cache = new FileCache();
-    return new GitHubDirectoryOperations(mockConfig, cache, mockStatOps as any);
+    return new GitHubDirectoryOperations(
+      mockConfig,
+      new FileCache(),
+      mockStatOps as any,
+    );
   }
 
   describe("class", () => {
@@ -36,8 +39,7 @@ describe("GitHubDirectoryOperations", () => {
     });
 
     it("should be instantiable", () => {
-      const ops = createOps();
-      assertExists(ops);
+      assertExists(createOps());
     });
   });
 
@@ -55,9 +57,7 @@ describe("GitHubDirectoryOperations", () => {
     });
 
     it("should return empty array for non-existent directory", () => {
-      const ops = createOps();
-      const entries = ops.readdir("/non-existent");
-      assertEquals(entries, []);
+      assertEquals(createOps().readdir("/non-existent"), []);
     });
   });
 });

@@ -1,12 +1,3 @@
-/**
- * Error Page Fallback Handler
- *
- * Attempts to render custom error pages (404.tsx, 500.tsx, _error.tsx) from the pages directory.
- * Supports optional cache injection for testing.
- *
- * @module server/handlers/request/ssr/error-page-fallback
- */
-
 import type * as React from "react";
 import type { HandlerContext } from "../../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
@@ -103,33 +94,30 @@ const CACHE_NOT_FOUND = "__NOT_FOUND__";
 
 const errorPagePathCache = new Map<string, string | null>();
 
-/** Get cached path from injected repo or internal Map */
-async function getCachedPath(cacheKey: string): Promise<string | null | undefined> {
-  if (injectedCacheRepo) {
-    const cached = await injectedCacheRepo.get(cacheKey);
-    if (cached === CACHE_NOT_FOUND) return null;
-    if (cached) return cached;
-    return undefined; // cache miss
-  }
-  return errorPagePathCache.get(cacheKey);
+async function getCachedPath(
+  cacheKey: string,
+): Promise<string | null | undefined> {
+  if (!injectedCacheRepo) return errorPagePathCache.get(cacheKey);
+
+  const cached = await injectedCacheRepo.get(cacheKey);
+  if (cached === CACHE_NOT_FOUND) return null;
+  return cached || undefined;
 }
 
-/** Set cached path in injected repo or internal Map */
 async function setCachedPath(cacheKey: string, path: string | null): Promise<void> {
   if (injectedCacheRepo) {
     await injectedCacheRepo.set(cacheKey, path ?? CACHE_NOT_FOUND);
-  } else {
-    errorPagePathCache.set(cacheKey, path);
+    return;
   }
+  errorPagePathCache.set(cacheKey, path);
 }
 
-/** Delete cached path from injected repo or internal Map */
 async function deleteCachedPath(cacheKey: string): Promise<void> {
   if (injectedCacheRepo) {
     await injectedCacheRepo.delete(cacheKey);
-  } else {
-    errorPagePathCache.delete(cacheKey);
+    return;
   }
+  errorPagePathCache.delete(cacheKey);
 }
 
 async function tryLoadErrorPage(
@@ -142,6 +130,7 @@ async function tryLoadErrorPage(
   const cachedPath = await getCachedPath(cacheKey);
   if (cachedPath !== undefined) {
     if (!cachedPath) return null;
+
     try {
       return await loadErrorComponent(cachedPath, ctx);
     } catch {
@@ -202,9 +191,10 @@ async function loadErrorComponent(
     "@veryfront/modules/react-loader/component-loader.ts"
   );
 
+  const isLocalDev = ctx.requestContext?.isLocalDev ?? false;
   const contentSourceId = ctx.enriched?.contentSourceId ??
     computeContentSourceId(
-      ctx.requestContext?.isLocalDev ?? false,
+      isLocalDev,
       ctx.resolvedEnvironment ?? ctx.requestContext?.mode ?? "preview",
       ctx.requestContext?.branch ?? null,
       ctx.releaseId,
@@ -217,7 +207,7 @@ async function loadErrorComponent(
     ctx.adapter,
     {
       projectId: ctx.projectId ?? ctx.projectDir,
-      dev: ctx.requestContext?.isLocalDev ?? false,
+      dev: isLocalDev,
       contentSourceId,
     },
   );
@@ -269,12 +259,16 @@ async function renderErrorPage(
       error: renderError,
     });
 
+    const title = statusCode === 404 ? "Not Found" : "Server Error";
+    let message = "An unexpected error occurred.";
+    if (statusCode === 404) {
+      message = pathname ? `The page "${pathname}" could not be found.` : "Page not found.";
+    }
+
     const fallbackHtml = generateErrorHtml({
       statusCode,
-      title: statusCode === 404 ? "Not Found" : "Server Error",
-      message: statusCode === 404
-        ? pathname ? `The page "${pathname}" could not be found.` : "Page not found."
-        : "An unexpected error occurred.",
+      title,
+      message,
       minimal: true,
     });
 

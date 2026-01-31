@@ -87,6 +87,11 @@ function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
 }
 
+function getPrefix(prefix: string | undefined, fallback?: IssuePrefix): IssuePrefix | undefined {
+  const value = prefix?.toUpperCase() as IssuePrefix | undefined;
+  return value ?? fallback;
+}
+
 export async function issuesCommand(args: {
   _: (string | number)[];
   title?: string;
@@ -117,6 +122,7 @@ export async function issuesCommand(args: {
   const subcommand = getId(args, 1);
   const manager = createIssuesManager(cwd());
   const json = getJsonFlag(args);
+  const verbose = Boolean(args.verbose || args.v);
 
   switch (subcommand) {
     case "create": {
@@ -126,17 +132,13 @@ export async function issuesCommand(args: {
         return;
       }
 
-      const labels = parseLabels(args.labels || args.l);
-      const assignees = parseLabels(args.assignees || args.a);
-      const prefix = (args.prefix?.toUpperCase() || "ISSUE") as IssuePrefix;
-
       const issue = await manager.create({
         title,
         body: args.body || args.b,
-        labels,
+        labels: parseLabels(args.labels || args.l),
         milestone: args.milestone || args.m,
-        assignees,
-        prefix,
+        assignees: parseLabels(args.assignees || args.a),
+        prefix: getPrefix(args.prefix, "ISSUE")!,
       });
 
       if (json) {
@@ -151,20 +153,14 @@ export async function issuesCommand(args: {
 
     case "list":
     case "ls": {
-      const state = args.state ? parseState(args.state) ?? undefined : undefined;
-      const labels = parseLabels(args.labels || args.l);
-      const prefix = args.prefix?.toUpperCase() as IssuePrefix | undefined;
-      const sortBy = (args.sort as "created_at" | "updated_at" | "id") || "created_at";
-      const sortDirection = (args.dir as "asc" | "desc") || "desc";
-
       const result = await manager.list({
-        state,
-        labels,
+        state: args.state ? parseState(args.state) ?? undefined : undefined,
+        labels: parseLabels(args.labels || args.l),
         milestone: args.milestone || args.m,
         assignee: args.assignee,
-        prefix,
-        sortBy,
-        sortDirection,
+        prefix: getPrefix(args.prefix),
+        sortBy: (args.sort as "created_at" | "updated_at" | "id") || "created_at",
+        sortDirection: (args.dir as "asc" | "desc") || "desc",
         limit: args.limit,
       });
 
@@ -179,7 +175,7 @@ export async function issuesCommand(args: {
       }
 
       for (const issue of result.issues) {
-        console.log(formatIssue(issue, Boolean(args.verbose)));
+        console.log(formatIssue(issue, verbose));
       }
 
       if (result.total > result.issues.length) {

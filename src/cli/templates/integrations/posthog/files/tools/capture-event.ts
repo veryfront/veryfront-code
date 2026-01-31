@@ -26,8 +26,10 @@ export default tool({
       timestamp,
     });
 
+    const success = result.status === 1 || result.status === 200;
+
     return {
-      success: result.status === 1 || result.status === 200,
+      success,
       event: {
         name: event,
         distinctId,

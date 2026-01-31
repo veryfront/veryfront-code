@@ -31,6 +31,8 @@ export default tool({
     const drives = await listDrives(siteId);
     result.documentLibraries = drives.map((drive) => {
       const quota = drive.quota;
+      const percentUsed =
+        quota && quota.total > 0 ? Math.round((quota.used / quota.total) * 100) : 0;
 
       return {
         id: drive.id,
@@ -43,8 +45,7 @@ export default tool({
               total: quota.total,
               used: quota.used,
               remaining: quota.remaining,
-              percentUsed:
-                quota.total > 0 ? Math.round((quota.used / quota.total) * 100) : 0,
+              percentUsed,
             }
           : undefined,
       };

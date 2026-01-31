@@ -18,8 +18,8 @@ export class GitHubStatOperations {
   private readonly cache: FileCache;
   private readonly projectDir: string;
 
-  private fileIndex: Map<string, FileIndexEntry> = new Map();
-  private directoryIndex: Set<string> = new Set();
+  private fileIndex = new Map<string, FileIndexEntry>();
+  private directoryIndex = new Set<string>();
   private buildingIndex: Promise<void> | null = null;
   private indexBuilt = false;
 
@@ -93,9 +93,7 @@ export class GitHubStatOperations {
         continue;
       }
 
-      if (entry.type === "tree") {
-        this.directoryIndex.add(entry.path);
-      }
+      if (entry.type === "tree") this.directoryIndex.add(entry.path);
     }
   }
 
@@ -186,6 +184,7 @@ export class GitHubStatOperations {
 
     const resolved = this.tryResolve(normalizedPath) ??
       this.tryResolveWithPagesPrefix(normalizedPath);
+
     this.cache.set(cacheKey, resolved);
     return resolved;
   }

@@ -15,7 +15,7 @@ const EXTENSION_MAP: Record<string, FileType> = {
 };
 
 const LOADER_MAP: Record<string, esbuild.Loader> = {
-  mdx: "tsx", // MDX compiles to TSX
+  mdx: "tsx",
   tsx: "tsx",
   ts: "ts",
   jsx: "jsx",
@@ -26,11 +26,13 @@ const LOADER_MAP: Record<string, esbuild.Loader> = {
 };
 
 export function getLoaderFromPath(path: string): esbuild.Loader {
-  return LOADER_MAP[getExtensionName(path)] ?? "default";
+  const extension = getExtensionName(path);
+  return LOADER_MAP[extension] ?? "default";
 }
 
 export function getFileType(path: string): FileType {
-  return EXTENSION_MAP[getExtensionName(path)] ?? "js";
+  const extension = getExtensionName(path);
+  return EXTENSION_MAP[extension] ?? "js";
 }
 
 export function getSlugFromPath(path: string): string {

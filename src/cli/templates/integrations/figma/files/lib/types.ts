@@ -307,8 +307,17 @@ export interface GroupNode extends NodeWithChildren {
   opacity?: number;
 }
 
+export type VectorNodeType =
+  | "VECTOR"
+  | "BOOLEAN_OPERATION"
+  | "STAR"
+  | "LINE"
+  | "ELLIPSE"
+  | "REGULAR_POLYGON"
+  | "RECTANGLE";
+
 export interface VectorNode extends NodeBase {
-  type: "VECTOR" | "BOOLEAN_OPERATION" | "STAR" | "LINE" | "ELLIPSE" | "REGULAR_POLYGON" | "RECTANGLE";
+  type: VectorNodeType;
   absoluteBoundingBox?: Rectangle;
   absoluteRenderBounds?: Rectangle;
   constraints?: LayoutConstraint;

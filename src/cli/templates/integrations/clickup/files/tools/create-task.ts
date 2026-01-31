@@ -25,6 +25,7 @@ export default tool({
   }),
   async execute(input) {
     const task = await createTask(input);
+    const dueDate = task.due_date ? new Date(Number(task.due_date)).toISOString() : null;
 
     return {
       success: true,
@@ -32,9 +33,9 @@ export default tool({
         id: task.id,
         name: task.name,
         status: task.status.status,
-        dueDate: task.due_date ? new Date(Number(task.due_date)).toISOString() : null,
+        dueDate,
         priority: task.priority?.priority ?? "none",
-        assignees: task.assignees.map((a) => a.username),
+        assignees: task.assignees.map((assignee) => assignee.username),
         list: task.list.name,
         url: `https://app.clickup.com/t/${task.id}`,
       },

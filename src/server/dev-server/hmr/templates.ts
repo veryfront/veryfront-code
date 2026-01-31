@@ -84,12 +84,13 @@ export function generateHMRClientTemplate(
       console.warn('[HMR] Update message missing path');
       return;
     }
-    // CSS changes: refresh link href
+
     if (update.path.endsWith('.css')) {
       console.log('[HMR] CSS changed, refreshing stylesheet');
       refreshTailwindCSS();
       return;
     }
+
     updateJS(update.path);
   }
 
@@ -100,12 +101,20 @@ export function generateHMRClientTemplate(
     console.log('[HMR] Tailwind CSS link refreshed');
   }
 
+  function notifyStudioUpdateCompleted() {
+    if (window.parent === window) return;
+    try {
+      window.parent.postMessage({ action: 'appUpdated', url: window.location.href }, '*');
+    } catch (e) { /* ignore */ }
+  }
+
   function updateJS(path) {
     try {
       const cacheBusted = path + (path.includes('?') ? '&' : '?') + 't=' + Date.now();
       const script = document.createElement('script');
       script.type = 'module';
       script.crossOrigin = 'anonymous';
+
       script.onload = () => {
         // Clear component cache to ensure fresh components are loaded
         window.__veryfrontClearComponentCache?.();
@@ -118,13 +127,7 @@ export function generateHMRClientTemplate(
         // where layouts and pages are dynamically loaded
         if (window.__veryfrontRenderPage) {
           window.__veryfrontRenderPage(window.location.pathname);
-
-          // Notify Studio that update completed
-          if (window.parent !== window) {
-            try {
-              window.parent.postMessage({ action: 'appUpdated', url: window.location.href }, '*');
-            } catch (e) { /* ignore */ }
-          }
+          notifyStudioUpdateCompleted();
           return;
         }
 
@@ -135,9 +138,11 @@ export function generateHMRClientTemplate(
 
         window.location.reload();
       };
+
       script.onerror = () => {
         window.location.reload();
       };
+
       script.src = cacheBusted;
       document.head.appendChild(script);
     } catch (error) {

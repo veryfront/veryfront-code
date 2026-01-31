@@ -1,8 +1,3 @@
-/**
- * React Server Components Handler
- * Handles RSC endpoints and streaming
- */
-
 import { BaseHandler } from "../../response/base.ts";
 import type {
   HandlerContext,
@@ -31,7 +26,7 @@ export class RSCHandler extends BaseHandler {
       return Promise.resolve(this.continue());
     }
 
-    const endpoint = pathname.replace("/_veryfront/rsc/", "");
+    const endpoint = pathname.slice("/_veryfront/rsc/".length);
 
     return withSpan(
       "rsc.handle",

@@ -10,7 +10,7 @@ export function Link({
   ...rest
 }: LinkProps): React.ReactElement {
   return (
-    <a {...rest} {...(prefetch ? { "data-prefetch": "true" } : {})}>
+    <a {...rest} data-prefetch={prefetch ? "true" : undefined}>
       {children}
     </a>
   );

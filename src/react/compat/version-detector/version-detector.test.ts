@@ -106,7 +106,6 @@ describe("React Version Detector", () => {
 
     it("server components detection based on version", () => {
       const info = getReactVersionInfo();
-
       if (info.major < 18) return;
 
       assertEquals(info.features.serverComponents, info.minor >= 3);

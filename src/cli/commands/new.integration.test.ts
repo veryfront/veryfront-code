@@ -31,12 +31,12 @@ function getCliPath(): string {
   return new URL("../main.ts", import.meta.url).pathname;
 }
 
-async function runNewCommand(
+function runNewCommand(
   projectName: string,
   args: string[],
   options?: { env?: Record<string, string> },
 ): Promise<{ code: number; stdout?: string; stderr?: string }> {
-  return await runCommand("deno", {
+  return runCommand("deno", {
     args: ["run", "--allow-all", getCliPath(), "new", projectName, ...args],
     cwd: TEST_DIR,
     capture: true,
@@ -59,11 +59,9 @@ describe("new command integration", () => {
   const projectDir = join(TEST_DIR, projectName);
 
   afterEach(async () => {
-    try {
-      await remove(projectDir, { recursive: true });
-    } catch {
+    await remove(projectDir, { recursive: true }).catch(() => {
       // Ignore if doesn't exist
-    }
+    });
   });
 
   describe("--skip-deploy mode", () => {
@@ -76,7 +74,9 @@ describe("new command integration", () => {
       const statResult = await stat(projectDir);
       assertEquals(statResult.isDirectory, true);
 
-      const configContent = await readTextFile(join(projectDir, "veryfront.config.ts"));
+      const configContent = await readTextFile(
+        join(projectDir, "veryfront.config.ts"),
+      );
       assertExists(configContent.includes(`projectSlug: "${projectName}-`));
 
       assertEquals(await exists(join(projectDir, ".env")), true);
@@ -98,7 +98,9 @@ describe("new command integration", () => {
       const statResult = await stat(projectDir);
       assertEquals(statResult.isDirectory, true);
 
-      const configContent = await readTextFile(join(projectDir, "veryfront.config.ts"));
+      const configContent = await readTextFile(
+        join(projectDir, "veryfront.config.ts"),
+      );
       assertExists(configContent.includes(`projectSlug: "${projectName}-`));
     });
   });
@@ -135,7 +137,9 @@ describe("new command integration", () => {
       const result = await runNewCommand(projectName, ["--skip-deploy", "--force"]);
       assertEquals(result.code, 0);
 
-      const configContent = await readTextFile(join(projectDir, "veryfront.config.ts"));
+      const configContent = await readTextFile(
+        join(projectDir, "veryfront.config.ts"),
+      );
       assertExists(configContent.includes(`projectSlug: "${projectName}-`));
     });
   });

@@ -34,10 +34,7 @@ export default tool({
       returned: limitedEvents.length,
       dateRange: { from, to },
       eventFilter: event ?? "all",
-      events: limitedEvents.map(({ event, properties }) => ({
-        event,
-        properties,
-      })),
+      events: limitedEvents.map(({ event, properties }) => ({ event, properties })),
     };
   },
 });

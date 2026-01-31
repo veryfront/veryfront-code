@@ -137,9 +137,11 @@ async function jiraFetch<T>(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({} as any));
+    const error = await response.json().catch(() => ({} as unknown));
     const message =
-      error?.errorMessages?.join(", ") || error?.message || response.statusText;
+      (error as any)?.errorMessages?.join(", ") ||
+      (error as any)?.message ||
+      response.statusText;
 
     throw new Error(`Jira API error: ${response.status} ${message}`);
   }
@@ -305,21 +307,22 @@ export function extractDescriptionText(description: unknown): string {
     return "";
   }
 
-  if (!("content" in description)) {
+  const content = (description as { content?: unknown[] }).content;
+  if (!Array.isArray(content)) {
     return "";
   }
 
-  const content = (description as { content: unknown[] }).content;
   const texts: string[] = [];
 
-  const extractText = (node: any): void => {
+  function extractText(node: any): void {
     if (node?.type === "text" && node.text) {
       texts.push(node.text);
     }
+
     if (Array.isArray(node?.content)) {
       node.content.forEach(extractText);
     }
-  };
+  }
 
   content.forEach(extractText);
   return texts.join(" ");

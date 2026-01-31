@@ -28,26 +28,29 @@ export default tool({
   }> {
     const tables = await listTables();
 
-    const baseTables = tables.map((t) => ({
-      name: t.table_name,
-      schema: t.table_schema,
-      type: t.table_type,
-    }));
-
     if (!includeColumns) {
+      const baseTables = tables.map((t) => ({
+        name: t.table_name,
+        schema: t.table_schema,
+        type: t.table_type,
+      }));
+
       return { count: baseTables.length, tables: baseTables };
     }
 
-    // Fetch column information for each table
     const tablesWithColumns = await Promise.all(
       tables.map(async (table) => {
+        const base = {
+          name: table.table_name,
+          schema: table.table_schema,
+          type: table.table_type,
+        };
+
         try {
           const columns = await getTableColumns(table.table_name);
 
           return {
-            name: table.table_name,
-            schema: table.table_schema,
-            type: table.table_type,
+            ...base,
             columns: columns.map((c) => ({
               name: c.column_name,
               type: c.data_type,
@@ -57,9 +60,7 @@ export default tool({
           };
         } catch (error) {
           return {
-            name: table.table_name,
-            schema: table.table_schema,
-            type: table.table_type,
+            ...base,
             columns: [],
             error: error instanceof Error ? error.message : "Failed to fetch columns",
           };

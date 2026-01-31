@@ -25,7 +25,8 @@ export default defineTool({
     close_notes: z.string().optional().describe("Close notes (required when closing)"),
   }),
   async execute(input) {
-    if (!(await isServiceNowConnected())) {
+    const connected = await isServiceNowConnected();
+    if (!connected) {
       return {
         error: "ServiceNow not connected",
         action: "Please connect ServiceNow via /api/auth/servicenow",

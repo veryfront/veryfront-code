@@ -2,32 +2,26 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RenderPipelineConfig } from "./pipeline.ts";
 
-// ---- Inline reimplementations of non-exported helpers for unit testing ----
-
-/** Check if a path segment is a hidden dot-directory (not . or ..) */
 function isHiddenSegment(segment: string): boolean {
   return segment.startsWith(".") && segment !== "." && segment !== "..";
 }
 
-/** Check if a path contains dot-prefixed segments */
 function isDotPath(slug: string, filePath?: string): boolean {
   const hasDotSegment = (path: string) => path.split("/").some(isHiddenSegment);
   return hasDotSegment(slug) || (filePath ? hasDotSegment(filePath) : false);
 }
 
-/** Create a cache key for page CSS */
 function getPageCssCacheKey(
   projectId: string | undefined,
   environment: string | undefined,
   slug: string,
   projectUpdatedAt: string | undefined,
 ): string {
-  return `${projectId || "default"}:${environment || "preview"}:${slug}:${
-    projectUpdatedAt || "draft"
+  return `${projectId ?? "default"}:${environment ?? "preview"}:${slug}:${
+    projectUpdatedAt ?? "draft"
   }`;
 }
 
-/** Page CSS cache (LRU-style eviction) */
 const PAGE_CSS_CACHE_MAX_SIZE = 200;
 const pageCssCache = new Map<string, string>();
 
@@ -43,14 +37,13 @@ function cachePageCss(cacheKey: string, css: string): void {
   pageCssCache.set(cacheKey, css);
 }
 
-/** hasDataFetchingFunction logic */
 function hasDataFetchingFunction(mod: unknown): boolean {
   if (!mod || typeof mod !== "object") return false;
+
   const m = mod as Record<string, unknown>;
   return typeof m.getServerData === "function" || typeof m.getStaticData === "function";
 }
 
-/** collectModulesToLoad logic */
 interface ModuleToLoad {
   type: "page" | "layout";
   id: string;
@@ -64,18 +57,18 @@ function collectModulesToLoad(
   nestedLayouts: Array<{ kind: string; componentPath?: string }>,
 ): ModuleToLoad[] {
   const modules: ModuleToLoad[] = [];
+
   if (isComponentPage && isInPagesOrAppDir) {
     modules.push({ type: "page", id: pagePath, path: pagePath });
   }
-  for (const layout of nestedLayouts) {
-    if (layout.kind === "tsx" && layout.componentPath) {
-      modules.push({ type: "layout", id: layout.componentPath, path: layout.componentPath });
-    }
+
+  for (const { kind, componentPath } of nestedLayouts) {
+    if (kind !== "tsx" || !componentPath) continue;
+    modules.push({ type: "layout", id: componentPath, path: componentPath });
   }
+
   return modules;
 }
-
-// ---- Tests ----
 
 describe("RenderPipeline helpers", () => {
   describe("isHiddenSegment", () => {
@@ -163,13 +156,12 @@ describe("RenderPipeline helpers", () => {
 
     it("should evict oldest entry when at max capacity", () => {
       pageCssCache.clear();
-      // Fill to max
+
       for (let i = 0; i < PAGE_CSS_CACHE_MAX_SIZE; i++) {
         cachePageCss(`fill-${i}`, `css-${i}`);
       }
       assertEquals(pageCssCache.size, PAGE_CSS_CACHE_MAX_SIZE);
 
-      // Add one more - should evict first
       cachePageCss("overflow-key", "overflow-css");
       assertEquals(pageCssCache.size, PAGE_CSS_CACHE_MAX_SIZE);
       assertEquals(getCachedPageCss("fill-0"), undefined);
@@ -210,6 +202,7 @@ describe("RenderPipeline helpers", () => {
     it("should include page module for component pages in pages dir", () => {
       const result = collectModulesToLoad("/project/pages/index.tsx", true, true, []);
       assertEquals(result.length, 1);
+
       const first = result[0];
       assertExists(first);
       assertEquals(first.type, "page");
@@ -234,6 +227,7 @@ describe("RenderPipeline helpers", () => {
       ];
       const result = collectModulesToLoad("/page.tsx", false, false, layouts);
       assertEquals(result.length, 2);
+
       const first = result[0];
       const second = result[1];
       assertExists(first);
@@ -253,6 +247,7 @@ describe("RenderPipeline helpers", () => {
       const layouts = [{ kind: "tsx", componentPath: "/layout.tsx" }];
       const result = collectModulesToLoad("/pages/index.tsx", true, true, layouts);
       assertEquals(result.length, 2);
+
       const first = result[0];
       const second = result[1];
       assertExists(first);

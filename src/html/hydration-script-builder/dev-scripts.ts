@@ -34,13 +34,13 @@ export function getDevScripts(
   const scripts: string[] = [];
 
   // Error logger only works in local dev (endpoint returns 404 in preview/prod)
-  if (!options?.skipErrorLogger) {
-    scripts.push(generateDevErrorLoggerScript(nonce));
-  }
+  if (!options?.skipErrorLogger) scripts.push(generateDevErrorLoggerScript(nonce));
 
-  scripts.push(generateDevComponentManifestScript(config, nonce));
-  scripts.push(generateDevClientRendererScript(nonce));
-  scripts.push(generateHMRScript(config, nonce, options?.skipDevHMR));
+  scripts.push(
+    generateDevComponentManifestScript(config, nonce),
+    generateDevClientRendererScript(nonce),
+    generateHMRScript(config, nonce, options?.skipDevHMR),
+  );
 
   return scripts.join("\n");
 }

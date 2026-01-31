@@ -8,8 +8,6 @@ import * as crypto from "node:crypto";
 export class NodeServerAdapter implements ServerAdapter {
   upgradeWebSocket(request: Request): WebSocketUpgrade {
     const key = request.headers.get("sec-websocket-key");
-    const protocol = request.headers.get("sec-websocket-protocol");
-
     if (!key) {
       throw toError(
         createError({
@@ -19,12 +17,11 @@ export class NodeServerAdapter implements ServerAdapter {
       );
     }
 
+    const protocol = request.headers.get("sec-websocket-protocol");
     const socket = new NodeWebSocket();
 
     registerWebSocketUpgrade(key)
-      .then((ws) => {
-        socket._attachRealSocket(ws);
-      })
+      .then((ws) => socket._attachRealSocket(ws))
       .catch((error) => {
         serverLogger.error("WebSocket upgrade failed:", error);
         socket._emitError(error);
@@ -34,11 +31,8 @@ export class NodeServerAdapter implements ServerAdapter {
       Upgrade: "websocket",
       Connection: "Upgrade",
       "Sec-WebSocket-Accept": this.generateAcceptKey(key),
+      ...(protocol ? { "Sec-WebSocket-Protocol": protocol } : {}),
     };
-
-    if (protocol) {
-      headers["Sec-WebSocket-Protocol"] = protocol;
-    }
 
     const response = new Response(null, {
       status: 101,

@@ -1,9 +1,9 @@
 import { logger } from "#veryfront/utils";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { type EnvReader, OAuthService } from "../providers/base.ts";
 import type { AuthorizationUrlOptions, OAuthServiceConfig, TokenStore } from "../types.ts";
 import { memoryTokenStore } from "../token-store/memory.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 export interface OAuthInitHandlerOptions {
   /** Token store to use (defaults to memory store) */
@@ -27,7 +27,6 @@ export function createOAuthInitHandler(
   options: OAuthInitHandlerOptions = {},
 ): () => Promise<Response> {
   const tokenStore = options.tokenStore ?? memoryTokenStore;
-  const baseUrl = options.baseUrl;
   const authOptions = options.authOptions ?? {};
   const env = options.env ?? getRuntimeEnv();
   const envReader = options.envReader ?? getEnv;
@@ -45,14 +44,12 @@ export function createOAuthInitHandler(
       );
     }
 
-    const appUrl = baseUrl ?? env.appUrl ?? "http://localhost:3000";
+    const appUrl = options.baseUrl ?? env.appUrl ?? "http://localhost:3000";
     const redirectUri = `${appUrl}/api/auth/${config.serviceId}/callback`;
 
     try {
       const { url, state } = await service.createAuthorizationUrl({ ...authOptions, redirectUri });
-
       await tokenStore.setState(state);
-
       return Response.redirect(url);
     } catch (error) {
       logger.error("[OAuth] Init error", { serviceId: config.serviceId }, error);

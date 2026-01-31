@@ -9,17 +9,19 @@ import { getBranchByName, MergeArgsSchema, mergeBranch, parseMergeArgs } from ".
 import type { ApiClient } from "../shared/config.ts";
 import type { ParsedArgs } from "../index/types.ts";
 
-function createMockClient(overrides: {
-  get?: (url: string, params?: unknown) => Promise<unknown>;
-  post?: (url: string, body?: unknown) => Promise<unknown>;
-} = {}): ApiClient {
+function createMockClient(
+  overrides: {
+    get?: (url: string, params?: unknown) => Promise<unknown>;
+    post?: (url: string, body?: unknown) => Promise<unknown>;
+  } = {},
+): ApiClient {
   return {
     get: overrides.get ?? (() => Promise.resolve({ data: [] })),
     post: overrides.post ?? (() => Promise.resolve({})),
     put: () => Promise.resolve({}),
     patch: () => Promise.resolve({}),
     delete: () => Promise.resolve({}),
-  } as unknown as ApiClient;
+  } as ApiClient;
 }
 
 async function captureError(fn: () => Promise<unknown>): Promise<Error | null> {
@@ -35,27 +37,27 @@ describe("MergeArgsSchema", () => {
   it("should require branch name", () => {
     const result = MergeArgsSchema.safeParse({ branch: "" });
     assertEquals(result.success, false);
-    if (!result.success) {
-      assertEquals(result.error.issues[0]?.message, "Branch name is required");
-    }
+
+    if (result.success) return;
+    assertEquals(result.error.issues[0]?.message, "Branch name is required");
   });
 
   it("should accept valid branch name", () => {
     const result = MergeArgsSchema.safeParse({ branch: "feature-x" });
     assertEquals(result.success, true);
-    if (result.success) {
-      assertEquals(result.data.branch, "feature-x");
-      assertEquals(result.data.dryRun, false);
-      assertEquals(result.data.force, false);
-    }
+
+    if (!result.success) return;
+    assertEquals(result.data.branch, "feature-x");
+    assertEquals(result.data.dryRun, false);
+    assertEquals(result.data.force, false);
   });
 
   it("should accept optional into branch", () => {
     const result = MergeArgsSchema.safeParse({ branch: "feature", into: "staging" });
     assertEquals(result.success, true);
-    if (result.success) {
-      assertEquals(result.data.into, "staging");
-    }
+
+    if (!result.success) return;
+    assertEquals(result.data.into, "staging");
   });
 
   it("should reject empty into branch", () => {
@@ -69,45 +71,45 @@ describe("parseMergeArgs", () => {
     const args = { _: ["merge", "feature-branch"] } as ParsedArgs;
     const result = parseMergeArgs(args);
     assertEquals(result.success, true);
-    if (result.success) {
-      assertEquals(result.data.branch, "feature-branch");
-    }
+
+    if (!result.success) return;
+    assertEquals(result.data.branch, "feature-branch");
   });
 
   it("should parse --into flag", () => {
     const args = { _: ["merge", "feature"], into: "staging" } as ParsedArgs;
     const result = parseMergeArgs(args);
     assertEquals(result.success, true);
-    if (result.success) {
-      assertEquals(result.data.into, "staging");
-    }
+
+    if (!result.success) return;
+    assertEquals(result.data.into, "staging");
   });
 
   it("should parse --dry-run flag", () => {
     const args = { _: ["merge", "feature"], "dry-run": true } as ParsedArgs;
     const result = parseMergeArgs(args);
     assertEquals(result.success, true);
-    if (result.success) {
-      assertEquals(result.data.dryRun, true);
-    }
+
+    if (!result.success) return;
+    assertEquals(result.data.dryRun, true);
   });
 
   it("should parse -f flag as force", () => {
     const args = { _: ["merge", "feature"], f: true } as ParsedArgs;
     const result = parseMergeArgs(args);
     assertEquals(result.success, true);
-    if (result.success) {
-      assertEquals(result.data.force, true);
-    }
+
+    if (!result.success) return;
+    assertEquals(result.data.force, true);
   });
 
   it("should parse --force flag", () => {
     const args = { _: ["merge", "feature"], force: true } as ParsedArgs;
     const result = parseMergeArgs(args);
     assertEquals(result.success, true);
-    if (result.success) {
-      assertEquals(result.data.force, true);
-    }
+
+    if (!result.success) return;
+    assertEquals(result.data.force, true);
   });
 
   it("should fail when branch is missing", () => {

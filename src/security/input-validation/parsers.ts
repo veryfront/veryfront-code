@@ -25,8 +25,7 @@ export async function parseJsonBody<T>(
 
   try {
     const validated = await schema.parseAsync(data);
-    if (!options?.sanitize) return validated;
-    return sanitizeData(validated) as T;
+    return options?.sanitize ? (sanitizeData(validated) as T) : validated;
   } catch (error) {
     if (!(error instanceof z.ZodError)) throw error;
 

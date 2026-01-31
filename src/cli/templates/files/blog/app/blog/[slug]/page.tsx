@@ -9,7 +9,11 @@ export default async function BlogPost({
 }): Promise<JSX.Element> {
   const post = await getPost(params.slug);
 
-  if (!post) return <div>Post not found</div>;
+  if (!post) {
+    return <div>Post not found</div>;
+  }
+
+  const hasTags = !!post.tags?.length;
 
   return (
     <article className="prose lg:prose-lg mx-auto">
@@ -20,9 +24,9 @@ export default async function BlogPost({
           {post.author && <span> · By {post.author}</span>}
         </div>
 
-        {post.tags?.length ? (
+        {hasTags && (
           <div className="flex gap-2 mt-4">
-            {post.tags.map((tag) => (
+            {post.tags!.map((tag) => (
               <span
                 key={tag}
                 className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-sm"
@@ -31,7 +35,7 @@ export default async function BlogPost({
               </span>
             ))}
           </div>
-        ) : null}
+        )}
       </header>
 
       <MDX source={post.content} />

@@ -38,10 +38,12 @@ describe("rendering/rsc/ids", () => {
 
       assertEquals(result.client.length, 1);
       assertEquals(result.server.length, 1);
+
       const clientEntry = result.client[0];
       const serverEntry = result.server[0];
       assertExists(clientEntry);
       assertExists(serverEntry);
+
       assertEquals(typeof clientEntry.id, "string");
       assertEquals(typeof serverEntry.id, "string");
       assertEquals(clientEntry.path, "/project/app/components/Button.tsx");
@@ -54,6 +56,7 @@ describe("rendering/rsc/ids", () => {
         server: [],
       };
       const result = withStableIds("/project", graph);
+
       const entry = result.client[0];
       assertExists(entry);
       assertEquals(entry.rel, "/components/Button.tsx");
@@ -68,8 +71,8 @@ describe("rendering/rsc/ids", () => {
         server: [],
       };
       const result = withStableIds("/project", graph);
-      const first = result.client[0];
-      const second = result.client[1];
+
+      const [first, second] = result.client;
       assertExists(first);
       assertExists(second);
       assertEquals(first.rel, "/a-file.tsx");
@@ -82,6 +85,7 @@ describe("rendering/rsc/ids", () => {
         server: [],
       };
       const result = withStableIds("/project", graph);
+
       const entry = result.client[0];
       assertExists(entry);
       assertEquals(entry.rel, "/other/place.tsx");

@@ -33,7 +33,9 @@ describe("styles-builder/tailwind-compiler", () => {
     });
 
     it("should extract responsive/state variants", () => {
-      const candidates = extractCandidates('class="sm:mt-4 hover:bg-blue-500 dark:text-white"');
+      const candidates = extractCandidates(
+        'class="sm:mt-4 hover:bg-blue-500 dark:text-white"',
+      );
       assertEquals(candidates.includes("sm:mt-4"), true);
       assertEquals(candidates.includes("hover:bg-blue-500"), true);
       assertEquals(candidates.includes("dark:text-white"), true);
@@ -107,7 +109,10 @@ describe("styles-builder/tailwind-compiler", () => {
 
     it("should extract candidates from .jsx files", () => {
       const files = [
-        { path: "components/button.jsx", content: '<button className="px-4 py-2">' },
+        {
+          path: "components/button.jsx",
+          content: '<button className="px-4 py-2">',
+        },
       ];
       const candidates = extractCandidatesFromFiles(files);
       assertEquals(candidates.has("px-4"), true);
@@ -116,7 +121,10 @@ describe("styles-builder/tailwind-compiler", () => {
 
     it("should extract candidates from .ts files", () => {
       const files = [
-        { path: "lib/utils.ts", content: 'const classes = "text-lg font-bold";' },
+        {
+          path: "lib/utils.ts",
+          content: 'const classes = "text-lg font-bold";',
+        },
       ];
       const candidates = extractCandidatesFromFiles(files);
       assertEquals(candidates.has("text-lg"), true);
@@ -133,7 +141,10 @@ describe("styles-builder/tailwind-compiler", () => {
 
     it("should extract candidates from .mdx files", () => {
       const files = [
-        { path: "pages/blog.mdx", content: '<div className="prose max-w-none">' },
+        {
+          path: "pages/blog.mdx",
+          content: '<div className="prose max-w-none">',
+        },
       ];
       const candidates = extractCandidatesFromFiles(files);
       assertEquals(candidates.has("prose"), true);
@@ -177,7 +188,7 @@ describe("styles-builder/tailwind-compiler", () => {
       ];
       const candidates = extractCandidatesFromFiles(files);
       assertEquals(candidates.size >= 1, true);
-      // "flex" should only appear once in the Set
+
       const flexCount = [...candidates].filter((c) => c === "flex").length;
       assertEquals(flexCount, 1);
     });
@@ -219,14 +230,18 @@ describe("styles-builder/tailwind-compiler", () => {
 
   describe("formatCSSError", () => {
     it("should format plugin options not supported error", () => {
-      const result = formatCSSError('The plugin "@tailwindcss/forms" does not accept options');
+      const result = formatCSSError(
+        'The plugin "@tailwindcss/forms" does not accept options',
+      );
       assertEquals(result.title, "Plugin Options Not Supported");
       assertEquals(result.message.includes("@tailwindcss/forms"), true);
       assertEquals(result.suggestion.includes("@plugin"), true);
     });
 
     it("should format plugin not found error", () => {
-      const result = formatCSSError('Could not resolve plugin "tailwindcss-animate"');
+      const result = formatCSSError(
+        'Could not resolve plugin "tailwindcss-animate"',
+      );
       assertEquals(result.title, "Plugin Not Found");
       assertEquals(result.message.includes("tailwindcss-animate"), true);
       assertEquals(result.suggestion.includes("esm.sh"), true);
@@ -298,7 +313,6 @@ describe("styles-builder/tailwind-compiler", () => {
 
     it("should clear all caches", () => {
       clearCSSCache();
-      // After clearing, any lookup should return undefined
       assertEquals(getCSSByHash("any-hash"), undefined);
     });
   });
@@ -324,29 +338,22 @@ describe("styles-builder/tailwind-compiler", () => {
 
   describe("loadModuleFromEsmSh", () => {
     it("should dynamically load tailwindcss-animate plugin from esm.sh", async () => {
-      // This test proves that the dynamic loading workaround works.
-      // In a compiled binary, normal `import(url)` fails, but our fetch + rewrite + file:// approach works.
       const mod = await loadModuleFromEsmSh("tailwindcss-animate@1.0.7");
 
-      // The module should have a default export
       assertEquals(typeof mod, "object");
-      assertEquals("default" in (mod as object), true);
+      assertEquals("default" in mod, true);
 
-      // The default export should be a tailwind plugin (object with handler property)
       const plugin = (mod as { default: unknown }).default;
       assertEquals(typeof plugin, "object");
       assertEquals(plugin !== null, true);
-
-      // Tailwind v4 plugins have a 'handler' property
       assertEquals("handler" in (plugin as object), true);
     });
 
     it("should dynamically load a simple package without tailwindcss dependency", async () => {
-      // Test with is-odd - a simple package with no tailwindcss dependency
       const mod = await loadModuleFromEsmSh("is-odd@3.0.1");
 
       assertEquals(typeof mod, "object");
-      assertEquals("default" in (mod as object), true);
+      assertEquals("default" in mod, true);
 
       const isOdd = (mod as { default: (n: number) => boolean }).default;
       assertEquals(typeof isOdd, "function");

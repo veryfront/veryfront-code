@@ -1,10 +1,3 @@
-/****
- * Shared Error HTML Generator
- *
- * Generates styled error pages for 404, 500, and other HTTP errors.
- * Consolidated from multiple duplicate implementations to ensure consistency.
- */
-
 export interface ErrorHtmlOptions {
   statusCode: number;
   title: string;
@@ -15,22 +8,16 @@ export interface ErrorHtmlOptions {
   minimal?: boolean;
 }
 
-/**
- * Generate a styled error page HTML.
- * Styled to match the Veryfront design system with dark mode support.
- */
 export function generateErrorHtml(options: ErrorHtmlOptions): string {
   const { statusCode, title, message, pathname, minimal } = options;
 
-  if (minimal) return generateMinimalErrorHtml(statusCode, title, message, pathname);
+  if (minimal) {
+    return generateMinimalErrorHtml(statusCode, title, message, pathname);
+  }
 
   return generateStyledErrorHtml(statusCode, title, message);
 }
 
-/**
- * Generate a styled error page with Veryfront design system.
- * Supports light/dark mode based on system preference or class.
- */
 function generateStyledErrorHtml(statusCode: number, title: string, message: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -94,10 +81,6 @@ function generateStyledErrorHtml(statusCode: number, title: string, message: str
 </html>`;
 }
 
-/**
- * Generate minimal unstyled error HTML.
- * Used as ultimate fallback when rendering completely fails.
- */
 function generateMinimalErrorHtml(
   statusCode: number,
   title: string,
@@ -120,37 +103,38 @@ function generateMinimalErrorHtml(
 </html>`;
 }
 
-/**
- * Common error configurations for quick use.
- */
 export const ErrorPages = {
-  notFound: (pathname?: string) =>
-    generateErrorHtml({
+  notFound(pathname?: string): string {
+    return generateErrorHtml({
       statusCode: 404,
       title: "Not Found",
       message: pathname
         ? `The page "${pathname}" could not be found.`
         : "The page you requested could not be found.",
-    }),
+    });
+  },
 
-  serverError: (message?: string) =>
-    generateErrorHtml({
+  serverError(message?: string): string {
+    return generateErrorHtml({
       statusCode: 500,
       title: "Internal Server Error",
       message: message ?? "Something went wrong while rendering this page.",
-    }),
+    });
+  },
 
-  undeployed: () =>
-    generateErrorHtml({
+  undeployed(): string {
+    return generateErrorHtml({
       statusCode: 404,
       title: "Not Yet Deployed",
       message: "This project has not been deployed yet.",
-    }),
+    });
+  },
 
-  memoryPressure: () =>
-    generateErrorHtml({
+  memoryPressure(): string {
+    return generateErrorHtml({
       statusCode: 503,
       title: "Service Temporarily Unavailable",
       message: "The server is experiencing high load. Please try again.",
-    }),
+    });
+  },
 };

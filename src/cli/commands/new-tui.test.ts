@@ -14,14 +14,8 @@ describe("new-tui", () => {
   });
 
   it("works with ai template", () => {
-    const result: NewTuiResult = {
-      template: "ai",
-      integrations: [],
-      cancelled: false,
-    };
-    assertEquals(result.template, "ai");
-    assertEquals(result.integrations.length, 0);
-    assertEquals(result.cancelled, false);
+    const result: NewTuiResult = { template: "ai", integrations: [], cancelled: false };
+    assertEquals(result, { template: "ai", integrations: [], cancelled: false });
   });
 
   it("works with integrations", () => {
@@ -31,22 +25,18 @@ describe("new-tui", () => {
       cancelled: false,
     };
     assertEquals(result.template, "app");
-    assertEquals(result.integrations.length, 3);
-    assertEquals(result.integrations[0], "gmail");
+    assertEquals(result.integrations, ["gmail", "slack", "github"]);
+    assertEquals(result.cancelled, false);
   });
 
   it("works when cancelled", () => {
-    const result: NewTuiResult = {
-      template: "ai",
-      integrations: [],
-      cancelled: true,
-    };
+    const result: NewTuiResult = { template: "ai", integrations: [], cancelled: true };
     assertEquals(result.cancelled, true);
   });
 
   it("supports all template types", () => {
     const templates: NewTuiResult["template"][] = ["ai", "app", "blog", "docs", "minimal"];
-    assertEquals(templates.length, 5);
+    assertEquals(templates, ["ai", "app", "blog", "docs", "minimal"]);
   });
 
   it("supports all integration types", () => {
@@ -60,7 +50,16 @@ describe("new-tui", () => {
       "jira",
       "linear",
     ];
-    assertEquals(integrations.length, 8);
+    assertEquals(integrations, [
+      "gmail",
+      "slack",
+      "notion",
+      "github",
+      "calendar",
+      "drive",
+      "jira",
+      "linear",
+    ]);
   });
 });
 

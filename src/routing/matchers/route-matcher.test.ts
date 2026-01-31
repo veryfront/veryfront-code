@@ -9,7 +9,6 @@ describe("route-matcher", () => {
       const route = parseRoute("/about", "about.tsx");
       const match = matchRoute("/about", route);
 
-      assertEquals(match !== null, true);
       assertEquals(match?.params, {});
       assertEquals(match?.route.pattern, "/about");
     });
@@ -25,7 +24,6 @@ describe("route-matcher", () => {
       const route = parseRoute("/users/[id]", "user.tsx");
       const match = matchRoute("/users/123", route);
 
-      assertEquals(match !== null, true);
       assertEquals(match?.params.id, "123");
     });
 
@@ -33,7 +31,6 @@ describe("route-matcher", () => {
       const route = parseRoute("/blog/[year]/[month]", "archive.tsx");
       const match = matchRoute("/blog/2024/01", route);
 
-      assertEquals(match !== null, true);
       assertEquals(match?.params.year, "2024");
       assertEquals(match?.params.month, "01");
     });
@@ -42,7 +39,6 @@ describe("route-matcher", () => {
       const route = parseRoute("/search/[query]", "search.tsx");
       const match = matchRoute("/search/hello%20world", route);
 
-      assertEquals(match !== null, true);
       assertEquals(match?.params.query, "hello world");
     });
 
@@ -50,7 +46,6 @@ describe("route-matcher", () => {
       const route = parseRoute("/docs/[...slug]", "docs.tsx");
       const match = matchRoute("/docs/getting-started/intro", route);
 
-      assertEquals(match !== null, true);
       assertEquals(match?.params.slug, ["getting-started", "intro"]);
     });
 
@@ -58,7 +53,6 @@ describe("route-matcher", () => {
       const route = parseRoute("/shop/[[...category]]", "shop.tsx");
       const match = matchRoute("/shop", route);
 
-      assertEquals(match !== null, true);
       assertEquals(match?.params.category, []);
     });
 
@@ -66,7 +60,6 @@ describe("route-matcher", () => {
       const route = parseRoute("/files/[...path]", "files.tsx");
       const match = matchRoute("/files/my%20folder/sub%20dir", route);
 
-      assertEquals(match !== null, true);
       assertEquals(match?.params.path, ["my folder", "sub dir"]);
     });
 
@@ -74,7 +67,6 @@ describe("route-matcher", () => {
       const route = parseRoute("/api/users/[id]/posts", "posts.tsx");
       const match = matchRoute("/api/users/42/posts", route);
 
-      assertEquals(match !== null, true);
       assertEquals(match?.params.id, "42");
     });
   });

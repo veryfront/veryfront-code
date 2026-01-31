@@ -15,12 +15,14 @@ describe("security/path-validation/index", () => {
         baseDir: "/project",
         allowedDirs: ["src"],
       });
+
       assertEquals(result.valid, true);
       assertEquals(result.canonicalPath, "/project/src/file.ts");
     });
 
     it("should reject paths with null bytes", async () => {
       const result = await validatePath("src/\0evil.ts", { baseDir: "/project" });
+
       assertEquals(result.valid, false);
       assertEquals(result.code, PathValidationError.NULL_BYTE);
     });
@@ -31,6 +33,7 @@ describe("security/path-validation/index", () => {
         level: "strict",
         allowAbsolute: false,
       });
+
       assertEquals(result.valid, false);
       assertEquals(result.code, PathValidationError.ABSOLUTE_PATH_DENIED);
     });
@@ -42,6 +45,7 @@ describe("security/path-validation/index", () => {
         allowAbsolute: true,
         allowedDirs: ["src"],
       });
+
       assertEquals(result.valid, true);
     });
 
@@ -51,6 +55,7 @@ describe("security/path-validation/index", () => {
         level: "normal",
         allowedDirs: ["src"],
       });
+
       assertEquals(result.valid, true);
     });
 
@@ -58,17 +63,23 @@ describe("security/path-validation/index", () => {
       const result = await validatePath("../../etc/passwd", {
         baseDir: "/project",
       });
+
       assertEquals(result.valid, false);
       assertEquals(result.code, PathValidationError.OUTSIDE_BASE);
     });
 
     it("should reject symlinks in strict mode", async () => {
-      const mockAdapter = {
+      const mockAdapter: Parameters<typeof validatePath>[1]["adapter"] = {
         fs: {
           stat: (_path: string) =>
-            Promise.resolve({ isSymlink: true, isDirectory: false, isFile: true, size: 0 }),
+            Promise.resolve({
+              isSymlink: true,
+              isDirectory: false,
+              isFile: true,
+              size: 0,
+            }),
         },
-      } as Parameters<typeof validatePath>[1]["adapter"];
+      };
 
       const result = await validatePath("src/link.ts", {
         baseDir: "/project",
@@ -77,16 +88,17 @@ describe("security/path-validation/index", () => {
         adapter: mockAdapter,
         allowedDirs: ["src"],
       });
+
       assertEquals(result.valid, false);
       assertEquals(result.code, PathValidationError.SYMLINK_DETECTED);
     });
 
     it("should reject when file not found and checkExists is true", async () => {
-      const mockAdapter = {
+      const mockAdapter: Parameters<typeof validatePath>[1]["adapter"] = {
         fs: {
           stat: () => Promise.reject(new Error("ENOENT")),
         },
-      } as unknown as Parameters<typeof validatePath>[1]["adapter"];
+      };
 
       const result = await validatePath("src/missing.ts", {
         baseDir: "/project",
@@ -95,6 +107,7 @@ describe("security/path-validation/index", () => {
         adapter: mockAdapter,
         allowedDirs: ["src"],
       });
+
       assertEquals(result.valid, false);
       assertEquals(result.code, PathValidationError.FILE_NOT_FOUND);
     });
@@ -104,6 +117,7 @@ describe("security/path-validation/index", () => {
         baseDir: "/project",
         allowedDirs: ["src", "lib"],
       });
+
       assertEquals(result.valid, false);
       assertEquals(result.code, PathValidationError.NOT_IN_ALLOWLIST);
     });
@@ -112,6 +126,7 @@ describe("security/path-validation/index", () => {
       const result = await validatePath("anything/file.ts", {
         baseDir: "/project",
       });
+
       assertEquals(result.valid, true);
     });
 
@@ -120,6 +135,7 @@ describe("security/path-validation/index", () => {
         baseDir: "/project",
         allowedDirs: ["lib"],
       });
+
       assertEquals(result.valid, true);
       assertEquals(result.canonicalPath, "/project/lib/file.ts");
     });
@@ -131,11 +147,13 @@ describe("security/path-validation/index", () => {
         baseDir: "/project",
         allowedDirs: ["src"],
       });
+
       assertEquals(result.valid, true);
     });
 
     it("should reject paths with null bytes", () => {
       const result = validatePathSync("src/\0evil.ts", { baseDir: "/project" });
+
       assertEquals(result.valid, false);
       assertEquals(result.code, PathValidationError.NULL_BYTE);
     });
@@ -146,6 +164,7 @@ describe("security/path-validation/index", () => {
         level: "strict",
         allowAbsolute: false,
       });
+
       assertEquals(result.valid, false);
       assertEquals(result.code, PathValidationError.ABSOLUTE_PATH_DENIED);
     });
@@ -155,6 +174,7 @@ describe("security/path-validation/index", () => {
         baseDir: "/project",
         allowedDirs: ["src"],
       });
+
       assertEquals(result.valid, false);
       assertEquals(result.code, PathValidationError.NOT_IN_ALLOWLIST);
     });
@@ -163,6 +183,7 @@ describe("security/path-validation/index", () => {
       const result = validatePathSync("../../etc/passwd", {
         baseDir: "/project",
       });
+
       assertEquals(result.valid, false);
       assertEquals(result.code, PathValidationError.OUTSIDE_BASE);
     });
@@ -171,6 +192,7 @@ describe("security/path-validation/index", () => {
       const result = validatePathSync("anything/file.ts", {
         baseDir: "/project",
       });
+
       assertEquals(result.valid, true);
     });
   });
@@ -240,7 +262,10 @@ describe("security/path-validation/index", () => {
     });
 
     it("should return the full normalized path when base does not match", () => {
-      const result = sanitizePathForDisplay("/completely/different/path/deep/file.ts", "/project");
+      const result = sanitizePathForDisplay(
+        "/completely/different/path/deep/file.ts",
+        "/project",
+      );
       assertEquals(result, "file.ts");
     });
   });

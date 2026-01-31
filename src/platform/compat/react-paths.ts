@@ -12,10 +12,10 @@
 // Bun global type declaration for cross-runtime compatibility
 declare const Bun: { resolveSync?: (specifier: string, dir: string) => string } | undefined;
 
-import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
-import { isBun, isDeno, isNode } from "./runtime.ts";
+import { pathToFileURL } from "node:url";
 import { cwd } from "./process.ts";
+import { isBun, isDeno, isNode } from "./runtime.ts";
 
 let localReactPathsCache: Record<string, string> | null = null;
 
@@ -28,13 +28,9 @@ const REACT_SPECIFIERS = [
   "react/jsx-dev-runtime",
 ] as const;
 
-function hasBunResolveSync(): boolean {
-  return typeof Bun !== "undefined" && typeof Bun?.resolveSync === "function";
-}
-
 function resolveReactSpecifier(specifier: string): string | undefined {
   try {
-    if (isBun && hasBunResolveSync() && Bun?.resolveSync) {
+    if (isBun && typeof Bun?.resolveSync === "function") {
       const resolved = Bun.resolveSync(specifier, cwd());
       return `file://${resolved}`;
     }

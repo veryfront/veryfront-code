@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createDriveClient } from "../../lib/drive-client.ts";
 
 const DEFAULT_USER_ID = "demo-user";
+const FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 
 export default tool({
   id: "search-files",
@@ -50,24 +51,28 @@ export default tool({
       orderBy: orderBy ? `${orderBy} desc` : undefined,
     });
 
+    const files = result.files.map((file) => ({
+      id: file.id,
+      name: file.name,
+      mimeType: file.mimeType,
+      isFolder: file.mimeType === FOLDER_MIME_TYPE,
+      size: file.size,
+      createdTime: file.createdTime,
+      modifiedTime: file.modifiedTime,
+      webViewLink: file.webViewLink,
+      iconLink: file.iconLink,
+      thumbnailLink: file.thumbnailLink,
+      starred: file.starred,
+      shared: file.shared,
+      parents: file.parents,
+    }));
+
+    const nextPageToken = result.nextPageToken;
+
     return {
-      files: result.files.map((file) => ({
-        id: file.id,
-        name: file.name,
-        mimeType: file.mimeType,
-        isFolder: file.mimeType === "application/vnd.google-apps.folder",
-        size: file.size,
-        createdTime: file.createdTime,
-        modifiedTime: file.modifiedTime,
-        webViewLink: file.webViewLink,
-        iconLink: file.iconLink,
-        thumbnailLink: file.thumbnailLink,
-        starred: file.starred,
-        shared: file.shared,
-        parents: file.parents,
-      })),
-      nextPageToken: result.nextPageToken,
-      hasMore: Boolean(result.nextPageToken),
+      files,
+      nextPageToken,
+      hasMore: Boolean(nextPageToken),
       incompleteSearch: result.incompleteSearch,
     };
   },

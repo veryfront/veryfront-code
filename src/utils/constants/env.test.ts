@@ -9,15 +9,9 @@ import {
 
 describe("constants/env", () => {
   describe("isTruthyEnvValue", () => {
-    it("should return true for '1'", () => {
+    it("should return true for truthy values", () => {
       assertEquals(isTruthyEnvValue("1"), true);
-    });
-
-    it("should return true for 'true'", () => {
       assertEquals(isTruthyEnvValue("true"), true);
-    });
-
-    it("should return true for 'yes'", () => {
       assertEquals(isTruthyEnvValue("yes"), true);
     });
 
@@ -30,30 +24,20 @@ describe("constants/env", () => {
       assertEquals(isTruthyEnvValue("  true  "), true);
     });
 
-    it("should return false for '0'", () => {
+    it("should return false for falsy values", () => {
       assertEquals(isTruthyEnvValue("0"), false);
-    });
-
-    it("should return false for 'false'", () => {
       assertEquals(isTruthyEnvValue("false"), false);
-    });
-
-    it("should return false for empty string", () => {
       assertEquals(isTruthyEnvValue(""), false);
-    });
-
-    it("should return false for undefined", () => {
       assertEquals(isTruthyEnvValue(undefined), false);
-    });
-
-    it("should return false for arbitrary strings", () => {
       assertEquals(isTruthyEnvValue("maybe"), false);
     });
   });
 
   describe("isDebugEnabled", () => {
     it("should return true when VERYFRONT_DEBUG is truthy", () => {
-      const env = { get: (key: string) => key === "VERYFRONT_DEBUG" ? "1" : undefined };
+      const env = {
+        get: (key: string) => (key === "VERYFRONT_DEBUG" ? "1" : undefined),
+      };
       assertEquals(isDebugEnabled(env), true);
     });
 
@@ -65,7 +49,9 @@ describe("constants/env", () => {
 
   describe("isDeepInspectEnabled", () => {
     it("should return true when VERYFRONT_DEEP_INSPECT is truthy", () => {
-      const env = { get: (key: string) => key === "VERYFRONT_DEEP_INSPECT" ? "true" : undefined };
+      const env = {
+        get: (key: string) => (key === "VERYFRONT_DEEP_INSPECT" ? "true" : undefined),
+      };
       assertEquals(isDeepInspectEnabled(env), true);
     });
 
@@ -77,12 +63,16 @@ describe("constants/env", () => {
 
   describe("isAnyDebugEnabled", () => {
     it("should return true when debug is enabled", () => {
-      const env = { get: (key: string) => key === "VERYFRONT_DEBUG" ? "1" : undefined };
+      const env = {
+        get: (key: string) => (key === "VERYFRONT_DEBUG" ? "1" : undefined),
+      };
       assertEquals(isAnyDebugEnabled(env), true);
     });
 
     it("should return true when deep inspect is enabled", () => {
-      const env = { get: (key: string) => key === "VERYFRONT_DEEP_INSPECT" ? "1" : undefined };
+      const env = {
+        get: (key: string) => (key === "VERYFRONT_DEEP_INSPECT" ? "1" : undefined),
+      };
       assertEquals(isAnyDebugEnabled(env), true);
     });
 

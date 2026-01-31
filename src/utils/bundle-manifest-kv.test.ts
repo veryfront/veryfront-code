@@ -4,96 +4,69 @@ import { KVBundleManifestStore } from "./bundle-manifest-kv.ts";
 
 describe("KVBundleManifestStore", () => {
   it("should construct without errors", () => {
-    const store = new KVBundleManifestStore({});
-    assertEquals(typeof store, "object");
+    assertEquals(typeof new KVBundleManifestStore({}), "object");
   });
 
   it("should construct with keyPrefix option", () => {
-    const store = new KVBundleManifestStore({ keyPrefix: "test:" });
-    assertEquals(typeof store, "object");
+    assertEquals(typeof new KVBundleManifestStore({ keyPrefix: "test:" }), "object");
   });
 
   describe("isAvailable", () => {
     it("should return false (placeholder implementation)", async () => {
       const store = new KVBundleManifestStore({});
-      const available = await store.isAvailable();
-      assertEquals(available, false);
+      assertEquals(await store.isAvailable(), false);
     });
   });
 
   describe("unimplemented methods", () => {
     const store = new KVBundleManifestStore({});
+    const notImplementedMessage = "KV bundle manifest store not implemented";
+
+    async function assertNotImplemented(fn: () => Promise<unknown>): Promise<void> {
+      await assertRejects(fn, Error, notImplementedMessage);
+    }
 
     it("getBundleMetadata should reject with not implemented error", async () => {
-      await assertRejects(
-        () => store.getBundleMetadata("test-key"),
-        Error,
-        "KV bundle manifest store not implemented",
-      );
+      await assertNotImplemented(() => store.getBundleMetadata("test-key"));
     });
 
     it("setBundleMetadata should reject with not implemented error", async () => {
-      await assertRejects(
-        () =>
-          store.setBundleMetadata("test-key", {
-            hash: "abc",
-            codeHash: "abc",
-            size: 100,
-            compiledAt: Date.now(),
-            source: "test.ts",
-            mode: "development",
-          }),
-        Error,
-        "KV bundle manifest store not implemented",
+      await assertNotImplemented(() =>
+        store.setBundleMetadata("test-key", {
+          hash: "abc",
+          codeHash: "abc",
+          size: 100,
+          compiledAt: Date.now(),
+          source: "test.ts",
+          mode: "development",
+        })
       );
     });
 
     it("getBundleCode should reject with not implemented error", async () => {
-      await assertRejects(
-        () => store.getBundleCode("hash"),
-        Error,
-        "KV bundle manifest store not implemented",
-      );
+      await assertNotImplemented(() => store.getBundleCode("hash"));
     });
 
     it("setBundleCode should reject with not implemented error", async () => {
-      await assertRejects(
-        () => store.setBundleCode("hash", { code: "", sourceMap: undefined }),
-        Error,
-        "KV bundle manifest store not implemented",
+      await assertNotImplemented(() =>
+        store.setBundleCode("hash", { code: "", sourceMap: undefined })
       );
     });
 
     it("deleteBundle should reject with not implemented error", async () => {
-      await assertRejects(
-        () => store.deleteBundle("key"),
-        Error,
-        "KV bundle manifest store not implemented",
-      );
+      await assertNotImplemented(() => store.deleteBundle("key"));
     });
 
     it("invalidateSource should reject with not implemented error", async () => {
-      await assertRejects(
-        () => store.invalidateSource("source"),
-        Error,
-        "KV bundle manifest store not implemented",
-      );
+      await assertNotImplemented(() => store.invalidateSource("source"));
     });
 
     it("clear should reject with not implemented error", async () => {
-      await assertRejects(
-        () => store.clear(),
-        Error,
-        "KV bundle manifest store not implemented",
-      );
+      await assertNotImplemented(() => store.clear());
     });
 
     it("getStats should reject with not implemented error", async () => {
-      await assertRejects(
-        () => store.getStats(),
-        Error,
-        "KV bundle manifest store not implemented",
-      );
+      await assertNotImplemented(() => store.getStats());
     });
   });
 });

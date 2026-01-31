@@ -26,10 +26,10 @@ export default tool({
 
     return chats.map((chat) => {
       const members = expandMembers
-        ? chat.members?.map((m) => ({
-            id: m.id,
-            displayName: m.displayName,
-            email: m.email,
+        ? chat.members?.map(({ id, displayName, email }) => ({
+            id,
+            displayName,
+            email,
           }))
         : undefined;
 

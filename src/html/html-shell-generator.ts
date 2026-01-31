@@ -2,6 +2,12 @@ import type { ComponentProps, RenderMetadata } from "#veryfront/types";
 import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { isMarkdownPreview as checkMarkdownPreview } from "../transforms/md/utils.ts";
+import {
+  generateModulePreloadHintsFromManifest,
+  getRouteManifest,
+} from "../modules/manifest/route-module-manifest.ts";
 import { escapeHTML } from "./html-escape.ts";
 import {
   generateHydrationData,
@@ -23,12 +29,6 @@ import {
   buildRootAttributes,
   shouldDisableLayout,
 } from "./utils.ts";
-import { serverLogger } from "#veryfront/utils/logger/logger.ts";
-import { isMarkdownPreview as checkMarkdownPreview } from "../transforms/md/utils.ts";
-import {
-  generateModulePreloadHintsFromManifest,
-  getRouteManifest,
-} from "../modules/manifest/route-module-manifest.ts";
 
 function pathToModuleUrl(path: string, studioEmbed?: boolean): string {
   if (!path) return "";
@@ -128,6 +128,7 @@ async function generateHTMLShellPartsImpl(
   const stylesheetContent = options.globalCSS;
 
   const localDev = options.isLocalDev ?? false;
+  const isPreviewMode = options.environment === "preview";
   const useProductionCSS = !localDev && options.environment === "production";
 
   // Use projectClasses (extracted from ALL source files) + current page as fallback
@@ -165,11 +166,7 @@ async function generateHTMLShellPartsImpl(
     noLayout,
   );
 
-  const contentAttributes = buildContentAttributes(
-    meta.slug || "",
-    noLayout,
-    meta.ssrHash,
-  );
+  const contentAttributes = buildContentAttributes(meta.slug || "", noLayout, meta.ssrHash);
 
   const importMapJson = await buildImportMapJson({
     projectDir: options.projectDir,
@@ -186,7 +183,6 @@ async function generateHTMLShellPartsImpl(
 
   const nonce = options.nonce ?? "";
 
-  const isPreviewMode = options.environment === "preview";
   const skipDevHMR = isPreviewMode || options.noHmr;
   // Error logger endpoint only enabled in local dev (returns 404 in preview/prod)
   const skipErrorLogger = isPreviewMode;
@@ -204,8 +200,9 @@ async function generateHTMLShellPartsImpl(
 
   const modulePreloadHints = generateModulePreloadHints(options);
 
-  const hydrationErrorSuppression = !useDevScripts
-    ? `<script${nonce ? ` nonce="${nonce}"` : ""}>
+  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+
+  const hydrationErrorSuppression = useDevScripts ? "" : `<script${nonceAttr}>
 (function(){
   var origError = console.error;
   var hydrationErrorLogged = false;
@@ -223,8 +220,7 @@ async function generateHTMLShellPartsImpl(
     origError.apply(console, arguments);
   };
 })();
-</script>`
-    : "";
+</script>`;
 
   const colorScheme = options.colorScheme ?? "light";
   const htmlAttrs = [
@@ -235,23 +231,25 @@ async function generateHTMLShellPartsImpl(
   ].join(" ");
 
   const themePersistenceScript = options.colorSchemeFromParam
-    ? `<script${nonce ? ` nonce="${nonce}"` : ""}>
+    ? `<script${nonceAttr}>
 (function(){try{localStorage.setItem('theme','${colorScheme}')}catch(e){/* SILENT: localStorage may be unavailable */}})();
 </script>`
     : "";
 
   let tailwindCSSBlock = "";
-  if (useProductionCSS && cssHash) {
-    tailwindCSSBlock = `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`;
-  } else if (useProductionCSS && !cssHash) {
-    // CSS generation failed — log error prominently and omit link to avoid /_vf/css/.css 404
-    serverLogger.error(
-      "[HTML] Tailwind CSS hash is empty — CSS link omitted. CSS generation likely failed.",
-      {
-        projectSlug,
-        environment: options.environment,
-      },
-    );
+  if (useProductionCSS) {
+    if (cssHash) {
+      tailwindCSSBlock = `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`;
+    } else {
+      // CSS generation failed — log error prominently and omit link to avoid /_vf/css/.css 404
+      serverLogger.error(
+        "[HTML] Tailwind CSS hash is empty — CSS link omitted. CSS generation likely failed.",
+        {
+          projectSlug,
+          environment: options.environment,
+        },
+      );
+    }
   } else {
     // Dev/preview: use link tag for HMR cache-busting
     tailwindCSSBlock =
@@ -280,7 +278,7 @@ async function generateHTMLShellPartsImpl(
   <title>${escapeHTML(effectiveTitle)}</title>
 
   <!-- Import map for ESM module resolution -->
-  <script type="importmap"${nonce ? ` nonce="${nonce}"` : ""}>
+  <script type="importmap"${nonceAttr}>
   ${importMapJson}
   </script>
 
@@ -310,12 +308,12 @@ async function generateHTMLShellPartsImpl(
     })
     : "";
 
-  const previewHMRScript = options.environment === "preview"
-    ? `<script src="/_veryfront/preview-hmr.js"${nonce ? ` nonce="${nonce}"` : ""}></script>`
+  const previewHMRScript = isPreviewMode
+    ? `<script src="/_veryfront/preview-hmr.js"${nonceAttr}></script>`
     : "";
 
   const mermaidScript = isMarkdownPreview
-    ? `<script type="module"${nonce ? ` nonce="${nonce}"` : ""}>
+    ? `<script type="module"${nonceAttr}>
 import mermaid from 'https://esm.sh/mermaid@11';
 mermaid.initialize({ startOnLoad: false, theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default' });
 // Convert code.language-mermaid blocks to mermaid-compatible format
@@ -337,7 +335,7 @@ mermaid.run();
   <div id="veryfront-portals"></div>
 
   <!-- Hydration metadata for component tree reconstruction -->
-  <script id="veryfront-hydration-data" type="application/json"${nonce ? ` nonce="${nonce}"` : ""}>
+  <script id="veryfront-hydration-data" type="application/json"${nonceAttr}>
   ${hydrationDataJson}
   </script>
 

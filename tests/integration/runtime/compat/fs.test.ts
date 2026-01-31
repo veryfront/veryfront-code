@@ -4,45 +4,35 @@ import { join } from "@veryfront/compat/path";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { isBun } from "@veryfront/platform/compat/runtime.ts";
 import { delay } from "@std/async";
-
 import { makeTempDir, remove } from "@veryfront/testing/deno-compat";
 
-// Remove tests are skipped in Bun due to fs.rm EFAULT bug
-// https://github.com/oven-sh/bun/issues/
 const removeIt = isBun ? it.skip : it;
 
-// Safe cleanup helper - Bun has EFAULT bug with fs.rm on directories
 async function safeCleanup(
   fs: ReturnType<typeof createFileSystem>,
   path: string,
   options?: { recursive?: boolean },
-) {
+): Promise<void> {
   try {
     await fs.remove(path, options);
   } catch (e) {
-    // In Bun, ignore EFAULT errors during cleanup (known bug)
-    if (isBun && e instanceof Error && e.message.includes("EFAULT")) {
-      return;
-    }
+    if (isBun && e instanceof Error && e.message.includes("EFAULT")) return;
     throw e;
   }
 }
 
-// Create temp directory for all runtimes using the compat layer
 const TEST_DIR = await makeTempDir({ prefix: "veryfront_fs_test_" });
 
 async function collectEntries(
   fs: ReturnType<typeof createFileSystem>,
   path: string,
-) {
+): Promise<Array<{ name: string; isFile: boolean; isDirectory: boolean }>> {
   const results: Array<{ name: string; isFile: boolean; isDirectory: boolean }> = [];
-  for await (const entry of fs.readDir(path)) {
-    results.push(entry);
-  }
+  for await (const entry of fs.readDir(path)) results.push(entry);
   return results;
 }
 
-async function cleanup() {
+async function cleanup(): Promise<void> {
   try {
     await remove(TEST_DIR, { recursive: true });
   } catch {
@@ -51,9 +41,7 @@ async function cleanup() {
 }
 
 describe("FS Compat", () => {
-  afterAll(async () => {
-    await cleanup();
-  });
+  afterAll(cleanup);
 
   describe("createFileSystem", () => {
     it("should return fs instance with all required methods", () => {
@@ -76,8 +64,7 @@ describe("FS Compat", () => {
 
       await fs.writeTextFile(testFile, "Hello World");
 
-      const exists = await fs.exists(testFile);
-      assert(exists, "File should exist");
+      assert(await fs.exists(testFile), "File should exist");
 
       await fs.remove(testFile);
     });
@@ -89,8 +76,7 @@ describe("FS Compat", () => {
       const content = "Test content for reading";
       await fs.writeTextFile(testFile, content);
 
-      const readContent = await fs.readTextFile(testFile);
-      assertEquals(readContent, content);
+      assertEquals(await fs.readTextFile(testFile), content);
 
       await fs.remove(testFile);
     });
@@ -100,9 +86,7 @@ describe("FS Compat", () => {
       const nonExistentFile = join(TEST_DIR, "non-existent.txt");
 
       await assertRejects(
-        async () => {
-          await fs.readTextFile(nonExistentFile);
-        },
+        () => fs.readTextFile(nonExistentFile),
         Error,
         "",
         "Should throw error for non-existent file",
@@ -114,12 +98,10 @@ describe("FS Compat", () => {
       const testFile = join(TEST_DIR, "overwrite-test.txt");
 
       await fs.writeTextFile(testFile, "original content");
-      let content = await fs.readTextFile(testFile);
-      assertEquals(content, "original content");
+      assertEquals(await fs.readTextFile(testFile), "original content");
 
       await fs.writeTextFile(testFile, "new content");
-      content = await fs.readTextFile(testFile);
-      assertEquals(content, "new content");
+      assertEquals(await fs.readTextFile(testFile), "new content");
 
       await fs.remove(testFile);
     });
@@ -132,8 +114,7 @@ describe("FS Compat", () => {
 
       await fs.writeTextFile(testFile, "content");
 
-      const exists = await fs.exists(testFile);
-      assert(exists, "File should exist");
+      assert(await fs.exists(testFile), "File should exist");
 
       await fs.remove(testFile);
     });
@@ -142,8 +123,7 @@ describe("FS Compat", () => {
       const fs = createFileSystem();
       const nonExistentFile = join(TEST_DIR, "does-not-exist.txt");
 
-      const exists = await fs.exists(nonExistentFile);
-      assert(!exists, "File should not exist");
+      assert(!(await fs.exists(nonExistentFile)), "File should not exist");
     });
   });
 
@@ -152,8 +132,7 @@ describe("FS Compat", () => {
       const fs = createFileSystem();
       const testFile = join(TEST_DIR, "stat-test.txt");
 
-      const content = "Test content";
-      await fs.writeTextFile(testFile, content);
+      await fs.writeTextFile(testFile, "Test content");
 
       const stat = await fs.stat(testFile);
 
@@ -224,8 +203,7 @@ describe("FS Compat", () => {
 
       await fs.mkdir(testDir);
 
-      const exists = await fs.exists(testDir);
-      assert(exists, "Directory should exist");
+      assert(await fs.exists(testDir), "Directory should exist");
 
       const stat = await fs.stat(testDir);
       assert(stat.isDirectory, "Should be a directory");
@@ -239,8 +217,7 @@ describe("FS Compat", () => {
 
       await fs.mkdir(nestedDir, { recursive: true });
 
-      const exists = await fs.exists(nestedDir);
-      assert(exists, "Nested directory should exist");
+      assert(await fs.exists(nestedDir), "Nested directory should exist");
 
       await fs.remove(join(TEST_DIR, "parent"), { recursive: true });
     });
@@ -284,7 +261,6 @@ describe("FS Compat", () => {
       await fs.mkdir(testDir);
 
       const entries = await collectEntries(fs, testDir);
-
       assertEquals(entries.length, 0);
 
       await safeCleanup(fs, testDir);
@@ -298,13 +274,11 @@ describe("FS Compat", () => {
 
       await fs.writeTextFile(testFile, "content");
 
-      let exists = await fs.exists(testFile);
-      assert(exists, "File should exist before removal");
+      assert(await fs.exists(testFile), "File should exist before removal");
 
       await fs.remove(testFile);
 
-      exists = await fs.exists(testFile);
-      assert(!exists, "File should not exist after removal");
+      assert(!(await fs.exists(testFile)), "File should not exist after removal");
     });
 
     removeIt("should remove empty directory with remove operation", async () => {
@@ -313,13 +287,11 @@ describe("FS Compat", () => {
 
       await fs.mkdir(testDir);
 
-      let exists = await fs.exists(testDir);
-      assert(exists, "Directory should exist before removal");
+      assert(await fs.exists(testDir), "Directory should exist before removal");
 
       await fs.remove(testDir);
 
-      exists = await fs.exists(testDir);
-      assert(!exists, "Directory should not exist after removal");
+      assert(!(await fs.exists(testDir)), "Directory should not exist after removal");
     });
 
     removeIt("should remove nested directories with recursive option", async () => {
@@ -333,8 +305,7 @@ describe("FS Compat", () => {
 
       await fs.remove(testDir, { recursive: true });
 
-      const exists = await fs.exists(testDir);
-      assert(!exists, "Directory should not exist after recursive removal");
+      assert(!(await fs.exists(testDir)), "Directory should not exist after recursive removal");
     });
   });
 
@@ -346,8 +317,7 @@ describe("FS Compat", () => {
       const utf8Content = "你好世界 🌍 émojis and ñ special chars";
       await fs.writeTextFile(testFile, utf8Content);
 
-      const readContent = await fs.readTextFile(testFile);
-      assertEquals(readContent, utf8Content);
+      assertEquals(await fs.readTextFile(testFile), utf8Content);
 
       await fs.remove(testFile);
     });
@@ -359,8 +329,7 @@ describe("FS Compat", () => {
       const multilineContent = "Line 1\nLine 2\nLine 3\n";
       await fs.writeTextFile(testFile, multilineContent);
 
-      const readContent = await fs.readTextFile(testFile);
-      assertEquals(readContent, multilineContent);
+      assertEquals(await fs.readTextFile(testFile), multilineContent);
 
       await fs.remove(testFile);
     });
@@ -371,8 +340,7 @@ describe("FS Compat", () => {
 
       await fs.writeTextFile(testFile, "");
 
-      const readContent = await fs.readTextFile(testFile);
-      assertEquals(readContent, "");
+      assertEquals(await fs.readTextFile(testFile), "");
 
       const stat = await fs.stat(testFile);
       assertEquals(stat.size, 0);
@@ -403,11 +371,7 @@ describe("FS Compat", () => {
 
       await fs.mkdir(testDir);
 
-      const specialNames = [
-        "file-with-dash.txt",
-        "file_with_underscore.txt",
-        "file.multiple.dots.txt",
-      ];
+      const specialNames = ["file-with-dash.txt", "file_with_underscore.txt", "file.multiple.dots.txt"];
 
       for (const name of specialNames) {
         await fs.writeTextFile(join(testDir, name), "content");
@@ -434,20 +398,17 @@ describe("FS Compat", () => {
         await fs.writeTextFile(join(testDir, `file${i}.txt`), `content${i}`);
       }
 
-      const entries = await collectEntries(fs, testDir);
-      assertEquals(entries.length, 5);
+      assertEquals((await collectEntries(fs, testDir)).length, 5);
 
       for (let i = 0; i < 5; i++) {
-        const content = await fs.readTextFile(join(testDir, `file${i}.txt`));
-        assertEquals(content, `content${i}`);
+        assertEquals(await fs.readTextFile(join(testDir, `file${i}.txt`)), `content${i}`);
       }
 
       for (let i = 0; i < 5; i++) {
         await fs.remove(join(testDir, `file${i}.txt`));
       }
 
-      const emptyEntries = await collectEntries(fs, testDir);
-      assertEquals(emptyEntries.length, 0);
+      assertEquals((await collectEntries(fs, testDir)).length, 0);
 
       await safeCleanup(fs, testDir);
     });
@@ -458,15 +419,14 @@ describe("FS Compat", () => {
 
       await fs.mkdir(testDir);
 
-      const promises = [];
+      const promises: Array<Promise<void>> = [];
       for (let i = 0; i < 10; i++) {
         promises.push(fs.writeTextFile(join(testDir, `file${i}.txt`), `content${i}`));
       }
 
       await Promise.all(promises);
 
-      const entries = await collectEntries(fs, testDir);
-      assertEquals(entries.length, 10);
+      assertEquals((await collectEntries(fs, testDir)).length, 10);
 
       await fs.remove(testDir, { recursive: true });
     });

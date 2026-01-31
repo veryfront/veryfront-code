@@ -3,7 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
 import { bareStrategy } from "./bare-strategy.ts";
 
-function makeCtx(overrides?: Partial<RewriteContext>): RewriteContext {
+function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
   return {
     filePath: "/project/pages/index.tsx",
     projectDir: "/project",
@@ -80,19 +80,13 @@ describe("BareStrategy", () => {
 
   describe("rewrite", () => {
     it("should return null for SSR target", () => {
-      const result = bareStrategy.rewrite(
-        makeInfo("lodash"),
-        makeCtx({ target: "ssr" }),
-      );
+      const result = bareStrategy.rewrite(makeInfo("lodash"), makeCtx({ target: "ssr" }));
       assertEquals(result.specifier, null);
     });
 
     it("should rewrite to esm.sh URL for browser", () => {
-      const result = bareStrategy.rewrite(
-        makeInfo("lodash"),
-        makeCtx({ target: "browser" }),
-      );
-      assertEquals(result.specifier!.includes("esm.sh"), true);
+      const result = bareStrategy.rewrite(makeInfo("lodash"), makeCtx({ target: "browser" }));
+      assertEquals(result.specifier?.includes("esm.sh"), true);
     });
 
     it("should handle tailwindcss with pinned version", () => {
@@ -100,7 +94,7 @@ describe("BareStrategy", () => {
         makeInfo("tailwindcss"),
         makeCtx({ target: "browser" }),
       );
-      assertEquals(result.specifier!.includes("tailwindcss@"), true);
+      assertEquals(result.specifier?.includes("tailwindcss@"), true);
     });
 
     it("should strip version from versioned specifier", () => {
@@ -108,7 +102,7 @@ describe("BareStrategy", () => {
         makeInfo("lodash@4.17.21"),
         makeCtx({ target: "browser" }),
       );
-      assertEquals(result.specifier!.includes("esm.sh/lodash"), true);
+      assertEquals(result.specifier?.includes("esm.sh/lodash"), true);
     });
   });
 });

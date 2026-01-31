@@ -66,7 +66,7 @@ export function deleteBlob(id: string): Promise<boolean> {
 }
 
 export function listBlobs(): Promise<BlobRef[]> {
-  const refs = Array.from(blobs.values(), (b) => b.ref).sort(
+  const refs = Array.from(blobs.values(), ({ ref }) => ref).sort(
     (a, b) => b.createdAt - a.createdAt,
   );
   return Promise.resolve(refs);

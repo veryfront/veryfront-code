@@ -6,6 +6,7 @@ import type { Context } from "../core/types.ts";
 function makeContext(headers: Record<string, string> = {}): Context {
   const req = new Request("http://localhost/", { headers });
   const store = new Map<string, unknown>();
+
   return {
     req,
     request: req,
@@ -23,14 +24,14 @@ function makeContext(headers: Record<string, string> = {}): Context {
         headers: { "content-type": "text/html", ...(init?.headers ?? {}) },
       }),
     redirect: (location: string, status = 302) => Response.redirect(location, status),
-    set: (key: string, value: unknown) => {
-      store.set(key, value);
-    },
+    set: (key: string, value: unknown) => store.set(key, value),
     get: (key: string) => store.get(key),
   };
 }
 
-const nextOk = () => Promise.resolve(new Response("ok", { status: 200 }));
+function nextOk(): Promise<Response> {
+  return Promise.resolve(new Response("ok", { status: 200 }));
+}
 
 describe("middleware/builtin/auth", () => {
   describe("basicAuth", () => {
@@ -88,8 +89,7 @@ describe("middleware/builtin/auth", () => {
 
     it("should pass through with valid token", async () => {
       const mw = bearerAuth({ token: "secret" });
-      const ctx = makeContext({ authorization: "Bearer secret" });
-      const res = await mw(ctx, nextOk);
+      const res = await mw(makeContext({ authorization: "Bearer secret" }), nextOk);
       assertEquals(res?.status, 200);
     });
 

@@ -30,6 +30,6 @@ export function handleBatchModuleEndpoint(
 
       return respond(response);
     },
-    { "module.batch.projectSlug": ctx.projectSlug || "unknown" },
+    { "module.batch.projectSlug": ctx.projectSlug ?? "unknown" },
   );
 }

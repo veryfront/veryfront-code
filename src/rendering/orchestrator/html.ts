@@ -68,11 +68,9 @@ export class HTMLGenerator {
     reactStream: ReadableStream,
     context: Omit<HTMLGenerationContext, "html">,
   ): Promise<ReadableStream> {
-    const mergedFrontmatter = this.mergeFrontmatter(context as HTMLGenerationContext);
-    const htmlOptions = await this.buildHTMLOptions(
-      context as HTMLGenerationContext,
-      mergedFrontmatter,
-    );
+    const fullContext = context as HTMLGenerationContext;
+    const mergedFrontmatter = this.mergeFrontmatter(fullContext);
+    const htmlOptions = await this.buildHTMLOptions(fullContext, mergedFrontmatter);
 
     let reactContent: string;
     try {
@@ -87,7 +85,7 @@ export class HTMLGenerator {
     }
 
     const { start, end } = await this.generateShellParts(
-      context as HTMLGenerationContext,
+      fullContext,
       mergedFrontmatter,
       htmlOptions,
       reactContent,
@@ -110,20 +108,8 @@ export class HTMLGenerator {
       (context.layoutBundle?.frontmatter || {}) as MDXFrontmatter,
     );
 
-    let isClientPage = false;
     const pagePath = context.pageInfo.entity.path;
-
-    try {
-      const pageContent = await this.config.adapter.fs.readFile(pagePath);
-      isClientPage = /^\s*['"]use client['"];?\s*$/m.test(pageContent);
-      if (isClientPage) {
-        logger.debug(`[HTMLGenerator] Detected 'use client' page: ${pagePath}`);
-      }
-    } catch {
-      logger.debug(
-        `[HTMLGenerator] Could not read page file for directive detection: ${pagePath}`,
-      );
-    }
+    const isClientPage = await this.detectUseClientDirective(pagePath);
 
     const injectedHtml = injectHTMLContent(context.html, "", metadata, {
       mode: this.config.mode,
@@ -133,11 +119,27 @@ export class HTMLGenerator {
       isClientPage,
     });
 
-    if (injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")) {
-      return injectedHtml;
-    }
+    if (injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")) return injectedHtml;
 
     return `<!DOCTYPE html>\n${injectedHtml}`;
+  }
+
+  private async detectUseClientDirective(pagePath: string): Promise<boolean> {
+    try {
+      const pageContent = await this.config.adapter.fs.readFile(pagePath);
+      const isClientPage = /^\s*['"]use client['"];?\s*$/m.test(pageContent);
+
+      if (isClientPage) {
+        logger.debug(`[HTMLGenerator] Detected 'use client' page: ${pagePath}`);
+      }
+
+      return isClientPage;
+    } catch {
+      logger.debug(
+        `[HTMLGenerator] Could not read page file for directive detection: ${pagePath}`,
+      );
+      return false;
+    }
   }
 
   private async wrapHTMLFragment(context: HTMLGenerationContext): Promise<string> {
@@ -256,8 +258,6 @@ export class HTMLGenerator {
     context: HTMLGenerationContext,
     mergedFrontmatter: MDXFrontmatter,
   ): Promise<HTMLGenerationOptions> {
-    // Load app path, global CSS, and extract project classes in parallel
-    // Note: tailwind.config.js is not loaded - Tailwind v4 uses CSS @theme directive instead
     const stylesheetPath = this.config.config?.tailwind?.stylesheet || "globals.css";
     const [appComponentPath, globalCSS, projectClasses] = await Promise.all([
       this.resolveAppPath().then((p) => p ?? undefined),
@@ -277,9 +277,15 @@ export class HTMLGenerator {
       this.config.projectDir,
     );
 
-    // Determine pageType from file extension
     const fileExtension = getExtensionName(context.pageInfo.entity.path);
-    const pageType = fileExtension as "mdx" | "md" | "tsx" | "jsx" | "ts" | "js" | undefined;
+    const pageType = fileExtension as
+      | "mdx"
+      | "md"
+      | "tsx"
+      | "jsx"
+      | "ts"
+      | "js"
+      | undefined;
 
     const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
       ? computeSourceHash(context.pageInfo.entity.content)

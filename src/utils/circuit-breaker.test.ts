@@ -2,6 +2,17 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { CircuitBreaker, CircuitBreakerOpen, getCircuitBreaker } from "./circuit-breaker.ts";
 
+function ignoreRejection(promise: Promise<unknown>): Promise<void> {
+  return promise.then(
+    () => undefined,
+    () => undefined,
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 describe("CircuitBreaker", () => {
   it("should execute operation in CLOSED state", async () => {
     const cb = new CircuitBreaker({ name: "test" });
@@ -14,9 +25,7 @@ describe("CircuitBreaker", () => {
     const cb = new CircuitBreaker({ failureThreshold: 3, name: "test-threshold" });
 
     for (let i = 0; i < 2; i++) {
-      try {
-        await cb.execute(() => Promise.reject(new Error("fail")));
-      } catch { /* expected */ }
+      await ignoreRejection(cb.execute(() => Promise.reject(new Error("fail"))));
     }
 
     assertEquals(cb.getState(), "CLOSED");
@@ -26,9 +35,7 @@ describe("CircuitBreaker", () => {
     const cb = new CircuitBreaker({ failureThreshold: 3, name: "test-open" });
 
     for (let i = 0; i < 3; i++) {
-      try {
-        await cb.execute(() => Promise.reject(new Error("fail")));
-      } catch { /* expected */ }
+      await ignoreRejection(cb.execute(() => Promise.reject(new Error("fail"))));
     }
 
     assertEquals(cb.getState(), "OPEN");
@@ -41,16 +48,11 @@ describe("CircuitBreaker", () => {
       name: "test-reject",
     });
 
-    try {
-      await cb.execute(() => Promise.reject(new Error("fail")));
-    } catch { /* expected */ }
+    await ignoreRejection(cb.execute(() => Promise.reject(new Error("fail"))));
 
     assertEquals(cb.getState(), "OPEN");
 
-    await assertRejects(
-      () => cb.execute(() => Promise.resolve("ok")),
-      CircuitBreakerOpen,
-    );
+    await assertRejects(() => cb.execute(() => Promise.resolve("ok")), CircuitBreakerOpen);
   });
 
   it("should transition to HALF_OPEN after resetTimeout", async () => {
@@ -60,16 +62,12 @@ describe("CircuitBreaker", () => {
       name: "test-halfopen",
     });
 
-    try {
-      await cb.execute(() => Promise.reject(new Error("fail")));
-    } catch { /* expected */ }
+    await ignoreRejection(cb.execute(() => Promise.reject(new Error("fail"))));
 
     assertEquals(cb.getState(), "OPEN");
 
-    // Wait for reset timeout to pass
-    await new Promise((r) => setTimeout(r, 10));
+    await sleep(10);
 
-    // Next call should transition to HALF_OPEN and execute
     const result = await cb.execute(() => Promise.resolve("recovered"));
     assertEquals(result, "recovered");
   });
@@ -82,14 +80,10 @@ describe("CircuitBreaker", () => {
       name: "test-recover",
     });
 
-    // Trigger OPEN
-    try {
-      await cb.execute(() => Promise.reject(new Error("fail")));
-    } catch { /* expected */ }
+    await ignoreRejection(cb.execute(() => Promise.reject(new Error("fail"))));
 
-    await new Promise((r) => setTimeout(r, 10));
+    await sleep(10);
 
-    // Succeed enough times to close
     await cb.execute(() => Promise.resolve("ok"));
     await cb.execute(() => Promise.resolve("ok"));
 
@@ -103,17 +97,11 @@ describe("CircuitBreaker", () => {
       name: "test-halfopen-fail",
     });
 
-    // Trigger OPEN
-    try {
-      await cb.execute(() => Promise.reject(new Error("fail")));
-    } catch { /* expected */ }
+    await ignoreRejection(cb.execute(() => Promise.reject(new Error("fail"))));
 
-    await new Promise((r) => setTimeout(r, 10));
+    await sleep(10);
 
-    // Fail in HALF_OPEN
-    try {
-      await cb.execute(() => Promise.reject(new Error("fail again")));
-    } catch { /* expected */ }
+    await ignoreRejection(cb.execute(() => Promise.reject(new Error("fail again"))));
 
     assertEquals(cb.getState(), "OPEN");
   });
@@ -121,21 +109,14 @@ describe("CircuitBreaker", () => {
   it("should reset failure count on success", async () => {
     const cb = new CircuitBreaker({ failureThreshold: 3, name: "test-reset" });
 
-    // Two failures
     for (let i = 0; i < 2; i++) {
-      try {
-        await cb.execute(() => Promise.reject(new Error("fail")));
-      } catch { /* expected */ }
+      await ignoreRejection(cb.execute(() => Promise.reject(new Error("fail"))));
     }
 
-    // One success resets count
     await cb.execute(() => Promise.resolve("ok"));
 
-    // Two more failures shouldn't trigger OPEN
     for (let i = 0; i < 2; i++) {
-      try {
-        await cb.execute(() => Promise.reject(new Error("fail")));
-      } catch { /* expected */ }
+      await ignoreRejection(cb.execute(() => Promise.reject(new Error("fail"))));
     }
 
     assertEquals(cb.getState(), "CLOSED");

@@ -39,13 +39,8 @@ export interface WorkflowOptions<TInput = unknown, TOutput = unknown> {
 export function workflow<TInput = unknown, TOutput = unknown>(
   options: WorkflowOptions<TInput, TOutput>,
 ): Workflow<TInput, TOutput> {
-  if (!options.id) {
-    throw new Error("Workflow must have an 'id'");
-  }
-
-  if (!options.steps) {
-    throw new Error(`Workflow "${options.id}" must have 'steps'`);
-  }
+  if (!options.id) throw new Error("Workflow must have an 'id'");
+  if (!options.steps) throw new Error(`Workflow "${options.id}" must have 'steps'`);
 
   const definition: WorkflowDefinition<TInput, TOutput> = {
     id: options.id,
@@ -85,28 +80,29 @@ export function sequence(...nodes: WorkflowNode[]): WorkflowNode[] {
   });
 }
 
-export function dag(
-  nodes: Record<string, WorkflowNode | { node: WorkflowNode; dependsOn: string[] }>,
-): WorkflowNode[] {
+type DagNodeInput = WorkflowNode | { node: WorkflowNode; dependsOn: string[] };
+
+export function dag(nodes: Record<string, DagNodeInput>): WorkflowNode[] {
   const result: WorkflowNode[] = [];
   const seenIds = new Set<string>();
 
   for (const [id, value] of Object.entries(nodes)) {
-    const isWithDeps = "node" in value && "dependsOn" in value;
+    const isWithDeps = "node" in value;
 
-    const baseNode = isWithDeps ? value.node : (value as WorkflowNode);
+    const baseNode = isWithDeps ? value.node : value;
     const nodeId = baseNode.id || id;
-
-    const node: WorkflowNode = isWithDeps
-      ? { ...baseNode, id: nodeId, dependsOn: value.dependsOn }
-      : { ...baseNode, id: nodeId };
 
     if (seenIds.has(nodeId)) {
       throw new Error(`Duplicate node ID detected in dag: "${nodeId}"`);
     }
 
     seenIds.add(nodeId);
-    result.push(node);
+
+    result.push(
+      isWithDeps
+        ? { ...baseNode, id: nodeId, dependsOn: value.dependsOn }
+        : { ...baseNode, id: nodeId },
+    );
   }
 
   return result;

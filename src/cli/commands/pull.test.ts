@@ -18,11 +18,10 @@ import type { ApiClient } from "../shared/config.ts";
 
 function createMockClient(overrides: {
   get?: (url: string, params?: unknown) => Promise<unknown>;
-  post?: (url: string, body?: unknown) => Promise<unknown>;
 } = {}): ApiClient {
   return {
     get: overrides.get ?? (() => Promise.resolve({ data: [] })),
-    post: overrides.post ?? (() => Promise.resolve({})),
+    post: () => Promise.resolve({}),
     put: () => Promise.resolve({}),
     patch: () => Promise.resolve({}),
     delete: () => Promise.resolve({}),
@@ -195,7 +194,10 @@ describe("buildFileContentUrl", () => {
 });
 
 describe("listAllFiles", () => {
-  it("should fetch files from main", async () => {
+  async function testListAllFiles(
+    source: PullSource,
+    expectedUrl: string,
+  ): Promise<void> {
     let capturedUrl = "";
     const mockClient = createMockClient({
       get: (url: string) => {
@@ -204,60 +206,36 @@ describe("listAllFiles", () => {
       },
     });
 
-    const source: PullSource = { type: "main" };
     const files = await listAllFiles(mockClient, "my-project", source);
 
-    assertEquals(capturedUrl, "/projects/my-project/files");
+    assertEquals(capturedUrl, expectedUrl);
     assertEquals(files.length, 1);
     assertEquals(files[0]?.path, "pages/index.tsx");
+  }
+
+  it("should fetch files from main", async () => {
+    await testListAllFiles({ type: "main" }, "/projects/my-project/files");
   });
 
   it("should fetch files from branch", async () => {
-    let capturedUrl = "";
-    const mockClient = createMockClient({
-      get: (url: string) => {
-        capturedUrl = url;
-        return mockFilesResponse(["pages/index.tsx"]);
-      },
-    });
-
-    const source: PullSource = { type: "branch", name: "feature-x" };
-    const files = await listAllFiles(mockClient, "my-project", source);
-
-    assertEquals(capturedUrl, "/projects/my-project/branches/feature-x/files");
-    assertEquals(files.length, 1);
+    await testListAllFiles(
+      { type: "branch", name: "feature-x" },
+      "/projects/my-project/branches/feature-x/files",
+    );
   });
 
   it("should fetch files from environment", async () => {
-    let capturedUrl = "";
-    const mockClient = createMockClient({
-      get: (url: string) => {
-        capturedUrl = url;
-        return mockFilesResponse(["pages/index.tsx"]);
-      },
-    });
-
-    const source: PullSource = { type: "environment", name: "production" };
-    const files = await listAllFiles(mockClient, "my-project", source);
-
-    assertEquals(capturedUrl, "/projects/my-project/environments/production/files");
-    assertEquals(files.length, 1);
+    await testListAllFiles(
+      { type: "environment", name: "production" },
+      "/projects/my-project/environments/production/files",
+    );
   });
 
   it("should fetch files from release", async () => {
-    let capturedUrl = "";
-    const mockClient = createMockClient({
-      get: (url: string) => {
-        capturedUrl = url;
-        return mockFilesResponse(["pages/index.tsx"]);
-      },
-    });
-
-    const source: PullSource = { type: "release", version: "v1.2.0" };
-    const files = await listAllFiles(mockClient, "my-project", source);
-
-    assertEquals(capturedUrl, "/projects/my-project/releases/v1.2.0/files");
-    assertEquals(files.length, 1);
+    await testListAllFiles(
+      { type: "release", version: "v1.2.0" },
+      "/projects/my-project/releases/v1.2.0/files",
+    );
   });
 
   it("should handle pagination", async () => {
@@ -281,7 +259,10 @@ describe("listAllFiles", () => {
 });
 
 describe("getFileContent", () => {
-  it("should fetch file content from main", async () => {
+  async function testGetFileContent(
+    source: PullSource,
+    expectedUrl: string,
+  ): Promise<void> {
     let capturedUrl = "";
     const mockClient = createMockClient({
       get: (url: string) => {
@@ -290,46 +271,31 @@ describe("getFileContent", () => {
       },
     });
 
-    const source: PullSource = { type: "main" };
     const content = await getFileContent(mockClient, "my-project", "pages/index.tsx", source);
 
-    assertEquals(capturedUrl, "/projects/my-project/files/pages%2Findex.tsx");
+    assertEquals(capturedUrl, expectedUrl);
     assertEquals(content, "export default function Home() {}\n");
+  }
+
+  it("should fetch file content from main", async () => {
+    await testGetFileContent(
+      { type: "main" },
+      "/projects/my-project/files/pages%2Findex.tsx",
+    );
   });
 
   it("should fetch file content from environment", async () => {
-    let capturedUrl = "";
-    const mockClient = createMockClient({
-      get: (url: string) => {
-        capturedUrl = url;
-        return mockFileContentResponse("export default function Home() {}");
-      },
-    });
-
-    const source: PullSource = { type: "environment", name: "production" };
-    const content = await getFileContent(mockClient, "my-project", "pages/index.tsx", source);
-
-    assertEquals(
-      capturedUrl,
+    await testGetFileContent(
+      { type: "environment", name: "production" },
       "/projects/my-project/environments/production/files/pages%2Findex.tsx",
     );
-    assertEquals(content, "export default function Home() {}\n");
   });
 
   it("should fetch file content from release", async () => {
-    let capturedUrl = "";
-    const mockClient = createMockClient({
-      get: (url: string) => {
-        capturedUrl = url;
-        return mockFileContentResponse("export default function Home() {}");
-      },
-    });
-
-    const source: PullSource = { type: "release", version: "v1.2.0" };
-    const content = await getFileContent(mockClient, "my-project", "pages/index.tsx", source);
-
-    assertEquals(capturedUrl, "/projects/my-project/releases/v1.2.0/files/pages%2Findex.tsx");
-    assertEquals(content, "export default function Home() {}\n");
+    await testGetFileContent(
+      { type: "release", version: "v1.2.0" },
+      "/projects/my-project/releases/v1.2.0/files/pages%2Findex.tsx",
+    );
   });
 
   it("should add trailing newline if missing", async () => {

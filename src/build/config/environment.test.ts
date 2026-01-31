@@ -10,6 +10,8 @@ import {
 } from "./environment.ts";
 import type { BuildEnvironmentConfig } from "./environment.ts";
 
+const VALID_ENVS = ["development", "production", "test"] as const;
+
 describe("build/config/environment", () => {
   // Note: These tests depend on the current VERYFRONT_ENV or NODE_ENV.
   // In test runner, the environment may be "test" or "development".
@@ -18,7 +20,7 @@ describe("build/config/environment", () => {
     it("should return a valid environment string", () => {
       const env = getEnvironment();
       assertEquals(
-        ["development", "production", "test"].includes(env),
+        VALID_ENVS.includes(env),
         true,
         `Expected valid environment, got: ${env}`,
       );
@@ -33,7 +35,8 @@ describe("build/config/environment", () => {
     });
 
     it("exactly one should be true", () => {
-      const count = [isDevelopment(), isProduction(), isTest()].filter(Boolean).length;
+      const count = [isDevelopment(), isProduction(), isTest()].filter(Boolean)
+        .length;
       assertEquals(count, 1, "Exactly one environment flag should be true");
     });
   });
@@ -54,34 +57,33 @@ describe("build/config/environment", () => {
 
     it("should have consistent environment flags", () => {
       const config = getBuildConfig();
-      const env = config.environment;
-      assertEquals(config.isDevelopment, env === "development");
-      assertEquals(config.isProduction, env === "production");
-      assertEquals(config.isTest, env === "test");
+      const { environment } = config;
+      assertEquals(config.isDevelopment, environment === "development");
+      assertEquals(config.isProduction, environment === "production");
+      assertEquals(config.isTest, environment === "test");
     });
 
     it("should have production settings when environment is production", () => {
-      // Only test structure; actual values depend on current env
       const config = getBuildConfig();
-      if (config.isProduction) {
-        assertEquals(config.minify, true);
-        assertEquals(config.treeShaking, true);
-        assertEquals(config.cacheMaxEntries, 100);
-        assertEquals(config.cacheTTLMs, 3600000);
-        assertEquals(config.target, ["es2020"]);
-      }
+      if (!config.isProduction) return;
+
+      assertEquals(config.minify, true);
+      assertEquals(config.treeShaking, true);
+      assertEquals(config.cacheMaxEntries, 100);
+      assertEquals(config.cacheTTLMs, 3600000);
+      assertEquals(config.target, ["es2020"]);
     });
 
     it("should have development settings when environment is development", () => {
       const config = getBuildConfig();
-      if (config.isDevelopment) {
-        assertEquals(config.minify, false);
-        assertEquals(config.sourcemaps, "inline");
-        assertEquals(config.treeShaking, false);
-        assertEquals(config.cacheMaxEntries, 10);
-        assertEquals(config.cacheTTLMs, 0);
-        assertEquals(config.target, ["esnext"]);
-      }
+      if (!config.isDevelopment) return;
+
+      assertEquals(config.minify, false);
+      assertEquals(config.sourcemaps, "inline");
+      assertEquals(config.treeShaking, false);
+      assertEquals(config.cacheMaxEntries, 10);
+      assertEquals(config.cacheTTLMs, 0);
+      assertEquals(config.target, ["esnext"]);
     });
   });
 
@@ -89,9 +91,10 @@ describe("build/config/environment", () => {
     it("should return a JSON-encoded environment string", () => {
       const result = getDefineEnv();
       assertEquals(typeof result, "string");
+
       const parsed = JSON.parse(result);
       assertEquals(
-        ["development", "production", "test"].includes(parsed),
+        VALID_ENVS.includes(parsed),
         true,
         `Expected valid JSON-encoded environment, got: ${result}`,
       );

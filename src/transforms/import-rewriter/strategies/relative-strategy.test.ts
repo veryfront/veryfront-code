@@ -3,7 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
 import { relativeStrategy } from "./relative-strategy.ts";
 
-function makeCtx(overrides?: Partial<RewriteContext>): RewriteContext {
+function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
   return {
     filePath: "/project/pages/index.tsx",
     projectDir: "/project",
@@ -54,7 +54,11 @@ describe("RelativeStrategy", () => {
         makeInfo("./component.tsx"),
         makeCtx({ target: "ssr" }),
       );
-      assertEquals(result.specifier, "http://localhost:3000/_vf_modules/pages/component.js");
+
+      assertEquals(
+        result.specifier,
+        "http://localhost:3000/_vf_modules/pages/component.js",
+      );
     });
 
     it("should normalize .tsx extension to .js for SSR when no moduleServerUrl", () => {
@@ -62,6 +66,7 @@ describe("RelativeStrategy", () => {
         makeInfo("./component.tsx"),
         makeCtx({ target: "ssr", moduleServerUrl: undefined }),
       );
+
       assertEquals(result.specifier, "./component.js");
     });
 
@@ -70,6 +75,7 @@ describe("RelativeStrategy", () => {
         makeInfo("./utils.ts"),
         makeCtx({ target: "ssr", moduleServerUrl: undefined }),
       );
+
       assertEquals(result.specifier, "./utils.js");
     });
 
@@ -78,6 +84,7 @@ describe("RelativeStrategy", () => {
         makeInfo("./utils.js"),
         makeCtx({ target: "ssr", moduleServerUrl: undefined }),
       );
+
       assertEquals(result.specifier, null);
     });
 
@@ -90,7 +97,11 @@ describe("RelativeStrategy", () => {
           moduleServerUrl: "http://localhost:3000/_vf_modules",
         }),
       );
-      assertEquals(result.specifier!.startsWith("http://localhost:3000/_vf_modules"), true);
+
+      assertEquals(
+        result.specifier?.startsWith("http://localhost:3000/_vf_modules"),
+        true,
+      );
     });
 
     it("should return normalized specifier when no moduleServerUrl", () => {
@@ -98,6 +109,7 @@ describe("RelativeStrategy", () => {
         makeInfo("./component.tsx"),
         makeCtx({ target: "browser", moduleServerUrl: undefined }),
       );
+
       assertEquals(result.specifier, "./component.js");
     });
   });

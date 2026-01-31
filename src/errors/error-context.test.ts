@@ -42,7 +42,7 @@ describe("error-context", () => {
 
     it("should use fallback for complex types on error", async () => {
       const result = await withErrorContext(
-        () => Promise.reject(new Error("test")) as Promise<{ data: number[] }>,
+        () => Promise.reject(new Error("test")),
         { operation: "test" },
         { fallback: { data: [] } },
       );

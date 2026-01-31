@@ -16,9 +16,15 @@ const hybridTokenStore = {
   async clearTokens(serviceId: string) {
     await tokenStore.revokeToken(USER_ID, serviceId);
   },
-  getState: (state: string) => memoryTokenStore.getState(state),
-  setState: (state: { state: string; codeVerifier?: string; createdAt: number }) => memoryTokenStore.setState(state),
-  clearState: (state: string) => memoryTokenStore.clearState(state),
+  getState(state: string) {
+    return memoryTokenStore.getState(state);
+  },
+  setState(state: { state: string; codeVerifier?: string; createdAt: number }) {
+    return memoryTokenStore.setState(state);
+  },
+  clearState(state: string) {
+    return memoryTokenStore.clearState(state);
+  },
 };
 
 export const GET = createOAuthCallbackHandler(boxConfig, { tokenStore: hybridTokenStore });

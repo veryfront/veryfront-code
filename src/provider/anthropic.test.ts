@@ -2,24 +2,29 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AnthropicProvider } from "./anthropic.ts";
 
-// We test the provider's helper methods by creating an instance
-// and calling the protected methods via a test subclass.
 class TestableAnthropicProvider extends AnthropicProvider {
-  public testGetHeaders() {
+  public testGetHeaders(): Record<string, string> {
     return this.getHeaders();
   }
-  public testGetEndpoint(path: string) {
+
+  public testGetEndpoint(path: string): string {
     return this.getEndpoint(path);
   }
-  public testTransformRequest(request: Parameters<AnthropicProvider["transformRequest"]>[0]) {
+
+  public testTransformRequest(
+    request: Parameters<AnthropicProvider["transformRequest"]>[0],
+  ): ReturnType<AnthropicProvider["transformRequest"]> {
     return this.transformRequest(request);
   }
-  public testTransformResponse(response: Parameters<AnthropicProvider["transformResponse"]>[0]) {
+
+  public testTransformResponse(
+    response: Parameters<AnthropicProvider["transformResponse"]>[0],
+  ): ReturnType<AnthropicProvider["transformResponse"]> {
     return this.transformResponse(response);
   }
 }
 
-function createProvider(overrides?: { baseURL?: string }) {
+function createProvider(overrides?: { baseURL?: string }): TestableAnthropicProvider {
   return new TestableAnthropicProvider({
     apiKey: "test-api-key",
     baseURL: overrides?.baseURL,
@@ -31,6 +36,7 @@ describe("AnthropicProvider", () => {
     it("returns correct API key and version headers", () => {
       const provider = createProvider();
       const headers = provider.testGetHeaders();
+
       assertEquals(headers["x-api-key"], "test-api-key");
       assertEquals(headers["anthropic-version"], "2023-06-01");
     });
@@ -59,11 +65,11 @@ describe("AnthropicProvider", () => {
       assertEquals(result.model, "claude-3-sonnet");
       assertEquals(result.stream, false);
       assertEquals(result.max_tokens, 4096);
-      assertEquals(
-        (result.messages as Array<{ role: string; content: string }>).length > 0,
-        true,
-      );
-      const message = (result.messages as Array<{ role: string; content: string }>)[0];
+
+      const messages = result.messages as Array<{ role: string; content: string }>;
+      assertEquals(messages.length > 0, true);
+
+      const message = messages[0];
       assertExists(message);
       assertEquals(message.role, "user");
       assertEquals(message.content, "Hello");
@@ -97,10 +103,11 @@ describe("AnthropicProvider", () => {
       assertExists(msg);
       assertEquals(msg.role, "user");
       assertEquals(Array.isArray(msg.content), true);
-      const firstPart = msg.content[0];
+
+      const firstPart = msg.content[0] as { type: string; tool_use_id: string };
       assertExists(firstPart);
-      assertEquals((firstPart as { type: string }).type, "tool_result");
-      assertEquals((firstPart as { tool_use_id: string }).tool_use_id, "tc_123");
+      assertEquals(firstPart.type, "tool_result");
+      assertEquals(firstPart.tool_use_id, "tc_123");
     });
 
     it("transforms assistant messages with tool calls", () => {
@@ -125,14 +132,16 @@ describe("AnthropicProvider", () => {
       assertExists(msg);
       assertEquals(msg.role, "assistant");
       assertEquals(Array.isArray(msg.content), true);
-      const textPart = msg.content[0];
-      const toolPart = msg.content[1];
+
+      const textPart = msg.content[0] as { type: string; text: string };
+      const toolPart = msg.content[1] as { type: string; name: string };
+
       assertExists(textPart);
       assertExists(toolPart);
-      assertEquals((textPart as { type: string }).type, "text");
-      assertEquals((textPart as { text: string }).text, "Let me search");
-      assertEquals((toolPart as { type: string }).type, "tool_use");
-      assertEquals((toolPart as { name: string }).name, "search");
+      assertEquals(textPart.type, "text");
+      assertEquals(textPart.text, "Let me search");
+      assertEquals(toolPart.type, "tool_use");
+      assertEquals(toolPart.name, "search");
     });
 
     it("sets temperature and topP when provided", () => {
@@ -164,6 +173,7 @@ describe("AnthropicProvider", () => {
 
       const tools = result.tools as Array<{ name: string; input_schema: unknown }>;
       assertEquals(tools.length, 1);
+
       const tool = tools[0];
       assertExists(tool);
       assertEquals(tool.name, "search");
@@ -207,15 +217,14 @@ describe("AnthropicProvider", () => {
     it("extracts tool calls from tool_use blocks", () => {
       const provider = createProvider();
       const result = provider.testTransformResponse({
-        content: [
-          { type: "tool_use", id: "tc1", name: "search", input: { q: "test" } },
-        ],
+        content: [{ type: "tool_use", id: "tc1", name: "search", input: { q: "test" } }],
         usage: { input_tokens: 5, output_tokens: 3 },
         stop_reason: "tool_use",
       });
 
       assertExists(result.toolCalls);
       assertEquals(result.toolCalls.length, 1);
+
       const call = result.toolCalls[0];
       assertExists(call);
       assertEquals(call.id, "tc1");
@@ -237,40 +246,24 @@ describe("AnthropicProvider", () => {
 
     it("maps stop reasons correctly", () => {
       const provider = createProvider();
-      const endTurn = provider.testTransformResponse({
-        content: [{ type: "text", text: "" }],
-        stop_reason: "end_turn",
-        usage: {},
-      });
-      assertEquals(endTurn.finishReason, "stop");
 
-      const maxTokens = provider.testTransformResponse({
-        content: [{ type: "text", text: "" }],
-        stop_reason: "max_tokens",
-        usage: {},
-      });
-      assertEquals(maxTokens.finishReason, "length");
+      const cases: Array<[string, string]> = [
+        ["end_turn", "stop"],
+        ["max_tokens", "length"],
+        ["tool_use", "tool_calls"],
+        ["stop_sequence", "stop"],
+        ["unknown_reason", "stop"],
+      ];
 
-      const toolUse = provider.testTransformResponse({
-        content: [{ type: "text", text: "" }],
-        stop_reason: "tool_use",
-        usage: {},
-      });
-      assertEquals(toolUse.finishReason, "tool_calls");
+      for (const [stop_reason, expected] of cases) {
+        const res = provider.testTransformResponse({
+          content: [{ type: "text", text: "" }],
+          stop_reason,
+          usage: {},
+        });
 
-      const stopSeq = provider.testTransformResponse({
-        content: [{ type: "text", text: "" }],
-        stop_reason: "stop_sequence",
-        usage: {},
-      });
-      assertEquals(stopSeq.finishReason, "stop");
-
-      const unknown = provider.testTransformResponse({
-        content: [{ type: "text", text: "" }],
-        stop_reason: "unknown_reason",
-        usage: {},
-      });
-      assertEquals(unknown.finishReason, "stop");
+        assertEquals(res.finishReason, expected);
+      }
     });
 
     it("handles missing usage fields gracefully", () => {

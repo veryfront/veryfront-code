@@ -164,9 +164,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
     if (lastUserIndex === -1) return;
 
     const lastUserMessage = messages[lastUserIndex];
-    if (!lastUserMessage) return;
-
-    const textPart = lastUserMessage.parts.find((p) => p.type === "text");
+    const textPart = lastUserMessage?.parts.find((p) => p.type === "text");
     if (!textPart || !("text" in textPart)) return;
 
     setMessages(messages.slice(0, lastUserIndex));

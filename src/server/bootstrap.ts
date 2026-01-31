@@ -3,11 +3,11 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { clearConfigCache, getConfig } from "#veryfront/config";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { initializeEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { logger } from "#veryfront/utils";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { loadEnv, supportsEnvFiles } from "#veryfront/utils/env-loader.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
-import { initializeEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 
 export interface BootstrapResult {
   /** Enhanced runtime adapter (with FSAdapter if configured) */
@@ -63,24 +63,19 @@ export async function bootstrap(
 
   logger.debug("[Bootstrap] Initializing FSAdapter", { type: fsType });
   const enhancedAdapter = await enhanceAdapterWithFS(adapter, config, projectDir);
-  const fsAdapterInitialized = enhancedAdapter !== adapter;
 
-  const isProxyMode = config.fs?.veryfront?.proxyMode === true;
-  const isProductionMode = config.fs?.veryfront?.productionMode === true;
-
-  if (!fsAdapterInitialized) {
+  if (enhancedAdapter === adapter) {
     logger.debug("[Bootstrap] Framework initialized successfully", {
       projectDir,
       runtime: adapter.id,
       fsAdapter: "local",
     });
 
-    return {
-      adapter,
-      config,
-      usingFSAdapter: false,
-    };
+    return { adapter, config, usingFSAdapter: false };
   }
+
+  const isProxyMode = config.fs?.veryfront?.proxyMode === true;
+  const isProductionMode = config.fs?.veryfront?.productionMode === true;
 
   if (isProxyMode) {
     logger.debug("[Bootstrap] Skipping config reload in proxy mode (using local config)");
@@ -97,10 +92,12 @@ export async function bootstrap(
       reloadedConfig.dev?.host === "localhost" &&
       !reloadedConfig.dev?.hmr;
 
-    config = usesDefaultDevConfig && originalConfig.dev
-      ? (logger.debug("[Bootstrap] Keeping original config (FSAdapter returned defaults)"),
-        originalConfig)
-      : reloadedConfig;
+    if (usesDefaultDevConfig && originalConfig.dev) {
+      logger.debug("[Bootstrap] Keeping original config (FSAdapter returned defaults)");
+      config = originalConfig;
+    } else {
+      config = reloadedConfig;
+    }
   }
 
   logger.debug("[Bootstrap] Framework initialized successfully", {

@@ -1,3 +1,5 @@
 import { createOAuthInitHandler, memoryTokenStore, salesforceConfig } from "veryfront/oauth";
 
-export const GET = createOAuthInitHandler(salesforceConfig, { tokenStore: memoryTokenStore });
+export const GET = createOAuthInitHandler(salesforceConfig, {
+  tokenStore: memoryTokenStore,
+});

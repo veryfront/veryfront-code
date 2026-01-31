@@ -30,7 +30,7 @@ export class MiddlewareContext implements Context {
       ...init,
       headers: {
         "content-type": "text/plain; charset=utf-8",
-        ...(init?.headers ?? {}),
+        ...init?.headers,
       },
     });
   }
@@ -40,7 +40,7 @@ export class MiddlewareContext implements Context {
       ...init,
       headers: {
         "content-type": "text/html; charset=utf-8",
-        ...(init?.headers ?? {}),
+        ...init?.headers,
       },
     });
   }

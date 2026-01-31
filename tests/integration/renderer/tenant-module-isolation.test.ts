@@ -11,6 +11,8 @@ describe(
   { sanitizeResources: false, sanitizeOps: false },
   () => {
     it("isolates module temp files per projectId", async () => {
+      const adapter = await getAdapter();
+
       await withTestContext("tenant-modules-a", async (contextA) => {
         await withTestContext("tenant-modules-b", async (contextB) => {
           const filePathA = join(contextA.projectDir, "components", "Widget.tsx");
@@ -19,14 +21,16 @@ describe(
           const sourceA = "export default function WidgetA() { return null; }";
           const sourceB = "export default function WidgetB() { return null; }";
 
-          await writeTextFile(filePathA, sourceA);
-          await writeTextFile(filePathB, sourceB);
+          await Promise.all([
+            writeTextFile(filePathA, sourceA),
+            writeTextFile(filePathB, sourceB),
+          ]);
 
           const componentA = await loadComponentFromSource(
             sourceA,
             filePathA,
             contextA.projectDir,
-            await getAdapter(),
+            adapter,
             { dev: true, ssr: false, projectId: "project-a" },
           );
 
@@ -34,7 +38,7 @@ describe(
             sourceB,
             filePathB,
             contextB.projectDir,
-            await getAdapter(),
+            adapter,
             { dev: true, ssr: false, projectId: "project-b" },
           );
 
@@ -42,7 +46,7 @@ describe(
             sourceA,
             filePathA,
             contextA.projectDir,
-            await getAdapter(),
+            adapter,
             { dev: true, ssr: false, projectId: "project-a" },
           );
 

@@ -1,15 +1,15 @@
-/**
- * Stdin utilities tests
- */
-
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createEscapeBuffer } from "./stdin.ts";
 
+function createTestBuffer(timeouts: string[]): ReturnType<typeof createEscapeBuffer> {
+  return createEscapeBuffer((key) => timeouts.push(key));
+}
+
 describe("createEscapeBuffer", () => {
   it("should pass through regular characters immediately", () => {
     const timeouts: string[] = [];
-    const buffer = createEscapeBuffer((key) => timeouts.push(key));
+    const buffer = createTestBuffer(timeouts);
 
     assertEquals(buffer.push("a"), "a");
     assertEquals(buffer.push("b"), "b");
@@ -21,12 +21,9 @@ describe("createEscapeBuffer", () => {
 
   it("should buffer escape and combine with following input", () => {
     const timeouts: string[] = [];
-    const buffer = createEscapeBuffer((key) => timeouts.push(key));
+    const buffer = createTestBuffer(timeouts);
 
-    // Escape alone returns null (buffered)
     assertEquals(buffer.push("\x1b"), null);
-
-    // Next input combines with buffered escape
     assertEquals(buffer.push("[A"), "\x1b[A");
     assertEquals(timeouts, []);
 
@@ -35,9 +32,8 @@ describe("createEscapeBuffer", () => {
 
   it("should pass through complete escape sequences", () => {
     const timeouts: string[] = [];
-    const buffer = createEscapeBuffer((key) => timeouts.push(key));
+    const buffer = createTestBuffer(timeouts);
 
-    // Complete sequence in one read
     assertEquals(buffer.push("\x1b[A"), "\x1b[A");
     assertEquals(buffer.push("\x1b[B"), "\x1b[B");
     assertEquals(timeouts, []);
@@ -47,12 +43,10 @@ describe("createEscapeBuffer", () => {
 
   it("should timeout standalone escape key", async () => {
     const timeouts: string[] = [];
-    const buffer = createEscapeBuffer((key) => timeouts.push(key));
+    const buffer = createTestBuffer(timeouts);
 
-    // Escape alone
     assertEquals(buffer.push("\x1b"), null);
 
-    // Wait for timeout (50ms + buffer)
     await new Promise((r) => setTimeout(r, 100));
 
     assertEquals(timeouts, ["\x1b"]);
@@ -62,12 +56,11 @@ describe("createEscapeBuffer", () => {
 
   it("should clear pending escape", () => {
     const timeouts: string[] = [];
-    const buffer = createEscapeBuffer((key) => timeouts.push(key));
+    const buffer = createTestBuffer(timeouts);
 
     assertEquals(buffer.push("\x1b"), null);
     buffer.clear();
 
-    // After clear, next input is fresh
     assertEquals(buffer.push("a"), "a");
     assertEquals(timeouts, []);
   });

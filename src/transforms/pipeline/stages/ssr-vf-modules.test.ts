@@ -9,10 +9,10 @@
 
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { _testExports, ssrVfModulesPlugin } from "./ssr-vf-modules.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { buildReactUrl, getReactImportMap } from "../../import-rewriter/url-builder.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { buildReactUrl, getReactImportMap } from "../../import-rewriter/url-builder.ts";
+import { _testExports, ssrVfModulesPlugin } from "./ssr-vf-modules.ts";
 import type { TransformContext } from "../types.ts";
 
 const { findVfModuleImports, FRAMEWORK_ROOT, EXTENSIONS } = _testExports;
@@ -80,8 +80,8 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
       const ssrCtx = { target: "ssr" } as TransformContext;
       const browserCtx = { target: "browser" } as TransformContext;
 
-      assertEquals(ssrVfModulesPlugin.condition!(ssrCtx), true);
-      assertEquals(ssrVfModulesPlugin.condition!(browserCtx), false);
+      assertEquals(ssrVfModulesPlugin.condition?.(ssrCtx), true);
+      assertEquals(ssrVfModulesPlugin.condition?.(browserCtx), false);
     });
   });
 
@@ -132,19 +132,18 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
   describe("FRAMEWORK_ROOT", () => {
     it("points to valid directory", async () => {
       const fs = createFileSystem();
-      // Framework root should contain src/ directory
       const srcExists = await fs.exists(`${FRAMEWORK_ROOT}/src`);
       assertEquals(srcExists, true, `FRAMEWORK_ROOT/src should exist at ${FRAMEWORK_ROOT}/src`);
     });
 
     it("contains expected framework files", async () => {
       const fs = createFileSystem();
-      // Check for key framework files
+
       const headExists = await fs.exists(`${FRAMEWORK_ROOT}/src/react/components/Head.tsx`);
       assertEquals(headExists, true, "Head.tsx should exist");
 
-      const routerExists = await fs.exists(`${FRAMEWORK_ROOT}/src/react/router/index.ts`);
-      assertEquals(routerExists, true, "router/index.ts should exist");
+      const routerExists = await fs.exists(`${FRAMEWORK_ROOT}/src/react/router/index.tsx`);
+      assertEquals(routerExists, true, "router/index.tsx should exist");
     });
   });
 
@@ -157,7 +156,6 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("prefers TypeScript over JavaScript", () => {
-      // .tsx should come before .js
       const tsxIndex = EXTENSIONS.indexOf(".tsx");
       const jsIndex = EXTENSIONS.indexOf(".js");
       assertEquals(tsxIndex < jsIndex, true, ".tsx should be tried before .js");
@@ -188,7 +186,7 @@ describe("ssr-vf-modules integration", { sanitizeOps: false, sanitizeResources: 
 
     assertEquals(result !== null, true, "Should resolve Head.tsx");
     assertStringIncludes(result!.sourcePath, "Head.tsx");
-    assertStringIncludes(result!.content, "useRef"); // Head uses useRef
+    assertStringIncludes(result!.content, "useRef");
   });
 
   it("resolves router index from /_vf_modules/ path", async () => {
@@ -208,7 +206,6 @@ describe("ssr-vf-modules integration", { sanitizeOps: false, sanitizeResources: 
     const fs = createFileSystem();
     const { resolveVeryfrontImport } = _testExports;
 
-    // Test resolving a known framework module
     const result = await resolveVeryfrontImport("#veryfront/utils", fs);
 
     assertEquals(result !== null, true, "Should resolve #veryfront/utils");
@@ -236,7 +233,6 @@ describe("ssr-vf-modules integration", { sanitizeOps: false, sanitizeResources: 
     const fs = createFileSystem();
     const { resolveVeryfrontImport, FRAMEWORK_ROOT } = _testExports;
 
-    // The resolved file:// paths should include FRAMEWORK_ROOT
     // This ensures different environments (source vs compiled binary) don't share cache files
     const result = await resolveVeryfrontImport("#veryfront/utils", fs);
     assertEquals(result !== null, true, "Should resolve #veryfront/utils");

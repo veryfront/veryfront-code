@@ -12,10 +12,11 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
   constructor(private kvNamespace?: KVNamespace) {}
 
   private getKV(path: string): KVNamespace {
-    if (!this.kvNamespace) {
+    const kv = this.kvNamespace;
+    if (!kv) {
       throw new ConfigError("KV namespace required for file operations in Workers", { path });
     }
-    return this.kvNamespace;
+    return kv;
   }
 
   async readFile(path: string): Promise<string> {
@@ -37,25 +38,21 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
 
   async exists(path: string): Promise<boolean> {
     const value = await this.kvNamespace?.get(path);
-    return value !== null && value !== undefined;
+    return value != null;
   }
 
   async *readDir(path: string): AsyncIterable<DirEntry> {
-    if (!this.kvNamespace) return;
+    const kv = this.kvNamespace;
+    if (!kv) return;
 
     const prefix = (path || "").replace(/\/$/, "");
-    const list = await this.kvNamespace.list({ prefix });
+    const list = await kv.list({ prefix });
 
     for (const key of list.keys) {
       const name = prefix ? key.name.slice(prefix.length + 1) : key.name;
       if (!name || name.includes("/")) continue;
 
-      yield {
-        name,
-        isFile: true,
-        isDirectory: false,
-        isSymlink: false,
-      };
+      yield { name, isFile: true, isDirectory: false, isSymlink: false };
     }
   }
 

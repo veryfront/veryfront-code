@@ -9,8 +9,6 @@ export default tool({
     meetingId: z.string().describe("The unique ID of the meeting"),
   }),
   async execute({ meetingId }) {
-    const meeting = await getMeeting(meetingId);
-
-    return { ...meeting };
+    return getMeeting(meetingId);
   },
 });

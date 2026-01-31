@@ -1,9 +1,3 @@
-/**
- * ServiceNow API Client
- *
- * Handles authentication and API calls to ServiceNow REST API.
- */
-
 import { getServiceNowTokens } from "./token-store.ts";
 
 function getEnv(name: string): string | undefined {
@@ -78,11 +72,13 @@ export class ServiceNowClient {
     this.accessToken = tokens.accessToken;
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<T> {
     await this.ensureAuthenticated();
 
-    const url = `${this.baseUrl}${endpoint}`;
-    const response = await fetch(url, {
+    const response = await fetch(`${this.baseUrl}${endpoint}`, {
       ...options,
       headers: {
         Authorization: `Bearer ${this.accessToken}`,
@@ -100,17 +96,16 @@ export class ServiceNowClient {
     return response.json();
   }
 
-  /**
-   * List incidents with optional filters
-   */
-  async listIncidents(options: {
-    limit?: number;
-    offset?: number;
-    state?: string;
-    priority?: string;
-    assignedTo?: string;
-    query?: string;
-  } = {}): Promise<ServiceNowIncident[]> {
+  async listIncidents(
+    options: {
+      limit?: number;
+      offset?: number;
+      state?: string;
+      priority?: string;
+      assignedTo?: string;
+      query?: string;
+    } = {},
+  ): Promise<ServiceNowIncident[]> {
     const params = new URLSearchParams({
       sysparm_limit: String(options.limit ?? 20),
       sysparm_offset: String(options.offset ?? 0),
@@ -120,7 +115,9 @@ export class ServiceNowClient {
     const queryParts: string[] = [];
     if (options.state) queryParts.push(`state=${options.state}`);
     if (options.priority) queryParts.push(`priority=${options.priority}`);
-    if (options.assignedTo) queryParts.push(`assigned_to.name=${options.assignedTo}`);
+    if (options.assignedTo) {
+      queryParts.push(`assigned_to.name=${options.assignedTo}`);
+    }
     if (options.query) queryParts.push(`short_descriptionLIKE${options.query}`);
 
     if (queryParts.length) params.set("sysparm_query", queryParts.join("^"));
@@ -131,32 +128,26 @@ export class ServiceNowClient {
     return response.result;
   }
 
-  /**
-   * Get a specific incident by sys_id or number
-   */
   async getIncident(idOrNumber: string): Promise<ServiceNowIncident> {
     const params = new URLSearchParams({ sysparm_display_value: "all" });
 
-    if (idOrNumber.toUpperCase().startsWith("INC")) {
-      params.set("sysparm_query", `number=${idOrNumber}`);
-      const response = await this.request<ServiceNowListResponse<ServiceNowIncident>>(
-        `/table/incident?${params}`,
+    if (!idOrNumber.toUpperCase().startsWith("INC")) {
+      const response = await this.request<ServiceNowResponse<ServiceNowIncident>>(
+        `/table/incident/${idOrNumber}?${params}`,
       );
-
-      const incident = response.result[0];
-      if (!incident) throw new Error(`Incident ${idOrNumber} not found`);
-      return incident;
+      return response.result;
     }
 
-    const response = await this.request<ServiceNowResponse<ServiceNowIncident>>(
-      `/table/incident/${idOrNumber}?${params}`,
+    params.set("sysparm_query", `number=${idOrNumber}`);
+    const response = await this.request<ServiceNowListResponse<ServiceNowIncident>>(
+      `/table/incident?${params}`,
     );
-    return response.result;
+
+    const incident = response.result[0];
+    if (!incident) throw new Error(`Incident ${idOrNumber} not found`);
+    return incident;
   }
 
-  /**
-   * Create a new incident
-   */
   async createIncident(data: {
     short_description: string;
     description?: string;
@@ -176,9 +167,6 @@ export class ServiceNowClient {
     return response.result;
   }
 
-  /**
-   * Update an existing incident
-   */
   async updateIncident(
     sysId: string,
     data: Partial<{
@@ -202,9 +190,6 @@ export class ServiceNowClient {
     return response.result;
   }
 
-  /**
-   * Search knowledge base articles
-   */
   async searchKnowledge(
     query: string,
     limit = 10,
@@ -214,14 +199,13 @@ export class ServiceNowClient {
       sysparm_query: `short_descriptionLIKE${query}^ORtextLIKE${query}^workflow_state=published`,
     });
 
-    const response = await this.request<ServiceNowListResponse<ServiceNowKnowledgeArticle>>(
-      `/table/kb_knowledge?${params}`,
-    );
+    const response = await this.request<
+      ServiceNowListResponse<ServiceNowKnowledgeArticle>
+    >(`/table/kb_knowledge?${params}`);
     return response.result;
   }
 }
 
-// Singleton instance
 let client: ServiceNowClient | null = null;
 
 export function getServiceNowClient(): ServiceNowClient {

@@ -18,7 +18,7 @@ export function handleDataEndpoint(
       try {
         const encSlug = pathname.replace("/_veryfront/data/", "").replace(/\.json$/, "");
         const renderer = await getRendererForProject(ctx);
-        const result = await renderer.renderPage(encSlug || "");
+        const result = await renderer.renderPage(encSlug);
 
         const data = {
           slug: encSlug,
@@ -64,6 +64,9 @@ export function handleDataEndpoint(
         );
       }
     },
-    { "module.data.pathname": pathname, "module.data.projectSlug": ctx.projectSlug || "unknown" },
+    {
+      "module.data.pathname": pathname,
+      "module.data.projectSlug": ctx.projectSlug || "unknown",
+    },
   );
 }

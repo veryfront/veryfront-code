@@ -12,17 +12,27 @@
 
 import { assertEquals, assertExists } from "jsr:@std/assert";
 
+async function withTempDir(fn: (tempDir: string) => Promise<void>): Promise<void> {
+  const tempDir = await Deno.makeTempDir({ prefix: "vf-api-test-" });
+  try {
+    await fn(tempDir);
+  } finally {
+    await Deno.remove(tempDir, { recursive: true }).catch(() => {});
+  }
+}
+
+async function listDirNames(dir: string): Promise<string[]> {
+  const names: string[] = [];
+  for await (const entry of Deno.readDir(dir)) names.push(entry.name);
+  return names;
+}
+
 // Test that ctx.fs.readDir works in API routes
 Deno.test("API routes can read directory contents via ctx.fs.readDir", async () => {
-  // Create temp project structure
-  const tempDir = await Deno.makeTempDir({ prefix: "vf-api-test-" });
-
-  try {
-    // Create test files
+  await withTempDir(async (tempDir) => {
     await Deno.mkdir(`${tempDir}/pages/api`, { recursive: true });
     await Deno.mkdir(`${tempDir}/pages/blog/articles`, { recursive: true });
 
-    // Create test MDX files
     await Deno.writeTextFile(
       `${tempDir}/pages/blog/articles/test-article.mdx`,
       `---
@@ -36,7 +46,7 @@ summary:
 # Test Article
 
 Content here.
-`
+`,
     );
 
     await Deno.writeTextFile(
@@ -52,10 +62,9 @@ summary:
 # Another Article
 
 More content.
-`
+`,
     );
 
-    // Create API route that lists files
     await Deno.writeTextFile(
       `${tempDir}/pages/api/articles.ts`,
       `export default async function (ctx) {
@@ -75,14 +84,10 @@ More content.
     return ctx.json({ error: e.message });
   }
   return ctx.json({ articles, count: articles.length });
-}`
+}`,
     );
 
-    // Verify files were created
-    const entries = [];
-    for await (const entry of Deno.readDir(`${tempDir}/pages/blog/articles`)) {
-      entries.push(entry.name);
-    }
+    const entries = await listDirNames(`${tempDir}/pages/blog/articles`);
     assertEquals(entries.length, 2);
     assertExists(entries.find((e) => e === "test-article.mdx"));
     assertExists(entries.find((e) => e === "another-article.mdx"));
@@ -91,17 +96,12 @@ More content.
     console.log(`  - ${tempDir}/pages/blog/articles/test-article.mdx`);
     console.log(`  - ${tempDir}/pages/blog/articles/another-article.mdx`);
     console.log(`  - ${tempDir}/pages/api/articles.ts`);
-  } finally {
-    // Cleanup
-    await Deno.remove(tempDir, { recursive: true }).catch(() => {});
-  }
+  });
 });
 
 // Test file content reading
 Deno.test("API routes can read file contents via ctx.fs.readFile", async () => {
-  const tempDir = await Deno.makeTempDir({ prefix: "vf-api-test-" });
-
-  try {
+  await withTempDir(async (tempDir) => {
     await Deno.mkdir(`${tempDir}/pages/blog`, { recursive: true });
 
     const testContent = `---
@@ -115,13 +115,10 @@ summary:
     const content = await Deno.readTextFile(`${tempDir}/pages/blog/test.mdx`);
     assertEquals(content, testContent);
 
-    // Parse frontmatter
     const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
     assertExists(frontmatterMatch);
     assertExists(frontmatterMatch[1]);
 
     console.log("✅ File content reading works correctly");
-  } finally {
-    await Deno.remove(tempDir, { recursive: true }).catch(() => {});
-  }
+  });
 });

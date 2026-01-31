@@ -31,15 +31,21 @@ describe("errors/enhanced-catalog", () => {
   });
 
   it("should re-export all individual catalogs", () => {
-    assertEquals(typeof BUILD_ERROR_CATALOG, "object");
-    assertEquals(typeof CONFIG_ERROR_CATALOG, "object");
-    assertEquals(typeof DEPLOYMENT_ERROR_CATALOG, "object");
-    assertEquals(typeof DEV_ERROR_CATALOG, "object");
-    assertEquals(typeof GENERAL_ERROR_CATALOG, "object");
-    assertEquals(typeof MODULE_ERROR_CATALOG, "object");
-    assertEquals(typeof ROUTE_ERROR_CATALOG, "object");
-    assertEquals(typeof RSC_ERROR_CATALOG, "object");
-    assertEquals(typeof RUNTIME_ERROR_CATALOG, "object");
-    assertEquals(typeof SERVER_ERROR_CATALOG, "object");
+    const catalogs = [
+      BUILD_ERROR_CATALOG,
+      CONFIG_ERROR_CATALOG,
+      DEPLOYMENT_ERROR_CATALOG,
+      DEV_ERROR_CATALOG,
+      GENERAL_ERROR_CATALOG,
+      MODULE_ERROR_CATALOG,
+      ROUTE_ERROR_CATALOG,
+      RSC_ERROR_CATALOG,
+      RUNTIME_ERROR_CATALOG,
+      SERVER_ERROR_CATALOG,
+    ];
+
+    for (const catalog of catalogs) {
+      assertEquals(typeof catalog, "object");
+    }
   });
 });

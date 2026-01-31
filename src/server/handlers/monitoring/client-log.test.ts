@@ -2,17 +2,36 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ClientLogHandler } from "./client-log.handler.ts";
 
+function createHandler(): ClientLogHandler {
+  return new ClientLogHandler();
+}
+
+function createPostRequest(body: unknown): Request {
+  return new Request("http://localhost/_veryfront/log", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function assertOkResponse(result: { response?: Response }): Promise<void> {
+  assertEquals(result.response instanceof Response, true);
+  assertExists(result.response);
+  assertEquals(result.response.status, 200);
+}
+
 describe("server/handlers/monitoring/client-log", () => {
   describe("ClientLogHandler metadata", () => {
     it("should have correct handler name", () => {
-      const handler = new ClientLogHandler();
+      const handler = createHandler();
       assertEquals(handler.metadata.name, "ClientLogHandler");
     });
 
     it("should match POST to /_veryfront/log", () => {
-      const handler = new ClientLogHandler();
+      const handler = createHandler();
       assertExists(handler.metadata.patterns);
       assertEquals(handler.metadata.patterns.length, 1);
+
       const pattern = handler.metadata.patterns[0];
       assertExists(pattern);
       assertEquals(typeof pattern !== "string" && pattern.pattern, "/_veryfront/log");
@@ -21,34 +40,20 @@ describe("server/handlers/monitoring/client-log", () => {
     });
 
     it("should only be enabled in local dev mode", () => {
-      const handler = new ClientLogHandler();
+      const handler = createHandler();
       const enabledFn = handler.metadata.enabled;
       assertEquals(typeof enabledFn, "function");
 
-      if (typeof enabledFn === "function") {
-        assertEquals(enabledFn({ requestContext: { isLocalDev: false } } as never), false);
-        assertEquals(enabledFn({ requestContext: { isLocalDev: true } } as never), true);
-        assertEquals(enabledFn({} as never), false);
-      }
+      if (typeof enabledFn !== "function") return;
+
+      assertEquals(enabledFn({ requestContext: { isLocalDev: false } } as never), false);
+      assertEquals(enabledFn({ requestContext: { isLocalDev: true } } as never), true);
+      assertEquals(enabledFn({} as never), false);
     });
   });
 
   describe("ClientLogHandler.handle", () => {
-    function createHandler(): ClientLogHandler {
-      return new ClientLogHandler();
-    }
-
-    function createPostRequest(body: unknown): Request {
-      return new Request("http://localhost/_veryfront/log", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    }
-
-    const minimalCtx = {
-      securityConfig: undefined,
-    } as never;
+    const minimalCtx = { securityConfig: undefined } as never;
 
     it("should return continue for non-matching pathname", async () => {
       const handler = createHandler();
@@ -70,12 +75,10 @@ describe("server/handlers/monitoring/client-log", () => {
       const handler = createHandler();
       const req = createPostRequest({ level: "info", message: "test message" });
       const result = await handler.handle(req, minimalCtx);
-      assertEquals(result.response instanceof Response, true);
-      if (result.response) {
-        assertEquals(result.response.status, 200);
-        const body = await result.response.json();
-        assertEquals(body.ok, true);
-      }
+
+      await assertOkResponse(result);
+      const body = await result.response.json();
+      assertEquals(body.ok, true);
     });
 
     it("should return ok:true even for invalid JSON body", async () => {
@@ -85,12 +88,10 @@ describe("server/handlers/monitoring/client-log", () => {
         body: "not valid json {{{",
       });
       const result = await handler.handle(req, minimalCtx);
-      assertEquals(result.response instanceof Response, true);
-      if (result.response) {
-        assertEquals(result.response.status, 200);
-        const body = await result.response.json();
-        assertEquals(body.ok, true);
-      }
+
+      await assertOkResponse(result);
+      const body = await result.response.json();
+      assertEquals(body.ok, true);
     });
 
     it("should return ok:true for log data with details", async () => {
@@ -101,30 +102,21 @@ describe("server/handlers/monitoring/client-log", () => {
         details: { component: "App", stack: "Error at line 5" },
       });
       const result = await handler.handle(req, minimalCtx);
-      assertEquals(result.response instanceof Response, true);
-      if (result.response) {
-        assertEquals(result.response.status, 200);
-      }
+      await assertOkResponse(result);
     });
 
     it("should handle missing level gracefully", async () => {
       const handler = createHandler();
       const req = createPostRequest({ message: "no level" });
       const result = await handler.handle(req, minimalCtx);
-      assertEquals(result.response instanceof Response, true);
-      if (result.response) {
-        assertEquals(result.response.status, 200);
-      }
+      await assertOkResponse(result);
     });
 
     it("should handle missing message gracefully", async () => {
       const handler = createHandler();
       const req = createPostRequest({ level: "warn" });
       const result = await handler.handle(req, minimalCtx);
-      assertEquals(result.response instanceof Response, true);
-      if (result.response) {
-        assertEquals(result.response.status, 200);
-      }
+      await assertOkResponse(result);
     });
   });
 });

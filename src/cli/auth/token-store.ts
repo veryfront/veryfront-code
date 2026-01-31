@@ -20,7 +20,8 @@ export async function readToken(): Promise<string | null> {
   try {
     if (!(await fs.exists(tokenPath))) return null;
     const content = await fs.readTextFile(tokenPath);
-    return content.trim() || null;
+    const token = content.trim();
+    return token ? token : null;
   } catch {
     return null;
   }
@@ -31,7 +32,9 @@ export async function saveToken(token: string): Promise<void> {
   const configDir = getConfigDir();
   const tokenPath = getTokenPath();
 
-  if (!(await fs.exists(configDir))) await fs.mkdir(configDir, { recursive: true });
+  if (!(await fs.exists(configDir))) {
+    await fs.mkdir(configDir, { recursive: true });
+  }
 
   await fs.writeTextFile(tokenPath, `${token}\n`);
   await fs.chmod(tokenPath, TOKEN_FILE_PERMISSIONS);

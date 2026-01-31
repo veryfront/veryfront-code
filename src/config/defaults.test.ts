@@ -17,6 +17,16 @@ import {
   SSR_TIMEOUT_MS,
 } from "./defaults.ts";
 
+function assertSortedAscending(values: readonly number[]): void {
+  for (let i = 1; i < values.length; i++) {
+    const current = values[i];
+    const previous = values[i - 1];
+    assertExists(current);
+    assertExists(previous);
+    assertEquals(current > previous, true);
+  }
+}
+
 describe("config/defaults", () => {
   describe("exported constants", () => {
     it("should have correct DEFAULT_PORT", () => {
@@ -66,23 +76,12 @@ describe("config/defaults", () => {
 
   describe("DURATION_HISTOGRAM_BOUNDARIES_MS", () => {
     it("should be sorted in ascending order", () => {
-      for (let i = 1; i < DURATION_HISTOGRAM_BOUNDARIES_MS.length; i++) {
-        const current = DURATION_HISTOGRAM_BOUNDARIES_MS[i];
-        const previous = DURATION_HISTOGRAM_BOUNDARIES_MS[i - 1];
-        assertExists(current);
-        assertExists(previous);
-        assertEquals(
-          current > previous,
-          true,
-        );
-      }
+      assertSortedAscending(DURATION_HISTOGRAM_BOUNDARIES_MS);
     });
 
     it("should start at 5ms and end at 10000ms", () => {
       const first = DURATION_HISTOGRAM_BOUNDARIES_MS[0];
-      const last = DURATION_HISTOGRAM_BOUNDARIES_MS[
-        DURATION_HISTOGRAM_BOUNDARIES_MS.length - 1
-      ];
+      const last = DURATION_HISTOGRAM_BOUNDARIES_MS.at(-1);
       assertExists(first);
       assertExists(last);
       assertEquals(first, 5);
@@ -96,21 +95,12 @@ describe("config/defaults", () => {
 
   describe("SIZE_HISTOGRAM_BOUNDARIES_KB", () => {
     it("should be sorted in ascending order", () => {
-      for (let i = 1; i < SIZE_HISTOGRAM_BOUNDARIES_KB.length; i++) {
-        const current = SIZE_HISTOGRAM_BOUNDARIES_KB[i];
-        const previous = SIZE_HISTOGRAM_BOUNDARIES_KB[i - 1];
-        assertExists(current);
-        assertExists(previous);
-        assertEquals(
-          current > previous,
-          true,
-        );
-      }
+      assertSortedAscending(SIZE_HISTOGRAM_BOUNDARIES_KB);
     });
 
     it("should start at 1KB and end at 10000KB", () => {
       const first = SIZE_HISTOGRAM_BOUNDARIES_KB[0];
-      const last = SIZE_HISTOGRAM_BOUNDARIES_KB[SIZE_HISTOGRAM_BOUNDARIES_KB.length - 1];
+      const last = SIZE_HISTOGRAM_BOUNDARIES_KB.at(-1);
       assertExists(first);
       assertExists(last);
       assertEquals(first, 1);

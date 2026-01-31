@@ -20,6 +20,12 @@ function createClient(): GitHubAPIClient {
   return new GitHubAPIClient(mockConfig);
 }
 
+function assertMethod(client: GitHubAPIClient, name: keyof GitHubAPIClient): void {
+  const value = client[name];
+  assertExists(value);
+  assertEquals(typeof value, "function");
+}
+
 describe("GitHubAPIClient", () => {
   describe("class", () => {
     it("should export GitHubAPIClient class", () => {
@@ -28,46 +34,35 @@ describe("GitHubAPIClient", () => {
     });
 
     it("should be instantiable with config", () => {
-      const client = createClient();
-      assertExists(client);
+      assertExists(createClient());
     });
   });
 
   describe("repoId", () => {
     it("should return owner/repo format", () => {
-      const client = createClient();
-      assertEquals(client.repoId, "test-owner/test-repo");
+      assertEquals(createClient().repoId, "test-owner/test-repo");
     });
   });
 
   describe("methods", () => {
     it("should have getTree method", () => {
-      const client = createClient();
-      assertExists(client.getTree);
-      assertEquals(typeof client.getTree, "function");
+      assertMethod(createClient(), "getTree");
     });
 
     it("should have getContents method", () => {
-      const client = createClient();
-      assertExists(client.getContents);
-      assertEquals(typeof client.getContents, "function");
+      assertMethod(createClient(), "getContents");
     });
 
     it("should have getBlob method", () => {
-      const client = createClient();
-      assertExists(client.getBlob);
-      assertEquals(typeof client.getBlob, "function");
+      assertMethod(createClient(), "getBlob");
     });
 
     it("should have getRateLimitInfo method", () => {
-      const client = createClient();
-      assertExists(client.getRateLimitInfo);
-      assertEquals(typeof client.getRateLimitInfo, "function");
+      assertMethod(createClient(), "getRateLimitInfo");
     });
 
     it("should return null for initial rate limit info", () => {
-      const client = createClient();
-      assertEquals(client.getRateLimitInfo(), null);
+      assertEquals(createClient().getRateLimitInfo(), null);
     });
   });
 });

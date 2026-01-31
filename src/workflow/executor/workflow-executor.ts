@@ -112,21 +112,21 @@ export class WorkflowExecutor {
     });
 
     const bs = this.config.blobStorage;
-    if (bs) {
-      const resolveIfBlob = <T>(
-        ref: any,
-        fn: (id: string) => Promise<T>,
-        fallback: T,
-      ): Promise<T> => ref?.__kind === "blob" ? fn(ref.id) : Promise.resolve(fallback);
+    if (!bs) return;
 
-      this.blobResolver = {
-        getText: (ref) => resolveIfBlob(ref, (id) => bs.getText(id), null),
-        getBytes: (ref) => resolveIfBlob(ref, (id) => bs.getBytes(id), null),
-        getStream: (ref) => resolveIfBlob(ref, (id) => bs.getStream(id), null),
-        stat: (ref) => resolveIfBlob(ref, (id) => bs.stat(id), null),
-        delete: (ref) => resolveIfBlob(ref, (id) => bs.delete(id), undefined),
-      };
-    }
+    const resolveIfBlob = <T>(
+      ref: any,
+      fn: (id: string) => Promise<T>,
+      fallback: T,
+    ): Promise<T> => (ref?.__kind === "blob" ? fn(ref.id) : Promise.resolve(fallback));
+
+    this.blobResolver = {
+      getText: (ref) => resolveIfBlob(ref, (id) => bs.getText(id), null),
+      getBytes: (ref) => resolveIfBlob(ref, (id) => bs.getBytes(id), null),
+      getStream: (ref) => resolveIfBlob(ref, (id) => bs.getStream(id), null),
+      stat: (ref) => resolveIfBlob(ref, (id) => bs.stat(id), null),
+      delete: (ref) => resolveIfBlob(ref, (id) => bs.delete(id), undefined),
+    };
   }
 
   /**
@@ -152,9 +152,7 @@ export class WorkflowExecutor {
     options?: { runId?: string },
   ): Promise<WorkflowHandle<TOutput>> {
     const workflow = this.workflows.get(workflowId);
-    if (!workflow) {
-      throw new Error(`Workflow not found: ${workflowId}`);
-    }
+    if (!workflow) throw new Error(`Workflow not found: ${workflowId}`);
 
     workflow.inputSchema?.parse(input);
 
@@ -186,9 +184,7 @@ export class WorkflowExecutor {
    */
   async resume(runId: string, fromCheckpoint?: string): Promise<void> {
     const run = await this.config.backend.getRun(runId);
-    if (!run) {
-      throw new Error(`Run not found: ${runId}`);
-    }
+    if (!run) throw new Error(`Run not found: ${runId}`);
 
     if (run.status !== "waiting" && run.status !== "pending") {
       throw new Error(
@@ -198,12 +194,9 @@ export class WorkflowExecutor {
     }
 
     const workflow = this.workflows.get(run.workflowId);
-    if (!workflow) {
-      throw new Error(`Workflow not found: ${run.workflowId}`);
-    }
+    if (!workflow) throw new Error(`Workflow not found: ${run.workflowId}`);
 
     const nodes = this.resolveNodes(workflow, run.context);
-
     const resumeInfo = await this.checkpointManager.prepareResume(runId, nodes, fromCheckpoint);
 
     if (fromCheckpoint && !resumeInfo) {
@@ -232,14 +225,10 @@ export class WorkflowExecutor {
    */
   async executeAsync(runId: string, startFromNode?: string): Promise<void> {
     const run = await this.config.backend.getRun(runId);
-    if (!run) {
-      throw new Error(`Run not found: ${runId}`);
-    }
+    if (!run) throw new Error(`Run not found: ${runId}`);
 
     const workflow = this.workflows.get(run.workflowId);
-    if (!workflow) {
-      throw new Error(`Workflow not found: ${run.workflowId}`);
-    }
+    if (!workflow) throw new Error(`Workflow not found: ${run.workflowId}`);
 
     const useLocking = this.config.enableLocking !== false && hasLockSupport(this.config.backend);
     const lockDuration = this.config.lockDuration ?? WorkflowExecutor.DEFAULT_LOCK_DURATION;
@@ -252,7 +241,6 @@ export class WorkflowExecutor {
             `This can happen when multiple workers try to execute the same run concurrently.`,
         );
       }
-
       logger.debug("[WorkflowExecutor] Acquired lock for run", { runId });
     }
 
@@ -375,9 +363,7 @@ export class WorkflowExecutor {
    * The timeout is always cleared in the finally block to prevent memory leaks.
    */
   private async executeWithTimeout<T>(fn: () => Promise<T>, timeout?: string | number): Promise<T> {
-    if (!timeout) {
-      return fn();
-    }
+    if (!timeout) return fn();
 
     const timeoutMs = parseDuration(timeout);
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -391,9 +377,7 @@ export class WorkflowExecutor {
     try {
       return await Promise.race([fn(), timeoutPromise]);
     } finally {
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-      }
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
     }
   }
 
@@ -408,7 +392,7 @@ export class WorkflowExecutor {
     const output = this.determineOutput(context);
 
     await this.config.backend.updateRun(runId, {
-      status: "completed" as WorkflowStatus,
+      status: "completed",
       output,
       context,
       nodeStates,
@@ -428,7 +412,7 @@ export class WorkflowExecutor {
     nodeStates: Record<string, NodeState>,
   ): Promise<void> {
     await this.config.backend.updateRun(runId, {
-      status: "failed" as WorkflowStatus,
+      status: "failed",
       context,
       nodeStates,
       error: {
@@ -449,7 +433,7 @@ export class WorkflowExecutor {
     nodeStates: Record<string, NodeState>,
   ): Promise<void> {
     await this.config.backend.updateRun(runId, {
-      status: "waiting" as WorkflowStatus,
+      status: "waiting",
       currentNodes: [waitingNode],
       context,
       nodeStates,
@@ -482,21 +466,11 @@ export class WorkflowExecutor {
   private async waitForResult<TOutput>(runId: string, pollInterval = 1000): Promise<TOutput> {
     while (true) {
       const run = await this.config.backend.getRun(runId);
-      if (!run) {
-        throw new Error(`Run not found: ${runId}`);
-      }
+      if (!run) throw new Error(`Run not found: ${runId}`);
 
-      if (run.status === "completed") {
-        return run.output as TOutput;
-      }
-
-      if (run.status === "failed") {
-        throw new Error(run.error?.message || "Workflow failed");
-      }
-
-      if (run.status === "cancelled") {
-        throw new Error("Workflow was cancelled");
-      }
+      if (run.status === "completed") return run.output as TOutput;
+      if (run.status === "failed") throw new Error(run.error?.message || "Workflow failed");
+      if (run.status === "cancelled") throw new Error("Workflow was cancelled");
 
       await new Promise((resolve) => setTimeout(resolve, pollInterval));
     }
@@ -507,9 +481,7 @@ export class WorkflowExecutor {
    */
   async cancel(runId: string): Promise<void> {
     const run = await this.config.backend.getRun(runId);
-    if (!run) {
-      throw new Error(`Run not found: ${runId}`);
-    }
+    if (!run) throw new Error(`Run not found: ${runId}`);
 
     if (run.status === "completed" || run.status === "failed") {
       throw new Error(
@@ -519,7 +491,7 @@ export class WorkflowExecutor {
     }
 
     await this.config.backend.updateRun(runId, {
-      status: "cancelled" as WorkflowStatus,
+      status: "cancelled",
       completedAt: new Date(),
     });
   }

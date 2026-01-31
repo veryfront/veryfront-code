@@ -23,26 +23,29 @@ export function createEmbeddingProvider(
   type: EmbeddingProviderType,
   config: EmbeddingProviderConfig,
 ): EmbeddingProvider {
-  if (type === "openai") return new OpenAIEmbeddingProvider(config);
-  if (type === "cohere") return new CohereEmbeddingProvider(config);
-  if (type === "voyageai") return new VoyageAIEmbeddingProvider(config);
-
-  if (type === "custom") {
-    throw toError(
-      createError({
-        type: "config",
-        message:
-          "Custom embedding provider requires manual instantiation. Extend BaseEmbeddingProvider.",
-      }),
-    );
+  switch (type) {
+    case "openai":
+      return new OpenAIEmbeddingProvider(config);
+    case "cohere":
+      return new CohereEmbeddingProvider(config);
+    case "voyageai":
+      return new VoyageAIEmbeddingProvider(config);
+    case "custom":
+      throw toError(
+        createError({
+          type: "config",
+          message:
+            "Custom embedding provider requires manual instantiation. Extend BaseEmbeddingProvider.",
+        }),
+      );
+    default:
+      throw toError(
+        createError({
+          type: "config",
+          message: `Unknown embedding provider: ${type}`,
+        }),
+      );
   }
-
-  throw toError(
-    createError({
-      type: "config",
-      message: `Unknown embedding provider: ${type}`,
-    }),
-  );
 }
 
 export function createEmbeddingProviderFromConfig(searchConfig: {
@@ -57,10 +60,12 @@ export function createEmbeddingProviderFromConfig(searchConfig: {
   const embedding = searchConfig.embedding;
   if (!embedding?.provider || !embedding?.apiKey) return null;
 
-  return createEmbeddingProvider(embedding.provider, {
-    apiKey: embedding.apiKey,
-    model: embedding.model,
-    dimension: embedding.dimension,
-    batchSize: embedding.batchSize,
+  const { apiKey, provider, model, dimension, batchSize } = embedding;
+
+  return createEmbeddingProvider(provider, {
+    apiKey,
+    model,
+    dimension,
+    batchSize,
   });
 }

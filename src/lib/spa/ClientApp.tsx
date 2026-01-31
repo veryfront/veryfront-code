@@ -71,13 +71,26 @@ function normalizeParams(params: Record<string, string | string[]>): Record<stri
 }
 
 function getQuery(): Record<string, string> {
-  return globalThis.location
-    ? Object.fromEntries(new URLSearchParams(globalThis.location.search))
-    : {};
+  if (!globalThis.location) return {};
+  return Object.fromEntries(new URLSearchParams(globalThis.location.search));
 }
 
 function getDomain(): string {
   return globalThis.location?.hostname ?? "";
+}
+
+function getUrl(path: string | { pathname: string }): string {
+  return typeof path === "string" ? path : path.pathname;
+}
+
+async function navigateViaRouter(url: string, push?: boolean): Promise<void> {
+  const router = globalThis.veryFrontRouter;
+  if (!router || !("navigate" in router)) return;
+
+  await (router as { navigate: (url: string, push?: boolean) => Promise<void> }).navigate(
+    url,
+    push,
+  );
 }
 
 export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
@@ -86,7 +99,7 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
 
     return {
       currentPath: initialData.slug || "/",
-      PageComponent: cachedComponent as PageComponentType | null,
+      PageComponent: cachedComponent,
       layouts: initialData.layouts || [],
       layoutProps: initialData.layoutProps || {},
       pageProps: initialData.props || {},
@@ -104,7 +117,7 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
 
     loadComponent(initialData.pagePath).then((Component) => {
       if (!Component) return;
-      setState((prev) => ({ ...prev, PageComponent: Component as PageComponentType }));
+      setState((prev) => ({ ...prev, PageComponent: Component }));
     });
   }, [initialData.pagePath, state.PageComponent]);
 
@@ -129,7 +142,7 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
 
       setState({
         currentPath: data.slug || "/",
-        PageComponent: PageComponent as PageComponentType,
+        PageComponent,
         layouts: data.layouts || [],
         layoutProps: data.layoutProps || {},
         pageProps: data.props || {},
@@ -169,28 +182,13 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
     isPreview: false,
     isMounted,
     navigate: async (path, _options) => {
-      const url = typeof path === "string" ? path : path.pathname;
-      if (globalThis.veryFrontRouter && "navigate" in globalThis.veryFrontRouter) {
-        await (globalThis.veryFrontRouter as { navigate: (url: string) => Promise<void> }).navigate(
-          url,
-        );
-      }
+      await navigateViaRouter(getUrl(path));
     },
     push: async (path, _options) => {
-      const url = typeof path === "string" ? path : path.pathname;
-      if (globalThis.veryFrontRouter && "navigate" in globalThis.veryFrontRouter) {
-        await (globalThis.veryFrontRouter as { navigate: (url: string) => Promise<void> }).navigate(
-          url,
-        );
-      }
+      await navigateViaRouter(getUrl(path));
     },
     replace: async (path, _options) => {
-      const url = typeof path === "string" ? path : path.pathname;
-      if (globalThis.veryFrontRouter && "navigate" in globalThis.veryFrontRouter) {
-        await (globalThis.veryFrontRouter as {
-          navigate: (url: string, push?: boolean) => Promise<void>;
-        }).navigate(url, false);
-      }
+      await navigateViaRouter(getUrl(path), false);
     },
     reload: () => {
       globalThis.location.reload();

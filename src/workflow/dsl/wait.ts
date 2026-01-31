@@ -11,10 +11,7 @@ export interface WaitForApprovalOptions extends Omit<BaseNodeConfig, "checkpoint
 }
 
 /** Create a wait-for-approval node. Pauses until human approves/rejects. */
-export function waitForApproval(
-  id: string,
-  options: WaitForApprovalOptions = {},
-): WorkflowNode {
+export function waitForApproval(id: string, options: WaitForApprovalOptions = {}): WorkflowNode {
   validateNodeId(id);
 
   return {
@@ -26,7 +23,6 @@ export function waitForApproval(
       payload: options.payload,
       approvers: options.approvers,
       timeout: options.timeout,
-      // Always checkpoint before waiting
       checkpoint: true,
       retry: options.retry,
       skip: options.skip,

@@ -21,9 +21,7 @@ export class MiddlewareChain {
           const middlewareIndex = index++;
           const currentMiddleware = this.middleware[middlewareIndex];
 
-          if (!currentMiddleware) {
-            return finalHandler();
-          }
+          if (!currentMiddleware) return finalHandler();
 
           return withSpan(
             `agent.middleware.chain.dispatch.${index}`,

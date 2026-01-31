@@ -359,7 +359,9 @@ export const vfListTemplates: MCPTool<ListTemplatesInput, TemplateInfo[]> = {
 // ============================================================================
 
 const listIntegrationsInput = z.object({
-  category: z.enum(["all", "productivity", "development", "communication", "data", "ai"]).optional()
+  category: z
+    .enum(["all", "productivity", "development", "communication", "data", "ai"])
+    .optional()
     .default("all")
     .describe("Filter integrations by category"),
 });
@@ -372,8 +374,9 @@ export const vfListIntegrations: MCPTool<ListIntegrationsInput, IntegrationInfo[
     "List available service integrations (Gmail, Slack, GitHub, etc.). These can be added to AI projects to give agents access to external services.",
   inputSchema: listIntegrationsInput,
   execute: (input) => {
-    if (input.category === "all") return Promise.resolve(INTEGRATIONS);
-    return Promise.resolve(INTEGRATIONS.filter((i) => i.category === input.category));
+    const { category } = input;
+    if (category === "all") return Promise.resolve(INTEGRATIONS);
+    return Promise.resolve(INTEGRATIONS.filter((i) => i.category === category));
   },
 };
 
@@ -399,15 +402,19 @@ export const vfListUsecases: MCPTool<ListUsecasesInput, UsecaseInfo[]> = {
 
 const createProjectInput = z.object({
   name: z.string().describe("Project name (will be converted to slug for directory)"),
-  template: z.enum(["ai", "app", "blog", "docs", "minimal"]).optional().default("ai").describe(
-    "Project template to use",
-  ),
-  integrations: z.array(z.string()).optional().describe(
-    "Service integrations to include (e.g., ['gmail', 'slack'])",
-  ),
-  directory: z.string().optional().describe(
-    "Parent directory to create project in (defaults to current directory)",
-  ),
+  template: z
+    .enum(["ai", "app", "blog", "docs", "minimal"])
+    .optional()
+    .default("ai")
+    .describe("Project template to use"),
+  integrations: z
+    .array(z.string())
+    .optional()
+    .describe("Service integrations to include (e.g., ['gmail', 'slack'])"),
+  directory: z
+    .string()
+    .optional()
+    .describe("Parent directory to create project in (defaults to current directory)"),
 });
 
 type CreateProjectInput = z.infer<typeof createProjectInput>;
@@ -431,8 +438,9 @@ export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> =
         try {
           const { initCommand } = await import("../../commands/init/index.ts");
 
+          const slug = toSlug(input.name);
           const parentDir = input.directory ?? cwd();
-          const projectDir = join(parentDir, toSlug(input.name));
+          const projectDir = join(parentDir, slug);
 
           if (await directoryExists(projectDir)) {
             return { success: false, message: `Directory already exists: ${projectDir}` };
@@ -448,7 +456,7 @@ export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> =
             skipEnvPrompt: true,
           });
 
-          const nextSteps = [`cd ${toSlug(input.name)}`, "deno task dev"];
+          const nextSteps = [`cd ${slug}`, "deno task dev"];
           if (input.integrations?.length) {
             nextSteps.push("Configure integration credentials in .env");
           }

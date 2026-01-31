@@ -27,9 +27,9 @@ export const getRendererScript = () => `
         let pageModule;
 
         if (data.pagePath) {
-          // Use the server-provided page path
           const moduleUrl = pathToModuleUrl(data.pagePath, data.studioEmbed);
           log('Loading page from hydration data:', moduleUrl);
+
           try {
             pageModule = await import(moduleUrl);
           } catch (error) {
@@ -37,23 +37,17 @@ export const getRendererScript = () => `
           }
         }
 
-        // Fallback to old Pages Router behavior if pagePath not available
         if (!pageModule) {
           const pageSlug = pathname === '/' ? 'index' : pathname.slice(1);
           log('Falling back to Pages Router pattern:', pageSlug);
 
-          // Don't add pages/ prefix for @/ paths (alias paths like @/components/)
           const prefix = pageSlug.startsWith('@/') ? '' : '/pages';
-
           const basePath = MODULE_SERVER_URL + prefix + '/' + pageSlug;
+
           try {
             pageModule = await import(basePath + '.js');
           } catch (error) {
-            // Only try /index.js variant if slug is not already 'index' or ending with '/index'
-            // e.g., 'about' -> 'about/index.js', but 'index' should NOT become 'index/index.js'
-            if (pageSlug === 'index' || pageSlug.endsWith('/index')) {
-              throw error; // Re-throw original error for index pages
-            }
+            if (pageSlug === 'index' || pageSlug.endsWith('/index')) throw error;
             pageModule = await import(basePath + '/index.js');
           }
         }
@@ -69,13 +63,13 @@ export const getRendererScript = () => `
           return;
         }
 
-        // Merge props with params for Next.js-style pages that expect { params }
         const pageProps = { ...(data.props || {}), params: data.params || {} };
         let tree = React.createElement(PageComponent, pageProps);
 
-        if (data.layouts?.length) {
-          for (let i = data.layouts.length - 1; i >= 0; i--) {
-            const LayoutComponent = await loadComponent(data.layouts[i].path);
+        const layouts = data.layouts;
+        if (layouts?.length) {
+          for (let i = layouts.length - 1; i >= 0; i--) {
+            const LayoutComponent = await loadComponent(layouts[i].path);
             if (LayoutComponent) {
               tree = React.createElement(LayoutComponent, { children: tree });
             }
@@ -89,26 +83,19 @@ export const getRendererScript = () => `
           }
         }
 
-        // Build page context for usePageContext() hook
-        const headingsArray = data.headings || [];
+        const headings = data.headings || [];
         const pageContext = {
           slug: data.slug || '',
           path: data.pagePath || pathname,
           params: data.params || {},
           query: Object.fromEntries(new URLSearchParams(window.location.search)),
           frontmatter: data.frontmatter || {},
-          headings: headingsArray,
-          mdxHeadings: headingsArray, // Alias for backwards compatibility
+          headings,
+          mdxHeadings: headings, // Alias for backwards compatibility
         };
 
-        // Wrap with PageContextProvider so layout components can access frontmatter
         tree = React.createElement(PageContextProvider, { pageContext, children: tree });
-
-        // Use imported RouterProvider with client router for SPA navigation
-        // The router object is defined in router.ts (same module scope)
-        tree = React.createElement(RouterProvider, { router: router, children: tree });
-        // Note: QueryClientProvider should be added by user's app.tsx if needed
-        // This allows users to configure their own QueryClient options
+        tree = React.createElement(RouterProvider, { router, children: tree });
 
         const container = document.getElementById('veryfront-content');
         if (!container) return;
@@ -119,33 +106,25 @@ export const getRendererScript = () => `
           return;
         }
 
-        // Always use hydrateRoot to preserve SSR content
-        // IMPORTANT: identifierPrefix must match SSR to prevent useId() mismatch
         const { hydrateRoot } = await import('react-dom/client');
-        // Always suppress recoverable hydration errors - they're common with animation
-        // libraries that use useLayoutEffect and other SSR edge cases. React 18's
-        // hydration recovers gracefully from mismatches. The SSR content is preserved
-        // and client takes over interactivity.
         const options = {
           identifierPrefix: 'vf',
           onRecoverableError: (error) => {
-            // Only log in dev mode with DEBUG enabled
             if (data.dev && typeof DEBUG !== 'undefined' && DEBUG) {
               log('Hydration mismatch (suppressed):', error.message);
             }
-          }
+          },
         };
-        const root = hydrateRoot(container, tree, options);
-        container.__reactRoot = root;
+
+        container.__reactRoot = hydrateRoot(container, tree, options);
         log('Client-side React app hydrated successfully');
 
-        // Signal hydration complete for SPA navigation
         if (window.__veryfrontHydrationComplete) {
           window.__veryfrontHydrationComplete();
         }
       } catch (error) {
         logError('Client initialization error:', error);
-        // Signal hydration failed for SPA navigation fallback
+
         if (window.__veryfrontHydrationFailed) {
           window.__veryfrontHydrationFailed(error);
         }
@@ -166,7 +145,9 @@ export const getRendererScript = () => `
           window.history.replaceState({ pageData, scrollY: 0 }, '', window.location.href);
           log('Stored initial page data in history state');
         }
-      } catch (e) { /* ignore parse errors */ }
+      } catch {
+        // ignore parse errors
+      }
     }
 
     // Note: popstate is handled by router.ts for SPA navigation

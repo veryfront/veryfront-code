@@ -1,4 +1,4 @@
-import { __unstable__loadDesignSystem, compile } from "tailwindcss";
+import { compile } from "tailwindcss";
 import plugin from "tailwindcss/plugin";
 import defaultTheme from "tailwindcss/defaultTheme";
 import colors from "tailwindcss/colors";
@@ -118,6 +118,12 @@ let projectCSSBackend: CacheBackend | null = null;
 let projectCSSInitialized = false;
 let projectCSSInitPromise: Promise<void> | null = null;
 
+interface ProjectCSSCacheEntry {
+  css: string;
+  hash: string;
+  candidatesHash: string;
+}
+
 interface ProjectCSSLocalEntry extends ProjectCSSCacheEntry {
   expiresAt: number;
 }
@@ -137,12 +143,6 @@ registerCache("tailwind-compiler-cache", () => ({
   maxEntries: MAX_CACHED_COMPILERS,
 }));
 
-interface ProjectCSSCacheEntry {
-  css: string;
-  hash: string;
-  candidatesHash: string;
-}
-
 /**
  * Initialize project CSS distributed cache.
  * Call this at server startup alongside other distributed caches.
@@ -150,9 +150,7 @@ interface ProjectCSSCacheEntry {
  * @returns true if distributed backend was successfully initialized
  */
 export async function initializeProjectCSSCache(): Promise<boolean> {
-  if (projectCSSInitialized) {
-    return projectCSSBackend?.type !== "memory";
-  }
+  if (projectCSSInitialized) return projectCSSBackend?.type !== "memory";
 
   if (!projectCSSInitPromise) {
     projectCSSInitPromise = (async () => {
@@ -178,7 +176,7 @@ export async function initializeProjectCSSCache(): Promise<boolean> {
  * Check if distributed project CSS cache is enabled.
  */
 export function isProjectCSSCacheDistributed(): boolean {
-  return projectCSSBackend?.type !== "memory" && projectCSSBackend !== null;
+  return projectCSSBackend !== null && projectCSSBackend.type !== "memory";
 }
 
 export async function getProjectCSS(
@@ -272,8 +270,7 @@ export async function getProjectCSS(
   await cacheCSSAsync(result.css, hash);
 
   // Store CSS inputs for JIT regeneration (allows any pod to regenerate)
-  const resolvedStylesheet = stylesheet ?? DEFAULT_STYLESHEET;
-  await storeCSSInputsAsync(hash, candidates, resolvedStylesheet);
+  await storeCSSInputsAsync(hash, candidates, stylesheet ?? DEFAULT_STYLESHEET);
 
   logger.debug("[tailwind] Project CSS generated", {
     projectSlug,
@@ -325,8 +322,7 @@ export async function invalidateProjectCSSAsync(projectSlug: string): Promise<vo
 }
 
 function setProjectCSSLocalFallback(key: string, entry: ProjectCSSCacheEntry): void {
-  const expiresAt = Date.now() + PROJECT_CSS_LOCAL_TTL_MS;
-  projectCSSLocalFallback.set(key, { ...entry, expiresAt });
+  projectCSSLocalFallback.set(key, { ...entry, expiresAt: Date.now() + PROJECT_CSS_LOCAL_TTL_MS });
   if (projectCSSLocalFallback.size > PROJECT_CSS_LOCAL_FALLBACK_MAX) {
     pruneProjectCSSLocalFallback();
   }
@@ -493,8 +489,10 @@ async function storeCSSInputsAsync(
   candidates: string[] | Set<string>,
   stylesheet: string,
 ): Promise<void> {
-  const candidatesArray = Array.isArray(candidates) ? candidates : [...candidates];
-  const entry: CSSInputsCacheEntry = { candidates: candidatesArray, stylesheet };
+  const entry: CSSInputsCacheEntry = {
+    candidates: Array.isArray(candidates) ? candidates : [...candidates],
+    stylesheet,
+  };
 
   storeInLocalCssInputsCache(hash, entry);
 
@@ -510,11 +508,9 @@ async function storeCSSInputsAsync(
  * Get CSS generation inputs by hash for JIT regeneration.
  */
 async function getCSSInputsByHash(hash: string): Promise<CSSInputsCacheEntry | undefined> {
-  // Try local cache first
   const local = localCssInputsCache.get(hash);
   if (local) return local;
 
-  // Try distributed cache
   try {
     const cache = await getCssInputsCache();
     const raw = await cache.get(hash);
@@ -541,14 +537,12 @@ export async function regenerateCSSByHash(expectedHash: string): Promise<string 
   return await withSpan(
     SpanNames.HTML_REGENERATE_CSS_BY_HASH,
     async () => {
-      // Get cached inputs
       const inputs = await getCSSInputsByHash(expectedHash);
       if (!inputs) {
         logger.debug("[tailwind] Cannot regenerate CSS - no cached inputs", { hash: expectedHash });
         return undefined;
       }
 
-      // Regenerate CSS from cached inputs
       const result = await generateTailwindCSS(inputs.stylesheet, inputs.candidates, {
         minify: true,
       });
@@ -561,7 +555,6 @@ export async function regenerateCSSByHash(expectedHash: string): Promise<string 
         return undefined;
       }
 
-      // Verify hash matches (protects against stale inputs)
       const regeneratedHash = hashCSS(result.css);
       if (regeneratedHash !== expectedHash) {
         logger.debug("[tailwind] CSS regeneration hash mismatch", {
@@ -571,7 +564,6 @@ export async function regenerateCSSByHash(expectedHash: string): Promise<string 
         return undefined;
       }
 
-      // Store regenerated CSS in cache
       storeInLocalCache(regeneratedHash, result.css);
       try {
         const cache = await getCssCache();
@@ -610,16 +602,8 @@ export async function regenerateCSSByHash(expectedHash: string): Promise<string 
  * - 3D transforms: rotate-x-45, perspective-500
  */
 export function extractCandidates(content: string): string[] {
-  // Pattern breakdown:
-  // - !? - optional important prefix
-  // - -? - optional negative prefix
-  // - @? - optional @ for container queries
-  // - (?:[a-zA-Z0-9]|\[&?) - start with alphanumeric OR [ (with optional & for arbitrary variants)
-  // - [...] - continuation characters including all Tailwind syntax
-  // - ~ for sibling selectors [&~*]
   const pattern = /!?-?@?(?:[a-zA-Z0-9]|\[&?)[a-zA-Z0-9_\-:\/\.\[\]%#,()!'=<>$@{}|*+?;^~]*/g;
-  const matches = content.match(pattern) ?? [];
-  return [...new Set(matches)];
+  return [...new Set(content.match(pattern) ?? [])];
 }
 
 export function extractCandidatesFromFiles(
@@ -691,7 +675,6 @@ export async function loadModuleFromEsmSh(packageName: string): Promise<unknown>
   };
 
   for (const [importPath, shimName] of Object.entries(shimMap)) {
-    // Match: import*as __N$ from"tailwindcss/plugin" (where N is any number)
     const importRegex = new RegExp(
       `import\\*as\\s+(__\\d+\\$)\\s+from["']${importPath.replace("/", "\\/")}["']`,
       "g",
@@ -717,10 +700,8 @@ export async function loadModuleFromEsmSh(packageName: string): Promise<unknown>
   logger.debug("[tailwind] Wrote plugin to temp file", { path: tempPath });
 
   try {
-    const mod = await import(`file://${tempPath}`);
-    return mod;
+    return await import(`file://${tempPath}`);
   } finally {
-    // Clean up temp file
     await Deno.remove(tempPath).catch(() => {});
   }
 }
@@ -806,10 +787,28 @@ async function getTailwindBaseCSS(): Promise<string> {
   return tailwindBaseCSS;
 }
 
+function evictOldestCompiler(): void {
+  if (compilerCache.size < MAX_CACHED_COMPILERS) return;
+
+  let oldestKey: string | null = null;
+  let oldestTime = Infinity;
+
+  for (const [key, entry] of compilerCache) {
+    if (entry.createdAt < oldestTime) {
+      oldestTime = entry.createdAt;
+      oldestKey = key;
+    }
+  }
+
+  if (!oldestKey) return;
+
+  compilerCache.delete(oldestKey);
+  logger.debug("[tailwind] Evicted oldest compiler from cache", { hash: oldestKey });
+}
+
 async function getCompiler(stylesheet: string): Promise<Awaited<ReturnType<typeof compile>>> {
   const hash = hashString(stylesheet);
 
-  // Check LRU cache
   const cached = compilerCache.get(hash);
   if (cached) {
     logger.debug("[tailwind] Compiler cache hit", { hash });
@@ -819,8 +818,6 @@ async function getCompiler(stylesheet: string): Promise<Awaited<ReturnType<typeo
   logger.debug("[tailwind] Creating new compiler", { hash });
 
   const tailwindBase = await getTailwindBaseCSS();
-
-  // Create new plugin caches for this stylesheet
   const pluginCache = new Map<string, unknown>();
   const pluginErrors = new Map<string, string>();
 
@@ -834,32 +831,15 @@ async function getCompiler(stylesheet: string): Promise<Awaited<ReturnType<typeo
       return Promise.resolve({ content: "", base: "/", path: "/" });
     },
     loadModule: async (id: string) => {
-      const plugin = await loadPlugin(id, pluginCache, pluginErrors);
-      if (!plugin) {
-        throw new Error(`Failed to load plugin "${id}": plugin not installed`);
-      }
+      const loaded = await loadPlugin(id, pluginCache, pluginErrors);
+      if (!loaded) throw new Error(`Failed to load plugin "${id}": plugin not installed`);
       // deno-lint-ignore no-explicit-any
-      return { module: plugin as any, base: "/", path: "/" };
+      return { module: loaded as any, base: "/", path: "/" };
     },
   });
 
-  // Evict oldest entry if at capacity
-  if (compilerCache.size >= MAX_CACHED_COMPILERS) {
-    let oldestKey: string | null = null;
-    let oldestTime = Infinity;
-    for (const [key, entry] of compilerCache) {
-      if (entry.createdAt < oldestTime) {
-        oldestTime = entry.createdAt;
-        oldestKey = key;
-      }
-    }
-    if (oldestKey) {
-      compilerCache.delete(oldestKey);
-      logger.debug("[tailwind] Evicted oldest compiler from cache", { hash: oldestKey });
-    }
-  }
+  evictOldestCompiler();
 
-  // Store in cache
   compilerCache.set(hash, {
     compiler: newCompiler,
     createdAt: Date.now(),
@@ -888,11 +868,8 @@ export function getCompilerCacheStats(): {
     createdAt: entry.createdAt,
     pluginCount: entry.pluginCache.size,
   }));
-  return {
-    size: compilerCache.size,
-    maxSize: MAX_CACHED_COMPILERS,
-    entries,
-  };
+
+  return { size: compilerCache.size, maxSize: MAX_CACHED_COMPILERS, entries };
 }
 
 export async function generateTailwindCSS(
@@ -911,9 +888,7 @@ export async function generateTailwindCSS(
         const comp = await getCompiler(css);
         let output = comp.build(candidateArray);
 
-        if (options?.minify) {
-          output = minifyCSS(output);
-        }
+        if (options?.minify) output = minifyCSS(output);
 
         logger.debug("[tailwind] Generated CSS", {
           candidateCount: candidateArray.length,

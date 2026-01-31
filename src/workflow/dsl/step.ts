@@ -22,8 +22,8 @@ export interface StepOptions extends Omit<BaseNodeConfig, "checkpoint"> {
 export function step(id: string, options: StepOptions): WorkflowNode {
   validateNodeId(id);
 
-  const hasAgent = !!options.agent;
-  const hasTool = !!options.tool;
+  const hasAgent = options.agent != null;
+  const hasTool = options.tool != null;
 
   if (!hasAgent && !hasTool) {
     throw new Error(`Step "${id}" must specify either 'agent' or 'tool'`);

@@ -4,19 +4,10 @@ import { listPersons } from "../../lib/pipedrive-client.ts";
 
 export default tool({
   id: "list-persons",
-  description:
-    "List contacts/persons from Pipedrive. Can optionally search by name or email.",
+  description: "List contacts/persons from Pipedrive. Can optionally search by name or email.",
   inputSchema: z.object({
-    searchTerm: z
-      .string()
-      .optional()
-      .describe("Search term to filter persons by name or email"),
-    limit: z
-      .number()
-      .min(1)
-      .max(100)
-      .default(20)
-      .describe("Maximum number of persons to return"),
+    searchTerm: z.string().optional().describe("Search term to filter persons by name or email"),
+    limit: z.number().min(1).max(100).default(20).describe("Maximum number of persons to return"),
   }),
   async execute({ searchTerm, limit }) {
     const persons = await listPersons({ searchTerm, limit });

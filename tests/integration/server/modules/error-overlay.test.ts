@@ -54,11 +54,7 @@ describe("ErrorOverlay Tests", () => {
 
       assertStringIncludes(runtime, "errorInfo.type", "Runtime should access error type");
       assertStringIncludes(runtime, "errorInfo.error.name", "Runtime should access error name");
-      assertStringIncludes(
-        runtime,
-        "errorInfo.error.message",
-        "Runtime should access error message",
-      );
+      assertStringIncludes(runtime, "errorInfo.error.message", "Runtime should access error message");
       assertStringIncludes(runtime, "errorInfo.file", "Runtime should access file path");
       assertStringIncludes(runtime, "errorInfo.line", "Runtime should access line number");
       assertStringIncludes(runtime, "errorInfo.suggestion", "Runtime should access suggestion");
@@ -94,11 +90,7 @@ describe("ErrorOverlay Tests", () => {
         "Runtime should handle error events",
       );
       assertStringIncludes(runtime, "event.filename", "Runtime should capture filename from event");
-      assertStringIncludes(
-        runtime,
-        "event.lineno",
-        "Runtime should capture line number from event",
-      );
+      assertStringIncludes(runtime, "event.lineno", "Runtime should capture line number from event");
       assertStringIncludes(runtime, "event.colno", "Runtime should capture column from event");
     });
 
@@ -121,38 +113,26 @@ describe("ErrorOverlay Tests", () => {
         "const existing = document.getElementById('veryfront-error-overlay')",
         "Runtime should check for existing overlay",
       );
-      assertStringIncludes(
-        runtime,
-        "existing.remove()",
-        "Runtime should remove existing overlay",
-      );
+      assertStringIncludes(runtime, "existing.remove()", "Runtime should remove existing overlay");
     });
   });
 
   describe("ErrorOverlay - getSuggestion", () => {
     it("detects parse errors", () => {
-      const error = new Error("Unexpected token <");
-      const suggestion = ErrorOverlay.getSuggestion(error);
+      const suggestion = ErrorOverlay.getSuggestion(new Error("Unexpected token <"));
 
       assertExists(suggestion, "Should provide suggestion for parse errors");
-      assertStringIncludes(
-        suggestion!,
-        "syntax errors",
-        "Suggestion should mention syntax errors",
-      );
+      assertStringIncludes(suggestion!, "syntax errors", "Suggestion should mention syntax errors");
       assertStringIncludes(suggestion!, "JSX", "Suggestion should mention JSX tags");
     });
 
     it("detects module not found errors", () => {
-      const error = new Error('Cannot find module "./components/Header"');
-      const suggestion = ErrorOverlay.getSuggestion(error);
+      const suggestion = ErrorOverlay.getSuggestion(
+        new Error('Cannot find module "./components/Header"'),
+      );
 
       assertExists(suggestion, "Should provide suggestion for missing modules");
-      assertStringIncludes(
-        suggestion!,
-        "module exists",
-        "Suggestion should mention module existence",
-      );
+      assertStringIncludes(suggestion!, "module exists", "Suggestion should mention module existence");
       assertStringIncludes(
         suggestion!,
         "path is correct",
@@ -161,8 +141,7 @@ describe("ErrorOverlay Tests", () => {
     });
 
     it("detects frontmatter errors", () => {
-      const error = new Error("Invalid frontmatter YAML syntax");
-      const suggestion = ErrorOverlay.getSuggestion(error);
+      const suggestion = ErrorOverlay.getSuggestion(new Error("Invalid frontmatter YAML syntax"));
 
       assertExists(suggestion, "Should provide suggestion for frontmatter errors");
       assertStringIncludes(suggestion!, "frontmatter", "Suggestion should mention frontmatter");
@@ -171,8 +150,7 @@ describe("ErrorOverlay Tests", () => {
     });
 
     it("detects component errors", () => {
-      const error = new Error("Component not exported correctly");
-      const suggestion = ErrorOverlay.getSuggestion(error);
+      const suggestion = ErrorOverlay.getSuggestion(new Error("Component not exported correctly"));
 
       assertExists(suggestion, "Should provide suggestion for component errors");
       assertStringIncludes(suggestion!, "exported", "Suggestion should mention export");
@@ -180,8 +158,9 @@ describe("ErrorOverlay Tests", () => {
     });
 
     it("detects React hooks errors", () => {
-      const error = new Error("Invalid hook call. useState cannot be called.");
-      const suggestion = ErrorOverlay.getSuggestion(error);
+      const suggestion = ErrorOverlay.getSuggestion(
+        new Error("Invalid hook call. useState cannot be called."),
+      );
 
       assertExists(suggestion, "Should provide suggestion for hooks errors");
       assertStringIncludes(suggestion!, "hooks", "Suggestion should mention hooks");
@@ -190,18 +169,15 @@ describe("ErrorOverlay Tests", () => {
         "function components",
         "Suggestion should mention function components",
       );
-      assertStringIncludes(
-        suggestion!,
-        "server-side",
-        "Suggestion should mention server-side code",
-      );
+      assertStringIncludes(suggestion!, "server-side", "Suggestion should mention server-side code");
     });
 
     it("detects hydration errors", () => {
-      const error = new Error(
-        "Hydration failed because the initial UI does not match what was rendered on the server.",
+      const suggestion = ErrorOverlay.getSuggestion(
+        new Error(
+          "Hydration failed because the initial UI does not match what was rendered on the server.",
+        ),
       );
-      const suggestion = ErrorOverlay.getSuggestion(error);
 
       assertExists(suggestion, "Should provide suggestion for hydration errors");
       assertStringIncludes(suggestion!, "Hydration", "Suggestion should mention hydration");
@@ -218,15 +194,13 @@ describe("ErrorOverlay Tests", () => {
     });
 
     it("returns undefined for unknown errors", () => {
-      const error = new Error("Some completely custom error message xyz123");
-      const suggestion = ErrorOverlay.getSuggestion(error);
+      const suggestion = ErrorOverlay.getSuggestion(new Error("Some completely custom error message xyz123"));
 
       assertEquals(suggestion, undefined, "Should return undefined for unknown error types");
     });
 
     it("is case-insensitive", () => {
-      const error = new Error("UNEXPECTED TOKEN IN LINE 42");
-      const suggestion = ErrorOverlay.getSuggestion(error);
+      const suggestion = ErrorOverlay.getSuggestion(new Error("UNEXPECTED TOKEN IN LINE 42"));
 
       assertExists(suggestion, "Should provide suggestion regardless of case");
       assertStringIncludes(suggestion!, "syntax", "Should detect error type case-insensitively");
@@ -235,12 +209,10 @@ describe("ErrorOverlay Tests", () => {
 
   describe("ErrorOverlay - createHTML", () => {
     it("generates complete HTML document", () => {
-      const errorInfo: ErrorInfo = {
+      const html = ErrorOverlay.createHTML({
         type: "build",
         error: new Error("Test error message"),
-      };
-
-      const html = ErrorOverlay.createHTML(errorInfo);
+      });
 
       assertStringIncludes(html, "<!DOCTYPE html>", "Should include DOCTYPE");
       assertStringIncludes(html, "<html>", "Should include html tag");
@@ -251,12 +223,10 @@ describe("ErrorOverlay Tests", () => {
     });
 
     it("displays error type correctly", () => {
-      const errorInfo: ErrorInfo = {
+      const html = ErrorOverlay.createHTML({
         type: "runtime",
         error: new Error("Runtime error"),
-      };
-
-      const html = ErrorOverlay.createHTML(errorInfo);
+      });
 
       assertStringIncludes(html, "Runtime Error", "Should display error type with capitalization");
     });
@@ -265,27 +235,23 @@ describe("ErrorOverlay Tests", () => {
       const error = new Error("Something went wrong");
       error.name = "CustomError";
 
-      const errorInfo: ErrorInfo = {
+      const html = ErrorOverlay.createHTML({
         type: "build",
         error,
-      };
-
-      const html = ErrorOverlay.createHTML(errorInfo);
+      });
 
       assertStringIncludes(html, "CustomError", "Should display error name");
       assertStringIncludes(html, "Something went wrong", "Should display error message");
     });
 
     it("includes file location when provided", () => {
-      const errorInfo: ErrorInfo = {
+      const html = ErrorOverlay.createHTML({
         type: "build",
         error: new Error("Parse error"),
         file: "/src/components/Header.tsx",
         line: 42,
         column: 15,
-      };
-
-      const html = ErrorOverlay.createHTML(errorInfo);
+      });
 
       assertStringIncludes(html, "/src/components/Header.tsx", "Should display file path");
       assertStringIncludes(html, ":42", "Should display line number");
@@ -293,75 +259,56 @@ describe("ErrorOverlay Tests", () => {
     });
 
     it("omits file location when not provided", () => {
-      const errorInfo: ErrorInfo = {
+      const html = ErrorOverlay.createHTML({
         type: "runtime",
         error: new Error("Runtime error"),
-      };
-
-      const html = ErrorOverlay.createHTML(errorInfo);
+      });
 
       assertExists(html, "Should generate HTML without file info");
-      // HTML should not contain file-related divs when file is not provided
     });
 
     it("includes custom suggestion", () => {
-      const errorInfo: ErrorInfo = {
+      const html = ErrorOverlay.createHTML({
         type: "build",
         error: new Error("Custom error"),
         suggestion: "Try reinstalling your dependencies with npm install",
-      };
-
-      const html = ErrorOverlay.createHTML(errorInfo);
+      });
 
       assertStringIncludes(html, "Suggestion:", "Should display suggestion header");
-      assertStringIncludes(
-        html,
-        "Try reinstalling your dependencies",
-        "Should display suggestion text",
-      );
+      assertStringIncludes(html, "Try reinstalling your dependencies", "Should display suggestion text");
     });
 
     it("auto-generates suggestion from error", () => {
-      const errorInfo: ErrorInfo = {
+      const html = ErrorOverlay.createHTML({
         type: "build",
         error: new Error('Cannot find module "@/components/Button"'),
-      };
-
-      const html = ErrorOverlay.createHTML(errorInfo);
+      });
 
       assertStringIncludes(html, "Suggestion:", "Should display auto-generated suggestion");
-      assertStringIncludes(
-        html,
-        "module exists",
-        "Should include suggestion about module existence",
-      );
+      assertStringIncludes(html, "module exists", "Should include suggestion about module existence");
     });
 
     it("includes stack trace", () => {
       const error = new Error("Error with stack");
-      // Ensure error has a stack trace
-      const errorInfo: ErrorInfo = {
+
+      const html = ErrorOverlay.createHTML({
         type: "runtime",
         error,
-      };
+      });
 
-      const html = ErrorOverlay.createHTML(errorInfo);
+      if (!error.stack) return;
 
-      if (error.stack) {
-        assertStringIncludes(html, "Stack Trace", "Should display stack trace header");
-        assertStringIncludes(html, "<details", "Should use details element for collapsible stack");
-        assertStringIncludes(html, "<summary>", "Should use summary element");
-        assertStringIncludes(html, "<pre>", "Should use pre element for stack formatting");
-      }
+      assertStringIncludes(html, "Stack Trace", "Should display stack trace header");
+      assertStringIncludes(html, "<details", "Should use details element for collapsible stack");
+      assertStringIncludes(html, "<summary>", "Should use summary element");
+      assertStringIncludes(html, "<pre>", "Should use pre element for stack formatting");
     });
 
     it("includes all necessary styles", () => {
-      const errorInfo: ErrorInfo = {
+      const html = ErrorOverlay.createHTML({
         type: "build",
         error: new Error("Style test"),
-      };
-
-      const html = ErrorOverlay.createHTML(errorInfo);
+      });
 
       assertStringIncludes(html, "<style>", "Should include style tag");
       assertStringIncludes(html, ".error-container", "Should define error-container class");
@@ -374,57 +321,49 @@ describe("ErrorOverlay Tests", () => {
     });
 
     it("handles build error type", () => {
-      const errorInfo: ErrorInfo = {
+      const html = ErrorOverlay.createHTML({
         type: "build",
         error: new Error("Build failed"),
-      };
+      });
 
-      const html = ErrorOverlay.createHTML(errorInfo);
       assertStringIncludes(html, "Build Error", "Should display build error type");
     });
 
     it("handles runtime error type", () => {
-      const errorInfo: ErrorInfo = {
+      const html = ErrorOverlay.createHTML({
         type: "runtime",
         error: new Error("Runtime failed"),
-      };
+      });
 
-      const html = ErrorOverlay.createHTML(errorInfo);
       assertStringIncludes(html, "Runtime Error", "Should display runtime error type");
     });
 
     it("handles hydration error type", () => {
-      const errorInfo: ErrorInfo = {
+      const html = ErrorOverlay.createHTML({
         type: "hydration",
         error: new Error("Hydration failed"),
-      };
+      });
 
-      const html = ErrorOverlay.createHTML(errorInfo);
       assertStringIncludes(html, "Hydration Error", "Should display hydration error type");
     });
 
     it("handles error messages with special characters", () => {
-      const errorInfo: ErrorInfo = {
+      const html = ErrorOverlay.createHTML({
         type: "build",
         error: new Error("Expected <div> but got <span>"),
-      };
+      });
 
-      const html = ErrorOverlay.createHTML(errorInfo);
-
-      // The HTML should be generated without throwing errors
       assertExists(html, "Should handle special HTML characters in error messages");
       assertStringIncludes(html, "Expected", "Should include error message content");
     });
 
     it("displays line without column", () => {
-      const errorInfo: ErrorInfo = {
+      const html = ErrorOverlay.createHTML({
         type: "build",
         error: new Error("Parse error"),
         file: "/src/app.tsx",
         line: 100,
-      };
-
-      const html = ErrorOverlay.createHTML(errorInfo);
+      });
 
       assertStringIncludes(html, "/src/app.tsx", "Should display file");
       assertStringIncludes(html, ":100", "Should display line number");
@@ -434,16 +373,14 @@ describe("ErrorOverlay Tests", () => {
       const error = new Error("Complex error scenario");
       error.name = "SyntaxError";
 
-      const errorInfo: ErrorInfo = {
+      const html = ErrorOverlay.createHTML({
         type: "build",
         error,
         file: "/pages/index.tsx",
         line: 25,
         column: 10,
         suggestion: "Check your JSX syntax",
-      };
-
-      const html = ErrorOverlay.createHTML(errorInfo);
+      });
 
       assertStringIncludes(html, "Build Error", "Should display error type");
       assertStringIncludes(html, "SyntaxError", "Should display error name");
@@ -456,12 +393,10 @@ describe("ErrorOverlay Tests", () => {
       const error = new Error("");
       error.name = "EmptyError";
 
-      const errorInfo: ErrorInfo = {
+      const html = ErrorOverlay.createHTML({
         type: "runtime",
         error,
-      };
-
-      const html = ErrorOverlay.createHTML(errorInfo);
+      });
 
       assertExists(html, "Should generate HTML for empty error message");
       assertStringIncludes(html, "EmptyError", "Should still display error name");

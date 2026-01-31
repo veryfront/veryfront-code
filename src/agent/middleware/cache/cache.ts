@@ -18,13 +18,7 @@ export interface CacheEntry {
 
 function createCacheEntry(response: AgentResponse, expiresAt?: number): CacheEntry {
   const now = Date.now();
-  return {
-    response,
-    cachedAt: now,
-    expiresAt,
-    accessCount: 0,
-    lastAccessedAt: now,
-  };
+  return { response, cachedAt: now, expiresAt, accessCount: 0, lastAccessedAt: now };
 }
 
 function markAccessed(entry: CacheEntry): void {
@@ -73,7 +67,7 @@ class LRUCache {
     if (this.cache.has(key)) this.cache.delete(key);
 
     if (this.cache.size >= this.maxSize) {
-      const firstKey = this.cache.keys().next().value as string | undefined;
+      const firstKey = this.cache.keys().next().value;
       if (firstKey !== undefined) this.cache.delete(firstKey);
     }
 
@@ -111,13 +105,10 @@ class LRUCache {
 class TTLCache {
   private cache = new Map<string, CacheEntry>();
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
-  private ttl?: number;
 
-  constructor(ttl: number = 300000) {
-    this.ttl = ttl > 0 ? ttl : undefined;
-    if (this.ttl !== undefined) {
-      this.startCleanup();
-    }
+  constructor(private ttl?: number) {
+    this.ttl = this.ttl && this.ttl > 0 ? this.ttl : undefined;
+    if (this.ttl !== undefined) this.startCleanup();
   }
 
   set(key: string, response: AgentResponse): void {
@@ -129,7 +120,7 @@ class TTLCache {
     const entry = this.cache.get(key);
     if (!entry) return null;
 
-    if (entry.expiresAt !== undefined && Date.now() >= entry.expiresAt) {
+    if (this.isExpired(entry)) {
       this.cache.delete(key);
       return null;
     }
@@ -142,7 +133,7 @@ class TTLCache {
     const entry = this.cache.get(key);
     if (!entry) return false;
 
-    if (entry.expiresAt !== undefined && Date.now() >= entry.expiresAt) {
+    if (this.isExpired(entry)) {
       this.cache.delete(key);
       return false;
     }
@@ -170,6 +161,10 @@ class TTLCache {
     this.cache.clear();
   }
 
+  private isExpired(entry: CacheEntry): boolean {
+    return entry.expiresAt !== undefined && Date.now() >= entry.expiresAt;
+  }
+
   private startCleanup(): void {
     if (this.ttl === undefined) return;
 
@@ -187,9 +182,14 @@ class TTLCache {
 type CacheInstance = Pick<MemoryCache, "set" | "get" | "has" | "delete" | "clear" | "size">;
 
 function createCacheByStrategy(config: CacheConfig): CacheInstance {
-  if (config.strategy === "lru") return new LRUCache(config.maxSize ?? 100);
-  if (config.strategy === "ttl") return new TTLCache(config.ttl ?? 300000);
-  return new MemoryCache();
+  switch (config.strategy) {
+    case "lru":
+      return new LRUCache(config.maxSize ?? 100);
+    case "ttl":
+      return new TTLCache(config.ttl ?? 300000);
+    default:
+      return new MemoryCache();
+  }
 }
 
 export function createCache(config: CacheConfig): {
@@ -208,22 +208,22 @@ export function createCache(config: CacheConfig): {
   }
 
   return {
-    get(input: string, context?: Record<string, unknown>): AgentResponse | null {
+    get(input, context) {
       return cache.get(keyFor(input, context));
     },
-    set(input: string, response: AgentResponse, context?: Record<string, unknown>): void {
+    set(input, response, context) {
       cache.set(keyFor(input, context), response);
     },
-    has(input: string, context?: Record<string, unknown>): boolean {
+    has(input, context) {
       return cache.has(keyFor(input, context));
     },
-    delete(input: string, context?: Record<string, unknown>): void {
+    delete(input, context) {
       cache.delete(keyFor(input, context));
     },
-    clear(): void {
+    clear() {
       cache.clear();
     },
-    size(): number {
+    size() {
       return cache.size();
     },
   };
@@ -233,8 +233,7 @@ function hashString(str: string): string {
   let hash = 0;
 
   for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
+    hash = (hash << 5) - hash + str.charCodeAt(i);
     hash &= hash;
   }
 
@@ -251,16 +250,14 @@ function hashString(str: string): string {
 function defaultKeyGenerator(input: string, context?: Record<string, unknown>): string {
   const inputHash = hashString(input);
 
-  // Extract projectId from context if available (various possible locations)
   const projectId = context?.projectId ??
     (context?.project as Record<string, unknown> | undefined)?.id ??
     (context?.renderContext as Record<string, unknown> | undefined)?.projectId;
 
-  if (projectId && typeof projectId === "string") {
+  if (typeof projectId === "string" && projectId) {
     return `cache_${projectId}:${inputHash}`;
   }
 
-  // Fallback to input-only hash (backwards compatible, but logs warning in dev)
   return `cache_${inputHash}`;
 }
 
@@ -272,10 +269,7 @@ export function cacheMiddleware(
 ) => Promise<AgentResponse> {
   const cache = createCache(config);
 
-  return (
-    context: Record<string, unknown>,
-    next: () => Promise<AgentResponse>,
-  ): Promise<AgentResponse> =>
+  return (context, next) =>
     withSpan(
       "agent.middleware.cache",
       async () => {
@@ -285,10 +279,7 @@ export function cacheMiddleware(
 
         const cached = cache.get(inputString, context);
         if (cached) {
-          setActiveSpanAttributes({
-            "cache.hit": true,
-            "cache.strategy": config.strategy,
-          });
+          setActiveSpanAttributes({ "cache.hit": true, "cache.strategy": config.strategy });
 
           return {
             ...cached,
@@ -300,10 +291,7 @@ export function cacheMiddleware(
           };
         }
 
-        setActiveSpanAttributes({
-          "cache.hit": false,
-          "cache.strategy": config.strategy,
-        });
+        setActiveSpanAttributes({ "cache.hit": false, "cache.strategy": config.strategy });
 
         const result = await next();
         cache.set(inputString, result, context);

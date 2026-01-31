@@ -3,6 +3,11 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ErrorCode } from "../error-codes.ts";
 import { CONFIG_ERROR_CATALOG } from "./config-errors.ts";
 
+function assertHasExample(code: ErrorCode): void {
+  const solution = CONFIG_ERROR_CATALOG[code];
+  assertEquals(typeof solution?.example, "string");
+}
+
 describe("errors/catalog/config-errors", () => {
   describe("CONFIG_ERROR_CATALOG", () => {
     it("should contain all config error codes", () => {
@@ -33,14 +38,18 @@ describe("errors/catalog/config-errors", () => {
     it("should have steps for all entries", () => {
       for (const [code, solution] of Object.entries(CONFIG_ERROR_CATALOG)) {
         assertEquals(Array.isArray(solution.steps), true, `steps should be array for ${code}`);
-        assertEquals(solution.steps!.length > 0, true, `steps should not be empty for ${code}`);
+        assertEquals(
+          (solution.steps?.length ?? 0) > 0,
+          true,
+          `steps should not be empty for ${code}`,
+        );
       }
     });
 
     it("should have docs URLs pointing to veryfront.com", () => {
       for (const solution of Object.values(CONFIG_ERROR_CATALOG)) {
         assertEquals(
-          solution.docs!.startsWith("https://veryfront.com/docs/errors/"),
+          solution.docs?.startsWith("https://veryfront.com/docs/errors/") ?? false,
           true,
           `docs URL should start with veryfront.com for ${solution.code}`,
         );
@@ -48,25 +57,22 @@ describe("errors/catalog/config-errors", () => {
     });
 
     it("CONFIG_NOT_FOUND should have example and tips", () => {
-      const solution = CONFIG_ERROR_CATALOG[ErrorCode.CONFIG_NOT_FOUND]!;
-      assertEquals(typeof solution.example, "string");
-      assertEquals(Array.isArray(solution.tips), true);
-      assertEquals(solution.tips!.length > 0, true);
+      const solution = CONFIG_ERROR_CATALOG[ErrorCode.CONFIG_NOT_FOUND];
+      assertEquals(typeof solution?.example, "string");
+      assertEquals(Array.isArray(solution?.tips), true);
+      assertEquals((solution?.tips?.length ?? 0) > 0, true);
     });
 
     it("CONFIG_INVALID should have example", () => {
-      const solution = CONFIG_ERROR_CATALOG[ErrorCode.CONFIG_INVALID]!;
-      assertEquals(typeof solution.example, "string");
+      assertHasExample(ErrorCode.CONFIG_INVALID);
     });
 
     it("IMPORT_MAP_INVALID should have example", () => {
-      const solution = CONFIG_ERROR_CATALOG[ErrorCode.IMPORT_MAP_INVALID]!;
-      assertEquals(typeof solution.example, "string");
+      assertHasExample(ErrorCode.IMPORT_MAP_INVALID);
     });
 
     it("CORS_CONFIG_INVALID should have example", () => {
-      const solution = CONFIG_ERROR_CATALOG[ErrorCode.CORS_CONFIG_INVALID]!;
-      assertEquals(typeof solution.example, "string");
+      assertHasExample(ErrorCode.CORS_CONFIG_INVALID);
     });
   });
 });

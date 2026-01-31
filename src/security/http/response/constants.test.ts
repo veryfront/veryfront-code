@@ -4,29 +4,20 @@ import { CACHE_DURATIONS, CONTENT_TYPES } from "./constants.ts";
 
 describe("HTTP response constants", () => {
   describe("CONTENT_TYPES", () => {
-    it("should define JSON content type", () => {
-      assertEquals(CONTENT_TYPES.JSON, "application/json; charset=utf-8");
-    });
+    const cases: Array<[keyof typeof CONTENT_TYPES, string]> = [
+      ["JSON", "application/json; charset=utf-8"],
+      ["HTML", "text/html; charset=utf-8"],
+      ["TEXT", "text/plain; charset=utf-8"],
+      ["JAVASCRIPT", "application/javascript; charset=utf-8"],
+      ["CSS", "text/css; charset=utf-8"],
+      ["XML", "application/xml; charset=utf-8"],
+    ];
 
-    it("should define HTML content type", () => {
-      assertEquals(CONTENT_TYPES.HTML, "text/html; charset=utf-8");
-    });
-
-    it("should define TEXT content type", () => {
-      assertEquals(CONTENT_TYPES.TEXT, "text/plain; charset=utf-8");
-    });
-
-    it("should define JAVASCRIPT content type", () => {
-      assertEquals(CONTENT_TYPES.JAVASCRIPT, "application/javascript; charset=utf-8");
-    });
-
-    it("should define CSS content type", () => {
-      assertEquals(CONTENT_TYPES.CSS, "text/css; charset=utf-8");
-    });
-
-    it("should define XML content type", () => {
-      assertEquals(CONTENT_TYPES.XML, "application/xml; charset=utf-8");
-    });
+    for (const [key, expected] of cases) {
+      it(`should define ${key} content type`, () => {
+        assertEquals(CONTENT_TYPES[key], expected);
+      });
+    }
 
     it("should include charset in all content types", () => {
       for (const [key, value] of Object.entries(CONTENT_TYPES)) {

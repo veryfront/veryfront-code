@@ -17,7 +17,6 @@ import {
 import type { HandlerContext } from "../../src/server/handlers/types.ts";
 import { VERSION } from "../../src/utils/version.ts";
 
-// Mock adapter for testing
 const mockAdapter = {
   fs: {
     readFile: () => Promise.resolve(""),
@@ -32,23 +31,48 @@ const mockAdapter = {
   },
 };
 
-// Mock config for testing
 const mockConfig = {
   directories: {},
   cache: {},
 };
 
+function createHandlerContext(
+  overrides: Partial<HandlerContext> = {},
+): HandlerContext {
+  return {
+    projectDir: "/projects/test-project",
+    adapter: mockAdapter as any,
+    config: mockConfig as any,
+    securityConfig: null,
+    cspUserHeader: null,
+    ...overrides,
+  };
+}
+
+function createRenderContextFixture(
+  overrides: Partial<RenderContext> = {},
+): RenderContext {
+  return {
+    projectId: "proj_123",
+    projectSlug: "test-project",
+    projectDir: "/projects/test-project",
+    config: mockConfig as any,
+    mode: "production",
+    adapter: mockAdapter as any,
+    cachePrefix: "proj_123:production:rel_456",
+    environment: "production",
+    contentSourceId: "release-rel_456",
+    releaseId: "rel_456",
+    ...overrides,
+  };
+}
+
 describe("RenderContext", () => {
   describe("createRenderContext", () => {
     it("creates context from handler context", () => {
-      const handlerCtx: HandlerContext = {
-        projectDir: "/projects/test-project",
+      const handlerCtx: HandlerContext = createHandlerContext({
         projectId: "proj_123",
         projectSlug: "test-project",
-        adapter: mockAdapter as any,
-        config: mockConfig as any,
-        securityConfig: null,
-        cspUserHeader: null,
         requestContext: {
           mode: "production",
           slug: "test-project",
@@ -58,7 +82,7 @@ describe("RenderContext", () => {
         },
         releaseId: "rel_456",
         proxyToken: "token_xyz",
-      };
+      });
 
       const ctx = createRenderContext(handlerCtx);
 
@@ -77,14 +101,9 @@ describe("RenderContext", () => {
     });
 
     it("uses main branch for preview environment", () => {
-      const handlerCtx: HandlerContext = {
-        projectDir: "/projects/test-project",
+      const handlerCtx: HandlerContext = createHandlerContext({
         projectId: "proj_123",
         projectSlug: "test-project",
-        adapter: mockAdapter as any,
-        config: mockConfig as any,
-        securityConfig: null,
-        cspUserHeader: null,
         requestContext: {
           mode: "preview",
           slug: "test-project",
@@ -92,7 +111,7 @@ describe("RenderContext", () => {
           token: "",
           isLocalDev: true,
         },
-      };
+      });
 
       const ctx = createRenderContext(handlerCtx);
 
@@ -102,13 +121,10 @@ describe("RenderContext", () => {
     });
 
     it("throws without projectSlug or projectId", () => {
-      const handlerCtx: HandlerContext = {
-        projectDir: "/projects/test-project",
-        adapter: mockAdapter as any,
-        config: mockConfig as any,
-        securityConfig: null,
-        cspUserHeader: null,
-      };
+      const handlerCtx: HandlerContext = createHandlerContext({
+        projectId: undefined,
+        projectSlug: undefined,
+      });
 
       assertThrows(
         () => createRenderContext(handlerCtx),
@@ -134,14 +150,9 @@ describe("RenderContext", () => {
     });
 
     it("throws for production without releaseId (remote)", () => {
-      const handlerCtx: HandlerContext = {
-        projectDir: "/projects/test-project",
+      const handlerCtx: HandlerContext = createHandlerContext({
         projectId: "proj_123",
         projectSlug: "test-project",
-        adapter: mockAdapter as any,
-        config: mockConfig as any,
-        securityConfig: null,
-        cspUserHeader: null,
         requestContext: {
           mode: "production",
           slug: "test-project",
@@ -149,8 +160,7 @@ describe("RenderContext", () => {
           token: "",
           isLocalDev: false,
         },
-        // Missing releaseId
-      };
+      });
 
       assertThrows(
         () => createRenderContext(handlerCtx),
@@ -162,72 +172,50 @@ describe("RenderContext", () => {
 
   describe("createCacheKey", () => {
     it("creates properly prefixed keys", () => {
-      const ctx: RenderContext = {
-        projectId: "proj_123",
-        projectSlug: "test-project",
-        projectDir: "/projects/test-project",
-        config: mockConfig as any,
-        mode: "production",
-        adapter: mockAdapter as any,
+      const ctx: RenderContext = createRenderContextFixture({
         cachePrefix: "proj_123:production:rel_456",
-        environment: "production",
         contentSourceId: "release-rel_456",
         releaseId: "rel_456",
-      };
+      });
 
       const cacheKey = createCacheKey(ctx, "page:blog/post");
       assertEquals(cacheKey, "proj_123:production:rel_456:page:blog/post");
     });
 
     it("creates different keys for different projects", () => {
-      const ctxA: RenderContext = {
+      const ctxA: RenderContext = createRenderContextFixture({
         projectId: "proj_A",
         projectSlug: "project-a",
         projectDir: "/projects/a",
-        config: mockConfig as any,
-        mode: "production",
-        adapter: mockAdapter as any,
         cachePrefix: "proj_A:production:v1",
-        environment: "production",
         contentSourceId: "release-v1",
         releaseId: "v1",
-      };
+      });
 
-      const ctxB: RenderContext = {
+      const ctxB: RenderContext = createRenderContextFixture({
         projectId: "proj_B",
         projectSlug: "project-b",
         projectDir: "/projects/b",
-        config: mockConfig as any,
-        mode: "production",
-        adapter: mockAdapter as any,
         cachePrefix: "proj_B:production:v1",
-        environment: "production",
         contentSourceId: "release-v1",
         releaseId: "v1",
-      };
+      });
 
       const keyA = createCacheKey(ctxA, "page:index");
       const keyB = createCacheKey(ctxB, "page:index");
 
-      // Same content key but different projects = different cache keys
       assertEquals(keyA, "proj_A:production:v1:page:index");
       assertEquals(keyB, "proj_B:production:v1:page:index");
       assertEquals(keyA !== keyB, true);
     });
 
     it("creates different keys for different releases", () => {
-      const ctxV1: RenderContext = {
-        projectId: "proj_123",
-        projectSlug: "test-project",
+      const ctxV1: RenderContext = createRenderContextFixture({
         projectDir: "/projects/test",
-        config: mockConfig as any,
-        mode: "production",
-        adapter: mockAdapter as any,
         cachePrefix: "proj_123:production:v1",
-        environment: "production",
         contentSourceId: "release-v1",
         releaseId: "v1",
-      };
+      });
 
       const ctxV2: RenderContext = {
         ...ctxV1,
@@ -245,7 +233,9 @@ describe("RenderContext", () => {
 
   describe("parseCacheKey", () => {
     it("parses valid cache keys", () => {
-      const parsed = parseCacheKey("proj_123:production:v1:0.0.75:page:blog/post");
+      const parsed = parseCacheKey(
+        "proj_123:production:v1:0.0.75:page:blog/post",
+      );
 
       assertEquals(parsed?.projectId, "proj_123");
       assertEquals(parsed?.environment, "production");
@@ -258,58 +248,42 @@ describe("RenderContext", () => {
       assertEquals(parseCacheKey("invalid"), null);
       assertEquals(parseCacheKey("too:short"), null);
       assertEquals(parseCacheKey("a:b:c"), null);
-      assertEquals(parseCacheKey("a:b:c:d"), null); // Now needs 5 parts minimum
+      assertEquals(parseCacheKey("a:b:c:d"), null);
     });
   });
 
   describe("isSameTenant", () => {
     it("returns true for same tenant", () => {
-      const ctxA: RenderContext = {
-        projectId: "proj_123",
-        projectSlug: "test-project",
+      const ctxA: RenderContext = createRenderContextFixture({
         projectDir: "/projects/test",
-        config: mockConfig as any,
-        mode: "production",
-        adapter: mockAdapter as any,
         cachePrefix: "proj_123:production:v1",
-        environment: "production",
         contentSourceId: "release-v1",
         releaseId: "v1",
-      };
+      });
 
-      const ctxB: RenderContext = {
-        ...ctxA,
-      };
+      const ctxB: RenderContext = { ...ctxA };
 
       assertEquals(isSameTenant(ctxA, ctxB), true);
     });
 
     it("returns false for different tenants", () => {
-      const ctxA: RenderContext = {
+      const ctxA: RenderContext = createRenderContextFixture({
         projectId: "proj_A",
         projectSlug: "project-a",
         projectDir: "/projects/a",
-        config: mockConfig as any,
-        mode: "production",
-        adapter: mockAdapter as any,
         cachePrefix: "proj_A:production:v1",
-        environment: "production",
         contentSourceId: "release-v1",
         releaseId: "v1",
-      };
+      });
 
-      const ctxB: RenderContext = {
+      const ctxB: RenderContext = createRenderContextFixture({
         projectId: "proj_B",
         projectSlug: "project-b",
         projectDir: "/projects/b",
-        config: mockConfig as any,
-        mode: "production",
-        adapter: mockAdapter as any,
         cachePrefix: "proj_B:production:v1",
-        environment: "production",
         contentSourceId: "release-v1",
         releaseId: "v1",
-      };
+      });
 
       assertEquals(isSameTenant(ctxA, ctxB), false);
     });

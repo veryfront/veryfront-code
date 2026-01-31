@@ -26,6 +26,3 @@ export type CsrfToken = Brand<string, "CsrfToken">;
 export type ApiKey = Brand<string, "ApiKey">;
 
 export type Unbrand<T> = T extends Brand<infer U, string> ? U : T;
-
-// Runtime branded value utilities (brandValue, isBrandedString, unbrandValue)
-// removed — zero production consumers. See P2-2 Dead Export Audit.

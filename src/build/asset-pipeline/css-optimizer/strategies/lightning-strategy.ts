@@ -35,12 +35,12 @@ export class LightningCSSStrategy implements CSSOptimizationStrategy {
     return this.lightningCSS !== null && options.enabled !== false;
   }
 
-  process(
+  async process(
     content: string,
     filename: string,
     options: CSSOptimizationOptions,
   ): Promise<CSSProcessingResult> {
-    if (!this.lightningCSS) return Promise.reject(new Error("Lightning CSS not initialized"));
+    if (!this.lightningCSS) throw new Error("Lightning CSS not initialized");
 
     try {
       const result = this.lightningCSS.transform({
@@ -54,15 +54,15 @@ export class LightningCSSStrategy implements CSSOptimizationStrategy {
 
       const decoder = new TextDecoder();
 
-      return Promise.resolve({
+      return {
         code: decoder.decode(result.code),
         sourceMap: result.map ? decoder.decode(result.map) : undefined,
-      });
+      };
     } catch (error) {
       logger.warn(`Lightning CSS processing failed for ${filename}`, {
         error: error instanceof Error ? error.message : String(error),
       });
-      return Promise.reject(error);
+      throw error;
     }
   }
 

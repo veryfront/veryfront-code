@@ -78,11 +78,19 @@ export interface WorkflowBackend {
   destroy(): Promise<void>;
 }
 
-export function hasQueueSupport(
-  backend: WorkflowBackend,
-): backend is
+type WithQueueSupport =
   & WorkflowBackend
-  & Required<Pick<WorkflowBackend, "enqueue" | "dequeue" | "acknowledge">> {
+  & Required<Pick<WorkflowBackend, "enqueue" | "dequeue" | "acknowledge">>;
+
+type WithLockSupport =
+  & WorkflowBackend
+  & Required<Pick<WorkflowBackend, "acquireLock" | "releaseLock">>;
+
+type WithEventSupport =
+  & WorkflowBackend
+  & Required<Pick<WorkflowBackend, "publishEvent" | "subscribeEvents">>;
+
+export function hasQueueSupport(backend: WorkflowBackend): backend is WithQueueSupport {
   return (
     typeof backend.enqueue === "function" &&
     typeof backend.dequeue === "function" &&
@@ -90,22 +98,14 @@ export function hasQueueSupport(
   );
 }
 
-export function hasLockSupport(
-  backend: WorkflowBackend,
-): backend is
-  & WorkflowBackend
-  & Required<Pick<WorkflowBackend, "acquireLock" | "releaseLock">> {
+export function hasLockSupport(backend: WorkflowBackend): backend is WithLockSupport {
   return (
     typeof backend.acquireLock === "function" &&
     typeof backend.releaseLock === "function"
   );
 }
 
-export function hasEventSupport(
-  backend: WorkflowBackend,
-): backend is
-  & WorkflowBackend
-  & Required<Pick<WorkflowBackend, "publishEvent" | "subscribeEvents">> {
+export function hasEventSupport(backend: WorkflowBackend): backend is WithEventSupport {
   return (
     typeof backend.publishEvent === "function" &&
     typeof backend.subscribeEvents === "function"

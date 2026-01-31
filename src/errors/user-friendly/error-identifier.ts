@@ -18,7 +18,8 @@ export function identifyError(error: Error): string {
   }
 
   if (
-    message.includes("import") || message.includes("module not found") ||
+    message.includes("import") ||
+    message.includes("module not found") ||
     message.includes("resolve")
   ) {
     return "import-not-found";

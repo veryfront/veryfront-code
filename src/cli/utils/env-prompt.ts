@@ -29,10 +29,8 @@ export interface EnvPromptResult {
 }
 
 function maskSensitiveValue(value: string): string {
-  if (value.length > 8) {
-    return `${value.substring(0, 4)}...${value.substring(value.length - 4)}`;
-  }
-  return "****";
+  if (value.length <= 8) return "****";
+  return `${value.substring(0, 4)}...${value.substring(value.length - 4)}`;
 }
 
 /**
@@ -54,25 +52,25 @@ export async function promptForEnvVars(
     "",
   ];
 
-  const disablePrompt = options.skipPrompt || isCiEnv() || isDenoTestingEnv();
-  const interactive = options.interactive ?? (!disablePrompt && checkIsInteractive());
-
   const prefilledValues = options.prefilledValues ?? {};
   const hasPrefilledValues = Object.keys(prefilledValues).length > 0;
 
+  const disablePrompt = options.skipPrompt || isCiEnv() || isDenoTestingEnv();
+  const interactive = options.interactive ?? (!disablePrompt && checkIsInteractive());
+
   if (envVars.length > 0) {
+    logger.info("");
+
     if (interactive) {
-      logger.info("");
-      logger.info(`${cyan("Environment Setup:")}`);
+      logger.info(cyan("Environment Setup:"));
       logger.info(dim("  Press Enter to skip and set values later\n"));
     } else if (hasPrefilledValues) {
-      logger.info("");
       logger.info(`${cyan("Environment Setup:")} Using values from config file`);
     }
   }
 
   for (const envVar of envVars) {
-    const commentLines: string[] = [`# ${envVar.description}`];
+    const commentLines = [`# ${envVar.description}`];
 
     if (envVar.docsUrl) commentLines.push(`# Get yours at: ${envVar.docsUrl}`);
     if (envVar.required) commentLines.push("# Required");
@@ -95,7 +93,10 @@ export async function promptForEnvVars(
 
     if (value) {
       envLines.push(`${envVar.name}=${value}`);
-    } else if (envVar.required) {
+      continue;
+    }
+
+    if (envVar.required) {
       envLines.push(`# ${envVar.name}= # Required - see .env.example`);
     }
   }
@@ -144,11 +145,11 @@ async function promptForSingleEnvVar(envVar: EnvVarConfig): Promise<string> {
     if (trimmedValue) {
       const displayValue = envVar.sensitive ? maskSensitiveValue(trimmedValue) : trimmedValue;
       logger.info(dim(`    Set to: ${displayValue}`));
-    } else {
-      logger.info(dim("    Skipped (will use placeholder)"));
+      return trimmedValue;
     }
 
-    return trimmedValue;
+    logger.info(dim("    Skipped (will use placeholder)"));
+    return "";
   } catch (error) {
     logger.debug("Failed to read stdin:", error);
     logger.info(dim("    Skipped (will use placeholder)"));
@@ -160,13 +161,7 @@ async function promptForSingleEnvVar(envVar: EnvVarConfig): Promise<string> {
  * Generates content for .gitignore to ensure .env is not committed
  */
 export function generateGitignoreContent(existingContent?: string): string {
-  const requiredEntries = [
-    "# Environment files",
-    ".env",
-    ".env.local",
-    ".env.*.local",
-    "",
-  ];
+  const requiredEntries = ["# Environment files", ".env", ".env.local", ".env.*.local", ""];
 
   if (!existingContent) {
     return [

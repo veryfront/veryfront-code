@@ -10,7 +10,9 @@ describe(
     let handler: RSCDevServerHandler;
 
     afterAll(async () => {
-      if ((globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) return;
+      const preserveEsbuild = (globalThis as Record<string, unknown>)
+        .__vfTestPreserveEsbuild;
+      if (preserveEsbuild) return;
 
       const { stop } = await import("esbuild");
       await stop();

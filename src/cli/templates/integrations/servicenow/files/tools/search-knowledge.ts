@@ -25,7 +25,7 @@ export default defineTool({
         count: articles.length,
         articles: articles.map((article) => {
           const text = article.text ?? "";
-          const summary = text.substring(0, 500) + (text.length > 500 ? "..." : "");
+          const summary = `${text.substring(0, 500)}${text.length > 500 ? "..." : ""}`;
 
           return {
             number: article.number,

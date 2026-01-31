@@ -1,5 +1,8 @@
-export { MiddlewareContext, MiddlewarePipeline } from "./core/index.ts";
-export type { MiddlewarePipelineOptions } from "./core/index.ts";
+export {
+  MiddlewareContext,
+  MiddlewarePipeline,
+  type MiddlewarePipelineOptions,
+} from "./core/index.ts";
 export type {
   Context,
   ExecutionContext,

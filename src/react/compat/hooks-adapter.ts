@@ -16,15 +16,16 @@ function hasReactHook(hookName: string): boolean {
 }
 
 export function useFormStatusCompat(): FormStatus {
-  if (hasFeature("useFormStatus") && hasReactHook("useFormStatus")) {
-    try {
-      return (React as typeof React & { useFormStatus: () => FormStatus }).useFormStatus();
-    } catch {
-      logger.warn("useFormStatus not available in current React version");
-    }
+  if (!hasFeature("useFormStatus") || !hasReactHook("useFormStatus")) {
+    return { pending: false, data: null, method: null, action: null };
   }
 
-  return { pending: false, data: null, method: null, action: null };
+  try {
+    return (React as typeof React & { useFormStatus: () => FormStatus }).useFormStatus();
+  } catch {
+    logger.warn("useFormStatus not available in current React version");
+    return { pending: false, data: null, method: null, action: null };
+  }
 }
 
 export function useOptimisticCompat<State, OptimisticState = State>(
@@ -56,10 +57,12 @@ export function useOptimisticCompat<State, OptimisticState = State>(
     (action: OptimisticStateAction<OptimisticState>) => {
       if (typeof action === "function") {
         const actionFn = action as (currentState: State) => State;
+
         setOptimisticState((current) => {
           const newState = actionFn(current);
           return updateFn ? updateFn(current, newState as State & OptimisticState) : newState;
         });
+
         return;
       }
 
@@ -154,8 +157,6 @@ export interface CompatHooks {
   useId: typeof useIdCompat;
 }
 
-// Lazy-initialized context to avoid module-level React.createContext() calls
-// that can fail during parallel test execution with inconsistent React instances
 let compatHooksContext: React.Context<CompatHooks> | null = null;
 
 function getCompatHooksContext(): React.Context<CompatHooks> {

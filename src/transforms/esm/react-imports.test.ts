@@ -4,7 +4,6 @@ import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { addDepsToEsmShUrls, resolveReactImports } from "./react-imports.ts";
 import { rewriteVendorImports } from "./import-rewriter.ts";
 
-// SSR tests: React → esm.sh URLs for consistency (no npm: specifiers)
 const denoOnlyIt = isDeno ? it : it.skip;
 
 describe("react-imports", () => {
@@ -70,6 +69,7 @@ describe("react-imports", () => {
 import { jsx } from "react/jsx-runtime"
 import ReactDOM from "react-dom"`;
       const result = await resolveReactImports(code);
+
       expect(result).toContain(
         'from "https://esm.sh/react@19.1.1?target=es2022&deps=csstype@3.2.3"',
       );
@@ -166,7 +166,6 @@ import { renderToString } from "react-dom/server"`;
       expect(result).toBe(code);
     });
 
-    // SSR React resolution: uses esm.sh URLs consistently (no npm: specifiers)
     describe("SSR mode (forSSR = true)", () => {
       denoOnlyIt("should resolve React to esm.sh URLs for SSR", async () => {
         const code = 'import React from "react"';
@@ -363,13 +362,16 @@ import bar from "https://example.com/package.js"`;
 import { Button } from "some-ui-lib"`;
 
       code = await resolveReactImports(code);
-      expect(code).toContain('from "https://esm.sh/react@19.1.1?target=es2022&deps=csstype@3.2.3"');
+      expect(code).toContain(
+        'from "https://esm.sh/react@19.1.1?target=es2022&deps=csstype@3.2.3"',
+      );
 
       code = code.replace('from "some-ui-lib"', 'from "https://esm.sh/some-ui-lib@1.0.0"');
       code = await addDepsToEsmShUrls(code);
 
-      // React import (already has ?target=es2022) should be unchanged
-      expect(code).toContain('from "https://esm.sh/react@19.1.1?target=es2022&deps=csstype@3.2.3"');
+      expect(code).toContain(
+        'from "https://esm.sh/react@19.1.1?target=es2022&deps=csstype@3.2.3"',
+      );
       expect(code).toContain("some-ui-lib@1.0.0?external=react,react-dom&target=es2022");
     });
 
@@ -378,7 +380,6 @@ import { Button } from "some-ui-lib"`;
       code = await resolveReactImports(code);
       code = await addDepsToEsmShUrls(code);
 
-      // React base import (no ?external) should be unchanged since it already has ?target
       expect(code).toBe(
         'import React from "https://esm.sh/react@19.1.1?target=es2022&deps=csstype@3.2.3"',
       );

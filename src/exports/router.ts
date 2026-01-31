@@ -1,1 +1,1 @@
-export * from "../react/router/index.ts";
+export * from "../react/router/index.tsx";

@@ -2,13 +2,15 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { HTMLGenerator, type HTMLGeneratorConfig } from "./html.ts";
 
-// ---- Inline reimplementation of non-exported helpers ----
-
-function buildHeadElements(head?: {
+type Head = {
   metas: Array<{ name?: string; property?: string; content?: string }>;
   links: Array<Record<string, string | null | undefined>>;
   styles: string[];
-}): string {
+};
+
+// ---- Inline reimplementation of non-exported helpers ----
+
+function buildHeadElements(head?: Head): string {
   if (!head) return "";
 
   const parts: string[] = [];
@@ -20,6 +22,7 @@ function buildHeadElements(head?: {
     if (meta.name) attrs.push(`name="${meta.name}"`);
     if (meta.property) attrs.push(`property="${meta.property}"`);
     if (meta.content) attrs.push(`content="${meta.content}"`);
+
     if (attrs.length) parts.push(`<meta ${attrs.join(" ")}>`);
   }
 
@@ -28,6 +31,7 @@ function buildHeadElements(head?: {
       .filter(([, v]) => v != null)
       .map(([k, v]) => `${k}="${v}"`)
       .join(" ");
+
     if (attrs) parts.push(`<link ${attrs}>`);
   }
 
@@ -45,8 +49,8 @@ function mergeFrontmatter(context: {
 }): Record<string, unknown> {
   return {
     ...context.pageInfo.entity.frontmatter,
-    ...(context.pageBundle as { frontmatter?: Record<string, unknown> }).frontmatter,
-    ...(context.collectedMetadata || {}),
+    ...context.pageBundle.frontmatter,
+    ...(context.collectedMetadata ?? {}),
   };
 }
 
@@ -63,7 +67,7 @@ describe("HTMLGenerator helpers", () => {
     });
 
     it("should skip description meta tags", () => {
-      const head = {
+      const head: Head = {
         metas: [{ name: "description", content: "A description" }],
         links: [],
         styles: [],
@@ -72,7 +76,7 @@ describe("HTMLGenerator helpers", () => {
     });
 
     it("should render meta tags with name attribute", () => {
-      const head = {
+      const head: Head = {
         metas: [{ name: "viewport", content: "width=device-width" }],
         links: [],
         styles: [],
@@ -83,7 +87,7 @@ describe("HTMLGenerator helpers", () => {
     });
 
     it("should render meta tags with property attribute (OpenGraph)", () => {
-      const head = {
+      const head: Head = {
         metas: [{ property: "og:title", content: "My Page" }],
         links: [],
         styles: [],
@@ -94,7 +98,7 @@ describe("HTMLGenerator helpers", () => {
     });
 
     it("should render link tags filtering null values", () => {
-      const head = {
+      const head: Head = {
         metas: [],
         links: [{ rel: "stylesheet", href: "/style.css", integrity: null }],
         styles: [],
@@ -106,7 +110,7 @@ describe("HTMLGenerator helpers", () => {
     });
 
     it("should render style tags", () => {
-      const head = {
+      const head: Head = {
         metas: [],
         links: [],
         styles: [".body { color: red; }", ".header { font-size: 2rem; }"],
@@ -117,7 +121,7 @@ describe("HTMLGenerator helpers", () => {
     });
 
     it("should combine multiple metas, links, and styles", () => {
-      const head = {
+      const head: Head = {
         metas: [
           { name: "viewport", content: "width=device-width" },
           { property: "og:title", content: "Title" },
@@ -211,6 +215,7 @@ describe("HTMLGenerator helpers", () => {
         config: {} as any,
         mode: "development",
       });
+
       assertExists(generator);
     });
   });

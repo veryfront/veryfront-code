@@ -12,28 +12,24 @@ testSuite("deno-sandbox", () => {
   });
 
   it("runInWorker handles errors", async () => {
-    let threw = false;
-
     try {
       await runInWorker("throw new Error('boom')");
+      assertEquals(false, true);
     } catch (e) {
-      threw = String((e as Error)?.message ?? e).includes("boom");
+      const message = String((e as Error)?.message ?? e);
+      assertEquals(message.includes("boom"), true);
     }
-
-    assertEquals(threw, true);
   });
 
   it("runInWorker enforces timeout", async () => {
-    let timedOut = false;
-
     try {
       await runInWorker("return new Promise((r) => setTimeout(() => r(1), 50));", {
         timeoutMs: 10,
       });
+      assertEquals(false, true);
     } catch (e) {
-      timedOut = String((e as Error)?.message ?? e).includes("timeout");
+      const message = String((e as Error)?.message ?? e);
+      assertEquals(message.includes("timeout"), true);
     }
-
-    assertEquals(timedOut, true);
   });
 });

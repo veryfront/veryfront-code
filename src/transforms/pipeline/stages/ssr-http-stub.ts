@@ -43,9 +43,7 @@ function generateStub(
   const trimmed = statement.trim();
 
   // Side-effect import: import 'url' -> /* SSR stub: import 'url' */
-  if (/^import\s+['"`]/.test(trimmed)) {
-    return `/* SSR stub: ${trimmed} */`;
-  }
+  if (/^import\s+['"`]/.test(trimmed)) return `/* SSR stub: ${trimmed} */`;
 
   const fromIndex = trimmed.lastIndexOf(" from ");
   if (fromIndex === -1) return null;
@@ -59,9 +57,7 @@ function generateStub(
 
   // Namespace import: import * as X from 'url' -> const X = {}
   const namespaceMatch = importClause.match(/^\*\s+as\s+([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
-  if (namespaceMatch) {
-    return `const ${namespaceMatch[1]} = {}; /* SSR stub for ${imp.n} */`;
-  }
+  if (namespaceMatch) return `const ${namespaceMatch[1]} = {}; /* SSR stub for ${imp.n} */`;
 
   // Named imports: import { X, Y as Z } from 'url' -> const X = null, Z = null
   const namedMatch = importClause.match(/^\{([^}]+)\}$/);
@@ -89,9 +85,10 @@ export const ssrHttpStubPlugin: TransformPlugin = {
   async transform(ctx) {
     const imports = await parseImports(ctx.code);
 
-    const needsStubbing = imports.some(
-      (imp) => imp.n && imp.d === -1 && isHttpImport(imp.n) && isBrowserOnlyModule(imp.n),
-    );
+    const needsStubbing = imports.some((imp) => {
+      if (!imp.n || imp.d !== -1) return false;
+      return isHttpImport(imp.n) && isBrowserOnlyModule(imp.n);
+    });
     if (!needsStubbing) return ctx.code;
 
     return rewriteImports(ctx.code, (imp, statement) => generateStub(imp, statement));

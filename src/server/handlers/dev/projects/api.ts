@@ -12,7 +12,8 @@ function jsonResponse(data: unknown, status = 200): Response {
 export function handleProjectsAPI(req: Request, ctx: HandlerContext): Response | null {
   const { pathname } = new URL(req.url);
 
-  if (req.method !== "GET" || pathname !== "/_projects/api/config") return null;
+  if (req.method !== "GET") return null;
+  if (pathname !== "/_projects/api/config") return null;
 
   return handleGetConfig(req, ctx);
 }
@@ -20,7 +21,6 @@ export function handleProjectsAPI(req: Request, ctx: HandlerContext): Response |
 function handleGetConfig(req: Request, ctx: HandlerContext): Response {
   const url = new URL(req.url);
 
-  // Get domain info for building project URLs
   const host = req.headers.get("x-forwarded-host") ??
     req.headers.get("host") ??
     url.host ??

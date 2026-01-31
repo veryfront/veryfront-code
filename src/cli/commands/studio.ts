@@ -77,16 +77,19 @@ export async function studioCommand(
   const opened = canOpenBrowser();
 
   console.log();
-  if (opened) {
-    await openBrowser(url);
-    console.log("  " + success("✓") + " Opening " + brand(project) + " in Studio");
-    console.log();
-    console.log("  " + dim(url));
-  } else {
+
+  if (!opened) {
     console.log("  " + muted("Open in browser:"));
     console.log();
     console.log("  " + brand(url));
+    console.log();
+    return { url, opened };
   }
+
+  await openBrowser(url);
+  console.log("  " + success("✓") + " Opening " + brand(project) + " in Studio");
+  console.log();
+  console.log("  " + dim(url));
   console.log();
 
   return { url, opened };

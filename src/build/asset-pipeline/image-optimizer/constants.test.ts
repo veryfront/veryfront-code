@@ -14,9 +14,9 @@ describe("build/asset-pipeline/image-optimizer/constants", () => {
     });
 
     it("should include webp, avif, and jpeg formats", () => {
-      assertEquals(DEFAULT_OPTIONS.formats.includes("webp"), true);
-      assertEquals(DEFAULT_OPTIONS.formats.includes("avif"), true);
-      assertEquals(DEFAULT_OPTIONS.formats.includes("jpeg"), true);
+      for (const format of ["webp", "avif", "jpeg"] as const) {
+        assertEquals(DEFAULT_OPTIONS.formats.includes(format), true);
+      }
     });
 
     it("should have non-empty sizes array", () => {
@@ -41,11 +41,9 @@ describe("build/asset-pipeline/image-optimizer/constants", () => {
 
   describe("SUPPORTED_EXTENSIONS", () => {
     it("should include common image extensions", () => {
-      assertEquals(SUPPORTED_EXTENSIONS.includes(".jpg"), true);
-      assertEquals(SUPPORTED_EXTENSIONS.includes(".jpeg"), true);
-      assertEquals(SUPPORTED_EXTENSIONS.includes(".png"), true);
-      assertEquals(SUPPORTED_EXTENSIONS.includes(".webp"), true);
-      assertEquals(SUPPORTED_EXTENSIONS.includes(".avif"), true);
+      for (const ext of [".jpg", ".jpeg", ".png", ".webp", ".avif"] as const) {
+        assertEquals(SUPPORTED_EXTENSIONS.includes(ext), true);
+      }
     });
 
     it("should have 5 supported extensions", () => {

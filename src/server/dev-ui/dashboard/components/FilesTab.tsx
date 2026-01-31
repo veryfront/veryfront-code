@@ -29,7 +29,7 @@ export function FilesTab(): React.ReactElement {
     void loadFiles(currentPath);
   }, [currentPath]);
 
-  const filteredFiles = useMemo(() => {
+  const filteredFiles = useMemo((): FileItem[] => {
     if (!search) return files;
     const q = search.toLowerCase();
     return files.filter((f) => f.name.toLowerCase().includes(q));
@@ -39,14 +39,14 @@ export function FilesTab(): React.ReactElement {
     const file = files.find((f) => f.path === id);
     if (!file) return;
 
-    if (file.type === "directory") {
-      setCurrentPath(file.path);
-      setSelectedFile(null);
-      setSearch("");
+    if (file.type !== "directory") {
+      setSelectedFile(file.path);
       return;
     }
 
-    setSelectedFile(file.path);
+    setCurrentPath(file.path);
+    setSelectedFile(null);
+    setSearch("");
   }
 
   function handleBack(): void {
@@ -105,8 +105,8 @@ function FileDetail({ path }: { path: string }): React.ReactElement {
   const [content, setContent] = useState<FileContent | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const filename = useMemo(() => path.split("/").pop() ?? "", [path]);
-  const ext = useMemo(() => path.split(".").pop()?.toLowerCase() ?? "", [path]);
+  const filename = useMemo((): string => path.split("/").pop() ?? "", [path]);
+  const ext = useMemo((): string => path.split(".").pop()?.toLowerCase() ?? "", [path]);
 
   useEffect(() => {
     setLoading(true);

@@ -29,7 +29,7 @@ export default tool({
         account.BillingCountry,
       ) || undefined;
 
-    const additionalFields = fields
+    const additionalFields = fields?.length
       ? Object.fromEntries(
           fields
             .filter((field) => account[field] !== undefined)

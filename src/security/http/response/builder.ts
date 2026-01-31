@@ -7,8 +7,8 @@ import * as staticHelpers from "./static-helpers.ts";
 import { generateNonce } from "./security-handler.ts";
 
 export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsContext {
-  public headers: Headers;
-  public status: number;
+  public headers: Headers = new Headers();
+  public status: number = 200;
   public securityConfig: SecurityConfig | null;
   public isDev: boolean;
   public nonce: string;
@@ -17,8 +17,6 @@ export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsCon
   public isVeryfrontDomain: boolean;
 
   constructor(config?: ResponseBuilderConfig) {
-    this.headers = new Headers();
-    this.status = 200;
     this.securityConfig = config?.securityConfig ?? null;
     this.isDev = config?.isDev ?? false;
     this.nonce = config?.nonce ?? generateNonce();

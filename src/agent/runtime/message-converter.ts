@@ -49,9 +49,11 @@ export function convertMessageToProvider(msg: Message): ProviderMessage {
   );
 
   if (toolResultPart && msg.role === "tool") {
-    providerMsg.tool_call_id = toolResultPart.toolCallId;
-    providerMsg.content = JSON.stringify(toolResultPart.result);
-    return providerMsg;
+    return {
+      ...providerMsg,
+      tool_call_id: toolResultPart.toolCallId,
+      content: JSON.stringify(toolResultPart.result),
+    };
   }
 
   const toolCallParts = msg.parts.filter(
@@ -59,18 +61,19 @@ export function convertMessageToProvider(msg: Message): ProviderMessage {
       p.type === "tool-call" || (p.type.startsWith("tool-") && p.type !== "tool-result"),
   );
 
-  if (toolCallParts.length) {
-    providerMsg.tool_calls = toolCallParts.map((tc) => ({
+  if (!toolCallParts.length) return providerMsg;
+
+  return {
+    ...providerMsg,
+    tool_calls: toolCallParts.map((tc) => ({
       id: tc.toolCallId,
       type: "function",
       function: {
         name: tc.toolName,
         arguments: JSON.stringify(getToolArguments(tc as ToolCallPart)),
       },
-    }));
-  }
-
-  return providerMsg;
+    })),
+  };
 }
 
 /**
@@ -80,6 +83,10 @@ export function convertProviderToMessage(
   providerMsg: ProviderMessage,
   messageId?: string,
 ): Message {
+  if (typeof messageId === "string" && messageId.trim().length === 0) {
+    throw new Error("Message id cannot be empty.");
+  }
+
   const parts: MessagePart[] = [];
 
   if (providerMsg.content) {
@@ -102,14 +109,8 @@ export function convertProviderToMessage(
     });
   }
 
-  if (typeof messageId === "string" && messageId.trim().length === 0) {
-    throw new Error("Message id cannot be empty.");
-  }
-
-  const resolvedId = messageId ?? `msg_${Date.now()}`;
-
   return {
-    id: resolvedId,
+    id: messageId ?? `msg_${Date.now()}`,
     role: providerMsg.role as Message["role"],
     parts,
     timestamp: Date.now(),

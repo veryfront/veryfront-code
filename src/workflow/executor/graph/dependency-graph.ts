@@ -92,9 +92,8 @@ export class DependencyGraph {
     for (const node of nodes) {
       for (const dep of node.dependsOn ?? []) {
         const dependents = adjList.get(dep);
-        if (!dependents) {
-          throw new Error(`Node "${node.id}" depends on unknown node "${dep}"`);
-        }
+        if (!dependents) throw new Error(`Node "${node.id}" depends on unknown node "${dep}"`);
+
         dependents.push(node.id);
         inDegree.set(node.id, (inDegree.get(node.id) ?? 0) + 1);
       }

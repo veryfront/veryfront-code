@@ -1,5 +1,4 @@
-export function generateThemeVariables(): string {
-  return `:root {
+const THEME_VARIABLES = `:root {
   --background: 0 0% 100%;
   --foreground: 222.2 84% 4.9%;
   --muted: 210 40% 96.1%;
@@ -75,4 +74,7 @@ export function generateThemeVariables(): string {
   font-family: Inter, ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji" !important;
 }
 `;
+
+export function generateThemeVariables(): string {
+  return THEME_VARIABLES;
 }

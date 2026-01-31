@@ -35,7 +35,7 @@ async function loadColors(): Promise<ConsoleStyler> {
   if (_colors) return _colors;
 
   try {
-    const mod = isDeno ? await import("./deno.ts") : await import("./node.ts");
+    const mod = await (isDeno ? import("./deno.ts") : import("./node.ts"));
     _colors = mod.colors;
   } catch {
     _colors = fallbackColors;
@@ -50,8 +50,8 @@ function getColors(): ConsoleStyler {
   return _colors ?? fallbackColors;
 }
 
-function makeColor(fn: (c: ConsoleStyler) => ColorFunction): ColorFunction {
-  return (text: string) => fn(getColors())(text);
+function makeColor(getter: (c: ConsoleStyler) => ColorFunction): ColorFunction {
+  return (text: string) => getter(getColors())(text);
 }
 
 export const red: ColorFunction = makeColor((c) => c.red);

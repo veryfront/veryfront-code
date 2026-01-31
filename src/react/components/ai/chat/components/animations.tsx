@@ -17,11 +17,10 @@ export function Loader({
   size?: number;
 }): React.ReactElement {
   const dotSize = size / 4;
-  const delays = ["0ms", "150ms", "300ms"] as const;
 
   return (
     <div className={cn("flex items-center gap-1", className)}>
-      {delays.map((animationDelay) => (
+      {["0ms", "150ms", "300ms"].map((animationDelay) => (
         <span
           key={animationDelay}
           className="animate-bounce rounded-full bg-muted-foreground"

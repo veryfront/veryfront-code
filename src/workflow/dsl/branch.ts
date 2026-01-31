@@ -19,23 +19,19 @@ export interface BranchOptions extends Omit<BaseNodeConfig, "checkpoint"> {
 
 function prefixNodes(id: string, branch: "then" | "else", nodes: WorkflowNode[]): WorkflowNode[] {
   const prefix = `${id}/${branch}/`;
-  return nodes.map((node) => ({
-    ...node,
-    id: node.id.startsWith(prefix) ? node.id : `${prefix}${node.id}`,
-  }));
+
+  return nodes.map((node) => {
+    if (node.id.startsWith(prefix)) return node;
+    return { ...node, id: `${prefix}${node.id}` };
+  });
 }
 
 /** Create a conditional branch node. */
 export function branch(id: string, options: BranchOptions): WorkflowNode {
   validateNodeId(id);
 
-  if (!options.condition) {
-    throw new Error(`Branch "${id}" must specify a condition`);
-  }
-
-  if (!options.then?.length) {
-    throw new Error(`Branch "${id}" must have at least one 'then' node`);
-  }
+  if (!options.condition) throw new Error(`Branch "${id}" must specify a condition`);
+  if (!options.then?.length) throw new Error(`Branch "${id}" must have at least one 'then' node`);
 
   const config: BranchNodeConfig = {
     type: "branch",

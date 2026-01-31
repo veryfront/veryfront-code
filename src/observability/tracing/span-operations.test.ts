@@ -3,13 +3,15 @@ import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { SpanOperations } from "./span-operations.ts";
 import type { OpenTelemetryAPI, Span, Tracer } from "./types.ts";
 
-function createMockSpan(): Span & {
+type MockSpan = Span & {
   _ended: boolean;
   _status: { code: number; message?: string } | null;
   _attributes: Record<string, unknown>;
   _events: Array<{ name: string; attributes?: Record<string, unknown> }>;
   _exception: Error | null;
-} {
+};
+
+function createMockSpan(): MockSpan {
   const span = {
     _ended: false,
     _status: null as { code: number; message?: string } | null,
@@ -44,14 +46,22 @@ function createMockSpan(): Span & {
       return span;
     },
   };
-  return span as Span & typeof span;
+
+  return span as MockSpan;
+}
+
+function createMockTracer(): Tracer {
+  return {
+    startSpan: () => createMockSpan(),
+    startActiveSpan: (() => {}) as never,
+  };
 }
 
 function createMockApi(): OpenTelemetryAPI {
   return {
     trace: {
       getTracer: () => createMockTracer(),
-      setSpan: (_context: unknown, _span: unknown) => ({ _type: "context" }) as never,
+      setSpan: () => ({ _type: "context" }) as never,
     },
     propagation: {
       setGlobalPropagator: () => {},
@@ -73,13 +83,6 @@ function createMockApi(): OpenTelemetryAPI {
       OK: 1,
       ERROR: 2,
     },
-  };
-}
-
-function createMockTracer(): Tracer {
-  return {
-    startSpan: (_name: string, _options?: unknown, _context?: unknown) => createMockSpan(),
-    startActiveSpan: (() => {}) as never,
   };
 }
 
@@ -124,6 +127,7 @@ describe("observability/tracing/span-operations", () => {
         },
         startActiveSpan: (() => {}) as never,
       } as Tracer;
+
       const badOps = new SpanOperations(api, badTracer);
       const span = badOps.startSpan("test");
       assertEquals(span, null);
@@ -135,7 +139,7 @@ describe("observability/tracing/span-operations", () => {
       const mockSpan = createMockSpan();
       ops.endSpan(mockSpan);
       assertEquals(mockSpan._ended, true);
-      assertEquals(mockSpan._status?.code, 1); // OK
+      assertEquals(mockSpan._status?.code, 1);
     });
 
     it("should end a span with error status", () => {
@@ -143,14 +147,13 @@ describe("observability/tracing/span-operations", () => {
       const error = new Error("test error");
       ops.endSpan(mockSpan, error);
       assertEquals(mockSpan._ended, true);
-      assertEquals(mockSpan._status?.code, 2); // ERROR
+      assertEquals(mockSpan._status?.code, 2);
       assertEquals(mockSpan._status?.message, "test error");
       assertEquals(mockSpan._exception, error);
     });
 
     it("should handle null span gracefully", () => {
       ops.endSpan(null);
-      // Should not throw
     });
 
     it("should handle span.end() throwing", () => {
@@ -160,8 +163,8 @@ describe("observability/tracing/span-operations", () => {
           throw new Error("setStatus failed");
         },
       } as unknown as Span;
+
       ops.endSpan(badSpan);
-      // Should not throw
     });
   });
 
@@ -175,7 +178,6 @@ describe("observability/tracing/span-operations", () => {
 
     it("should handle null span gracefully", () => {
       ops.setAttributes(null, { key: "value" });
-      // Should not throw
     });
 
     it("should handle span.setAttributes() throwing", () => {
@@ -184,8 +186,8 @@ describe("observability/tracing/span-operations", () => {
           throw new Error("setAttributes failed");
         },
       } as unknown as Span;
+
       ops.setAttributes(badSpan, { key: "value" });
-      // Should not throw
     });
   });
 
@@ -206,7 +208,6 @@ describe("observability/tracing/span-operations", () => {
 
     it("should handle null span gracefully", () => {
       ops.addEvent(null, "event.name");
-      // Should not throw
     });
 
     it("should handle span.addEvent() throwing", () => {
@@ -215,8 +216,8 @@ describe("observability/tracing/span-operations", () => {
           throw new Error("addEvent failed");
         },
       } as unknown as Span;
+
       ops.addEvent(badSpan, "event");
-      // Should not throw
     });
   });
 
@@ -251,6 +252,7 @@ describe("observability/tracing/span-operations", () => {
           },
         },
       } as OpenTelemetryAPI;
+
       const badOps = new SpanOperations(badApi, tracer);
       const parent = createMockSpan();
       const child = badOps.createChildSpan(parent, "child");

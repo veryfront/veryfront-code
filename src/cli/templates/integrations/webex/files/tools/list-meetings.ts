@@ -27,34 +27,6 @@ export default tool({
       .describe("Filter by meeting state"),
   }),
   async execute({ max, from, to, state }) {
-    const meetings = await listMeetings({ max, from, to, state });
-
-    return meetings.map(
-      ({
-        id,
-        title,
-        agenda,
-        start,
-        end,
-        timezone,
-        hostEmail,
-        hostDisplayName,
-        webLink,
-        meetingNumber,
-        state,
-      }) => ({
-        id,
-        title,
-        agenda,
-        start,
-        end,
-        timezone,
-        hostEmail,
-        hostDisplayName,
-        webLink,
-        meetingNumber,
-        state,
-      }),
-    );
+    return listMeetings({ max, from, to, state });
   },
 });

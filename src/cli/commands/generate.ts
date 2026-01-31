@@ -11,10 +11,15 @@ import { generateIntegration } from "./generate/integration-generator.ts";
 
 let fs: FileSystem;
 
-async function ensureDir(path: string): Promise<void> {
+function getFs(): FileSystem {
   if (!fs) fs = createFileSystem();
+  return fs;
+}
+
+async function ensureDir(path: string): Promise<void> {
+  const fileSystem = getFs();
   try {
-    await fs.mkdir(path, { recursive: true });
+    await fileSystem.mkdir(path, { recursive: true });
   } catch (error) {
     if (!isAlreadyExistsError(error)) throw error;
   }
@@ -62,6 +67,11 @@ export async function generateCommand(
   const preferred = await getPreferredRouter(projectDir);
   const slug = toSlug(name);
 
+  if (type === "integration") {
+    await generateIntegration(projectDir, { name: name || undefined });
+    return;
+  }
+
   switch (type) {
     case "rsc": {
       const dir = join(projectDir, "app", slug || "");
@@ -92,9 +102,9 @@ export async function generateCommand(
 
         const file = join(pageDir, "page.tsx");
         const title = slug.split("/").pop() || "Page";
-        const content = `export default function ${
-          toComponentName(title)
-        }(){ return <div>${title}</div>; }\n`;
+        const componentName = toComponentName(title);
+        const content =
+          `export default function ${componentName}(){ return <div>${title}</div>; }\n`;
         await fs.writeTextFile(file, content);
         cliLogger.info(`Created ${file}`);
         return;
@@ -134,9 +144,9 @@ export async function generateCommand(
       await ensureDir(dir);
 
       const file = join(dir, `${slug}.mdx`);
-      const content = `---\nisLayout: true\n---\n\nexport default function ${
-        toComponentName(slug)
-      }({ children }) {\n  return (<div className="${slug}-layout"><main>{children}</main></div>);\n}\n`;
+      const componentName = toComponentName(slug);
+      const content =
+        `---\nisLayout: true\n---\n\nexport default function ${componentName}({ children }) {\n  return (<div className="${slug}-layout"><main>{children}</main></div>);\n}\n`;
       await fs.writeTextFile(file, content);
       cliLogger.info(`Created ${file}`);
       return;
@@ -166,11 +176,6 @@ export async function generateCommand(
         `export function GET(_req: Request) {\n  return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } });\n}\n`;
       await fs.writeTextFile(file, content);
       cliLogger.info(`Created ${file}`);
-      return;
-    }
-
-    case "integration": {
-      await generateIntegration(projectDir, { name: name || undefined });
       return;
     }
 

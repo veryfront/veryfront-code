@@ -1,13 +1,3 @@
-/**
- * Build Executor Module
- *
- * Handles the execution of the actual build process:
- * - Building pages routes
- * - Building app routes
- * - Coordinating SSG options
- * - Aggregating build statistics
- */
-
 import { serverLogger as logger } from "#veryfront/utils";
 import { buildAppRoutes, buildPagesRoutes } from "../static-generation.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -34,9 +24,6 @@ export interface BuildResult {
   ssgPaths: string[];
 }
 
-/**
- * Execute the build process for all routes
- */
 export async function executeBuild(
   pagesRoutes: RouteInfo[],
   appRoutes: AppRouteInfo[],
@@ -56,6 +43,6 @@ export async function executeBuild(
   return {
     pages: pagesStats.pages + appStats.pages,
     totalSize: pagesStats.totalSize + appStats.totalSize,
-    ssgPaths: pagesStats.ssgPaths.concat(appStats.ssgPaths),
+    ssgPaths: [...pagesStats.ssgPaths, ...appStats.ssgPaths],
   };
 }

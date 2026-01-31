@@ -2,95 +2,89 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { CommonSchemas } from "./schemas.ts";
 
+function assertParseSuccess<T>(
+  result: { success: boolean; data?: T },
+): asserts result is { success: true; data: T } {
+  assertEquals(result.success, true);
+}
+
+function assertParseFailure(result: { success: boolean }): void {
+  assertEquals(result.success, false);
+}
+
 describe("CommonSchemas", () => {
   describe("email", () => {
     it("should accept valid email", () => {
-      const result = CommonSchemas.email.safeParse("user@example.com");
-      assertEquals(result.success, true);
+      assertParseSuccess(CommonSchemas.email.safeParse("user@example.com"));
     });
 
     it("should reject invalid email", () => {
-      const result = CommonSchemas.email.safeParse("not-an-email");
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.email.safeParse("not-an-email"));
     });
 
     it("should reject email exceeding 255 chars", () => {
       const longEmail = "a".repeat(247) + "@test.com";
-      const result = CommonSchemas.email.safeParse(longEmail);
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.email.safeParse(longEmail));
     });
   });
 
   describe("uuid", () => {
     it("should accept valid UUID", () => {
-      const result = CommonSchemas.uuid.safeParse("550e8400-e29b-41d4-a716-446655440000");
-      assertEquals(result.success, true);
+      assertParseSuccess(CommonSchemas.uuid.safeParse("550e8400-e29b-41d4-a716-446655440000"));
     });
 
     it("should reject invalid UUID", () => {
-      const result = CommonSchemas.uuid.safeParse("not-a-uuid");
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.uuid.safeParse("not-a-uuid"));
     });
   });
 
   describe("slug", () => {
     it("should accept valid slug", () => {
-      const result = CommonSchemas.slug.safeParse("my-project-123");
-      assertEquals(result.success, true);
+      assertParseSuccess(CommonSchemas.slug.safeParse("my-project-123"));
     });
 
     it("should reject slug with uppercase letters", () => {
-      const result = CommonSchemas.slug.safeParse("My-Project");
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.slug.safeParse("My-Project"));
     });
 
     it("should reject empty slug", () => {
-      const result = CommonSchemas.slug.safeParse("");
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.slug.safeParse(""));
     });
 
     it("should reject slug with spaces", () => {
-      const result = CommonSchemas.slug.safeParse("my project");
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.slug.safeParse("my project"));
     });
 
     it("should reject slug exceeding 100 chars", () => {
-      const result = CommonSchemas.slug.safeParse("a".repeat(101));
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.slug.safeParse("a".repeat(101)));
     });
   });
 
   describe("url", () => {
     it("should accept valid URL", () => {
-      const result = CommonSchemas.url.safeParse("https://example.com");
-      assertEquals(result.success, true);
+      assertParseSuccess(CommonSchemas.url.safeParse("https://example.com"));
     });
 
     it("should reject invalid URL", () => {
-      const result = CommonSchemas.url.safeParse("not a url");
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.url.safeParse("not a url"));
     });
   });
 
   describe("phoneNumber", () => {
     it("should accept valid phone number with country code", () => {
-      const result = CommonSchemas.phoneNumber.safeParse("+14155551234");
-      assertEquals(result.success, true);
+      assertParseSuccess(CommonSchemas.phoneNumber.safeParse("+14155551234"));
     });
 
     it("should accept valid phone number without plus", () => {
-      const result = CommonSchemas.phoneNumber.safeParse("14155551234");
-      assertEquals(result.success, true);
+      assertParseSuccess(CommonSchemas.phoneNumber.safeParse("14155551234"));
     });
 
     it("should reject phone number starting with 0", () => {
-      const result = CommonSchemas.phoneNumber.safeParse("014155551234");
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.phoneNumber.safeParse("014155551234"));
     });
 
     it("should reject phone number with letters", () => {
-      const result = CommonSchemas.phoneNumber.safeParse("+1415abc1234");
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.phoneNumber.safeParse("+1415abc1234"));
     });
   });
 
@@ -102,112 +96,104 @@ describe("CommonSchemas", () => {
         sort: "name",
         order: "asc",
       });
-      assertEquals(result.success, true);
-      if (result.success) {
-        assertEquals(result.data.page, 2);
-        assertEquals(result.data.limit, 25);
-        assertEquals(result.data.sort, "name");
-        assertEquals(result.data.order, "asc");
-      }
+
+      assertParseSuccess(result);
+      assertEquals(result.data.page, 2);
+      assertEquals(result.data.limit, 25);
+      assertEquals(result.data.sort, "name");
+      assertEquals(result.data.order, "asc");
     });
 
     it("should use defaults for missing page and limit", () => {
       const result = CommonSchemas.pagination.safeParse({});
-      assertEquals(result.success, true);
-      if (result.success) {
-        assertEquals(result.data.page, 1);
-        assertEquals(result.data.limit, 10);
-      }
+
+      assertParseSuccess(result);
+      assertEquals(result.data.page, 1);
+      assertEquals(result.data.limit, 10);
     });
 
     it("should coerce string numbers", () => {
       const result = CommonSchemas.pagination.safeParse({ page: "3", limit: "20" });
-      assertEquals(result.success, true);
-      if (result.success) {
-        assertEquals(result.data.page, 3);
-        assertEquals(result.data.limit, 20);
-      }
+
+      assertParseSuccess(result);
+      assertEquals(result.data.page, 3);
+      assertEquals(result.data.limit, 20);
     });
 
     it("should reject negative page numbers", () => {
-      const result = CommonSchemas.pagination.safeParse({ page: -1 });
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.pagination.safeParse({ page: -1 }));
     });
 
     it("should reject limit exceeding 100", () => {
-      const result = CommonSchemas.pagination.safeParse({ limit: 101 });
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.pagination.safeParse({ limit: 101 }));
     });
 
     it("should reject invalid order values", () => {
-      const result = CommonSchemas.pagination.safeParse({ order: "random" });
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.pagination.safeParse({ order: "random" }));
     });
   });
 
   describe("dateRange", () => {
     it("should accept valid date range", () => {
-      const result = CommonSchemas.dateRange.safeParse({
-        from: "2024-01-01T00:00:00Z",
-        to: "2024-12-31T23:59:59Z",
-      });
-      assertEquals(result.success, true);
+      assertParseSuccess(
+        CommonSchemas.dateRange.safeParse({
+          from: "2024-01-01T00:00:00Z",
+          to: "2024-12-31T23:59:59Z",
+        }),
+      );
     });
 
     it("should accept same from and to dates", () => {
-      const result = CommonSchemas.dateRange.safeParse({
-        from: "2024-06-15T12:00:00Z",
-        to: "2024-06-15T12:00:00Z",
-      });
-      assertEquals(result.success, true);
+      assertParseSuccess(
+        CommonSchemas.dateRange.safeParse({
+          from: "2024-06-15T12:00:00Z",
+          to: "2024-06-15T12:00:00Z",
+        }),
+      );
     });
 
     it("should reject when from is after to", () => {
-      const result = CommonSchemas.dateRange.safeParse({
-        from: "2024-12-31T00:00:00Z",
-        to: "2024-01-01T00:00:00Z",
-      });
-      assertEquals(result.success, false);
+      assertParseFailure(
+        CommonSchemas.dateRange.safeParse({
+          from: "2024-12-31T00:00:00Z",
+          to: "2024-01-01T00:00:00Z",
+        }),
+      );
     });
 
     it("should reject non-datetime strings", () => {
-      const result = CommonSchemas.dateRange.safeParse({
-        from: "yesterday",
-        to: "today",
-      });
-      assertEquals(result.success, false);
+      assertParseFailure(
+        CommonSchemas.dateRange.safeParse({
+          from: "yesterday",
+          to: "today",
+        }),
+      );
     });
   });
 
   describe("strongPassword", () => {
     it("should accept strong password", () => {
-      const result = CommonSchemas.strongPassword.safeParse("MyP@ssw0rd!");
-      assertEquals(result.success, true);
+      assertParseSuccess(CommonSchemas.strongPassword.safeParse("MyP@ssw0rd!"));
     });
 
     it("should reject password shorter than 8 characters", () => {
-      const result = CommonSchemas.strongPassword.safeParse("A1@b");
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.strongPassword.safeParse("A1@b"));
     });
 
     it("should reject password without uppercase", () => {
-      const result = CommonSchemas.strongPassword.safeParse("myp@ssw0rd!");
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.strongPassword.safeParse("myp@ssw0rd!"));
     });
 
     it("should reject password without lowercase", () => {
-      const result = CommonSchemas.strongPassword.safeParse("MYP@SSW0RD!");
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.strongPassword.safeParse("MYP@SSW0RD!"));
     });
 
     it("should reject password without number", () => {
-      const result = CommonSchemas.strongPassword.safeParse("MyP@ssword!");
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.strongPassword.safeParse("MyP@ssword!"));
     });
 
     it("should reject password without special character", () => {
-      const result = CommonSchemas.strongPassword.safeParse("MyPassw0rd");
-      assertEquals(result.success, false);
+      assertParseFailure(CommonSchemas.strongPassword.safeParse("MyPassw0rd"));
     });
   });
 });

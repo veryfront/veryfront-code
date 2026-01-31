@@ -18,15 +18,14 @@ export function loadComponentFromSource(
   adapter: RuntimeAdapter,
   options?: LoadComponentOptions,
 ): Promise<React.ComponentType<Record<string, unknown>>> {
-  const fileName = filePath.split("/").pop() || filePath;
+  const fileName = filePath.split("/").pop() ?? filePath;
+  const projectId = options?.projectId ?? projectDir;
+  const dev = options?.dev ?? true;
+  const ssr = options?.ssr ?? true;
 
   return withSpan(
     "modules.react.loadComponentFromSource",
     async () => {
-      const projectId = options?.projectId ?? projectDir;
-      const dev = options?.dev ?? true;
-      const ssr = options?.ssr ?? true;
-
       if (ssr) {
         const loader = new SSRModuleLoader({
           projectDir,
@@ -37,6 +36,7 @@ export function loadComponentFromSource(
           contentSourceId: options?.contentSourceId,
           reactVersion: options?.reactVersion,
         });
+
         return loader.loadModule(filePath, source);
       }
 
@@ -72,7 +72,7 @@ export function loadComponentFromSource(
     {
       "react.file": fileName,
       "react.projectDir": projectDir,
-      "react.ssr": options?.ssr ?? true,
+      "react.ssr": ssr,
       "react.sourceLength": source.length,
     },
   );

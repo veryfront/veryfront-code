@@ -11,7 +11,7 @@ export function writeManifest(
 ): Promise<void> {
   return withSpan(
     "build.asset.writeManifest",
-    async () => {
+    async (): Promise<void> => {
       const fs = createFileSystem();
       const manifestPath = join(outputDir, MANIFEST_FILENAME);
 
@@ -34,7 +34,7 @@ export function loadManifest(
 ): Promise<Map<string, OptimizedImageMetadata>> {
   return withSpan(
     "build.asset.loadManifest",
-    async () => {
+    async (): Promise<Map<string, OptimizedImageMetadata>> => {
       const fs = createFileSystem();
       const manifestPath = join(outputDir, MANIFEST_FILENAME);
 

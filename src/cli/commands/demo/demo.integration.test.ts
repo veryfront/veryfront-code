@@ -23,7 +23,14 @@ denoOnlyDescribe("demo command integration", () => {
 
   async function assertHelpIncludes(...includes: string[]): Promise<void> {
     const { output } = await runDemo(["--help"]);
-    for (const text of includes) assertStringIncludes(output, text);
+    for (const text of includes) {
+      assertStringIncludes(output, text);
+    }
+  }
+
+  async function assertNonTtyExit(args: string[] = []): Promise<void> {
+    const { output } = await runDemo(args);
+    assertStringIncludes(output, "interactive terminal");
   }
 
   describe("--help flag", () => {
@@ -46,36 +53,30 @@ denoOnlyDescribe("demo command integration", () => {
 
   describe("non-TTY behavior", () => {
     it("should exit gracefully when not in TTY", async () => {
-      const { output } = await runDemo([]);
-      assertStringIncludes(output, "interactive terminal");
+      await assertNonTtyExit();
     });
 
     it("should exit gracefully with --auto flag when not in TTY", async () => {
-      const { output } = await runDemo(["--auto"]);
-      assertStringIncludes(output, "interactive terminal");
+      await assertNonTtyExit(["--auto"]);
     });
 
     it("should exit gracefully with --auto and --login flags when not in TTY", async () => {
-      const { output } = await runDemo(["--auto", "--login", "google"]);
-      assertStringIncludes(output, "interactive terminal");
+      await assertNonTtyExit(["--auto", "--login", "google"]);
     });
   });
 
   describe("command-line argument parsing", () => {
     it("should accept project name argument", async () => {
-      const { output } = await runDemo(["my-custom-project"]);
-      assertStringIncludes(output, "interactive terminal");
+      await assertNonTtyExit(["my-custom-project"]);
     });
 
     it("should accept --auto flag with project name", async () => {
-      const { output } = await runDemo(["test-project", "--auto"]);
-      assertStringIncludes(output, "interactive terminal");
+      await assertNonTtyExit(["test-project", "--auto"]);
     });
 
     it("should accept all login methods", async () => {
       for (const method of ["google", "github", "microsoft", "token"]) {
-        const { output } = await runDemo(["--auto", "--login", method]);
-        assertStringIncludes(output, "interactive terminal");
+        await assertNonTtyExit(["--auto", "--login", method]);
       }
     });
   });

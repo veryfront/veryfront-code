@@ -28,6 +28,7 @@ describe("memoize", () => {
       cache.set("a", 1);
       cache.set("b", 2);
       assertEquals(cache.size(), 2);
+
       cache.clear();
       assertEquals(cache.size(), 0);
       assertEquals(cache.has("a"), false);
@@ -36,8 +37,10 @@ describe("memoize", () => {
     it("should return correct size", () => {
       const cache = new MemoCache<string>();
       assertEquals(cache.size(), 0);
+
       cache.set("a", "1");
       assertEquals(cache.size(), 1);
+
       cache.set("b", "2");
       assertEquals(cache.size(), 2);
     });
@@ -52,11 +55,12 @@ describe("memoize", () => {
   });
 
   describe("memoize", () => {
-    function createDoublerMemoized(callCount: { value: number }) {
-      const fn = (x: number) => {
+    function createDoublerMemoized(callCount: { value: number }): (x: number) => number {
+      const fn = (x: number): number => {
         callCount.value++;
         return x * 2;
       };
+
       return memoize(fn, (x) => String(x));
     }
 
@@ -66,6 +70,7 @@ describe("memoize", () => {
 
       assertEquals(memoized(5), 10);
       assertEquals(callCount.value, 1);
+
       assertEquals(memoized(5), 10);
       assertEquals(callCount.value, 1);
     });
@@ -80,7 +85,7 @@ describe("memoize", () => {
     });
 
     it("should use key hasher for cache key", () => {
-      const fn = (a: number, b: number) => a + b;
+      const fn = (a: number, b: number): number => a + b;
       const memoized = memoize(fn, (a, b) => `${a}-${b}`);
 
       assertEquals(memoized(1, 2), 3);
@@ -88,7 +93,7 @@ describe("memoize", () => {
     });
 
     it("should handle complex return types", () => {
-      const fn = (id: string) => ({ id, timestamp: Date.now() });
+      const fn = (id: string): { id: string; timestamp: number } => ({ id, timestamp: Date.now() });
       const memoized = memoize(fn, (id) => id);
 
       const result1 = memoized("test");
@@ -98,12 +103,15 @@ describe("memoize", () => {
   });
 
   describe("memoizeAsync", () => {
-    function createAsyncDoublerMemoized(callCount: { value: number }) {
-      const fn = async (x: number) => {
+    function createAsyncDoublerMemoized(
+      callCount: { value: number },
+    ): (x: number) => Promise<number> {
+      const fn = async (x: number): Promise<number> => {
         await Promise.resolve();
         callCount.value++;
         return x * 2;
       };
+
       return memoizeAsync(fn, (x) => String(x));
     }
 
@@ -113,6 +121,7 @@ describe("memoize", () => {
 
       assertEquals(await memoized(5), 10);
       assertEquals(callCount.value, 1);
+
       assertEquals(await memoized(5), 10);
       assertEquals(callCount.value, 1);
     });
@@ -127,7 +136,7 @@ describe("memoize", () => {
     });
 
     it("should handle promise resolution", async () => {
-      const fn = async (msg: string) => {
+      const fn = async (msg: string): Promise<string> => {
         await delay(1);
         return `processed: ${msg}`;
       };

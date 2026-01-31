@@ -23,17 +23,21 @@ export function createMockAdapter(): MockRuntimeAdapter {
 
   function hasPath(path: string): boolean {
     if (files.has(path) || directories.has(path)) return true;
+
     for (const filePath of files.keys()) {
-      if (filePath.startsWith(path + "/")) return true;
+      if (filePath.startsWith(`${path}/`)) return true;
     }
+
     return false;
   }
 
   function isDirectoryPath(path: string): boolean {
     if (directories.has(path)) return true;
+
     for (const filePath of files.keys()) {
-      if (filePath.startsWith(path + "/")) return true;
+      if (filePath.startsWith(`${path}/`)) return true;
     }
+
     return false;
   }
 
@@ -79,18 +83,18 @@ export function createMockAdapter(): MockRuntimeAdapter {
         const entries = new Map<string, { isFile: boolean; isDirectory: boolean }>();
 
         for (const filePath of files.keys()) {
-          if (!filePath.startsWith(path + "/")) continue;
+          if (!filePath.startsWith(`${path}/`)) continue;
 
           const relativePath = filePath.slice(path.length + 1);
           const [name, ...rest] = relativePath.split("/");
           if (!name) continue;
 
-          if (!entries.has(name)) {
-            entries.set(name, {
-              isFile: rest.length === 0,
-              isDirectory: rest.length > 0,
-            });
-          }
+          if (entries.has(name)) continue;
+
+          entries.set(name, {
+            isFile: rest.length === 0,
+            isDirectory: rest.length > 0,
+          });
         }
 
         for (const [name, meta] of entries) {
@@ -128,7 +132,7 @@ export function createMockAdapter(): MockRuntimeAdapter {
           const parts = path.split("/").filter(Boolean);
           let current = "";
           for (const part of parts) {
-            current += "/" + part;
+            current += `/${part}`;
             directories.add(current);
           }
         }
@@ -140,11 +144,11 @@ export function createMockAdapter(): MockRuntimeAdapter {
         directories.delete(path);
 
         if (options?.recursive) {
-          for (const filePath of [...files.keys()]) {
-            if (filePath.startsWith(path + "/")) files.delete(filePath);
+          for (const filePath of files.keys()) {
+            if (filePath.startsWith(`${path}/`)) files.delete(filePath);
           }
-          for (const dirPath of [...directories]) {
-            if (dirPath.startsWith(path + "/")) directories.delete(dirPath);
+          for (const dirPath of directories) {
+            if (dirPath.startsWith(`${path}/`)) directories.delete(dirPath);
           }
         }
 

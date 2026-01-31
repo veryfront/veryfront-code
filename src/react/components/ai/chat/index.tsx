@@ -47,7 +47,6 @@ import { MessageActions } from "./components/message-actions.tsx";
 import { ReasoningCard } from "./components/reasoning.tsx";
 import { ToolCallCard } from "./components/tool-ui.tsx";
 import { getTextContent, groupPartsInOrder } from "./utils/message-parts.ts";
-import { ChatFooter, ChatHeader, ChatInput, ChatMessages } from "./composition/api.tsx";
 
 export interface ChatProps {
   messages: UIMessage[];
@@ -152,7 +151,7 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
               {showSuggestions && (
                 <div className="w-full max-w-2xl mt-6 mb-8">
                   <Suggestions layout="grid">
-                    {suggestions!.map((suggestion) => (
+                    {suggestions?.map((suggestion) => (
                       <Suggestion
                         key={suggestion}
                         suggestion={suggestion}
@@ -174,6 +173,7 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
 
                 if (msg.role === "user") {
                   const content = getTextContent(msg);
+
                   return (
                     <MessageItem key={msg.id} role={msg.role} className={cn("flex", "justify-end")}>
                       <div className={theme.message?.[msg.role] ?? theme.message?.user}>
@@ -187,11 +187,7 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
                 const textContent = getTextContent(msg);
 
                 return (
-                  <MessageItem
-                    key={msg.id}
-                    role={msg.role}
-                    className={cn("flex", "justify-start")}
-                  >
+                  <MessageItem key={msg.id} role={msg.role} className={cn("flex", "justify-start")}>
                     <div className={theme.message?.[msg.role] ?? theme.message?.assistant}>
                       {partGroups.map((group, index) => {
                         if (group.type === "text") {

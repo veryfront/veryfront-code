@@ -11,16 +11,22 @@ import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
 import { join } from "@veryfront/compat/path";
 import { LayoutCollector } from "../../../../src/rendering/layouts/layout-collector.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import type { EntityInfo } from "@veryfront/types";
-import type { MdxBundle } from "@veryfront/types";
+import type { EntityInfo, MdxBundle } from "@veryfront/types";
 import { cleanupTestDir, createTestProjectDir } from "../../../_helpers/server.ts";
+
+function createMockCompileMDX(): (_content: string, frontmatter?: Record<string, unknown>) => Promise<MdxBundle> {
+  return (_content: string, frontmatter?: Record<string, unknown>) =>
+    Promise.resolve({
+      compiledCode: `export default () => "compiled"`,
+      frontmatter: frontmatter ?? {},
+    } as MdxBundle);
+}
 
 describe("LayoutCollector", () => {
   it("collects named layout from frontmatter", async () => {
     const projectDir = await createTestProjectDir();
 
     try {
-      // Create layouts directory and layout file
       await mkdir(join(projectDir, "layouts"), { recursive: true });
       await writeTextFile(
         join(projectDir, "layouts/main.mdx"),
@@ -35,7 +41,6 @@ isLayout: true
 `,
       );
 
-      // Create page with layout frontmatter
       const pageInfo: EntityInfo = {
         entity: {
           id: join(projectDir, "pages/test.mdx"),
@@ -43,25 +48,16 @@ isLayout: true
           slug: "test",
           type: "page",
           content: "# Test Page",
-          frontmatter: {
-            layout: "main",
-          },
+          frontmatter: { layout: "main" },
         },
       };
 
       const adapter = await getAdapter();
-      const mockCompileMDX = (_content: string, frontmatter?: Record<string, unknown>) => {
-        return Promise.resolve({
-          compiledCode: `export default () => "compiled"`,
-          frontmatter: frontmatter || {},
-        } as MdxBundle);
-      };
-
       const collector = new LayoutCollector({
         projectDir,
         adapter,
         config: {},
-        compileMDX: mockCompileMDX,
+        compileMDX: createMockCompileMDX(),
       });
 
       const result = await collector.collectLayouts(pageInfo);
@@ -82,7 +78,6 @@ isLayout: true
     const projectDir = await createTestProjectDir();
 
     try {
-      // Create nested layout structure
       await mkdir(join(projectDir, "pages/blog"), { recursive: true });
       await writeTextFile(
         join(projectDir, "pages/layout.tsx"),
@@ -105,18 +100,11 @@ isLayout: true
       };
 
       const adapter = await getAdapter();
-      const mockCompileMDX = (_content: string, frontmatter?: Record<string, unknown>) => {
-        return Promise.resolve({
-          compiledCode: `export default () => "compiled"`,
-          frontmatter: frontmatter || {},
-        } as MdxBundle);
-      };
-
       const collector = new LayoutCollector({
         projectDir,
         adapter,
         config: {},
-        compileMDX: mockCompileMDX,
+        compileMDX: createMockCompileMDX(),
       });
 
       const result = await collector.collectLayouts(pageInfo);
@@ -146,15 +134,13 @@ isLayout: true
       };
 
       const adapter = await getAdapter();
-      const mockCompileMDX = () => {
-        throw new Error("Should not compile layout");
-      };
-
       const collector = new LayoutCollector({
         projectDir,
         adapter,
         config: { layout: "main" },
-        compileMDX: mockCompileMDX,
+        compileMDX: () => {
+          throw new Error("Should not compile layout");
+        },
       });
 
       const result = await collector.collectLayouts(pageInfo);
@@ -169,7 +155,6 @@ isLayout: true
     const projectDir = await createTestProjectDir();
 
     try {
-      // Create default layout with isLayout frontmatter
       await mkdir(join(projectDir, "layouts"), { recursive: true });
       await writeTextFile(
         join(projectDir, "layouts/default.mdx"),
@@ -199,7 +184,7 @@ isLayout: true
         compileCalled = true;
         return Promise.resolve({
           compiledCode: `export default () => "compiled"`,
-          frontmatter: frontmatter || {},
+          frontmatter: frontmatter ?? {},
         } as MdxBundle);
       };
 
@@ -217,9 +202,7 @@ isLayout: true
       // layoutBundle is undefined, but the layout is in nestedLayouts
       assertEquals(result.layoutBundle, undefined);
       assertEquals(result.nestedLayouts.length, 1);
-      const nestedLayout = result.nestedLayouts[0];
-      assertExists(nestedLayout);
-      assertExists(nestedLayout.bundle);
+      assertExists(result.nestedLayouts[0]?.bundle);
     } finally {
       await cleanupTestDir(projectDir);
     }

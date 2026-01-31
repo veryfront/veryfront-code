@@ -84,7 +84,9 @@ interface GraphQLResponse<T> {
 
 async function linearFetch<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
   const token = await getAccessToken();
-  if (!token) throw new Error("Not authenticated with Linear. Please connect your account.");
+  if (!token) {
+    throw new Error("Not authenticated with Linear. Please connect your account.");
+  }
 
   const response = await fetch(LINEAR_API_URL, {
     method: "POST",
@@ -102,9 +104,13 @@ async function linearFetch<T>(query: string, variables?: Record<string, unknown>
   const json: GraphQLResponse<T> = await response.json();
 
   const errorMessage = json.errors?.[0]?.message;
-  if (errorMessage) throw new Error(`Linear GraphQL error: ${errorMessage}`);
+  if (errorMessage) {
+    throw new Error(`Linear GraphQL error: ${errorMessage}`);
+  }
 
-  if (!json.data) throw new Error("Linear API returned no data");
+  if (!json.data) {
+    throw new Error("Linear API returned no data");
+  }
 
   return json.data;
 }
@@ -287,7 +293,10 @@ export async function createIssue(options: {
     input,
   });
 
-  if (!data.issueCreate.success) throw new Error("Failed to create issue");
+  if (!data.issueCreate.success) {
+    throw new Error("Failed to create issue");
+  }
+
   return data.issueCreate.issue;
 }
 
@@ -363,7 +372,10 @@ export async function updateIssue(
     input,
   });
 
-  if (!data.issueUpdate.success) throw new Error("Failed to update issue");
+  if (!data.issueUpdate.success) {
+    throw new Error("Failed to update issue");
+  }
+
   return data.issueUpdate.issue;
 }
 

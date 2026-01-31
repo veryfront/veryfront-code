@@ -19,7 +19,7 @@ import {
   brand,
   createTui,
   dim,
-  error,
+  error as errorText,
   handleInput,
   interceptConsole,
   success,
@@ -72,6 +72,10 @@ function parseIntegrations(integrationsStr?: string): IntegrationName[] {
     .filter(Boolean) as IntegrationName[];
 }
 
+function isValidProjectName(name: string): boolean {
+  return /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/.test(name);
+}
+
 // ============================================================================
 // Main Command
 // ============================================================================
@@ -93,7 +97,6 @@ export async function newCommand(
   let integrations = parseIntegrations(integrationsStr);
 
   const fs = createFileSystem();
-
   const token = env.apiToken || (await readToken());
   const userInfo = token ? await validateToken(token) : null;
 
@@ -112,8 +115,8 @@ export async function newCommand(
   const projectDir = join(cwd(), name);
   const slug = `${name}-${randomSuffix()}`;
 
-  if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/.test(name)) {
-    console.error(error("Invalid project name. Use lowercase letters, numbers, and hyphens."));
+  if (!isValidProjectName(name)) {
+    console.error(errorText("Invalid project name. Use lowercase letters, numbers, and hyphens."));
     exitProcess(1);
     return;
   }
@@ -121,7 +124,7 @@ export async function newCommand(
   try {
     const stat = await fs.stat(projectDir);
     if (stat.isDirectory && !force) {
-      console.error(error(`Directory "${name}" exists. Use --force to overwrite.`));
+      console.error(errorText(`Directory "${name}" exists. Use --force to overwrite.`));
       exitProcess(1);
       return;
     }
@@ -147,7 +150,7 @@ export async function newCommand(
   }
 
   if (!token) {
-    console.log("\n" + error("  Please log in: ") + dim("deno task cli login") + "\n");
+    console.log("\n" + errorText("  Please log in: ") + dim("deno task cli login") + "\n");
     exitProcess(1);
     return;
   }
@@ -159,8 +162,8 @@ export async function newCommand(
   const prodUrl = `https://${slug}.veryfront.com`;
 
   tui.setInfo({
-    Local: dim("○") + " " + brand(localUrl),
-    Production: dim("○") + " " + brand(prodUrl),
+    Local: `${dim("○")} ${brand(localUrl)}`,
+    Production: `${dim("○")} ${brand(prodUrl)}`,
   });
 
   tui.setStatus("Creating...", "loading");
@@ -185,8 +188,8 @@ export async function newCommand(
     }
 
     tui.setInfo({
-      Local: success("●") + " " + brand(localUrl),
-      Production: dim("○") + " " + brand(prodUrl),
+      Local: `${success("●")} ${brand(localUrl)}`,
+      Production: `${dim("○")} ${brand(prodUrl)}`,
     });
     tui.setStatus("Ready", "success");
 
@@ -220,8 +223,8 @@ export async function newCommand(
     await deploy({ branch: "main", env: "production", force: true, dryRun: false, quiet: true });
 
     tui.setInfo({
-      Local: success("●") + " " + brand(localUrl),
-      Production: success("●") + " " + brand(`https://${actualSlug}.veryfront.com`),
+      Local: `${success("●")} ${brand(localUrl)}`,
+      Production: `${success("●")} ${brand(`https://${actualSlug}.veryfront.com`)}`,
     });
     tui.setStatus("Deployed", "success");
 
@@ -232,8 +235,8 @@ export async function newCommand(
 
     tui.cleanup();
     exitProcess(0);
-  } catch (error) {
-    tui.setStatus(error instanceof Error ? error.message : String(error), "error");
+  } catch (err) {
+    tui.setStatus(err instanceof Error ? err.message : String(err), "error");
     await new Promise((r) => setTimeout(r, 2000));
     tui.cleanup();
     restore();

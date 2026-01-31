@@ -11,7 +11,6 @@ export class DenoRedisAdapter implements RedisAdapter {
 
   async hgetall(key: string): Promise<Record<string, string>> {
     const res = await this.client.hgetall(key);
-    // Deno redis returns array [k1, v1, k2, v2]
     return arrayToObject(res);
   }
 
@@ -71,18 +70,14 @@ export class DenoRedisAdapter implements RedisAdapter {
   > {
     if (streams.length === 0) return [];
 
-    const res = await this.client.xreadgroup(
-      streams.map(({ key, xid }) => ({ key, xid })),
-      options,
-    );
-
+    const res = await this.client.xreadgroup(streams, options);
     if (!res) return [];
 
-    return res.map((stream) => ({
-      key: stream.key,
-      messages: stream.messages.map((msg) => ({
-        id: msg.id,
-        data: arrayToObject(msg.fieldValues),
+    return res.map(({ key, messages }) => ({
+      key,
+      messages: messages.map(({ id, fieldValues }) => ({
+        id,
+        data: arrayToObject(fieldValues),
       })),
     }));
   }
@@ -116,10 +111,10 @@ export class DenoRedisAdapter implements RedisAdapter {
   }
 
   async quit(): Promise<void> {
-    await this.client.close(); // Deno redis uses close
+    await this.client.close();
   }
 
-  async disconnect(): Promise<void> {
-    await this.client.close();
+  disconnect(): Promise<void> {
+    return this.client.close();
   }
 }

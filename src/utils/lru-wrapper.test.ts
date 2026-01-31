@@ -23,10 +23,12 @@ describe("LRUCache", () => {
   describe("Basic functionality", () => {
     it("basic set/get and overwrite", (): void => {
       const cache = createCache<string, number>({ maxEntries: 3, ttlMs: 1000 });
+
       cache.set("a", 1);
       cache.set("b", 2);
       assertEquals(cache.get("a"), 1);
       assertEquals(cache.get("b"), 2);
+
       cache.set("a", 3);
       assertEquals(cache.get("a"), 3);
     });
@@ -49,6 +51,7 @@ describe("LRUCache", () => {
 
     it("delete() returns false for non-existent key", (): void => {
       const cache = createCache<string, string>({ maxEntries: 3 });
+
       assertEquals(cache.delete("nonexistent"), false);
 
       cache.set("exists", "value");
@@ -80,6 +83,7 @@ describe("LRUCache", () => {
   describe("TTL and expiration", () => {
     it("TTL expiration", async (): Promise<void> => {
       const cache = createCache<string, number>({ maxEntries: 3, ttlMs: 30 });
+
       cache.set("a", 1);
       assertEquals(cache.get("a"), 1);
 
@@ -91,6 +95,7 @@ describe("LRUCache", () => {
 
     it("has() respects expiry", async (): Promise<void> => {
       const cache = createCache<string, number>({ maxEntries: 3, ttlMs: 30 });
+
       cache.set("a", 1);
       assertEquals(cache.has("a"), true);
 
@@ -102,10 +107,12 @@ describe("LRUCache", () => {
 
     it("no TTL - entries never expire", async (): Promise<void> => {
       const cache = createCache<string, number>({ maxEntries: 5 });
+
       cache.set("a", 1);
       cache.set("b", 2);
 
       await delay(10);
+
       assertEquals(cache.get("a"), 1);
       assertEquals(cache.get("b"), 2);
     });
@@ -117,6 +124,7 @@ describe("LRUCache", () => {
 
       cache.set("a", 1);
       await delay(2);
+
       cache.set("b", 2);
       await delay(2);
 
@@ -139,9 +147,9 @@ describe("LRUCache", () => {
 
     it("prune with no expired entries", (): void => {
       const cache = createCache<string, number>({ maxEntries: 2 });
+
       cache.set("a", 1);
       cache.set("b", 2);
-
       assertEquals(cache.size, 2);
 
       cache.set("c", 3);
@@ -153,6 +161,7 @@ describe("LRUCache", () => {
 
     it("pruning with exactly maxEntries", (): void => {
       const cache = createCache<string, number>({ maxEntries: 3 });
+
       cache.set("a", 1);
       cache.set("b", 2);
       cache.set("c", 3);
@@ -185,9 +194,11 @@ describe("LRUCache", () => {
   describe("Default options and edge cases", () => {
     it("default options", (): void => {
       const cache = createCache<string, number>();
+
       for (let i = 0; i < 150; i++) {
         cache.set(`key${i}`, i);
       }
+
       assertEquals(cache.size, 100);
       assertEquals(cache.get("key0"), undefined);
       assertEquals(cache.get("key49"), undefined);
@@ -197,10 +208,12 @@ describe("LRUCache", () => {
 
     it("edge case - key is undefined", (): void => {
       const cache = createCache<string | undefined, number>({ maxEntries: 3 });
-      cache.set(undefined as any, 42);
-      assertEquals(cache.get(undefined as any), 42);
-      assertEquals(cache.has(undefined as any), true);
-      assertEquals(cache.delete(undefined as any), true);
+      const key = undefined as any;
+
+      cache.set(key, 42);
+      assertEquals(cache.get(key), 42);
+      assertEquals(cache.has(key), true);
+      assertEquals(cache.delete(key), true);
     });
 
     it("has() respects delete and clear", (): void => {

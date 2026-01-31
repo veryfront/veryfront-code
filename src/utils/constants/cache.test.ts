@@ -29,6 +29,8 @@ describe("constants/cache", () => {
   });
 
   describe("getDistributedCacheTTL", () => {
+    const cacheTypes = ["ssr-module", "transform", "file", "css"] as const;
+
     it("should return production TTL for ssr-module when production", () => {
       const ttl = getDistributedCacheTTL("ssr-module", true);
       assertEquals(typeof ttl, "number");
@@ -38,15 +40,17 @@ describe("constants/cache", () => {
     it("should return preview TTL for ssr-module when not production", () => {
       const ttl = getDistributedCacheTTL("ssr-module", false);
       assertEquals(typeof ttl, "number");
+
       // Preview TTL should be shorter than production
       const prodTtl = getDistributedCacheTTL("ssr-module", true);
       assertEquals(ttl < prodTtl, true);
     });
 
     it("should return values for all cache types", () => {
-      for (const type of ["ssr-module", "transform", "file", "css"] as const) {
+      for (const type of cacheTypes) {
         const prodTtl = getDistributedCacheTTL(type, true);
         const previewTtl = getDistributedCacheTTL(type, false);
+
         assertEquals(typeof prodTtl, "number");
         assertEquals(typeof previewTtl, "number");
         assertEquals(prodTtl > 0, true);
@@ -55,9 +59,10 @@ describe("constants/cache", () => {
     });
 
     it("should return production TTL >= preview TTL for all types", () => {
-      for (const type of ["ssr-module", "transform", "file", "css"] as const) {
+      for (const type of cacheTypes) {
         const prodTtl = getDistributedCacheTTL(type, true);
         const previewTtl = getDistributedCacheTTL(type, false);
+
         assertEquals(prodTtl >= previewTtl, true);
       }
     });

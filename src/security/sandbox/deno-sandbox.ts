@@ -19,23 +19,21 @@ type ExtendedWorkerOptions = WorkerOptions & {
 };
 
 export function runInWorker<T = unknown>(code: string, options: SandboxOptions = {}): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_SANDBOX_TIMEOUT_MS;
+
   return withSpan(
     "security.sandbox.runInWorker",
     () => {
       const workerOptions: ExtendedWorkerOptions = { type: "module" };
 
-      if (isDeno) {
-        workerOptions.deno = { permissions: "none" };
-      }
+      if (isDeno) workerOptions.deno = { permissions: "none" };
 
-      const memoryLimitMb = options.memoryLimitMb;
+      const { memoryLimitMb } = options;
       if (typeof memoryLimitMb === "number") {
         if (!Number.isFinite(memoryLimitMb) || memoryLimitMb <= 0) {
           throw new Error("Sandbox memoryLimitMb must be a positive, finite number");
         }
-        if (!isNode) {
-          throw new Error("Sandbox memory limits are not supported in this runtime");
-        }
+        if (!isNode) throw new Error("Sandbox memory limits are not supported in this runtime");
 
         workerOptions.resourceLimits = {
           ...workerOptions.resourceLimits,
@@ -62,7 +60,6 @@ export function runInWorker<T = unknown>(code: string, options: SandboxOptions =
         : URL.createObjectURL(new Blob([workerCode], { type: "application/javascript" }));
 
       const worker = new Worker(workerUrl, workerOptions);
-      const timeoutMs = options.timeoutMs ?? DEFAULT_SANDBOX_TIMEOUT_MS;
 
       function safeTerminate(logMessage: string, error?: unknown): void {
         try {
@@ -99,7 +96,7 @@ export function runInWorker<T = unknown>(code: string, options: SandboxOptions =
       return promise;
     },
     {
-      "sandbox.timeoutMs": options.timeoutMs ?? DEFAULT_SANDBOX_TIMEOUT_MS,
+      "sandbox.timeoutMs": timeoutMs,
       "sandbox.memoryLimitMb": options.memoryLimitMb ?? 0,
     },
   );

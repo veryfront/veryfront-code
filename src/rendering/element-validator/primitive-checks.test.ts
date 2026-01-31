@@ -1,7 +1,3 @@
-/**
- * Tests for primitive-checks utility functions
- */
-
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import * as React from "react";

@@ -2,15 +2,29 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { LayoutApplicationOptions } from "./layout-applicator.ts";
 
-// ---- Inline reimplementations of non-exported pure logic ----
-
-/** Detect if page path is a dot-prefixed path */
 function isDotPath(pageFilePath: string): boolean {
-  return pageFilePath.split("/").some((s) => s.startsWith(".") && s !== "." && s !== "..");
+  return pageFilePath
+    .split("/")
+    .some((segment) => segment.startsWith(".") && segment !== "." && segment !== "..");
 }
 
-/** Build SSR router context for server-side rendering */
-function buildSSRRouter(requestUrl: URL | undefined, pageFilePath: string, pageSlug: string) {
+function buildSSRRouter(
+  requestUrl: URL | undefined,
+  pageFilePath: string,
+  pageSlug: string,
+): {
+  domain: string;
+  path: string;
+  pathname: string;
+  params: Record<string, never>;
+  query: Record<string, string>;
+  isPreview: false;
+  isMounted: false;
+  navigate: () => void;
+  push: () => void;
+  replace: () => void;
+  reload: () => void;
+} {
   return {
     domain: requestUrl?.origin ?? "",
     path: requestUrl?.pathname ?? pageFilePath,
@@ -26,13 +40,22 @@ function buildSSRRouter(requestUrl: URL | undefined, pageFilePath: string, pageS
   };
 }
 
-/** Build page context for PageContextProvider */
+type Heading = { id: string; text: string; level: number };
+
 function buildPageContext(
   slug: string,
   path: string,
   frontmatter: Record<string, unknown>,
-  headings: Array<{ id: string; text: string; level: number }>,
-) {
+  headings: Heading[],
+): {
+  slug: string;
+  path: string;
+  params: Record<string, never>;
+  query: Record<string, never>;
+  frontmatter: Record<string, unknown>;
+  headings: Heading[];
+  mdxHeadings: Heading[];
+} {
   return {
     slug,
     path,
@@ -43,8 +66,6 @@ function buildPageContext(
     mdxHeadings: headings,
   };
 }
-
-// ---- Tests ----
 
 describe("LayoutApplicator helpers", () => {
   describe("isDotPath", () => {
@@ -104,7 +125,6 @@ describe("LayoutApplicator helpers", () => {
 
     it("should provide async navigate/push/replace/reload methods", async () => {
       const router = buildSSRRouter(undefined, "/page.tsx", "page");
-      // These should be callable but no-ops
       await router.navigate();
       await router.push();
       await router.replace();
@@ -175,7 +195,7 @@ describe("LayoutApplicator helpers", () => {
       const opts: Partial<LayoutApplicationOptions> = {
         frontmatter: { title: "Test", description: "A test page" },
       };
-      assertEquals(opts.frontmatter?.title, "Test");
+      assertEquals((opts.frontmatter as { title?: string } | undefined)?.title, "Test");
     });
 
     it("should accept optional headings", () => {
@@ -191,24 +211,24 @@ describe("LayoutApplicator helpers", () => {
       const config: { experimental?: { esmLayouts?: boolean } } = {
         experimental: { esmLayouts: true },
       };
-      assertEquals(Boolean(config?.experimental?.esmLayouts), true);
+      assertEquals(Boolean(config.experimental?.esmLayouts), true);
     });
 
     it("should default to function-body mode when not set", () => {
       const config: { experimental?: { esmLayouts?: boolean } } = {};
-      assertEquals(Boolean((config as any)?.experimental?.esmLayouts), false);
+      assertEquals(Boolean(config.experimental?.esmLayouts), false);
     });
 
     it("should default to function-body mode when experimental is undefined", () => {
       const config: { experimental?: { esmLayouts?: boolean } } = { experimental: undefined };
-      assertEquals(Boolean(config?.experimental?.esmLayouts), false);
+      assertEquals(Boolean(config.experimental?.esmLayouts), false);
     });
 
     it("should default to function-body mode when esmLayouts is false", () => {
       const config: { experimental?: { esmLayouts?: boolean } } = {
         experimental: { esmLayouts: false },
       };
-      assertEquals(Boolean(config?.experimental?.esmLayouts), false);
+      assertEquals(Boolean(config.experimental?.esmLayouts), false);
     });
   });
 });

@@ -41,7 +41,11 @@ export interface SharpPngOptions {
 export interface SharpInstance {
   metadata(): Promise<SharpMetadata>;
   clone(): SharpInstance;
-  resize(width: number | null, height?: number | null, options?: SharpResizeOptions): SharpInstance;
+  resize(
+    width: number | null,
+    height?: number | null,
+    options?: SharpResizeOptions,
+  ): SharpInstance;
   webp(options?: SharpWebpOptions): SharpInstance;
   avif(options?: SharpAvifOptions): SharpInstance;
   jpeg(options?: SharpJpegOptions): SharpInstance;

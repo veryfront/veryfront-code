@@ -64,7 +64,7 @@ export function AITab({ tools, resources, prompts, agents }: AITabProps): React.
         setProviders(d.providers ?? []);
         setProvidersError(null);
       })
-      .catch((e: unknown) => setProvidersError((e as Error).message))
+      .catch((e: unknown) => setProvidersError(e instanceof Error ? e.message : String(e)))
       .finally(() => setProvidersLoading(false));
 
     fetch("/_dev/api/workflows")
@@ -73,7 +73,7 @@ export function AITab({ tools, resources, prompts, agents }: AITabProps): React.
         setWorkflows(d.workflows ?? []);
         setWorkflowsError(null);
       })
-      .catch((e: unknown) => setWorkflowsError((e as Error).message))
+      .catch((e: unknown) => setWorkflowsError(e instanceof Error ? e.message : String(e)))
       .finally(() => setWorkflowsLoading(false));
   }, []);
 
@@ -157,14 +157,12 @@ function TabButton({
   onClick: () => void;
   label: string;
 }): React.ReactElement {
+  const className = `px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+    active ? "bg-white text-sky-600 shadow-sm" : "text-gray-500 hover:text-gray-700"
+  }`;
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-        active ? "bg-white text-sky-600 shadow-sm" : "text-gray-500 hover:text-gray-700"
-      }`}
-    >
+    <button type="button" onClick={onClick} className={className}>
       {label}
     </button>
   );
@@ -247,8 +245,16 @@ function ProvidersSection({
     );
   }
 
-  const configured = providers.filter((p) => p.configured);
-  const notConfigured = providers.filter((p) => !p.configured);
+  const configured: Provider[] = [];
+  const notConfigured: Provider[] = [];
+
+  for (const provider of providers) {
+    if (provider.configured) {
+      configured.push(provider);
+    } else {
+      notConfigured.push(provider);
+    }
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-6">
@@ -283,33 +289,36 @@ function ProvidersSection({
             </tr>
           </thead>
           <tbody>
-            {providers.map((provider) => (
-              <tr key={provider.name} className="border-b last:border-0">
-                <td className="px-3 py-3">
-                  <code className="text-sm text-sky-600 font-medium">{provider.name}</code>
-                </td>
-                <td className="px-3 py-3">
-                  {provider.configured
-                    ? (
-                      <span className="inline-flex items-center gap-1.5 text-green-600">
-                        <span className="w-2 h-2 rounded-full bg-green-500" />
-                        Ready
-                      </span>
-                    )
-                    : (
-                      <span className="inline-flex items-center gap-1.5 text-gray-400">
-                        <span className="w-2 h-2 rounded-full bg-gray-300" />
-                        Not configured
-                      </span>
-                    )}
-                </td>
-                <td className="px-3 py-3 text-gray-500 text-sm">
-                  {provider.configured
-                    ? <span className="text-green-600">(set)</span>
-                    : <span className="text-gray-400">(not set)</span>}
-                </td>
-              </tr>
-            ))}
+            {providers.map((provider) => {
+              const status = provider.configured
+                ? {
+                  className: "inline-flex items-center gap-1.5 text-green-600",
+                  dotClassName: "w-2 h-2 rounded-full bg-green-500",
+                  label: "Ready",
+                  apiKey: <span className="text-green-600">(set)</span>,
+                }
+                : {
+                  className: "inline-flex items-center gap-1.5 text-gray-400",
+                  dotClassName: "w-2 h-2 rounded-full bg-gray-300",
+                  label: "Not configured",
+                  apiKey: <span className="text-gray-400">(not set)</span>,
+                };
+
+              return (
+                <tr key={provider.name} className="border-b last:border-0">
+                  <td className="px-3 py-3">
+                    <code className="text-sm text-sky-600 font-medium">{provider.name}</code>
+                  </td>
+                  <td className="px-3 py-3">
+                    <span className={status.className}>
+                      <span className={status.dotClassName} />
+                      {status.label}
+                    </span>
+                  </td>
+                  <td className="px-3 py-3 text-gray-500 text-sm">{status.apiKey}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </Card>

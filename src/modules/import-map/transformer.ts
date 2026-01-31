@@ -9,9 +9,7 @@ function shouldResolve(specifier: string, options?: TransformOptions): boolean {
   const isBare = !specifier.startsWith("http") && !specifier.startsWith("/") &&
     !specifier.startsWith(".");
 
-  if (isBare && !options?.resolveBare) {
-    return false;
-  }
+  if (isBare && !options?.resolveBare) return false;
 
   return true;
 }
@@ -41,7 +39,8 @@ export function transformImportsWithMap(
 
   transformedCode = transformedCode.replace(
     /import\s*\(\s*["']([^"']+)["']\s*\)/g,
-    (_match, specifier) => {
+    (match, specifier) => {
+      if (!shouldResolve(specifier, options)) return match;
       return `import("${resolve(specifier)}")`;
     },
   );

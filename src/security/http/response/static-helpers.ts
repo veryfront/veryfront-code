@@ -63,13 +63,8 @@ function createBuilder(
     builder.withSecurity(config.securityConfig ?? undefined);
   }
 
-  if (config?.cache) {
-    builder.withCache(config.cache);
-  }
-
-  if (config?.etag) {
-    builder.withETag(config.etag);
-  }
+  if (config?.cache) builder.withCache(config.cache);
+  if (config?.etag) builder.withETag(config.etag);
 
   return builder;
 }
@@ -87,13 +82,8 @@ export function error(
   const builder = createBuilder(req, config);
   const contentType = config?.contentType ?? CONTENT_TYPES.TEXT;
 
-  if (contentType === CONTENT_TYPES.JSON) {
-    return builder.json({ error: message }, status);
-  }
-
-  if (contentType === CONTENT_TYPES.HTML) {
-    return builder.html(message, status);
-  }
+  if (contentType === CONTENT_TYPES.JSON) return builder.json({ error: message }, status);
+  if (contentType === CONTENT_TYPES.HTML) return builder.html(message, status);
 
   return builder.text(message, status);
 }

@@ -75,9 +75,7 @@ interface XeroTenant {
 
 async function requireAccessToken(): Promise<string> {
   const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with Xero. Please connect your account.");
-  }
+  if (!token) throw new Error("Not authenticated with Xero. Please connect your account.");
   return token;
 }
 
@@ -89,23 +87,23 @@ async function getTenantId(token: string): Promise<string> {
     },
   });
 
-  if (!response.ok) {
-    throw new Error(`Failed to get Xero tenants: ${response.status}`);
-  }
+  if (!response.ok) throw new Error(`Failed to get Xero tenants: ${response.status}`);
 
   const tenants: XeroTenant[] = await response.json();
   const tenantId = tenants[0]?.tenantId;
+
   if (!tenantId) {
-    throw new Error(
-      "No Xero organizations found. Please connect to a Xero organization.",
-    );
+    throw new Error("No Xero organizations found. Please connect to a Xero organization.");
   }
 
   return tenantId;
 }
 
-function getCollection<T>(response: XeroResponse<T>, key: keyof T): T[keyof T] {
-  return response[key] as T[keyof T];
+function getCollection<T extends Record<string, unknown>, K extends keyof T>(
+  response: XeroResponse<T>,
+  key: K,
+): T[K] {
+  return response[key] as T[K];
 }
 
 async function xeroFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -124,12 +122,12 @@ async function xeroFetch<T>(endpoint: string, options: RequestInit = {}): Promis
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({} as Record<string, unknown>));
-    const message =
-      (error as { Message?: string; Detail?: string }).Message ??
-      (error as { Message?: string; Detail?: string }).Detail ??
-      response.statusText;
+    const error = (await response.json().catch(() => ({}))) as {
+      Message?: string;
+      Detail?: string;
+    };
 
+    const message = error.Message ?? error.Detail ?? response.statusText;
     throw new Error(`Xero API error: ${response.status} ${message}`);
   }
 
@@ -147,9 +145,7 @@ export async function listInvoices(options?: {
 
   if (options?.status) where.push(`Status == "${options.status}"`);
   if (options?.type) where.push(`Type == "${options.type}"`);
-  if (options?.contactId) {
-    where.push(`Contact.ContactID == Guid("${options.contactId}")`);
-  }
+  if (options?.contactId) where.push(`Contact.ContactID == Guid("${options.contactId}")`);
 
   if (where.length) params.set("where", where.join(" AND "));
   if (options?.limit) params.set("page", "1");
@@ -158,7 +154,7 @@ export async function listInvoices(options?: {
   const endpoint = `/Invoices${queryString ? `?${queryString}` : ""}`;
 
   const response = await xeroFetch<XeroResponse<{ Invoices: XeroInvoice[] }>>(endpoint);
-  const invoices = (getCollection(response, "Invoices") as XeroInvoice[]) ?? [];
+  const invoices = (getCollection(response, "Invoices") as XeroInvoice[] | undefined) ?? [];
 
   return options?.limit ? invoices.slice(0, options.limit) : invoices;
 }
@@ -167,11 +163,11 @@ export async function getInvoice(invoiceId: string): Promise<XeroInvoice> {
   const response = await xeroFetch<XeroResponse<{ Invoices: XeroInvoice[] }>>(
     `/Invoices/${invoiceId}`,
   );
+
   const invoices = getCollection(response, "Invoices") as XeroInvoice[] | undefined;
-
   const invoice = invoices?.[0];
-  if (!invoice) throw new Error(`Invoice not found: ${invoiceId}`);
 
+  if (!invoice) throw new Error(`Invoice not found: ${invoiceId}`);
   return invoice;
 }
 
@@ -207,18 +203,15 @@ export async function createInvoice(options: {
     LineAmountTypes: "Exclusive",
   };
 
-  const response = await xeroFetch<XeroResponse<{ Invoices: XeroInvoice[] }>>(
-    "/Invoices",
-    {
-      method: "POST",
-      body: JSON.stringify({ Invoices: [invoice] }),
-    },
-  );
+  const response = await xeroFetch<XeroResponse<{ Invoices: XeroInvoice[] }>>("/Invoices", {
+    method: "POST",
+    body: JSON.stringify({ Invoices: [invoice] }),
+  });
 
   const invoices = getCollection(response, "Invoices") as XeroInvoice[] | undefined;
   const created = invoices?.[0];
-  if (!created) throw new Error("Failed to create invoice");
 
+  if (!created) throw new Error("Failed to create invoice");
   return created;
 }
 
@@ -239,7 +232,7 @@ export async function listContacts(options?: {
   const endpoint = `/Contacts${queryString ? `?${queryString}` : ""}`;
 
   const response = await xeroFetch<XeroResponse<{ Contacts: XeroContact[] }>>(endpoint);
-  const contacts = (getCollection(response, "Contacts") as XeroContact[]) ?? [];
+  const contacts = (getCollection(response, "Contacts") as XeroContact[] | undefined) ?? [];
 
   return options?.limit ? contacts.slice(0, options.limit) : contacts;
 }
@@ -248,11 +241,11 @@ export async function getContact(contactId: string): Promise<XeroContact> {
   const response = await xeroFetch<XeroResponse<{ Contacts: XeroContact[] }>>(
     `/Contacts/${contactId}`,
   );
+
   const contacts = getCollection(response, "Contacts") as XeroContact[] | undefined;
-
   const contact = contacts?.[0];
-  if (!contact) throw new Error(`Contact not found: ${contactId}`);
 
+  if (!contact) throw new Error(`Contact not found: ${contactId}`);
   return contact;
 }
 
@@ -270,9 +263,7 @@ export async function getCurrentUser(): Promise<{
     },
   });
 
-  if (!response.ok) {
-    throw new Error(`Failed to get user info: ${response.status}`);
-  }
+  if (!response.ok) throw new Error(`Failed to get user info: ${response.status}`);
 
   const data: { Organisations: Array<{ Name: string }> } = await response.json();
 

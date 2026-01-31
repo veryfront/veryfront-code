@@ -1,9 +1,3 @@
-/**
- * Step Executor
- *
- * Executes individual workflow steps (agents and tools)
- */
-
 import type { Agent, AgentResponse } from "#veryfront/agent";
 import type { Tool } from "#veryfront/tool";
 import type {
@@ -16,7 +10,6 @@ import type {
 import { parseDuration } from "../types.ts";
 import type { BlobStorage } from "../blob/types.ts";
 
-/** Default retry configuration */
 const DEFAULT_RETRY: RetryConfig = {
   maxAttempts: 1,
   backoff: "exponential",
@@ -24,80 +17,42 @@ const DEFAULT_RETRY: RetryConfig = {
   maxDelay: 30000,
 };
 
-/** Default timeout for workflow steps (5 minutes) */
 const DEFAULT_STEP_TIMEOUT_MS = 5 * 60 * 1000;
 
-/**
- * Agent registry for looking up agents by ID
- */
 export interface AgentRegistry {
   get(id: string): Agent | undefined;
-  /** Optional: List all registered agent IDs (for error messages) */
   list?(): string[];
 }
 
-/**
- * Tool registry for looking up tools by ID
- */
 export interface ToolRegistry {
   get(id: string): Tool | undefined;
-  /** Optional: List all registered tool IDs (for error messages) */
   list?(): string[];
 }
 
-/**
- * Step executor configuration
- */
 export interface StepExecutorConfig {
-  /** Agent registry for looking up agents */
   agentRegistry?: AgentRegistry;
-  /** Tool registry for looking up tools */
   toolRegistry?: ToolRegistry;
-  /** Default timeout for steps (in milliseconds) */
   defaultTimeout?: number;
-  /** Blob storage access */
   blobStorage?: BlobStorage;
-  /** Callback when step starts */
   onStepStart?: (nodeId: string, input: unknown) => void;
-  /** Callback when step completes */
   onStepComplete?: (nodeId: string, output: unknown) => void;
-  /** Callback when step fails */
   onStepError?: (nodeId: string, error: Error) => void;
 }
 
-/**
- * Result of executing a step
- */
 export interface StepResult {
-  /** Whether the step succeeded */
   success: boolean;
-  /** Output from the step (if successful) */
   output?: unknown;
-  /** Error message (if failed) */
   error?: string;
-  /** Execution time in milliseconds */
   executionTime: number;
 }
 
-/**
- * Step Executor class
- *
- * Responsible for executing individual workflow steps by invoking
- * the appropriate agent or tool.
- */
 export class StepExecutor {
   private config: StepExecutorConfig;
 
   constructor(config: StepExecutorConfig = {}) {
-    this.config = {
-      defaultTimeout: DEFAULT_STEP_TIMEOUT_MS,
-      ...config,
-    };
+    this.config = { defaultTimeout: DEFAULT_STEP_TIMEOUT_MS, ...config };
   }
 
-  /**
-   * Execute a step node with retry support
-   */
   async execute(node: WorkflowNode, context: WorkflowContext): Promise<StepResult> {
     const startTime = Date.now();
     const config = node.config as StepNodeConfig;
@@ -139,9 +94,7 @@ export class StepExecutor {
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
 
-        const shouldRetry = attempt < maxAttempts && this.isRetryableError(lastError, retryConfig);
-
-        if (shouldRetry) {
+        if (attempt < maxAttempts && this.isRetryableError(lastError, retryConfig)) {
           await this.sleep(this.calculateRetryDelay(attempt, retryConfig));
           continue;
         }
@@ -163,9 +116,6 @@ export class StepExecutor {
     };
   }
 
-  /**
-   * Check if error is retryable
-   */
   private isRetryableError(error: Error, config: RetryConfig): boolean {
     if (config.retryIf) return config.retryIf(error);
 
@@ -183,49 +133,31 @@ export class StepExecutor {
     return retryablePatterns.some((pattern) => pattern.test(error.message));
   }
 
-  /**
-   * Calculate retry delay based on backoff strategy
-   */
   private calculateRetryDelay(attempt: number, config: RetryConfig): number {
     const initialDelay = config.initialDelay ?? 1000;
     const maxDelay = config.maxDelay ?? 30000;
 
-    const baseDelay = config.backoff === "exponential"
-      ? initialDelay * Math.pow(2, attempt - 1)
-      : config.backoff === "linear"
-      ? initialDelay * attempt
-      : initialDelay;
+    let baseDelay = initialDelay;
+    if (config.backoff === "exponential") baseDelay = initialDelay * Math.pow(2, attempt - 1);
+    else if (config.backoff === "linear") baseDelay = initialDelay * attempt;
 
-    // Add jitter (±10%) and cap at maxDelay
     const jitter = baseDelay * 0.1 * (Math.random() * 2 - 1);
     return Math.floor(Math.min(baseDelay + jitter, maxDelay));
   }
 
-  /**
-   * Sleep for specified milliseconds
-   */
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  /**
-   * Resolve step input from context
-   */
   private async resolveInput(
     input: StepNodeConfig["input"],
     context: WorkflowContext,
   ): Promise<unknown> {
     if (input === undefined) return context.input;
-    if (typeof input === "function") return await input(context);
+    if (typeof input === "function") return input(context);
     return input;
   }
 
-  /**
-   * Execute step with timeout
-   *
-   * Uses Promise.race() to properly handle timeout cleanup.
-   * The timeout is always cleared in the finally block to prevent memory leaks.
-   */
   private async executeWithTimeout<T>(
     fn: () => Promise<T>,
     timeout: number,
@@ -242,26 +174,20 @@ export class StepExecutor {
     try {
       return await Promise.race([fn(), timeoutPromise]);
     } finally {
-      if (timeoutId) clearTimeout(timeoutId);
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
     }
   }
 
-  /**
-   * Execute the actual step (agent or tool)
-   */
   private async executeStep(
     config: StepNodeConfig,
     input: unknown,
     context: WorkflowContext,
   ): Promise<unknown> {
-    if (config.agent) return await this.executeAgent(config.agent, input, context);
-    if (config.tool) return await this.executeTool(config.tool, input);
+    if (config.agent) return this.executeAgent(config.agent, input, context);
+    if (config.tool) return this.executeTool(config.tool, input);
     throw new Error("Step must have either 'agent' or 'tool' specified");
   }
 
-  /**
-   * Execute an agent
-   */
   private async executeAgent(
     agent: string | Agent,
     input: unknown,
@@ -270,10 +196,7 @@ export class StepExecutor {
     const resolvedAgent = typeof agent === "string" ? this.getAgent(agent) : agent;
     const agentInput = typeof input === "string" ? input : JSON.stringify(input);
 
-    const response: AgentResponse = await resolvedAgent.generate({
-      input: agentInput,
-      context,
-    });
+    const response: AgentResponse = await resolvedAgent.generate({ input: agentInput, context });
 
     return {
       text: response.text,
@@ -283,26 +206,21 @@ export class StepExecutor {
     };
   }
 
-  /**
-   * Execute a tool
-   */
   private async executeTool(tool: string | Tool, input: unknown): Promise<unknown> {
     const resolvedTool = typeof tool === "string" ? this.getTool(tool) : tool;
 
-    return await resolvedTool.execute(input as Record<string, unknown>, {
+    return resolvedTool.execute(input as Record<string, unknown>, {
       agentId: "workflow",
       blobStorage: this.config.blobStorage,
     });
   }
 
-  /** Format available items for error messages (shows first 5) */
   private formatAvailableItems(items: string[]): string {
     if (items.length === 0) return "";
     const preview = items.slice(0, 5).join(", ");
     return ` Available: ${preview}${items.length > 5 ? "..." : ""}`;
   }
 
-  /** Resolve an item from a registry with helpful error messages */
   private resolveFromRegistry<T>(
     id: string,
     registry: { get(id: string): T | undefined; list?(): string[] } | undefined,
@@ -333,13 +251,10 @@ export class StepExecutor {
     return this.resolveFromRegistry(id, this.config.toolRegistry, "tool");
   }
 
-  /**
-   * Check if a step should be skipped
-   */
   async shouldSkip(node: WorkflowNode, context: WorkflowContext): Promise<boolean> {
     const { skip } = node.config;
     if (!skip) return false;
-    return await skip(context);
+    return skip(context);
   }
 
   createInitialState(nodeId: string): NodeState {

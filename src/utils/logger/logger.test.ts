@@ -11,6 +11,34 @@ import {
 import { type RequestContext, runWithRequestContextAsync } from "./request-context.ts";
 import { VERSION } from "../version.ts";
 
+function captureConsoleLog(): { getOutput: () => string; restore: () => void } {
+  const originalLog = console.log;
+  let capturedOutput = "";
+
+  console.log = (msg: string) => {
+    capturedOutput = msg;
+  };
+
+  return {
+    getOutput: () => capturedOutput,
+    restore: () => {
+      console.log = originalLog;
+    },
+  };
+}
+
+function withJsonLogFormat<T>(fn: () => T): T {
+  __resetLoggerConfigForTesting();
+  Deno.env.set("LOG_FORMAT", "json");
+
+  try {
+    return fn();
+  } finally {
+    Deno.env.delete("LOG_FORMAT");
+    __resetLoggerConfigForTesting();
+  }
+}
+
 describe("logger", () => {
   describe("getDefaultLevel", () => {
     it("should return DEBUG for LOG_LEVEL=DEBUG", () => {
@@ -65,125 +93,93 @@ describe("logger", () => {
 
   describe("request context propagation", () => {
     it("should include request context in logs when running within context", async () => {
-      const originalLog = console.log;
-      let capturedOutput = "";
-      console.log = (msg: string) => {
-        capturedOutput = msg;
-      };
+      const { getOutput, restore } = captureConsoleLog();
 
       try {
-        __resetLoggerConfigForTesting();
-        Deno.env.set("LOG_FORMAT", "json");
+        await withJsonLogFormat(async () => {
+          const baseLogger = getBaseLogger("SERVER");
+          const reqLogger = baseLogger.child({
+            requestId: "test-req-123",
+            project_slug: "test-project",
+          });
 
-        const baseLogger = getBaseLogger("SERVER");
-        const reqLogger = baseLogger.child({
-          requestId: "test-req-123",
-          project_slug: "test-project",
+          const context: RequestContext = {
+            logger: reqLogger,
+            requestId: "test-req-123",
+            projectSlug: "test-project",
+          };
+
+          await runWithRequestContextAsync(context, () => {
+            // Using the global serverLogger should now pick up request context
+            serverLogger.info("Test message from within context");
+            return Promise.resolve();
+          });
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.requestId, "test-req-123");
+          assertEquals(entry.project_slug, "test-project");
+          assertEquals(entry.veryfrontVersion, VERSION);
         });
-
-        const context: RequestContext = {
-          logger: reqLogger,
-          requestId: "test-req-123",
-          projectSlug: "test-project",
-        };
-
-        await runWithRequestContextAsync(context, () => {
-          // Using the global serverLogger should now pick up request context
-          serverLogger.info("Test message from within context");
-          return Promise.resolve();
-        });
-
-        const entry = JSON.parse(capturedOutput) as LogEntry;
-        assertEquals(entry.requestId, "test-req-123");
-        assertEquals(entry.project_slug, "test-project");
-        assertEquals(entry.veryfrontVersion, VERSION);
       } finally {
-        console.log = originalLog;
-        Deno.env.delete("LOG_FORMAT");
-        __resetLoggerConfigForTesting();
+        restore();
       }
     });
 
     it("should use base logger when not in request context", () => {
-      const originalLog = console.log;
-      let capturedOutput = "";
-      console.log = (msg: string) => {
-        capturedOutput = msg;
-      };
+      const { getOutput, restore } = captureConsoleLog();
 
       try {
-        __resetLoggerConfigForTesting();
-        Deno.env.set("LOG_FORMAT", "json");
+        withJsonLogFormat(() => {
+          // Outside of request context
+          serverLogger.info("Test message outside context");
 
-        // Outside of request context
-        serverLogger.info("Test message outside context");
-
-        const entry = JSON.parse(capturedOutput) as LogEntry;
-        assertEquals(entry.requestId, undefined);
-        assertEquals(entry.project_slug, undefined);
-        assertEquals(entry.veryfrontVersion, VERSION);
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.requestId, undefined);
+          assertEquals(entry.project_slug, undefined);
+          assertEquals(entry.veryfrontVersion, VERSION);
+        });
       } finally {
-        console.log = originalLog;
-        Deno.env.delete("LOG_FORMAT");
-        __resetLoggerConfigForTesting();
+        restore();
       }
     });
   });
 
   describe("JSON output format", () => {
     it("should include version field in LogEntry", () => {
-      // Capture console output
-      const originalLog = console.log;
-      let capturedOutput = "";
-      console.log = (msg: string) => {
-        capturedOutput = msg;
-      };
+      const { getOutput, restore } = captureConsoleLog();
 
       try {
-        // Reset config and force JSON format
-        __resetLoggerConfigForTesting();
-        Deno.env.set("LOG_FORMAT", "json");
+        withJsonLogFormat(() => {
+          serverLogger.info("Test message");
 
-        serverLogger.info("Test message");
-
-        // Parse and verify
-        const entry = JSON.parse(capturedOutput) as LogEntry;
-        assertEquals(entry.veryfrontVersion, VERSION);
-        assertEquals(typeof entry.veryfrontVersion, "string");
-        assertEquals(entry.veryfrontVersion.length > 0, true);
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.veryfrontVersion, VERSION);
+          assertEquals(typeof entry.veryfrontVersion, "string");
+          assertEquals(entry.veryfrontVersion.length > 0, true);
+        });
       } finally {
-        console.log = originalLog;
-        Deno.env.delete("LOG_FORMAT");
-        __resetLoggerConfigForTesting();
+        restore();
       }
     });
 
     it("should include all required fields in JSON output", () => {
-      const originalLog = console.log;
-      let capturedOutput = "";
-      console.log = (msg: string) => {
-        capturedOutput = msg;
-      };
+      const { getOutput, restore } = captureConsoleLog();
 
       try {
-        __resetLoggerConfigForTesting();
-        Deno.env.set("LOG_FORMAT", "json");
+        withJsonLogFormat(() => {
+          serverLogger.info("Test message", { extra: "data" });
 
-        serverLogger.info("Test message", { extra: "data" });
+          const entry = JSON.parse(getOutput()) as LogEntry;
 
-        const entry = JSON.parse(capturedOutput) as LogEntry;
-
-        // Verify all required fields
-        assertEquals(typeof entry.timestamp, "string");
-        assertEquals(entry.level, "info");
-        assertEquals(typeof entry.service, "string");
-        assertEquals(entry.veryfrontVersion, VERSION);
-        assertEquals(entry.message, "Test message");
-        assertEquals(entry.context?.extra, "data");
+          assertEquals(typeof entry.timestamp, "string");
+          assertEquals(entry.level, "info");
+          assertEquals(typeof entry.service, "string");
+          assertEquals(entry.veryfrontVersion, VERSION);
+          assertEquals(entry.message, "Test message");
+          assertEquals(entry.context?.extra, "data");
+        });
       } finally {
-        console.log = originalLog;
-        Deno.env.delete("LOG_FORMAT");
-        __resetLoggerConfigForTesting();
+        restore();
       }
     });
   });

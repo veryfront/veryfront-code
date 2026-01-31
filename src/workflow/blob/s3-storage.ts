@@ -186,7 +186,7 @@ export class S3BlobStorage implements BlobStorage {
           Key: key,
         }),
       );
-      return (response.Body as ReadableStream | undefined) ?? null;
+      return response.Body ?? null;
     } catch (e) {
       if (e instanceof Error && e.name === "NoSuchKey") return null;
       throw e;
@@ -197,7 +197,7 @@ export class S3BlobStorage implements BlobStorage {
     const stream = await this.getStream(id);
     if (!stream) return null;
     // @ts-ignore - Deno's ReadableStream vs Web ReadableStream type mismatch
-    return await new Response(stream).text();
+    return new Response(stream).text();
   }
 
   async getBytes(id: string): Promise<Uint8Array | null> {
@@ -261,21 +261,15 @@ export class S3BlobStorage implements BlobStorage {
       if (!headResult.LastModified) return null;
 
       const metadata: Record<string, string> = {};
-      for (
-        const [k, v] of Object.entries(
-          (headResult.Metadata as Record<string, string> | undefined) ?? {},
-        )
-      ) {
-        if (v != null) metadata[k] = v;
+      for (const [k, v] of Object.entries(headResult.Metadata ?? {})) {
+        if (typeof v === "string") metadata[k] = v;
       }
 
-      let expiresAt: Date | undefined;
-      if (headResult.Expires) {
-        expiresAt = new Date(headResult.Expires);
-      } else {
-        const raw = headResult.Metadata?.["expiresat"];
-        if (raw) expiresAt = new Date(raw);
-      }
+      const expiresAt = headResult.Expires
+        ? new Date(headResult.Expires)
+        : headResult.Metadata?.["expiresat"]
+        ? new Date(headResult.Metadata["expiresat"])
+        : undefined;
 
       return {
         __kind: "blob",

@@ -24,12 +24,12 @@ export function handlePageModule(
         const slug = slugPath || "index";
 
         const renderer = await getRendererForProject(ctx);
-        const moduleResult = await renderer.renderPage(slug, {
+        const { pageModule } = await renderer.renderPage(slug, {
           params: undefined,
           props: undefined,
         });
 
-        const code = moduleResult.pageModule?.code;
+        const code = pageModule?.code;
         if (!code) {
           return respond(
             ResponseBuilder.error(404, "Module not found", req, {
@@ -48,13 +48,10 @@ export function handlePageModule(
           return respond(builder.notModified(etag));
         }
 
+        const cacheMode = shouldUseNoCacheHeadersFromHandler(ctx) ? "no-cache" : "short";
+
         return respond(
-          builder
-            .withCache(
-              shouldUseNoCacheHeadersFromHandler(ctx) ? "no-cache" : "short",
-            )
-            .withETag(etag)
-            .javascript(code, 200),
+          builder.withCache(cacheMode).withETag(etag).javascript(code, 200),
         );
       } catch (error) {
         return respond(

@@ -14,7 +14,10 @@ export default tool({
       .string()
       .optional()
       .describe("ID of the parent folder. If not provided, creates in root."),
-    description: z.string().optional().describe("Optional description for the folder"),
+    description: z
+      .string()
+      .optional()
+      .describe("Optional description for the folder"),
   }),
   async execute({ name, parentId, description }) {
     const client = createDriveClient(DEFAULT_USER_ID);

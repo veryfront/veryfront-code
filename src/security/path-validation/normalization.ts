@@ -34,7 +34,7 @@ export function resolvePathSegments(path: string): string {
     if (part === ".") continue;
 
     if (part === "..") {
-      if (resolved.length) resolved.pop();
+      resolved.pop();
       continue;
     }
 

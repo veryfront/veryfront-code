@@ -234,7 +234,7 @@ async function generateFullHtml(
     return injectHTMLContent(htmlBody, "", metadata, {
       mode: options.mode,
       slug,
-      devPort: options.config?.dev?.port || DEFAULT_DASHBOARD_PORT,
+      devPort: options.config?.dev?.port ?? DEFAULT_DASHBOARD_PORT,
     });
   }
 
@@ -246,14 +246,14 @@ async function generateFullHtml(
     nonce: options.nonce,
   };
 
-  return await wrapInHTMLShell(
+  return wrapInHTMLShell(
     htmlBody,
     {
-      title: getStringMeta(outputMetadata, "title") ||
-        pageInfo.entity.frontmatter?.title ||
+      title: getStringMeta(outputMetadata, "title") ??
+        pageInfo.entity.frontmatter?.title ??
         "Veryfront App",
-      description: getStringMeta(outputMetadata, "description") ||
-        pageInfo.entity.frontmatter?.description ||
+      description: getStringMeta(outputMetadata, "description") ??
+        pageInfo.entity.frontmatter?.description ??
         "",
       slug,
       frontmatter: mergedFrontmatter,
@@ -269,8 +269,8 @@ async function generateFullHtml(
 function normalizeModulePath(modulePath: string, projectDir: string): string {
   let normalized = modulePath;
 
-  if (!modulePath.startsWith("/") && projectDir) {
-    normalized = join(projectDir, modulePath);
+  if (!normalized.startsWith("/") && projectDir) {
+    normalized = join(projectDir, normalized);
   }
 
   if (!normalized.startsWith("/")) {
@@ -344,8 +344,8 @@ async function transpileWithEsbuild(
     },
   });
 
-  if (result.errors?.length) {
-    const firstError = result.errors[0]?.text || "unknown error";
+  const firstError = result.errors?.[0]?.text;
+  if (firstError) {
     throw toError(
       createError({
         type: "render",
@@ -397,5 +397,5 @@ async function loadScriptModule(
   const transpiled = await transpileWithEsbuild(source, modulePath, resolveDir);
   logger.debug(`[Script] Transpiled ${modulePath}`);
 
-  return await importFromTempFile(fs, rewriteNpmImports(transpiled));
+  return importFromTempFile(fs, rewriteNpmImports(transpiled));
 }

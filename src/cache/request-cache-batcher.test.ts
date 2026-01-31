@@ -9,7 +9,6 @@ import {
   setInRequestCache,
 } from "./request-cache-batcher.ts";
 
-/** Create a minimal mock CacheBackend backed by a Map. */
 function createMockBackend(
   data: Record<string, string> = {},
 ): CacheBackend & { getCalls: string[]; getBatchCalls: string[][] } {
@@ -33,10 +32,10 @@ function createMockBackend(
       }
       return Promise.resolve(results);
     },
-    set(_key: string, _value: string) {
+    set() {
       return Promise.resolve();
     },
-    del(_key: string) {
+    del() {
       return Promise.resolve();
     },
   };
@@ -51,11 +50,13 @@ describe("cache/request-cache-batcher", () => {
 
     it("should propagate errors from the wrapped function", async () => {
       let caught: Error | null = null;
+
       try {
         await runWithCacheBatching(() => Promise.reject(new Error("test error")));
       } catch (e) {
         caught = e as Error;
       }
+
       assertNotEquals(caught, null);
       assertEquals(caught!.message, "test error");
     });
@@ -70,7 +71,6 @@ describe("cache/request-cache-batcher", () => {
       // deno-lint-ignore require-await
       await runWithCacheBatching(async () => {
         const ctx = getRequestCacheContext();
-        assertNotEquals(ctx, undefined);
         assertExists(ctx);
         assertEquals(ctx.cache instanceof Map, true);
         assertEquals(ctx.pending instanceof Map, true);
@@ -87,7 +87,6 @@ describe("cache/request-cache-batcher", () => {
       // deno-lint-ignore require-await
       await runWithCacheBatching(async () => {
         const stats = getRequestCacheStats();
-        assertNotEquals(stats, null);
         assertExists(stats);
         assertEquals(stats.hits, 0);
         assertEquals(stats.stored, 0);
@@ -99,6 +98,7 @@ describe("cache/request-cache-batcher", () => {
       await runWithCacheBatching(async () => {
         setInRequestCache("key1", "value1");
         setInRequestCache("key2", "value2");
+
         const stats = getRequestCacheStats();
         assertExists(stats);
         assertEquals(stats.stored, 2);
@@ -108,7 +108,6 @@ describe("cache/request-cache-batcher", () => {
 
   describe("setInRequestCache", () => {
     it("should be a no-op outside of batching context", () => {
-      // Should not throw
       setInRequestCache("key", "value");
     });
 
@@ -116,6 +115,7 @@ describe("cache/request-cache-batcher", () => {
       // deno-lint-ignore require-await
       await runWithCacheBatching(async () => {
         setInRequestCache("myKey", "myValue");
+
         const ctx = getRequestCacheContext();
         assertExists(ctx);
         assertEquals(ctx.cache.get("myKey"), "myValue");
@@ -126,6 +126,7 @@ describe("cache/request-cache-batcher", () => {
       // deno-lint-ignore require-await
       await runWithCacheBatching(async () => {
         setInRequestCache("nullKey", null);
+
         const ctx = getRequestCacheContext();
         assertExists(ctx);
         assertEquals(ctx.cache.has("nullKey"), true);
@@ -136,7 +137,8 @@ describe("cache/request-cache-batcher", () => {
 
   describe("getCachedWithBatching", () => {
     it("should fall back to direct backend.get outside of batching context", async () => {
-      const backend = createMockBackend({ "key1": "value1" });
+      const backend = createMockBackend({ key1: "value1" });
+
       const result = await getCachedWithBatching(backend, "key1");
       assertEquals(result, "value1");
       assertEquals(backend.getCalls.length, 1);
@@ -144,28 +146,30 @@ describe("cache/request-cache-batcher", () => {
 
     it("should return null for missing keys outside of context", async () => {
       const backend = createMockBackend({});
+
       const result = await getCachedWithBatching(backend, "missing");
       assertEquals(result, null);
     });
 
     it("should return cached value from request cache without hitting backend", async () => {
-      const backend = createMockBackend({ "key1": "backend-value" });
+      const backend = createMockBackend({ key1: "backend-value" });
 
       await runWithCacheBatching(async () => {
         setInRequestCache("key1", "cached-value");
+
         const result = await getCachedWithBatching(backend, "key1");
         assertEquals(result, "cached-value");
-        // Backend should not have been called
         assertEquals(backend.getCalls.length, 0);
         assertEquals(backend.getBatchCalls.length, 0);
       });
     });
 
     it("should return null from request cache when explicitly set to null", async () => {
-      const backend = createMockBackend({ "key1": "backend-value" });
+      const backend = createMockBackend({ key1: "backend-value" });
 
       await runWithCacheBatching(async () => {
         setInRequestCache("key1", null);
+
         const result = await getCachedWithBatching(backend, "key1");
         assertEquals(result, null);
         assertEquals(backend.getCalls.length, 0);
@@ -174,13 +178,12 @@ describe("cache/request-cache-batcher", () => {
 
     it("should batch multiple concurrent requests", async () => {
       const backend = createMockBackend({
-        "a": "val-a",
-        "b": "val-b",
-        "c": "val-c",
+        a: "val-a",
+        b: "val-b",
+        c: "val-c",
       });
 
       await runWithCacheBatching(async () => {
-        // Fire multiple requests concurrently - they should be batched
         const [ra, rb, rc] = await Promise.all([
           getCachedWithBatching(backend, "a"),
           getCachedWithBatching(backend, "b"),
@@ -190,14 +193,12 @@ describe("cache/request-cache-batcher", () => {
         assertEquals(ra, "val-a");
         assertEquals(rb, "val-b");
         assertEquals(rc, "val-c");
-
-        // Should have used getBatch since there are multiple keys
         assertEquals(backend.getBatchCalls.length, 1);
       });
     });
 
     it("should deduplicate requests for the same key", async () => {
-      const backend = createMockBackend({ "dup": "dup-value" });
+      const backend = createMockBackend({ dup: "dup-value" });
 
       await runWithCacheBatching(async () => {
         const [r1, r2] = await Promise.all([
@@ -214,17 +215,15 @@ describe("cache/request-cache-batcher", () => {
       const backend = createMockBackend({ "cached-key": "fetched-value" });
 
       await runWithCacheBatching(async () => {
-        // First call - triggers backend fetch
         const result1 = await getCachedWithBatching(backend, "cached-key");
         assertEquals(result1, "fetched-value");
 
-        // Second call - should be served from request cache
         const totalCallsBefore = backend.getCalls.length + backend.getBatchCalls.length;
+
         const result2 = await getCachedWithBatching(backend, "cached-key");
         assertEquals(result2, "fetched-value");
-        const totalCallsAfter = backend.getCalls.length + backend.getBatchCalls.length;
 
-        // No additional backend calls for the second read
+        const totalCallsAfter = backend.getCalls.length + backend.getBatchCalls.length;
         assertEquals(totalCallsAfter, totalCallsBefore);
       });
     });
@@ -232,6 +231,7 @@ describe("cache/request-cache-batcher", () => {
     it("should use individual gets when backend has no getBatch and single key", async () => {
       const store = new Map([["solo", "solo-val"]]);
       const getCalls: string[] = [];
+
       const backend: CacheBackend = {
         type: "memory",
         get(key: string) {
@@ -269,11 +269,13 @@ describe("cache/request-cache-batcher", () => {
 
       await runWithCacheBatching(async () => {
         let caught: Error | null = null;
+
         try {
           await getCachedWithBatching(backend, "fail-key");
         } catch (e) {
           caught = e as Error;
         }
+
         assertNotEquals(caught, null);
         assertEquals(caught!.message, "backend failure");
       });

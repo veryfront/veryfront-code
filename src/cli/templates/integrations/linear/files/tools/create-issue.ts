@@ -48,6 +48,17 @@ export default tool({
       labelIds,
     });
 
+    const assignee = issue.assignee
+      ? { name: issue.assignee.name, email: issue.assignee.email }
+      : null;
+
+    const project = issue.project ? { name: issue.project.name } : null;
+
+    const labels = issue.labels.nodes.map((label) => ({
+      name: label.name,
+      color: label.color,
+    }));
+
     return {
       id: issue.id,
       identifier: issue.identifier,
@@ -55,18 +66,13 @@ export default tool({
       description: issue.description,
       priority: issue.priorityLabel,
       status: issue.state.name,
-      assignee: issue.assignee
-        ? { name: issue.assignee.name, email: issue.assignee.email }
-        : null,
+      assignee,
       team: {
         name: issue.team.name,
         key: issue.team.key,
       },
-      project: issue.project ? { name: issue.project.name } : null,
-      labels: issue.labels.nodes.map((label) => ({
-        name: label.name,
-        color: label.color,
-      })),
+      project,
+      labels,
       url: issue.url,
       createdAt: issue.createdAt,
     };

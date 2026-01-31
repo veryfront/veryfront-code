@@ -17,7 +17,10 @@ const statusMap = {
 } as const;
 
 function getKeyByValue<T extends Record<string, unknown>>(map: T, value: T[keyof T]): string {
-  return Object.keys(map).find((key) => map[key as keyof T] === value) ?? "unknown";
+  for (const [key, mapValue] of Object.entries(map)) {
+    if (mapValue === value) return key;
+  }
+  return "unknown";
 }
 
 export default tool({

@@ -17,8 +17,11 @@ export default tool({
   inputSchema: z.object({
     conversationId: z.string().describe("The ID of the conversation to retrieve"),
   }),
-  async execute({ conversationId }) {
+  async execute({ conversationId }): Promise<unknown> {
     const conversation = await getConversation(conversationId);
+
+    const source = conversation.source;
+    const sourceAuthor = source.author;
 
     return {
       id: conversation.id,
@@ -31,29 +34,33 @@ export default tool({
       waitingSince: toIsoFromSecondsOrNull(conversation.waiting_since),
       snoozedUntil: toIsoFromSecondsOrNull(conversation.snoozed_until),
       source: {
-        type: conversation.source.type,
-        subject: conversation.source.subject,
-        body: conversation.source.body,
+        type: source.type,
+        subject: source.subject,
+        body: source.body,
         author: {
-          type: conversation.source.author.type,
-          id: conversation.source.author.id,
-          name: conversation.source.author.name,
-          email: conversation.source.author.email,
+          type: sourceAuthor.type,
+          id: sourceAuthor.id,
+          name: sourceAuthor.name,
+          email: sourceAuthor.email,
         },
       },
       conversationParts:
-        conversation.conversation_parts?.conversation_parts.map((part) => ({
-          id: part.id,
-          partType: part.part_type,
-          body: part.body,
-          createdAt: toIsoFromSeconds(part.created_at),
-          author: {
-            type: part.author.type,
-            id: part.author.id,
-            name: part.author.name,
-            email: part.author.email,
-          },
-        })) ?? [],
+        conversation.conversation_parts?.conversation_parts.map((part) => {
+          const author = part.author;
+
+          return {
+            id: part.id,
+            partType: part.part_type,
+            body: part.body,
+            createdAt: toIsoFromSeconds(part.created_at),
+            author: {
+              type: author.type,
+              id: author.id,
+              name: author.name,
+              email: author.email,
+            },
+          };
+        }) ?? [],
       contactIds: conversation.contacts?.map((c) => c.id),
       teammateIds: conversation.teammates?.map((t) => t.id),
     };

@@ -39,9 +39,9 @@ function mapSpec(
   // Handle @/ project-relative aliases
   // @/ maps to components/ directory in veryfront projects
   if (spec.startsWith("@/")) {
-    const relativePath = spec.slice(2);
     if (target !== "browser") return spec;
 
+    const relativePath = spec.slice(2);
     const path = `/_vf_modules/${relativePath}.js`;
     return baseUrl ? `${baseUrl}${path}` : path;
   }
@@ -100,35 +100,23 @@ export function rewriteCompiledImports(compiledCode: string, config: ImportRewri
   const basedir = dirname(config.filePath);
   const mapper = (spec: string) => mapSpec(spec, basedir, config.target, config.baseUrl);
 
-  const _replaceFrom = (pattern: RegExp): string =>
-    compiledCode.replace(pattern, (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`);
+  const replaceAll = (code: string, patterns: RegExp[]): string => {
+    for (const pattern of patterns) {
+      code = code.replace(pattern, (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`);
+    }
+    return code;
+  };
 
   let code = compiledCode;
 
-  code = code.replace(
+  code = replaceAll(code, [
     /(from\s+["'])(@\/[^"']+)(["'])/g,
-    (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`,
-  );
-  code = code.replace(
     /(import\(\s*["'])(@\/[^"']+)(["']\s*\))/g,
-    (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`,
-  );
-
-  const fromPatterns = [
     /(from\s+["'])(\.{1,2}\/[^"']+)(["'])/g,
     /(from\s+["'])(file:\/\/[^"']+)(["'])/g,
-  ];
-  for (const pattern of fromPatterns) {
-    code = code.replace(pattern, (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`);
-  }
-
-  const importPatterns = [
     /(import\(\s*["'])(\.{1,2}\/[^"']+)(["']\s*\))/g,
     /(import\(\s*["'])(file:\/\/[^"']+)(["']\s*\))/g,
-  ];
-  for (const pattern of importPatterns) {
-    code = code.replace(pattern, (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`);
-  }
+  ]);
 
   code = code.replace(/file:\/\/[A-Za-z0-9_\-./%]+/g, (match) => mapper(match));
 

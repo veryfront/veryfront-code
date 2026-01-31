@@ -4,49 +4,25 @@ import { clearReactPathsCache, getLocalReactPaths, isReactSpecifier } from "./re
 
 describe("react-paths", () => {
   describe("isReactSpecifier", () => {
-    it("should return true for 'react'", () => {
-      assertEquals(isReactSpecifier("react"), true);
-    });
+    const cases: Array<[string, boolean]> = [
+      ["react", true],
+      ["react-dom", true],
+      ["react/jsx-runtime", true],
+      ["react/jsx-dev-runtime", true],
+      ["react-dom/client", true],
+      ["react-dom/server", true],
+      ["vue", false],
+      ["preact", false],
+      ["react-query", false],
+      ["", false],
+      ["@react-spring/core", false],
+    ];
 
-    it("should return true for 'react-dom'", () => {
-      assertEquals(isReactSpecifier("react-dom"), true);
-    });
-
-    it("should return true for 'react/jsx-runtime'", () => {
-      assertEquals(isReactSpecifier("react/jsx-runtime"), true);
-    });
-
-    it("should return true for 'react/jsx-dev-runtime'", () => {
-      assertEquals(isReactSpecifier("react/jsx-dev-runtime"), true);
-    });
-
-    it("should return true for 'react-dom/client'", () => {
-      assertEquals(isReactSpecifier("react-dom/client"), true);
-    });
-
-    it("should return true for 'react-dom/server'", () => {
-      assertEquals(isReactSpecifier("react-dom/server"), true);
-    });
-
-    it("should return false for 'vue'", () => {
-      assertEquals(isReactSpecifier("vue"), false);
-    });
-
-    it("should return false for 'preact'", () => {
-      assertEquals(isReactSpecifier("preact"), false);
-    });
-
-    it("should return false for 'react-query'", () => {
-      assertEquals(isReactSpecifier("react-query"), false);
-    });
-
-    it("should return false for empty string", () => {
-      assertEquals(isReactSpecifier(""), false);
-    });
-
-    it("should return false for '@react-spring/core'", () => {
-      assertEquals(isReactSpecifier("@react-spring/core"), false);
-    });
+    for (const [specifier, expected] of cases) {
+      it(`should return ${expected} for '${specifier}'`, () => {
+        assertEquals(isReactSpecifier(specifier), expected);
+      });
+    }
   });
 
   describe("getLocalReactPaths", () => {
@@ -61,7 +37,6 @@ describe("react-paths", () => {
   describe("clearReactPathsCache", () => {
     it("should not throw when clearing cache", () => {
       clearReactPathsCache();
-      // Should still return valid result after clearing
       const paths = getLocalReactPaths();
       assertEquals(typeof paths, "object");
     });

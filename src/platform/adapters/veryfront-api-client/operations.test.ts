@@ -14,6 +14,12 @@ function createOps(
   );
 }
 
+function assertMethodExists<T extends object>(obj: T, key: keyof T): void {
+  const value = obj[key];
+  assertExists(value);
+  assertEquals(typeof value, "function");
+}
+
 describe("VeryfrontAPIOperations", () => {
   describe("class", () => {
     it("should export VeryfrontAPIOperations class", () => {
@@ -22,25 +28,21 @@ describe("VeryfrontAPIOperations", () => {
     });
 
     it("should be instantiable with string token", () => {
-      const ops = createOps("test-token");
-      assertExists(ops);
+      assertExists(createOps("test-token"));
     });
 
     it("should be instantiable with token provider function", () => {
-      const ops = createOps(() => "dynamic-token");
-      assertExists(ops);
+      assertExists(createOps(() => "dynamic-token"));
     });
   });
 
   describe("getToken", () => {
     it("should return token from string", () => {
-      const ops = createOps("static-token");
-      assertEquals(ops.getToken(), "static-token");
+      assertEquals(createOps("static-token").getToken(), "static-token");
     });
 
     it("should return token from provider function", () => {
-      const ops = createOps(() => "provider-token");
-      assertEquals(ops.getToken(), "provider-token");
+      assertEquals(createOps(() => "provider-token").getToken(), "provider-token");
     });
   });
 
@@ -76,57 +78,39 @@ describe("VeryfrontAPIOperations", () => {
 
   describe("methods exist", () => {
     it("should have listProjects method", () => {
-      const ops = createOps();
-      assertExists(ops.listProjects);
-      assertEquals(typeof ops.listProjects, "function");
+      assertMethodExists(createOps(), "listProjects");
     });
 
     it("should have getProject method", () => {
-      const ops = createOps();
-      assertExists(ops.getProject);
-      assertEquals(typeof ops.getProject, "function");
+      assertMethodExists(createOps(), "getProject");
     });
 
     it("should have listBranchFiles method", () => {
-      const ops = createOps();
-      assertExists(ops.listBranchFiles);
-      assertEquals(typeof ops.listBranchFiles, "function");
+      assertMethodExists(createOps(), "listBranchFiles");
     });
 
     it("should have getBranchFile method", () => {
-      const ops = createOps();
-      assertExists(ops.getBranchFile);
-      assertEquals(typeof ops.getBranchFile, "function");
+      assertMethodExists(createOps(), "getBranchFile");
     });
 
     it("should have listEnvironmentFiles method", () => {
-      const ops = createOps();
-      assertExists(ops.listEnvironmentFiles);
-      assertEquals(typeof ops.listEnvironmentFiles, "function");
+      assertMethodExists(createOps(), "listEnvironmentFiles");
     });
 
     it("should have getEnvironmentFile method", () => {
-      const ops = createOps();
-      assertExists(ops.getEnvironmentFile);
-      assertEquals(typeof ops.getEnvironmentFile, "function");
+      assertMethodExists(createOps(), "getEnvironmentFile");
     });
 
     it("should have listReleaseFiles method", () => {
-      const ops = createOps();
-      assertExists(ops.listReleaseFiles);
-      assertEquals(typeof ops.listReleaseFiles, "function");
+      assertMethodExists(createOps(), "listReleaseFiles");
     });
 
     it("should have getReleaseFile method", () => {
-      const ops = createOps();
-      assertExists(ops.getReleaseFile);
-      assertEquals(typeof ops.getReleaseFile, "function");
+      assertMethodExists(createOps(), "getReleaseFile");
     });
 
     it("should have lookupProjectByDomain method", () => {
-      const ops = createOps();
-      assertExists(ops.lookupProjectByDomain);
-      assertEquals(typeof ops.lookupProjectByDomain, "function");
+      assertMethodExists(createOps(), "lookupProjectByDomain");
     });
   });
 });

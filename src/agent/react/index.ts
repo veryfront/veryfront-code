@@ -1,11 +1,3 @@
-/**
- * Agent React Hooks - Layer 1 (Headless)
- *
- * React hooks for AI interactions with zero UI opinions.
- *
- * @module veryfront/agent/react
- */
-
 export { useChat } from "./use-chat/index.ts";
 export type {
   DynamicToolUIPart,

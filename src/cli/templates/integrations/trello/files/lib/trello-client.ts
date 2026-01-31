@@ -74,8 +74,9 @@ async function trelloFetch<T>(endpoint: string, options: RequestInit = {}): Prom
   });
 
   if (!response.ok) {
-    const error = await response.text().catch(() => "");
-    throw new Error(`Trello API error: ${response.status} ${error || response.statusText}`);
+    const errorText = await response.text().catch(() => "");
+    const message = errorText || response.statusText;
+    throw new Error(`Trello API error: ${response.status} ${message}`);
   }
 
   return response.json();
@@ -106,15 +107,18 @@ export async function listCards(options: {
 }): Promise<TrelloCard[]> {
   const { boardId, listId, limit = 50 } = options;
 
+  const fields =
+    "name,desc,closed,idBoard,idList,idMembers,labels,due,dueComplete,url,dateLastActivity";
+
   if (listId) {
     return trelloFetch<TrelloCard[]>(
-      `/lists/${listId}/cards?fields=name,desc,closed,idBoard,idList,idMembers,labels,due,dueComplete,url,dateLastActivity&limit=${limit}`,
+      `/lists/${listId}/cards?fields=${fields}&limit=${limit}`,
     );
   }
 
   if (boardId) {
     return trelloFetch<TrelloCard[]>(
-      `/boards/${boardId}/cards?fields=name,desc,closed,idBoard,idList,idMembers,labels,due,dueComplete,url,dateLastActivity&limit=${limit}`,
+      `/boards/${boardId}/cards?fields=${fields}&limit=${limit}`,
     );
   }
 
@@ -123,7 +127,8 @@ export async function listCards(options: {
 
 export async function getCard(cardId: string): Promise<TrelloCard> {
   return trelloFetch<TrelloCard>(
-    `/cards/${cardId}?fields=name,desc,closed,idBoard,idList,idMembers,labels,due,dueComplete,url,dateLastActivity`,
+    "/cards/" +
+      `${cardId}?fields=name,desc,closed,idBoard,idList,idMembers,labels,due,dueComplete,url,dateLastActivity`,
   );
 }
 
@@ -171,9 +176,7 @@ export async function updateCard(
   if (updates.closed !== undefined) params.set("closed", String(updates.closed));
   if (updates.idList !== undefined) params.set("idList", updates.idList);
   if (updates.due !== undefined) params.set("due", updates.due ?? "");
-  if (updates.dueComplete !== undefined) {
-    params.set("dueComplete", String(updates.dueComplete));
-  }
+  if (updates.dueComplete !== undefined) params.set("dueComplete", String(updates.dueComplete));
   if (updates.idMembers !== undefined) params.set("idMembers", updates.idMembers.join(","));
   if (updates.idLabels !== undefined) params.set("idLabels", updates.idLabels.join(","));
   if (updates.pos !== undefined) params.set("pos", String(updates.pos));

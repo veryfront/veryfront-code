@@ -7,14 +7,17 @@ import { ReadOperations } from "./read-operations.ts";
 import type { ContentContextProvider } from "./read-operations.ts";
 
 // deno-lint-ignore no-explicit-any
-const createMockClient = (overrides: Record<string, any> = {}): VeryfrontAPIClient =>
-  ({
+function createMockClient(
+  overrides: Record<string, any> = {},
+): VeryfrontAPIClient {
+  return {
     getRequestBranch: () => "main",
     getFileContent: () => Promise.resolve("file content"),
     getPublishedFileContent: () => Promise.resolve("published content"),
     resolveFileWithExtension: () => Promise.resolve(null),
     ...overrides,
-  }) as unknown as VeryfrontAPIClient;
+  } as unknown as VeryfrontAPIClient;
+}
 
 function createBranchContext(): ContentContextProvider {
   return {
@@ -42,6 +45,24 @@ function createReleaseContext(releaseId = "release-123"): ContentContextProvider
   };
 }
 
+function createReadOps(
+  client: VeryfrontAPIClient,
+  cacheEnabled: boolean,
+  contextProvider?: ContentContextProvider,
+  pathResolver?: (path: string) => string,
+  getFileListCache?: () => Promise<Array<{ path: string; content: string }>>,
+  pathNormalizer = new PathNormalizer(),
+): ReadOperations {
+  return new ReadOperations(
+    client,
+    new FileCache({ enabled: cacheEnabled, ttl: 1000, maxSize: 100 }),
+    pathNormalizer,
+    contextProvider,
+    pathResolver,
+    getFileListCache,
+  );
+}
+
 describe("ReadOperations", () => {
   describe("class", () => {
     it("should export ReadOperations class", () => {
@@ -52,39 +73,24 @@ describe("ReadOperations", () => {
 
   describe("instantiation", () => {
     it("should be instantiable without context provider", () => {
-      const readOps = new ReadOperations(
-        createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-      );
+      const readOps = createReadOps(createMockClient(), true);
       assertExists(readOps);
     });
 
     it("should be instantiable with branch context provider", () => {
-      const readOps = new ReadOperations(
-        createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-        createBranchContext(),
-      );
+      const readOps = createReadOps(createMockClient(), true, createBranchContext());
       assertExists(readOps);
     });
 
     it("should be instantiable with release context provider", () => {
-      const readOps = new ReadOperations(
-        createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-        createReleaseContext(),
-      );
+      const readOps = createReadOps(createMockClient(), true, createReleaseContext());
       assertExists(readOps);
     });
 
     it("should be instantiable with path resolver", () => {
-      const readOps = new ReadOperations(
+      const readOps = createReadOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
+        true,
         createBranchContext(),
         (path: string) => path,
       );
@@ -92,14 +98,15 @@ describe("ReadOperations", () => {
     });
 
     it("should be instantiable with file list cache getter", () => {
-      const readOps = new ReadOperations(
+      const readOps = createReadOps(
         createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
+        true,
         createBranchContext(),
         (path: string) => path,
         () =>
-          Promise.resolve([{ path: "pages/index.tsx", content: "export default () => <div />" }]),
+          Promise.resolve([
+            { path: "pages/index.tsx", content: "export default () => <div />" },
+          ]),
       );
       assertExists(readOps);
     });
@@ -115,14 +122,7 @@ describe("ReadOperations", () => {
         },
       });
 
-      const readOps = new ReadOperations(
-        client,
-        new FileCache({ enabled: false, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-        createBranchContext(),
-      );
-
-      // Set a resolved ready promise so it doesn't block
+      const readOps = createReadOps(client, false, createBranchContext());
       readOps.setFileListReadyPromise(Promise.resolve());
 
       const content = await readOps.readTextFile("pages/index.tsx");
@@ -141,13 +141,7 @@ describe("ReadOperations", () => {
         },
       });
 
-      const readOps = new ReadOperations(
-        client,
-        new FileCache({ enabled: false, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-        createReleaseContext("rel-abc"),
-      );
-
+      const readOps = createReadOps(client, false, createReleaseContext("rel-abc"));
       readOps.setFileListReadyPromise(Promise.resolve());
 
       const content = await readOps.readTextFile("pages/index.tsx");
@@ -170,10 +164,9 @@ describe("ReadOperations", () => {
         { path: "pages/about.tsx", content: "about page content" },
       ];
 
-      const readOps = new ReadOperations(
+      const readOps = createReadOps(
         client,
-        new FileCache({ enabled: false, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
+        false,
         createReleaseContext("rel-1"),
         (path: string) => path,
         () => Promise.resolve(fileListCache),
@@ -195,10 +188,9 @@ describe("ReadOperations", () => {
         },
       });
 
-      const readOps = new ReadOperations(
+      const readOps = createReadOps(
         client,
-        new FileCache({ enabled: false, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
+        false,
         createBranchContext(),
         (path: string) => path,
         () => Promise.resolve([{ path: "pages/index.tsx", content: "stale cache" }]),
@@ -220,11 +212,13 @@ describe("ReadOperations", () => {
         },
       });
 
-      const readOps = new ReadOperations(
+      const readOps = createReadOps(
         client,
-        new FileCache({ enabled: false, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer("/project/root/"),
+        false,
         createBranchContext(),
+        undefined,
+        undefined,
+        new PathNormalizer("/project/root/"),
       );
 
       readOps.setFileListReadyPromise(Promise.resolve());
@@ -240,13 +234,7 @@ describe("ReadOperations", () => {
         getFileContent: () => Promise.resolve("hello world"),
       });
 
-      const readOps = new ReadOperations(
-        client,
-        new FileCache({ enabled: false, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-        createBranchContext(),
-      );
-
+      const readOps = createReadOps(client, false, createBranchContext());
       readOps.setFileListReadyPromise(Promise.resolve());
 
       const bytes = await readOps.readFile("test.txt");
@@ -258,11 +246,7 @@ describe("ReadOperations", () => {
 
   describe("clearFileListIndex", () => {
     it("should clear without error when no index exists", () => {
-      const readOps = new ReadOperations(
-        createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-      );
+      const readOps = createReadOps(createMockClient(), true);
       readOps.clearFileListIndex();
     });
 
@@ -271,10 +255,9 @@ describe("ReadOperations", () => {
         getFileContent: () => Promise.resolve("content"),
       });
 
-      const readOps = new ReadOperations(
+      const readOps = createReadOps(
         client,
-        new FileCache({ enabled: false, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
+        false,
         createReleaseContext(),
         (path: string) => path,
         () => Promise.resolve([{ path: "pages/index.tsx", content: "test content" }]),
@@ -282,21 +265,14 @@ describe("ReadOperations", () => {
 
       readOps.setFileListReadyPromise(Promise.resolve());
 
-      // Trigger index build by reading a file
       await readOps.readTextFile("pages/index.tsx");
-
-      // Clear should not throw
       readOps.clearFileListIndex();
     });
   });
 
   describe("setFileListReadyPromise", () => {
     it("should accept a promise", () => {
-      const readOps = new ReadOperations(
-        createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-      );
+      const readOps = createReadOps(createMockClient(), true);
       readOps.setFileListReadyPromise(Promise.resolve());
     });
 
@@ -305,19 +281,13 @@ describe("ReadOperations", () => {
         getFileContent: () => Promise.resolve("fallback content"),
       });
 
-      const readOps = new ReadOperations(
-        client,
-        new FileCache({ enabled: false, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-        createBranchContext(),
-      );
+      const readOps = createReadOps(client, false, createBranchContext());
 
       const rejectedPromise = Promise.reject(new Error("init failed"));
       // Prevent unhandled rejection from killing the test runner
       rejectedPromise.catch(() => {});
       readOps.setFileListReadyPromise(rejectedPromise);
 
-      // Should still work by falling through to API fetch
       const content = await readOps.readTextFile("pages/index.tsx");
       assertEquals(content, "fallback content");
     });
@@ -337,12 +307,7 @@ describe("ReadOperations", () => {
         isReleaseBeingInvalidated: (releaseId: string) => releaseId === "release-123",
       };
 
-      const readOps = new ReadOperations(
-        createMockClient(),
-        new FileCache({ enabled: true, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-        contextProvider,
-      );
+      const readOps = createReadOps(createMockClient(), true, contextProvider);
       assertExists(readOps);
     });
 
@@ -365,7 +330,7 @@ describe("ReadOperations", () => {
           projectSlug: "test-project",
           releaseId: "release-456",
         }),
-        isPersistentCacheInvalidated: () => true, // Cache is being invalidated
+        isPersistentCacheInvalidated: () => true,
         isReleaseBeingInvalidated: () => true,
       };
 
@@ -398,14 +363,14 @@ describe("ReadOperations", () => {
         isReleaseBeingInvalidated: (releaseId: string) => invalidatedReleases.has(releaseId),
       };
 
-      assertEquals(contextProvider.isReleaseBeingInvalidated!("release-456"), false);
+      assertEquals(contextProvider.isReleaseBeingInvalidated?.("release-456"), false);
 
       invalidatedReleases.add("release-456");
-      assertEquals(contextProvider.isReleaseBeingInvalidated!("release-456"), true);
-      assertEquals(contextProvider.isReleaseBeingInvalidated!("release-789"), false);
+      assertEquals(contextProvider.isReleaseBeingInvalidated?.("release-456"), true);
+      assertEquals(contextProvider.isReleaseBeingInvalidated?.("release-789"), false);
 
       invalidatedReleases.delete("release-456");
-      assertEquals(contextProvider.isReleaseBeingInvalidated!("release-456"), false);
+      assertEquals(contextProvider.isReleaseBeingInvalidated?.("release-456"), false);
     });
 
     it("should handle prefix-based invalidation", () => {
@@ -429,28 +394,26 @@ describe("ReadOperations", () => {
       };
 
       assertEquals(
-        contextProvider.isPersistentCacheInvalidated!("file:release:my-project:release-abc:"),
+        contextProvider.isPersistentCacheInvalidated?.("file:release:my-project:release-abc:"),
         false,
       );
 
       invalidatedPrefixes.add("file:release:my-project:release-abc:");
 
       assertEquals(
-        contextProvider.isPersistentCacheInvalidated!("file:release:my-project:release-abc:"),
+        contextProvider.isPersistentCacheInvalidated?.("file:release:my-project:release-abc:"),
         true,
       );
 
-      // More specific path should also match
       assertEquals(
-        contextProvider.isPersistentCacheInvalidated!(
+        contextProvider.isPersistentCacheInvalidated?.(
           "file:release:my-project:release-abc:components/app.tsx",
         ),
         true,
       );
 
-      // Different release should not match
       assertEquals(
-        contextProvider.isPersistentCacheInvalidated!("file:release:my-project:release-xyz:"),
+        contextProvider.isPersistentCacheInvalidated?.("file:release:my-project:release-xyz:"),
         false,
       );
     });
@@ -480,15 +443,15 @@ describe("ReadOperations", () => {
       invalidatedPrefixes.add("file:env:env-project:production:");
 
       assertEquals(
-        contextProvider.isPersistentCacheInvalidated!("file:release:env-project:release-env-123:"),
+        contextProvider.isPersistentCacheInvalidated?.("file:release:env-project:release-env-123:"),
         true,
       );
       assertEquals(
-        contextProvider.isPersistentCacheInvalidated!("file:env:env-project:production:"),
+        contextProvider.isPersistentCacheInvalidated?.("file:env:env-project:production:"),
         true,
       );
       assertEquals(
-        contextProvider.isPersistentCacheInvalidated!("file:env:env-project:staging:"),
+        contextProvider.isPersistentCacheInvalidated?.("file:env:env-project:staging:"),
         false,
       );
     });
@@ -500,22 +463,14 @@ describe("ReadOperations", () => {
       const client = createMockClient({
         getFileContent: async () => {
           fetchCount++;
-          // Simulate some async work
           await new Promise((r) => setTimeout(r, 10));
           return "content";
         },
       });
 
-      const readOps = new ReadOperations(
-        client,
-        new FileCache({ enabled: false, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-        createBranchContext(),
-      );
-
+      const readOps = createReadOps(client, false, createBranchContext());
       readOps.setFileListReadyPromise(Promise.resolve());
 
-      // Fire two concurrent reads for the same path
       const [result1, result2] = await Promise.all([
         readOps.readTextFile("pages/index.tsx"),
         readOps.readTextFile("pages/index.tsx"),
@@ -523,7 +478,6 @@ describe("ReadOperations", () => {
 
       assertEquals(result1, "content");
       assertEquals(result2, "content");
-      // Only one fetch should have been made
       assertEquals(fetchCount, 1);
     });
 
@@ -537,13 +491,7 @@ describe("ReadOperations", () => {
         },
       });
 
-      const readOps = new ReadOperations(
-        client,
-        new FileCache({ enabled: false, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
-        createBranchContext(),
-      );
-
+      const readOps = createReadOps(client, false, createBranchContext());
       readOps.setFileListReadyPromise(Promise.resolve());
 
       const [result1, result2] = await Promise.all([
@@ -565,10 +513,9 @@ describe("ReadOperations", () => {
         { path: "pages/about.tsx", content: "about content" },
       ];
 
-      const readOps = new ReadOperations(
+      const readOps = createReadOps(
         createMockClient(),
-        new FileCache({ enabled: false, ttl: 1000, maxSize: 100 }),
-        new PathNormalizer(),
+        false,
         createReleaseContext(),
         (path: string) => path,
         () => {
@@ -579,13 +526,9 @@ describe("ReadOperations", () => {
 
       readOps.setFileListReadyPromise(Promise.resolve());
 
-      // First read - builds index
       await readOps.readTextFile("pages/index.tsx");
-      // Second read - should reuse index
       await readOps.readTextFile("pages/about.tsx");
 
-      // getFileListCache is called each time, but the index itself
-      // should be reused based on the key
       assertEquals(indexBuildCount >= 1, true);
     });
   });

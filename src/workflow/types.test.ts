@@ -42,9 +42,11 @@ describe("parseDuration", () => {
   });
 
   it("should throw on invalid format", () => {
-    assertThrows(() => parseDuration("invalid"), Error, "Invalid duration format");
-    assertThrows(() => parseDuration("10x"), Error, "Invalid duration format");
-    assertThrows(() => parseDuration(""), Error, "Invalid duration format");
+    const message = "Invalid duration format";
+
+    assertThrows(() => parseDuration("invalid"), Error, message);
+    assertThrows(() => parseDuration("10x"), Error, message);
+    assertThrows(() => parseDuration(""), Error, message);
   });
 });
 

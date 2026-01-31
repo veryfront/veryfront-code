@@ -37,10 +37,9 @@ export class BunAdapter implements RuntimeAdapter {
   }
 
   async shutdown(): Promise<void> {
-    const server = this.activeServer;
-    if (!server) return;
+    if (!this.activeServer) return;
 
-    await server.stop();
+    await this.activeServer.stop();
     this.activeServer = null;
   }
 }

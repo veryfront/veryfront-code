@@ -13,10 +13,7 @@ export default tool({
       .default(10)
       .describe("Maximum number of customers to retrieve"),
     email: z.string().email().optional().describe("Filter by customer email address"),
-    createdAfter: z
-      .number()
-      .optional()
-      .describe("Filter customers created after this Unix timestamp"),
+    createdAfter: z.number().optional().describe("Filter customers created after this Unix timestamp"),
     createdBefore: z
       .number()
       .optional()
@@ -24,7 +21,9 @@ export default tool({
   }),
   async execute({ limit, email, createdAfter, createdBefore }) {
     const created =
-      createdAfter || createdBefore ? { gte: createdAfter, lte: createdBefore } : undefined;
+      createdAfter != null || createdBefore != null
+        ? { gte: createdAfter, lte: createdBefore }
+        : undefined;
 
     const customers = await listCustomers({ limit, email, created });
 

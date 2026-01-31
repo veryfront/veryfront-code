@@ -31,8 +31,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
 
       function mapNodeCore(spec: string): string | null {
         if (spec.startsWith("node:")) {
-          const sub = spec.slice(5);
-          return `${stdNodeBase}/${sub}.ts`;
+          return `${stdNodeBase}/${spec.slice(5)}.ts`;
         }
 
         switch (spec) {
@@ -44,6 +43,21 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
             return `${stdNodeBase}/fs.ts`;
           default:
             return null;
+        }
+      }
+
+      async function fetchWithTimeout(url: string): Promise<Response> {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), HTTP_MODULE_FETCH_TIMEOUT_MS);
+
+        try {
+          return await fetch(url, {
+            headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
+            signal: controller.signal,
+            redirect: "follow",
+          });
+        } finally {
+          clearTimeout(timeout);
         }
       }
 
@@ -115,21 +129,6 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
           logger.warn("API URL parse failed", e);
         }
 
-        async function fetchWithTimeout(url: string): Promise<Response> {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), HTTP_MODULE_FETCH_TIMEOUT_MS);
-
-          try {
-            return await fetch(url, {
-              headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
-              signal: controller.signal,
-              redirect: "follow",
-            });
-          } finally {
-            clearTimeout(timeout);
-          }
-        }
-
         if (lockfile) {
           const cached = await lockfile.get(args.path);
           if (cached) {
@@ -164,7 +163,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         }
 
         const res = await fetchWithTimeout(requestUrl).catch((e) => {
-          return new Response(String(e?.message || e), { status: HTTP_NETWORK_CONNECT_TIMEOUT });
+          return new Response(String(e?.message ?? e), { status: HTTP_NETWORK_CONNECT_TIMEOUT });
         });
 
         if (!res.ok) {

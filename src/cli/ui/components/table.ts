@@ -36,8 +36,8 @@ export interface TableOptions {
 
 export type TableRow = Record<string, string | number | boolean | undefined>;
 
-function getTotalWidth(widths: number[], separator: string, columnCount: number): number {
-  return widths.reduce((a, b) => a + b, 0) + separator.length * (columnCount - 1);
+function getTotalWidth(widths: number[], separator: string): number {
+  return widths.reduce((a, b) => a + b, 0) + separator.length * (widths.length - 1);
 }
 
 /**
@@ -71,7 +71,7 @@ export function table(rows: TableRow[], options: TableOptions): string {
     );
 
     if (borderChars) {
-      const totalWidth = getTotalWidth(widths, separator, columns.length);
+      const totalWidth = getTotalWidth(widths, separator);
       lines.push(
         indentStr +
           borderChars.topLeft +
@@ -79,8 +79,9 @@ export function table(rows: TableRow[], options: TableOptions): string {
           borderChars.topRight,
       );
       lines.push(
-        indentStr + borderChars.vertical + " " + headerCells.join(separator) + " " +
-          borderChars.vertical,
+        `${indentStr}${borderChars.vertical} ${
+          headerCells.join(separator)
+        } ${borderChars.vertical}`,
       );
       lines.push(
         indentStr +
@@ -103,7 +104,7 @@ export function table(rows: TableRow[], options: TableOptions): string {
 
     if (borderChars) {
       lines.push(
-        indentStr + borderChars.vertical + " " + cells.join(separator) + " " + borderChars.vertical,
+        `${indentStr}${borderChars.vertical} ${cells.join(separator)} ${borderChars.vertical}`,
       );
     } else {
       lines.push(indentStr + cells.join(separator));
@@ -111,7 +112,7 @@ export function table(rows: TableRow[], options: TableOptions): string {
   }
 
   if (borderChars) {
-    const totalWidth = getTotalWidth(widths, separator, columns.length);
+    const totalWidth = getTotalWidth(widths, separator);
     lines.push(
       indentStr +
         borderChars.bottomLeft +

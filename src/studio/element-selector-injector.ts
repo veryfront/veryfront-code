@@ -41,6 +41,7 @@ export function injectElementSelectors(
   options: InjectorOptions = {},
 ): string {
   const { prefix = "vf", skipElements = [] } = options;
+
   const skipSet = new Set([
     ...IGNORED_ELEMENTS,
     ...skipElements.map((e) => e.toLowerCase()),
@@ -48,7 +49,6 @@ export function injectElementSelectors(
 
   let counter = 0;
   let inIgnoredElement = 0;
-  let depth = 0;
 
   // Find the content div (id="veryfront-content" or id="root")
   // Only inject selectors within the content area
@@ -68,29 +68,19 @@ export function injectElementSelectors(
         if (skipSet.has(tag) && !isVoid) {
           inIgnoredElement = Math.max(0, inIgnoredElement - 1);
         }
-        depth--;
         return match;
       }
-
-      depth++;
 
       if (skipSet.has(tag)) {
         if (!isVoid) inIgnoredElement++;
         return match;
       }
 
-      if (inIgnoredElement > 0 || offset < contentStart) {
-        return match;
-      }
-
-      if (/data-vf-(id|selector|ignore)/i.test(attributes)) {
-        return match;
-      }
+      if (inIgnoredElement > 0 || offset < contentStart) return match;
+      if (/data-vf-(id|selector|ignore)/i.test(attributes)) return match;
 
       const selectorId = `${prefix}-${tag}-${++counter}`;
-      const insertPoint = match.lastIndexOf(
-        isVoid || isSelfClosing ? (isSelfClosing ? "/>" : ">") : ">",
-      );
+      const insertPoint = match.lastIndexOf(isSelfClosing ? "/>" : ">");
 
       return (
         match.slice(0, insertPoint) +

@@ -290,13 +290,19 @@ describe("DynamicRouter", () => {
       router.addRoute("/products/[id]/edit", "dynamic-edit.tsx");
 
       assertEquals(router.match("/products/new")?.route.page, "static.tsx");
-      assertEquals(router.match("/products/123/edit")?.route.page, "dynamic-edit.tsx");
+      assertEquals(
+        router.match("/products/123/edit")?.route.page,
+        "dynamic-edit.tsx",
+      );
       assertEquals(router.match("/products/123")?.route.page, "dynamic.tsx");
       assertEquals(
         router.match("/products/category/subcategory")?.route.page,
         "catch-all.tsx",
       );
-      assertEquals(router.match("/products")?.route.page, "optional-catch-all.tsx");
+      assertEquals(
+        router.match("/products")?.route.page,
+        "optional-catch-all.tsx",
+      );
     });
 
     it("prioritizes longer static paths", () => {

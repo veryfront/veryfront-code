@@ -9,13 +9,16 @@ import { join } from "#veryfront/platform/compat/path/index.ts";
 export function createSplitterPlugin(projectDir: string): Plugin {
   return {
     name: "veryfront-splitter",
-    setup(build: PluginBuild) {
-      build.onResolve({ filter: /^react(-dom)?(\/.*)?$/ }, (args: OnResolveArgs) => {
-        const reactMap = getReactImportMap(REACT_DEFAULT_VERSION);
-        if (!reactMap[args.path]) return;
+    setup(build: PluginBuild): void {
+      build.onResolve(
+        { filter: /^react(-dom)?(\/.*)?$/ },
+        (args: OnResolveArgs) => {
+          const reactMap = getReactImportMap(REACT_DEFAULT_VERSION);
+          if (!reactMap[args.path]) return null;
 
-        return { path: args.path, external: true };
-      });
+          return { path: args.path, external: true };
+        },
+      );
 
       build.onResolve({ filter: /\.mdx$/ }, (args: OnResolveArgs) => ({
         path: join(projectDir, args.path),
@@ -27,7 +30,7 @@ export function createSplitterPlugin(projectDir: string): Plugin {
         loader: "jsx",
       }));
 
-      build.onDispose(() => {
+      build.onDispose((): void => {
         logger.debug("CodeSplitter build disposed, cleaning up resources");
       });
     },

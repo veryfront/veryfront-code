@@ -57,7 +57,9 @@ export function extractCssVariables(css: string): Record<string, string> {
   while ((match = varRegex.exec(css)) !== null) {
     const key = match[1];
     const val = match[2];
-    if (key && val) variables[key] = val.trim();
+
+    if (!key || !val) continue;
+    variables[key] = val.trim();
   }
 
   return variables;

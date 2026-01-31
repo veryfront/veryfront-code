@@ -10,6 +10,7 @@ import {
 } from "#veryfront/utils/constants/index.ts";
 
 const ALLOWED_MODULES = new Set(["agent/react.js", "components/ai.js", "primitives.js"]);
+const LIB_PREFIX = "/_veryfront/lib/";
 
 export class LibModulesHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -26,7 +27,7 @@ export class LibModulesHandler extends BaseHandler {
     if (method !== "GET" && method !== "HEAD") return this.continue();
 
     const pathname = new URL(req.url).pathname;
-    if (!pathname.startsWith("/_veryfront/lib/")) return this.continue();
+    if (!pathname.startsWith(LIB_PREFIX)) return this.continue();
 
     const moduleResolution = ctx.config?.client?.moduleResolution ?? "cdn";
     if (moduleResolution !== "self-hosted") {
@@ -38,7 +39,7 @@ export class LibModulesHandler extends BaseHandler {
       return this.continue();
     }
 
-    const modulePath = pathname.slice("/_veryfront/lib/".length);
+    const modulePath = pathname.slice(LIB_PREFIX.length);
     if (!ALLOWED_MODULES.has(modulePath)) {
       this.logDebug(
         `LibModulesHandler: module not allowed: ${modulePath}`,
@@ -66,14 +67,11 @@ export class LibModulesHandler extends BaseHandler {
       const content = await secureFs.readFile(filePath);
       const etag = computeEtag(content);
 
-      const builder = this.createResponseBuilder(ctx);
+      const builder = this.createResponseBuilder(ctx).withCORS(req, ctx.securityConfig?.cors);
 
       if (hasMatchingEtag(req, etag)) {
         return this.respond(
-          builder
-            .withCORS(req, ctx.securityConfig?.cors)
-            .withSecurity(ctx.securityConfig ?? undefined)
-            .notModified(etag),
+          builder.withSecurity(ctx.securityConfig ?? undefined).notModified(etag),
         );
       }
 
@@ -88,7 +86,6 @@ export class LibModulesHandler extends BaseHandler {
 
       return this.respond(
         builder
-          .withCORS(req, ctx.securityConfig?.cors)
           .withSecurity(ctx.securityConfig ?? undefined)
           .withCache(isDev ? "no-cache" : "immutable")
           .withETag(etag)
@@ -121,9 +118,7 @@ export class LibModulesHandler extends BaseHandler {
   private resolveModulePath(module: string, projectDir: string): string | null {
     if (!ALLOWED_MODULES.has(module)) return null;
 
-    const nodeModulesDir = joinPath(projectDir, "node_modules");
-    const veryfrontDir = joinPath(nodeModulesDir, "veryfront");
-    const distDir = joinPath(veryfrontDir, "dist");
+    const distDir = joinPath(joinPath(joinPath(projectDir, "node_modules"), "veryfront"), "dist");
     return normalizePath(joinPath(distDir, module)) ?? null;
   }
 }

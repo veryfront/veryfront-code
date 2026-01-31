@@ -19,26 +19,23 @@ describe("transforms/import-rewriter/url-builder", () => {
     });
 
     it("should include version", () => {
-      const url = buildEsmShUrl("react", "19.1.1");
-      assertEquals(url, "https://esm.sh/react@19.1.1?target=es2022");
+      assertEquals(buildEsmShUrl("react", "19.1.1"), "https://esm.sh/react@19.1.1?target=es2022");
     });
 
     it("should include subpath", () => {
-      const url = buildEsmShUrl("react", "19.1.1", "/jsx-runtime");
-      assertEquals(url, "https://esm.sh/react@19.1.1/jsx-runtime?target=es2022");
+      assertEquals(
+        buildEsmShUrl("react", "19.1.1", "/jsx-runtime"),
+        "https://esm.sh/react@19.1.1/jsx-runtime?target=es2022",
+      );
     });
 
     it("should include external packages", () => {
-      const url = buildEsmShUrl("react-dom", "19.1.1", undefined, {
-        external: ["react"],
-      });
+      const url = buildEsmShUrl("react-dom", "19.1.1", undefined, { external: ["react"] });
       assertEquals(url.includes("external=react"), true);
     });
 
     it("should include deps", () => {
-      const url = buildEsmShUrl("react", "19.1.1", undefined, {
-        deps: { csstype: "3.2.3" },
-      });
+      const url = buildEsmShUrl("react", "19.1.1", undefined, { deps: { csstype: "3.2.3" } });
       assertEquals(url.includes("deps=csstype@3.2.3"), true);
     });
 
@@ -69,13 +66,19 @@ describe("transforms/import-rewriter/url-builder", () => {
   describe("getReactImportMap", () => {
     it("should return map with react entries", () => {
       const map = getReactImportMap("19.1.1");
-      assertEquals(typeof map["react"], "string");
-      assertEquals(typeof map["react-dom"], "string");
-      assertEquals(typeof map["react-dom/client"], "string");
-      assertEquals(typeof map["react-dom/server"], "string");
-      assertEquals(typeof map["react/jsx-runtime"], "string");
-      assertEquals(typeof map["react/jsx-dev-runtime"], "string");
-      assertEquals(typeof map["react/"], "string");
+      const keys = [
+        "react",
+        "react-dom",
+        "react-dom/client",
+        "react-dom/server",
+        "react/jsx-runtime",
+        "react/jsx-dev-runtime",
+        "react/",
+      ] as const;
+
+      for (const key of keys) {
+        assertEquals(typeof map[key], "string");
+      }
     });
   });
 
@@ -148,10 +151,7 @@ describe("transforms/import-rewriter/url-builder", () => {
     });
 
     it("should keep .js as-is", () => {
-      assertEquals(
-        buildVeryfrontModuleUrl("lib/main.js"),
-        "/_vf_modules/_veryfront/lib/main.js",
-      );
+      assertEquals(buildVeryfrontModuleUrl("lib/main.js"), "/_vf_modules/_veryfront/lib/main.js");
     });
   });
 
@@ -201,8 +201,10 @@ describe("transforms/import-rewriter/url-builder", () => {
 
   describe("addEsmShDeps", () => {
     it("should add deps to esm.sh URL without params", () => {
-      const result = addEsmShDeps("https://esm.sh/lodash", "19.1.1");
-      assertEquals(result, "https://esm.sh/lodash?external=react,react-dom&target=es2022");
+      assertEquals(
+        addEsmShDeps("https://esm.sh/lodash", "19.1.1"),
+        "https://esm.sh/lodash?external=react,react-dom&target=es2022",
+      );
     });
 
     it("should skip non-esm.sh URLs", () => {

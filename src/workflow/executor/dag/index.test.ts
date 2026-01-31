@@ -1,4 +1,4 @@
-/**
+/****
  * DAG Executor Tests
  *
  * Tests DAGExecutor with mock step executors to validate:
@@ -18,10 +18,6 @@ import type { Checkpoint, WorkflowContext, WorkflowNode, WorkflowRun } from "../
 import { StepExecutor, type StepResult } from "../step-executor.ts";
 import { CheckpointManager } from "../checkpoint-manager.ts";
 import type { WorkflowBackend } from "../../backends/types.ts";
-
-// ---------------------------------------------------------------------------
-// Mock Step Executor
-// ---------------------------------------------------------------------------
 
 class MockStepExecutor extends StepExecutor {
   constructor(
@@ -81,7 +77,7 @@ function createMockCheckpointManager(): CheckpointManager & {
   return Object.assign(manager, { saved });
 }
 
-function createTestRun(overrides?: Partial<WorkflowRun>): WorkflowRun {
+function createTestRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
   return {
     id: "test-run",
     workflowId: "wf-1",
@@ -97,10 +93,6 @@ function createTestRun(overrides?: Partial<WorkflowRun>): WorkflowRun {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe("DAGExecutor", () => {
   let stepExecutor: StepExecutor;
   let executor: DAGExecutor;
@@ -112,9 +104,7 @@ describe("DAGExecutor", () => {
 
   describe("simple sequential execution", () => {
     it("should execute a single step node", async () => {
-      const nodes: WorkflowNode[] = [
-        { id: "step1", config: { type: "step" } as any },
-      ];
+      const nodes: WorkflowNode[] = [{ id: "step1", config: { type: "step" } as any }];
 
       const result = await executor.execute(nodes, createTestRun());
       assertEquals(result.completed, true);
@@ -184,9 +174,11 @@ describe("DAGExecutor", () => {
       });
 
       const exec = new DAGExecutor({ stepExecutor: rejectExecutor });
-      const nodes: WorkflowNode[] = [
-        { id: "crasher", dependsOn: [], config: { type: "step" } as any },
-      ];
+      const nodes: WorkflowNode[] = [{
+        id: "crasher",
+        dependsOn: [],
+        config: { type: "step" } as any,
+      }];
 
       const result = await exec.execute(nodes, createTestRun());
       assertEquals(result.completed, false);
@@ -249,7 +241,6 @@ describe("DAGExecutor", () => {
 
       const result = await exec.execute(nodes, run);
       assertEquals(result.completed, true);
-      // "done" should not be re-executed
       assertEquals(order.includes("done"), false);
       assertEquals(order.includes("next"), true);
     });
@@ -436,10 +427,6 @@ describe("DAGExecutor", () => {
       const result = await executor.execute(nodes, createTestRun());
       assertEquals(result.completed, true);
       const output = result.nodeStates["loop-max"]!.output as any;
-      // The while loop runs maxIterations times, then exits.
-      // Since the while condition never returned false, exitReason
-      // remains the default "condition" (the loop exited because
-      // iteration < maxIterations became false).
       assertEquals(output.iterations, 2);
     });
   });
@@ -506,9 +493,11 @@ describe("DAGExecutor", () => {
 
   describe("unknown node type", () => {
     it("should error on unknown node type", async () => {
-      const nodes: WorkflowNode[] = [
-        { id: "unknown", dependsOn: [], config: { type: "foobar" } as any },
-      ];
+      const nodes: WorkflowNode[] = [{
+        id: "unknown",
+        dependsOn: [],
+        config: { type: "foobar" } as any,
+      }];
 
       const result = await executor.execute(nodes, createTestRun());
       assertEquals(result.completed, false);
@@ -520,10 +509,7 @@ describe("DAGExecutor", () => {
   describe("checkpoint management", () => {
     it("should save checkpoints for checkpointed nodes", async () => {
       const cpManager = createMockCheckpointManager();
-      const exec = new DAGExecutor({
-        stepExecutor,
-        checkpointManager: cpManager,
-      });
+      const exec = new DAGExecutor({ stepExecutor, checkpointManager: cpManager });
 
       const nodes: WorkflowNode[] = [
         {
@@ -540,14 +526,13 @@ describe("DAGExecutor", () => {
 
     it("should not save checkpoint for non-checkpointed nodes", async () => {
       const cpManager = createMockCheckpointManager();
-      const exec = new DAGExecutor({
-        stepExecutor,
-        checkpointManager: cpManager,
-      });
+      const exec = new DAGExecutor({ stepExecutor, checkpointManager: cpManager });
 
-      const nodes: WorkflowNode[] = [
-        { id: "no-cp", dependsOn: [], config: { type: "step" } as any },
-      ];
+      const nodes: WorkflowNode[] = [{
+        id: "no-cp",
+        dependsOn: [],
+        config: { type: "step" } as any,
+      }];
 
       await exec.execute(nodes, createTestRun());
       assertEquals(cpManager.saved.length, 0);
@@ -565,9 +550,11 @@ describe("DAGExecutor", () => {
         onNodeComplete: (id) => completed.push(id),
       });
 
-      const nodes: WorkflowNode[] = [
-        { id: "cb-node", dependsOn: [], config: { type: "step" } as any },
-      ];
+      const nodes: WorkflowNode[] = [{
+        id: "cb-node",
+        dependsOn: [],
+        config: { type: "step" } as any,
+      }];
 
       await exec.execute(nodes, createTestRun());
       assertEquals(started, ["cb-node"]);
@@ -584,25 +571,19 @@ describe("DAGExecutor", () => {
       });
 
       const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
-      // Use dependencies so "a" waits on "b", then startFromNode="b"
-      // After "b" completes, "a" becomes ready
       const nodes: WorkflowNode[] = [
         { id: "b", dependsOn: [], config: { type: "step" } as any },
         { id: "a", dependsOn: ["b"], config: { type: "step" } as any },
       ];
 
       await exec.execute(nodes, createTestRun(), "b");
-      // "b" starts first since it's the startFromNode
       assertEquals(order[0], "b");
     });
   });
 
   describe("maxConcurrency", () => {
     it("should respect maxConcurrency config", async () => {
-      const exec = new DAGExecutor({
-        stepExecutor,
-        maxConcurrency: 1,
-      });
+      const exec = new DAGExecutor({ stepExecutor, maxConcurrency: 1 });
 
       const nodes: WorkflowNode[] = [
         { id: "a", dependsOn: [], config: { type: "step" } as any },

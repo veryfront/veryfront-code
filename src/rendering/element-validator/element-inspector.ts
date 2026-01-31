@@ -1,7 +1,7 @@
 import * as React from "react";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import type { InvalidObjectDetails } from "./types.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import {
   getElementTypeName,
   getObjectKeys,
@@ -25,18 +25,13 @@ export function deepInspectElement(
   visited: WeakSet<object> = new WeakSet(),
 ): void {
   if (depth > options.maxDepth) {
-    if (options.debugMode) {
-      logger.debug(`[DEEP INSPECT] Max depth reached at ${path}`);
-    }
+    if (options.debugMode) logger.debug(`[DEEP INSPECT] Max depth reached at ${path}`);
     return;
   }
 
-  // Cycle detection: prevent infinite loops from circular references
   if (element && typeof element === "object") {
     if (visited.has(element)) {
-      if (options.debugMode) {
-        logger.debug(`[DEEP INSPECT] Cycle detected at ${path}, skipping`);
-      }
+      if (options.debugMode) logger.debug(`[DEEP INSPECT] Cycle detected at ${path}, skipping`);
       return;
     }
     visited.add(element);
@@ -49,10 +44,7 @@ export function deepInspectElement(
 
   if (isValidPrimitive(element)) {
     if (options.debugMode) {
-      logger.debug(`[DEEP INSPECT] ✓ Valid primitive at ${path}`, {
-        type: typeof element,
-        depth,
-      });
+      logger.debug(`[DEEP INSPECT] ✓ Valid primitive at ${path}`, { type: typeof element, depth });
     }
     return;
   }
@@ -74,11 +66,9 @@ function inspectReactElement(
   options: InspectionOptions,
   visited: WeakSet<object>,
 ): void {
-  const elementType = getElementTypeName(element);
-
   if (options.debugMode) {
     logger.debug(`[DEEP INSPECT] ✓ Valid React element at ${path}`, {
-      type: elementType,
+      type: getElementTypeName(element),
       depth,
     });
   }
@@ -147,10 +137,7 @@ function inspectArray(
   visited: WeakSet<object>,
 ): void {
   if (options.debugMode) {
-    logger.debug(`[DEEP INSPECT] ✓ Array at ${path}`, {
-      length: arr.length,
-      depth,
-    });
+    logger.debug(`[DEEP INSPECT] ✓ Array at ${path}`, { length: arr.length, depth });
   }
 
   for (let i = 0; i < arr.length; i++) {
@@ -188,7 +175,6 @@ function handleInvalidObject(element: object, path: string, depth: number): void
     errorDetails,
   );
 
-  // Throw error to stop rendering and provide clear debugging info
   throw toError(
     createError({
       type: "config",

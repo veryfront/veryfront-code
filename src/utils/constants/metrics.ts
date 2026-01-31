@@ -1,4 +1,4 @@
-/** SSR render time histogram boundaries (ms) */
+/********** SSR render time histogram boundaries (ms) **********/
 export const SSR_RENDER_TIME_BOUNDARIES_MS = [
   5,
   10,
@@ -18,7 +18,7 @@ export const SSR_RENDER_TIME_BOUNDARIES_MS = [
 
 export const HTTP_REQUEST_DURATION_BOUNDARIES_MS = SSR_RENDER_TIME_BOUNDARIES_MS;
 
-/** RSC stream duration boundaries (ms) */
+/********** RSC stream duration boundaries (ms) **********/
 export const RSC_STREAM_DURATION_BOUNDARIES_MS = [
   10,
   25,

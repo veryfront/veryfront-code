@@ -4,11 +4,8 @@ import { isValidSecurityConfig } from "./config-loader.ts";
 
 describe("security/http/middleware/config-loader", () => {
   describe("isValidSecurityConfig", () => {
-    it("should return false for null", () => {
+    it("should return false for null/undefined", () => {
       assertEquals(isValidSecurityConfig(null), false);
-    });
-
-    it("should return false for undefined", () => {
       assertEquals(isValidSecurityConfig(undefined), false);
     });
 
@@ -22,63 +19,37 @@ describe("security/http/middleware/config-loader", () => {
       assertEquals(isValidSecurityConfig({}), true);
     });
 
-    it("should return true for valid csp object", () => {
+    it("should validate csp", () => {
       assertEquals(
         isValidSecurityConfig({ csp: { "default-src": "'self'" } }),
         true,
       );
-    });
-
-    it("should return false for invalid csp (non-object)", () => {
       assertEquals(isValidSecurityConfig({ csp: "invalid" }), false);
       assertEquals(isValidSecurityConfig({ csp: null }), false);
     });
 
-    it("should return true for cors = true", () => {
+    it("should validate cors", () => {
       assertEquals(isValidSecurityConfig({ cors: true }), true);
-    });
-
-    it("should return true for cors = false", () => {
       assertEquals(isValidSecurityConfig({ cors: false }), true);
-    });
+      assertEquals(isValidSecurityConfig({ cors: { origin: "*" } }), true);
 
-    it("should return true for cors as object", () => {
-      assertEquals(
-        isValidSecurityConfig({ cors: { origin: "*" } }),
-        true,
-      );
-    });
-
-    it("should return false for cors as non-boolean non-object", () => {
       assertEquals(isValidSecurityConfig({ cors: "invalid" }), false);
       assertEquals(isValidSecurityConfig({ cors: 123 }), false);
-    });
-
-    it("should return false for cors = null", () => {
       assertEquals(isValidSecurityConfig({ cors: null }), false);
     });
 
-    it("should return true for valid coop string", () => {
+    it("should validate coop", () => {
       assertEquals(isValidSecurityConfig({ coop: "same-origin" }), true);
-    });
-
-    it("should return false for non-string coop", () => {
       assertEquals(isValidSecurityConfig({ coop: 123 }), false);
     });
 
-    it("should return true for valid corp string", () => {
+    it("should validate corp", () => {
       assertEquals(isValidSecurityConfig({ corp: "same-origin" }), true);
-    });
-
-    it("should return false for non-string corp", () => {
       assertEquals(isValidSecurityConfig({ corp: true }), false);
     });
 
-    it("should return true for valid coep string", () => {
+    it("should validate coep", () => {
       assertEquals(isValidSecurityConfig({ coep: "require-corp" }), true);
-    });
-
-    it("should return false for non-string coep", () => {
       assertEquals(isValidSecurityConfig({ coep: [] }), false);
     });
 

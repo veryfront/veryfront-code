@@ -12,9 +12,12 @@ export class BunEnvironmentAdapter implements EnvironmentAdapter {
 
   toObject(): Record<string, string> {
     const result: Record<string, string> = {};
+
     for (const [key, value] of Object.entries(process.env)) {
-      if (value !== undefined) result[key] = value;
+      if (value == null) continue;
+      result[key] = value;
     }
+
     return result;
   }
 }

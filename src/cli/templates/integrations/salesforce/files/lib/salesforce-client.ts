@@ -120,7 +120,7 @@ async function salesforceFetch<T>(endpoint: string, options: RequestInit = {}): 
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({} as any));
+    const error = await response.json().catch(() => ({}));
     const message = error?.[0]?.message ?? error?.message ?? response.statusText;
     throw new Error(`Salesforce API error: ${response.status} ${message}`);
   }
@@ -140,9 +140,11 @@ function buildListSoql(params: {
   offset: number;
 }): string {
   const { object, fields, where, limit, offset } = params;
+
   let soql = `SELECT ${fields.join(", ")} FROM ${object}`;
   if (where) soql += ` WHERE ${where}`;
   soql += ` ORDER BY LastModifiedDate DESC LIMIT ${limit} OFFSET ${offset}`;
+
   return soql;
 }
 
@@ -187,9 +189,7 @@ export function listAccounts(options?: {
     "LastModifiedDate",
   ];
 
-  return query<SalesforceAccount>(
-    buildListSoql({ object: "Account", fields, limit, offset }),
-  );
+  return query<SalesforceAccount>(buildListSoql({ object: "Account", fields, limit, offset }));
 }
 
 export function getAccount(accountId: string, fields?: string[]): Promise<SalesforceAccount> {
@@ -272,9 +272,7 @@ export function listContacts(options?: {
 
   const where = options?.accountId ? `AccountId = '${options.accountId}'` : undefined;
 
-  return query<SalesforceContact>(
-    buildListSoql({ object: "Contact", fields, where, limit, offset }),
-  );
+  return query<SalesforceContact>(buildListSoql({ object: "Contact", fields, where, limit, offset }));
 }
 
 export function getContact(contactId: string, fields?: string[]): Promise<SalesforceContact> {
@@ -365,10 +363,7 @@ export function listOpportunities(options?: {
   );
 }
 
-export function getOpportunity(
-  opportunityId: string,
-  fields?: string[],
-): Promise<SalesforceOpportunity> {
+export function getOpportunity(opportunityId: string, fields?: string[]): Promise<SalesforceOpportunity> {
   const selectedFields = fields ?? [
     "Id",
     "Name",
@@ -472,11 +467,9 @@ export function createLead(data: {
   Rating?: string;
   [key: string]: any;
 }): Promise<{ id: string; success: boolean; errors: any[] }> {
-  const leadData = { ...data, Status: data.Status ?? "Open - Not Contacted" };
-
   return salesforceFetch("/sobjects/Lead", {
     method: "POST",
-    body: JSON.stringify(leadData),
+    body: JSON.stringify({ ...data, Status: data.Status ?? "Open - Not Contacted" }),
   });
 }
 
@@ -484,14 +477,18 @@ export function createLead(data: {
 // HELPER FUNCTIONS
 // ============================================================================
 
+function formatPersonName(firstName?: string, lastName?: string, email?: string, fallback = "Unnamed"): string {
+  const parts = [firstName, lastName].filter(Boolean);
+  if (parts.length) return parts.join(" ");
+  return email ?? fallback;
+}
+
 export function formatContactName(contact: SalesforceContact): string {
-  const parts = [contact.FirstName, contact.LastName].filter(Boolean);
-  return parts.length ? parts.join(" ") : contact.Email ?? "Unnamed Contact";
+  return formatPersonName(contact.FirstName, contact.LastName, contact.Email, "Unnamed Contact");
 }
 
 export function formatLeadName(lead: SalesforceLead): string {
-  const parts = [lead.FirstName, lead.LastName].filter(Boolean);
-  return parts.length ? parts.join(" ") : lead.Email ?? "Unnamed Lead";
+  return formatPersonName(lead.FirstName, lead.LastName, lead.Email, "Unnamed Lead");
 }
 
 export function formatAddress(

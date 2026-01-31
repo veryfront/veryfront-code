@@ -29,7 +29,6 @@ export const getS3ObjectTool = tool({
 
       const maxPreviewLength = 10000;
       const truncated = content.length > maxPreviewLength;
-      const contentPreview = truncated ? `${content.substring(0, maxPreviewLength)}\n... [truncated]` : content;
 
       return {
         success: true,
@@ -38,7 +37,7 @@ export const getS3ObjectTool = tool({
         key,
         contentType: 'text',
         contentLength: content.length,
-        content: contentPreview,
+        content: truncated ? `${content.substring(0, maxPreviewLength)}\n... [truncated]` : content,
         truncated,
       };
     } catch (error) {

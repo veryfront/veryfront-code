@@ -21,18 +21,15 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
     });
 
     it("should render boolean true as attribute name only", () => {
-      const result = renderAttributes({ disabled: true });
-      assertEquals(result.trim(), "disabled");
+      assertEquals(renderAttributes({ disabled: true }).trim(), "disabled");
     });
 
     it("should skip boolean false", () => {
-      const result = renderAttributes({ hidden: false });
-      assertEquals(result, "");
+      assertEquals(renderAttributes({ hidden: false }), "");
     });
 
     it("should skip null and undefined values", () => {
-      const result = renderAttributes({ a: null, b: undefined });
-      assertEquals(result, "");
+      assertEquals(renderAttributes({ a: null, b: undefined }), "");
     });
 
     it("should skip children, key, and ref props", () => {
@@ -42,9 +39,10 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
         ref: {},
         id: "test",
       });
-      assertEquals(result.includes("children"), false);
-      assertEquals(result.includes("key"), false);
-      assertEquals(result.includes("ref"), false);
+
+      for (const prop of ["children", "key", "ref"]) {
+        assertEquals(result.includes(prop), false);
+      }
       assertEquals(result.includes("id"), true);
     });
 

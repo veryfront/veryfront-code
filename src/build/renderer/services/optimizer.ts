@@ -15,18 +15,18 @@ export function optimizeBundle(
 
   return withSpan(
     "build.renderer.optimizeBundle",
-    async () => {
+    async (): Promise<void> => {
       try {
         for (const [, output] of result.outputs) {
           if (output.type !== "js") continue;
 
-          const { code } = await esbuild.transform(output.content, {
+          const transformed = await esbuild.transform(output.content, {
             minify: true,
             target: "es2020",
             loader: "js",
           });
 
-          output.content = code;
+          output.content = transformed.code;
         }
 
         logger.info("Bundle optimized", {

@@ -2,12 +2,15 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { computeEtag } from "./etag.ts";
 
+function assertWeakEtagFormat(etag: string): void {
+  assert(etag.startsWith('W/"'));
+  assert(etag.endsWith('"'));
+}
+
 describe("security/http/middleware/etag", () => {
   describe("computeEtag", () => {
     it("should return a weak ETag string", () => {
-      const etag = computeEtag("hello");
-      assert(etag.startsWith('W/"'));
-      assert(etag.endsWith('"'));
+      assertWeakEtagFormat(computeEtag("hello"));
     });
 
     it("should return consistent results for the same input", () => {
@@ -23,16 +26,11 @@ describe("security/http/middleware/etag", () => {
     });
 
     it("should handle empty string", () => {
-      const etag = computeEtag("");
-      assert(etag.startsWith('W/"'));
-      assert(etag.endsWith('"'));
+      assertWeakEtagFormat(computeEtag(""));
     });
 
     it("should handle long strings", () => {
-      const long = "a".repeat(10000);
-      const etag = computeEtag(long);
-      assert(etag.startsWith('W/"'));
-      assert(etag.endsWith('"'));
+      assertWeakEtagFormat(computeEtag("a".repeat(10000)));
     });
 
     it("should produce a hex hash value", () => {

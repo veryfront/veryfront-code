@@ -39,7 +39,7 @@ export class MemoryDebugHandler extends BaseHandler {
         case "/_debug/memory/caches":
           return this.handleCacheStats(req, ctx);
         case "/_debug/memory/gc":
-          return await this.handleGC(req, ctx);
+          return this.handleGC(req, ctx);
         case "/_debug/memory/pressure":
           return this.handlePressureCheck(req, ctx);
         default:
@@ -95,12 +95,13 @@ export class MemoryDebugHandler extends BaseHandler {
 
   private handleCacheStats(req: Request, ctx: HandlerContext): HandlerResult {
     const caches = getCacheStats();
+    const totalEntries = caches.reduce((sum, c) => sum + Math.max(0, c.entries), 0);
 
     return this.jsonResponse(
       {
         timestamp: new Date().toISOString(),
         caches,
-        totalEntries: caches.reduce((sum, c) => sum + Math.max(0, c.entries), 0),
+        totalEntries,
       },
       req,
       ctx,
@@ -111,10 +112,10 @@ export class MemoryDebugHandler extends BaseHandler {
     const beforeHeap = getHeapStats();
     const gcTriggered = await forceGC();
 
-    // Wait a bit for GC to complete
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     const afterHeap = getHeapStats();
+    const freedMB = Math.round((beforeHeap.usedHeapSizeMB - afterHeap.usedHeapSizeMB) * 100) / 100;
 
     return this.jsonResponse(
       {
@@ -122,7 +123,7 @@ export class MemoryDebugHandler extends BaseHandler {
         gcTriggered,
         before: beforeHeap,
         after: afterHeap,
-        freedMB: Math.round((beforeHeap.usedHeapSizeMB - afterHeap.usedHeapSizeMB) * 100) / 100,
+        freedMB,
       },
       req,
       ctx,

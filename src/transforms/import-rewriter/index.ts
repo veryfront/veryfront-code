@@ -7,7 +7,6 @@
  * @module transforms/import-rewriter
  */
 
-// Core types
 export type {
   ImportMapConfig,
   ImportRewriteStrategy,
@@ -26,7 +25,6 @@ export {
   isUrlSpecifier,
 } from "./types.ts";
 
-// URL building utilities (centralized constants)
 export {
   addEsmShDeps,
   buildCrossProjectUrl,
@@ -42,7 +40,6 @@ export {
   TAILWIND_VERSION,
 } from "./url-builder.ts";
 
-// Parse cache utilities
 export {
   applyRewrites,
   initLexer,
@@ -51,7 +48,6 @@ export {
   replaceSpecifiers,
 } from "./parse-cache.ts";
 
-// Main rewriter
 export {
   defaultRewriter,
   rewriteImports,
@@ -59,7 +55,6 @@ export {
   UnifiedImportRewriter,
 } from "./unified-rewriter.ts";
 
-// Individual strategies (for testing and customization)
 export {
   AliasStrategy,
   aliasStrategy,

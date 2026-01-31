@@ -5,7 +5,9 @@ export const ErrorOverlay = {
   getRuntime: generateRuntimeScript,
   getSuggestion,
   createHTML(errorInfo: ErrorInfo): string {
-    const suggestion = errorInfo.suggestion ?? getSuggestion(errorInfo.error);
-    return generateErrorHTML(errorInfo, suggestion);
+    return generateErrorHTML(
+      errorInfo,
+      errorInfo.suggestion ?? getSuggestion(errorInfo.error),
+    );
   },
 };

@@ -1,7 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { detectRuntime } from "./runtime-detection.ts";
-import type { RuntimeId } from "./base.ts";
 
 describe("runtime-detection", () => {
   describe("detectRuntime", () => {
@@ -12,13 +11,7 @@ describe("runtime-detection", () => {
 
     it("should return a valid runtime identifier", () => {
       const result = detectRuntime();
-      const validValues: Array<RuntimeId | "unknown"> = [
-        "deno",
-        "node",
-        "bun",
-        "cloudflare",
-        "unknown",
-      ];
+      const validValues = ["deno", "node", "bun", "cloudflare", "unknown"];
       assertEquals(validValues.includes(result), true);
     });
 

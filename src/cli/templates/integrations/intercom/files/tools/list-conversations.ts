@@ -3,7 +3,7 @@ import { z } from "zod";
 import { listConversations } from "../../lib/intercom-client.ts";
 
 function toIsoSeconds(seconds?: number | null): string | null {
-  if (!seconds) return null;
+  if (seconds == null) return null;
   return new Date(seconds * 1000).toISOString();
 }
 

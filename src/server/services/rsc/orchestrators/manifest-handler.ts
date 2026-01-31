@@ -18,22 +18,6 @@ const MANIFEST_CACHE_TTL_SECONDS = Math.floor(RSC_MANIFEST_CACHE_TTL_MS / 1000);
 /** Cache key for manifest data */
 const MANIFEST_CACHE_KEY = "rsc-manifest";
 
-/**
- * RSC Manifest Handler
- *
- * Builds and caches client component manifests for RSC rendering.
- *
- * @example
- * ```typescript
- * // Default usage (internal TTL cache)
- * const handler = new ManifestHandler("/path/to/project");
- * const response = await handler.handle(null);
- *
- * // With injected cache (for testing)
- * const mockCache = new MockCacheRepository({ context });
- * const handler = new ManifestHandler("/path/to/project", { cacheRepo: mockCache });
- * ```
- */
 export class ManifestHandler {
   private cache: ManifestCacheEntry | null = null;
   private readonly cacheRepo?: CacheRepository<string>;
@@ -46,31 +30,36 @@ export class ManifestHandler {
   }
 
   async handle(clientManifest: Map<string, ClientComponentMeta> | null): Promise<Response> {
-    // Try external cache repository first
-    if (this.cacheRepo) {
-      const cached = await this.cacheRepo.get(MANIFEST_CACHE_KEY);
-      if (cached) {
-        return this.createResponse(JSON.parse(cached) as ManifestData);
-      }
-    } else if (this.isCacheValid()) {
-      // Fall back to internal TTL cache
-      return this.createResponse(this.cache?.data as ManifestData);
-    }
+    const cachedData = await this.getCachedData();
+    if (cachedData) return this.createResponse(cachedData);
 
     const data = await this.buildManifest(clientManifest);
+    await this.setCachedData(data);
 
-    // Store in external cache repository or internal cache
+    return this.createResponse(data);
+  }
+
+  private async getCachedData(): Promise<ManifestData | null> {
+    if (this.cacheRepo) {
+      const cached = await this.cacheRepo.get(MANIFEST_CACHE_KEY);
+      return cached ? (JSON.parse(cached) as ManifestData) : null;
+    }
+
+    if (!this.isCacheValid()) return null;
+    return this.cache!.data;
+  }
+
+  private async setCachedData(data: ManifestData): Promise<void> {
     if (this.cacheRepo) {
       await this.cacheRepo.set(
         MANIFEST_CACHE_KEY,
         JSON.stringify(data),
         MANIFEST_CACHE_TTL_SECONDS,
       );
-    } else {
-      this.cache = { data, timestamp: Date.now() };
+      return;
     }
 
-    return this.createResponse(data);
+    this.cache = { data, timestamp: Date.now() };
   }
 
   private isCacheValid(): boolean {
@@ -102,8 +91,6 @@ export class ManifestHandler {
    */
   clearCache(): void {
     this.cache = null;
-    if (this.cacheRepo?.delete) {
-      void this.cacheRepo.delete(MANIFEST_CACHE_KEY);
-    }
+    void this.cacheRepo?.delete?.(MANIFEST_CACHE_KEY);
   }
 }

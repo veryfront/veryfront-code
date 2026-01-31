@@ -7,32 +7,29 @@ class SystemError extends VeryfrontError {
   }
 }
 
-export class FileSystemError extends SystemError {
-  constructor(message: string, context?: unknown) {
-    super("FileSystemError", message, ErrorCode.FILE_NOT_FOUND, context);
-  }
+function createSystemErrorClass(name: string, code: ErrorCode) {
+  return class extends SystemError {
+    constructor(message: string, context?: unknown) {
+      super(name, message, code, context);
+    }
+  };
 }
 
-export class ConfigError extends SystemError {
-  constructor(message: string, context?: unknown) {
-    super("ConfigError", message, ErrorCode.CONFIG_ERROR, context);
-  }
-}
+export const FileSystemError = createSystemErrorClass(
+  "FileSystemError",
+  ErrorCode.FILE_NOT_FOUND,
+);
 
-export class NetworkError extends SystemError {
-  constructor(message: string, context?: unknown) {
-    super("NetworkError", message, ErrorCode.NETWORK_ERROR, context);
-  }
-}
+export const ConfigError = createSystemErrorClass("ConfigError", ErrorCode.CONFIG_ERROR);
 
-export class PermissionError extends SystemError {
-  constructor(message: string, context?: unknown) {
-    super("PermissionError", message, ErrorCode.PERMISSION_ERROR, context);
-  }
-}
+export const NetworkError = createSystemErrorClass("NetworkError", ErrorCode.NETWORK_ERROR);
 
-export class NotSupportedError extends SystemError {
-  constructor(message: string, context?: unknown) {
-    super("NotSupportedError", message, ErrorCode.NOT_SUPPORTED, context);
-  }
-}
+export const PermissionError = createSystemErrorClass(
+  "PermissionError",
+  ErrorCode.PERMISSION_ERROR,
+);
+
+export const NotSupportedError = createSystemErrorClass(
+  "NotSupportedError",
+  ErrorCode.NOT_SUPPORTED,
+);

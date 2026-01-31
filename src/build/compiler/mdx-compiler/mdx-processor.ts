@@ -9,12 +9,11 @@ export interface ProcessedMDX {
   imports: string[];
 }
 
-export async function compileMDX(
-  content: string,
-  options: CompileOptions,
-): Promise<ProcessedMDX> {
-  const remarkPlugins = (await getRemarkPlugins()) as MDXPluggable[];
-  const rehypePlugins = (await getRehypePlugins()) as MDXPluggable[];
+export async function compileMDX(content: string, options: CompileOptions): Promise<ProcessedMDX> {
+  const [remarkPlugins, rehypePlugins] = await Promise.all([
+    getRemarkPlugins(),
+    getRehypePlugins(),
+  ]);
 
   const compiled = await compileMdx(content, {
     outputFormat: "program",
@@ -22,14 +21,13 @@ export async function compileMDX(
     jsxRuntime: "automatic",
     jsxImportSource: "react",
     development: options.mode === "development",
-    remarkPlugins,
-    rehypePlugins,
+    remarkPlugins: remarkPlugins as MDXPluggable[],
+    rehypePlugins: rehypePlugins as MDXPluggable[],
   });
 
   const code = String(compiled.value);
-  const imports = extractImports(code);
 
-  return { code, imports };
+  return { code, imports: extractImports(code) };
 }
 
 function extractImports(code: string): string[] {

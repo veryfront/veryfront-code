@@ -42,96 +42,92 @@ function isToolPart(part: UIMessagePart): part is ToolUIPart {
   return part.type.startsWith("tool-") && "toolCallId" in part;
 }
 
-export const Message = React.forwardRef<HTMLDivElement, MessageProps>(
-  (
-    {
-      message,
-      className,
-      theme: userTheme,
-      showRole = false,
-      showTimestamp = false,
-      renderToolCall,
-      renderDynamicTool,
-      renderReasoning,
-    },
-    ref,
-  ) => {
-    const theme = mergeThemes(defaultChatTheme, userTheme);
-    const messageTheme = theme.message?.[message.role] ?? theme.message?.assistant;
-
-    return (
-      <MessageItem
-        ref={ref}
-        role={message.role}
-        className={cn("flex", message.role === "user" ? "justify-end" : "justify-start", className)}
-      >
-        <div className={messageTheme}>
-          {showRole && (
-            <MessageRole className="block text-xs font-semibold mb-1 opacity-75 uppercase">
-              {message.role}
-            </MessageRole>
-          )}
-
-          {message.parts.map((part, index) => {
-            const key = `${message.id}-part-${index}`;
-
-            if (part.type === "text") {
-              return <MessageContent key={key}>{part.text}</MessageContent>;
-            }
-
-            if (part.type === "reasoning") {
-              if (renderReasoning) {
-                return <React.Fragment key={key}>{renderReasoning(part)}</React.Fragment>;
-              }
-
-              return (
-                <div key={key} className="text-sm italic opacity-70 my-2 pl-2 border-l-2">
-                  {part.text}
-                </div>
-              );
-            }
-
-            if (part.type === "dynamic-tool") {
-              if (renderDynamicTool) {
-                return <React.Fragment key={key}>{renderDynamicTool(part)}</React.Fragment>;
-              }
-
-              return (
-                <div key={key} className="text-xs bg-blue-50 rounded p-2 my-2">
-                  <span className="font-mono">{part.toolName}</span>
-                  <span className="ml-2 text-blue-500">[dynamic: {part.state}]</span>
-                  {part.errorText && <div className="text-red-600 mt-1">{part.errorText}</div>}
-                </div>
-              );
-            }
-
-            if (isToolPart(part)) {
-              if (renderToolCall) {
-                return <React.Fragment key={key}>{renderToolCall(part)}</React.Fragment>;
-              }
-
-              return (
-                <div key={key} className="text-xs bg-gray-100 rounded p-2 my-2">
-                  <span className="font-mono">{part.toolName}</span>
-                  <span className="ml-2 text-gray-500">[{part.state}]</span>
-                  {part.errorText && <div className="text-red-600 mt-1">{part.errorText}</div>}
-                </div>
-              );
-            }
-
-            return null;
-          })}
-
-          {showTimestamp && message.createdAt && (
-            <div className="text-xs opacity-60 mt-1">
-              {new Date(message.createdAt).toLocaleTimeString()}
-            </div>
-          )}
-        </div>
-      </MessageItem>
-    );
+export const Message = React.forwardRef<HTMLDivElement, MessageProps>(function Message(
+  {
+    message,
+    className,
+    theme: userTheme,
+    showRole = false,
+    showTimestamp = false,
+    renderToolCall,
+    renderDynamicTool,
+    renderReasoning,
   },
-);
+  ref,
+) {
+  const theme = mergeThemes(defaultChatTheme, userTheme);
+  const messageTheme = theme.message?.[message.role] ?? theme.message?.assistant;
+
+  return (
+    <MessageItem
+      ref={ref}
+      role={message.role}
+      className={cn("flex", message.role === "user" ? "justify-end" : "justify-start", className)}
+    >
+      <div className={messageTheme}>
+        {showRole && (
+          <MessageRole className="block text-xs font-semibold mb-1 opacity-75 uppercase">
+            {message.role}
+          </MessageRole>
+        )}
+
+        {message.parts.map((part, index) => {
+          const key = `${message.id}-part-${index}`;
+
+          if (part.type === "text") {
+            return <MessageContent key={key}>{part.text}</MessageContent>;
+          }
+
+          if (part.type === "reasoning") {
+            if (renderReasoning) {
+              return <React.Fragment key={key}>{renderReasoning(part)}</React.Fragment>;
+            }
+
+            return (
+              <div key={key} className="text-sm italic opacity-70 my-2 pl-2 border-l-2">
+                {part.text}
+              </div>
+            );
+          }
+
+          if (part.type === "dynamic-tool") {
+            if (renderDynamicTool) {
+              return <React.Fragment key={key}>{renderDynamicTool(part)}</React.Fragment>;
+            }
+
+            return (
+              <div key={key} className="text-xs bg-blue-50 rounded p-2 my-2">
+                <span className="font-mono">{part.toolName}</span>
+                <span className="ml-2 text-blue-500">[dynamic: {part.state}]</span>
+                {part.errorText && <div className="text-red-600 mt-1">{part.errorText}</div>}
+              </div>
+            );
+          }
+
+          if (!isToolPart(part)) return null;
+
+          if (renderToolCall) {
+            return <React.Fragment key={key}>{renderToolCall(part)}</React.Fragment>;
+          }
+
+          return (
+            <div key={key} className="text-xs bg-gray-100 rounded p-2 my-2">
+              <span className="font-mono">{part.toolName}</span>
+              <span className="ml-2 text-gray-500">[{part.state}]</span>
+              {part.errorText && <div className="text-red-600 mt-1">{part.errorText}</div>}
+            </div>
+          );
+        })}
+
+        {showTimestamp && message.createdAt && (
+          <div className="text-xs opacity-60 mt-1">
+            {new Date(message.createdAt).toLocaleTimeString()}
+          </div>
+        )}
+      </div>
+    </MessageItem>
+  );
+});
 
 Message.displayName = "Message";
 
@@ -150,7 +146,7 @@ export interface StreamingMessageProps {
 }
 
 export const StreamingMessage = React.forwardRef<HTMLDivElement, StreamingMessageProps>(
-  ({ parts, showCursor = true, className, theme: userTheme }, ref) => {
+  function StreamingMessage({ parts, showCursor = true, className, theme: userTheme }, ref) {
     const theme = mergeThemes(defaultChatTheme, userTheme);
     const textContent = getTextFromParts(parts);
 

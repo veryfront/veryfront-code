@@ -55,13 +55,17 @@ const VERYFRONT_VERSION: string = getEnv("VERYFRONT_VERSION") ??
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
+const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3,
+};
+
 // Log level configuration
-const MIN_LOG_LEVEL: LogLevel = ((): LogLevel => {
+const MIN_LOG_LEVEL: LogLevel = (() => {
   const level = getEnv("LOG_LEVEL")?.toLowerCase();
-  if (
-    level === "debug" || level === "info" || level === "warn" ||
-    level === "error"
-  ) {
+  if (level === "debug" || level === "info" || level === "warn" || level === "error") {
     return level;
   }
   return "info"; // Default: suppress debug logs
@@ -105,18 +109,14 @@ function formatTimestamp(date: Date = new Date()): string {
 
 function isTty(): boolean {
   try {
-    if (
-      typeof Deno !== "undefined" &&
-      typeof Deno.stdout?.isTerminal === "function"
-    ) {
+    if (typeof Deno !== "undefined" && typeof Deno.stdout?.isTerminal === "function") {
       return Deno.stdout.isTerminal();
     }
   } catch {
     // ignore
   }
 
-  const stdout = (globalThis as { process?: { stdout?: { isTTY?: boolean } } })
-    .process?.stdout;
+  const stdout = (globalThis as { process?: { stdout?: { isTTY?: boolean } } }).process?.stdout;
   return stdout?.isTTY ?? false;
 }
 
@@ -124,18 +124,16 @@ function shouldUseColor(): boolean {
   const noColor = getEnv("NO_COLOR");
   const forceColor = getEnv("FORCE_COLOR");
   const logColor = getEnv("LOG_COLOR");
+
   if (forceColor === "0" || logColor === "0") return false;
   if (noColor !== undefined) return false;
   if (getEnv("CI") !== undefined) return false;
   if (forceColor || logColor === "1" || logColor === "true") return true;
+
   return isTty();
 }
 
-function colorize(
-  text: string,
-  color: string | undefined,
-  enable: boolean,
-): string {
+function colorize(text: string, color: string | undefined, enable: boolean): string {
   if (!enable || !color) return text;
   return `${color}${text}${ANSI.reset}`;
 }
@@ -155,57 +153,19 @@ function formatValue(value: unknown): string {
     if (/\s/.test(trimmed)) return JSON.stringify(trimmed);
     return trimmed;
   }
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
+
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (value === null) return "null";
   if (value === undefined) return "undefined";
-  let text = "";
+
+  let text: string;
   try {
     text = JSON.stringify(value) ?? String(value);
   } catch {
     text = String(value);
   }
+
   return truncateText(normalizeText(text));
-}
-
-function formatErrorText(error: LogEntry["error"]): string {
-  if (!error) return "";
-  const text = `${error.name}: ${error.message}`;
-  return truncateText(normalizeText(text), 120);
-}
-
-// Prefix width: timestamp(8) + gap(2) + tag(10) + space(1) + glyph(1) + space(1) = 23
-const PREFIX_WIDTH = 23;
-
-function formatContextText(
-  context: Record<string, unknown>,
-  error: LogEntry["error"] | undefined,
-  enableColor: boolean,
-): string {
-  const entries = Object.entries(context).map(([key, value]) => `${key}=${formatValue(value)}`);
-  if (error) {
-    entries.push(`err=${formatErrorText(error)}`);
-  }
-  if (entries.length === 0) return "";
-  const text = entries.join(" ");
-  // Put context on new line, indented to align with message
-  const indent = " ".repeat(PREFIX_WIDTH);
-  return `\n${indent}${colorize(text, ANSI.dim, enableColor)}`;
-}
-
-function formatTextLine(
-  level: LogLevel,
-  message: string,
-  context: Record<string, unknown> | undefined,
-  error: LogEntry["error"] | undefined,
-): string {
-  const enableColor = shouldUseColor();
-  const timestamp = colorize(formatTimestamp(), ANSI.dim, enableColor);
-  const tag = colorize(padTag("PROXY"), ANSI.cyan, enableColor);
-  const glyph = colorize(LEVEL_GLYPHS[level], LEVEL_COLORS[level], enableColor);
-  const contextText = formatContextText(context ?? {}, error, enableColor);
-  return `${timestamp}  ${tag} ${glyph} ${message}${contextText}`;
 }
 
 interface LogEntry {
@@ -233,6 +193,44 @@ interface LogEntry {
   };
 }
 
+function formatErrorText(error: LogEntry["error"]): string {
+  if (!error) return "";
+  const text = `${error.name}: ${error.message}`;
+  return truncateText(normalizeText(text), 120);
+}
+
+// Prefix width: timestamp(8) + gap(2) + tag(10) + space(1) + glyph(1) + space(1) = 23
+const PREFIX_WIDTH = 23;
+
+function formatContextText(
+  context: Record<string, unknown>,
+  error: LogEntry["error"] | undefined,
+  enableColor: boolean,
+): string {
+  const entries = Object.entries(context).map(([key, value]) => `${key}=${formatValue(value)}`);
+  if (error) entries.push(`err=${formatErrorText(error)}`);
+  if (entries.length === 0) return "";
+
+  const text = entries.join(" ");
+  // Put context on new line, indented to align with message
+  const indent = " ".repeat(PREFIX_WIDTH);
+  return `\n${indent}${colorize(text, ANSI.dim, enableColor)}`;
+}
+
+function formatTextLine(
+  level: LogLevel,
+  message: string,
+  context: Record<string, unknown> | undefined,
+  error: LogEntry["error"] | undefined,
+): string {
+  const enableColor = shouldUseColor();
+  const timestamp = colorize(formatTimestamp(), ANSI.dim, enableColor);
+  const tag = colorize(padTag("PROXY"), ANSI.cyan, enableColor);
+  const glyph = colorize(LEVEL_GLYPHS[level], LEVEL_COLORS[level], enableColor);
+  const contextText = formatContextText(context ?? {}, error, enableColor);
+  return `${timestamp}  ${tag} ${glyph} ${message}${contextText}`;
+}
+
 function isProduction(): boolean {
   return getEnv("NODE_ENV") === "production";
 }
@@ -242,13 +240,6 @@ function getLogFormat(): "json" | "text" {
   if (format === "json" || format === "text") return format;
   return isProduction() ? "json" : "text";
 }
-
-const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
-  debug: 0,
-  info: 1,
-  warn: 2,
-  error: 3,
-};
 
 function serializeError(err: unknown): LogEntry["error"] | undefined {
   if (err instanceof Error) {
@@ -260,6 +251,10 @@ function serializeError(err: unknown): LogEntry["error"] | undefined {
   return undefined;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 class ProxyLogger {
   private format = getLogFormat();
 
@@ -269,43 +264,40 @@ class ProxyLogger {
     context?: Record<string, unknown>,
     error?: unknown,
   ): void {
-    // Filter by minimum log level
-    if (LOG_LEVEL_ORDER[level] < LOG_LEVEL_ORDER[MIN_LOG_LEVEL]) {
+    if (LOG_LEVEL_ORDER[level] < LOG_LEVEL_ORDER[MIN_LOG_LEVEL]) return;
+
+    if (this.format !== "json") {
+      console.log(formatTextLine(level, message, context, serializeError(error)));
       return;
     }
-    if (this.format === "json") {
-      const traceCtx = getTraceContext();
-      const reqCtx = getProxyRequestContext();
-      const entry: LogEntry = {
-        timestamp: new Date().toISOString(),
-        level,
-        service: "proxy",
-        veryfrontVersion: VERYFRONT_VERSION,
-        message,
-        ...(traceCtx.traceId &&
-          { traceId: traceCtx.traceId, spanId: traceCtx.spanId }),
-        // Include request context fields at top level (like renderer logs)
-        ...(reqCtx?.requestId && { requestId: reqCtx.requestId }),
-        ...(reqCtx?.projectSlug && { projectSlug: reqCtx.projectSlug }),
-        ...(reqCtx?.projectId && { projectId: reqCtx.projectId }),
-        ...(reqCtx?.releaseId && { releaseId: reqCtx.releaseId }),
-        ...(reqCtx?.branchId && { branchId: reqCtx.branchId }),
-        ...(reqCtx?.branchName && { branchName: reqCtx.branchName }),
-        ...(reqCtx?.domain && { domain: reqCtx.domain }),
-        ...(reqCtx?.environment && { environment: reqCtx.environment }),
-      };
-      if (context && Object.keys(context).length > 0) {
-        entry.context = context;
-      }
-      const serializedError = serializeError(error);
-      if (serializedError) {
-        entry.error = serializedError;
-      }
-      console.log(JSON.stringify(entry));
-    } else {
-      const serializedError = serializeError(error);
-      console.log(formatTextLine(level, message, context, serializedError));
-    }
+
+    const traceCtx = getTraceContext();
+    const reqCtx = getProxyRequestContext();
+
+    const entry: LogEntry = {
+      timestamp: new Date().toISOString(),
+      level,
+      service: "proxy",
+      veryfrontVersion: VERYFRONT_VERSION,
+      message,
+      ...(traceCtx.traceId && { traceId: traceCtx.traceId, spanId: traceCtx.spanId }),
+      // Include request context fields at top level (like renderer logs)
+      ...(reqCtx?.requestId && { requestId: reqCtx.requestId }),
+      ...(reqCtx?.projectSlug && { projectSlug: reqCtx.projectSlug }),
+      ...(reqCtx?.projectId && { projectId: reqCtx.projectId }),
+      ...(reqCtx?.releaseId && { releaseId: reqCtx.releaseId }),
+      ...(reqCtx?.branchId && { branchId: reqCtx.branchId }),
+      ...(reqCtx?.branchName && { branchName: reqCtx.branchName }),
+      ...(reqCtx?.domain && { domain: reqCtx.domain }),
+      ...(reqCtx?.environment && { environment: reqCtx.environment }),
+    };
+
+    if (context && Object.keys(context).length > 0) entry.context = context;
+
+    const serializedError = serializeError(error);
+    if (serializedError) entry.error = serializedError;
+
+    console.log(JSON.stringify(entry));
   }
 
   debug(message: string, context?: Record<string, unknown>): void {
@@ -321,25 +313,23 @@ class ProxyLogger {
   }
 
   error(message: string, error?: unknown): void;
-  error(
-    message: string,
-    context: Record<string, unknown>,
-    error?: unknown,
-  ): void;
+  error(message: string, context: Record<string, unknown>, error?: unknown): void;
   error(
     message: string,
     contextOrError?: Record<string, unknown> | unknown,
     error?: unknown,
   ): void {
-    if (contextOrError instanceof Error || error !== undefined) {
-      const ctx = contextOrError instanceof Error
-        ? undefined
-        : contextOrError as Record<string, unknown>;
-      const err = contextOrError instanceof Error ? contextOrError : error;
-      this.log("error", message, ctx, err);
-    } else {
-      this.log("error", message, contextOrError as Record<string, unknown>);
+    if (error !== undefined) {
+      this.log("error", message, contextOrError as Record<string, unknown>, error);
+      return;
     }
+
+    if (contextOrError instanceof Error) {
+      this.log("error", message, undefined, contextOrError);
+      return;
+    }
+
+    this.log("error", message, contextOrError as Record<string, unknown>);
   }
 
   /**
@@ -373,28 +363,28 @@ class ChildProxyLogger {
   }
 
   error(message: string, error?: unknown): void;
-  error(
-    message: string,
-    context: Record<string, unknown>,
-    error?: unknown,
-  ): void;
+  error(message: string, context: Record<string, unknown>, error?: unknown): void;
   error(
     message: string,
     contextOrError?: Record<string, unknown> | unknown,
     error?: unknown,
   ): void {
-    if (contextOrError instanceof Error || error !== undefined) {
-      const ctx = contextOrError instanceof Error
-        ? this.boundContext
-        : this.merge(contextOrError as Record<string, unknown>);
-      const err = contextOrError instanceof Error ? contextOrError : error;
-      this.parent.error(message, ctx, err);
-    } else {
-      this.parent.error(
-        message,
-        this.merge(contextOrError as Record<string, unknown>),
-      );
+    if (error !== undefined) {
+      this.parent.error(message, this.merge(contextOrError as Record<string, unknown>), error);
+      return;
     }
+
+    if (contextOrError instanceof Error) {
+      this.parent.error(message, this.boundContext, contextOrError);
+      return;
+    }
+
+    if (isRecord(contextOrError)) {
+      this.parent.error(message, this.merge(contextOrError));
+      return;
+    }
+
+    this.parent.error(message, this.merge(contextOrError as Record<string, unknown>));
   }
 
   child(context: Record<string, unknown>): ChildProxyLogger {

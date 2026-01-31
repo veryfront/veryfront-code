@@ -35,35 +35,40 @@ const productionRequestContext = {
 
 describe("isProductionMode", () => {
   it("returns true when config.productionMode is true", () => {
-    const ctx = createContext({ config: prodConfig });
-    assertEquals(isProductionMode(ctx), true);
+    assertEquals(isProductionMode(createContext({ config: prodConfig })), true);
   });
 
   it("config.productionMode takes priority over requestContext.mode", () => {
-    const ctx = createContext({
-      config: prodConfig,
-      requestContext: previewRequestContext,
-    });
-    assertEquals(isProductionMode(ctx), true);
+    assertEquals(
+      isProductionMode(
+        createContext({ config: prodConfig, requestContext: previewRequestContext }),
+      ),
+      true,
+    );
   });
 
   it("returns true when requestContext.mode is production", () => {
-    const ctx = createContext({ requestContext: productionRequestContext });
-    assertEquals(isProductionMode(ctx), true);
+    assertEquals(
+      isProductionMode(createContext({ requestContext: productionRequestContext })),
+      true,
+    );
   });
 
   it("returns false when requestContext.mode is preview", () => {
-    const ctx = createContext({ requestContext: previewRequestContext });
-    assertEquals(isProductionMode(ctx), false);
+    assertEquals(
+      isProductionMode(createContext({ requestContext: previewRequestContext })),
+      false,
+    );
   });
 
   it("returns false when no requestContext present", () => {
-    const ctx = createContext();
-    assertEquals(isProductionMode(ctx), false);
+    assertEquals(isProductionMode(createContext()), false);
   });
 
   it("works without URL parameter (backward compatible)", () => {
-    const ctx = createContext({ requestContext: productionRequestContext });
-    assertEquals(isProductionMode(ctx), true);
+    assertEquals(
+      isProductionMode(createContext({ requestContext: productionRequestContext })),
+      true,
+    );
   });
 });

@@ -20,16 +20,14 @@ describe(
     describe("Basic server operations", () => {
       it(
         "should create and serve requests",
-        {
-          ignore: !isBunRuntime,
-        },
+        { ignore: !isBunRuntime },
         async () => {
           const adapter = new BunAdapter();
           let hit = 0;
           const port = await getFreePort();
 
           const server = await adapter.serve(
-            (_req: Request) => {
+            () => {
               hit++;
               return new Response("ok");
             },
@@ -38,9 +36,8 @@ describe(
 
           try {
             const res = await fetch(`http://127.0.0.1:${port}/`);
-            const text = await res.text();
             assertEquals(res.status, 200);
-            assertEquals(text, "ok");
+            assertEquals(await res.text(), "ok");
             assertEquals(hit, 1);
           } finally {
             await server.stop();
@@ -52,9 +49,7 @@ describe(
     describe("Universal server integration", () => {
       it(
         "should run with universal server",
-        {
-          ignore: !isBunRuntime,
-        },
+        { ignore: !isBunRuntime },
         async () => {
           const adapter = new BunAdapter();
           const dir = await makeTempDir({ prefix: "vf_bun_universal_" });
@@ -96,9 +91,7 @@ describe(
 
       it(
         "should work with thin server wrapper",
-        {
-          ignore: !isBunRuntime,
-        },
+        { ignore: !isBunRuntime },
         async () => {
           const { startUniversalServer: startBun } = await import(
             "../../../src/server/production-server.ts"
@@ -124,9 +117,3 @@ describe(
     });
   },
 );
-
-function assert(condition: boolean, message?: string): asserts condition {
-  if (!condition) {
-    throw new Error(message || "Assertion failed");
-  }
-}

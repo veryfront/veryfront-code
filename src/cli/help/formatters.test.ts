@@ -26,7 +26,6 @@ describe("cli/help/formatters", () => {
   describe("formatOptionFlag", () => {
     it("should pad flag to specified length", () => {
       const result = formatOptionFlag("-p", 10);
-      // The flag "-p" padded to 12 chars (10 + 2)
       assertEquals(result.length, 12);
     });
 
@@ -103,8 +102,7 @@ describe("cli/help/formatters", () => {
 
   describe("calculateMaxLength", () => {
     it("should return the maximum length", () => {
-      const items = [{ length: 3 }, { length: 7 }, { length: 5 }];
-      assertEquals(calculateMaxLength(items), 7);
+      assertEquals(calculateMaxLength([{ length: 3 }, { length: 7 }, { length: 5 }]), 7);
     });
 
     it("should handle single item", () => {
@@ -112,8 +110,7 @@ describe("cli/help/formatters", () => {
     });
 
     it("should handle items with zero length", () => {
-      const items = [{ length: 0 }, { length: 3 }];
-      assertEquals(calculateMaxLength(items), 3);
+      assertEquals(calculateMaxLength([{ length: 0 }, { length: 3 }]), 3);
     });
   });
 
@@ -138,8 +135,8 @@ describe("cli/help/formatters", () => {
       ];
       const result = formatCommandList(commands);
       assertEquals(result.length, 2);
-      assertEquals(result[0]!.includes("dev"), true);
-      assertEquals(result[1]!.includes("build"), true);
+      assertEquals(result[0]?.includes("dev"), true);
+      assertEquals(result[1]?.includes("build"), true);
     });
 
     it("should align command names", () => {
@@ -149,9 +146,8 @@ describe("cli/help/formatters", () => {
       ];
       const result = formatCommandList(commands);
       assertEquals(result.length, 2);
-      // Both should contain their respective names
-      assertEquals(result[0]!.includes("Short name"), true);
-      assertEquals(result[1]!.includes("Long name"), true);
+      assertEquals(result[0]?.includes("Short name"), true);
+      assertEquals(result[1]?.includes("Long name"), true);
     });
   });
 });

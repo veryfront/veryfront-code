@@ -129,35 +129,41 @@ export const SubmitButton = React.forwardRef<
     const showVoice = !showStop && !hasInput && !!onVoice;
 
     const handleClick = (e: React.MouseEvent<HTMLButtonElement>): void => {
-      if (showStop && onStop) {
+      if (showStop) {
+        if (!onStop) return;
         e.preventDefault();
         onStop();
         return;
       }
 
-      if (showVoice && onVoice) {
-        e.preventDefault();
-        onVoice();
-      }
+      if (!showVoice || !onVoice) return;
+      e.preventDefault();
+      onVoice();
     };
 
-    let icon: React.ReactNode;
-    let ariaLabel: string;
-    let state: "stop" | "voice" | "submit";
+    const { icon, ariaLabel, state } = (() => {
+      if (showStop) {
+        return {
+          icon: icons?.stop ?? <StopIcon />,
+          ariaLabel: "Stop generating",
+          state: "stop" as const,
+        };
+      }
 
-    if (showStop) {
-      icon = icons?.stop ?? <StopIcon />;
-      ariaLabel = "Stop generating";
-      state = "stop";
-    } else if (showVoice) {
-      icon = icons?.voice ?? <VoiceIcon />;
-      ariaLabel = "Voice input";
-      state = "voice";
-    } else {
-      icon = icons?.submit ?? <SubmitIcon />;
-      ariaLabel = "Send message";
-      state = "submit";
-    }
+      if (showVoice) {
+        return {
+          icon: icons?.voice ?? <VoiceIcon />,
+          ariaLabel: "Voice input",
+          state: "voice" as const,
+        };
+      }
+
+      return {
+        icon: icons?.submit ?? <SubmitIcon />,
+        ariaLabel: "Send message",
+        state: "submit" as const,
+      };
+    })();
 
     return (
       <button

@@ -16,10 +16,8 @@ describe(
   () => {
     it("should render TSX layouts in app router", async () => {
       await withTestContext("tsx-layout-app-router", async (context) => {
-        // Create app router structure with TSX layouts
         await mkdir(join(context.projectDir, "app", "blog"), { recursive: true });
 
-        // Root layout (TSX)
         await writeTextFile(
           join(context.projectDir, "app", "layout.tsx"),
           `export default function RootLayout({ children }) {
@@ -36,7 +34,6 @@ describe(
 }`,
         );
 
-        // Blog layout (TSX)
         await writeTextFile(
           join(context.projectDir, "app", "blog", "layout.tsx"),
           `export default function BlogLayout({ children }) {
@@ -49,7 +46,6 @@ describe(
 }`,
         );
 
-        // Blog page (MDX)
         await writeTextFile(
           join(context.projectDir, "app", "blog", "page.mdx"),
           `# Blog Post
@@ -62,23 +58,19 @@ This is content from the MDX page.`,
           mode: "development",
         });
 
-        const result = await renderer.renderPage("blog");
-        const html = result.html;
+        const { html } = await renderer.renderPage("blog");
 
-        // Verify both TSX layouts are applied
         assertStringIncludes(html, 'class="root-tsx-layout"');
         assertStringIncludes(html, 'class="blog-tsx-layout"');
         assertStringIncludes(html, "Header from TSX");
         assertStringIncludes(html, "Blog Navigation");
         assertStringIncludes(html, "Blog Post");
 
-        // Verify proper nesting
         const rootIdx = html.indexOf('class="root-tsx-layout"');
         const blogIdx = html.indexOf('class="blog-tsx-layout"');
         assertEquals(rootIdx < blogIdx, true, "Root layout should wrap blog layout");
 
-        // Clean up
-        if (renderer && typeof renderer.clearAllState === "function") {
+        if (typeof renderer.clearAllState === "function") {
           await renderer.clearAllState();
         }
       });

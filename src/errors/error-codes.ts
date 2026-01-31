@@ -78,7 +78,6 @@ export function getErrorDocsUrl(code: ErrorCodeType): string {
 
 export function inferErrorCode(error: Error): ErrorCodeType | null {
   const message = error.message.toLowerCase();
-
   const has = (text: string): boolean => message.includes(text);
 
   if (has("config")) {
@@ -96,9 +95,10 @@ export function inferErrorCode(error: Error): ErrorCodeType | null {
   if (has("client") && has("boundary")) return ErrorCode.CLIENT_BOUNDARY_VIOLATION;
   if (has("server-only") && has("client")) return ErrorCode.SERVER_ONLY_IN_CLIENT;
 
-  if (has("cache path mismatch") || has("incompatible") && has("path")) {
+  if (has("cache path mismatch") || (has("incompatible") && has("path"))) {
     return ErrorCode.CACHE_PATH_MISMATCH;
   }
+
   if (has("module not found") || has("cannot find module")) return ErrorCode.MODULE_NOT_FOUND;
   if (has("import") || has("resolve")) return ErrorCode.IMPORT_RESOLUTION_ERROR;
   if (has("react") && has("not found")) return ErrorCode.DEPENDENCY_MISSING;

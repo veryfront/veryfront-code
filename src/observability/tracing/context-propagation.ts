@@ -61,7 +61,7 @@ export class ContextPropagation {
       endSpan(span);
       return result;
     } catch (error) {
-      endSpan(span, error as Error);
+      endSpan(span, error instanceof Error ? error : undefined);
       throw error;
     }
   }
@@ -79,7 +79,7 @@ export class ContextPropagation {
       endSpan(span);
       return result;
     } catch (error) {
-      endSpan(span, error as Error);
+      endSpan(span, error instanceof Error ? error : undefined);
       throw error;
     }
   }

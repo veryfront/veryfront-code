@@ -1,16 +1,3 @@
-/**
- * Build Orchestrator Module
- *
- * Main orchestration module that coordinates the entire build process:
- * - Initializes build context
- * - Sets up build environment
- * - Collects routes
- * - Runs code splitting
- * - Executes build
- * - Generates outputs
- * - Performs cleanup
- */
-
 import { serverLogger as logger } from "#veryfront/utils";
 import type { BuildOptions, BuildStats } from "#veryfront/server/build-types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
@@ -29,9 +16,6 @@ import { generateAllOutputs } from "./output-generator.ts";
 import { collectAllRoutes } from "./route-collector.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-/**
- * Main build production orchestrator
- */
 export function buildProduction(options: BuildOptions): Promise<BuildStats> {
   return withSpan(
     "build.production",
@@ -61,14 +45,16 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
         {},
       );
 
+      const outputDir = normalizedOptions.outputDir ?? "";
+      const dryRun = normalizedOptions.dryRun ?? false;
+      const enableSplitting = normalizedOptions.enableSplitting ?? true;
+      const enablePrefetch = normalizedOptions.enablePrefetch ?? true;
+      const enableCompression = normalizedOptions.enableCompression ?? true;
+      const ssg = normalizedOptions.ssg ?? true;
+
       await withSpan(
         "build.setupDirectories",
-        () =>
-          setupBuildDirectories(
-            context.adapter,
-            normalizedOptions.outputDir ?? "",
-            normalizedOptions.dryRun ?? false,
-          ),
+        () => setupBuildDirectories(context.adapter, outputDir, dryRun),
         {},
       );
 
@@ -78,7 +64,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
           collectAllRoutes(
             context.adapter,
             normalizedOptions.projectDir,
-            normalizedOptions.ssg ?? true,
+            ssg,
             normalizedOptions.include,
             normalizedOptions.exclude,
           ),
@@ -90,10 +76,10 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
         () =>
           runCodeSplitting(
             normalizedOptions.projectDir,
-            normalizedOptions.outputDir ?? "",
+            outputDir,
             routes.pages,
-            normalizedOptions.enableSplitting ?? true,
-            normalizedOptions.dryRun ?? false,
+            enableSplitting,
+            dryRun,
           ),
         {},
       );
@@ -105,13 +91,13 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
           executeBuild(routes.pages, routes.app, {
             adapter: context.adapter,
             projectDir: normalizedOptions.projectDir,
-            outputDir: normalizedOptions.outputDir ?? "",
+            outputDir,
             renderer: context.renderer,
             config: context.config,
-            enablePrefetch: normalizedOptions.enablePrefetch ?? true,
+            enablePrefetch,
             chunkManifest: splitResult.manifest,
             baseUrl: "",
-            dryRun: normalizedOptions.dryRun ?? false,
+            dryRun,
           }),
         {},
       );
@@ -125,15 +111,15 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
           generateAllOutputs({
             adapter: context.adapter,
             projectDir: normalizedOptions.projectDir,
-            outputDir: normalizedOptions.outputDir ?? "",
+            outputDir,
             routes: routes.pages,
             appRoutes: routes.app,
             stats: context.stats,
-            enableSplitting: normalizedOptions.enableSplitting ?? true,
-            enablePrefetch: normalizedOptions.enablePrefetch ?? true,
-            enableCompression: normalizedOptions.enableCompression ?? true,
+            enableSplitting,
+            enablePrefetch,
+            enableCompression,
             chunkManifest: splitResult.manifest,
-            dryRun: normalizedOptions.dryRun ?? false,
+            dryRun,
           }),
         {},
       );
@@ -151,5 +137,4 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
   );
 }
 
-// Re-export helper functions for testing
 export { cleanupCaches, cleanupRenderer, logBuildCompletion };

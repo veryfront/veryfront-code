@@ -74,8 +74,9 @@ describe("CacheManager", () => {
       cache.set("key", entry2);
 
       const result = cache.get("key");
-      assertEquals(result ? getEntryProps<{ value: number }>(result).value : undefined, 2);
-      assertEquals(result?.revalidate, 120);
+      assertExists(result);
+      assertEquals(getEntryProps<{ value: number }>(result).value, 2);
+      assertEquals(result.revalidate, 120);
     });
   });
 
@@ -84,7 +85,7 @@ describe("CacheManager", () => {
       const cache = new CacheManager();
       cache.set("key", createEntry({}));
 
-      assertEquals(cache.get("key") !== null, true);
+      assertExists(cache.get("key"));
 
       cache.delete("key");
       assertEquals(cache.get("key"), null);

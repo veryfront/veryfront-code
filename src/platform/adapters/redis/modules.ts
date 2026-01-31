@@ -18,12 +18,11 @@ export function getRedisModule(): Promise<{
     async () => {
       try {
         if (isDeno) {
-          const denoRedisUrl = ["https://deno.land/x/redis", "@v0.32.1/mod.ts"].join("");
+          const denoRedisUrl = "https://deno.land/x/redis@v0.32.1/mod.ts";
           // @ts-ignore - Deno global
           DenoRedis = await import(denoRedisUrl);
         } else {
-          const redisModuleName = ["re", "dis"].join("");
-          NodeRedis = await import(redisModuleName);
+          NodeRedis = (await import("redis")) as unknown as NodeRedisModule;
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

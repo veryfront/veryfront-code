@@ -28,12 +28,12 @@ class StateBridge implements StateStore {
     if (typeof window === "undefined") return;
 
     this.boundSaveState = () => this.saveState();
-    (globalThis as unknown as Window).addEventListener("beforeunload", this.boundSaveState);
+    globalThis.addEventListener("beforeunload", this.boundSaveState);
   }
 
   destroy(): void {
     if (this.boundSaveState && typeof window !== "undefined") {
-      (globalThis as unknown as Window).removeEventListener("beforeunload", this.boundSaveState);
+      globalThis.removeEventListener("beforeunload", this.boundSaveState);
       this.boundSaveState = null;
     }
     this.clear();
@@ -159,11 +159,10 @@ export function useBridgedState<T>(
   options?: { persist?: boolean },
   testReact?: ReactHooksSubset,
 ): [T, (value: T) => void] {
-  const reactHooks = testReact ?? React;
-  const { useState, useEffect, useCallback } = reactHooks;
+  const { useState, useEffect, useCallback } = testReact ?? React;
   const bridge = getStateBridge();
 
-  const [value, setValue] = useState<T>((bridge.get(key) ?? initialValue) as T);
+  const [value, setValue] = useState<T>(() => bridge.get(key) ?? initialValue);
 
   useEffect(() => {
     const unsubscribe = bridge.subscribe(key, setValue);

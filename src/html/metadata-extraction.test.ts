@@ -28,23 +28,21 @@ describe("html/metadata-extraction", () => {
       const meta = extractHTMLMetadata({
         og: { title: "OG Title", image: "https://example.com/img.png" },
       });
+
       assertExists(meta.meta);
-      const first = meta.meta[0];
-      assertExists(first);
       assertEquals(meta.meta.length, 2);
-      assertEquals(first.property, "og:title");
-      assertEquals(first.content, "OG Title");
+      assertEquals(meta.meta[0]?.property, "og:title");
+      assertEquals(meta.meta[0]?.content, "OG Title");
     });
 
     it("should extract twitter metadata into meta array", () => {
       const meta = extractHTMLMetadata({
         twitter: { card: "summary", site: "@veryfront" },
       });
+
       assertExists(meta.meta);
-      const first = meta.meta[0];
-      assertExists(first);
       assertEquals(meta.meta.length, 2);
-      assertEquals(first.name, "twitter:card");
+      assertEquals(meta.meta[0]?.name, "twitter:card");
     });
 
     it("should handle nested metadata object", () => {
@@ -66,6 +64,7 @@ describe("html/metadata-extraction", () => {
         scripts: [{ src: "/app.js" }],
         styles: [{ href: "/style.css" }],
       });
+
       assertExists(meta.meta);
       assertExists(meta.links);
       assertExists(meta.scripts);

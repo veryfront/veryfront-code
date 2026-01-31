@@ -19,6 +19,8 @@ export default tool({
   async execute({ taskId, includeSubtasks, customTaskIds, teamId }) {
     const task = await getTask(taskId, { includeSubtasks, customTaskIds, teamId });
 
+    const { creator, list, folder, space } = task;
+
     return {
       id: task.id,
       name: task.name,
@@ -31,23 +33,23 @@ export default tool({
       dateUpdated: task.date_updated,
       dateClosed: task.date_closed,
       creator: {
-        id: task.creator.id,
-        username: task.creator.username,
-        email: task.creator.email,
+        id: creator.id,
+        username: creator.username,
+        email: creator.email,
       },
       assignees: task.assignees.map(({ id, username, email }) => ({ id, username, email })),
       tags: task.tags.map(({ name }) => name),
       list: {
-        id: task.list.id,
-        name: task.list.name,
+        id: list.id,
+        name: list.name,
       },
       folder: {
-        id: task.folder.id,
-        name: task.folder.name,
+        id: folder.id,
+        name: folder.name,
       },
       space: {
-        id: task.space.id,
-        name: task.space.name,
+        id: space.id,
+        name: space.name,
       },
     };
   },

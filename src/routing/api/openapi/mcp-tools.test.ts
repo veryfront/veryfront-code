@@ -11,6 +11,13 @@ function makeSpec(paths: OpenAPISpec["paths"]): OpenAPISpec {
   };
 }
 
+function generateTools(
+  spec: OpenAPISpec,
+  options?: { baseUrl: string; toolPrefix?: string },
+) {
+  return generateMCPToolsFromSpec(spec, options ?? { baseUrl: "http://localhost:3000" });
+}
+
 describe("routing/api/openapi/mcp-tools", () => {
   describe("generateMCPToolsFromSpec()", () => {
     it("should generate tools for each operation", () => {
@@ -29,10 +36,7 @@ describe("routing/api/openapi/mcp-tools", () => {
         },
       });
 
-      const tools = generateMCPToolsFromSpec(spec, {
-        baseUrl: "http://localhost:3000",
-      });
-
+      const tools = generateTools(spec, { baseUrl: "http://localhost:3000" });
       assertEquals(tools.length, 2);
     });
 
@@ -46,9 +50,7 @@ describe("routing/api/openapi/mcp-tools", () => {
         },
       });
 
-      const tools = generateMCPToolsFromSpec(spec, {
-        baseUrl: "http://localhost:3000",
-      });
+      const tools = generateTools(spec, { baseUrl: "http://localhost:3000" });
 
       const first = tools[0];
       assertExists(first);
@@ -65,7 +67,7 @@ describe("routing/api/openapi/mcp-tools", () => {
         },
       });
 
-      const tools = generateMCPToolsFromSpec(spec, {
+      const tools = generateTools(spec, {
         baseUrl: "http://localhost:3000",
         toolPrefix: "myapp",
       });
@@ -77,9 +79,7 @@ describe("routing/api/openapi/mcp-tools", () => {
 
     it("should return empty array for empty paths", () => {
       const spec = makeSpec({});
-      const tools = generateMCPToolsFromSpec(spec, {
-        baseUrl: "http://localhost:3000",
-      });
+      const tools = generateTools(spec, { baseUrl: "http://localhost:3000" });
       assertEquals(tools.length, 0);
     });
 
@@ -93,10 +93,7 @@ describe("routing/api/openapi/mcp-tools", () => {
         },
       });
 
-      const tools = generateMCPToolsFromSpec(spec, {
-        baseUrl: "http://localhost:3000",
-      });
-
+      const tools = generateTools(spec, { baseUrl: "http://localhost:3000" });
       assertEquals(tools.length, 1);
     });
 
@@ -134,10 +131,7 @@ describe("routing/api/openapi/mcp-tools", () => {
         },
       });
 
-      const tools = generateMCPToolsFromSpec(spec, {
-        baseUrl: "http://localhost:3000",
-      });
-
+      const tools = generateTools(spec, { baseUrl: "http://localhost:3000" });
       assertEquals(tools.length, 7);
     });
 
@@ -152,9 +146,7 @@ describe("routing/api/openapi/mcp-tools", () => {
         },
       });
 
-      const tools = generateMCPToolsFromSpec(spec, {
-        baseUrl: "http://localhost:3000",
-      });
+      const tools = generateTools(spec, { baseUrl: "http://localhost:3000" });
 
       const first = tools[0];
       assertExists(first);
@@ -173,9 +165,7 @@ describe("routing/api/openapi/mcp-tools", () => {
         },
       });
 
-      const tools = generateMCPToolsFromSpec(spec, {
-        baseUrl: "http://localhost:3000",
-      });
+      const tools = generateTools(spec, { baseUrl: "http://localhost:3000" });
 
       const first = tools[0];
       assertExists(first);
@@ -194,9 +184,7 @@ describe("routing/api/openapi/mcp-tools", () => {
         },
       });
 
-      const tools = generateMCPToolsFromSpec(spec, {
-        baseUrl: "http://localhost:3000",
-      });
+      const tools = generateTools(spec, { baseUrl: "http://localhost:3000" });
 
       const first = tools[0];
       assertExists(first);
@@ -208,10 +196,7 @@ describe("routing/api/openapi/mcp-tools", () => {
         "/api/users": null as unknown as OpenAPISpec["paths"][string],
       });
 
-      const tools = generateMCPToolsFromSpec(spec, {
-        baseUrl: "http://localhost:3000",
-      });
-
+      const tools = generateTools(spec, { baseUrl: "http://localhost:3000" });
       assertEquals(tools.length, 0);
     });
 
@@ -235,11 +220,10 @@ describe("routing/api/openapi/mcp-tools", () => {
         },
       });
 
-      const tools = generateMCPToolsFromSpec(spec, {
-        baseUrl: "http://localhost:3000",
-      });
+      const tools = generateTools(spec, { baseUrl: "http://localhost:3000" });
 
       assertEquals(tools.length, 3);
+
       const ids = tools.map((t) => t.id);
       assertEquals(ids.includes("api:getUsers"), true);
       assertEquals(ids.includes("api:getPosts"), true);

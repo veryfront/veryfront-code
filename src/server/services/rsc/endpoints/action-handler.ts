@@ -18,7 +18,7 @@ export async function handleActionRequest(
 ): Promise<Response> {
   const body = await req.json().catch((error) => {
     serverLogger.warn("[RSC] Failed to parse action request body", { error });
-    return {} as Record<string, unknown>;
+    return {};
   });
 
   const parseResult = await parseActionBody(body);
@@ -32,8 +32,8 @@ export async function handleActionRequest(
       const ok = await rscActionGuard(req, { id, args });
       if (!ok) return jsonErrorResponse(HttpStatus.FORBIDDEN, "unauthorized");
     }
-  } catch (e) {
-    serverLogger.debug("[rsc][dev] guard load failed", e);
+  } catch (error) {
+    serverLogger.debug("[rsc][dev] guard load failed", error);
   }
 
   const file = `${projectDir}/app/actions/${id}.ts`;

@@ -101,7 +101,7 @@ export const isFileCacheRedisEnabled = isFileCacheDistributedEnabled;
  * When backend unavailable: Small memory fallback for local dev
  */
 export class FileCache {
-  private fallbackCache: Map<string, CacheEntry<unknown>>;
+  private fallbackCache = new Map<string, CacheEntry<unknown>>();
   private fallbackMemoryUsed = 0;
   private options: Required<FileCacheOptions>;
   private hits = 0;
@@ -116,19 +116,13 @@ export class FileCache {
       ...options,
     };
 
-    // Fallback cache only used when backend is unavailable
-    this.fallbackCache = new Map();
-
     const mode = cacheBackend?.type ?? "memory";
     logger.debug("[FileCache] Initialized", { ...this.options, mode });
   }
 
-  private isDistributed(): boolean {
-    return cacheBackend?.type !== undefined && cacheBackend.type !== "memory";
-  }
-
   private getBackend(): CacheBackend | null {
-    return this.isDistributed() ? cacheBackend : null;
+    if (!cacheBackend || cacheBackend.type === "memory") return null;
+    return cacheBackend;
   }
 
   /**
@@ -142,7 +136,7 @@ export class FileCache {
     }
 
     // In distributed mode, sync get always misses - use getAsync
-    if (this.isDistributed()) {
+    if (this.getBackend()) {
       this.misses++;
       return undefined;
     }
@@ -277,7 +271,7 @@ export class FileCache {
 
   has(key: string): boolean {
     if (!this.options.enabled) return false;
-    if (this.isDistributed()) return false; // Use hasAsync for distributed mode
+    if (this.getBackend()) return false; // Use hasAsync for distributed mode
 
     const entry = this.fallbackCache.get(key);
     if (!entry) return false;
@@ -420,13 +414,10 @@ export class FileCache {
       this.fallbackCache.delete(oldest);
     };
 
-    // Evict by count
     while (this.fallbackCache.size >= this.options.maxSize) {
-      if (this.fallbackCache.size === 0) break;
       evictOldest();
     }
 
-    // Evict by memory
     while (
       this.fallbackMemoryUsed + newSize > this.options.maxMemory && this.fallbackCache.size > 0
     ) {

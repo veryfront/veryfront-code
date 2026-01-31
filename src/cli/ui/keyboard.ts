@@ -36,9 +36,6 @@ export interface KeyboardOptions {
   onPush?: () => void;
 }
 
-/**
- * Shared key press handler for all runtimes
- */
 function handleKeyPress(key: string, options: KeyboardOptions): void {
   if (key >= "1" && key <= "9") {
     options.onNumber?.(Number.parseInt(key, 10));
@@ -74,29 +71,23 @@ function handleKeyPress(key: string, options: KeyboardOptions): void {
 }
 
 function createNoopHandler(): KeyboardHandler {
-  return {
-    start() {},
-    stop() {},
-  };
+  return { start() {}, stop() {} };
 }
 
-// Cross-runtime implementation using platform abstractions
 function createPlatformHandler(options: KeyboardOptions): KeyboardHandler {
   let running = false;
   let reader: ReturnType<typeof getStdinReader> | null = null;
 
   async function readLoop(): Promise<void> {
-    if (!reader) return;
-
     while (running) {
       try {
+        if (!reader) return;
         const { value, done } = await reader.read();
         if (done || !value) return;
 
         const byte = value[0];
         if (byte === undefined) continue;
 
-        // Handle Ctrl+C (0x03)
         if (byte === 0x03) {
           options.onQuit?.();
           return;
@@ -104,38 +95,37 @@ function createPlatformHandler(options: KeyboardOptions): KeyboardHandler {
 
         handleKeyPress(String.fromCharCode(byte), options);
       } catch {
-        // stdin closed or error, exit loop
         return;
       }
     }
   }
 
-  return {
-    start() {
-      if (!isStdoutTTY()) return;
+  function start(): void {
+    if (!isStdoutTTY()) return;
 
-      try {
-        setRawMode(true);
-        reader = getStdinReader();
-        running = true;
-        // Start reading in background (don't await)
-        readLoop();
-      } catch {
-        // Failed to set raw mode, keyboard shortcuts won't work
-      }
-    },
-    stop() {
-      running = false;
+    try {
+      setRawMode(true);
+      reader = getStdinReader();
+      running = true;
+      readLoop();
+    } catch {
+      // Failed to set raw mode, keyboard shortcuts won't work
+    }
+  }
 
-      try {
-        reader?.releaseLock();
-        reader = null;
-        setRawMode(false);
-      } catch {
-        // Ignore errors restoring terminal
-      }
-    },
-  };
+  function stop(): void {
+    running = false;
+
+    try {
+      reader?.releaseLock();
+      reader = null;
+      setRawMode(false);
+    } catch {
+      // Ignore errors restoring terminal
+    }
+  }
+
+  return { start, stop };
 }
 
 /**

@@ -50,14 +50,12 @@ export class NavigationHandlers {
   createMouseOverHandler(callbacks: NavigationCallbacks) {
     return (event: MouseEvent) => {
       if (!(event.target instanceof HTMLElement)) return;
+      if (event.target.tagName !== "A") return;
 
-      const target = event.target;
-      if (target.tagName !== "A") return;
-
-      const href = target.getAttribute("href");
+      const href = event.target.getAttribute("href");
       if (!href || href.startsWith("http") || href.startsWith("#")) return;
 
-      if (!this.shouldPrefetchOnHover(target)) return;
+      if (!this.shouldPrefetchOnHover(event.target)) return;
       if (this.prefetchQueue.has(href)) return;
 
       this.prefetchQueue.add(href);
@@ -82,7 +80,7 @@ export class NavigationHandlers {
   saveScrollPosition(path: string): void {
     try {
       if (this.scrollPositions.size >= MAX_SCROLL_POSITIONS) {
-        const oldest = this.scrollPositions.keys().next().value as string | undefined;
+        const oldest = this.scrollPositions.keys().next().value;
         if (oldest) this.scrollPositions.delete(oldest);
       }
 

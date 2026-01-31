@@ -18,24 +18,24 @@ const CROSS_PROJECT_VERSIONED_PATTERN = /^([a-z0-9-]+)@([\d^~x][\d.x^~-]*)\/@\/(
 const CROSS_PROJECT_LATEST_PATTERN = /^([a-z0-9-]+)\/@\/(.+)$/;
 
 export function isCrossProjectImport(specifier: string): boolean {
-  return CROSS_PROJECT_VERSIONED_PATTERN.test(specifier) ||
-    CROSS_PROJECT_LATEST_PATTERN.test(specifier);
+  return (
+    CROSS_PROJECT_VERSIONED_PATTERN.test(specifier) ||
+    CROSS_PROJECT_LATEST_PATTERN.test(specifier)
+  );
 }
 
 export function parseCrossProjectImport(
   specifier: string,
 ): { projectSlug: string; version: string; path: string } | null {
   const versionedMatch = specifier.match(CROSS_PROJECT_VERSIONED_PATTERN);
-  if (versionedMatch) {
-    const [, projectSlug, version, path] = versionedMatch;
-    return { projectSlug: projectSlug!, version: version!, path: path! };
+  if (versionedMatch && versionedMatch[1] && versionedMatch[2] && versionedMatch[3]) {
+    return { projectSlug: versionedMatch[1], version: versionedMatch[2], path: versionedMatch[3] };
   }
 
   const latestMatch = specifier.match(CROSS_PROJECT_LATEST_PATTERN);
-  if (!latestMatch) return null;
+  if (!latestMatch || !latestMatch[1] || !latestMatch[2]) return null;
 
-  const [, projectSlug, path] = latestMatch;
-  return { projectSlug: projectSlug!, version: "latest", path: path! };
+  return { projectSlug: latestMatch[1], version: "latest", path: latestMatch[2] };
 }
 
 export class CrossProjectStrategy implements ImportRewriteStrategy {
@@ -47,15 +47,10 @@ export class CrossProjectStrategy implements ImportRewriteStrategy {
   }
 
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
-    // SSR: Skip cross-project rewriting
-    if (ctx.target === "ssr") {
-      return { specifier: null };
-    }
+    if (ctx.target === "ssr") return { specifier: null };
 
     const parsed = parseCrossProjectImport(info.specifier);
-    if (!parsed) {
-      return { specifier: null };
-    }
+    if (!parsed) return { specifier: null };
 
     const url = buildCrossProjectUrl(
       parsed.projectSlug,

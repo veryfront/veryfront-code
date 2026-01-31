@@ -10,7 +10,7 @@ export function loadESMModule(
 ): Promise<MDXModule> {
   return withSpan(
     "transforms.mdx.loadESMModule",
-    async () => {
+    async (): Promise<MDXModule> => {
       const { loadImportMap, transformImportsWithMap } = await import(
         "../../../../modules/import-map/index.ts"
       );

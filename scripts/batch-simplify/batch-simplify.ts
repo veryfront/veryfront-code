@@ -4,7 +4,7 @@
  * OpenAI Batch API Code Simplifier
  *
  * Uses OpenAI's Batch API for 50% cost reduction on large-scale code review.
- * Processes all TypeScript files in src/ for simplification.
+ * Processes all TypeScript files in src/ and tests/ for simplification.
  *
  * Usage:
  *   deno task batch:prepare    # Create JSONL batch file
@@ -24,7 +24,7 @@ await load({ export: true, examplePath: null });
 // Configuration
 const CONFIG = {
   model: "gpt-5.2", // SOTA coding model (Jan 2025)
-  srcDir: "src",
+  dirs: ["src", "tests"],
   outputDir: "scripts/batch-simplify/output",
   batchFile: "scripts/batch-simplify/output/batch-requests.jsonl",
   resultsFile: "scripts/batch-simplify/output/batch-results.jsonl",
@@ -103,12 +103,14 @@ function shouldExclude(path: string): boolean {
 async function collectFiles(): Promise<string[]> {
   const files: string[] = [];
 
-  for await (const entry of walk(CONFIG.srcDir, {
-    exts: CONFIG.extensions.map((e) => e.slice(1)),
-    includeDirs: false,
-  })) {
-    if (!shouldExclude(entry.path)) {
-      files.push(entry.path);
+  for (const dir of CONFIG.dirs) {
+    for await (const entry of walk(dir, {
+      exts: CONFIG.extensions.map((e) => e.slice(1)),
+      includeDirs: false,
+    })) {
+      if (!shouldExclude(entry.path)) {
+        files.push(entry.path);
+      }
     }
   }
 
@@ -248,10 +250,13 @@ async function submit(): Promise<void> {
   const batchResult = await batchResponse.json();
   console.log(`✅ Batch created: ${batchResult.id}`);
 
-  // Update state
-  const state: BatchState = JSON.parse(await Deno.readTextFile(CONFIG.stateFile));
-  state.batchId = batchResult.id;
-  state.status = batchResult.status;
+  // Save state
+  const state: BatchState = {
+    batchId: batchResult.id,
+    fileCount: 0,
+    createdAt: new Date().toISOString(),
+    status: batchResult.status,
+  };
   await Deno.writeTextFile(CONFIG.stateFile, JSON.stringify(state, null, 2));
 
   console.log(`\nBatch ID: ${batchResult.id}`);
@@ -532,7 +537,7 @@ OpenAI Batch Code Simplifier
 
 Commands:
   estimate   Estimate cost before running
-  prepare    Create JSONL batch file from src/
+  prepare    Create JSONL batch file from src/ and tests/
   submit     Upload and submit batch to OpenAI
   status     Check batch processing status
   errors     View error details (if batch failed)

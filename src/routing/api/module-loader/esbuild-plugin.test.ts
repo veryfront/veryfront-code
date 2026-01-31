@@ -63,19 +63,17 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       const loadHandlers: Array<{ filter: RegExp; namespace?: string }> = [];
 
       const mockBuild = createMockBuild(
-        (opts, _fn) => {
+        (opts) => {
           resolveHandlers.push(opts);
         },
-        (opts, _fn) => {
+        (opts) => {
           loadHandlers.push(opts);
         },
       );
 
       plugin.setup(mockBuild);
 
-      // Should register multiple onResolve handlers
       assertEquals(resolveHandlers.length >= 3, true);
-      // Should register at least one onLoad handler
       assertEquals(loadHandlers.length >= 1, true);
     });
 
@@ -84,7 +82,7 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
 
       const resolveFilters: RegExp[] = [];
       const mockBuild = createMockBuild(
-        (opts, _fn) => {
+        (opts) => {
           resolveFilters.push(opts.filter);
         },
         () => {},
@@ -92,7 +90,6 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
 
       plugin.setup(mockBuild);
 
-      // First resolver should match http/https URLs
       const httpFilter = resolveFilters[0];
       assertExists(httpFilter);
       assertEquals(httpFilter.test("https://esm.sh/react"), true);
@@ -104,7 +101,7 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
 
       const resolveFilters: RegExp[] = [];
       const mockBuild = createMockBuild(
-        (opts, _fn) => {
+        (opts) => {
           resolveFilters.push(opts.filter);
         },
         () => {},
@@ -112,7 +109,6 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
 
       plugin.setup(mockBuild);
 
-      // Second resolver should match react/jsx-runtime
       const reactFilter = resolveFilters[1];
       assertExists(reactFilter);
       assertEquals(reactFilter.test("react/jsx-runtime"), true);
@@ -124,7 +120,7 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
 
       const resolveFilters: RegExp[] = [];
       const mockBuild = createMockBuild(
-        (opts, _fn) => {
+        (opts) => {
           resolveFilters.push(opts.filter);
         },
         () => {},
@@ -132,7 +128,6 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
 
       plugin.setup(mockBuild);
 
-      // Third resolver should match node: builtins and bare specifiers
       const nodeFilter = resolveFilters[2];
       assertExists(nodeFilter);
       assertEquals(nodeFilter.test("node:path"), true);
@@ -149,6 +144,7 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
         filter: RegExp;
         fn: (args: OnResolveArgs) => unknown;
       }> = [];
+
       const mockBuild = createMockBuild(
         (opts, fn) => {
           resolvers.push({ filter: opts.filter, fn });
@@ -158,7 +154,6 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
 
       plugin.setup(mockBuild);
 
-      // Find the HTTP URL resolver (first one, matching http/https)
       const httpResolver = resolvers.find((r) => r.filter.test("https://esm.sh/react"));
       assertExists(httpResolver);
 
@@ -170,6 +165,7 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
         kind: "import-statement",
         pluginData: undefined,
       });
+
       assertEquals((result as { path: string }).path, "https://esm.sh/react");
       assertEquals((result as { namespace: string }).namespace, "http-url");
     });

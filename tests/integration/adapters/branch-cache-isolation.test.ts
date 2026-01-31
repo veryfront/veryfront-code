@@ -13,16 +13,23 @@ import { describe, it } from "@std/testing/bdd";
 import { buildFileCacheKeyPrefix, buildProxyManagerCacheKey } from "@veryfront/cache";
 import type { ResolvedContentContext } from "@veryfront/platform/adapters/fs/veryfront/types.ts";
 
+function hasContextMismatch(
+  currentContext: ResolvedContentContext,
+  expectedProductionMode: boolean,
+  expectedBranch: string,
+): boolean {
+  if (expectedProductionMode) {
+    return currentContext.sourceType !== "release" && currentContext.sourceType !== "environment";
+  }
+
+  if (currentContext.sourceType !== "branch") return true;
+  return currentContext.branch !== expectedBranch;
+}
+
 describe("Branch Cache Isolation - Context Verification", () => {
   describe("Input validation", () => {
     it("rejects empty projectSlug", () => {
-      const mainKey = () =>
-        buildProxyManagerCacheKey(
-          "", // empty projectSlug
-          false,
-          null,
-          "main",
-        );
+      const mainKey = () => buildProxyManagerCacheKey("", false, null, "main");
 
       // This should succeed because buildProxyManagerCacheKey doesn't validate
       // Validation happens in ProxyFSAdapterManager.getAdapter
@@ -30,37 +37,28 @@ describe("Branch Cache Isolation - Context Verification", () => {
     });
 
     it("requires branch in preview mode", () => {
-      // Preview mode (productionMode=false) should have branch
       const key = buildProxyManagerCacheKey(
         "test-project",
-        false, // preview mode
+        false,
         null,
-        null, // no branch - this is the bug scenario
+        null,
       );
 
-      // Cache key will use "main" as default
       assertEquals(key, "proxy:test-project:preview:main");
     });
 
     it("requires releaseId or environmentName in production mode", () => {
-      // Production mode with releaseId
       const releaseKey = buildProxyManagerCacheKey(
         "test-project",
-        true, // production mode
+        true,
         "rel_123",
         null,
       );
       assertEquals(releaseKey, "proxy:test-project:production:rel_123");
 
-      // Production mode without releaseId throws an error
       let threw = false;
       try {
-        buildProxyManagerCacheKey(
-          "test-project",
-          true,
-          null, // no releaseId - should throw
-          null,
-        );
+        buildProxyManagerCacheKey("test-project", true, null, null);
       } catch (e) {
         threw = true;
         assertEquals((e as Error).message, "Missing releaseId in production for test-project");
@@ -71,46 +69,22 @@ describe("Branch Cache Isolation - Context Verification", () => {
 
   describe("Cache key generation maintains branch isolation", () => {
     it("different branches generate different cache keys", () => {
-      const mainKey = buildProxyManagerCacheKey(
-        "test-project",
-        false, // preview mode
-        null, // no releaseId
-        "main", // branch
-      );
+      const mainKey = buildProxyManagerCacheKey("test-project", false, null, "main");
+      const featureKey = buildProxyManagerCacheKey("test-project", false, null, "feature");
 
-      const featureKey = buildProxyManagerCacheKey(
-        "test-project",
-        false,
-        null,
-        "feature",
-      );
-
-      // Keys must be different to ensure separate adapters
       assertEquals(
         mainKey === featureKey,
         false,
         "Main and feature branches must have different cache keys",
       );
 
-      // Verify expected format
       assertEquals(mainKey, "proxy:test-project:preview:main");
       assertEquals(featureKey, "proxy:test-project:preview:feature");
     });
 
     it("production and preview modes generate different cache keys", () => {
-      const previewKey = buildProxyManagerCacheKey(
-        "test-project",
-        false, // preview
-        null,
-        "main",
-      );
-
-      const prodKey = buildProxyManagerCacheKey(
-        "test-project",
-        true, // production
-        "rel_abc123",
-        null, // no branch in production
-      );
+      const previewKey = buildProxyManagerCacheKey("test-project", false, null, "main");
+      const prodKey = buildProxyManagerCacheKey("test-project", true, "rel_abc123", null);
 
       assertEquals(
         previewKey === prodKey,
@@ -140,7 +114,6 @@ describe("Branch Cache Isolation - Context Verification", () => {
       const mainKey = buildFileCacheKeyPrefix(mainContext);
       const featureKey = buildFileCacheKeyPrefix(featureContext);
 
-      // File cache keys must include branch to prevent contamination
       assertEquals(mainKey, "file:branch:test-project:main");
       assertEquals(featureKey, "file:branch:test-project:feature");
 
@@ -158,9 +131,7 @@ describe("Branch Cache Isolation - Context Verification", () => {
         releaseId: "rel_abc123",
       };
 
-      const key = buildFileCacheKeyPrefix(context);
-
-      assertEquals(key, "file:release:test-project:rel_abc123");
+      assertEquals(buildFileCacheKeyPrefix(context), "file:release:test-project:rel_abc123");
     });
 
     it("environment mode file cache keys include environment name and releaseId", () => {
@@ -171,10 +142,7 @@ describe("Branch Cache Isolation - Context Verification", () => {
         releaseId: "rel_xyz789",
       };
 
-      const key = buildFileCacheKeyPrefix(context);
-
-      // Environment keys include both environmentName and releaseId
-      assertEquals(key, "file:env:test-project:staging:rel_xyz789");
+      assertEquals(buildFileCacheKeyPrefix(context), "file:env:test-project:staging:rel_xyz789");
     });
   });
 
@@ -183,20 +151,11 @@ describe("Branch Cache Isolation - Context Verification", () => {
       const currentContext: ResolvedContentContext = {
         sourceType: "branch",
         projectSlug: "test-project",
-        branch: "feature", // Wrong branch!
+        branch: "feature",
       };
 
-      const expectedBranch = "main";
-      const expectedProductionMode = false;
-
-      // This is the logic from proxy-manager.ts
-      const contextMismatch = (expectedProductionMode && currentContext?.sourceType !== "release" &&
-        currentContext?.sourceType !== "environment") ||
-        (!expectedProductionMode && currentContext?.sourceType !== "branch") ||
-        (!expectedProductionMode && currentContext?.branch !== expectedBranch);
-
       assertEquals(
-        contextMismatch,
+        hasContextMismatch(currentContext, false, "main"),
         true,
         "Should detect context mismatch when branch is wrong",
       );
@@ -204,21 +163,13 @@ describe("Branch Cache Isolation - Context Verification", () => {
 
     it("context mismatch detection for wrong source type", () => {
       const currentContext: ResolvedContentContext = {
-        sourceType: "release", // Wrong! Should be branch
+        sourceType: "release",
         projectSlug: "test-project",
         releaseId: "rel_123",
       };
 
-      const expectedBranch = "main";
-      const expectedProductionMode = false; // Preview mode expects branch
-
-      const contextMismatch = (expectedProductionMode && currentContext?.sourceType !== "release" &&
-        currentContext?.sourceType !== "environment") ||
-        (!expectedProductionMode && currentContext?.sourceType !== "branch") ||
-        (!expectedProductionMode && currentContext?.branch !== expectedBranch);
-
       assertEquals(
-        contextMismatch,
+        hasContextMismatch(currentContext, false, "main"),
         true,
         "Should detect context mismatch when source type is wrong",
       );
@@ -231,16 +182,8 @@ describe("Branch Cache Isolation - Context Verification", () => {
         branch: "main",
       };
 
-      const expectedBranch = "main";
-      const expectedProductionMode = false;
-
-      const contextMismatch = (expectedProductionMode && currentContext?.sourceType !== "release" &&
-        currentContext?.sourceType !== "environment") ||
-        (!expectedProductionMode && currentContext?.sourceType !== "branch") ||
-        (!expectedProductionMode && currentContext?.branch !== expectedBranch);
-
       assertEquals(
-        contextMismatch,
+        hasContextMismatch(currentContext, false, "main"),
         false,
         "Should not detect mismatch when context is correct",
       );

@@ -35,15 +35,7 @@ export class TokenStorageAPIClient {
       const data: { value: string } = await response.json();
       return data.value;
     } catch (error) {
-      if (error instanceof TokenStorageError) {
-        throw error;
-      }
-
-      const message = error instanceof Error ? error.message : String(error);
-
-      logger.error("[TokenStorageAPIClient] Get failed", { key, error: message });
-
-      throw new TokenStorageError(`Failed to get token: ${message}`);
+      throw this.wrapError(error, "Get", key, `Failed to get token`);
     }
   }
 
@@ -67,15 +59,7 @@ export class TokenStorageAPIClient {
         );
       }
     } catch (error) {
-      if (error instanceof TokenStorageError) {
-        throw error;
-      }
-
-      const message = error instanceof Error ? error.message : String(error);
-
-      logger.error("[TokenStorageAPIClient] Set failed", { key, error: message });
-
-      throw new TokenStorageError(`Failed to set token: ${message}`);
+      throw this.wrapError(error, "Set", key, `Failed to set token`);
     }
   }
 
@@ -97,18 +81,7 @@ export class TokenStorageAPIClient {
         response.status,
       );
     } catch (error) {
-      if (error instanceof TokenStorageError) {
-        throw error;
-      }
-
-      const message = error instanceof Error ? error.message : String(error);
-
-      logger.error("[TokenStorageAPIClient] Delete failed", {
-        key,
-        error: message,
-      });
-
-      throw new TokenStorageError(`Failed to delete token: ${message}`);
+      throw this.wrapError(error, "Delete", key, `Failed to delete token`);
     }
   }
 
@@ -164,7 +137,9 @@ export class TokenStorageAPIClient {
 
   private buildUrl(key: string): string {
     return `${this.config.apiBaseUrl}/v1/projects/${
-      encodeURIComponent(this.config.projectSlug)
+      encodeURIComponent(
+        this.config.projectSlug,
+      )
     }/tokens/${encodeURIComponent(key)}`;
   }
 
@@ -173,6 +148,23 @@ export class TokenStorageAPIClient {
       Authorization: `Bearer ${this.config.apiToken}`,
       Accept: "application/json",
     };
+  }
+
+  private wrapError(
+    error: unknown,
+    action: "Get" | "Set" | "Delete",
+    key: string,
+    prefixMessage: string,
+  ): TokenStorageError {
+    if (error instanceof TokenStorageError) {
+      return error;
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+
+    logger.error(`[TokenStorageAPIClient] ${action} failed`, { key, error: message });
+
+    return new TokenStorageError(`${prefixMessage}: ${message}`);
   }
 
   private async fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
@@ -188,7 +180,11 @@ export class TokenStorageAPIClient {
         const headers = new Headers(init.headers);
         injectContext(headers);
 
-        const response = await fetch(url, { ...init, headers, signal: controller.signal });
+        const response = await fetch(url, {
+          ...init,
+          headers,
+          signal: controller.signal,
+        });
 
         if (response.status >= 400 && response.status < 500 && response.status !== 429) {
           return response;
@@ -202,7 +198,6 @@ export class TokenStorageAPIClient {
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
 
-        // Check if this was a timeout
         const isTimeout = error instanceof Error && error.name === "AbortError";
         if (isTimeout) {
           logger.warn("[TokenStorageAPIClient] Request timed out", {

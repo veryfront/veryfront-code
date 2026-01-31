@@ -42,13 +42,13 @@ export class APICacheStore implements CacheStore {
   private readonly localCache: MemoryCacheStore | null;
   private readonly keyPrefix: string;
   private readonly ttlSeconds: number;
-  private readonly enableLocalCache: boolean;
 
   constructor(options: APICacheStoreOptions = {}) {
     this.keyPrefix = options.keyPrefix ?? "render";
     this.ttlSeconds = options.ttlSeconds ?? 3600; // 1 hour default
-    this.enableLocalCache = options.enableLocalCache ?? true;
-    this.localCache = this.enableLocalCache
+
+    const enableLocalCache = options.enableLocalCache ?? true;
+    this.localCache = enableLocalCache
       ? new MemoryCacheStore({
         maxEntries: options.localMaxEntries ?? 200,
         ttlMs: this.ttlSeconds * 1000,
@@ -125,10 +125,8 @@ export class APICacheStore implements CacheStore {
   }
 
   async get(key: string): Promise<CachePayload | undefined> {
-    if (this.localCache) {
-      const local = await this.localCache.get(key);
-      if (local) return local;
-    }
+    const local = await this.localCache?.get(key);
+    if (local) return local;
 
     try {
       const backend = await this.getBackend();
@@ -156,10 +154,10 @@ export class APICacheStore implements CacheStore {
     this.getBackend()
       .then((backend) => backend.set(key, this.serialize(value), this.ttlSeconds))
       .catch((error) => {
-        logger.debug("[APICacheStore] Failed to store in distributed cache (no fallback)", {
-          key,
-          error,
-        });
+        logger.debug(
+          "[APICacheStore] Failed to store in distributed cache (no fallback)",
+          { key, error },
+        );
       });
   }
 

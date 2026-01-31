@@ -1,10 +1,3 @@
-/**
- * Pure ANSI escape code colors for npm/Node.js builds
- *
- * This file provides a zero-dependency color implementation using ANSI codes.
- * It's used in npm builds where std/fmt/colors.ts isn't available.
- */
-
 import type { ColorFunction, ConsoleStyler } from "./types.ts";
 
 function ansi(open: number, close: number): ColorFunction {

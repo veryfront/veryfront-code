@@ -15,13 +15,15 @@ export default tool({
 
     return {
       deals: response.results.map((deal) => {
-        const additionalProperties = properties
-          ? Object.fromEntries(
-              properties
-                .filter((prop) => deal.properties[prop] !== undefined)
-                .map((prop) => [prop, deal.properties[prop]]),
-            )
-          : undefined;
+        let additionalProperties: Record<string, unknown> | undefined;
+
+        if (properties) {
+          additionalProperties = Object.fromEntries(
+            properties
+              .filter((prop) => deal.properties[prop] !== undefined)
+              .map((prop) => [prop, deal.properties[prop]]),
+          );
+        }
 
         return {
           id: deal.id,

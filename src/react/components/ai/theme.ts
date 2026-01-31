@@ -79,6 +79,10 @@ export const defaultAgentTheme: AgentTheme = {
     "mt-2 p-3 bg-neutral-100 dark:bg-neutral-800 rounded-xl font-mono text-sm overflow-x-auto",
 };
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
 /**
  * Merge themes (user theme overrides default)
  */
@@ -96,18 +100,8 @@ export function mergeThemes<T extends Record<string, unknown>>(
 
     const defaultValue = defaultTheme[key];
 
-    if (
-      value &&
-      typeof value === "object" &&
-      !Array.isArray(value) &&
-      defaultValue &&
-      typeof defaultValue === "object" &&
-      !Array.isArray(defaultValue)
-    ) {
-      merged[key] = {
-        ...(defaultValue as object),
-        ...(value as object),
-      } as T[Extract<keyof T, string>];
+    if (isPlainObject(value) && isPlainObject(defaultValue)) {
+      merged[key] = { ...defaultValue, ...value } as T[Extract<keyof T, string>];
       continue;
     }
 

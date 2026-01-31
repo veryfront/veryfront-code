@@ -34,13 +34,24 @@ function createAdapter(): GitHubFSAdapter {
 
 function createTreeFetch(tree: unknown): typeof fetch {
   return (url) => {
-    if (String(url).includes("/git/trees/")) {
-      return Promise.resolve(
-        new Response(JSON.stringify(tree), { status: 200 }),
-      );
+    if (!String(url).includes("/git/trees/")) {
+      return Promise.resolve(new Response("Not found", { status: 404 }));
     }
-    return Promise.resolve(new Response("Not found", { status: 404 }));
+
+    return Promise.resolve(new Response(JSON.stringify(tree), { status: 200 }));
   };
+}
+
+function assertThrowsMessageIncludes(fn: () => void, includes: string): void {
+  try {
+    fn();
+    throw new Error("Should have thrown");
+  } catch (error) {
+    assertEquals(
+      error instanceof Error && error.message.includes(includes),
+      true,
+    );
+  }
 }
 
 describe("GitHubFSAdapter", () => {
@@ -56,21 +67,15 @@ describe("GitHubFSAdapter", () => {
 
   describe("createGitHubConfig", () => {
     it("should throw if token is missing", () => {
-      try {
+      assertThrowsMessageIncludes(() => {
         createGitHubConfig({ token: "", owner: "test", repo: "test" });
-        throw new Error("Should have thrown");
-      } catch (error) {
-        assertEquals(error instanceof Error && error.message.includes("token"), true);
-      }
+      }, "token");
     });
 
     it("should throw if owner/repo is missing", () => {
-      try {
+      assertThrowsMessageIncludes(() => {
         createGitHubConfig({ token: "token", owner: "", repo: "test" });
-        throw new Error("Should have thrown");
-      } catch (error) {
-        assertEquals(error instanceof Error && error.message.includes("owner"), true);
-      }
+      }, "owner");
     });
 
     it("should apply defaults", () => {
@@ -79,6 +84,7 @@ describe("GitHubFSAdapter", () => {
         owner: "owner",
         repo: "repo",
       });
+
       assertEquals(config.ref, "main");
       assertEquals(config.cache.enabled, true);
       assertEquals(config.cache.ttl, 60_000);
@@ -91,13 +97,14 @@ describe("GitHubFSAdapter", () => {
       let treeRequested = false;
 
       globalThis.fetch = (url) => {
-        if (String(url).includes("/git/trees/")) {
-          treeRequested = true;
-          return Promise.resolve(
-            new Response(JSON.stringify(mockTreeResponse), { status: 200 }),
-          );
+        if (!String(url).includes("/git/trees/")) {
+          return Promise.resolve(new Response("Not found", { status: 404 }));
         }
-        return Promise.resolve(new Response("Not found", { status: 404 }));
+
+        treeRequested = true;
+        return Promise.resolve(
+          new Response(JSON.stringify(mockTreeResponse), { status: 200 }),
+        );
       };
 
       const adapter = createAdapter();
@@ -164,11 +171,7 @@ describe("GitHubFSAdapter", () => {
     });
 
     it("should throw on nonexistent file", async () => {
-      await assertRejects(
-        () => adapter.stat("nonexistent.ts"),
-        Error,
-        "not found",
-      );
+      await assertRejects(() => adapter.stat("nonexistent.ts"), Error, "not found");
     });
   });
 
@@ -185,6 +188,7 @@ describe("GitHubFSAdapter", () => {
     it("should list root directory", async () => {
       const entries = await adapter.readdir("");
       const names = entries.map((e) => e.name);
+
       assertEquals(names.includes("README.md"), true);
       assertEquals(names.includes("src"), true);
     });
@@ -192,6 +196,7 @@ describe("GitHubFSAdapter", () => {
     it("should list subdirectory", async () => {
       const entries = await adapter.readdir("src");
       const names = entries.map((e) => e.name);
+
       assertEquals(names.includes("index.ts"), true);
       assertEquals(names.includes("utils"), true);
     });

@@ -5,12 +5,17 @@ import {
 } from "#veryfront/utils";
 import { RateLimiter, setupWebSocketHandlers } from "#veryfront/modules/server/index.ts";
 import { BaseHandler } from "../response/base.ts";
-import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
+import {
+  type HandlerContext,
+  type HandlerMetadata,
+  HandlerPriority,
+  type HandlerResult,
+} from "../types.ts";
 import { ReloadNotifier } from "../../reload-notifier.ts";
 import { invalidateProjectCaches } from "../../context/cache-invalidation.ts";
 
-// Priority between auth (0) and cors (50)
-const PRIORITY_HMR = 25 as HandlerPriority;
+// Priority between auth (0) and high (100)
+const PRIORITY_HMR: HandlerPriority = HandlerPriority.EARLY;
 
 /** Client metadata for observability */
 interface HMRClientInfo {
@@ -218,6 +223,7 @@ export class HMRHandler extends BaseHandler {
 
       const now = Date.now();
       const clientId = crypto.randomUUID().slice(0, 8);
+
       HMRHandler.clientsMap.set(clientId, {
         id: clientId,
         socket,

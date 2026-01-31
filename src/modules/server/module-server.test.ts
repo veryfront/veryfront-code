@@ -12,10 +12,6 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isModuleRequest } from "./module-server.ts";
 
-// ---------------------------------------------------------------------------
-// isModuleRequest
-// ---------------------------------------------------------------------------
-
 describe("isModuleRequest", () => {
   it("should return true for /_vf_modules/ path", () => {
     const req = new Request("http://localhost:3000/_vf_modules/components/Button.tsx");
@@ -56,68 +52,40 @@ describe("isModuleRequest", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// serveModule - non-module request handling
-// ---------------------------------------------------------------------------
-
 describe("serveModule", () => {
-  // We can test serveModule for non-module paths without needing
-  // a full adapter since it returns early with 404
-  it("should return 404 for non-module path prefix", async () => {
+  async function serve(req: Request): Promise<Response> {
     const { serveModule } = await import("./module-server.ts");
-
-    const req = new Request("http://localhost:3000/not-a-module");
-    const response = await serveModule(req, {
+    return await serveModule(req, {
       projectId: "test",
       projectDir: "/tmp/test",
       adapter: {} as any,
     });
+  }
+
+  it("should return 404 for non-module path prefix", async () => {
+    const response = await serve(new Request("http://localhost:3000/not-a-module"));
 
     assertEquals(response.status, 404);
-    const body = await response.text();
-    assertEquals(body, "Module not found");
+    assertEquals(await response.text(), "Module not found");
   });
 
   it("should handle HEAD request for non-module path", async () => {
-    const { serveModule } = await import("./module-server.ts");
-
-    const req = new Request("http://localhost:3000/not-a-module", { method: "HEAD" });
-    const response = await serveModule(req, {
-      projectId: "test",
-      projectDir: "/tmp/test",
-      adapter: {} as any,
-    });
+    const response = await serve(
+      new Request("http://localhost:3000/not-a-module", { method: "HEAD" }),
+    );
 
     assertEquals(response.status, 404);
   });
 
   it("should return 404 for snippet with missing hash", async () => {
-    const { serveModule } = await import("./module-server.ts");
+    const response = await serve(new Request("http://localhost:3000/_vf_modules/_snippets/.js"));
 
-    // Snippet URL pattern but no valid hash captured
-    const req = new Request("http://localhost:3000/_vf_modules/_snippets/.js");
-    const response = await serveModule(req, {
-      projectId: "test",
-      projectDir: "/tmp/test",
-      adapter: {} as any,
-    });
-
-    // Should either return 404 for missing snippet or 404 for module not found
     assertEquals(response.status === 404 || response.status === 500, true);
   });
 
   it("should return 404 for invalid cross-project import path", async () => {
-    const { serveModule } = await import("./module-server.ts");
+    const response = await serve(new Request("http://localhost:3000/_vf_modules/_cross//@/"));
 
-    // Cross-project versioned pattern without valid path segment
-    const req = new Request("http://localhost:3000/_vf_modules/_cross//@/");
-    const response = await serveModule(req, {
-      projectId: "test",
-      projectDir: "/tmp/test",
-      adapter: {} as any,
-    });
-
-    // Pattern won't match the regex, falls through to normal module resolution
     assertEquals(response.status === 404 || response.status === 500, true);
   });
 });

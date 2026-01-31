@@ -1,7 +1,3 @@
-/**
- * Workflow DSL Tests
- */
-
 import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { dag, dependsOn, sequence, workflow } from "./workflow.ts";
@@ -90,8 +86,7 @@ describe("sequence()", () => {
   });
 
   it("should handle empty array", () => {
-    const nodes = sequence();
-    assertEquals(nodes.length, 0);
+    assertEquals(sequence().length, 0);
   });
 });
 
@@ -124,18 +119,11 @@ describe("dag()", () => {
 describe("dependsOn()", () => {
   it("should add single dependency", () => {
     const node = dependsOn(step("process", { agent: "processor" }), "fetch");
-
     assertEquals(node.dependsOn, ["fetch"]);
   });
 
   it("should add multiple dependencies", () => {
-    const node = dependsOn(
-      step("merge", { tool: "merger" }),
-      "step1",
-      "step2",
-      "step3",
-    );
-
+    const node = dependsOn(step("merge", { tool: "merger" }), "step1", "step2", "step3");
     assertEquals(node.dependsOn, ["step1", "step2", "step3"]);
   });
 

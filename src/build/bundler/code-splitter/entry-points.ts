@@ -16,10 +16,10 @@ export function createEntryPoints(
   const entryPoints: Record<string, string> = {};
   const routeMap = new Map<string, string>();
 
-  for (const { name, path, file } of routes) {
-    const entryName = name ?? convertPathToName(path);
-    entryPoints[entryName] = file;
-    routeMap.set(entryName, path);
+  for (const route of routes) {
+    const entryName = route.name ?? convertPathToName(route.path);
+    entryPoints[entryName] = route.file;
+    routeMap.set(entryName, route.path);
   }
 
   return { entryPoints, routeMap };

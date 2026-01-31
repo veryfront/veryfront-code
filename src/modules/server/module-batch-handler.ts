@@ -37,6 +37,16 @@ const SLOW_REQUEST_THRESHOLD_MS = 500;
 /** Slow module transform threshold in milliseconds */
 const SLOW_TRANSFORM_THRESHOLD_MS = 100;
 
+/** Maximum number of modules that can be batched in one request */
+const MAX_BATCH_SIZE = 100;
+
+/** Cache for transformed modules (path -> code) */
+const transformCache = new Map<string, string>();
+
+const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
+
+const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"] as const;
+
 export interface BatchHandlerOptions {
   projectDir: string;
   adapter: RuntimeAdapter;
@@ -52,14 +62,6 @@ export interface BatchHandlerOptions {
   /** React version for transforms (from project config) */
   reactVersion?: string;
 }
-
-/** Maximum number of modules that can be batched in one request */
-const MAX_BATCH_SIZE = 100;
-
-/** Cache for transformed modules (path -> code) */
-const transformCache = new Map<string, string>();
-
-const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
 
 /**
  * Handle a batch module request
@@ -80,7 +82,11 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         });
       }
 
-      const paths = pathsParam.split(",").map((p) => p.trim()).filter(Boolean);
+      const paths = pathsParam
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean);
+
       if (paths.length === 0) {
         return new Response("No valid paths provided", {
           status: HTTP_BAD_REQUEST,
@@ -158,9 +164,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
               return { path: modulePath, code: null, error: "Not found", transformDurationMs };
             }
 
-            if (!dev) {
-              transformCache.set(cacheKey, code);
-            }
+            if (!dev) transformCache.set(cacheKey, code);
 
             return { path: modulePath, code, cached: false, transformDurationMs };
           } catch (error) {
@@ -204,8 +208,8 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         projectSlug,
       });
 
-      const slowModules = results.filter(
-        (r) => r.transformDurationMs > SLOW_TRANSFORM_THRESHOLD_MS,
+      const slowModules = results.filter((r) =>
+        r.transformDurationMs > SLOW_TRANSFORM_THRESHOLD_MS
       );
       if (slowModules.length > 0) {
         logger.warn("[ModuleBatch] Slow module transforms detected", {
@@ -253,9 +257,8 @@ async function loadAndTransformModule(
   },
 ): Promise<string | null> {
   const basePath = modulePath.replace(/\.js$/, "");
-  const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"];
 
-  for (const ext of extensions) {
+  for (const ext of EXTENSIONS) {
     const fullPath = join(projectDir, basePath + ext);
     try {
       const stat = await secureFs.stat(fullPath);
@@ -271,7 +274,7 @@ async function loadAndTransformModule(
   if (!basePath.startsWith("lib/")) return null;
 
   const platformFs = createFileSystem();
-  for (const ext of extensions) {
+  for (const ext of EXTENSIONS) {
     const frameworkPath = join(FRAMEWORK_ROOT, "src", basePath + ext);
     try {
       const stat = await platformFs.stat(frameworkPath);
@@ -343,13 +346,13 @@ function generateBatchBundle(
 
     parts.push(`// Module: ${path}`);
     parts.push(`const ${varName} = await (async () => {`);
-    parts.push(`  const exports = {};`);
-    parts.push(`  const module = { exports };`);
-    parts.push(`  // --- Module code start ---`);
+    parts.push("  const exports = {};");
+    parts.push("  const module = { exports };");
+    parts.push("  // --- Module code start ---");
     parts.push(transformExportsForBundle(code));
-    parts.push(`  // --- Module code end ---`);
-    parts.push(`  return exports;`);
-    parts.push(`})();`);
+    parts.push("  // --- Module code end ---");
+    parts.push("  return exports;");
+    parts.push("})();");
     parts.push(`__vf_batch_modules.set("${path}", ${varName});`);
     parts.push("");
   }
@@ -378,7 +381,7 @@ function generateBatchBundle(
 function transformExportsForBundle(code: string): string {
   return code
     .split("\n")
-    .map((line) => "  " + line)
+    .map((line) => `  ${line}`)
     .join("\n");
 }
 

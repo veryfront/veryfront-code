@@ -9,6 +9,10 @@ describe("composeMiddleware", () => {
     return new MiddlewareContext(new Request(`https://example.com${path}`));
   }
 
+  function finalResponse(text: string): () => Promise<Response> {
+    return () => Promise.resolve(new Response(text));
+  }
+
   it("should execute middlewares in order", async () => {
     const order: number[] = [];
 
@@ -27,7 +31,7 @@ describe("composeMiddleware", () => {
     };
 
     const composed = composeMiddleware([middleware1, middleware2], []);
-    await composed(createContext(), () => Promise.resolve(new Response("OK")));
+    await composed(createContext(), finalResponse("OK"));
 
     assertEquals(order, [1, 2, 3, 4]);
   });
@@ -36,7 +40,7 @@ describe("composeMiddleware", () => {
     const middleware: MiddlewareHandler = (_ctx, next) => next();
 
     const composed = composeMiddleware([middleware], []);
-    const response = await composed(createContext(), () => Promise.resolve(new Response("Final")));
+    const response = await composed(createContext(), finalResponse("Final"));
 
     assertEquals(await response?.text(), "Final");
   });
@@ -52,7 +56,7 @@ describe("composeMiddleware", () => {
     };
 
     const composed = composeMiddleware([middleware1, middleware2], []);
-    const response = await composed(createContext(), () => Promise.resolve(new Response("Final")));
+    const response = await composed(createContext(), finalResponse("Final"));
 
     assertEquals(await response?.text(), "Short circuit");
     assertEquals(reachedSecond, false);
@@ -61,16 +65,14 @@ describe("composeMiddleware", () => {
   it("should throw if next() called multiple times", async () => {
     const middleware: MiddlewareHandler = async (_ctx, next) => {
       await next();
-      await next(); // Second call should throw
+      await next();
       return new Response("OK");
     };
 
     const composed = composeMiddleware([middleware], []);
 
     await assertRejects(
-      async () => {
-        await composed(createContext(), () => Promise.resolve(new Response("OK")));
-      },
+      () => composed(createContext(), finalResponse("OK")),
       Error,
       "next() called multiple times",
     );
@@ -94,11 +96,11 @@ describe("composeMiddleware", () => {
       [{ pattern: /^\/api/, use: [apiMiddleware] }],
     );
 
-    await composed(createContext("/api/users"), () => Promise.resolve(new Response("OK")));
+    await composed(createContext("/api/users"), finalResponse("OK"));
     assertEquals(order, ["global", "api"]);
 
     order.length = 0;
-    await composed(createContext("/home"), () => Promise.resolve(new Response("OK")));
+    await composed(createContext("/home"), finalResponse("OK"));
     assertEquals(order, ["global"]);
   });
 
@@ -123,14 +125,14 @@ describe("composeMiddleware", () => {
       ],
     );
 
-    await composed(createContext("/api/test"), () => Promise.resolve(new Response("OK")));
+    await composed(createContext("/api/test"), finalResponse("OK"));
 
     assertEquals(order, ["auth", "logging"]);
   });
 
   it("should handle empty middleware array", async () => {
     const composed = composeMiddleware([], []);
-    const response = await composed(createContext(), () => Promise.resolve(new Response("Final")));
+    const response = await composed(createContext(), finalResponse("Final"));
 
     assertEquals(await response?.text(), "Final");
   });

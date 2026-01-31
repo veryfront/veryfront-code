@@ -94,29 +94,9 @@ export interface CacheStats {
   backfills: number;
 }
 
-/**
- * Multi-tier cache implementation.
- *
- * Provides automatic fallthrough from L1 → L2 → L3 with backfill on hits.
- *
- * @example
- * ```typescript
- * const cache = new MultiTierCache({
- *   name: "http-module",
- *   l1: new MemoryTier(),
- *   l3: await CacheBackends.httpModule(),
- *   defaultTtlSeconds: 86400,
- * });
- *
- * const value = await cache.get("my-key");
- * // If found in L3, automatically backfills L1
- * ```
- */
 export class MultiTierCache<T = string> {
   private readonly config:
-    & Required<
-      Omit<MultiTierCacheConfig<T>, "l1" | "l2" | "l3">
-    >
+    & Required<Omit<MultiTierCacheConfig<T>, "l1" | "l2" | "l3">>
     & Pick<MultiTierCacheConfig<T>, "l1" | "l2" | "l3">;
 
   private stats: CacheStats = {
@@ -138,75 +118,27 @@ export class MultiTierCache<T = string> {
     };
   }
 
-  /**
-   * Get a value from the cache.
-   *
-   * Checks tiers in order: L1 → L2 → L3.
-   * On hit at a lower tier, backfills higher tiers.
-   */
   get(key: string): Promise<T | null> {
     return withSpan(
       SpanNames.CACHE_MULTI_TIER_GET,
-      async (span?: Span) => {
+      async (span?: Span): Promise<T | null> => {
         this.stats.gets++;
         span?.setAttribute("cache.name", this.config.name);
         span?.setAttribute("cache.key", key);
 
-        // L1: Memory
-        if (this.config.l1) {
-          try {
-            const value = await this.config.l1.get(key);
-            if (value !== null) {
-              this.stats.l1Hits++;
-              span?.setAttribute("cache.hit_tier", "l1");
-              logger.debug(`[${this.config.name}] L1 hit`, { key });
-              return value;
-            }
-          } catch (error) {
-            logger.debug(`[${this.config.name}] L1 get error`, { key, error });
-          }
+        const l1Value = await this.getFromTier(this.config.l1, key, "l1");
+        if (l1Value !== null) return l1Value;
+
+        const l2Value = await this.getFromTier(this.config.l2, key, "l2");
+        if (l2Value !== null) {
+          await this.maybeAwaitBackfill(this.backfill(key, l2Value, ["l1"]));
+          return l2Value;
         }
 
-        // L2: Disk
-        if (this.config.l2) {
-          try {
-            const value = await this.config.l2.get(key);
-            if (value !== null) {
-              this.stats.l2Hits++;
-              span?.setAttribute("cache.hit_tier", "l2");
-              logger.debug(`[${this.config.name}] L2 hit`, { key });
-              const backfillPromise = this.backfill(key, value, ["l1"]);
-              if (this.config.asyncBackfill) {
-                void backfillPromise;
-              } else {
-                await backfillPromise;
-              }
-              return value;
-            }
-          } catch (error) {
-            logger.debug(`[${this.config.name}] L2 get error`, { key, error });
-          }
-        }
-
-        // L3: Distributed
-        if (this.config.l3) {
-          try {
-            const value = await this.config.l3.get(key);
-            if (value !== null) {
-              this.stats.l3Hits++;
-              span?.setAttribute("cache.hit_tier", "l3");
-              logger.debug(`[${this.config.name}] L3 hit`, { key });
-              const backfillPromise = this.backfill(key, value, ["l1", "l2"]);
-              if (this.config.asyncBackfill) {
-                void backfillPromise;
-              } else {
-                await backfillPromise;
-              }
-              return value;
-            }
-          } catch (error) {
-            logger.debug(`[${this.config.name}] L3 get error`, { key, error });
-          }
+        const l3Value = await this.getFromTier(this.config.l3, key, "l3");
+        if (l3Value !== null) {
+          await this.maybeAwaitBackfill(this.backfill(key, l3Value, ["l1", "l2"]));
+          return l3Value;
         }
 
         this.stats.misses++;
@@ -217,17 +149,13 @@ export class MultiTierCache<T = string> {
     );
   }
 
-  /**
-   * Set a value in all tiers.
-   *
-   * Writes to all configured tiers in parallel (or sequentially if asyncBackfill=false).
-   */
   set(key: string, value: T, ttlSeconds?: number): Promise<void> {
     return withSpan(
       SpanNames.CACHE_MULTI_TIER_SET,
-      (span?: Span) => {
+      async (span?: Span): Promise<void> => {
         this.stats.sets++;
         const ttl = ttlSeconds ?? this.config.defaultTtlSeconds;
+
         span?.setAttribute("cache.name", this.config.name);
         span?.setAttribute("cache.key", key);
         span?.setAttribute("cache.ttl_seconds", ttl);
@@ -243,21 +171,16 @@ export class MultiTierCache<T = string> {
         );
 
         if (this.config.asyncBackfill) {
-          // Fire-and-forget for performance (don't await)
           void Promise.all(setOps);
-          return Promise.resolve();
+          return;
         }
 
-        // Wait for all tiers
-        return Promise.all(setOps).then(() => {});
+        await Promise.all(setOps);
       },
       { "cache.operation": "set" },
     );
   }
 
-  /**
-   * Delete a value from all tiers.
-   */
   async delete(key: string): Promise<void> {
     const tiers = [this.config.l1, this.config.l2, this.config.l3].filter(
       (t): t is CacheTier<T> => t !== undefined && t.delete !== undefined,
@@ -272,17 +195,7 @@ export class MultiTierCache<T = string> {
     );
   }
 
-  /**
-   * Get or compute a value.
-   *
-   * If the key exists in any tier, returns it.
-   * Otherwise, calls the compute function and stores the result in all tiers.
-   */
-  async getOrCompute(
-    key: string,
-    computeFn: () => Promise<T>,
-    ttlSeconds?: number,
-  ): Promise<T> {
+  async getOrCompute(key: string, computeFn: () => Promise<T>, ttlSeconds?: number): Promise<T> {
     const cached = await this.get(key);
     if (cached !== null) return cached;
 
@@ -291,79 +204,42 @@ export class MultiTierCache<T = string> {
     return value;
   }
 
-  /**
-   * Batch get multiple values.
-   *
-   * Uses batch operations where available for efficiency.
-   * Returns a map of key → value (null if not found).
-   */
   async getBatch(keys: string[]): Promise<Map<string, T | null>> {
     if (keys.length === 0) return new Map();
 
     const results = new Map<string, T | null>();
     let remainingKeys = [...keys];
-
     const backfillPromises: Promise<void>[] = [];
 
-    // Check L1
     if (this.config.l1 && remainingKeys.length > 0) {
-      try {
-        const l1Results = this.config.l1.getBatch
-          ? await this.config.l1.getBatch(remainingKeys)
-          : await this.individualGets(this.config.l1, remainingKeys);
-
-        for (const [key, value] of l1Results) {
-          if (value !== null) {
-            results.set(key, value);
-            this.stats.l1Hits++;
-          }
-        }
-        remainingKeys = remainingKeys.filter((k) => !results.has(k) || results.get(k) === null);
-      } catch (error) {
-        logger.debug(`[${this.config.name}] L1 getBatch error`, {
-          keyCount: remainingKeys.length,
-          error,
-        });
-      }
+      remainingKeys = await this.getBatchFromTier(this.config.l1, remainingKeys, "l1", results);
     }
 
-    // Check L2
     if (this.config.l2 && remainingKeys.length > 0) {
-      try {
-        const l2Results = this.config.l2.getBatch
-          ? await this.config.l2.getBatch(remainingKeys)
-          : await this.individualGets(this.config.l2, remainingKeys);
-
-        for (const [key, value] of l2Results) {
-          if (value !== null) {
-            results.set(key, value);
-            this.stats.l2Hits++;
-            backfillPromises.push(this.backfill(key, value, ["l1"]));
-          }
-        }
-        remainingKeys = remainingKeys.filter((k) => !results.has(k) || results.get(k) === null);
-      } catch (error) {
-        logger.debug(`[${this.config.name}] L2 getBatch error`, {
-          keyCount: remainingKeys.length,
-          error,
-        });
-      }
+      remainingKeys = await this.getBatchFromTier(
+        this.config.l2,
+        remainingKeys,
+        "l2",
+        results,
+        (k, v) => {
+          backfillPromises.push(this.backfill(k, v, ["l1"]));
+        },
+      );
     }
 
-    // Check L3
     if (this.config.l3 && remainingKeys.length > 0) {
       try {
         const l3Results = this.config.l3.getBatch
           ? await this.config.l3.getBatch(remainingKeys)
           : await this.individualGets(this.config.l3, remainingKeys);
 
-        for (const [key, value] of l3Results) {
-          if (value !== null) {
-            results.set(key, value);
+        for (const [k, v] of l3Results) {
+          if (v !== null) {
+            results.set(k, v);
             this.stats.l3Hits++;
-            backfillPromises.push(this.backfill(key, value, ["l1", "l2"]));
+            backfillPromises.push(this.backfill(k, v, ["l1", "l2"]));
           } else {
-            results.set(key, null);
+            results.set(k, null);
             this.stats.misses++;
           }
         }
@@ -375,10 +251,9 @@ export class MultiTierCache<T = string> {
       }
     }
 
-    // Mark remaining as misses
-    for (const key of remainingKeys) {
-      if (!results.has(key)) {
-        results.set(key, null);
+    for (const k of remainingKeys) {
+      if (!results.has(k)) {
+        results.set(k, null);
         this.stats.misses++;
       }
     }
@@ -394,18 +269,12 @@ export class MultiTierCache<T = string> {
     return results;
   }
 
-  /**
-   * Get cache statistics.
-   */
   getStats(): CacheStats & { hitRate: number } {
     const totalHits = this.stats.l1Hits + this.stats.l2Hits + this.stats.l3Hits;
     const hitRate = this.stats.gets > 0 ? totalHits / this.stats.gets : 0;
     return { ...this.stats, hitRate };
   }
 
-  /**
-   * Reset statistics.
-   */
   resetStats(): void {
     this.stats = {
       gets: 0,
@@ -418,9 +287,68 @@ export class MultiTierCache<T = string> {
     };
   }
 
-  /**
-   * Backfill higher tiers with a value found at a lower tier.
-   */
+  private async getFromTier(
+    tier: CacheTier<T> | undefined,
+    key: string,
+    tierName: "l1" | "l2" | "l3",
+  ): Promise<T | null> {
+    if (!tier) return null;
+
+    try {
+      const value = await tier.get(key);
+      if (value === null) return null;
+
+      if (tierName === "l1") this.stats.l1Hits++;
+      if (tierName === "l2") this.stats.l2Hits++;
+      if (tierName === "l3") this.stats.l3Hits++;
+
+      logger.debug(`[${this.config.name}] ${tierName.toUpperCase()} hit`, { key });
+      return value;
+    } catch (error) {
+      logger.debug(`[${this.config.name}] ${tierName.toUpperCase()} get error`, { key, error });
+      return null;
+    }
+  }
+
+  private async getBatchFromTier(
+    tier: CacheTier<T>,
+    keys: string[],
+    tierName: "l1" | "l2",
+    results: Map<string, T | null>,
+    onHit?: (key: string, value: T) => void,
+  ): Promise<string[]> {
+    try {
+      const tierResults = tier.getBatch
+        ? await tier.getBatch(keys)
+        : await this.individualGets(tier, keys);
+
+      for (const [k, v] of tierResults) {
+        if (v === null) continue;
+
+        results.set(k, v);
+        if (tierName === "l1") this.stats.l1Hits++;
+        if (tierName === "l2") this.stats.l2Hits++;
+        onHit?.(k, v);
+      }
+
+      return keys.filter((k) => !results.has(k) || results.get(k) === null);
+    } catch (error) {
+      logger.debug(`[${this.config.name}] ${tierName.toUpperCase()} getBatch error`, {
+        keyCount: keys.length,
+        error,
+      });
+      return keys;
+    }
+  }
+
+  private async maybeAwaitBackfill(promise: Promise<void>): Promise<void> {
+    if (this.config.asyncBackfill) {
+      void promise;
+      return;
+    }
+    await promise;
+  }
+
   private backfill(key: string, value: T, tiers: ("l1" | "l2")[]): Promise<void> {
     if (!this.config.backfillOnHit) return Promise.resolve();
 
@@ -444,19 +372,12 @@ export class MultiTierCache<T = string> {
         }),
       );
     }
+
     return Promise.all(backfillOps).then(() => {});
   }
 
-  /**
-   * Helper for individual gets when batch operation is not available.
-   */
-  private async individualGets(
-    tier: CacheTier<T>,
-    keys: string[],
-  ): Promise<Map<string, T | null>> {
-    const results = await Promise.all(
-      keys.map(async (key) => [key, await tier.get(key)] as const),
-    );
+  private async individualGets(tier: CacheTier<T>, keys: string[]): Promise<Map<string, T | null>> {
+    const results = await Promise.all(keys.map(async (key) => [key, await tier.get(key)] as const));
     return new Map(results);
   }
 }

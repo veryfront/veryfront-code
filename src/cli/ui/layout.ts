@@ -1,9 +1,9 @@
-/**
+/*************************************************
  * Layout utilities for CLI
  *
  * Provides terminal-aware layout primitives for responsive CLI design.
  * Runtime-agnostic: works on Deno, Node.js, and Bun.
- */
+ *************************************************/
 
 import { getTerminalSize, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
 import { ANSI_REGEX, RESET } from "./ansi.ts";
@@ -33,7 +33,7 @@ export function isTTY(): boolean {
  * Get visible length of a string (excluding ANSI escape codes)
  */
 export function visibleLength(text: string): number {
-  return text.replace(ANSI_REGEX, "").length;
+  return stripAnsi(text).length;
 }
 
 /**
@@ -49,9 +49,8 @@ export function truncate(text: string, maxWidth: number, ellipsis = "…"): stri
   // Create a new regex instance to avoid state issues with global flag
   const ansiRegex = new RegExp(ANSI_REGEX.source, "g");
   let lastIndex = 0;
-  let match: RegExpExecArray | null;
 
-  while ((match = ansiRegex.exec(text)) !== null) {
+  for (let match = ansiRegex.exec(text); match !== null; match = ansiRegex.exec(text)) {
     const visiblePart = text.slice(lastIndex, match.index);
 
     for (let i = 0; i < visiblePart.length && visibleCount < maxVisible; i++) {
@@ -106,27 +105,27 @@ export function wrap(text: string, maxWidth: number): string[] {
   if (maxWidth <= 0) return [text];
 
   const words = text.split(" ");
-  const lines: string[] = [];
-  let currentLine = "";
+  const result: string[] = [];
+  let current = "";
 
   for (const word of words) {
-    if (!currentLine) {
-      currentLine = word;
+    if (!current) {
+      current = word;
       continue;
     }
 
-    if (visibleLength(currentLine) + 1 + visibleLength(word) <= maxWidth) {
-      currentLine += " " + word;
+    if (visibleLength(current) + 1 + visibleLength(word) <= maxWidth) {
+      current += " " + word;
       continue;
     }
 
-    lines.push(currentLine);
-    currentLine = word;
+    result.push(current);
+    current = word;
   }
 
-  if (currentLine) lines.push(currentLine);
+  if (current) result.push(current);
 
-  return lines;
+  return result;
 }
 
 /**

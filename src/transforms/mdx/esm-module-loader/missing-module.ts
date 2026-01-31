@@ -14,15 +14,15 @@ type MissingModuleContext = {
 };
 
 function getSuggestion(modulePath: string, namedImports: string[]): string {
-  if (modulePath.includes("lib/utils")) {
-    const missingCn = namedImports.includes("cn");
-    if (missingCn) {
-      return "Add lib/utils.ts exporting `cn`, or remove the `cn` import.";
-    }
-    return "Add lib/utils.ts or update the import path.";
+  if (!modulePath.includes("lib/utils")) {
+    return "Ensure the file exists in the project and is included in the release.";
   }
 
-  return "Ensure the file exists in the project and is included in the release.";
+  if (namedImports.includes("cn")) {
+    return "Add lib/utils.ts exporting `cn`, or remove the `cn` import.";
+  }
+
+  return "Add lib/utils.ts or update the import path.";
 }
 
 export function buildMissingModuleError(ctx: MissingModuleContext): Error {
@@ -30,29 +30,24 @@ export function buildMissingModuleError(ctx: MissingModuleContext): Error {
     ? extractNamedImports(ctx.code, ctx.importStatement)
     : [];
 
-  const parts: string[] = [];
-  parts.push(`[MDX] Missing module: ${ctx.modulePath}.`);
-  if (ctx.importer) parts.push(`Imported by: ${ctx.importer}.`);
-  if (namedImports.length > 0) {
-    parts.push(`Missing exports: ${namedImports.join(", ")}.`);
-  }
-  parts.push(`Suggestion: ${getSuggestion(ctx.modulePath, namedImports)}`);
+  const parts: string[] = [
+    `[MDX] Missing module: ${ctx.modulePath}.`,
+    ctx.importer ? `Imported by: ${ctx.importer}.` : "",
+    namedImports.length ? `Missing exports: ${namedImports.join(", ")}.` : "",
+    `Suggestion: ${getSuggestion(ctx.modulePath, namedImports)}`,
+  ].filter(Boolean);
 
   const message = parts.join(" ");
   const error = new Error(message);
   error.name = "MissingModuleError";
 
   try {
-    getErrorCollector().addModuleError(
-      message,
-      ctx.modulePath,
-      {
-        importer: ctx.importer,
-        namedImports,
-        importStatement: ctx.importStatement,
-        projectSlug: ctx.projectSlug,
-      },
-    );
+    getErrorCollector().addModuleError(message, ctx.modulePath, {
+      importer: ctx.importer,
+      namedImports,
+      importStatement: ctx.importStatement,
+      projectSlug: ctx.projectSlug,
+    });
   } catch {
     // Error collector may not be initialized in all contexts
   }

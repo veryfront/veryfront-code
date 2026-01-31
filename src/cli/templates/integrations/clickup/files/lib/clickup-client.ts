@@ -144,16 +144,13 @@ interface ClickUpSpace {
   };
 }
 
-function buildCustomTaskParams(options?: {
-  customTaskIds?: boolean;
-  teamId?: string;
-}): URLSearchParams {
+function buildCustomTaskParams(options?: { customTaskIds?: boolean; teamId?: string }): URLSearchParams {
   const params = new URLSearchParams();
 
-  if (options?.customTaskIds) {
-    params.set("custom_task_ids", "true");
-    if (options.teamId) params.set("team_id", options.teamId);
-  }
+  if (!options?.customTaskIds) return params;
+
+  params.set("custom_task_ids", "true");
+  if (options.teamId) params.set("team_id", options.teamId);
 
   return params;
 }
@@ -165,9 +162,7 @@ function withQuery(endpoint: string, params: URLSearchParams): string {
 
 async function clickupFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with ClickUp. Please connect your account.");
-  }
+  if (!token) throw new Error("Not authenticated with ClickUp. Please connect your account.");
 
   const response = await fetch(`${CLICKUP_BASE_URL}${endpoint}`, {
     ...options,
@@ -178,17 +173,12 @@ async function clickupFetch<T>(endpoint: string, options: RequestInit = {}): Pro
     },
   });
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({} as Record<string, unknown>));
-    const message =
-      (error as { err?: string; error?: string }).err ??
-      (error as { err?: string; error?: string }).error ??
-      response.statusText;
+  if (response.ok) return response.json();
 
-    throw new Error(`ClickUp API error: ${response.status} ${message}`);
-  }
+  const error = await response.json().catch(() => ({} as { err?: string; error?: string }));
+  const message = error.err ?? error.error ?? response.statusText;
 
-  return response.json();
+  throw new Error(`ClickUp API error: ${response.status} ${message}`);
 }
 
 export async function listSpaces(teamId: string): Promise<ClickUpSpace[]> {
@@ -248,7 +238,6 @@ export async function getTask(
   },
 ): Promise<ClickUpTask> {
   const params = buildCustomTaskParams(options);
-
   if (options?.includeSubtasks) params.set("include_subtasks", "true");
 
   return clickupFetch<ClickUpTask>(withQuery(`/task/${taskId}`, params));

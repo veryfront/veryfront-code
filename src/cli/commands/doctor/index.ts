@@ -14,14 +14,15 @@ import { bold, error, success, warning } from "../../ui/colors.ts";
 function summarizeResults(
   results: DiagnosticResult[],
 ): { warnCount: number; failCount: number } {
-  return results.reduce(
-    (acc, result) => {
-      if (result.status === "warn") acc.warnCount++;
-      if (result.status === "fail") acc.failCount++;
-      return acc;
-    },
-    { warnCount: 0, failCount: 0 },
-  );
+  let warnCount = 0;
+  let failCount = 0;
+
+  for (const result of results) {
+    if (result.status === "warn") warnCount++;
+    if (result.status === "fail") failCount++;
+  }
+
+  return { warnCount, failCount };
 }
 
 export async function doctorCommand(
@@ -40,16 +41,18 @@ export async function doctorCommand(
     ...(await checkAIConfig(projectDir)),
   ];
 
-  const checkItems = results.map((r) => ({
-    label: r.name,
-    status: r.status,
-    detail: r.message,
-  }));
-
   console.log();
   console.log(`  ${bold("System Diagnostics")}`);
   console.log();
-  console.log(checkList(checkItems));
+  console.log(
+    checkList(
+      results.map((result) => ({
+        label: result.name,
+        status: result.status,
+        detail: result.message,
+      })),
+    ),
+  );
   console.log();
 
   const { warnCount, failCount } = summarizeResults(results);
@@ -69,6 +72,7 @@ export async function doctorCommand(
   if (warnCount > 0) {
     console.log(`  ${warning("!")} ${warnCount} warnings, ${passCount} passed`);
     console.log();
+
     if (opts.strict) {
       throw toError(
         createError({
@@ -77,6 +81,7 @@ export async function doctorCommand(
         }),
       );
     }
+
     return;
   }
 

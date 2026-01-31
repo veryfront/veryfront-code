@@ -3,11 +3,11 @@
  */
 
 import { z } from "zod";
+import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ReloadNotifier } from "../../../server/reload-notifier.ts";
 import { getErrorCollector } from "../error-collector.ts";
 import { getLogBuffer } from "../log-buffer.ts";
-import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import type { MCPTool } from "../tools.ts";
 import { formatError } from "./helpers.ts";
 
@@ -16,9 +16,10 @@ import { formatError } from "./helpers.ts";
 // ============================================================================
 
 const hotReloadInput = z.object({
-  file: z.string().optional().describe(
-    "Specific file to trigger reload for (optional - reloads all if not specified)",
-  ),
+  file: z
+    .string()
+    .optional()
+    .describe("Specific file to trigger reload for (optional - reloads all if not specified)"),
 });
 
 type HotReloadInput = z.infer<typeof hotReloadInput>;
@@ -87,10 +88,10 @@ export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult
           return {
             success: true,
             context: {
-              projectSlug: data.context?.projectSlug || "",
-              projectDir: data.context?.projectDir || "",
-              requestContextMode: data.context?.requestContext?.mode || "unknown",
-              isMultiProjectMode: data.adapter?.isMultiProjectMode || false,
+              projectSlug: data.context?.projectSlug ?? "",
+              projectDir: data.context?.projectDir ?? "",
+              requestContextMode: data.context?.requestContext?.mode ?? "unknown",
+              isMultiProjectMode: data.adapter?.isMultiProjectMode ?? false,
             },
           };
         } catch (error) {
@@ -147,9 +148,11 @@ export const vfTriggerHmr: MCPTool<TriggerHmrInput, TriggerHmrResult> = {
 const previewRouteInput = z.object({
   route: z.string().describe("Route path to preview (e.g., '/', '/dashboard', '/api/users')"),
   port: z.number().optional().default(8080).describe("Dev server port (defaults to 8080)"),
-  format: z.enum(["html", "json", "status"]).optional().default("status").describe(
-    "Output format: html (full page), json (API response), status (just HTTP status)",
-  ),
+  format: z
+    .enum(["html", "json", "status"])
+    .optional()
+    .default("status")
+    .describe("Output format: html (full page), json (API response), status (just HTTP status)"),
 });
 
 type PreviewRouteInput = z.infer<typeof previewRouteInput>;
@@ -184,7 +187,7 @@ export const vfPreviewRoute: MCPTool<PreviewRouteInput, PreviewRouteResult> = {
           });
 
           const renderTime = Date.now() - startTime;
-          const contentType = response.headers.get("content-type") || "";
+          const contentType = response.headers.get("content-type") ?? "";
 
           if (input.format === "status") {
             return { success: response.ok, status: response.status, contentType, renderTime };
@@ -198,7 +201,7 @@ export const vfPreviewRoute: MCPTool<PreviewRouteInput, PreviewRouteResult> = {
 
           const maxLength = input.format === "html" ? 5000 : 10000;
           const truncatedBody = body.length > maxLength
-            ? body.slice(0, maxLength) + `\n\n[... truncated ${body.length - maxLength} characters]`
+            ? `${body.slice(0, maxLength)}\n\n[... truncated ${body.length - maxLength} characters]`
             : body;
 
           return {
@@ -223,12 +226,16 @@ export const vfPreviewRoute: MCPTool<PreviewRouteInput, PreviewRouteResult> = {
 
 const waitForReadyInput = z.object({
   port: z.number().optional().default(8080).describe("Server port to check (defaults to 8080)"),
-  timeout: z.number().optional().default(30000).describe(
-    "Maximum time to wait in milliseconds (defaults to 30000)",
-  ),
-  interval: z.number().optional().default(500).describe(
-    "Polling interval in milliseconds (defaults to 500)",
-  ),
+  timeout: z
+    .number()
+    .optional()
+    .default(30000)
+    .describe("Maximum time to wait in milliseconds (defaults to 30000)"),
+  interval: z
+    .number()
+    .optional()
+    .default(500)
+    .describe("Polling interval in milliseconds (defaults to 500)"),
 });
 
 type WaitForReadyInput = z.infer<typeof waitForReadyInput>;
@@ -356,9 +363,10 @@ export const vfGetFlywheelStatus: MCPTool<GetFlywheelStatusInput, FlywheelStatus
 
         const logCounts = logBuffer.countByLevel();
 
-        let uptime: number | undefined;
         const env = getRuntimeEnv();
-        if (env.serverStartTime) uptime = Date.now() - parseInt(env.serverStartTime, 10);
+        const uptime = env.serverStartTime
+          ? Date.now() - Number.parseInt(env.serverStartTime, 10)
+          : undefined;
 
         return {
           server: {

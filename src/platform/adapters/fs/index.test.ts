@@ -8,6 +8,12 @@ async function assertExportedFunction(name: string): Promise<void> {
   assertEquals(typeof value, "function");
 }
 
+async function assertExportedValue(name: string): Promise<void> {
+  const mod = await import("./index.ts");
+  const value = (mod as Record<string, unknown>)[name];
+  assertExists(value);
+}
+
 describe("fs/index.ts exports", () => {
   it("should export VeryfrontFSAdapter", () => assertExportedFunction("VeryfrontFSAdapter"));
   it("should export GitHubFSAdapter", () => assertExportedFunction("GitHubFSAdapter"));
@@ -21,17 +27,9 @@ describe("fs/index.ts exports", () => {
   it("should export FileCache", () => assertExportedFunction("FileCache"));
 
   it("should export integration functions", async () => {
-    const mod = await import("./index.ts");
-    const {
-      createFSAdapterFromConfig,
-      enhanceAdapterWithFS,
-      getFSAdapterType,
-      isFSAdapterConfigured,
-    } = mod;
-
-    assertExists(createFSAdapterFromConfig);
-    assertExists(enhanceAdapterWithFS);
-    assertExists(getFSAdapterType);
-    assertExists(isFSAdapterConfigured);
+    await assertExportedValue("createFSAdapterFromConfig");
+    await assertExportedValue("enhanceAdapterWithFS");
+    await assertExportedValue("getFSAdapterType");
+    await assertExportedValue("isFSAdapterConfigured");
   });
 });

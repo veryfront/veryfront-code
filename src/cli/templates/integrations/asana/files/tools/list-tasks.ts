@@ -30,14 +30,15 @@ export default tool({
     if (assignedToMe) {
       const me = await getMe();
       const workspaces = await listWorkspaces();
+      const workspaceGid = workspaces[0]?.gid;
 
-      if (workspaces.length === 0) {
+      if (!workspaceGid) {
         return { tasks: [], message: "No workspaces found" };
       }
 
       tasks = await listTasks({
         assigneeGid: me.gid,
-        workspaceGid: workspaces[0].gid,
+        workspaceGid,
         completedSince,
       });
     } else {

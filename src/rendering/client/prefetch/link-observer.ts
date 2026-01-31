@@ -60,12 +60,7 @@ export class LinkObserver {
   }
 
   private observeLinks(): void {
-    const links = document.querySelectorAll('a[href^="/"], a[href^="./"]');
-    for (const link of links) {
-      if (!isAnchorElement(link)) continue;
-      if (!this.isValidLink(link)) continue;
-      this.intersectionObserver?.observe(link);
-    }
+    this.observeAnchors(document.querySelectorAll('a[href^="/"], a[href^="./"]'));
   }
 
   private setupMutationObserver(): void {
@@ -114,7 +109,11 @@ export class LinkObserver {
       this.intersectionObserver?.observe(element);
     }
 
-    for (const link of element.querySelectorAll('a[href^="/"], a[href^="./"]')) {
+    this.observeAnchors(element.querySelectorAll('a[href^="/"], a[href^="./"]'));
+  }
+
+  private observeAnchors(links: NodeListOf<Element>): void {
+    for (const link of links) {
       if (!isAnchorElement(link)) continue;
       if (!this.isValidLink(link)) continue;
       this.intersectionObserver?.observe(link);

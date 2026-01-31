@@ -31,8 +31,6 @@ export default tool({
       customerMemo,
     });
 
-    const { CustomerRef } = invoice;
-
     return {
       success: true,
       invoice: {
@@ -43,8 +41,8 @@ export default tool({
         totalAmount: invoice.TotalAmt,
         balance: invoice.Balance,
         customer: {
-          id: CustomerRef.value,
-          name: CustomerRef.name,
+          id: invoice.CustomerRef.value,
+          name: invoice.CustomerRef.name,
         },
       },
     };

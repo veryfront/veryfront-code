@@ -52,7 +52,7 @@ export default tool({
         };
       }
 
-      const results = await deleteRows(tableName, filter!);
+      const results = await deleteRows(tableName, filter as Record<string, unknown>);
       return {
         success: true,
         tableName,

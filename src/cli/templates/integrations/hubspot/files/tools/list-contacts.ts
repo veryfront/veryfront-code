@@ -18,13 +18,25 @@ export default tool({
 
     return {
       contacts: response.results.map((contact) => {
-        const additionalProperties = properties
-          ? Object.fromEntries(
-              properties
-                .filter((prop) => contact.properties[prop] !== undefined)
-                .map((prop) => [prop, contact.properties[prop]]),
-            )
-          : undefined;
+        if (!properties) {
+          return {
+            id: contact.id,
+            name: formatContactName(contact),
+            email: contact.properties.email,
+            phone: contact.properties.phone,
+            company: contact.properties.company,
+            jobTitle: contact.properties.jobtitle,
+            createdAt: contact.createdAt,
+            updatedAt: contact.updatedAt,
+            additionalProperties: undefined,
+          };
+        }
+
+        const additionalProperties = Object.fromEntries(
+          properties
+            .filter((prop) => contact.properties[prop] !== undefined)
+            .map((prop) => [prop, contact.properties[prop]]),
+        );
 
         return {
           id: contact.id,

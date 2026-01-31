@@ -9,7 +9,9 @@ export default tool({
   inputSchema: z.object({
     messageSid: z
       .string()
-      .describe("The unique Twilio Message SID (starts with 'MM' or 'SM', e.g., MM1234567890abcdef)"),
+      .describe(
+        "The unique Twilio Message SID (starts with 'MM' or 'SM', e.g., MM1234567890abcdef)",
+      ),
   }),
   execute: async ({ messageSid }) => {
     try {
@@ -41,9 +43,9 @@ export default tool({
     } catch (error) {
       if (!(error instanceof Error)) throw error;
 
-      const message = error.message;
+      const errorMessage = error.message;
 
-      if (message.includes("not configured")) {
+      if (errorMessage.includes("not configured")) {
         return {
           error:
             "Twilio not configured. Please set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER.",
@@ -51,7 +53,7 @@ export default tool({
         };
       }
 
-      if (message.includes("20404")) {
+      if (errorMessage.includes("20404")) {
         return {
           error: `Message not found. The SID '${messageSid}' does not exist in your account.`,
         };

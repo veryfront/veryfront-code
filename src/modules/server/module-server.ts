@@ -56,7 +56,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
   return withSpan(
     "modules.serve",
-    async () => {
+    async (): Promise<Response> => {
       const startTime = performance.now();
 
       const {
@@ -146,7 +146,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             { projectId: effectiveProjectId, dev, ssr: isSSR, reactVersion },
           );
 
-          if (isSSR && transformedCode) {
+          if (isSSR) {
             transformedCode = applySSRImportRewrites(transformedCode, {
               projectSlug: snippetProjectSlug,
               branch: snippetBranch,
@@ -182,16 +182,9 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       const latestMatch = url.pathname.match(CROSS_PROJECT_LATEST_PREFIX);
 
       if (versionedMatch || latestMatch) {
-        let crossProjectSlug: string | undefined;
-        let crossVersion: string | undefined;
-        let crossPath: string | undefined;
-
-        if (versionedMatch) {
-          [, crossProjectSlug, crossVersion, crossPath] = versionedMatch;
-        } else if (latestMatch) {
-          [, crossProjectSlug, crossPath] = latestMatch;
-          crossVersion = "latest";
-        }
+        const crossProjectSlug = versionedMatch?.[1] ?? latestMatch?.[1];
+        const crossVersion = versionedMatch?.[2] ?? "latest";
+        const crossPath = versionedMatch?.[3] ?? latestMatch?.[2];
 
         if (!crossProjectSlug || !crossPath) {
           return createModuleResponse(method, "Invalid cross-project import path", HTTP_NOT_FOUND, {
@@ -235,7 +228,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             reactVersion,
           });
 
-          if (isSSR && code) {
+          if (isSSR) {
             code = applySSRImportRewrites(code, { crossProjectRef: projectRef });
           }
 
@@ -282,7 +275,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
         const { path: sourceFile, isFrameworkFile } = findResult;
 
-        let code: string | undefined;
+        let code = "";
 
         if (!isHeadRequest) {
           const platformFs = createFileSystem();
@@ -316,12 +309,12 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
           code = await transformToESM(source, sourceFile, projectDir, adapter, transformOpts);
 
-          if (isSSR && code) {
+          if (isSSR) {
             code = applySSRImportRewrites(code, { projectSlug, branch });
           }
 
           const hmrTimestamp = url.searchParams.get("t");
-          if (hmrTimestamp && code) {
+          if (hmrTimestamp) {
             code = await addHMRTimestamps(code, hmrTimestamp);
             logger.debug("[ModuleServer] HMR timestamp injection", {
               path: modulePath,
@@ -336,7 +329,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           durationMs: (performance.now() - startTime).toFixed(1),
         });
 
-        return createModuleResponse(method, code ?? "", HTTP_OK, headers);
+        return createModuleResponse(method, code, HTTP_OK, headers);
       } catch (error) {
         const errorMsg = getErrorMessage(error);
         logger.error("Module transform error", { modulePath, error: errorMsg });

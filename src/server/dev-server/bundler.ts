@@ -59,8 +59,7 @@ function createRelativeFsPlugin(projectDir: string, shell: ShellAdapter): Plugin
       const exts = [".tsx", ".ts", ".jsx", ".js", ".mjs"];
 
       build.onResolve({ filter: /.*/ }, (args) => {
-        const isRel = args.path.startsWith(".") || args.path.startsWith("/");
-        if (!isRel) return;
+        if (!args.path.startsWith(".") && !args.path.startsWith("/")) return;
 
         const basedir = args.importer ? dirname(args.importer) : projectDir;
         const candidate = args.path.startsWith("/")
@@ -68,8 +67,7 @@ function createRelativeFsPlugin(projectDir: string, shell: ShellAdapter): Plugin
           : pathResolve(join(basedir, args.path));
 
         const candidates: string[] = [candidate];
-        for (const ext of exts) candidates.push(candidate + ext);
-        for (const ext of exts) candidates.push(join(candidate, `index${ext}`));
+        for (const ext of exts) candidates.push(candidate + ext, join(candidate, `index${ext}`));
 
         for (const file of candidates) {
           try {
@@ -105,12 +103,14 @@ function createBareExternalPlugin(): Plugin {
     name: "vf-bare-ext",
     setup(build) {
       build.onResolve({ filter: /.*/ }, (args) => {
-        const isBare = !args.path.startsWith(".") &&
-          !args.path.startsWith("/") &&
-          !args.path.startsWith("http://") &&
-          !args.path.startsWith("https://");
-
-        if (!isBare) return;
+        if (
+          args.path.startsWith(".") ||
+          args.path.startsWith("/") ||
+          args.path.startsWith("http://") ||
+          args.path.startsWith("https://")
+        ) {
+          return;
+        }
 
         if (args.kind === "import-statement" || args.kind === "dynamic-import") {
           return { path: args.path, external: true };

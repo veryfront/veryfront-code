@@ -141,7 +141,7 @@ describe("html-wrapper", () => {
     it("should handle empty meta object", () => {
       const result = wrapInHTML("<div>Test</div>", createOptions());
 
-      const metaCount = (result.match(/<meta/g) || []).length;
+      const metaCount = (result.match(/<meta/g) ?? []).length;
       expect(metaCount).toBe(2);
     });
 
@@ -196,12 +196,8 @@ describe("html-wrapper", () => {
       );
 
       expect(result).toContain('<meta name="og:title" content="Open Graph Title">');
-      expect(result).toContain(
-        '<meta name="og:description" content="Open Graph Description">',
-      );
-      expect(result).toContain(
-        '<meta name="twitter:card" content="summary_large_image">',
-      );
+      expect(result).toContain('<meta name="og:description" content="Open Graph Description">');
+      expect(result).toContain('<meta name="twitter:card" content="summary_large_image">');
     });
 
     it("should handle multiple script types", () => {

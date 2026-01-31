@@ -18,16 +18,28 @@ type HookRegistration = {
   afterEach: (fn: () => void | Promise<void>) => void;
 };
 
+type TestIsolationContext = {
+  envSnapshot: Record<string, string> | null;
+  globalSnapshot: Map<string, { had: boolean; value: unknown }> | null;
+};
+
+type EnvOverlayStore = Map<string, string | typeof envDeleted>;
+type AsyncLocalStorage<T> = import("node:async_hooks").AsyncLocalStorage<T>;
+type EnvOverlay = {
+  storage: AsyncLocalStorage<EnvOverlayStore>;
+  baseEnv?: Record<string, string>;
+};
+
+type EnvMask = {
+  prefixes?: string[];
+  keys?: string[];
+};
+
 const installedKey = "__vfTestIsolationInstalled";
 const envOverlayKey = "__vfTestEnvOverlay";
 const denoEnvOverlayKey = "__vfTestDenoEnvOverlay";
 const envMaskKey = "__vfTestEnvMask";
 const cleanupTasks = new Set<CleanupTask>();
-
-type TestIsolationContext = {
-  envSnapshot: Record<string, string> | null;
-  globalSnapshot: Map<string, { had: boolean; value: unknown }> | null;
-};
 
 let isolationStorage: import("node:async_hooks").AsyncLocalStorage<TestIsolationContext> | null =
   null;
@@ -37,18 +49,7 @@ const fallbackContext: TestIsolationContext = {
   globalSnapshot: null,
 };
 
-function getIsolationContext(): TestIsolationContext {
-  return isolationStorage?.getStore() ?? fallbackContext;
-}
-
 const envDeleted = Symbol("vfEnvDeleted");
-
-type EnvOverlayStore = Map<string, string | typeof envDeleted>;
-type AsyncLocalStorage<T> = import("node:async_hooks").AsyncLocalStorage<T>;
-type EnvOverlay = {
-  storage: AsyncLocalStorage<EnvOverlayStore>;
-  baseEnv?: Record<string, string>;
-};
 
 const globalKeys = [
   "window",
@@ -99,6 +100,10 @@ const SSR_GLOBAL_KEYS = [
   "DocumentFragment",
 ] as const;
 
+function getIsolationContext(): TestIsolationContext {
+  return isolationStorage?.getStore() ?? fallbackContext;
+}
+
 function hasSSRStubGlobals(): boolean {
   const win = (globalThis as Record<string, unknown>).window as Record<string, unknown> | undefined;
   if (win && typeof win === "object" && win[SSR_STUB_MARKER] === true) return true;
@@ -121,11 +126,6 @@ function clearSSRGlobalStubs(): void {
   }
 }
 
-type EnvMask = {
-  prefixes?: string[];
-  keys?: string[];
-};
-
 function getEnvMask(): EnvMask | null {
   const mask = (globalThis as Record<string, unknown>)[envMaskKey];
   if (!mask || typeof mask !== "object") return null;
@@ -144,10 +144,8 @@ function isMaskedEnvKey(key: string, mask: EnvMask | null): boolean {
   if (!mask) return false;
   if (mask.keys?.includes(key)) return true;
 
-  if (mask.prefixes) {
-    for (const prefix of mask.prefixes) {
-      if (key.startsWith(prefix)) return true;
-    }
+  for (const prefix of mask.prefixes ?? []) {
+    if (key.startsWith(prefix)) return true;
   }
   return false;
 }
@@ -425,7 +423,7 @@ function captureEnvSnapshot(): Record<string, string> {
 function restoreEnvSnapshot(snapshot: Record<string, string> | null): void {
   if (!snapshot) return;
 
-  let current: Record<string, string> = {};
+  let current: Record<string, string>;
   try {
     current = readEnv();
   } catch {

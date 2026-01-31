@@ -16,9 +16,15 @@ const hybridTokenStore = {
   async clearTokens(serviceId: string) {
     await tokenStore.revokeToken(USER_ID, serviceId);
   },
-  getState: (state: string) => memoryTokenStore.getState(state),
-  setState: (state: { state: string; codeVerifier?: string; createdAt: number }) => memoryTokenStore.setState(state),
-  clearState: (state: string) => memoryTokenStore.clearState(state),
+  async getState(state: string) {
+    return memoryTokenStore.getState(state);
+  },
+  async setState(state: { state: string; codeVerifier?: string; createdAt: number }) {
+    await memoryTokenStore.setState(state);
+  },
+  async clearState(state: string) {
+    await memoryTokenStore.clearState(state);
+  },
 };
 
 export const GET = createOAuthCallbackHandler(notionConfig, { tokenStore: hybridTokenStore });

@@ -11,14 +11,15 @@ export default async function DashboardPage(): Promise<JSX.Element> {
     redirect("/login");
   }
 
-  const { id: userId, name } = session.user;
+  const userId = session.user.id;
+  const name = session.user.name;
 
   return (
     <DashboardLayout>
       <div className="space-y-8">
         <div>
           <h1 className="text-2xl font-bold text-neutral-900 dark:text-white">Dashboard</h1>
-          <p className="text-neutral-600 dark:text-neutral-400 mt-1">Welcome back, {name}</p>
+          <p className="mt-1 text-neutral-600 dark:text-neutral-400">Welcome back, {name}</p>
         </div>
 
         <StatsGrid userId={userId} />

@@ -27,21 +27,18 @@ export default tool({
   }),
   async execute({ fileKey, includeComponents, includeStyles, depth }) {
     const file = await getFile(fileKey, { depth });
-    const summary = getFileSummary(file);
 
-    const result = {
-      summary,
+    return {
+      summary: getFileSummary(file),
       url: `https://www.figma.com/file/${fileKey}`,
       thumbnailUrl: file.thumbnailUrl,
-      pages: (file.document.children ?? []).map((page) => ({
+      pages: file.document.children?.map((page) => ({
         id: page.id,
         name: page.name,
         type: page.type,
-      })),
+      })) ?? [],
       ...(includeComponents ? { components: extractComponents(file) } : {}),
       ...(includeStyles ? { styles: extractStyles(file) } : {}),
     };
-
-    return result;
   },
 });

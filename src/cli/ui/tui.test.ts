@@ -1,7 +1,3 @@
-/**
- * Tests for CLI TUI
- */
-
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { TuiState } from "./tui.ts";
@@ -9,21 +5,21 @@ import type { TuiState } from "./tui.ts";
 describe("tui", () => {
   describe("createTui", () => {
     it("exports createTui function", async () => {
-      const mod = await import("./tui.ts");
-      assertExists(mod.createTui);
-      assertEquals(typeof mod.createTui, "function");
+      const { createTui } = await import("./tui.ts");
+      assertExists(createTui);
+      assertEquals(typeof createTui, "function");
     });
 
     it("exports interceptConsole function", async () => {
-      const mod = await import("./tui.ts");
-      assertExists(mod.interceptConsole);
-      assertEquals(typeof mod.interceptConsole, "function");
+      const { interceptConsole } = await import("./tui.ts");
+      assertExists(interceptConsole);
+      assertEquals(typeof interceptConsole, "function");
     });
 
     it("exports handleInput function", async () => {
-      const mod = await import("./tui.ts");
-      assertExists(mod.handleInput);
-      assertEquals(typeof mod.handleInput, "function");
+      const { handleInput } = await import("./tui.ts");
+      assertExists(handleInput);
+      assertEquals(typeof handleInput, "function");
     });
   });
 

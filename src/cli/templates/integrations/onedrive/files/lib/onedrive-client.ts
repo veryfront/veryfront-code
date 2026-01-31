@@ -2,7 +2,6 @@ import { getAccessToken } from "./token-store.ts";
 
 const GRAPH_API_URL = "https://graph.microsoft.com/v1.0";
 
-// OneDrive API Types (Microsoft Graph API)
 export interface DriveItem {
   id: string;
   name: string;
@@ -67,11 +66,7 @@ async function getTokenOrThrow(): Promise<string> {
   return token;
 }
 
-// Helper function for OneDrive API calls
-async function onedriveFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+async function onedriveFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getTokenOrThrow();
   const url = endpoint.startsWith("http") ? endpoint : `${GRAPH_API_URL}${endpoint}`;
 
@@ -94,8 +89,6 @@ async function onedriveFetch<T>(
   return response.json();
 }
 
-// File and Folder Operations
-
 export function listFiles(
   folderId: string = "root",
   options?: {
@@ -108,7 +101,7 @@ export function listFiles(
 
   if (options?.orderBy) params.set("$orderby", options.orderBy);
   if (options?.top) params.set("$top", options.top.toString());
-  if (options?.select) params.set("$select", options.select.join(","));
+  if (options?.select?.length) params.set("$select", options.select.join(","));
 
   const queryString = params.toString();
   const endpoint = `/me/drive/items/${folderId}/children${queryString ? `?${queryString}` : ""}`;
@@ -225,17 +218,14 @@ export function moveFile(
 ): Promise<DriveItem> {
   const body: Record<string, unknown> = {
     parentReference: { id: newParentId },
+    ...(newName ? { name: newName } : {}),
   };
-
-  if (newName) body.name = newName;
 
   return onedriveFetch<DriveItem>(`/me/drive/items/${itemId}`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
 }
-
-// Helper Functions
 
 export function formatFileSize(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];

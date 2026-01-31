@@ -73,9 +73,7 @@ interface GraphResponse<T> {
 
 async function requireAccessToken(): Promise<string> {
   const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with Microsoft. Please connect your account.");
-  }
+  if (!token) throw new Error("Not authenticated with Microsoft. Please connect your account.");
   return token;
 }
 
@@ -91,14 +89,12 @@ async function graphFetch<T>(endpoint: string, options: RequestInit = {}): Promi
     },
   });
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `Microsoft Graph API error: ${response.status} ${error.error?.message || response.statusText}`,
-    );
-  }
+  if (response.ok) return response.json();
 
-  return response.json();
+  const error = await response.json().catch(() => ({}));
+  throw new Error(
+    `Microsoft Graph API error: ${response.status} ${error.error?.message ?? response.statusText}`,
+  );
 }
 
 export async function listSites(options?: {
@@ -109,10 +105,8 @@ export async function listSites(options?: {
     ? `/sites?search=${encodeURIComponent(options.search)}`
     : "/sites?search=*";
 
-  const response = await graphFetch<GraphResponse<SharePointSite>>(endpoint);
-  const sites = response.value ?? [];
-
-  return options?.limit ? sites.slice(0, options.limit) : sites;
+  const { value = [] } = await graphFetch<GraphResponse<SharePointSite>>(endpoint);
+  return options?.limit ? value.slice(0, options.limit) : value;
 }
 
 export function getSite(siteId: string): Promise<SharePointSite> {
@@ -124,8 +118,8 @@ export function getSiteByPath(hostname: string, sitePath: string): Promise<Share
 }
 
 export async function listDrives(siteId: string): Promise<SharePointDrive[]> {
-  const response = await graphFetch<GraphResponse<SharePointDrive>>(`/sites/${siteId}/drives`);
-  return response.value ?? [];
+  const { value = [] } = await graphFetch<GraphResponse<SharePointDrive>>(`/sites/${siteId}/drives`);
+  return value;
 }
 
 export function getDefaultDrive(siteId: string): Promise<SharePointDrive> {
@@ -149,17 +143,21 @@ export async function listFiles(
   if (options?.orderBy) params.set("$orderby", options.orderBy);
   if (options?.limit) params.set("$top", String(options.limit));
 
-  const endpoint = params.toString() ? `${baseEndpoint}?${params.toString()}` : baseEndpoint;
+  const endpoint = params.size ? `${baseEndpoint}?${params.toString()}` : baseEndpoint;
 
-  const response = await graphFetch<GraphResponse<SharePointFile>>(endpoint);
-  return response.value ?? [];
+  const { value = [] } = await graphFetch<GraphResponse<SharePointFile>>(endpoint);
+  return value;
 }
 
 export function getFile(siteId: string, driveId: string, itemId: string): Promise<SharePointFile> {
   return graphFetch<SharePointFile>(`/sites/${siteId}/drives/${driveId}/items/${itemId}`);
 }
 
-export function getFileByPath(siteId: string, driveId: string, path: string): Promise<SharePointFile> {
+export function getFileByPath(
+  siteId: string,
+  driveId: string,
+  path: string,
+): Promise<SharePointFile> {
   const encodedPath = encodeURIComponent(path);
   return graphFetch<SharePointFile>(`/sites/${siteId}/drives/${driveId}/root:/${encodedPath}`);
 }
@@ -173,14 +171,12 @@ export async function downloadFile(
 
   await getFile(siteId, driveId, itemId);
 
-  const downloadUrl = `${GRAPH_BASE_URL}/sites/${siteId}/drives/${driveId}/items/${itemId}/content`;
-  const response = await fetch(downloadUrl, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const response = await fetch(
+    `${GRAPH_BASE_URL}/sites/${siteId}/drives/${driveId}/items/${itemId}/content`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
 
-  if (!response.ok) {
-    throw new Error(`Failed to download file: ${response.statusText}`);
-  }
+  if (!response.ok) throw new Error(`Failed to download file: ${response.statusText}`);
 
   return response.arrayBuffer();
 }
@@ -226,12 +222,10 @@ export async function uploadFile(
     body,
   });
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(`Failed to upload file: ${error.error?.message || response.statusText}`);
-  }
+  if (response.ok) return response.json();
 
-  return response.json();
+  const error = await response.json().catch(() => ({}));
+  throw new Error(`Failed to upload file: ${error.error?.message ?? response.statusText}`);
 }
 
 export function createFolder(
@@ -264,8 +258,8 @@ export async function searchFiles(
   const baseEndpoint = `/sites/${siteId}/drive/root/search(q='${encodeURIComponent(query)}')`;
   const endpoint = options?.limit ? `${baseEndpoint}?$top=${options.limit}` : baseEndpoint;
 
-  const response = await graphFetch<GraphResponse<SharePointFile>>(endpoint);
-  return response.value ?? [];
+  const { value = [] } = await graphFetch<GraphResponse<SharePointFile>>(endpoint);
+  return value;
 }
 
 export async function deleteItem(siteId: string, driveId: string, itemId: string): Promise<void> {

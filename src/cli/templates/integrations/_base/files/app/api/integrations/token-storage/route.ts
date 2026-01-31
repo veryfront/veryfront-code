@@ -8,12 +8,15 @@ export async function GET(): Promise<Response> {
   const env = process.env;
 
   let mode: "memory" | "database" | "kv" | "redis" = "memory";
-  if (env.DATABASE_URL) mode = "database";
-  else if (env.KV_REST_API_URL) mode = "kv";
-  else if (env.REDIS_URL) mode = "redis";
+  if (env.DATABASE_URL) {
+    mode = "database";
+  } else if (env.KV_REST_API_URL) {
+    mode = "kv";
+  } else if (env.REDIS_URL) {
+    mode = "redis";
+  }
 
-  const encryptionKey = env.TOKEN_ENCRYPTION_KEY;
-  const hasExplicitKey = encryptionKey?.length === 64;
+  const hasExplicitKey = env.TOKEN_ENCRYPTION_KEY?.length === 64;
 
   return Response.json({
     mode,

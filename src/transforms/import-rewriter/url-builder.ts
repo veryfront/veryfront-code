@@ -14,6 +14,12 @@ export const TAILWIND_VERSION = "4.1.8";
 /** csstype version - must match deno.json for type consistency */
 export const CSSTYPE_VERSION = "3.2.3";
 
+type EsmShOptions = {
+  external?: string[];
+  target?: string;
+  deps?: Record<string, string>;
+};
+
 /**
  * Build esm.sh URL with proper configuration.
  *
@@ -26,23 +32,16 @@ export function buildEsmShUrl(
   pkg: string,
   version?: string,
   subpath?: string,
-  options?: {
-    external?: string[];
-    target?: string;
-    deps?: Record<string, string>;
-  },
+  options?: EsmShOptions,
 ): string {
   const params: string[] = [];
 
-  // Add external packages first (for consistency with existing URLs)
   if (options?.external?.length) {
     params.push(`external=${options.external.join(",")}`);
   }
 
-  // Add target (always include for consistent builds)
   params.push(`target=${options?.target ?? "es2022"}`);
 
-  // Add deps
   if (options?.deps) {
     const depsStr = Object.entries(options.deps)
       .map(([k, v]) => `${k}@${v}`)
@@ -52,7 +51,7 @@ export function buildEsmShUrl(
 
   const versionStr = version ? `@${version}` : "";
   const pathStr = subpath ?? "";
-  const queryStr = params.length > 0 ? `?${params.join("&")}` : "";
+  const queryStr = params.length ? `?${params.join("&")}` : "";
 
   return `https://esm.sh/${pkg}${versionStr}${pathStr}${queryStr}`;
 }
@@ -122,13 +121,8 @@ export function buildVeryfrontModuleUrl(path: string): string {
 /**
  * Normalize file extension for JavaScript output.
  */
-export function normalizeExtension(
-  path: string,
-  options?: { removeExtension?: boolean },
-): string {
-  if (options?.removeExtension) {
-    return path.replace(/\.(tsx?|jsx|mdx)$/, "");
-  }
+export function normalizeExtension(path: string, options?: { removeExtension?: boolean }): string {
+  if (options?.removeExtension) return path.replace(/\.(tsx?|jsx|mdx)$/, "");
   return path.replace(/\.(tsx?|jsx|mdx)$/, ".js");
 }
 
@@ -144,9 +138,7 @@ export function isEsmShUrl(url: string): boolean {
  */
 export function addEsmShDeps(url: string, reactVersion: string): string {
   if (!isEsmShUrl(url)) return url;
-  // Skip React packages (they already have correct deps)
   if (url.includes(`react@${reactVersion}`)) return url;
-  // Skip if already has query params
   if (url.includes("?")) return url;
 
   return `${url}?external=react,react-dom&target=es2022`;

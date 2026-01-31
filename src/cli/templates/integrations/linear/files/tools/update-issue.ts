@@ -18,8 +18,13 @@ export default tool({
       .min(0)
       .max(4)
       .optional()
-      .describe("New priority level: 0=No priority, 1=Urgent, 2=High, 3=Medium, 4=Low"),
-    stateId: z.string().optional().describe("New workflow state ID to move the issue to"),
+      .describe(
+        "New priority level: 0=No priority, 1=Urgent, 2=High, 3=Medium, 4=Low",
+      ),
+    stateId: z
+      .string()
+      .optional()
+      .describe("New workflow state ID to move the issue to"),
     assigneeId: z
       .string()
       .optional()
@@ -30,9 +35,16 @@ export default tool({
       .optional()
       .describe("New array of label IDs (replaces existing labels)"),
   }),
-  async execute(
-    { issueId, title, description, priority, stateId, assigneeId, projectId, labelIds },
-  ) {
+  async execute({
+    issueId,
+    title,
+    description,
+    priority,
+    stateId,
+    assigneeId,
+    projectId,
+    labelIds,
+  }) {
     const issue = await updateIssue(issueId, {
       title,
       description,
@@ -59,10 +71,7 @@ export default tool({
         key: issue.team.key,
       },
       project: issue.project ? { name: issue.project.name } : null,
-      labels: issue.labels.nodes.map((label) => ({
-        name: label.name,
-        color: label.color,
-      })),
+      labels: issue.labels.nodes.map(({ name, color }) => ({ name, color })),
       url: issue.url,
       updatedAt: issue.updatedAt,
     };

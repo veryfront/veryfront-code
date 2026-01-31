@@ -21,25 +21,31 @@ import {
 
 describe("HttpStatus", () => {
   it("should define standard HTTP status codes", () => {
-    assertEquals(HttpStatus.OK, 200);
-    assertEquals(HttpStatus.CREATED, 201);
-    assertEquals(HttpStatus.NO_CONTENT, 204);
-    assertEquals(HttpStatus.MOVED_PERMANENTLY, 301);
-    assertEquals(HttpStatus.FOUND, 302);
-    assertEquals(HttpStatus.NOT_MODIFIED, 304);
-    assertEquals(HttpStatus.BAD_REQUEST, 400);
-    assertEquals(HttpStatus.UNAUTHORIZED, 401);
-    assertEquals(HttpStatus.FORBIDDEN, 403);
-    assertEquals(HttpStatus.NOT_FOUND, 404);
-    assertEquals(HttpStatus.METHOD_NOT_ALLOWED, 405);
-    assertEquals(HttpStatus.CONFLICT, 409);
-    assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, 422);
-    assertEquals(HttpStatus.TOO_MANY_REQUESTS, 429);
-    assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, 500);
-    assertEquals(HttpStatus.NOT_IMPLEMENTED, 501);
-    assertEquals(HttpStatus.BAD_GATEWAY, 502);
-    assertEquals(HttpStatus.SERVICE_UNAVAILABLE, 503);
-    assertEquals(HttpStatus.GATEWAY_TIMEOUT, 504);
+    const cases: Array<[number, number]> = [
+      [HttpStatus.OK, 200],
+      [HttpStatus.CREATED, 201],
+      [HttpStatus.NO_CONTENT, 204],
+      [HttpStatus.MOVED_PERMANENTLY, 301],
+      [HttpStatus.FOUND, 302],
+      [HttpStatus.NOT_MODIFIED, 304],
+      [HttpStatus.BAD_REQUEST, 400],
+      [HttpStatus.UNAUTHORIZED, 401],
+      [HttpStatus.FORBIDDEN, 403],
+      [HttpStatus.NOT_FOUND, 404],
+      [HttpStatus.METHOD_NOT_ALLOWED, 405],
+      [HttpStatus.CONFLICT, 409],
+      [HttpStatus.UNPROCESSABLE_ENTITY, 422],
+      [HttpStatus.TOO_MANY_REQUESTS, 429],
+      [HttpStatus.INTERNAL_SERVER_ERROR, 500],
+      [HttpStatus.NOT_IMPLEMENTED, 501],
+      [HttpStatus.BAD_GATEWAY, 502],
+      [HttpStatus.SERVICE_UNAVAILABLE, 503],
+      [HttpStatus.GATEWAY_TIMEOUT, 504],
+    ];
+
+    for (const [actual, expected] of cases) {
+      assertEquals(actual, expected);
+    }
   });
 });
 
@@ -49,15 +55,13 @@ describe("errorResponse", () => {
     assertEquals(res.status, 404);
     assertEquals(res.statusText, "Not Found");
     assertEquals(res.headers.get("Content-Type"), "text/plain; charset=utf-8");
-    const body = await res.text();
-    assertEquals(body, "Not Found");
+    assertEquals(await res.text(), "Not Found");
   });
 
   it("should use custom message when provided", async () => {
     const res = errorResponse(HttpStatus.BAD_REQUEST, "Invalid input");
     assertEquals(res.status, 400);
-    const body = await res.text();
-    assertEquals(body, "Invalid input");
+    assertEquals(await res.text(), "Invalid input");
   });
 
   it("should add correlation id header when provided", () => {
@@ -79,8 +83,7 @@ describe("jsonResponse", () => {
     const res = jsonResponse({ name: "test" });
     assertEquals(res.status, 200);
     assertEquals(res.headers.get("Content-Type"), "application/json; charset=utf-8");
-    const data = await res.json();
-    assertEquals(data, { name: "test" });
+    assertEquals(await res.json(), { name: "test" });
   });
 
   it("should use custom status code", () => {
@@ -90,17 +93,16 @@ describe("jsonResponse", () => {
 
   it("should handle arrays", async () => {
     const res = jsonResponse([1, 2, 3]);
-    const data = await res.json();
-    assertEquals(data, [1, 2, 3]);
+    assertEquals(await res.json(), [1, 2, 3]);
   });
 
   it("should return 500 for non-serializable data", async () => {
     const circular: Record<string, unknown> = {};
     circular["self"] = circular;
+
     const res = jsonResponse(circular);
     assertEquals(res.status, 500);
-    const body = await res.text();
-    assertEquals(body, "Failed to serialize response data");
+    assertEquals(await res.text(), "Failed to serialize response data");
   });
 
   it("should add correlation id header", () => {
@@ -150,15 +152,13 @@ describe("convenience response helpers", () => {
   it("notFound should return 404", async () => {
     const res = notFound();
     assertEquals(res.status, 404);
-    const body = await res.text();
-    assertEquals(body, "Not Found");
+    assertEquals(await res.text(), "Not Found");
   });
 
   it("notFound should accept custom message", async () => {
     const res = notFound("Page missing");
     assertEquals(res.status, 404);
-    const body = await res.text();
-    assertEquals(body, "Page missing");
+    assertEquals(await res.text(), "Page missing");
   });
 
   it("badRequest should return 400", () => {
@@ -191,8 +191,7 @@ describe("methodNotAllowed", () => {
     const res = methodNotAllowed(["GET", "POST"]);
     assertEquals(res.status, 405);
     assertEquals(res.headers.get("Allow"), "GET, POST");
-    const body = await res.text();
-    assertEquals(body, "Method not allowed. Allowed methods: GET, POST");
+    assertEquals(await res.text(), "Method not allowed. Allowed methods: GET, POST");
   });
 });
 
@@ -205,8 +204,7 @@ describe("ok", () => {
   it("should return JSON when data is provided", async () => {
     const res = ok({ result: true });
     assertEquals(res.status, 200);
-    const data = await res.json();
-    assertEquals(data, { result: true });
+    assertEquals(await res.json(), { result: true });
   });
 });
 
@@ -219,8 +217,7 @@ describe("created", () => {
   it("should return 201 with JSON body", async () => {
     const res = created({ id: "123" });
     assertEquals(res.status, 201);
-    const data = await res.json();
-    assertEquals(data, { id: "123" });
+    assertEquals(await res.json(), { id: "123" });
   });
 
   it("should set Location header when provided", () => {
@@ -242,8 +239,7 @@ describe("jsonErrorResponse", () => {
     const res = jsonErrorResponse(HttpStatus.BAD_REQUEST, "Invalid field");
     assertEquals(res.status, 400);
     assertEquals(res.headers.get("Content-Type"), "application/json; charset=utf-8");
-    const data = await res.json();
-    assertEquals(data, { ok: false, error: "Invalid field" });
+    assertEquals(await res.json(), { ok: false, error: "Invalid field" });
   });
 
   it("should add correlation id header", () => {

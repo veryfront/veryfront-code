@@ -43,9 +43,11 @@ export class LayoutCompiler {
       for (const item of nestedLayouts) {
         if (!item) continue;
 
-        if (item.componentPath) {
+        const { componentPath } = item;
+
+        if (componentPath) {
           try {
-            const src = await this.adapter.fs.readFile(item.componentPath);
+            const src = await this.adapter.fs.readFile(componentPath);
             depParts.push(await computeHash(src));
           } catch (e) {
             logger.debug(

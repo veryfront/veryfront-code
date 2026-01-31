@@ -22,10 +22,9 @@ export default tool({
   }),
   execute: async ({ query, maxResults }, context) => {
     const userId = context?.userId ?? "current-user";
+    const gmail = createGmailClient(userId);
 
     try {
-      const gmail = createGmailClient(userId);
-
       const list = await gmail.listMessages({ query, maxResults });
 
       if (!list.messages?.length) {
@@ -46,7 +45,7 @@ export default tool({
       }
 
       const emails = await Promise.all(
-        list.messages.map(async ({ id }: { id: string }) => {
+        list.messages.map(async ({ id }) => {
           const message = await gmail.getMessage(id, "metadata");
           const headers = parseEmailHeaders(message.payload?.headers ?? []);
 

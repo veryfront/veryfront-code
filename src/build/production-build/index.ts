@@ -1,5 +1,4 @@
 export { type AssetStats, copyStaticAssets, loadClientStyles } from "./asset-generation.ts";
-
 export {
   generateAppModule,
   generateClientModule,
@@ -7,14 +6,12 @@ export {
   generatePrefetchScript,
   generateRouterScript,
 } from "./client-runtime.ts";
-
 export {
   type BuildManifest,
   generateManifest,
   generateRedirects,
   type ManifestOptions,
 } from "./manifest.ts";
-
 export {
   buildAppRoutes,
   buildPagesRoutes,
@@ -22,5 +19,4 @@ export {
   type SSGOptions,
   type SSGStats,
 } from "./static-generation.ts";
-
 export * from "./build/index.ts";

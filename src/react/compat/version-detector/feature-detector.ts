@@ -10,13 +10,14 @@ export function detectFeatures(
   isReact19Flag: boolean,
 ): ReactFeatures {
   const isReact18Plus = major >= 18;
+  const serverComponents = isReact18Plus && minor >= 3;
 
   return {
     suspense: isReact18Plus,
     streaming: isReact18Plus,
     automaticBatching: isReact18Plus,
     transitions: isReact18Plus,
-    serverComponents: isReact18Plus && minor >= 3,
+    serverComponents,
 
     useFormStatus: isReact19Flag,
     useOptimistic: isReact19Flag,
@@ -66,14 +67,14 @@ export async function detectReactVersionFromProject(
       packageJson.devDependencies?.react ??
       packageJson.peerDependencies?.react;
 
-    if (!reactDep) {
-      logger.debug("No React in package.json, using bundled version", {
+    if (reactDep) {
+      version = reactDep.replace(/^[\^~>=<]+/, "");
+      logger.debug("Detected React version from package.json", {
         projectDir,
         version,
       });
     } else {
-      version = reactDep.replace(/^[\^~>=<]+/, "");
-      logger.debug("Detected React version from package.json", {
+      logger.debug("No React in package.json, using bundled version", {
         projectDir,
         version,
       });

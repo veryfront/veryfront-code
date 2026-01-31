@@ -49,7 +49,10 @@ export const vfListRoutes: MCPTool<ListRoutesInput, RouteInfo[]> = {
         const fs = getFs();
         const routes: RouteInfo[] = [];
 
-        if (await directoryExists(appDir)) await scanDirectory(appDir, "", routes, fs);
+        if (await directoryExists(appDir)) {
+          await scanDirectory(appDir, "", routes, fs);
+        }
+
         if (input.type === "all") return routes;
 
         const allowedTypes = ROUTE_FILTER_MAP[input.type] ?? [];
@@ -83,9 +86,13 @@ const FEATURE_PATTERNS: Array<[string, string]> = [
 
 async function detectDirectories(projectDir: string): Promise<ProjectContext["directories"]> {
   const directories: ProjectContext["directories"] = {};
+
   for (const dir of STANDARD_DIRS) {
-    if (await directoryExists(join(projectDir, dir))) directories[dir] = dir;
+    if (await directoryExists(join(projectDir, dir))) {
+      directories[dir] = dir;
+    }
   }
+
   return directories;
 }
 
@@ -94,6 +101,7 @@ async function detectIntegrations(projectDir: string, fs: FileSystem): Promise<s
   if (!await directoryExists(authDir)) return [];
 
   const integrations: string[] = [];
+
   try {
     for await (const entry of fs.readDir(authDir)) {
       if (entry.isDirectory && !BUILTIN_AUTH_ROUTES.includes(entry.name)) {
@@ -112,7 +120,9 @@ async function detectFeatures(projectDir: string, hasAI: boolean): Promise<strin
   if (hasAI) features.push("ai");
 
   for (const [path, feature] of FEATURE_PATTERNS) {
-    if (await fileExists(join(projectDir, path))) features.push(feature);
+    if (await fileExists(join(projectDir, path))) {
+      features.push(feature);
+    }
   }
 
   return features;
@@ -121,11 +131,12 @@ async function detectFeatures(projectDir: string, hasAI: boolean): Promise<strin
 async function getProjectName(projectDir: string, fs: FileSystem): Promise<string> {
   try {
     const content = await fs.readTextFile(join(projectDir, "package.json"));
-    const pkg = JSON.parse(content);
+    const pkg = JSON.parse(content) as { name?: string };
     if (pkg.name) return pkg.name;
   } catch {
     // Fall back to directory name
   }
+
   return projectDir.split("/").pop() || "project";
 }
 
@@ -146,7 +157,9 @@ export const vfGetProjectContext: MCPTool<GetProjectContextInput, ProjectContext
         const router = hasApp ? "app" : hasPages ? "pages" : "app";
 
         const routes: RouteInfo[] = [];
-        if (hasApp) await scanDirectory(join(projectDir, "app"), "", routes, fs);
+        if (hasApp) {
+          await scanDirectory(join(projectDir, "app"), "", routes, fs);
+        }
 
         const directories = await detectDirectories(projectDir);
         const hasAI = await directoryExists(join(projectDir, "ai")) ||
@@ -192,7 +205,11 @@ interface ComponentTreeResult {
 function buildRoutePaths(route: string): string[] {
   const segments = route.split("/").filter(Boolean);
   const paths = [""];
-  for (const segment of segments) paths.push(paths[paths.length - 1] + "/" + segment);
+
+  for (const segment of segments) {
+    paths.push(paths[paths.length - 1] + "/" + segment);
+  }
+
   return paths;
 }
 
@@ -241,9 +258,9 @@ export const vfGetComponentTree: MCPTool<GetComponentTreeInput, ComponentTreeRes
         if (await directoryExists(providersDir)) {
           try {
             for await (const entry of fs.readDir(providersDir)) {
-              if (entry.isFile && (entry.name.endsWith(".tsx") || entry.name.endsWith(".mdx"))) {
-                providers.push(`providers/${entry.name}`);
-              }
+              if (!entry.isFile) continue;
+              if (!entry.name.endsWith(".tsx") && !entry.name.endsWith(".mdx")) continue;
+              providers.push(`providers/${entry.name}`);
             }
           } catch {
             // No providers
@@ -291,7 +308,7 @@ async function detectVeryfrontProject(projectPath: string): Promise<LocalProject
   let name = projectPath.split("/").pop() || "unknown";
   try {
     const pkgContent = await fs.readTextFile(join(projectPath, "package.json"));
-    const pkg = JSON.parse(pkgContent);
+    const pkg = JSON.parse(pkgContent) as { name?: string };
     if (pkg.name) name = pkg.name;
   } catch {
     // Use directory name
@@ -316,12 +333,11 @@ async function detectVeryfrontProject(projectPath: string): Promise<LocalProject
   if (await directoryExists(authDir)) {
     try {
       for await (const entry of fs.readDir(authDir)) {
-        if (
-          entry.isDirectory &&
-          !["login", "logout", "me", "signup", "register", "callback"].includes(entry.name)
-        ) {
-          integrations.push(entry.name);
+        if (!entry.isDirectory) continue;
+        if (["login", "logout", "me", "signup", "register", "callback"].includes(entry.name)) {
+          continue;
         }
+        integrations.push(entry.name);
       }
     } catch {
       // Ignore

@@ -17,51 +17,37 @@ function assertExportedFunction(value: unknown): void {
 }
 
 describe("runtime/bun/index.ts exports", () => {
-  describe("BunAdapter", () => {
-    it("should export BunAdapter class", () => {
-      assertExportedFunction(BunAdapter);
-    });
-
-    it("should export bunAdapter singleton", () => {
-      assertExists(bunAdapter);
-      assertEquals(bunAdapter.id, "bun");
-      assertEquals(bunAdapter.name, "bun");
-    });
+  it("should export BunAdapter class", () => {
+    assertExportedFunction(BunAdapter);
   });
 
-  describe("BunFileSystemAdapter", () => {
-    it("should export BunFileSystemAdapter class", () => {
-      assertExportedFunction(BunFileSystemAdapter);
-    });
+  it("should export bunAdapter singleton", () => {
+    assertExists(bunAdapter);
+    assertEquals(bunAdapter.id, "bun");
+    assertEquals(bunAdapter.name, "bun");
   });
 
-  describe("BunEnvironmentAdapter", () => {
-    it("should export BunEnvironmentAdapter class", () => {
-      assertExportedFunction(BunEnvironmentAdapter);
-    });
+  it("should export BunFileSystemAdapter class", () => {
+    assertExportedFunction(BunFileSystemAdapter);
   });
 
-  describe("BunServerAdapter", () => {
-    it("should export BunServerAdapter class", () => {
-      assertExportedFunction(BunServerAdapter);
-    });
+  it("should export BunEnvironmentAdapter class", () => {
+    assertExportedFunction(BunEnvironmentAdapter);
   });
 
-  describe("BunWebSocket", () => {
-    it("should export BunWebSocket class", () => {
-      assertExportedFunction(BunWebSocket);
-    });
+  it("should export BunServerAdapter class", () => {
+    assertExportedFunction(BunServerAdapter);
   });
 
-  describe("BunServer", () => {
-    it("should export BunServer class", () => {
-      assertExportedFunction(BunServer);
-    });
+  it("should export BunWebSocket class", () => {
+    assertExportedFunction(BunWebSocket);
   });
 
-  describe("createBunServer", () => {
-    it("should export createBunServer function", () => {
-      assertExportedFunction(createBunServer);
-    });
+  it("should export BunServer class", () => {
+    assertExportedFunction(BunServer);
+  });
+
+  it("should export createBunServer function", () => {
+    assertExportedFunction(createBunServer);
   });
 });

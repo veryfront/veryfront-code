@@ -16,12 +16,15 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 export function optimizeImages(
   options: ImageOptimizationOptions = {},
 ): Promise<Map<string, OptimizedImageMetadata>> {
+  const inputDir = options.inputDir ?? "default";
+  const formats = options.formats?.join(",") ?? "default";
+
   return withSpan(
     "build.asset.optimizeImages",
     () => new ImageOptimizer(options).optimize(),
     {
-      "image.inputDir": options.inputDir ?? "default",
-      "image.formats": options.formats?.join(",") ?? "default",
+      "image.inputDir": inputDir,
+      "image.formats": formats,
     },
   );
 }

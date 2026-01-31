@@ -10,7 +10,7 @@
  * 3. Selective invalidation clears specific paths and their stat/dir caches
  */
 
-import { assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
+import { assertEquals } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
 import {
   buildDirCacheKeyPrefix,
@@ -21,6 +21,27 @@ import {
 import type { ResolvedContentContext } from "@veryfront/platform/adapters/fs/veryfront/types.ts";
 import { FileCache } from "@veryfront/platform/adapters/fs/cache/file-cache.ts";
 
+function assertMatchesPrefix(key: string, prefixes: string[], label: string): void {
+  const matches = prefixes.some((prefix) => key.startsWith(prefix));
+  assertEquals(matches, true, `Key "${key}" should match one of ${label}`);
+}
+
+function deleteAllByPrefixes(cache: FileCache, prefixes: string[]): number {
+  return prefixes.reduce((total, prefix) => total + cache.deleteByPrefix(prefix), 0);
+}
+
+function deleteAllByPrefixAndSuffix(cache: FileCache, prefixes: string[], suffix: string): number {
+  return prefixes.reduce(
+    (total, prefix) => total + cache.deleteByPrefixAndSuffix(prefix, suffix),
+    0,
+  );
+}
+
+function getParentDir(path: string): string {
+  const slashIndex = path.lastIndexOf("/");
+  return slashIndex > 0 ? path.substring(0, slashIndex) : "";
+}
+
 describe("Cache Invalidation - Key Prefix Matching", () => {
   // Define the prefixes used by performInvalidation() - must match adapter.ts
   const FULL_INVALIDATION_PREFIXES = {
@@ -28,13 +49,6 @@ describe("Cache Invalidation - Key Prefix Matching", () => {
     stat: ["stat:branch:", "stat:release:", "stat:env:"],
     dir: ["dir:branch:", "dir:release:", "dir:env:"],
     files: ["files:branch:", "files:release:", "files:env:"],
-  };
-
-  // Define the prefixes used by performSelectiveInvalidation() - must match adapter.ts
-  const SELECTIVE_INVALIDATION_PREFIXES = {
-    file: ["file:branch:", "file:release:", "file:env:"],
-    stat: ["stat:branch:", "stat:release:", "stat:env:"],
-    dir: ["dir:branch:", "dir:release:", "dir:env:"],
   };
 
   describe("Branch mode cache keys", () => {
@@ -47,51 +61,28 @@ describe("Cache Invalidation - Key Prefix Matching", () => {
     it("file cache key matches full invalidation prefix", () => {
       const key = buildFileCacheKeyPrefix(branchContext);
       assertEquals(key, "file:branch:test-project:main");
-      // Verify the key starts with one of the full invalidation prefixes
-      const matchesPrefix = FULL_INVALIDATION_PREFIXES.file.some((prefix) =>
-        key.startsWith(prefix)
-      );
-      assertEquals(
-        matchesPrefix,
-        true,
-        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.file}`,
-      );
+      assertMatchesPrefix(key, FULL_INVALIDATION_PREFIXES.file, `${FULL_INVALIDATION_PREFIXES.file}`);
     });
 
     it("stat cache key matches full invalidation prefix", () => {
       const key = buildStatCacheKeyPrefix(branchContext);
       assertEquals(key, "stat:branch:test-project:main");
-      const matchesPrefix = FULL_INVALIDATION_PREFIXES.stat.some((prefix) =>
-        key.startsWith(prefix)
-      );
-      assertEquals(
-        matchesPrefix,
-        true,
-        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.stat}`,
-      );
+      assertMatchesPrefix(key, FULL_INVALIDATION_PREFIXES.stat, `${FULL_INVALIDATION_PREFIXES.stat}`);
     });
 
     it("dir cache key matches full invalidation prefix", () => {
       const key = buildDirCacheKeyPrefix(branchContext);
       assertEquals(key, "dir:branch:test-project:main");
-      const matchesPrefix = FULL_INVALIDATION_PREFIXES.dir.some((prefix) => key.startsWith(prefix));
-      assertEquals(
-        matchesPrefix,
-        true,
-        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.dir}`,
-      );
+      assertMatchesPrefix(key, FULL_INVALIDATION_PREFIXES.dir, `${FULL_INVALIDATION_PREFIXES.dir}`);
     });
 
     it("files list cache key matches full invalidation prefix", () => {
       const key = buildFileListCacheKey(branchContext);
       assertEquals(key, "files:branch:test-project:main");
-      const matchesPrefix = FULL_INVALIDATION_PREFIXES.files.some((prefix) =>
-        key.startsWith(prefix)
-      );
-      assertEquals(
-        matchesPrefix,
-        true,
-        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.files}`,
+      assertMatchesPrefix(
+        key,
+        FULL_INVALIDATION_PREFIXES.files,
+        `${FULL_INVALIDATION_PREFIXES.files}`,
       );
     });
   });
@@ -106,50 +97,28 @@ describe("Cache Invalidation - Key Prefix Matching", () => {
     it("file cache key matches full invalidation prefix", () => {
       const key = buildFileCacheKeyPrefix(releaseContext);
       assertEquals(key, "file:release:test-project:release-123");
-      const matchesPrefix = FULL_INVALIDATION_PREFIXES.file.some((prefix) =>
-        key.startsWith(prefix)
-      );
-      assertEquals(
-        matchesPrefix,
-        true,
-        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.file}`,
-      );
+      assertMatchesPrefix(key, FULL_INVALIDATION_PREFIXES.file, `${FULL_INVALIDATION_PREFIXES.file}`);
     });
 
     it("stat cache key matches full invalidation prefix", () => {
       const key = buildStatCacheKeyPrefix(releaseContext);
       assertEquals(key, "stat:release:test-project:release-123");
-      const matchesPrefix = FULL_INVALIDATION_PREFIXES.stat.some((prefix) =>
-        key.startsWith(prefix)
-      );
-      assertEquals(
-        matchesPrefix,
-        true,
-        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.stat}`,
-      );
+      assertMatchesPrefix(key, FULL_INVALIDATION_PREFIXES.stat, `${FULL_INVALIDATION_PREFIXES.stat}`);
     });
 
     it("dir cache key matches full invalidation prefix", () => {
       const key = buildDirCacheKeyPrefix(releaseContext);
       assertEquals(key, "dir:release:test-project:release-123");
-      const matchesPrefix = FULL_INVALIDATION_PREFIXES.dir.some((prefix) => key.startsWith(prefix));
-      assertEquals(
-        matchesPrefix,
-        true,
-        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.dir}`,
-      );
+      assertMatchesPrefix(key, FULL_INVALIDATION_PREFIXES.dir, `${FULL_INVALIDATION_PREFIXES.dir}`);
     });
 
     it("files list cache key matches full invalidation prefix", () => {
       const key = buildFileListCacheKey(releaseContext);
       assertEquals(key, "files:release:test-project:release-123");
-      const matchesPrefix = FULL_INVALIDATION_PREFIXES.files.some((prefix) =>
-        key.startsWith(prefix)
-      );
-      assertEquals(
-        matchesPrefix,
-        true,
-        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.files}`,
+      assertMatchesPrefix(
+        key,
+        FULL_INVALIDATION_PREFIXES.files,
+        `${FULL_INVALIDATION_PREFIXES.files}`,
       );
     });
   });
@@ -165,50 +134,28 @@ describe("Cache Invalidation - Key Prefix Matching", () => {
     it("file cache key matches full invalidation prefix", () => {
       const key = buildFileCacheKeyPrefix(envContext);
       assertEquals(key, "file:env:test-project:production:release-456");
-      const matchesPrefix = FULL_INVALIDATION_PREFIXES.file.some((prefix) =>
-        key.startsWith(prefix)
-      );
-      assertEquals(
-        matchesPrefix,
-        true,
-        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.file}`,
-      );
+      assertMatchesPrefix(key, FULL_INVALIDATION_PREFIXES.file, `${FULL_INVALIDATION_PREFIXES.file}`);
     });
 
     it("stat cache key matches full invalidation prefix", () => {
       const key = buildStatCacheKeyPrefix(envContext);
       assertEquals(key, "stat:env:test-project:production:release-456");
-      const matchesPrefix = FULL_INVALIDATION_PREFIXES.stat.some((prefix) =>
-        key.startsWith(prefix)
-      );
-      assertEquals(
-        matchesPrefix,
-        true,
-        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.stat}`,
-      );
+      assertMatchesPrefix(key, FULL_INVALIDATION_PREFIXES.stat, `${FULL_INVALIDATION_PREFIXES.stat}`);
     });
 
     it("dir cache key matches full invalidation prefix", () => {
       const key = buildDirCacheKeyPrefix(envContext);
       assertEquals(key, "dir:env:test-project:production:release-456");
-      const matchesPrefix = FULL_INVALIDATION_PREFIXES.dir.some((prefix) => key.startsWith(prefix));
-      assertEquals(
-        matchesPrefix,
-        true,
-        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.dir}`,
-      );
+      assertMatchesPrefix(key, FULL_INVALIDATION_PREFIXES.dir, `${FULL_INVALIDATION_PREFIXES.dir}`);
     });
 
     it("files list cache key matches full invalidation prefix", () => {
       const key = buildFileListCacheKey(envContext);
       assertEquals(key, "files:env:test-project:production:release-456");
-      const matchesPrefix = FULL_INVALIDATION_PREFIXES.files.some((prefix) =>
-        key.startsWith(prefix)
-      );
-      assertEquals(
-        matchesPrefix,
-        true,
-        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.files}`,
+      assertMatchesPrefix(
+        key,
+        FULL_INVALIDATION_PREFIXES.files,
+        `${FULL_INVALIDATION_PREFIXES.files}`,
       );
     });
   });
@@ -218,18 +165,15 @@ describe("Cache Invalidation - FileCache Operations", () => {
   it("deleteByPrefix clears all matching keys", () => {
     const cache = new FileCache({ maxSize: 100, ttl: 60000 });
 
-    // Populate cache with various keys
     cache.set("file:branch:project:main:components/Button.tsx", "content1");
     cache.set("file:branch:project:main:pages/index.mdx", "content2");
     cache.set("file:release:project:rel-1:components/Button.tsx", "content3");
     cache.set("stat:branch:project:main:components/Button.tsx", { size: 100 });
     cache.set("dir:branch:project:main:components", ["Button.tsx", "Card.tsx"]);
 
-    // Delete all file:branch: keys
     const deletedCount = cache.deleteByPrefix("file:branch:");
     assertEquals(deletedCount, 2);
 
-    // Verify only file:branch: keys were deleted
     assertEquals(cache.get("file:branch:project:main:components/Button.tsx"), undefined);
     assertEquals(cache.get("file:branch:project:main:pages/index.mdx"), undefined);
     assertEquals(cache.get("file:release:project:rel-1:components/Button.tsx"), "content3");
@@ -240,17 +184,14 @@ describe("Cache Invalidation - FileCache Operations", () => {
     const cache = new FileCache({ maxSize: 100, ttl: 60000 });
     const targetPath = "components/Button.tsx";
 
-    // Populate cache with same path across different source types
     cache.set(`file:branch:project:main:${targetPath}`, "branch content");
     cache.set(`file:release:project:rel-1:${targetPath}`, "release content");
     cache.set(`file:env:project:prod:rel-1:${targetPath}`, "env content");
     cache.set("file:branch:project:main:pages/index.mdx", "other content");
 
-    // Delete the specific path across all branch keys
     const deletedCount = cache.deleteByPrefixAndSuffix("file:branch:", targetPath);
     assertEquals(deletedCount, 1);
 
-    // Verify only the matching key was deleted
     assertEquals(cache.get(`file:branch:project:main:${targetPath}`), undefined);
     assertEquals(cache.get(`file:release:project:rel-1:${targetPath}`), "release content");
     assertEquals(cache.get("file:branch:project:main:pages/index.mdx"), "other content");
@@ -259,7 +200,6 @@ describe("Cache Invalidation - FileCache Operations", () => {
   it("full invalidation clears all cache types", () => {
     const cache = new FileCache({ maxSize: 100, ttl: 60000 });
 
-    // Populate cache with all types of keys
     cache.set("file:branch:project:main:test.tsx", "content");
     cache.set("file:release:project:rel:test.tsx", "content");
     cache.set("file:env:project:prod:rel:test.tsx", "content");
@@ -273,23 +213,24 @@ describe("Cache Invalidation - FileCache Operations", () => {
     cache.set("files:release:project:rel", ["test.tsx"]);
     cache.set("files:env:project:prod:rel", ["test.tsx"]);
 
-    const stats = cache.stats();
-    assertEquals(stats.size, 12);
+    assertEquals(cache.stats().size, 12);
 
-    // Simulate full invalidation (same prefixes as performInvalidation)
-    let totalDeleted = 0;
-    totalDeleted += cache.deleteByPrefix("file:branch:");
-    totalDeleted += cache.deleteByPrefix("file:release:");
-    totalDeleted += cache.deleteByPrefix("file:env:");
-    totalDeleted += cache.deleteByPrefix("stat:branch:");
-    totalDeleted += cache.deleteByPrefix("stat:release:");
-    totalDeleted += cache.deleteByPrefix("stat:env:");
-    totalDeleted += cache.deleteByPrefix("dir:branch:");
-    totalDeleted += cache.deleteByPrefix("dir:release:");
-    totalDeleted += cache.deleteByPrefix("dir:env:");
-    totalDeleted += cache.deleteByPrefix("files:branch:");
-    totalDeleted += cache.deleteByPrefix("files:release:");
-    totalDeleted += cache.deleteByPrefix("files:env:");
+    const prefixes = [
+      "file:branch:",
+      "file:release:",
+      "file:env:",
+      "stat:branch:",
+      "stat:release:",
+      "stat:env:",
+      "dir:branch:",
+      "dir:release:",
+      "dir:env:",
+      "files:branch:",
+      "files:release:",
+      "files:env:",
+    ];
+
+    const totalDeleted = deleteAllByPrefixes(cache, prefixes);
 
     assertEquals(totalDeleted, 12);
     assertEquals(cache.stats().size, 0);
@@ -300,82 +241,62 @@ describe("Cache Invalidation - FileCache Operations", () => {
     const changedPath = "components/Button.tsx";
     const parentDir = "components";
 
-    // Populate cache
     cache.set(`file:branch:project:main:${changedPath}`, "content");
     cache.set(`stat:branch:project:main:${changedPath}`, { size: 100 });
     cache.set(`dir:branch:project:main:${parentDir}`, ["Button.tsx", "Card.tsx"]);
     cache.set("file:branch:project:main:pages/index.mdx", "other file");
 
-    // Simulate selective invalidation
-    let deleted = 0;
-    // File content
-    deleted += cache.deleteByPrefixAndSuffix("file:branch:", changedPath);
-    deleted += cache.deleteByPrefixAndSuffix("file:release:", changedPath);
-    deleted += cache.deleteByPrefixAndSuffix("file:env:", changedPath);
-    // Stat cache
-    deleted += cache.deleteByPrefixAndSuffix("stat:branch:", changedPath);
-    deleted += cache.deleteByPrefixAndSuffix("stat:release:", changedPath);
-    deleted += cache.deleteByPrefixAndSuffix("stat:env:", changedPath);
-    // Parent directory
-    deleted += cache.deleteByPrefixAndSuffix("dir:branch:", parentDir);
-    deleted += cache.deleteByPrefixAndSuffix("dir:release:", parentDir);
-    deleted += cache.deleteByPrefixAndSuffix("dir:env:", parentDir);
+    const filePrefixes = ["file:branch:", "file:release:", "file:env:"];
+    const statPrefixes = ["stat:branch:", "stat:release:", "stat:env:"];
+    const dirPrefixes = ["dir:branch:", "dir:release:", "dir:env:"];
 
-    assertEquals(deleted, 3); // file, stat, dir for branch mode
+    let deleted = 0;
+    deleted += deleteAllByPrefixAndSuffix(cache, filePrefixes, changedPath);
+    deleted += deleteAllByPrefixAndSuffix(cache, statPrefixes, changedPath);
+    deleted += deleteAllByPrefixAndSuffix(cache, dirPrefixes, parentDir);
+
+    assertEquals(deleted, 3);
     assertEquals(cache.get(`file:branch:project:main:${changedPath}`), undefined);
     assertEquals(cache.get(`stat:branch:project:main:${changedPath}`), undefined);
     assertEquals(cache.get(`dir:branch:project:main:${parentDir}`), undefined);
-    // Other files should remain
     assertEquals(cache.get("file:branch:project:main:pages/index.mdx"), "other file");
   });
 
   it("selective invalidation clears root directory cache for root-level file changes", () => {
     const cache = new FileCache({ maxSize: 100, ttl: 60000 });
-    const rootFile = "logo.png"; // No "/" in path - root level file
+    const rootFile = "logo.png";
 
-    // Root directory cache key uses empty string suffix (normalized path)
-    // Cache key: dir:branch:project:main: (ends with empty string, not "/")
     cache.set(`file:branch:project:main:${rootFile}`, "image content");
     cache.set(`stat:branch:project:main:${rootFile}`, { size: 5000 });
-    cache.set("dir:branch:project:main:", ["logo.png", "README.md"]); // Root dir cache
+    cache.set("dir:branch:project:main:", ["logo.png", "README.md"]);
     cache.set("file:branch:project:main:components/Button.tsx", "other file");
 
-    // Calculate parent dir as the code does:
-    // For "logo.png", lastIndexOf("/") = -1, so parentDir should be "" (empty string)
-    const slashIndex = rootFile.lastIndexOf("/");
-    const parentDir = slashIndex > 0 ? rootFile.substring(0, slashIndex) : "";
-    assertEquals(parentDir, ""); // Verify empty string for root
+    const parentDir = getParentDir(rootFile);
+    assertEquals(parentDir, "");
 
-    // Simulate selective invalidation
     let deleted = 0;
-    // File content
     deleted += cache.deleteByPrefixAndSuffix("file:branch:", rootFile);
-    // Stat cache
     deleted += cache.deleteByPrefixAndSuffix("stat:branch:", rootFile);
-    // Parent directory (empty string for root)
     deleted += cache.deleteByPrefixAndSuffix("dir:branch:", parentDir);
 
-    assertEquals(deleted, 3); // file, stat, root dir
+    assertEquals(deleted, 3);
     assertEquals(cache.get(`file:branch:project:main:${rootFile}`), undefined);
     assertEquals(cache.get(`stat:branch:project:main:${rootFile}`), undefined);
-    assertEquals(cache.get("dir:branch:project:main:"), undefined); // Root dir cleared
-    // Other files should remain
+    assertEquals(cache.get("dir:branch:project:main:"), undefined);
     assertEquals(cache.get("file:branch:project:main:components/Button.tsx"), "other file");
   });
 
   it("root directory parent calculation uses empty string not slash", () => {
-    // Test various path scenarios to verify parent dir calculation
     const testCases = [
-      { path: "logo.png", expectedParent: "" }, // Root level
-      { path: "README.md", expectedParent: "" }, // Root level
+      { path: "logo.png", expectedParent: "" },
+      { path: "README.md", expectedParent: "" },
       { path: "components/Button.tsx", expectedParent: "components" },
       { path: "pages/api/health.ts", expectedParent: "pages/api" },
       { path: "a/b/c/d.ts", expectedParent: "a/b/c" },
     ];
 
     for (const { path, expectedParent } of testCases) {
-      const slashIndex = path.lastIndexOf("/");
-      const parentDir = slashIndex > 0 ? path.substring(0, slashIndex) : "";
+      const parentDir = getParentDir(path);
       assertEquals(
         parentDir,
         expectedParent,
@@ -388,12 +309,7 @@ describe("Cache Invalidation - FileCache Operations", () => {
 describe("Cache Invalidation - Invalid Prefix Detection", () => {
   // These tests ensure that the OLD (incorrect) prefixes don't match any keys
   // This validates the bug fix by proving the old prefixes were wrong
-  const OLD_INVALID_PREFIXES = [
-    "file:text:",
-    "file:content:",
-    "file:stat:",
-    "dir:entries:",
-  ];
+  const OLD_INVALID_PREFIXES = ["file:text:", "file:content:", "file:stat:", "dir:entries:"];
 
   it("old invalid prefixes do not match any generated cache keys", () => {
     const contexts: ResolvedContentContext[] = [
@@ -408,32 +324,21 @@ describe("Cache Invalidation - Invalid Prefix Detection", () => {
     ];
 
     for (const ctx of contexts) {
-      const fileKey = buildFileCacheKeyPrefix(ctx);
-      const statKey = buildStatCacheKeyPrefix(ctx);
-      const dirKey = buildDirCacheKeyPrefix(ctx);
-      const filesKey = buildFileListCacheKey(ctx);
+      const keys = [
+        { type: "File", key: buildFileCacheKeyPrefix(ctx) },
+        { type: "Stat", key: buildStatCacheKeyPrefix(ctx) },
+        { type: "Dir", key: buildDirCacheKeyPrefix(ctx) },
+        { type: "Files", key: buildFileListCacheKey(ctx) },
+      ];
 
       for (const invalidPrefix of OLD_INVALID_PREFIXES) {
-        assertEquals(
-          fileKey.startsWith(invalidPrefix),
-          false,
-          `File key "${fileKey}" should NOT match invalid prefix "${invalidPrefix}"`,
-        );
-        assertEquals(
-          statKey.startsWith(invalidPrefix),
-          false,
-          `Stat key "${statKey}" should NOT match invalid prefix "${invalidPrefix}"`,
-        );
-        assertEquals(
-          dirKey.startsWith(invalidPrefix),
-          false,
-          `Dir key "${dirKey}" should NOT match invalid prefix "${invalidPrefix}"`,
-        );
-        assertEquals(
-          filesKey.startsWith(invalidPrefix),
-          false,
-          `Files key "${filesKey}" should NOT match invalid prefix "${invalidPrefix}"`,
-        );
+        for (const { type, key } of keys) {
+          assertEquals(
+            key.startsWith(invalidPrefix),
+            false,
+            `${type} key "${key}" should NOT match invalid prefix "${invalidPrefix}"`,
+          );
+        }
       }
     }
   });
@@ -441,22 +346,15 @@ describe("Cache Invalidation - Invalid Prefix Detection", () => {
   it("deleteByPrefix with old invalid prefixes deletes nothing", () => {
     const cache = new FileCache({ maxSize: 100, ttl: 60000 });
 
-    // Populate with real keys
     cache.set("file:branch:project:main:test.tsx", "content");
     cache.set("stat:branch:project:main:test.tsx", { size: 1 });
     cache.set("dir:branch:project:main:components", ["test.tsx"]);
     cache.set("files:branch:project:main", ["test.tsx"]);
 
-    const initialCount = cache.stats().size;
-    assertEquals(initialCount, 4);
+    assertEquals(cache.stats().size, 4);
 
-    // Try deleting with old invalid prefixes
-    let totalDeleted = 0;
-    for (const invalidPrefix of OLD_INVALID_PREFIXES) {
-      totalDeleted += cache.deleteByPrefix(invalidPrefix);
-    }
+    const totalDeleted = deleteAllByPrefixes(cache, OLD_INVALID_PREFIXES);
 
-    // Should delete nothing
     assertEquals(totalDeleted, 0);
     assertEquals(cache.stats().size, 4);
   });

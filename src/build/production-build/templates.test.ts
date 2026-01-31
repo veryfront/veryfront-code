@@ -9,29 +9,23 @@ describe("build/production-build/templates", () => {
       assertEquals(CLIENT_STYLES.length > 0, true);
     });
 
-    it("should contain body reset styles", () => {
-      assertEquals(CLIENT_STYLES.includes("body {"), true);
-      assertEquals(CLIENT_STYLES.includes("margin: 0"), true);
-    });
+    it("should contain expected styles", () => {
+      const expectedSubstrings = [
+        "body {",
+        "margin: 0",
+        ".loading-container",
+        ".loading-spinner",
+        ".error-container",
+        ".prose",
+        ".prose h1",
+        ".prose code",
+        ".prose pre",
+        "@keyframes spin",
+      ];
 
-    it("should contain loading spinner styles", () => {
-      assertEquals(CLIENT_STYLES.includes(".loading-container"), true);
-      assertEquals(CLIENT_STYLES.includes(".loading-spinner"), true);
-    });
-
-    it("should contain error container styles", () => {
-      assertEquals(CLIENT_STYLES.includes(".error-container"), true);
-    });
-
-    it("should contain prose typography styles", () => {
-      assertEquals(CLIENT_STYLES.includes(".prose"), true);
-      assertEquals(CLIENT_STYLES.includes(".prose h1"), true);
-      assertEquals(CLIENT_STYLES.includes(".prose code"), true);
-      assertEquals(CLIENT_STYLES.includes(".prose pre"), true);
-    });
-
-    it("should contain the spin animation keyframe", () => {
-      assertEquals(CLIENT_STYLES.includes("@keyframes spin"), true);
+      for (const substring of expectedSubstrings) {
+        assertEquals(CLIENT_STYLES.includes(substring), true);
+      }
     });
   });
 

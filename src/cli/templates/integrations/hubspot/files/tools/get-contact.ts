@@ -18,15 +18,13 @@ export default tool({
   async execute({ contactId, properties }) {
     const contact = await getContact(contactId, properties);
 
-    let additionalProperties: Record<string, unknown> | undefined;
-
-    if (properties) {
-      additionalProperties = Object.fromEntries(
-        properties
-          .filter((prop) => contact.properties[prop] !== undefined)
-          .map((prop) => [prop, contact.properties[prop]]),
-      );
-    }
+    const additionalProperties = properties
+      ? Object.fromEntries(
+          properties
+            .filter((prop) => contact.properties[prop] !== undefined)
+            .map((prop) => [prop, contact.properties[prop]]),
+        )
+      : undefined;
 
     return {
       id: contact.id,

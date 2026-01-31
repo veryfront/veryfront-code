@@ -12,15 +12,15 @@ export default tool({
   async execute({ pageId }) {
     const page = await getPageContent(pageId);
 
-    const content = page.body?.storage?.value ?? page.body?.view?.value ?? "";
-    const plainTextContent = extractPlainText(content);
+    const htmlContent = page.body?.storage?.value ?? page.body?.view?.value ?? "";
+    const content = extractPlainText(htmlContent);
 
     return {
       id: page.id,
       type: page.type,
       title: page.title,
-      content: plainTextContent,
-      htmlContent: content,
+      content,
+      htmlContent,
       version: page.version.number,
       url: page._links.webui,
       spaceId: page.spaceId,

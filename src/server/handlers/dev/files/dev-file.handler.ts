@@ -50,7 +50,10 @@ export class DevFileHandler extends BaseHandler {
       const reason = this.getErrorMessage(error);
       this.logDebug("esbuild failed for dev fs", { path: absPath, reason }, ctx);
       return this.respond(
-        this.createErrorModule(`Build error: ${reason}`, HTTP_INTERNAL_SERVER_ERROR),
+        this.createErrorModule(
+          `Build error: ${reason}`,
+          HTTP_INTERNAL_SERVER_ERROR,
+        ),
       );
     }
   }

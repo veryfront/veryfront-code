@@ -12,7 +12,6 @@ import { join } from "@veryfront/compat/path";
 import { LayoutCompiler } from "../../../../src/rendering/layouts/layout-compiler.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import type { LayoutItem, MdxBundle } from "@veryfront/types";
-import type { EntityInfo } from "@veryfront/types";
 import { cleanupTestDir, createTestProjectDir } from "../../../_helpers/server.ts";
 
 describe("LayoutCompiler", () => {
@@ -20,32 +19,27 @@ describe("LayoutCompiler", () => {
     const projectDir = await createTestProjectDir();
 
     try {
-      // Create layout file
       const layoutPath = join(projectDir, "layouts/test.mdx");
       await mkdir(join(projectDir, "layouts"), { recursive: true });
       await writeTextFile(layoutPath, "# Test Layout\n\n<slot />");
 
-      const layouts: LayoutItem[] = [
-        {
-          kind: "mdx",
-          path: layoutPath,
-        },
-      ];
+      const layouts: LayoutItem[] = [{ kind: "mdx", path: layoutPath }];
 
       const adapter = await getAdapter();
       let compileCount = 0;
-      const mockCompileMDX = (_content: string, frontmatter?: Record<string, unknown>) => {
+
+      const mockCompileMDX = (
+        _content: string,
+        frontmatter?: Record<string, unknown>,
+      ): Promise<MdxBundle> => {
         compileCount++;
         return Promise.resolve({
           compiledCode: `export default () => "compiled-${compileCount}"`,
-          frontmatter: frontmatter || {},
-        } as MdxBundle);
+          frontmatter: frontmatter ?? {},
+        });
       };
 
-      const compiler = new LayoutCompiler({
-        adapter,
-        compileMDX: mockCompileMDX,
-      });
+      const compiler = new LayoutCompiler({ adapter, compileMDX: mockCompileMDX });
 
       await compiler.compileLayouts(layouts);
 
@@ -61,25 +55,22 @@ describe("LayoutCompiler", () => {
     const projectDir = await createTestProjectDir();
 
     try {
+      const layoutPath = join(projectDir, "layouts/test.tsx");
       const layouts: LayoutItem[] = [
         {
           kind: "tsx",
-          componentPath: join(projectDir, "layouts/test.tsx"),
-          path: join(projectDir, "layouts/test.tsx"),
+          componentPath: layoutPath,
+          path: layoutPath,
         },
       ];
 
       const adapter = await getAdapter();
-      const mockCompileMDX = () => {
+      const mockCompileMDX = (): never => {
         throw new Error("Should not compile TSX layouts");
       };
 
-      const compiler = new LayoutCompiler({
-        adapter,
-        compileMDX: mockCompileMDX,
-      });
+      const compiler = new LayoutCompiler({ adapter, compileMDX: mockCompileMDX });
 
-      // Should not throw
       await compiler.compileLayouts(layouts);
 
       assertEquals(layouts[0]?.bundle, undefined);
@@ -92,7 +83,6 @@ describe("LayoutCompiler", () => {
     const projectDir = await createTestProjectDir();
 
     try {
-      // Create layout file
       const layoutPath = join(projectDir, "layouts/test.mdx");
       await mkdir(join(projectDir, "layouts"), { recursive: true });
       await writeTextFile(layoutPath, "# Test Layout");
@@ -117,13 +107,10 @@ describe("LayoutCompiler", () => {
       const compiler = new LayoutCompiler({
         adapter,
         // deno-lint-ignore require-await
-        compileMDX: async () => layoutBundle,
+        compileMDX: async (): Promise<MdxBundle> => layoutBundle,
       });
 
-      const hash = await compiler.computeDependencyHash(
-        layoutBundle,
-        nestedLayouts,
-      );
+      const hash = await compiler.computeDependencyHash(layoutBundle, nestedLayouts);
 
       assertExists(hash);
       assertEquals(typeof hash, "string");
@@ -151,7 +138,7 @@ describe("LayoutCompiler", () => {
       const compiler = new LayoutCompiler({
         adapter,
         // deno-lint-ignore require-await
-        compileMDX: async () => layoutBundle1,
+        compileMDX: async (): Promise<MdxBundle> => layoutBundle1,
       });
 
       const hash1 = await compiler.computeDependencyHash(layoutBundle1, []);

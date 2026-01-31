@@ -7,7 +7,9 @@ describe("cli/mcp/error-collector", () => {
     it("should add and retrieve errors", () => {
       const ec = new ErrorCollector();
       ec.add({ type: "compile", message: "fail" });
+
       assertEquals(ec.count, 1);
+
       const first = ec.getAll()[0];
       assertExists(first);
       assertEquals(first.message, "fail");
@@ -20,7 +22,9 @@ describe("cli/mcp/error-collector", () => {
       ec.addBundleError("bundle fail", "mod.js");
       ec.addHMRError("hmr fail");
       ec.addModuleError("module fail");
+
       assertEquals(ec.count, 5);
+
       const counts = ec.countByType();
       assertEquals(counts.compile, 1);
       assertEquals(counts.runtime, 1);
@@ -34,6 +38,7 @@ describe("cli/mcp/error-collector", () => {
       ec.add({ type: "compile", message: "1" });
       ec.add({ type: "compile", message: "2" });
       ec.add({ type: "compile", message: "3" });
+
       assertEquals(ec.count, 2);
     });
 
@@ -41,8 +46,10 @@ describe("cli/mcp/error-collector", () => {
       const ec = new ErrorCollector();
       ec.addCompileError("a");
       ec.addRuntimeError("b");
+
       const compiles = ec.getAll({ type: "compile" });
       assertEquals(compiles.length, 1);
+
       const first = compiles[0];
       assertExists(first);
       assertEquals(first.type, "compile");
@@ -52,21 +59,22 @@ describe("cli/mcp/error-collector", () => {
       const ec = new ErrorCollector();
       ec.addCompileError("a", "src/a.ts");
       ec.addCompileError("b", "src/b.ts");
-      const results = ec.getAll({ file: "src/a.ts" });
-      assertEquals(results.length, 1);
+
+      assertEquals(ec.getAll({ file: "src/a.ts" }).length, 1);
     });
 
     it("should filter by file regex", () => {
       const ec = new ErrorCollector();
       ec.addCompileError("a", "src/foo.ts");
       ec.addCompileError("b", "lib/bar.ts");
-      const results = ec.getAll({ file: /^src\// });
-      assertEquals(results.length, 1);
+
+      assertEquals(ec.getAll({ file: /^src\// }).length, 1);
     });
 
     it("should get by id", () => {
       const ec = new ErrorCollector();
       const err = ec.add({ type: "compile", message: "test" });
+
       assertEquals(ec.get(err.id)?.message, "test");
       assertEquals(ec.get("nonexistent"), undefined);
     });
@@ -75,8 +83,8 @@ describe("cli/mcp/error-collector", () => {
       const ec = new ErrorCollector();
       ec.addCompileError("a", "src/a.ts");
       ec.addCompileError("b", "src/b.ts");
-      const cleared = ec.clearFile("src/a.ts");
-      assertEquals(cleared, 1);
+
+      assertEquals(ec.clearFile("src/a.ts"), 1);
       assertEquals(ec.count, 1);
     });
 
@@ -84,8 +92,8 @@ describe("cli/mcp/error-collector", () => {
       const ec = new ErrorCollector();
       ec.addCompileError("a");
       ec.addRuntimeError("b");
-      const cleared = ec.clearType("compile");
-      assertEquals(cleared, 1);
+
+      assertEquals(ec.clearType("compile"), 1);
       assertEquals(ec.count, 1);
     });
 
@@ -93,6 +101,7 @@ describe("cli/mcp/error-collector", () => {
       const ec = new ErrorCollector();
       ec.addCompileError("a");
       ec.addRuntimeError("b");
+
       ec.clear();
       assertEquals(ec.count, 0);
     });
@@ -101,8 +110,10 @@ describe("cli/mcp/error-collector", () => {
       const ec = new ErrorCollector();
       const received: string[] = [];
       const unsub = ec.subscribe((err) => received.push(err.message));
+
       ec.addCompileError("test");
       assertEquals(received, ["test"]);
+
       unsub();
       ec.addCompileError("after");
       assertEquals(received.length, 1);
@@ -111,7 +122,10 @@ describe("cli/mcp/error-collector", () => {
 
   describe("parseCompileError", () => {
     it("should parse TypeScript error format", () => {
-      const result = parseCompileError("src/app.ts(10,5): error TS2304: Cannot find name");
+      const result = parseCompileError(
+        "src/app.ts(10,5): error TS2304: Cannot find name",
+      );
+
       assertEquals(result?.type, "compile");
       assertEquals(result?.file, "src/app.ts");
       assertEquals(result?.line, 10);
@@ -120,6 +134,7 @@ describe("cli/mcp/error-collector", () => {
 
     it("should parse esbuild error format", () => {
       const result = parseCompileError("ERROR: [mod.js:5:12] Unexpected token");
+
       assertEquals(result?.type, "bundle");
       assertEquals(result?.file, "mod.js");
       assertEquals(result?.line, 5);
@@ -127,6 +142,7 @@ describe("cli/mcp/error-collector", () => {
 
     it("should parse generic error messages", () => {
       const result = parseCompileError("Some error occurred");
+
       assertEquals(result?.type, "compile");
       assertEquals(result?.message, "Some error occurred");
     });

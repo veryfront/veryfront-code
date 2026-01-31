@@ -5,9 +5,10 @@ import { EvictionManager, type LRUTrackerInterface } from "./eviction-manager.ts
 function createMockTracker(keys: string[]): LRUTrackerInterface {
   const queue = [...keys];
   const removed = new Set<string>();
+
   return {
     getLRU() {
-      while (queue.length > 0) {
+      while (queue.length) {
         const key = queue.shift()!;
         if (!removed.has(key)) return key;
       }
@@ -102,9 +103,7 @@ describe("EvictionManager", () => {
       ]);
       const tracker = createMockTracker(["a", "b"]);
 
-      // Max memory = 80, current = 100, adding 10 → need to free some
       em.evictIfNeeded(cache, tracker, 10, 100, 80);
-      // Should have evicted at least one
       assertEquals(cache.size < 2, true);
     });
   });
@@ -112,8 +111,9 @@ describe("EvictionManager", () => {
   describe("evictExpired", () => {
     it("should evict entries past their TTL", () => {
       const em = new EvictionManager();
+      const now = Date.now();
       const cache = new Map([
-        ["fresh", { size: 1, timestamp: Date.now() }],
+        ["fresh", { size: 1, timestamp: now }],
         ["stale", { size: 1, timestamp: 0 }],
       ]);
       const tracker = createMockTracker(["fresh", "stale"]);
@@ -126,9 +126,7 @@ describe("EvictionManager", () => {
 
     it("should return 0 when nothing expired", () => {
       const em = new EvictionManager();
-      const cache = new Map([
-        ["a", { size: 1, timestamp: Date.now() }],
-      ]);
+      const cache = new Map([["a", { size: 1, timestamp: Date.now() }]]);
       const tracker = createMockTracker(["a"]);
 
       assertEquals(em.evictExpired(cache, tracker, 60000), 0);

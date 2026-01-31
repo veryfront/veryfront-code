@@ -44,7 +44,7 @@ export async function reserveProjectSlug(
     if (result.success) {
       return {
         slug: currentSlug,
-        projectId: result.projectId as string,
+        projectId: result.projectId ?? "",
         created: true,
       };
     }
@@ -85,15 +85,9 @@ async function tryCreateProject(
     }
 
     const error = (await response.json().catch(() => ({}))) as ApiError;
-    return {
-      success: false,
-      error: error.message ?? `HTTP ${response.status}`,
-    };
+    return { success: false, error: error.message ?? `HTTP ${response.status}` };
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
 

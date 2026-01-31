@@ -9,34 +9,40 @@ import { describe, it } from "@veryfront/testing/bdd";
 import { createProxyHandler } from "./handler.ts";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 
+function createHandler(port: number) {
+  return createProxyHandler({
+    config: {
+      apiBaseUrl: `http://127.0.0.1:${port}`,
+      clientId: "test-client",
+      clientSecret: "test-secret",
+      previewClientId: "test-preview-client",
+      previewClientSecret: "test-preview-secret",
+      apiToken: "static-fallback-token",
+    },
+  });
+}
+
+function createTokenServer(token: string) {
+  return createMockServer((req: Request) => {
+    const { pathname } = new URL(req.url);
+    if (pathname === "/auth/token") {
+      return Response.json({
+        access_token: token,
+        token_type: "Bearer",
+        expires_in: 3600,
+      });
+    }
+    return new Response("Not found", { status: 404 });
+  });
+}
+
 describe("Token Priority Cascade", () => {
   describe("preview scope token priority", () => {
     it("prefers user auth cookie over OAuth in preview", async () => {
-      const { server, port } = createMockServer(
-        (req: Request) => {
-          const url = new URL(req.url);
-          if (url.pathname === "/auth/token") {
-            return Response.json({
-              access_token: "oauth-token",
-              token_type: "Bearer",
-              expires_in: 3600,
-            });
-          }
-          return new Response("Not found", { status: 404 });
-        },
-      );
+      const { server, port } = createTokenServer("oauth-token");
 
       try {
-        const handler = createProxyHandler({
-          config: {
-            apiBaseUrl: `http://127.0.0.1:${port}`,
-            clientId: "test-client",
-            clientSecret: "test-secret",
-            previewClientId: "test-preview-client",
-            previewClientSecret: "test-preview-secret",
-            apiToken: "static-fallback-token",
-          },
-        });
+        const handler = createHandler(port);
 
         const req = new Request("http://my-project.preview.veryfront.com/page", {
           headers: {
@@ -47,7 +53,6 @@ describe("Token Priority Cascade", () => {
 
         const ctx = await handler.processRequest(req);
 
-        // User cookie token should take priority over OAuth and static token
         assertEquals(ctx.token, "user-cookie-token");
         assertEquals(ctx.error, undefined);
 
@@ -58,31 +63,10 @@ describe("Token Priority Cascade", () => {
     });
 
     it("falls back to OAuth when no user cookie in preview", async () => {
-      const { server, port } = createMockServer(
-        (req: Request) => {
-          const url = new URL(req.url);
-          if (url.pathname === "/auth/token") {
-            return Response.json({
-              access_token: "oauth-preview-token",
-              token_type: "Bearer",
-              expires_in: 3600,
-            });
-          }
-          return new Response("Not found", { status: 404 });
-        },
-      );
+      const { server, port } = createTokenServer("oauth-preview-token");
 
       try {
-        const handler = createProxyHandler({
-          config: {
-            apiBaseUrl: `http://127.0.0.1:${port}`,
-            clientId: "test-client",
-            clientSecret: "test-secret",
-            previewClientId: "test-preview-client",
-            previewClientSecret: "test-preview-secret",
-            apiToken: "static-fallback-token",
-          },
-        });
+        const handler = createHandler(port);
 
         const req = new Request("http://my-project.preview.veryfront.com/page", {
           headers: { host: "my-project.preview.veryfront.com" },
@@ -90,7 +74,6 @@ describe("Token Priority Cascade", () => {
 
         const ctx = await handler.processRequest(req);
 
-        // OAuth token should be used when no user cookie
         assertEquals(ctx.token, "oauth-preview-token");
         assertEquals(ctx.error, undefined);
 
@@ -103,44 +86,38 @@ describe("Token Priority Cascade", () => {
 
   describe("production scope token priority", () => {
     it("uses OAuth token in production (user cookie ignored for production scope)", async () => {
-      const { server, port } = createMockServer(
-        (req: Request) => {
-          const url = new URL(req.url);
-          if (url.pathname === "/auth/token") {
-            return Response.json({
-              access_token: "oauth-prod-token",
-              token_type: "Bearer",
-              expires_in: 3600,
-            });
-          }
-          if (url.pathname.startsWith("/projects/")) {
-            return Response.json({
-              id: "proj-123",
-              slug: "my-project",
-              name: "My Project",
-              environments: [{
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          return Response.json({
+            access_token: "oauth-prod-token",
+            token_type: "Bearer",
+            expires_in: 3600,
+          });
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [
+              {
                 id: "env-1",
                 name: "production",
                 domains: ["example.com"],
                 active_release_id: "rel-123",
-              }],
-            });
-          }
-          return new Response("Not found", { status: 404 });
-        },
-      );
+              },
+            ],
+          });
+        }
+
+        return new Response("Not found", { status: 404 });
+      });
 
       try {
-        const handler = createProxyHandler({
-          config: {
-            apiBaseUrl: `http://127.0.0.1:${port}`,
-            clientId: "test-client",
-            clientSecret: "test-secret",
-            previewClientId: "test-preview-client",
-            previewClientSecret: "test-preview-secret",
-            apiToken: "static-fallback-token",
-          },
-        });
+        const handler = createHandler(port);
 
         const req = new Request("http://example.com/page", {
           headers: {
@@ -151,7 +128,6 @@ describe("Token Priority Cascade", () => {
 
         const ctx = await handler.processRequest(req);
 
-        // Production scope: OAuth is used (user cookie is for preview only)
         assertEquals(ctx.token, "oauth-prod-token");
         assertEquals(ctx.error, undefined);
 
@@ -197,7 +173,6 @@ describe("Token Priority Cascade", () => {
           clientSecret: "",
           previewClientId: "",
           previewClientSecret: "",
-          // No apiToken either
         },
       });
 
@@ -209,7 +184,10 @@ describe("Token Priority Cascade", () => {
 
       assertEquals(ctx.token, undefined);
       assertEquals(ctx.error?.status, 502);
-      assertEquals(ctx.error?.message, "Failed to authenticate for domain: custom-domain.com");
+      assertEquals(
+        ctx.error?.message,
+        "Failed to authenticate for domain: custom-domain.com",
+      );
 
       await handler.close();
     });
@@ -235,7 +213,6 @@ describe("Token Priority Cascade", () => {
 
       const ctx = await handler.processRequest(req);
 
-      // Local projects don't need tokens
       assertEquals(ctx.token, undefined);
       assertEquals(ctx.isLocalProject, true);
       assertEquals(ctx.localPath, "/tmp/local-proj");

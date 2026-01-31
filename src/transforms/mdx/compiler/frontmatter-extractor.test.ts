@@ -5,9 +5,11 @@ import { extractFrontmatter } from "./frontmatter-extractor.ts";
 describe("transforms/mdx/compiler/frontmatter-extractor", () => {
   describe("extractFrontmatter", () => {
     it("should return empty frontmatter for content without frontmatter", () => {
-      const result = extractFrontmatter("# Hello World");
+      const content = "# Hello World";
+      const result = extractFrontmatter(content);
+
       assertEquals(result.frontmatter, {});
-      assertEquals(result.body, "# Hello World");
+      assertEquals(result.body, content);
     });
 
     it("should extract YAML frontmatter", () => {
@@ -17,6 +19,7 @@ date: 2024-01-01
 ---
 # Content here`;
       const result = extractFrontmatter(content);
+
       assertEquals(result.frontmatter.title, "My Post");
       assertEquals(result.body.includes("# Content here"), true);
     });
@@ -27,6 +30,7 @@ title: From YAML
 ---
 Body text`;
       const result = extractFrontmatter(content, { author: "Test" });
+
       assertEquals(result.frontmatter.title, "From YAML");
       assertEquals(result.frontmatter.author, "Test");
     });
@@ -36,6 +40,7 @@ Body text`;
 export const draft = true;
 # Content`;
       const result = extractFrontmatter(content);
+
       assertEquals(result.frontmatter.title, "My Title");
       assertEquals(result.frontmatter.draft, true);
     });
@@ -45,6 +50,7 @@ export const draft = true;
 export const rating = 4.5;
 Body`;
       const result = extractFrontmatter(content);
+
       assertEquals(result.frontmatter.order, 42);
       assertEquals(result.frontmatter.rating, 4.5);
     });
@@ -53,6 +59,7 @@ Body`;
       const content = `export const published = false;
 Body`;
       const result = extractFrontmatter(content);
+
       assertEquals(result.frontmatter.published, false);
     });
 
@@ -60,6 +67,7 @@ Body`;
       const content = `export const category = null;
 Body`;
       const result = extractFrontmatter(content);
+
       assertEquals(result.frontmatter.category, null);
     });
 
@@ -67,6 +75,7 @@ Body`;
       const content = `export const title = "Test";
 # Heading`;
       const result = extractFrontmatter(content);
+
       assertEquals(result.body.includes("export const title"), false);
       assertEquals(result.body.includes("# Heading"), true);
     });
@@ -78,12 +87,14 @@ layout: post
 export const title = "Override";
 # Hello`;
       const result = extractFrontmatter(content);
+
       assertEquals(result.frontmatter.layout, "post");
       assertEquals(result.frontmatter.title, "Override");
     });
 
     it("should handle empty content", () => {
       const result = extractFrontmatter("");
+
       assertEquals(result.body, "");
       assertEquals(result.frontmatter, {});
     });

@@ -1,7 +1,7 @@
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
-import { StreamHandler } from "./stream-handler.ts";
 import { RenderHandler } from "./render-handler.ts";
+import { StreamHandler } from "./stream-handler.ts";
 
 class MockRenderHandler extends RenderHandler {
   private handlerImpl: (page: string, params: URLSearchParams) => Promise<Response>;
@@ -28,7 +28,7 @@ describe("StreamHandler", () => {
   beforeEach(() => {
     handleCalls = [];
 
-    mockRenderHandler = new MockRenderHandler((page: string, params: URLSearchParams) => {
+    mockRenderHandler = new MockRenderHandler((page, params) => {
       handleCalls.push([page, params]);
       return Promise.resolve(
         new Response(JSON.stringify({ html: "<div>Test Content</div>" }), {
@@ -46,9 +46,7 @@ describe("StreamHandler", () => {
       const response = await streamHandler.handle("/", new URLSearchParams());
 
       expect(response).toBeInstanceOf(Response);
-      expect(response.headers.get("content-type")).toBe(
-        "application/x-ndjson; charset=utf-8",
-      );
+      expect(response.headers.get("content-type")).toBe("application/x-ndjson; charset=utf-8");
       expect(response.headers.get("cache-control")).toBe("no-cache");
     });
 
@@ -61,10 +59,11 @@ describe("StreamHandler", () => {
       expect(lines.length).toBeGreaterThan(0);
 
       for (const line of lines) {
-        if (!line.trim()) continue;
+        const trimmed = line.trim();
+        if (!trimmed) continue;
 
-        expect(() => JSON.parse(line)).not.toThrow();
-        const parsed = JSON.parse(line);
+        expect(() => JSON.parse(trimmed)).not.toThrow();
+        const parsed = JSON.parse(trimmed);
         expect(parsed.type).toBe("slot");
         expect(parsed.id).toBeDefined();
         expect(parsed.html).toBeDefined();
@@ -89,9 +88,8 @@ describe("StreamHandler", () => {
       mockRenderHandler.setHandler(() => Promise.resolve(new Response(null, { status: 500 })));
 
       const response = await streamHandler.handle("/", new URLSearchParams());
-      const text = await response.text();
 
-      expect(text).toContain("OK");
+      expect(await response.text()).toContain("OK");
     });
 
     it("should handle invalid JSON from render handler", async () => {
@@ -100,19 +98,14 @@ describe("StreamHandler", () => {
       );
 
       const response = await streamHandler.handle("/", new URLSearchParams());
-      const text = await response.text();
 
-      expect(text).toContain("OK");
+      expect(await response.text()).toContain("OK");
     });
 
     it("should include malformed JSON when bad query param is set", async () => {
-      const response = await streamHandler.handle(
-        "/",
-        new URLSearchParams({ bad: "1" }),
-      );
-      const text = await response.text();
+      const response = await streamHandler.handle("/", new URLSearchParams({ bad: "1" }));
 
-      expect(text).toContain("MALFORMED_JSON");
+      expect(await response.text()).toContain("MALFORMED_JSON");
     });
   });
 
@@ -120,9 +113,9 @@ describe("StreamHandler", () => {
     it("should handle render handler errors gracefully", async () => {
       mockRenderHandler.setHandler(() => Promise.reject(new Error("Render failed")));
 
-      await expect(
-        streamHandler.handle("/", new URLSearchParams()),
-      ).rejects.toThrow("Render failed");
+      await expect(streamHandler.handle("/", new URLSearchParams())).rejects.toThrow(
+        "Render failed",
+      );
     });
 
     it("should return valid response even with non-ok render response", async () => {

@@ -9,12 +9,7 @@ export default tool({
   inputSchema: z.object({
     query: z.string().describe("Search query to find files or folders"),
     path: z.string().optional().describe("Optional path to limit search to a specific folder"),
-    maxResults: z
-      .number()
-      .min(1)
-      .max(100)
-      .default(20)
-      .describe("Maximum number of results to return"),
+    maxResults: z.number().min(1).max(100).default(20).describe("Maximum number of results to return"),
     fileCategories: z
       .array(
         z.enum([
@@ -46,7 +41,9 @@ export default tool({
         matchType: match.match_type[".tag"],
       };
 
-      if (!isFile(metadata)) return baseInfo;
+      if (!isFile(metadata)) {
+        return baseInfo;
+      }
 
       return {
         ...baseInfo,

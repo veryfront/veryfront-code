@@ -6,13 +6,11 @@ let compare: (password: string, hash: string) => Promise<boolean>;
 // @ts-ignore - Deno global
 if (typeof Deno !== "undefined") {
   const bcrypt = await import("https://deno.land/x/bcrypt@v0.4.1/mod.ts");
-  hash = bcrypt.hash;
-  compare = bcrypt.compare;
+  ({ hash, compare } = bcrypt);
 } else {
   // @ts-ignore
   const bcrypt = await import("@node-rs/bcrypt");
-  hash = bcrypt.hash;
-  compare = bcrypt.compare;
+  ({ hash, compare } = bcrypt);
 }
 
 interface User {
@@ -33,7 +31,6 @@ function toPublicUser({ passwordHash: _passwordHash, ...user }: User): PublicUse
 // In-memory storage (replace with database)
 const users = new Map<string, User>();
 
-// Demo user
 const demoUser: User = {
   id: "demo-user",
   email: "demo@example.com",
@@ -42,6 +39,7 @@ const demoUser: User = {
   passwordHash: await hash("password"),
   createdAt: new Date(),
 };
+
 users.set(demoUser.id, demoUser);
 
 export async function createUser(data: {
@@ -79,5 +77,6 @@ export async function getUsers(): Promise<PublicUser[]> {
 
 export async function getUser(id: string): Promise<PublicUser | null> {
   const user = users.get(id);
-  return user ? toPublicUser(user) : null;
+  if (!user) return null;
+  return toPublicUser(user);
 }

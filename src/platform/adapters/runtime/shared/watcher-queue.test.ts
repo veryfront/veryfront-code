@@ -54,21 +54,14 @@ describe("watcher-queue", () => {
 
     it("should wait for events when queue is empty and not closed", async () => {
       let resolver: ((value: IteratorResult<FileChangeEvent>) => void) | null = null;
-      const setResolver = (r: ((value: IteratorResult<FileChangeEvent>) => void) | null) => {
-        resolver = r;
-      };
 
-      const iterator = createWatcherIterator([], setResolver, () => false, () => false);
+      const iterator = createWatcherIterator([], (r) => (resolver = r), () => false, () => false);
 
       const promise = iterator.next();
 
-      // The resolver should have been set
-      const resolve = resolver ??
-        ((_value: IteratorResult<FileChangeEvent>) => {
-          throw new Error("Expected resolver to be set");
-        });
+      const resolve = resolver;
+      if (!resolve) throw new Error("Expected resolver to be set");
 
-      // Resolve it manually
       resolve({ done: false, value: makeEvent("modify", ["/c.ts"]) });
 
       const result = await promise;
@@ -99,29 +92,23 @@ describe("watcher-queue", () => {
     it("should resolve immediately when resolver exists", () => {
       const queue: FileChangeEvent[] = [];
       let resolvedValue: IteratorResult<FileChangeEvent> | null = null;
+
       const fakeResolver = (value: IteratorResult<FileChangeEvent>) => {
         resolvedValue = value;
       };
+
       let currentResolver: ((value: IteratorResult<FileChangeEvent>) => void) | null = fakeResolver;
 
       const event = makeEvent("modify", ["/b.ts"]);
 
-      enqueueWatchEvent(
-        event,
-        queue,
-        () => currentResolver,
-        (r) => {
-          currentResolver = r;
-        },
-      );
+      enqueueWatchEvent(event, queue, () => currentResolver, (r) => (currentResolver = r));
 
-      // Should NOT push to queue when resolver exists
       assertEquals(queue.length, 0);
-      // Should have resolved
+
       assertExists(resolvedValue);
-      assertEquals((resolvedValue as IteratorResult<FileChangeEvent>).done, false);
-      assertEquals((resolvedValue as IteratorResult<FileChangeEvent>).value, event);
-      // Should clear the resolver
+      assertEquals(resolvedValue.done, false);
+      assertEquals(resolvedValue.value, event);
+
       assertEquals(currentResolver, null);
     });
   });

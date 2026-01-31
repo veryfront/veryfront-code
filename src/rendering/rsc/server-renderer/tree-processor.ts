@@ -22,40 +22,40 @@ export async function renderTree(
     return { type: "html", html: Component == null ? "" : String(Component) };
   }
 
-  if (typeof Component === "function") {
-    const rscComponent = Component as RSCComponent;
-
-    if (isClientComponent(rscComponent, clientManifest)) {
-      const componentId = getComponentId(rscComponent);
-      registerClientRef(componentId, rscComponent, clientManifest, clientRefs);
-
-      return {
-        type: "client",
-        component: componentId,
-        props: serializeProps(props),
-      };
-    }
-
-    try {
-      const element = Component.prototype?.render
-        ? React.createElement(Component as React.ComponentClass, props)
-        : await (Component as React.FC)(props);
-
-      if (!element) return { type: "html", html: "" };
-      if (React.isValidElement(element)) return processElement(element, clientManifest, clientRefs);
-
-      return { type: "html", html: String(element) };
-    } catch (error) {
-      logger.error("[RSC] Error rendering component:", error);
-      throw error;
-    }
-  }
-
   if (React.isValidElement(Component)) {
     return processElement(Component, clientManifest, clientRefs);
   }
 
-  return { type: "html", html: String(Component) };
+  if (typeof Component !== "function") {
+    return { type: "html", html: String(Component) };
+  }
+
+  const rscComponent = Component as RSCComponent;
+
+  if (isClientComponent(rscComponent, clientManifest)) {
+    const componentId = getComponentId(rscComponent);
+    registerClientRef(componentId, rscComponent, clientManifest, clientRefs);
+
+    return {
+      type: "client",
+      component: componentId,
+      props: serializeProps(props),
+    };
+  }
+
+  try {
+    const element = Component.prototype?.render
+      ? React.createElement(Component as React.ComponentClass, props)
+      : await (Component as React.FC)(props);
+
+    if (!element) return { type: "html", html: "" };
+    if (React.isValidElement(element)) return processElement(element, clientManifest, clientRefs);
+
+    return { type: "html", html: String(element) };
+  } catch (error) {
+    logger.error("[RSC] Error rendering component:", error);
+    throw error;
+  }
 }
 
 /** Processes a React element into RSC node representation */
@@ -97,7 +97,7 @@ export async function processElement(
   }
 
   if (typeof type === "function") {
-    return renderTree(type, props as Record<string, unknown>, clientManifest, clientRefs);
+    return renderTree(type, props, clientManifest, clientRefs);
   }
 
   const html = await renderToStringAdapter(element);
@@ -117,7 +117,7 @@ export function renderChildren(
         return processElement(child, clientManifest, clientRefs);
       }
 
-      return Promise.resolve({ type: "html", html: String(child) } as RSCNode);
+      return Promise.resolve({ type: "html" as const, html: String(child) });
     }),
   );
 }

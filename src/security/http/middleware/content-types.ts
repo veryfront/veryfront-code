@@ -7,7 +7,7 @@ import {
   HTTP_CONTENT_TYPE_IMAGE_WEBP,
 } from "#veryfront/utils/constants/http.ts";
 
-export const CONTENT_TYPES: Record<string, string> = {
+export const CONTENT_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".txt": "text/plain; charset=utf-8",
@@ -25,4 +25,4 @@ export const CONTENT_TYPES: Record<string, string> = {
   ".woff2": "font/woff2",
   ".ttf": "font/ttf",
   ".otf": "font/otf",
-};
+} satisfies Record<string, string>;

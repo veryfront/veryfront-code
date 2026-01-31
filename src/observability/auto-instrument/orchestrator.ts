@@ -27,10 +27,10 @@ export async function initAutoInstrumentation(
       await initMetrics(finalConfig.metrics, adapter);
     }
 
-    initialized = true;
     logInitialization(finalConfig);
   } catch (error) {
     logger.warn("[auto-instrument] Failed to initialize auto-instrumentation", error);
+  } finally {
     initialized = true;
   }
 }

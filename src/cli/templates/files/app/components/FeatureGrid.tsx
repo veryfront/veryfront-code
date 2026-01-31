@@ -17,7 +17,11 @@ const features = [
     description: "Full-featured API with middleware and validation",
     icon: (
       <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"
+        />
       </svg>
     ),
   },
@@ -39,7 +43,11 @@ const features = [
     description: "Full TypeScript support with runtime validation",
     icon: (
       <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+        />
       </svg>
     ),
   },
@@ -83,16 +91,16 @@ export function FeatureGrid(): React.JSX.Element {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {features.map((feature) => (
+          {features.map(({ title, description, icon }) => (
             <div
-              key={feature.title}
+              key={title}
               className="bg-white dark:bg-neutral-800 rounded-2xl p-6 border border-neutral-200 dark:border-neutral-700"
             >
               <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center text-blue-500 mb-4">
-                {feature.icon}
+                {icon}
               </div>
-              <h3 className="text-base font-semibold text-neutral-900 dark:text-white mb-2">{feature.title}</h3>
-              <p className="text-sm text-neutral-600 dark:text-neutral-400">{feature.description}</p>
+              <h3 className="text-base font-semibold text-neutral-900 dark:text-white mb-2">{title}</h3>
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">{description}</p>
             </div>
           ))}
         </div>

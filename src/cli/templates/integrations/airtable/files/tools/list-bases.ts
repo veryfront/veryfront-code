@@ -8,12 +8,6 @@ export default tool({
     "List all accessible Airtable bases in the connected account. Returns base IDs, names, and permission levels.",
   inputSchema: z.object({}),
   async execute() {
-    const bases = await listBases();
-
-    return bases.map(({ id, name, permissionLevel }) => ({
-      id,
-      name,
-      permissionLevel,
-    }));
+    return listBases();
   },
 });

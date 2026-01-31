@@ -5,8 +5,8 @@
 export function computeSourceHash(content: string): string {
   let hash = 2166136261;
 
-  for (let i = 0; i < content.length; i++) {
-    hash ^= content.charCodeAt(i);
+  for (const char of content) {
+    hash ^= char.charCodeAt(0);
     hash = (hash * 16777619) >>> 0;
   }
 

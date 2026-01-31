@@ -22,12 +22,12 @@ export class SecurityConfigLoader {
     if (this.loadPromise) return this.loadPromise;
 
     this.loadPromise = this.load();
-    await this.loadPromise;
+    return this.loadPromise;
   }
 
   private async load(): Promise<void> {
     try {
-      const cfg = this.configOverride ?? await getConfig(this.projectDir, this.adapter);
+      const cfg = this.configOverride ?? (await getConfig(this.projectDir, this.adapter));
       this.applyConfig(cfg);
     } catch (error) {
       // Config is optional, so we don't throw
@@ -39,9 +39,7 @@ export class SecurityConfigLoader {
   private applyConfig(cfg?: VeryfrontConfig): void {
     const security: SecurityConfig = cfg?.security ? { ...cfg.security } : {};
 
-    if (security.headers) {
-      security.headers = { ...security.headers };
-    }
+    if (security.headers) security.headers = { ...security.headers };
 
     security.cors ??= true;
 
@@ -57,6 +55,7 @@ export class SecurityConfigLoader {
 
     for (const [k, v] of Object.entries(csp)) {
       if (v === undefined) continue;
+
       const key = k.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
       const val = Array.isArray(v) ? v.join(" ") : String(v);
       pieces.push(`${key} ${val}`);
@@ -86,7 +85,8 @@ export class SecurityConfigLoader {
     const configValue = this.securityConfig?.[configKey];
     const envValue = this.adapter.env.get(`VERYFRONT_${headerName}`);
 
-    return (typeof configValue === "string" ? configValue : undefined) || envValue || defaultValue;
+    if (typeof configValue === "string") return configValue;
+    return envValue || defaultValue;
   }
 
   reset(): void {

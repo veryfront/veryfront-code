@@ -39,8 +39,8 @@ export default tool({
   }),
   execute: async ({ repo, state, limit }, context) => {
     const userId = context?.userId ?? "current-user";
-
     const [owner, repoName] = repo.split("/");
+
     if (!owner || !repoName) {
       return { error: "Invalid repository format. Use 'owner/repo' format." };
     }
@@ -67,7 +67,7 @@ export default tool({
           additions: pr.additions,
           deletions: pr.deletions,
           changedFiles: pr.changed_files,
-          labels: pr.labels.map((l) => l.name),
+          labels: pr.labels.map(({ name }) => name),
         })),
         count: prs.length,
         repository: repo,

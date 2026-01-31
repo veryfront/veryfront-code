@@ -40,20 +40,24 @@ export class DynamicRouter {
     for (
       const match of originalPattern.matchAll(/\[\[\.\.\.(\w+)\]\]|\[\.\.\.(\w+)\]|\[(\w+)\]/g)
     ) {
-      if (match[1]) {
-        paramNames.push(match[1]);
+      const optionalCatchAll = match[1];
+      const catchAll = match[2];
+      const param = match[3];
+
+      if (optionalCatchAll) {
+        paramNames.push(optionalCatchAll);
         isOptionalCatchAll = true;
         isCatchAll = true;
         continue;
       }
-      if (match[2]) {
-        paramNames.push(match[2]);
+
+      if (catchAll) {
+        paramNames.push(catchAll);
         isCatchAll = true;
         continue;
       }
-      if (match[3]) {
-        paramNames.push(match[3]);
-      }
+
+      if (param) paramNames.push(param);
     }
 
     regex = regex
@@ -63,9 +67,7 @@ export class DynamicRouter {
 
     if (pattern !== "/" && pattern.endsWith("/")) {
       pattern = pattern.slice(0, -1);
-      if (regex.endsWith("/")) {
-        regex = regex.slice(0, -1);
-      }
+      if (regex.endsWith("/")) regex = regex.slice(0, -1);
     }
 
     const route: Route = { pattern, page };
@@ -79,7 +81,8 @@ export class DynamicRouter {
   }
 
   private normalizePathname(path: string): string {
-    return path !== "/" && path.endsWith("/") ? path.slice(0, -1) : path;
+    if (path === "/" || !path.endsWith("/")) return path;
+    return path.slice(0, -1);
   }
 
   private sortRoutesByPriority(): Array<[string, RouteEntry]> {

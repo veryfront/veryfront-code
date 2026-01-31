@@ -13,7 +13,6 @@ function toFileOperationContext(
   if (!ctx) return ctx;
 
   const { sourceType, projectSlug, branch, releaseId, environmentName } = ctx;
-
   return { sourceType, projectSlug, branch, releaseId, environmentName };
 }
 

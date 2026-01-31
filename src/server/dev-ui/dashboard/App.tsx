@@ -65,7 +65,7 @@ const TABS: Array<{ id: TabId; label: string }> = [
   { id: "api", label: "API" },
 ];
 
-async function fetchJson(url: string): Promise<any> {
+async function fetchJson(url: string): Promise<unknown> {
   const res = await fetch(url);
   return res.json();
 }
@@ -77,7 +77,7 @@ export function App(): JSX.Element {
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
 
-  useEffect(() => {
+  useEffect((): void => {
     async function fetchData(): Promise<void> {
       try {
         const [t, r, p, a] = await Promise.all([
@@ -87,16 +87,16 @@ export function App(): JSX.Element {
           fetchJson("/_dev/api/agents"),
         ]);
 
-        setTools(t?.tools ?? []);
-        setResources(r?.resources ?? []);
-        setPrompts(p?.prompts ?? []);
-        setAgents(a?.agents ?? []);
+        setTools((t as any)?.tools ?? []);
+        setResources((r as any)?.resources ?? []);
+        setPrompts((p as any)?.prompts ?? []);
+        setAgents((a as any)?.agents ?? []);
       } catch (e) {
         console.error("Failed to fetch data:", e);
       }
     }
 
-    fetchData();
+    void fetchData();
   }, []);
 
   return (

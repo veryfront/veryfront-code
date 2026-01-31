@@ -124,6 +124,7 @@ function createMockInstruments(): MetricsInstruments & {
     heapUsageGauge: null,
     heapTotalGauge: null,
     heapPercentGauge: null,
+
     _httpRequestCounter: httpRequestCounter,
     _httpRequestDuration: httpRequestDuration,
     _httpActiveRequests: httpActiveRequests,
@@ -421,7 +422,6 @@ describe("observability/metrics/recorder", () => {
       };
       const nullRecorder = new MetricsRecorder(nullInstruments, runtimeState);
 
-      // All of these should not throw
       nullRecorder.recordHttpRequest();
       nullRecorder.recordHttpRequestComplete(100);
       nullRecorder.recordCacheGet(true);

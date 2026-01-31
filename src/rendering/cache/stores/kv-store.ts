@@ -32,9 +32,10 @@ export class KVCacheStore implements CacheStore {
     if (!openKv) return null;
 
     const instance = await openKv(this.path);
-    if (!instance || typeof (instance as KVInstance).get !== "function") return null;
+    const kv = instance as KVInstance | null;
 
-    const kv = instance as KVInstance;
+    if (!kv || typeof kv.get !== "function") return null;
+
     this.kv = {
       get: kv.get.bind(instance) as KVInstance["get"],
       set: kv.set.bind(instance),
@@ -73,10 +74,11 @@ export class KVCacheStore implements CacheStore {
     if (!kv?.list) return 0;
 
     let deleted = 0;
+
     for await (const entry of kv.list({ prefix: ["veryfront", "render"] })) {
       const key = entry.key?.[2];
-      if (typeof key !== "string") continue;
-      if (!key.startsWith(prefix)) continue;
+      if (typeof key !== "string" || !key.startsWith(prefix)) continue;
+
       await kv.delete(entry.key);
       deleted++;
     }

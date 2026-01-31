@@ -18,8 +18,9 @@ describe("hash-utils", () => {
     });
 
     it("should produce consistent hashes for same input", async () => {
-      const hash1 = await computeHash("test content");
-      const hash2 = await computeHash("test content");
+      const input = "test content";
+      const hash1 = await computeHash(input);
+      const hash2 = await computeHash(input);
       assertEquals(hash1, hash2);
     });
 
@@ -98,28 +99,22 @@ describe("hash-utils", () => {
 
   describe("simpleHash", () => {
     it("should produce a number", () => {
-      const hash = simpleHash("test");
-      assertEquals(typeof hash, "number");
+      assertEquals(typeof simpleHash("test"), "number");
     });
 
     it("should produce non-negative numbers", () => {
-      const inputs = ["test", "another string", "negative test"];
-      for (const input of inputs) {
+      for (const input of ["test", "another string", "negative test"]) {
         assertEquals(simpleHash(input) >= 0, true);
       }
     });
 
     it("should produce consistent hashes", () => {
       const input = "consistent";
-      const hash1 = simpleHash(input);
-      const hash2 = simpleHash(input);
-      assertEquals(hash1, hash2);
+      assertEquals(simpleHash(input), simpleHash(input));
     });
 
     it("should produce different hashes for different strings", () => {
-      const hash1 = simpleHash("string a");
-      const hash2 = simpleHash("string b");
-      assertNotEquals(hash1, hash2);
+      assertNotEquals(simpleHash("string a"), simpleHash("string b"));
     });
 
     it("should handle empty string", () => {
@@ -138,15 +133,11 @@ describe("hash-utils", () => {
 
     it("should produce consistent short hashes", async () => {
       const input = "hello";
-      const hash1 = await shortHash(input);
-      const hash2 = await shortHash(input);
-      assertEquals(hash1, hash2);
+      assertEquals(await shortHash(input), await shortHash(input));
     });
 
     it("should be different for different content", async () => {
-      const hash1 = await shortHash("content 1");
-      const hash2 = await shortHash("content 2");
-      assertNotEquals(hash1, hash2);
+      assertNotEquals(await shortHash("content 1"), await shortHash("content 2"));
     });
   });
 });

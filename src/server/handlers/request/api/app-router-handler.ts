@@ -23,13 +23,9 @@ function resolveHandlerFunction(
   method: string,
 ): [HandlerFn | undefined, boolean] {
   const methodFn = mod[method];
-  if (typeof methodFn === "function") {
-    return [methodFn as HandlerFn, false];
-  }
+  if (typeof methodFn === "function") return [methodFn as HandlerFn, false];
 
-  if (method === "HEAD" && typeof mod.GET === "function") {
-    return [mod.GET as HandlerFn, true];
-  }
+  if (method === "HEAD" && typeof mod.GET === "function") return [mod.GET, true];
 
   return [undefined, false];
 }
@@ -50,7 +46,6 @@ export async function handleAppRouter(
     if (!fn) return methodNotAllowed(getAllowedMethods(mod));
 
     const res = await fn(req, { params: match.params });
-
     const headers = new Headers(res.headers);
 
     await applyCORSHeaders({
@@ -61,9 +56,7 @@ export async function handleAppRouter(
 
     applySecurityHeaders(headers, ctx);
 
-    if (headShim) {
-      return new Response(null, { status: res.status, headers });
-    }
+    if (headShim) return new Response(null, { status: res.status, headers });
 
     return new Response(res.body, { status: res.status, headers });
   } catch (error) {

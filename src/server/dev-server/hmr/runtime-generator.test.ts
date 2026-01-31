@@ -6,7 +6,7 @@ describe("server/dev-server/hmr/runtime-generator", () => {
   describe("generateHMRRuntimeScript", () => {
     it("should return a string containing the IIFE wrapper", () => {
       const script = generateHMRRuntimeScript({ port: 3001 });
-      assertEquals(script.includes("(function()"), true);
+      assertEquals(script.includes("(function ()"), true);
       assertEquals(script.includes("})();"), true);
     });
 

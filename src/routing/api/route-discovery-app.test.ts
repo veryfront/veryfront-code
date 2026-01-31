@@ -12,15 +12,31 @@ function createRouter(): DynamicRouter {
   return router;
 }
 
-function file(name: string) {
+type DirEntry = {
+  name: string;
+  isFile: boolean;
+  isDirectory: boolean;
+  isSymlink: boolean;
+};
+
+function file(name: string): DirEntry {
   return { name, isFile: true, isDirectory: false, isSymlink: false };
 }
 
-function dir(name: string) {
+function dir(name: string): DirEntry {
   return { name, isFile: false, isDirectory: true, isSymlink: false };
 }
 
-afterEach(() => {
+function setReadDir(
+  adapter: ReturnType<typeof createMockAdapter>,
+  entriesByPath: Record<string, DirEntry[]>,
+): void {
+  adapter.fs.readDir = async function* (path: string) {
+    for (const entry of entriesByPath[path] ?? []) yield entry;
+  };
+}
+
+afterEach((): void => {
   while (routers.length) routers.pop()?.destroy();
 });
 
@@ -30,9 +46,7 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (_path: string) {
-        yield file("route.ts");
-      };
+      setReadDir(adapter, { "/project/app/api": [file("route.ts")] });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -46,9 +60,7 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (_path: string) {
-        yield file("route.js");
-      };
+      setReadDir(adapter, { "/project/app/api": [file("route.js")] });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -61,9 +73,7 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (_path: string) {
-        yield file("route.tsx");
-      };
+      setReadDir(adapter, { "/project/app/api": [file("route.tsx")] });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -76,9 +86,7 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (_path: string) {
-        yield file("route.jsx");
-      };
+      setReadDir(adapter, { "/project/app/api": [file("route.jsx")] });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -91,14 +99,16 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (_path: string) {
-        yield file("page.tsx");
-        yield file("layout.tsx");
-        yield file("loading.tsx");
-        yield file("error.tsx");
-        yield file("not-found.tsx");
-        yield file("helpers.ts");
-      };
+      setReadDir(adapter, {
+        "/project/app/api": [
+          file("page.tsx"),
+          file("layout.tsx"),
+          file("loading.tsx"),
+          file("error.tsx"),
+          file("not-found.tsx"),
+          file("helpers.ts"),
+        ],
+      });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -110,7 +120,7 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (_path: string) {};
+      setReadDir(adapter, { "/project/app/api": [] });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -122,9 +132,7 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (_path: string) {
-        yield file("route.ts");
-      };
+      setReadDir(adapter, { "/project/app": [file("route.ts")] });
 
       await discoverAppRoutes(router, "/project/app", "", adapter);
 
@@ -139,10 +147,10 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") yield dir("users");
-        if (path === "/project/app/api/users") yield file("route.ts");
-      };
+      setReadDir(adapter, {
+        "/project/app/api": [dir("users")],
+        "/project/app/api/users": [file("route.ts")],
+      });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -156,11 +164,11 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") yield dir("v1");
-        if (path === "/project/app/api/v1") yield dir("users");
-        if (path === "/project/app/api/v1/users") yield file("route.ts");
-      };
+      setReadDir(adapter, {
+        "/project/app/api": [dir("v1")],
+        "/project/app/api/v1": [dir("users")],
+        "/project/app/api/v1/users": [file("route.ts")],
+      });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -173,13 +181,10 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") {
-          yield file("route.ts");
-          yield dir("users");
-        }
-        if (path === "/project/app/api/users") yield file("route.ts");
-      };
+      setReadDir(adapter, {
+        "/project/app/api": [file("route.ts"), dir("users")],
+        "/project/app/api/users": [file("route.ts")],
+      });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -194,11 +199,11 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") yield dir("v1");
-        if (path === "/project/app/api/v1") yield dir("admin");
-        if (path === "/project/app/api/v1/admin") yield file("route.ts");
-      };
+      setReadDir(adapter, {
+        "/project/app/api": [dir("v1")],
+        "/project/app/api/v1": [dir("admin")],
+        "/project/app/api/v1/admin": [file("route.ts")],
+      });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -213,10 +218,10 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") yield dir("[id]");
-        if (path === "/project/app/api/[id]") yield file("route.ts");
-      };
+      setReadDir(adapter, {
+        "/project/app/api": [dir("[id]")],
+        "/project/app/api/[id]": [file("route.ts")],
+      });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -229,10 +234,10 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") yield dir("[...slug]");
-        if (path === "/project/app/api/[...slug]") yield file("route.ts");
-      };
+      setReadDir(adapter, {
+        "/project/app/api": [dir("[...slug]")],
+        "/project/app/api/[...slug]": [file("route.ts")],
+      });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -245,10 +250,10 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") yield dir("[[...slug]]");
-        if (path === "/project/app/api/[[...slug]]") yield file("route.ts");
-      };
+      setReadDir(adapter, {
+        "/project/app/api": [dir("[[...slug]]")],
+        "/project/app/api/[[...slug]]": [file("route.ts")],
+      });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -261,13 +266,13 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") yield dir("users");
-        if (path === "/project/app/api/users") yield dir("[userId]");
-        if (path === "/project/app/api/users/[userId]") yield dir("posts");
-        if (path === "/project/app/api/users/[userId]/posts") yield dir("[postId]");
-        if (path === "/project/app/api/users/[userId]/posts/[postId]") yield file("route.ts");
-      };
+      setReadDir(adapter, {
+        "/project/app/api": [dir("users")],
+        "/project/app/api/users": [dir("[userId]")],
+        "/project/app/api/users/[userId]": [dir("posts")],
+        "/project/app/api/users/[userId]/posts": [dir("[postId]")],
+        "/project/app/api/users/[userId]/posts/[postId]": [file("route.ts")],
+      });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -282,10 +287,10 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") yield dir("user-profile");
-        if (path === "/project/app/api/user-profile") yield file("route.ts");
-      };
+      setReadDir(adapter, {
+        "/project/app/api": [dir("user-profile")],
+        "/project/app/api/user-profile": [file("route.ts")],
+      });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -298,10 +303,10 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") yield dir("v2");
-        if (path === "/project/app/api/v2") yield file("route.ts");
-      };
+      setReadDir(adapter, {
+        "/project/app/api": [dir("v2")],
+        "/project/app/api/v2": [file("route.ts")],
+      });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -314,12 +319,14 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (_path: string) {
-        yield file("routes.ts");
-        yield file("route-handler.ts");
-        yield file("route.backup.ts");
-        yield file("route.ts");
-      };
+      setReadDir(adapter, {
+        "/project/app/api": [
+          file("routes.ts"),
+          file("route-handler.ts"),
+          file("route.backup.ts"),
+          file("route.ts"),
+        ],
+      });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -332,9 +339,7 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (_path: string) {
-        yield file("route.ts");
-      };
+      setReadDir(adapter, { "/very/long/path/to/project/app/api": [file("route.ts")] });
 
       await discoverAppRoutes(router, "/very/long/path/to/project/app/api", "/api", adapter);
 
@@ -347,9 +352,7 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (_path: string) {
-        yield file("route.ts");
-      };
+      setReadDir(adapter, { "/project/app/custom": [file("route.ts")] });
 
       await discoverAppRoutes(router, "/project/app/custom", "/custom", adapter);
 
@@ -364,10 +367,10 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") yield dir("users");
-        if (path === "/project/app/api/users") yield file("route.ts");
-      };
+      setReadDir(adapter, {
+        "/project/app/api": [dir("users")],
+        "/project/app/api/users": [file("route.ts")],
+      });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
@@ -381,11 +384,11 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 
-      adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") yield dir("users");
-        if (path === "/project/app/api/users") yield dir("[id]");
-        if (path === "/project/app/api/users/[id]") yield file("route.ts");
-      };
+      setReadDir(adapter, {
+        "/project/app/api": [dir("users")],
+        "/project/app/api/users": [dir("[id]")],
+        "/project/app/api/users/[id]": [file("route.ts")],
+      });
 
       await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 

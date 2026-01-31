@@ -28,11 +28,7 @@ describe("rewriteCrossProjectImport", () => {
       `import { A } from "@acme/ui@1.0.0/@/A.tsx";`,
       `import { B } from "@acme/ui@1.0.0/@/A.tsx";`,
     ].join("\n");
-    const result = rewriteCrossProjectImport(
-      code,
-      "@acme/ui@1.0.0/@/A.tsx",
-      "/tmp/A.js",
-    );
+    const result = rewriteCrossProjectImport(code, "@acme/ui@1.0.0/@/A.tsx", "/tmp/A.js");
     assertEquals(result.match(/file:\/\//g)?.length, 2);
   });
 
@@ -65,7 +61,6 @@ describe("rewriteLocalImports", () => {
   });
 
   it("rewrites @/ alias import from depth-1 directory", () => {
-    // From pages/index.tsx, @/components/Button resolves to ../components/Button.js
     const map = new Map([["@/components/Button", "/tmp/Button.js"]]);
     const code = `import { Button } from "../components/Button.js";`;
     const result = rewriteLocalImports(code, map, "/project/pages/index.tsx", projectDir);
@@ -73,7 +68,6 @@ describe("rewriteLocalImports", () => {
   });
 
   it("rewrites @/ alias import from root-level file", () => {
-    // From root index.tsx, @/components/Button resolves to ./components/Button.js
     const map = new Map([["@/components/Button", "/tmp/Button.js"]]);
     const code = `import { Button } from "./components/Button.js";`;
     const result = rewriteLocalImports(code, map, "/project/index.tsx", projectDir);
@@ -81,7 +75,6 @@ describe("rewriteLocalImports", () => {
   });
 
   it("rewrites @/ alias import from nested directory", () => {
-    // From pages/blog/post.tsx (depth 2), @/utils/helpers resolves to ../../utils/helpers.js
     const map = new Map([["@/utils/helpers", "/tmp/helpers.js"]]);
     const code = `import { h } from "../../utils/helpers.js";`;
     const result = rewriteLocalImports(code, map, "/project/pages/blog/post.tsx", projectDir);
@@ -103,7 +96,6 @@ describe("rewriteLocalImports", () => {
   });
 
   it("rewrites absolute path starting with projectDir", () => {
-    // From pages/index.tsx, /project/lib/api.ts resolves to ../lib/api.js
     const map = new Map([["/project/lib/api.ts", "/tmp/api.js"]]);
     const code = `import { fetch } from "../lib/api.js";`;
     const result = rewriteLocalImports(code, map, "/project/pages/index.tsx", projectDir);
@@ -111,7 +103,6 @@ describe("rewriteLocalImports", () => {
   });
 
   it("strips trailing slash from projectDir", () => {
-    // From pages/index.tsx, @/utils/log resolves to ../utils/log.js
     const map = new Map([["@/utils/log", "/tmp/log.js"]]);
     const code = `import { log } from "../utils/log.js";`;
     const result = rewriteLocalImports(code, map, "/project/pages/index.tsx", "/project/");
@@ -119,7 +110,6 @@ describe("rewriteLocalImports", () => {
   });
 
   it("rewrites .tsx extensions to .js in alias patterns", () => {
-    // From pages/index.tsx, @/components/Card.tsx resolves to ../components/Card.js
     const map = new Map([["@/components/Card.tsx", "/tmp/Card.js"]]);
     const code = `import { Card } from "../components/Card.js";`;
     const result = rewriteLocalImports(code, map, "/project/pages/index.tsx", projectDir);

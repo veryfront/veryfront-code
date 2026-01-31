@@ -176,11 +176,11 @@ export async function promptProjectName(): Promise<string | null> {
   write(SHOW_CURSOR);
   clearLines(lines);
 
-  if (result) {
-    console.log();
-    console.log("  " + bold("Project name") + " " + brand(result));
-    console.log();
-  }
+  if (!result) return result;
+
+  console.log();
+  console.log("  " + bold("Project name") + " " + brand(result));
+  console.log();
 
   return result;
 }
@@ -200,7 +200,9 @@ export async function showMainMenu(): Promise<MenuAction | null> {
     lines = 3;
 
     for (let i = 0; i < MENU_OPTIONS.length; i++) {
-      const opt = MENU_OPTIONS[i]!;
+      const opt = MENU_OPTIONS[i];
+      if (!opt) continue;
+
       const selected = i === idx;
       const pointer = selected ? brand("❯") : " ";
       const label = selected ? brand(opt.label) : opt.label;
@@ -258,14 +260,14 @@ export async function showMainMenu(): Promise<MenuAction | null> {
   write(SHOW_CURSOR);
   clearLines(lines);
 
-  if (result && result !== "exit") {
-    const selected = MENU_OPTIONS.find((o) => o.id === result);
-    if (selected) {
-      console.log();
-      console.log("  " + bold(brand("Veryfront")) + "  " + brand(selected.label));
-      console.log();
-    }
-  }
+  if (!result || result === "exit") return result;
+
+  const selected = MENU_OPTIONS.find((o) => o.id === result);
+  if (!selected) return result;
+
+  console.log();
+  console.log("  " + bold(brand("Veryfront")) + "  " + brand(selected.label));
+  console.log();
 
   return result;
 }

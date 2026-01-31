@@ -69,7 +69,9 @@ describe("schemas", () => {
     });
 
     it("should accept all file types", () => {
-      for (const type of ["page", "function", "component", "file"]) {
+      const types = ["page", "function", "component", "file"] as const;
+
+      for (const type of types) {
         const result = ProjectFileSchema.safeParse({
           path: "test.ts",
           size: 100,
@@ -244,9 +246,10 @@ describe("schemas", () => {
         "listReleaseFiles",
         "getReleaseFile",
         "lookupDomain",
-      ];
+      ] as const;
+
       for (const key of expectedKeys) {
-        assertExists((API_ENDPOINTS as Record<string, unknown>)[key]);
+        assertExists(API_ENDPOINTS[key]);
       }
     });
 

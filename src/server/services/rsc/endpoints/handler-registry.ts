@@ -31,9 +31,7 @@ let cacheRegistered = false;
 let injectedCache: HandlerCache<RSCDevServerHandler> | null = null;
 
 function getHandlersCache(): HandlerCache<RSCDevServerHandler> {
-  // Use injected cache if available (for testing)
   if (injectedCache) return injectedCache;
-
   if (rscHandlersByProject) return rscHandlersByProject;
 
   rscHandlersByProject = new LRUCache<string, RSCDevServerHandler>({
@@ -64,21 +62,6 @@ export function getRSCHandler(projectDir: string): RSCDevServerHandler {
   return handler;
 }
 
-/**
- * Inject a custom cache for testing.
- * Call with null to restore default behavior.
- *
- * @example
- * ```typescript
- * const mockCache = new Map<string, RSCDevServerHandler>();
- * __injectCacheForTests({
- *   get: (key) => mockCache.get(key),
- *   set: (key, value) => { mockCache.set(key, value); },
- *   clear: () => mockCache.clear(),
- *   get size() { return mockCache.size; },
- * });
- * ```
- */
 export function __injectCacheForTests(
   cache: HandlerCache<RSCDevServerHandler> | null,
 ): void {
@@ -86,11 +69,8 @@ export function __injectCacheForTests(
 }
 
 export function __resetRSCHandlerForTests(): void {
-  if (injectedCache) {
-    injectedCache.clear();
-  } else {
-    rscHandlersByProject?.clear();
-  }
+  const cache = injectedCache ?? rscHandlersByProject;
+  cache?.clear();
 }
 
 export function __destroyRSCHandlerForTests(): void {

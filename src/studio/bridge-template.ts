@@ -16,7 +16,6 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   const DATA_VF_SELECTOR = 'data-vf-selector';
   const DATA_VF_TEXT = 'data-vf-text';
   const DATA_VF_IGNORE = 'data-vf-ignore';
-  const DATA_VF_SELECTION = 'data-vf-selection';
 
   const DATA_NODE_ID = 'data-node-id';
   const DATA_NODE_LINE = 'data-node-line';
@@ -297,8 +296,14 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         type: getNodeType(el),
         path: PAGE_PATH,
         parentId: parentId,
-        start: { line: parseInt(el.getAttribute(DATA_NODE_LINE) || '0', 10), column: parseInt(el.getAttribute(DATA_NODE_COLUMN) || '0', 10) },
-        end: { line: parseInt(el.getAttribute(DATA_NODE_END_LINE) || '0', 10), column: parseInt(el.getAttribute(DATA_NODE_END_COLUMN) || '0', 10) },
+        start: {
+          line: parseInt(el.getAttribute(DATA_NODE_LINE) || '0', 10),
+          column: parseInt(el.getAttribute(DATA_NODE_COLUMN) || '0', 10)
+        },
+        end: {
+          line: parseInt(el.getAttribute(DATA_NODE_END_LINE) || '0', 10),
+          column: parseInt(el.getAttribute(DATA_NODE_END_COLUMN) || '0', 10)
+        },
         children: [],
         text: el.hasAttribute(DATA_VF_TEXT) ? el.textContent?.trim() : undefined,
         isRemote: false
@@ -330,8 +335,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   }
 
   function createTreeSignature(root) {
-    const allElements = root.querySelectorAll('*');
-    const validElements = Array.from(allElements).filter(el => isValidElement(el));
+    const validElements = Array.from(root.querySelectorAll('*')).filter(el => isValidElement(el));
     return validElements.length + '-' + validElements.map(el => el.tagName).join('');
   }
 
@@ -373,34 +377,27 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     sendTreeUpdate();
   }
 
-  function showHoverOverlay(nodeId) {
+  function showOverlay(overlay, nodeId) {
     if (!nodeId) {
-      hideOverlay(hoverOverlay);
+      hideOverlay(overlay);
       return;
     }
 
     const el = findElementById(nodeId);
     if (!el) {
-      hideOverlay(hoverOverlay);
+      hideOverlay(overlay);
       return;
     }
 
-    positionOverlay(hoverOverlay, el, getNodeName(el));
+    positionOverlay(overlay, el, getNodeName(el));
+  }
+
+  function showHoverOverlay(nodeId) {
+    showOverlay(hoverOverlay, nodeId);
   }
 
   function showSelectionOverlay(nodeId) {
-    if (!nodeId) {
-      hideOverlay(selectionOverlay);
-      return;
-    }
-
-    const el = findElementById(nodeId);
-    if (!el) {
-      hideOverlay(selectionOverlay);
-      return;
-    }
-
-    positionOverlay(selectionOverlay, el, getNodeName(el));
+    showOverlay(selectionOverlay, nodeId);
   }
 
   function scrollToElement(nodeId) {
@@ -581,7 +578,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     if (!isFromStudio(event)) return;
 
     const message = event.data;
-    if (!message || !message.action) return;
+    if (!message?.action) return;
 
     switch (message.action) {
       case 'routeChange':
@@ -609,14 +606,15 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
       case 'toggleInspectMode':
         inspectMode = message.value;
-        if (!inspectMode) {
-          hideOverlay(hoverOverlay);
-          hoveredNodeId = null;
-          if (message.deselectElements) {
-            hideOverlay(selectionOverlay);
-            selectedNodeId = null;
-          }
-        }
+        if (inspectMode) return;
+
+        hideOverlay(hoverOverlay);
+        hoveredNodeId = null;
+
+        if (!message.deselectElements) return;
+
+        hideOverlay(selectionOverlay);
+        selectedNodeId = null;
         return;
 
       case 'setSelectedNode':

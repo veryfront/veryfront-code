@@ -21,7 +21,10 @@ type ClickUpList = {
   archived: boolean;
 };
 
-function mapList(list: ClickUpList, folderName?: string): {
+function mapList(
+  list: ClickUpList,
+  folderName?: string,
+): {
   id: string;
   name: string;
   taskCount: number;
@@ -38,9 +41,9 @@ function mapList(list: ClickUpList, folderName?: string): {
     name: list.name,
     taskCount: list.task_count,
     dueDate: list.due_date ? new Date(parseInt(list.due_date)).toISOString() : null,
-    status: list.status?.status || "active",
-    priority: list.priority?.priority || "none",
-    assignee: list.assignee?.username || null,
+    status: list.status?.status ?? "active",
+    priority: list.priority?.priority ?? "none",
+    assignee: list.assignee?.username ?? null,
     folder: folderName ?? list.folder.name,
     space: list.space.name,
     archived: list.archived,
@@ -49,7 +52,8 @@ function mapList(list: ClickUpList, folderName?: string): {
 
 export default tool({
   id: "list-lists",
-  description: "List all lists in ClickUp. Can filter by folder or space. Lists are containers for tasks.",
+  description:
+    "List all lists in ClickUp. Can filter by folder or space. Lists are containers for tasks.",
   inputSchema: z.object({
     folderId: z.string().optional().describe("Folder ID to list lists from"),
     spaceId: z.string().optional().describe("Space ID to list folderless lists from"),
@@ -61,12 +65,12 @@ export default tool({
   async execute({ folderId, spaceId, includeAll }) {
     if (folderId) {
       const lists = await listLists(folderId);
-      return lists.map((list) => mapList(list));
+      return lists.map(mapList);
     }
 
     if (spaceId) {
       const lists = await listFolderlessLists(spaceId);
-      return lists.map((list) => mapList(list));
+      return lists.map(mapList);
     }
 
     if (!includeAll) {

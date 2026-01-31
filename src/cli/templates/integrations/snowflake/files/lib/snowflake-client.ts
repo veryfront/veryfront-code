@@ -121,21 +121,17 @@ async function snowflakeFetch<T>(
     },
   });
 
-  if (response.ok) {
-    return await response.json();
-  }
+  if (response.ok) return await response.json();
 
-  const errorData = (await response.json().catch(() => ({}))) as Partial<
-    SnowflakeError
-  >;
+  const errorData = (await response.json().catch(() => ({}))) as Partial<SnowflakeError>;
   const errorMessage =
     errorData.message ??
-      `Snowflake API error: ${response.status} ${response.statusText}`;
+    `Snowflake API error: ${response.status} ${response.statusText}`;
 
   const err: SnowflakeError = new Error(errorMessage);
   err.code = errorData.code;
   err.sqlState = errorData.sqlState;
-  throw error;
+  throw err;
 }
 
 async function submitStatement(
@@ -182,9 +178,7 @@ export async function cancelQuery(statementHandle: string): Promise<void> {
   });
 }
 
-function transformResults(
-  result: SnowflakeQueryResult,
-): Record<string, unknown>[] {
+function transformResults(result: SnowflakeQueryResult): Record<string, unknown>[] {
   if (result.data.length === 0) return [];
 
   const columns = result.resultSetMetaData.rowType.map((col) => col.name);

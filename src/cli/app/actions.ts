@@ -1,9 +1,9 @@
-/**
+/**************************
  * CLI App Actions
  *
  * Handlers for opening projects in browser, Studio, and IDE.
  * Uses cross-runtime platform abstractions for filesystem and command execution.
- */
+ **************************/
 
 import { openBrowser } from "../auth/browser.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -19,7 +19,6 @@ export interface ActionResult {
   message?: string;
 }
 
-/** IDE command-line executables */
 const IDE_COMMANDS: Record<IDE, string> = {
   cursor: "cursor",
   code: "code",
@@ -28,7 +27,6 @@ const IDE_COMMANDS: Record<IDE, string> = {
   webstorm: "webstorm",
 };
 
-/** IDE display names */
 const IDE_NAMES: Record<IDE, string> = {
   cursor: "Cursor",
   code: "VS Code",
@@ -37,10 +35,8 @@ const IDE_NAMES: Record<IDE, string> = {
   webstorm: "WebStorm",
 };
 
-/** IDE detection order (preferred first) */
 const IDE_DETECTION_ORDER: IDE[] = ["cursor", "code", "zed", "idea", "webstorm"];
 
-/** Cache directories to clear relative to project path */
 const PROJECT_CACHE_DIRS = [".cache", "node_modules/.cache"];
 
 function formatError(error: unknown): string {
@@ -48,8 +44,9 @@ function formatError(error: unknown): string {
 }
 
 async function commandExists(cmd: string): Promise<boolean> {
+  const whichCmd = getOsType() === "windows" ? "where" : "which";
+
   try {
-    const whichCmd = getOsType() === "windows" ? "where" : "which";
     const result = await runCommand(whichCmd, { args: [cmd] });
     return result.success;
   } catch {
@@ -107,7 +104,6 @@ export async function getPreferredIDE(): Promise<IDE | null> {
 
 async function openPathInIDE(path: string, ide?: IDE): Promise<ActionResult> {
   const targetIDE = ide ?? (await getPreferredIDE());
-
   if (!targetIDE) {
     return {
       success: false,
@@ -118,11 +114,10 @@ async function openPathInIDE(path: string, ide?: IDE): Promise<ActionResult> {
   const cmd = IDE_COMMANDS[targetIDE];
   const name = IDE_NAMES[targetIDE];
 
-  if (await runCommandLocal(cmd, [path])) {
-    return { success: true, message: `Opened in ${name}` };
-  }
-
-  return { success: false, message: `Failed to open ${name}` };
+  const success = await runCommandLocal(cmd, [path]);
+  return success
+    ? { success: true, message: `Opened in ${name}` }
+    : { success: false, message: `Failed to open ${name}` };
 }
 
 export async function openInIDE(project: ProjectInfo, ide?: IDE): Promise<ActionResult> {
@@ -156,7 +151,7 @@ export async function clearProjectCache(project: ProjectInfo): Promise<ActionRes
 }
 
 export async function openMCPSettings(env: RuntimeEnv = getRuntimeEnv()): Promise<ActionResult> {
-  const home = env.homeDir || "";
+  const home = env.homeDir ?? "";
   const claudeDir = join(home, ".claude");
   const settingsPath = join(claudeDir, "settings.json");
   const fs = createFileSystem();
@@ -168,8 +163,7 @@ export async function openMCPSettings(env: RuntimeEnv = getRuntimeEnv()): Promis
   }
 
   if (!(await fs.exists(settingsPath))) {
-    const defaultSettings = { mcpServers: {} };
-    await fs.writeTextFile(settingsPath, JSON.stringify(defaultSettings, null, 2));
+    await fs.writeTextFile(settingsPath, JSON.stringify({ mcpServers: {} }, null, 2));
   }
 
   return openFileInIDE(settingsPath);
@@ -185,6 +179,9 @@ export function quickOpen(
     return Promise.resolve({ success: false, message: `No project at position ${num}` });
   }
 
-  const project = projects[index]!;
+  const project = projects[index];
+  if (!project) {
+    return Promise.resolve({ success: false, message: `No project at position ${num}` });
+  }
   return openInBrowser({ slug: project.slug, path: project.path, type: "local" }, port);
 }

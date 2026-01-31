@@ -16,14 +16,12 @@ describe("ServerDataFetcher", () => {
 
   describe("constructor", () => {
     it("should create instance without adapter", () => {
-      const fetcher = new ServerDataFetcher();
-      assertExists(fetcher);
+      assertExists(new ServerDataFetcher());
     });
 
     it("should create instance with adapter", () => {
       const mockAdapter = { env: { get: () => undefined } } as any;
-      const fetcher = new ServerDataFetcher(mockAdapter);
-      assertExists(fetcher);
+      assertExists(new ServerDataFetcher(mockAdapter));
     });
   });
 
@@ -66,10 +64,8 @@ describe("ServerDataFetcher", () => {
       };
 
       const result = await fetcher.fetch(pageModule, createContext());
-      const props = result.props as { title: string; count: number };
 
-      assertEquals(props.title, "Hello");
-      assertEquals(props.count, 42);
+      assertEquals(result.props, { title: "Hello", count: 42 });
     });
 
     it("should handle redirect result", async () => {
@@ -183,7 +179,7 @@ describe("ServerDataFetcher", () => {
 
       const result = await fetcher.fetch(pageModule, createContext());
 
-      assertEquals((result.props as { sync: boolean }).sync, true);
+      assertEquals(result.props, { sync: true });
     });
 
     it("should pass request object in context", async () => {

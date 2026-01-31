@@ -49,16 +49,14 @@ export const vfGetErrors: MCPTool<GetErrorsInput, DevError[]> = {
   description:
     "Get compilation, runtime, and build errors from the dev server. Use this to debug issues with your code.",
   inputSchema: getErrorsInput,
-  execute: (input) => {
+  execute: async (input) => {
     const errors = getErrorCollector().getAll({
       type: input.type as ErrorType | undefined,
       file: input.file,
     });
 
-    if (input.limit && errors.length > input.limit) {
-      return Promise.resolve(errors.slice(-input.limit));
-    }
-    return Promise.resolve(errors);
+    if (input.limit && errors.length > input.limit) return errors.slice(-input.limit);
+    return errors;
   },
 };
 
@@ -79,16 +77,14 @@ export const vfGetLogs: MCPTool<GetLogsInput, LogEntry[]> = {
   description:
     "Get recent server logs. Use this to understand what the server is doing and debug runtime issues.",
   inputSchema: getLogsInput,
-  execute: (input) => {
-    return Promise.resolve(
-      getLogBuffer().query({
-        level: input.level as LogLevel | undefined,
-        source: input.source,
-        pattern: input.pattern,
-        limit: input.limit,
-        since: input.since,
-      }),
-    );
+  execute: async (input) => {
+    return getLogBuffer().query({
+      level: input.level as LogLevel | undefined,
+      source: input.source,
+      pattern: input.pattern,
+      limit: input.limit,
+      since: input.since,
+    });
   },
 };
 
@@ -150,13 +146,13 @@ export function createVfGetStatus(
     name: "vf_get_status",
     description: "Get the current status of the dev server including error counts and uptime.",
     inputSchema: getStatusInput,
-    execute: () => {
+    execute: async () => {
       const errors = getErrorCollector();
       const logs = getLogBuffer();
       const counts = errors.countByType();
       const port = env.port ?? DEFAULT_PORT;
 
-      return Promise.resolve({
+      return {
         running: true,
         url: `http://veryfront.me:${port}`,
         port,
@@ -164,7 +160,7 @@ export function createVfGetStatus(
         warningCount: logs.query({ level: "warn" }).length,
         logCount: logs.count,
         uptime: Date.now() - serverStartTime,
-      });
+      };
     },
   };
 }
@@ -188,17 +184,15 @@ export const vfClearErrors: MCPTool<ClearErrorsInput, ClearErrorsOutput> = {
   name: "vf_clear_errors",
   description: "Clear errors from the error collector. Useful after fixing issues.",
   inputSchema: clearErrorsInput,
-  execute: (input) => {
+  execute: async (input) => {
     const collector = getErrorCollector();
 
-    if (input.file) return Promise.resolve({ cleared: collector.clearFile(input.file) });
-    if (input.type) {
-      return Promise.resolve({ cleared: collector.clearType(input.type as ErrorType) });
-    }
+    if (input.file) return { cleared: collector.clearFile(input.file) };
+    if (input.type) return { cleared: collector.clearType(input.type as ErrorType) };
 
     const cleared = collector.count;
     collector.clear();
-    return Promise.resolve({ cleared });
+    return { cleared };
   },
 };
 

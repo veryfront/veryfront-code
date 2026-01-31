@@ -332,8 +332,7 @@ describe.skip = function skip(
     return;
   }
 
-  if (!_impl) throw new Error("BDD implementation not initialized");
-  _impl.describe({ name, ignore: true }, testFn);
+  requireImpl().describe({ name, ignore: true }, testFn);
 };
 
 describe.ignore = describe.skip;
@@ -350,8 +349,7 @@ describe.only = function only(
     return;
   }
 
-  if (!_impl) throw new Error("BDD implementation not initialized");
-  _impl.describe({ name, only: true }, testFn);
+  requireImpl().describe({ name, only: true }, testFn);
 };
 
 export function it(
@@ -388,8 +386,7 @@ it.skip = function skip(
     return;
   }
 
-  if (!_impl) throw new Error("BDD implementation not initialized");
-  _impl.it({ name, ignore: true }, testFn);
+  requireImpl().it({ name, ignore: true }, testFn);
 };
 
 it.ignore = it.skip;
@@ -406,8 +403,7 @@ it.only = function only(
     return;
   }
 
-  if (!_impl) throw new Error("BDD implementation not initialized");
-  _impl.it({ name, only: true }, testFn);
+  requireImpl().it({ name, only: true }, testFn);
 };
 
 export function beforeEach(fn: HookFn): void {
@@ -415,8 +411,7 @@ export function beforeEach(fn: HookFn): void {
     denoBdd.beforeEach(fn);
     return;
   }
-  if (!_impl) throw new Error("BDD implementation not initialized");
-  _impl.beforeEach(fn);
+  requireImpl().beforeEach(fn);
 }
 
 export function afterEach(fn: HookFn): void {
@@ -424,8 +419,7 @@ export function afterEach(fn: HookFn): void {
     denoBdd.afterEach(fn);
     return;
   }
-  if (!_impl) throw new Error("BDD implementation not initialized");
-  _impl.afterEach(fn);
+  requireImpl().afterEach(fn);
 }
 
 export function beforeAll(fn: HookFn): void {
@@ -433,8 +427,7 @@ export function beforeAll(fn: HookFn): void {
     denoBdd.beforeAll(fn);
     return;
   }
-  if (!_impl) throw new Error("BDD implementation not initialized");
-  _impl.beforeAll(fn);
+  requireImpl().beforeAll(fn);
 }
 
 export function afterAll(fn: HookFn): void {
@@ -442,8 +435,7 @@ export function afterAll(fn: HookFn): void {
     denoBdd.afterAll(fn);
     return;
   }
-  if (!_impl) throw new Error("BDD implementation not initialized");
-  _impl.afterAll(fn);
+  requireImpl().afterAll(fn);
 }
 
 export const test = it;

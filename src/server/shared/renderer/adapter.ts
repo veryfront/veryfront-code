@@ -1,4 +1,4 @@
-/**
+/**************************
  * Renderer Adapter
  *
  * Adapts the shared Renderer to work with handler contexts.
@@ -6,7 +6,7 @@
  * to a specific project context.
  *
  * @module server/shared/renderer/adapter
- */
+ **************************/
 
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getConfig } from "#veryfront/config";
@@ -20,7 +20,7 @@ import {
   initializeRenderer,
   isRendererInitialized,
   type RenderContext,
-  Renderer,
+  type Renderer,
   type RendererOptions,
 } from "../../../rendering/renderer.ts";
 import type {
@@ -95,16 +95,16 @@ function resolveEnvironment(ctx: HandlerContext): "preview" | "production" {
   if (ctx.resolvedEnvironment) return ctx.resolvedEnvironment;
 
   const domainEnv = ctx.parsedDomain?.environment;
+  if (domainEnv === "production") return "production";
   if (domainEnv === "staging" || domainEnv === "development" || domainEnv === "preview") {
     return "preview";
   }
-  if (domainEnv === "production") return "production";
 
   return ctx.requestContext?.mode ?? "preview";
 }
 
 async function createContextFromHandler(ctx: HandlerContext): Promise<RenderContext> {
-  const projectSlug = ctx.projectSlug || "unknown";
+  const projectSlug = ctx.projectSlug ?? "unknown";
 
   if (ctx.enriched) {
     logger.debug("[RendererAdapter] Using pre-built EnrichedContext", { projectSlug });
@@ -112,9 +112,8 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
   }
 
   let config = ctx.config;
-
   if (!config) {
-    const cacheKey = ctx.projectId || ctx.projectSlug;
+    const cacheKey = ctx.projectId ?? ctx.projectSlug;
     logger.debug("[RendererAdapter] Loading config from adapter START", {
       projectDir: ctx.projectDir,
       projectSlug,
@@ -163,7 +162,7 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
     debug: ctx.debug,
   });
 
-  (ctx as { enriched?: typeof enriched }).enriched = enriched;
+  ctx.enriched = enriched;
 
   const renderContext = createRenderContextFromEnriched(enriched);
   logger.debug("[RendererAdapter] createRenderContext DONE (built EnrichedContext)", {
@@ -212,8 +211,8 @@ class RendererAdapterImpl implements RendererAdapter {
     logger.warn("[RendererAdapter] getVirtualModuleSystem called - not supported");
     return {
       handleRequest: () => null,
-      register: () => Promise.resolve(""),
-      registerModule: () => Promise.resolve(""),
+      register: async () => "",
+      registerModule: async () => "",
       getModule: () => undefined,
       clear: () => {},
     };
@@ -248,7 +247,7 @@ class RendererAdapterImpl implements RendererAdapter {
 
 export async function getRendererForProject(ctx: HandlerContext): Promise<RendererAdapter> {
   const startTime = performance.now();
-  const projectSlug = ctx.projectSlug || "unknown";
+  const projectSlug = ctx.projectSlug ?? "unknown";
 
   logger.debug("[RendererAdapter] getRendererForProject START", {
     projectSlug,

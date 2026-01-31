@@ -23,14 +23,9 @@ export default tool({
   async execute({ database, schema, table, includeRowCount }) {
     const description = await describeTable(database, schema, table);
 
-    let rowCount: number | null = null;
-    if (includeRowCount) {
-      try {
-        rowCount = await getTableRowCount(database, schema, table);
-      } catch {
-        rowCount = null;
-      }
-    }
+    const rowCount = includeRowCount
+      ? await getTableRowCount(database, schema, table).catch(() => null)
+      : null;
 
     return {
       database,

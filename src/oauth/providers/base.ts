@@ -78,13 +78,8 @@ export class OAuthProvider {
       redirect_uri: redirectUri,
       response_type: "code",
       state,
-      ...(scopes.length > 0 ? { scope: scopes.join(" ") } : {}),
-      ...(codeChallenge
-        ? {
-          code_challenge: codeChallenge,
-          code_challenge_method: "S256",
-        }
-        : {}),
+      ...(scopes.length ? { scope: scopes.join(" ") } : {}),
+      ...(codeChallenge ? { code_challenge: codeChallenge, code_challenge_method: "S256" } : {}),
       ...this.config.additionalAuthParams,
       ...options.additionalParams,
     });
@@ -156,6 +151,44 @@ export class OAuthProvider {
     return { response, data };
   }
 
+  private buildClientCredentialsParams(
+    clientId: string,
+    clientSecret: string,
+  ): Record<string, string> {
+    if (this.config.useBasicAuth) return {};
+    return { client_id: clientId, client_secret: clientSecret };
+  }
+
+  private async exchangeToken(
+    body: URLSearchParams,
+    clientId: string,
+    clientSecret: string,
+    errorFallback: string,
+    errorDescriptionFallback?: (status: number) => string,
+    fallbackRefreshToken?: string,
+  ): Promise<TokenExchangeResult> {
+    try {
+      const { response, data } = await this.postTokenRequest(body, clientId, clientSecret);
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error || errorFallback,
+          errorDescription: data.error_description ||
+            (errorDescriptionFallback ? errorDescriptionFallback(response.status) : undefined),
+        };
+      }
+
+      return { success: true, tokens: this.parseTokenResponse(data, fallbackRefreshToken) };
+    } catch (error) {
+      return {
+        success: false,
+        error: "network_error",
+        errorDescription: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+
   async exchangeCode(options: TokenExchangeOptions): Promise<TokenExchangeResult> {
     const clientId = this.getClientId();
     const clientSecret = this.getClientSecret();
@@ -174,34 +207,17 @@ export class OAuthProvider {
       code: options.code,
       redirect_uri: options.redirectUri,
       ...(options.codeVerifier ? { code_verifier: options.codeVerifier } : {}),
-      ...(!this.config.useBasicAuth
-        ? {
-          client_id: clientId,
-          client_secret: clientSecret,
-        }
-        : {}),
+      ...this.buildClientCredentialsParams(clientId, clientSecret),
       ...this.config.additionalTokenParams,
     });
 
-    try {
-      const { response, data } = await this.postTokenRequest(body, clientId, clientSecret);
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || "token_exchange_failed",
-          errorDescription: data.error_description || `Status ${response.status}`,
-        };
-      }
-
-      return { success: true, tokens: this.parseTokenResponse(data) };
-    } catch (error) {
-      return {
-        success: false,
-        error: "network_error",
-        errorDescription: error instanceof Error ? error.message : "Unknown error",
-      };
-    }
+    return this.exchangeToken(
+      body,
+      clientId,
+      clientSecret,
+      "token_exchange_failed",
+      (status) => `Status ${status}`,
+    );
   }
 
   async refreshTokens(refreshToken: string): Promise<TokenExchangeResult> {
@@ -215,37 +231,21 @@ export class OAuthProvider {
     const body = new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshToken,
-      ...(!this.config.useBasicAuth
-        ? {
-          client_id: clientId,
-          client_secret: clientSecret,
-        }
-        : {}),
+      ...this.buildClientCredentialsParams(clientId, clientSecret),
     });
 
-    try {
-      const { response, data } = await this.postTokenRequest(body, clientId, clientSecret);
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || "refresh_failed",
-          errorDescription: data.error_description,
-        };
-      }
-
-      return { success: true, tokens: this.parseTokenResponse(data, refreshToken) };
-    } catch (error) {
-      return {
-        success: false,
-        error: "network_error",
-        errorDescription: error instanceof Error ? error.message : "Unknown error",
-      };
-    }
+    return this.exchangeToken(
+      body,
+      clientId,
+      clientSecret,
+      "refresh_failed",
+      undefined,
+      refreshToken,
+    );
   }
 
   async revokeToken(token: string): Promise<boolean> {
-    const revocationUrl = this.config.revocationUrl;
+    const { revocationUrl } = this.config;
     if (!revocationUrl) return false;
 
     try {

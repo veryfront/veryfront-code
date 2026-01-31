@@ -69,10 +69,7 @@ describe("MemoryRateLimitStore", () => {
 });
 
 describe("rateLimit middleware", () => {
-  function createContext(
-    ip: string = "127.0.0.1",
-    path: string = "/",
-  ): MiddlewareContext {
+  function createContext(ip: string = "127.0.0.1", path: string = "/"): MiddlewareContext {
     return new MiddlewareContext(
       new Request(`https://example.com${path}`, {
         headers: { "x-forwarded-for": ip },
@@ -98,12 +95,13 @@ describe("rateLimit middleware", () => {
     const middleware = rateLimit({ maxRequests: 2, windowMs: 60000 });
 
     for (let i = 0; i < 2; i++) {
-      const ctx = createContext("same-ip");
-      await middleware(ctx, () => Promise.resolve(new Response("OK")));
+      await middleware(createContext("same-ip"), () => Promise.resolve(new Response("OK")));
     }
 
-    const ctx = createContext("same-ip");
-    const response = await middleware(ctx, () => Promise.resolve(new Response("OK")));
+    const response = await middleware(
+      createContext("same-ip"),
+      () => Promise.resolve(new Response("OK")),
+    );
 
     assertEquals(response?.status, 429);
     assertExists(response?.headers.get("Retry-After"));
@@ -111,18 +109,14 @@ describe("rateLimit middleware", () => {
 
   it("should accept numeric arguments (legacy API)", async () => {
     const middleware = rateLimit(3, 60000);
-    const ctx = createContext();
-
-    const response = await middleware(ctx, () => Promise.resolve(new Response("OK")));
+    const response = await middleware(createContext(), () => Promise.resolve(new Response("OK")));
 
     assertEquals(response?.status, 200);
   });
 
   it("should use default values when no options provided", async () => {
     const middleware = rateLimit();
-    const ctx = createContext();
-
-    const response = await middleware(ctx, () => Promise.resolve(new Response("OK")));
+    const response = await middleware(createContext(), () => Promise.resolve(new Response("OK")));
 
     assertEquals(response?.status, 200);
   });
@@ -152,15 +146,18 @@ describe("rateLimit middleware", () => {
   it("should track different IPs separately", async () => {
     const middleware = rateLimit({ maxRequests: 1, windowMs: 60000 });
 
-    const ctx1 = createContext("ip-1");
-    await middleware(ctx1, () => Promise.resolve(new Response("OK")));
+    await middleware(createContext("ip-1"), () => Promise.resolve(new Response("OK")));
 
-    const ctx2 = createContext("ip-1");
-    const response1 = await middleware(ctx2, () => Promise.resolve(new Response("OK")));
+    const response1 = await middleware(
+      createContext("ip-1"),
+      () => Promise.resolve(new Response("OK")),
+    );
     assertEquals(response1?.status, 429);
 
-    const ctx3 = createContext("ip-2");
-    const response2 = await middleware(ctx3, () => Promise.resolve(new Response("OK")));
+    const response2 = await middleware(
+      createContext("ip-2"),
+      () => Promise.resolve(new Response("OK")),
+    );
     assertEquals(response2?.status, 200);
   });
 });

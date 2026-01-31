@@ -75,10 +75,7 @@ export function build(
   return buildResponse(this, body, status);
 }
 
-export function notModified(
-  this: ResponseMethodsContext,
-  etag?: string,
-): Response {
+export function notModified(this: ResponseMethodsContext, etag?: string): Response {
   if (etag) this.headers.set("ETag", etag);
 
   return new Response(null, {

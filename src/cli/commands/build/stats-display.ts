@@ -9,22 +9,23 @@ export function displayBuildSuccess(
   dryRun: boolean,
 ): void {
   const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+  const separator = dim("─".repeat(40));
 
   cliLogger.info(`\n${green("✓")}${bold(green(" Build completed successfully!\n"))}`);
 
   cliLogger.info(cyan("📊 Build Statistics"));
-  cliLogger.info(dim("─".repeat(40)));
+  cliLogger.info(separator);
   cliLogger.info(`  Pages       ${bold(String(stats.pages).padStart(6))} files`);
   cliLogger.info(`  Chunks      ${bold(String(stats.chunks).padStart(6))} files`);
   cliLogger.info(`  Assets      ${bold(String(stats.assets).padStart(6))} files`);
-  cliLogger.info(dim("─".repeat(40)));
+  cliLogger.info(separator);
   cliLogger.info(
     `  Total size  ${bold((stats.totalSize / 1024 / 1024).toFixed(2).padStart(6))} MB`,
   );
   cliLogger.info(`  Build time  ${bold(duration.padStart(6))} seconds`);
   cliLogger.info("");
 
-  if (dryRun && Array.isArray(stats.ssgPaths)) {
+  if (dryRun && stats.ssgPaths?.length) {
     cliLogger.info(yellow("📝 SSG routes that would be generated:"));
     for (const p of stats.ssgPaths) cliLogger.info(`  ${dim("•")} ${p}`);
     cliLogger.info("");

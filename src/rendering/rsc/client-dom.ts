@@ -5,13 +5,12 @@ import { RSC_ROOT_ID } from "./constants.ts";
 export type SlotMessage = { type: "slot"; id: string; html: string };
 
 export function getContainer(doc: Document, id: string): HTMLElement {
-  const isRoot = id === "root";
-  const elementId = isRoot ? RSC_ROOT_ID : `rsc-slot-${id}`;
+  const elementId = id === "root" ? RSC_ROOT_ID : `rsc-slot-${id}`;
 
-  let el = doc.getElementById(elementId) as HTMLElement | null;
-  if (el) return el;
+  const existing = doc.getElementById(elementId);
+  if (existing) return existing as HTMLElement;
 
-  el = doc.createElement("div");
+  const el = doc.createElement("div");
   el.id = elementId;
   doc.body.appendChild(el);
   return el;
@@ -26,7 +25,6 @@ export function applySlotMessage(doc: Document, msg: SlotMessage): void {
 }
 
 export function processNdjsonChunk(doc: Document, buffered: string): string {
-  // Split into lines; keep last fragment unprocessed
   const parts = buffered.split("\n");
   const remainder = parts.pop() ?? "";
 
@@ -34,7 +32,7 @@ export function processNdjsonChunk(doc: Document, buffered: string): string {
     const s = line.trim();
     if (!s) continue;
 
-    let msg: SlotMessage | null = null;
+    let msg: SlotMessage;
     try {
       msg = JSON.parse(s) as SlotMessage;
     } catch (e) {
@@ -45,7 +43,7 @@ export function processNdjsonChunk(doc: Document, buffered: string): string {
       continue;
     }
 
-    if (!msg || msg.type !== "slot") continue;
+    if (msg.type !== "slot") continue;
 
     applySlotMessage(doc, msg);
     try {
@@ -59,21 +57,19 @@ export function processNdjsonChunk(doc: Document, buffered: string): string {
 }
 
 export function processNdjsonLines(doc: Document, ndjson: string): void {
-  // Ensure trailing newline so the final line is flushed
   processNdjsonChunk(doc, ndjson.endsWith("\n") ? ndjson : `${ndjson}\n`);
 }
 
 function createAbortPromise(signal: AbortSignal): Promise<never> {
   return new Promise<never>((_, reject) => {
+    const abort = (): void => reject(new DOMException("aborted", "AbortError"));
+
     if (signal.aborted) {
-      reject(new DOMException("aborted", "AbortError"));
+      abort();
       return;
     }
-    signal.addEventListener(
-      "abort",
-      () => reject(new DOMException("aborted", "AbortError")),
-      { once: true },
-    );
+
+    signal.addEventListener("abort", abort, { once: true });
   });
 }
 
@@ -83,7 +79,7 @@ export async function consumeNdjsonStream(
   signal?: AbortSignal,
 ): Promise<void> {
   const response = "body" in input ? input : null;
-  const stream = response ? response.body : (input as ReadableStream<Uint8Array>);
+  const stream = response?.body ?? (input as ReadableStream<Uint8Array>);
   if (!stream) return;
 
   const reader = stream.getReader();
@@ -96,11 +92,10 @@ export async function consumeNdjsonStream(
       if (signal?.aborted) throw new DOMException("aborted", "AbortError");
 
       const readPromise = reader.read();
-      const result = signal
+      const { done, value } = signal
         ? await Promise.race([readPromise, createAbortPromise(signal)])
         : await readPromise;
 
-      const { done, value } = result;
       if (done) {
         streamFinished = true;
         break;
@@ -112,7 +107,6 @@ export async function consumeNdjsonStream(
 
     if (buffer) processNdjsonChunk(doc, `${buffer}\n`);
   } catch (e) {
-    // If aborted, throw AbortError; otherwise rethrow
     if (e instanceof Error && e.name === "AbortError") throw e;
     rscLogger.debug("[client-dom] consumeNdjsonStream error", e);
     throw e;
@@ -137,7 +131,7 @@ export async function consumeNdjsonStream(
       }
     }
 
-    if (response?.body && typeof response.body.cancel === "function") {
+    if (typeof response?.body?.cancel === "function") {
       try {
         await response.body.cancel();
       } catch (e) {

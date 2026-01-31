@@ -15,19 +15,16 @@ export async function getFreePort(): Promise<number> {
   if (isDeno) {
     // @ts-ignore - Deno global
     const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-    // @ts-ignore - Deno.NetAddr
-    const port = (listener.addr as { port: number }).port;
+    const { port } = listener.addr as { port: number };
     listener.close();
     return port;
   }
 
   if (isBun) {
-    const bun = (globalThis as {
-      Bun?: {
-        serve: (options: Record<string, unknown>) => { stop: () => void; port: number };
-      };
-    }).Bun;
+    const bun = (globalThis as { Bun?: { serve: (options: Record<string, unknown>) => { stop: () => void; port: number } } })
+      .Bun;
     if (!bun) throw new Error("Bun global not available");
+
     const server = bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -35,14 +32,14 @@ export async function getFreePort(): Promise<number> {
         return new Response("ok");
       },
     });
-    const port = server.port;
+
+    const { port } = server;
     server.stop();
     return port;
   }
 
-  // Node.js fallback
   const net = await import("node:net");
-  return new Promise<number>((resolve, reject) => {
+  return await new Promise<number>((resolve, reject) => {
     const server = net.createServer();
     server.unref?.();
     server.once("error", reject);
@@ -74,24 +71,23 @@ export function createMockServer(
   handler: (req: Request) => Response | Promise<Response>,
 ): { server: Deno.HttpServer; port: number; hostname: string; url: string } {
   // @ts-ignore - Deno global
-  const server = Deno.serve(
-    { port: 0, hostname: "127.0.0.1", onListen() {} },
-    handler,
-  );
+  const server = Deno.serve({ port: 0, hostname: "127.0.0.1", onListen() {} }, handler);
   const { port, hostname } = server.addr as { port: number; hostname: string };
   return { server, port, hostname, url: `http://${hostname}:${port}` };
 }
 
 export function withEnv(vars: Record<string, string>): () => void {
   const prev: Record<string, string | undefined> = {};
-  for (const [k, v] of Object.entries(vars)) {
-    prev[k] = getEnv(k);
-    setEnv(k, v);
+
+  for (const [key, value] of Object.entries(vars)) {
+    prev[key] = getEnv(key);
+    setEnv(key, value);
   }
+
   return () => {
-    for (const [k, v] of Object.entries(prev)) {
-      if (v === undefined) deleteEnv(k);
-      else setEnv(k, v);
+    for (const [key, value] of Object.entries(prev)) {
+      if (value === undefined) deleteEnv(key);
+      else setEnv(key, value);
     }
   };
 }
@@ -110,10 +106,11 @@ export function withEnv(vars: Record<string, string>): () => void {
 export async function drainEventLoop(cycles = 5, extraDelayMs = 50): Promise<void> {
   for (let i = 0; i < cycles; i++) {
     await Promise.resolve();
-    await new Promise((r) => setTimeout(r, 0));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
+
   if (extraDelayMs > 0) {
-    await new Promise((r) => setTimeout(r, extraDelayMs));
+    await new Promise<void>((resolve) => setTimeout(resolve, extraDelayMs));
   }
 }
 
@@ -133,45 +130,42 @@ export async function assertDrained({
   allowResources?: RegExp[];
   allowOpsDelta?: number;
 } = {}): Promise<void> {
-  // This is Deno-specific - skip in Node.js/Bun
   if (!isDeno) {
     await drainEventLoop(2, delayMs);
     return;
   }
 
   // deno-lint-ignore no-explicit-any
+  const denoAny = Deno as any;
+
   const resourcesFn: (() => Record<number, string>) | null =
-    typeof (Deno as any).resources === "function" ? (Deno as any).resources.bind(Deno) : null;
-  // deno-lint-ignore no-explicit-any
+    typeof denoAny.resources === "function" ? denoAny.resources.bind(Deno) : null;
+
   const metricsFn: (() => { opsDispatched: number; opsCompleted: number }) | null =
-    typeof (Deno as any).metrics === "function" ? (Deno as any).metrics.bind(Deno) : null;
+    typeof denoAny.metrics === "function" ? denoAny.metrics.bind(Deno) : null;
+
+  const isAllowedResource = (name: string): boolean => allowResources.some((re) => re.test(name));
 
   let lastResources: Record<number, string> = {};
   let lastPendingOps = 0;
+
   for (let attempt = 0; attempt <= retries; attempt++) {
     await drainEventLoop(2, delayMs);
-    const res = resourcesFn ? resourcesFn() : {};
-    // filter allowed resource names
-    const leftoverEntries = Object.entries(res).filter(
-      ([, name]) => !allowResources.some((re) => re.test(name)),
-    );
-    const m = metricsFn ? metricsFn() : { opsDispatched: 0, opsCompleted: 0 };
-    const pending = Math.max(0, (m.opsDispatched ?? 0) - (m.opsCompleted ?? 0));
 
-    if (leftoverEntries.length === 0 && pending <= allowOpsDelta) {
-      return; // drained
-    }
-    lastResources = res;
+    const resources = resourcesFn?.() ?? {};
+    const leftoverEntries = Object.entries(resources).filter(([, name]) => !isAllowedResource(name));
+
+    const metrics = metricsFn?.() ?? { opsDispatched: 0, opsCompleted: 0 };
+    const pending = Math.max(0, (metrics.opsDispatched ?? 0) - (metrics.opsCompleted ?? 0));
+
+    if (leftoverEntries.length === 0 && pending <= allowOpsDelta) return;
+
+    lastResources = resources;
     lastPendingOps = pending;
   }
-  const filtered = Object.entries(lastResources).filter(
-    ([, name]) => !allowResources.some((re) => re.test(name)),
-  );
+
+  const filtered = Object.entries(lastResources).filter(([, name]) => !isAllowedResource(name));
   throw new Error(
-    `Event loop not fully drained after retries. resources=${
-      JSON.stringify(
-        filtered,
-      )
-    } pendingOps=${lastPendingOps}`,
+    `Event loop not fully drained after retries. resources=${JSON.stringify(filtered)} pendingOps=${lastPendingOps}`,
   );
 }

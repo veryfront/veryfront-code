@@ -18,35 +18,32 @@ type MDXCompileResult = MdxBundle & {
 };
 
 export class MDXCompiler {
-  private config: MDXCompilerConfig;
-
-  constructor(config: MDXCompilerConfig) {
-    this.config = config;
-  }
+  constructor(private config: MDXCompilerConfig) {}
 
   compileMDX(
     content: string,
     frontmatter?: Record<string, unknown>,
     filePath?: string,
   ): Promise<MDXCompileResult> {
+    const spanAttrs = {
+      "mdx.file_path": filePath ?? "inline",
+      "mdx.content_length": content.length,
+    };
+
     return withSpan(
       SpanNames.MDX_COMPILE,
       async () => {
         const cachedBundle = await withSpan(
           SpanNames.MDX_CACHE_GET,
           () => this.config.mdxCacheAdapter.getCachedBundle(content, frontmatter, filePath),
-          { "mdx.file_path": filePath ?? "inline", "mdx.content_length": content.length },
+          spanAttrs,
         );
 
         if (cachedBundle) return cachedBundle;
 
         return this.compileAndCache(content, frontmatter, filePath);
       },
-      {
-        "mdx.file_path": filePath ?? "inline",
-        "mdx.content_length": content.length,
-        "mdx.mode": this.config.mode,
-      },
+      { ...spanAttrs, "mdx.mode": this.config.mode },
     );
   }
 

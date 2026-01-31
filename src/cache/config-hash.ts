@@ -34,16 +34,11 @@ export interface TransformConfig {
  */
 export function computeConfigHash(config: TransformConfig): Promise<string> {
   const normalized = {
-    // Core transform settings
     transformVersion: VERSION,
     reactVersion: config.reactVersion ?? DEFAULT_REACT_VERSION,
     jsxImportSource: config.jsxImportSource ?? "react",
-
-    // Feature flags
     studioEmbed: config.studioEmbed ?? false,
     dev: config.dev ?? false,
-
-    // Package versions that affect output
     csstype: CSSTYPE_VERSION,
     tailwind: TAILWIND_VERSION,
   };
@@ -57,7 +52,6 @@ export function computeConfigHash(config: TransformConfig): Promise<string> {
  * Use this when you need a config hash but can't afford async overhead.
  */
 export function computeConfigHashSync(config: TransformConfig): string {
-  // Simple string concatenation for sync hash
   const parts = [
     `v${VERSION}`,
     config.reactVersion ?? DEFAULT_REACT_VERSION,

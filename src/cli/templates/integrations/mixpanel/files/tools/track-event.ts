@@ -29,10 +29,7 @@ export default tool({
     const result = await trackEvent(event, eventProperties, distinctId);
 
     if (result.status !== 1) {
-      return {
-        success: false,
-        error: result.error ?? "Failed to track event",
-      };
+      return { success: false, error: result.error ?? "Failed to track event" };
     }
 
     return {

@@ -12,10 +12,16 @@ function extractEsmShPackage(url: string): string | null {
     const parsed = new URL(url);
     const pathname = parsed.pathname.slice(1).replace(/^v\d+\//, "");
 
-    const packageName = pathname.startsWith("@")
-      ? pathname.split("/").slice(0, 2).join("/").replace(/@[\d.]+.*$/, "")
-      : (pathname.split("@")[0] ?? "").split("/")[0] ?? "";
+    if (pathname.startsWith("@")) {
+      const packageName = pathname
+        .split("/")
+        .slice(0, 2)
+        .join("/")
+        .replace(/@[\d.]+.*$/, "");
+      return packageName || null;
+    }
 
+    const packageName = pathname.split("@")[0]?.split("/")[0] ?? "";
     return packageName || null;
   } catch {
     return null;
@@ -65,7 +71,7 @@ export function resolveImport(
       // Always check for explicit subpath mapping first (e.g., "react/jsx-runtime")
       // This takes priority over appending subpath to base package mapping
       if (subpath) {
-        const fullKey = esmShPackage + subpath; // e.g., "react/jsx-runtime"
+        const fullKey = esmShPackage + subpath;
         const subpathMapping = scopedImports?.[fullKey] ?? importMap.imports?.[fullKey];
         if (subpathMapping) return subpathMapping;
       }
@@ -74,13 +80,9 @@ export function resolveImport(
       if (mapping) {
         if (!subpath) return mapping;
 
-        // If mapping target is a file path (not HTTP URL or npm: specifier),
-        // fall back to base mapping since explicit subpath wasn't found above
         const isFilePath = !mapping.startsWith("http://") && !mapping.startsWith("https://") &&
           !mapping.startsWith("npm:");
-        if (isFilePath) {
-          return mapping;
-        }
+        if (isFilePath) return mapping;
 
         return mapping + subpath;
       }
@@ -93,12 +95,9 @@ export function resolveImport(
     if (mapped) return mapped;
   }
 
-  const imports = importMap.imports;
-  if (imports) {
-    for (const [key, value] of Object.entries(imports)) {
-      if (key.endsWith("/") && specifier.startsWith(key)) {
-        return value + specifier.slice(key.length);
-      }
+  for (const [key, value] of Object.entries(importMap.imports ?? {})) {
+    if (key.endsWith("/") && specifier.startsWith(key)) {
+      return value + specifier.slice(key.length);
     }
   }
 

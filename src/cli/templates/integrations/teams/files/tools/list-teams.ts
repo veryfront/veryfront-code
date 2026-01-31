@@ -17,24 +17,14 @@ export default tool({
   async execute({ limit }) {
     const teams = await listTeams({ limit });
 
-    return teams.map(
-      ({
-        id,
-        displayName,
-        description,
-        visibility,
-        isArchived,
-        createdDateTime,
-        webUrl,
-      }) => ({
-        id,
-        name: displayName,
-        description,
-        visibility,
-        isArchived,
-        createdAt: createdDateTime,
-        webUrl,
-      }),
-    );
+    return teams.map((team) => ({
+      id: team.id,
+      name: team.displayName,
+      description: team.description,
+      visibility: team.visibility,
+      isArchived: team.isArchived,
+      createdAt: team.createdDateTime,
+      webUrl: team.webUrl,
+    }));
   },
 });

@@ -11,7 +11,6 @@
 
 import { serverLogger as logger } from "#veryfront/utils";
 import { join } from "#veryfront/platform/compat/path/index.ts";
-// Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { ChunkManifest } from "#veryfront/build/bundler/index.ts";
 import type { AppRouteInfo, BuildStats, RouteInfo } from "#veryfront/server/build-types.ts";
@@ -52,14 +51,11 @@ export async function generateClientScripts(
   if (dryRun) return;
 
   await adapter.fs.writeFile(join(outputDir, "_veryfront/app.js"), generateAppModule());
-
   await adapter.fs.writeFile(join(outputDir, "_veryfront/client.js"), await generateClientModule());
-
   await adapter.fs.writeFile(
     join(outputDir, "_veryfront/router.js"),
     await generateRouterScript(adapter),
   );
-
   await adapter.fs.writeFile(
     join(outputDir, "_veryfront/prefetch.js"),
     await generatePrefetchScript(adapter),
@@ -72,27 +68,37 @@ export async function generateClientScripts(
 export async function generateManifestAndServiceWorker(
   options: OutputGeneratorOptions,
 ): Promise<void> {
+  const {
+    adapter,
+    outputDir,
+    routes,
+    appRoutes,
+    stats,
+    enableSplitting,
+    enablePrefetch,
+    enableCompression,
+    chunkManifest,
+    dryRun,
+  } = options;
+
   const manifest = generateManifest({
-    routes: options.routes,
-    appRoutes: options.appRoutes,
-    stats: options.stats,
-    enableSplitting: options.enableSplitting,
-    enablePrefetch: options.enablePrefetch,
-    enableCompression: options.enableCompression,
-    chunkManifest: options.chunkManifest,
+    routes,
+    appRoutes,
+    stats,
+    enableSplitting,
+    enablePrefetch,
+    enableCompression,
+    chunkManifest,
   });
 
-  if (options.dryRun) return;
+  if (dryRun) return;
 
-  await options.adapter.fs.writeFile(
-    join(options.outputDir, "_veryfront/manifest.json"),
+  await adapter.fs.writeFile(
+    join(outputDir, "_veryfront/manifest.json"),
     JSON.stringify(manifest, null, 2),
   );
 
-  await options.adapter.fs.writeFile(
-    join(options.outputDir, "sw.js"),
-    generateServiceWorker(manifest),
-  );
+  await adapter.fs.writeFile(join(outputDir, "sw.js"), generateServiceWorker(manifest));
 }
 
 /**
@@ -123,18 +129,14 @@ export function copyAssets(
  * Generate all output files
  */
 export async function generateAllOutputs(options: OutputGeneratorOptions): Promise<void> {
-  await generateClientScripts(options.adapter, options.outputDir, options.dryRun);
+  const { adapter, projectDir, outputDir, dryRun, stats } = options;
 
-  const assetStats = await copyAssets(
-    options.adapter,
-    options.projectDir,
-    options.outputDir,
-    options.dryRun,
-  );
+  await generateClientScripts(adapter, outputDir, dryRun);
 
-  options.stats.assets = assetStats.assets;
-  options.stats.totalSize += assetStats.totalSize;
+  const assetStats = await copyAssets(adapter, projectDir, outputDir, dryRun);
+  stats.assets = assetStats.assets;
+  stats.totalSize += assetStats.totalSize;
 
   await generateManifestAndServiceWorker(options);
-  await generateRedirectsFile(options.adapter, options.outputDir, options.dryRun);
+  await generateRedirectsFile(adapter, outputDir, dryRun);
 }

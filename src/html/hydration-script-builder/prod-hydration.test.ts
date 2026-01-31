@@ -11,7 +11,12 @@ describe("hydration-script-builder/prod-hydration", () => {
     });
 
     it("should include nonce attribute when provided", () => {
-      const result = generateProdHydrationScript("index", undefined, undefined, "n1");
+      const result = generateProdHydrationScript(
+        "index",
+        undefined,
+        undefined,
+        "n1",
+      );
       assertEquals(result.includes('nonce="n1"'), true);
     });
 
@@ -27,7 +32,10 @@ describe("hydration-script-builder/prod-hydration", () => {
 
     it("should import ReactDOM from react-dom/client", () => {
       const result = generateProdHydrationScript("index");
-      assertEquals(result.includes("import * as ReactDOM from 'react-dom/client'"), true);
+      assertEquals(
+        result.includes("import * as ReactDOM from 'react-dom/client'"),
+        true,
+      );
     });
 
     it("should include the page slug in the import path", () => {
@@ -70,14 +78,18 @@ describe("hydration-script-builder/prod-hydration", () => {
     it("should import App and Layout components", () => {
       const result = generateProdHydrationScript("index");
       assertEquals(result.includes("import { App } from '@/components/app'"), true);
-      assertEquals(result.includes("import { Layout } from '@/components/layout'"), true);
+      assertEquals(
+        result.includes("import { Layout } from '@/components/layout'"),
+        true,
+      );
     });
 
     it("should nest Page inside Layout inside App", () => {
       const result = generateProdHydrationScript("index");
-      assertEquals(result.includes("React.createElement(App"), true);
-      assertEquals(result.includes("React.createElement(Layout"), true);
-      assertEquals(result.includes("React.createElement(Page"), true);
+      // Components are on separate lines in the multiline createElement calls
+      assertEquals(result.includes("App,"), true);
+      assertEquals(result.includes("Layout,"), true);
+      assertEquals(result.includes("React.createElement(Page,"), true);
     });
   });
 });

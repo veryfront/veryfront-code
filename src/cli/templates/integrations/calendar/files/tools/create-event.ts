@@ -32,7 +32,6 @@ export default tool({
 
     try {
       const calendar = createCalendarClient(userId);
-
       const event = await calendar.createEvent({
         summary: title,
         start: startTime,
@@ -48,8 +47,8 @@ export default tool({
         event: {
           id: event.id,
           title: event.summary,
-          start: event.start.dateTime || event.start.date,
-          end: event.end.dateTime || event.end.date,
+          start: event.start.dateTime ?? event.start.date,
+          end: event.end.dateTime ?? event.end.date,
           url: event.htmlLink,
           location: event.location,
           attendees: event.attendees?.map((a: { email: string }) => a.email) ?? [],

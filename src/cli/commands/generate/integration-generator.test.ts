@@ -20,6 +20,7 @@ describe("cli/commands/generate/integration-generator", () => {
         scopes: "messages:read,messages:write",
         skipPrompts: true,
       };
+
       assertEquals(options.name, "twilio");
       assertEquals(options.authType, "oauth2");
       assertEquals(options.skipPrompts, true);
@@ -32,18 +33,28 @@ describe("cli/commands/generate/integration-generator", () => {
         authType: "api-key",
         skipPrompts: true,
       };
+
       assertEquals(options.authType, "api-key");
     });
   });
 
   describe("integration name validation pattern", () => {
-    // Re-implements the validation pattern from validateIntegrationName
     function validateIntegrationName(name: string): void {
-      if (!name || !/^[a-z][a-z0-9-]*$/.test(name)) {
-        throw new Error(
-          "Integration name must be lowercase letters, numbers, and hyphens",
-        );
+      if (name && /^[a-z][a-z0-9-]*$/.test(name)) return;
+
+      throw new Error(
+        "Integration name must be lowercase letters, numbers, and hyphens",
+      );
+    }
+
+    function assertThrows(fn: () => void): void {
+      let threw = false;
+      try {
+        fn();
+      } catch {
+        threw = true;
       }
+      assertEquals(threw, true);
     }
 
     it("should accept valid lowercase name", () => {
@@ -59,70 +70,33 @@ describe("cli/commands/generate/integration-generator", () => {
     });
 
     it("should reject uppercase", () => {
-      let threw = false;
-      try {
-        validateIntegrationName("Twilio");
-      } catch {
-        threw = true;
-      }
-      assertEquals(threw, true);
+      assertThrows(() => validateIntegrationName("Twilio"));
     });
 
     it("should reject empty string", () => {
-      let threw = false;
-      try {
-        validateIntegrationName("");
-      } catch {
-        threw = true;
-      }
-      assertEquals(threw, true);
+      assertThrows(() => validateIntegrationName(""));
     });
 
     it("should reject name starting with number", () => {
-      let threw = false;
-      try {
-        validateIntegrationName("2fast");
-      } catch {
-        threw = true;
-      }
-      assertEquals(threw, true);
+      assertThrows(() => validateIntegrationName("2fast"));
     });
 
     it("should reject name starting with hyphen", () => {
-      let threw = false;
-      try {
-        validateIntegrationName("-invalid");
-      } catch {
-        threw = true;
-      }
-      assertEquals(threw, true);
+      assertThrows(() => validateIntegrationName("-invalid"));
     });
 
     it("should reject name with spaces", () => {
-      let threw = false;
-      try {
-        validateIntegrationName("my integration");
-      } catch {
-        threw = true;
-      }
-      assertEquals(threw, true);
+      assertThrows(() => validateIntegrationName("my integration"));
     });
 
     it("should reject name with special characters", () => {
-      let threw = false;
-      try {
-        validateIntegrationName("my_integration");
-      } catch {
-        threw = true;
-      }
-      assertEquals(threw, true);
+      assertThrows(() => validateIntegrationName("my_integration"));
     });
   });
 
   describe("scope parsing pattern", () => {
-    // Re-implements parseScopes from the module
     function parseScopes(scopes?: string): string[] {
-      return scopes?.split(",").map((s) => s.trim()) || [];
+      return scopes?.split(",").map((s) => s.trim()) ?? [];
     }
 
     it("should parse comma-separated scopes", () => {
@@ -154,7 +128,6 @@ describe("cli/commands/generate/integration-generator", () => {
   });
 
   describe("non-interactive config construction pattern", () => {
-    // Re-implements getNonInteractiveConfig logic
     function getNonInteractiveConfig(options: IntegrationGeneratorOptions) {
       if (!options.name || !options.displayName || !options.authType) {
         throw new Error(
@@ -166,12 +139,22 @@ describe("cli/commands/generate/integration-generator", () => {
         name: options.name.toLowerCase(),
         displayName: options.displayName,
         authType: options.authType,
-        apiBaseUrl: options.apiBaseUrl || `https://api.${options.name}.com`,
+        apiBaseUrl: options.apiBaseUrl ?? `https://api.${options.name}.com`,
         authorizationUrl: options.authorizationUrl,
         tokenUrl: options.tokenUrl,
-        scopes: options.scopes?.split(",").map((s) => s.trim()) || [],
+        scopes: options.scopes?.split(",").map((s) => s.trim()) ?? [],
         envVarPrefix: options.name.toUpperCase(),
       };
+    }
+
+    function assertThrows(fn: () => void): void {
+      let threw = false;
+      try {
+        fn();
+      } catch {
+        threw = true;
+      }
+      assertEquals(threw, true);
     }
 
     it("should build config with all fields", () => {
@@ -222,42 +205,30 @@ describe("cli/commands/generate/integration-generator", () => {
     });
 
     it("should throw when name is missing", () => {
-      let threw = false;
-      try {
+      assertThrows(() =>
         getNonInteractiveConfig({
           displayName: "Test",
           authType: "api-key",
-        });
-      } catch {
-        threw = true;
-      }
-      assertEquals(threw, true);
+        })
+      );
     });
 
     it("should throw when displayName is missing", () => {
-      let threw = false;
-      try {
+      assertThrows(() =>
         getNonInteractiveConfig({
           name: "test",
           authType: "api-key",
-        });
-      } catch {
-        threw = true;
-      }
-      assertEquals(threw, true);
+        })
+      );
     });
 
     it("should throw when authType is missing", () => {
-      let threw = false;
-      try {
+      assertThrows(() =>
         getNonInteractiveConfig({
           name: "test",
           displayName: "Test",
-        });
-      } catch {
-        threw = true;
-      }
-      assertEquals(threw, true);
+        })
+      );
     });
 
     it("should default scopes to empty array", () => {
@@ -272,17 +243,17 @@ describe("cli/commands/generate/integration-generator", () => {
 
   describe("tool input schema generation pattern", () => {
     function getToolInputSchema(toolFile: string): string {
-      if (toolFile === "list-items.ts") {
-        return `limit: z.number().optional().describe("Maximum number of items to return"),
+      switch (toolFile) {
+        case "list-items.ts":
+          return `limit: z.number().optional().describe("Maximum number of items to return"),
     offset: z.number().optional().describe("Number of items to skip"),`;
+        case "get-item.ts":
+          return `id: z.string().describe("The ID of the item to retrieve"),`;
+        case "search.ts":
+          return `query: z.string().describe("Search query"),`;
+        default:
+          return "";
       }
-      if (toolFile === "get-item.ts") {
-        return `id: z.string().describe("The ID of the item to retrieve"),`;
-      }
-      if (toolFile === "search.ts") {
-        return `query: z.string().describe("Search query"),`;
-      }
-      return "";
     }
 
     it("should return list-items schema", () => {
@@ -308,8 +279,9 @@ describe("cli/commands/generate/integration-generator", () => {
 
   describe("tool execute body generation pattern", () => {
     function getToolExecuteBody(toolFile: string): string {
-      if (toolFile === "list-items.ts") {
-        return `const items = await listItems({
+      switch (toolFile) {
+        case "list-items.ts":
+          return `const items = await listItems({
         limit: input.limit,
         offset: input.offset,
       });
@@ -318,23 +290,22 @@ describe("cli/commands/generate/integration-generator", () => {
         items,
         count: items.length,
       };`;
-      }
-      if (toolFile === "get-item.ts") {
-        return `const item = await getItem(input.id);
+        case "get-item.ts":
+          return `const item = await getItem(input.id);
       return {
         success: true,
         item,
       };`;
-      }
-      if (toolFile === "search.ts") {
-        return `const results = await searchItems(input.query);
+        case "search.ts":
+          return `const results = await searchItems(input.query);
       return {
         success: true,
         results,
         count: results.length,
       };`;
+        default:
+          return "";
       }
-      return "";
     }
 
     it("should return list-items execute body", () => {

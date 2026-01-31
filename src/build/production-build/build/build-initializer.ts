@@ -1,10 +1,8 @@
 import { join } from "#veryfront/platform/compat/path/index.ts";
-// Direct import from registry.ts to avoid circular dependency through barrel
 import { runtime } from "#veryfront/platform/adapters/registry.ts";
 import { getConfig } from "#veryfront/config";
 import { createRenderer, type VeryfrontRenderer } from "#veryfront/rendering/index.ts";
 import type { BuildOptions, BuildStats } from "#veryfront/server/build-types.ts";
-// Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 
@@ -30,23 +28,25 @@ export async function initializeBuildContext(options: BuildOptions): Promise<Bui
     config,
     renderer,
     options,
-    stats: {
-      pages: 0,
-      components: 0,
-      chunks: 0,
-      assets: 0,
-      totalSize: 0,
-      duration: 0,
-    },
+    stats: createEmptyBuildStats(),
+  };
+}
+
+function createEmptyBuildStats(): BuildStats {
+  return {
+    pages: 0,
+    components: 0,
+    chunks: 0,
+    assets: 0,
+    totalSize: 0,
+    duration: 0,
   };
 }
 
 export function normalizeBuildOptions(options: BuildOptions): BuildOptions {
-  const outputDir = options.outputDir ?? join(options.projectDir, ".veryfront", "output");
-
   return {
     projectDir: options.projectDir,
-    outputDir,
+    outputDir: options.outputDir ?? join(options.projectDir, ".veryfront", "output"),
     enableSplitting: options.enableSplitting ?? true,
     enableCompression: options.enableCompression ?? true,
     enablePrefetch: options.enablePrefetch ?? true,

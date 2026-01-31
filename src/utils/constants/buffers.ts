@@ -1,4 +1,3 @@
-/******** Standard buffer sizes (powers of 2 for optimal memory alignment) ********/
 export const BUFFER_SIZE_256_BYTES = 256;
 export const BUFFER_SIZE_512_BYTES = 512;
 export const BUFFER_SIZE_1_KB = 1024;

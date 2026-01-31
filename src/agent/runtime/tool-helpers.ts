@@ -28,11 +28,11 @@ export function parseToolArgs(
   try {
     const parsed = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
 
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return { args: parsed as Record<string, unknown> };
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { args: {}, error: "Tool call arguments must be a JSON object" };
     }
 
-    return { args: {}, error: "Tool call arguments must be a JSON object" };
+    return { args: parsed as Record<string, unknown> };
   } catch (error) {
     return {
       args: {},
@@ -62,6 +62,16 @@ function logToolDefinition(name: string, def: ToolDefinition): void {
   );
 }
 
+function addToolDefinition(
+  tools: ToolDefinition[],
+  name: string,
+  tool: Tool<any, any>,
+): void {
+  const def = toolToProviderDefinition(tool);
+  logToolDefinition(name, def);
+  tools.push(def);
+}
+
 /**
  * Get available tools based on agent configuration.
  * When tools === true, loads all tools from registry.
@@ -88,18 +98,12 @@ export function getAvailableTools(
   for (const [name, entry] of Object.entries(toolsConfig)) {
     if (entry === true) {
       const tool = toolRegistry.get(name);
-      if (!tool) continue;
-
-      const def = toolToProviderDefinition(tool);
-      logToolDefinition(name, def);
-      tools.push(def);
+      if (tool) addToolDefinition(tools, name, tool);
       continue;
     }
 
     if (entry && typeof entry === "object") {
-      const def = toolToProviderDefinition(entry);
-      logToolDefinition(name, def);
-      tools.push(def);
+      addToolDefinition(tools, name, entry);
     }
   }
 

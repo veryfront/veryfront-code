@@ -63,9 +63,14 @@ export function ConfigTab(): React.JSX.Element {
     refresh();
   }, []);
 
+  const layoutProps = {
+    title: "Config",
+    description: "Configuration, environment, and runtime context",
+  };
+
   if (loading && !data) {
     return (
-      <PageLayout title="Config" description="Configuration, environment, and runtime context">
+      <PageLayout {...layoutProps}>
         <Card>
           <LoadingState message="Loading configuration..." />
         </Card>
@@ -75,7 +80,7 @@ export function ConfigTab(): React.JSX.Element {
 
   if (error && !data) {
     return (
-      <PageLayout title="Config" description="Configuration, environment, and runtime context">
+      <PageLayout {...layoutProps}>
         <Card>
           <ErrorState error={error} />
         </Card>
@@ -83,8 +88,15 @@ export function ConfigTab(): React.JSX.Element {
     );
   }
 
+  let content: React.JSX.Element;
+  if (subTab === "settings") {
+    content = <SettingsSection data={data} />;
+  } else {
+    content = <DebugSection content={debugContent} loading={debugLoading} />;
+  }
+
   return (
-    <PageLayout title="Config" description="Configuration, environment, and runtime context">
+    <PageLayout {...layoutProps}>
       <div className="flex items-center justify-between mb-6">
         <div className="flex gap-1 border-b border-gray-200 pb-2">
           <TabButton
@@ -105,9 +117,7 @@ export function ConfigTab(): React.JSX.Element {
         </button>
       </div>
 
-      {subTab === "settings"
-        ? <SettingsSection data={data} />
-        : <DebugSection content={debugContent} loading={debugLoading} />}
+      {content}
     </PageLayout>
   );
 }
@@ -163,31 +173,33 @@ function SettingsSection({ data }: { data: ConfigData | null }): React.JSX.Eleme
             </tr>
           </thead>
           <tbody>
-            {data?.featureFlags.map((flag) => (
-              <tr key={flag.name} className="border-b last:border-0">
-                <td className="px-3 py-2.5">
-                  <code className="text-xs text-sky-600 font-medium">{flag.name}</code>
-                </td>
-                <td className="px-3 py-2.5">
-                  {flag.value
-                    ? (
-                      <span className="inline-flex items-center gap-1.5 text-green-600">
-                        <span className="w-2 h-2 rounded-full bg-green-500" />
-                        Enabled
-                      </span>
-                    )
-                    : (
-                      <span className="inline-flex items-center gap-1.5 text-gray-400">
-                        <span className="w-2 h-2 rounded-full bg-gray-300" />
-                        Disabled
-                      </span>
-                    )}
-                </td>
-                <td className="px-3 py-2.5">
-                  <code className="text-xs text-gray-500">{flag.source}</code>
-                </td>
-              </tr>
-            ))}
+            {data?.featureFlags.map((flag) => {
+              const valueEl = flag.value
+                ? (
+                  <span className="inline-flex items-center gap-1.5 text-green-600">
+                    <span className="w-2 h-2 rounded-full bg-green-500" />
+                    Enabled
+                  </span>
+                )
+                : (
+                  <span className="inline-flex items-center gap-1.5 text-gray-400">
+                    <span className="w-2 h-2 rounded-full bg-gray-300" />
+                    Disabled
+                  </span>
+                );
+
+              return (
+                <tr key={flag.name} className="border-b last:border-0">
+                  <td className="px-3 py-2.5">
+                    <code className="text-xs text-sky-600 font-medium">{flag.name}</code>
+                  </td>
+                  <td className="px-3 py-2.5">{valueEl}</td>
+                  <td className="px-3 py-2.5">
+                    <code className="text-xs text-gray-500">{flag.source}</code>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </Card>
@@ -206,14 +218,14 @@ function SettingsSection({ data }: { data: ConfigData | null }): React.JSX.Eleme
           </thead>
           <tbody>
             {Object.entries(data?.environment ?? {}).map(([key, value]) => {
-              let valueEl: React.JSX.Element;
+              let className = "text-gray-900 text-sm";
 
-              if (typeof value === "string" && value.includes("(set)")) {
-                valueEl = <span className="text-green-600 text-sm">{value}</span>;
-              } else if (typeof value === "string" && value.includes("(not set)")) {
-                valueEl = <span className="text-gray-400 text-sm">{value}</span>;
-              } else {
-                valueEl = <span className="text-gray-900 text-sm">{String(value)}</span>;
+              if (typeof value === "string") {
+                if (value.includes("(set)")) {
+                  className = "text-green-600 text-sm";
+                } else if (value.includes("(not set)")) {
+                  className = "text-gray-400 text-sm";
+                }
               }
 
               return (
@@ -221,7 +233,9 @@ function SettingsSection({ data }: { data: ConfigData | null }): React.JSX.Eleme
                   <td className="px-3 py-2.5">
                     <code className="text-xs text-sky-600 font-medium">{key}</code>
                   </td>
-                  <td className="px-3 py-2.5">{valueEl}</td>
+                  <td className="px-3 py-2.5">
+                    <span className={className}>{String(value)}</span>
+                  </td>
                 </tr>
               );
             })}
@@ -235,15 +249,19 @@ function SettingsSection({ data }: { data: ConfigData | null }): React.JSX.Eleme
 function DebugSection(
   { content, loading }: { content: string; loading: boolean },
 ): React.JSX.Element {
+  if (loading) {
+    return (
+      <Card title="RUNTIME CONTEXT">
+        <LoadingState message="Loading debug context..." />
+      </Card>
+    );
+  }
+
   return (
     <Card title="RUNTIME CONTEXT">
-      {loading
-        ? <LoadingState message="Loading debug context..." />
-        : (
-          <pre className="p-4 text-xs font-mono text-gray-600 overflow-auto max-h-[500px] whitespace-pre-wrap bg-gray-50">
-          {content}
-          </pre>
-        )}
+      <pre className="p-4 text-xs font-mono text-gray-600 overflow-auto max-h-[500px] whitespace-pre-wrap bg-gray-50">
+        {content}
+      </pre>
     </Card>
   );
 }

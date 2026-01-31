@@ -23,8 +23,7 @@ let _colorEnabled: boolean | undefined;
 export function shouldUseColor(forceColor?: boolean): boolean {
   if (forceColor !== undefined) return forceColor;
 
-  const noColor = getNoColorEnv();
-  if (noColor) return false;
+  if (getNoColorEnv()) return false;
 
   const forceColorEnv = getForceColorEnv();
   if (forceColorEnv && forceColorEnv !== "0") return true;
@@ -52,11 +51,7 @@ export function conditionalColor<T extends (s: string) => string>(
   return getColorEnabled() ? colorFn(text) : text;
 }
 
-function colorize(
-  useColor: boolean,
-  fn: (s: string) => string,
-  s: string,
-): string {
+function colorize(useColor: boolean, fn: (s: string) => string, s: string): string {
   return useColor ? fn(s) : s;
 }
 
@@ -174,9 +169,13 @@ export function registerTerminationSignals(
   handler: (signal: "SIGINT" | "SIGTERM") => void | Promise<void>,
 ): () => void {
   const signals: Array<"SIGINT" | "SIGTERM"> = ["SIGINT", "SIGTERM"];
+
   for (const signal of signals) {
-    onSignal(signal, () => void handler(signal));
+    onSignal(signal, () => {
+      void handler(signal);
+    });
   }
+
   return () => {};
 }
 
@@ -234,9 +233,6 @@ interface Spinner {
   update: (message: string) => void;
 }
 
-/**
- * Create a no-op spinner that does nothing (for quiet mode)
- */
 export function createNoopSpinner(): Spinner {
   return {
     start() {},
@@ -272,6 +268,7 @@ export function createSpinner(message: string): Spinner {
         cliLogger.info(`... ${message}`);
         return;
       }
+
       render();
       intervalId = setInterval(render, 80);
     },
@@ -280,6 +277,7 @@ export function createSpinner(message: string): Spinner {
         clearInterval(intervalId);
         intervalId = null;
       }
+
       clearLine();
       if (finalMessage) cliLogger.info(finalMessage);
     },

@@ -4,20 +4,34 @@ import { deleteEnv, getEnv, setEnv } from "@veryfront/compat/process.ts";
 import { LogLevel } from "@veryfront/utils/logger/index.ts";
 import { delay } from "@std/async";
 
-async function importFresh() {
-  const mod = await import(`@veryfront/utils/logger/index.ts?ts=${Date.now()}&r=${Math.random()}`);
-  return mod;
+function importFresh(): Promise<typeof import("@veryfront/utils/logger/index.ts")> {
+  return import(
+    `@veryfront/utils/logger/index.ts?ts=${Date.now()}&r=${Math.random()}`
+  );
 }
 
-async function importSharedLogger(query: string) {
-  const mod = await import(`@veryfront/utils/logger/index.ts?${query}`);
-  return mod;
+function importSharedLogger(
+  query: string,
+): Promise<typeof import("@veryfront/utils/logger/index.ts")> {
+  return import(`@veryfront/utils/logger/index.ts?${query}`);
 }
 
 function assertExists(value: unknown): asserts value is NonNullable<unknown> {
-  if (value === null || value === undefined) {
-    throw new Error("Expected value to exist");
-  }
+  if (value === null || value === undefined) throw new Error("Expected value to exist");
+}
+
+function restoreEnv(key: string, prev: string | undefined): void {
+  if (prev === undefined) deleteEnv(key);
+  else setEnv(key, prev);
+}
+
+function captureStrings(messages: string[]): (...args: unknown[]) => void {
+  return (...args: unknown[]) => {
+    for (const arg of args) {
+      if (typeof arg === "string") messages.push(arg);
+      else if (arg !== null && typeof arg === "object") messages.push(JSON.stringify(arg));
+    }
+  };
 }
 
 describe("Logger", () => {
@@ -48,8 +62,7 @@ describe("Logger", () => {
       try {
         setEnv("LOG_LEVEL", "DEBUG");
         deleteEnv("VERYFRONT_DEBUG");
-        const mod = await importSharedLogger(`ts=${Date.now()}`);
-        const logger = mod.logger;
+        const { logger } = await importSharedLogger(`ts=${Date.now()}`);
 
         messages.length = 0;
         logger.debug("debug msg");
@@ -57,27 +70,13 @@ describe("Logger", () => {
         logger.warn("warn msg");
         logger.error("error msg");
 
-        assertEquals(
-          messages.some((m) => m.includes("debug msg")),
-          true,
-        );
-        assertEquals(
-          messages.some((m) => m.includes("info msg")),
-          true,
-        );
-        assertEquals(
-          messages.some((m) => m.includes("warn msg")),
-          true,
-        );
-        assertEquals(
-          messages.some((m) => m.includes("error msg")),
-          true,
-        );
+        assertEquals(messages.some((m) => m.includes("debug msg")), true);
+        assertEquals(messages.some((m) => m.includes("info msg")), true);
+        assertEquals(messages.some((m) => m.includes("warn msg")), true);
+        assertEquals(messages.some((m) => m.includes("error msg")), true);
       } finally {
-        if (prevVF === undefined) deleteEnv("VERYFRONT_DEBUG");
-        else setEnv("VERYFRONT_DEBUG", prevVF);
-        if (prevLV === undefined) deleteEnv("LOG_LEVEL");
-        else setEnv("LOG_LEVEL", prevLV);
+        restoreEnv("VERYFRONT_DEBUG", prevVF);
+        restoreEnv("LOG_LEVEL", prevLV);
         console.debug = orig.debug;
         console.log = orig.log;
         console.warn = orig.warn;
@@ -88,29 +87,31 @@ describe("Logger", () => {
     it("respects LOG_LEVEL=INFO and skips debug messages", async () => {
       const prevVF = getEnv("VERYFRONT_DEBUG");
       const prevLV = getEnv("LOG_LEVEL");
-      const original = { debug: console.debug, log: console.log };
+      const orig = { debug: console.debug, log: console.log };
       const counts = { debug: 0, log: 0 };
+
       console.debug = () => {
         counts.debug++;
       };
       console.log = () => {
         counts.log++;
       };
+
       try {
         setEnv("VERYFRONT_DEBUG", "true");
         setEnv("LOG_LEVEL", "INFO");
         const { logger } = await importFresh();
+
         logger.debug("d");
         logger.info("i");
+
         assertEquals(counts.debug, 0);
         assertEquals(counts.log >= 1, true);
       } finally {
-        if (prevVF === undefined) deleteEnv("VERYFRONT_DEBUG");
-        else setEnv("VERYFRONT_DEBUG", prevVF);
-        if (prevLV === undefined) deleteEnv("LOG_LEVEL");
-        else setEnv("LOG_LEVEL", prevLV);
-        console.debug = original.debug;
-        console.log = original.log;
+        restoreEnv("VERYFRONT_DEBUG", prevVF);
+        restoreEnv("LOG_LEVEL", prevLV);
+        console.debug = orig.debug;
+        console.log = orig.log;
       }
     });
 
@@ -133,8 +134,7 @@ describe("Logger", () => {
       try {
         setEnv("LOG_LEVEL", "WARN");
         deleteEnv("VERYFRONT_DEBUG");
-        const mod = await importSharedLogger(`ts=${Date.now()}-warn`);
-        const logger = mod.logger;
+        const { logger } = await importSharedLogger(`ts=${Date.now()}-warn`);
 
         messages.length = 0;
         logger.debug("debug msg");
@@ -142,27 +142,13 @@ describe("Logger", () => {
         logger.warn("warn msg");
         logger.error("error msg");
 
-        assertEquals(
-          messages.some((m) => m.includes("debug msg")),
-          false,
-        );
-        assertEquals(
-          messages.some((m) => m.includes("info msg")),
-          false,
-        );
-        assertEquals(
-          messages.some((m) => m.includes("warn msg")),
-          true,
-        );
-        assertEquals(
-          messages.some((m) => m.includes("error msg")),
-          true,
-        );
+        assertEquals(messages.some((m) => m.includes("debug msg")), false);
+        assertEquals(messages.some((m) => m.includes("info msg")), false);
+        assertEquals(messages.some((m) => m.includes("warn msg")), true);
+        assertEquals(messages.some((m) => m.includes("error msg")), true);
       } finally {
-        if (prevVF === undefined) deleteEnv("VERYFRONT_DEBUG");
-        else setEnv("VERYFRONT_DEBUG", prevVF);
-        if (prevLV === undefined) deleteEnv("LOG_LEVEL");
-        else setEnv("LOG_LEVEL", prevLV);
+        restoreEnv("VERYFRONT_DEBUG", prevVF);
+        restoreEnv("LOG_LEVEL", prevLV);
         console.debug = orig.debug;
         console.log = orig.log;
         console.warn = orig.warn;
@@ -180,36 +166,37 @@ describe("Logger", () => {
         error: console.error,
       };
       const counts = { debug: 0, log: 0, warn: 0, error: 0 };
-      console.debug = (..._a: unknown[]) => {
+
+      console.debug = () => {
         counts.debug++;
       };
-      console.log = (..._a: unknown[]) => {
+      console.log = () => {
         counts.log++;
       };
-      console.warn = (..._a: unknown[]) => {
+      console.warn = () => {
         counts.warn++;
       };
-      console.error = (..._a: unknown[]) => {
+      console.error = () => {
         counts.error++;
       };
+
       try {
         setEnv("VERYFRONT_DEBUG", "0");
         setEnv("LOG_LEVEL", "ERROR");
-        const mod = await importSharedLogger(`ts=${Date.now()}`);
-        const logger = mod.logger;
+        const { logger } = await importSharedLogger(`ts=${Date.now()}`);
+
         logger.debug("d");
         logger.info("i");
         logger.warn("w");
         logger.error("e");
+
         assertEquals(counts.debug, 0);
         assertEquals(counts.log, 0);
         assertEquals(counts.warn, 0);
         assertEquals(counts.error >= 1, true);
       } finally {
-        if (prevVF === undefined) deleteEnv("VERYFRONT_DEBUG");
-        else setEnv("VERYFRONT_DEBUG", prevVF);
-        if (prevLV === undefined) deleteEnv("LOG_LEVEL");
-        else setEnv("LOG_LEVEL", prevLV);
+        restoreEnv("VERYFRONT_DEBUG", prevVF);
+        restoreEnv("LOG_LEVEL", prevLV);
         console.debug = orig.debug;
         console.log = orig.log;
         console.warn = orig.warn;
@@ -236,26 +223,17 @@ describe("Logger", () => {
       try {
         setEnv("LOG_LEVEL", "INVALID");
         deleteEnv("VERYFRONT_DEBUG");
-        const mod = await importSharedLogger(`ts=${Date.now()}-invalid`);
-        const logger = mod.logger;
+        const { logger } = await importSharedLogger(`ts=${Date.now()}-invalid`);
 
         messages.length = 0;
         logger.debug("debug msg");
         logger.info("info msg");
 
-        assertEquals(
-          messages.some((m) => m.includes("debug msg")),
-          false,
-        );
-        assertEquals(
-          messages.some((m) => m.includes("info msg")),
-          true,
-        );
+        assertEquals(messages.some((m) => m.includes("debug msg")), false);
+        assertEquals(messages.some((m) => m.includes("info msg")), true);
       } finally {
-        if (prevVF === undefined) deleteEnv("LOG_LEVEL");
-        else setEnv("LOG_LEVEL", prevVF);
-        if (prevLV === undefined) deleteEnv("VERYFRONT_DEBUG");
-        else setEnv("VERYFRONT_DEBUG", prevLV);
+        restoreEnv("VERYFRONT_DEBUG", prevVF);
+        restoreEnv("LOG_LEVEL", prevLV);
         console.debug = orig.debug;
         console.log = orig.log;
         console.warn = orig.warn;
@@ -264,29 +242,18 @@ describe("Logger", () => {
     });
 
     it("enables debug logging when VERYFRONT_DEBUG=1", async () => {
-      // This test verifies VERYFRONT_DEBUG env var support via the getDefaultLevel function.
-      // Due to module caching and test isolation issues with dynamic imports,
-      // we test the underlying function directly instead of the full logger flow.
       const mod = await importFresh();
       const { getDefaultLevel, LogLevel } = mod;
 
-      // Without any env vars, default should be INFO
       const defaultLevel = getDefaultLevel(undefined, undefined);
       assertEquals(defaultLevel, LogLevel.INFO, "Default level without env vars should be INFO");
 
-      // With VERYFRONT_DEBUG=1, should be DEBUG
       const debugLevel = getDefaultLevel(undefined, "1");
       assertEquals(debugLevel, LogLevel.DEBUG, "Level with VERYFRONT_DEBUG=1 should be DEBUG");
 
-      // With VERYFRONT_DEBUG=true, should be DEBUG
       const debugLevelTrue = getDefaultLevel(undefined, "true");
-      assertEquals(
-        debugLevelTrue,
-        LogLevel.DEBUG,
-        "Level with VERYFRONT_DEBUG=true should be DEBUG",
-      );
+      assertEquals(debugLevelTrue, LogLevel.DEBUG, "Level with VERYFRONT_DEBUG=true should be DEBUG");
 
-      // LOG_LEVEL takes precedence over VERYFRONT_DEBUG
       const explicitLevel = getDefaultLevel("ERROR", "1");
       assertEquals(explicitLevel, LogLevel.ERROR, "LOG_LEVEL should take precedence");
     });
@@ -311,6 +278,7 @@ describe("Logger", () => {
         mod.agentLogger,
         mod.logger,
       ];
+
       for (const logger of loggers) {
         assertEquals(typeof logger.debug, "function");
         assertEquals(typeof logger.info, "function");
@@ -330,6 +298,7 @@ describe("Logger", () => {
         error: console.error,
       };
       const counts = { debug: 0, log: 0, warn: 0, error: 0 };
+
       console.debug = () => {
         counts.debug++;
       };
@@ -342,6 +311,7 @@ describe("Logger", () => {
       console.error = () => {
         counts.error++;
       };
+
       try {
         setEnv("VERYFRONT_DEBUG", "true");
         setEnv("LOG_LEVEL", "INFO");
@@ -353,21 +323,21 @@ describe("Logger", () => {
           mod.bundlerLogger,
           mod.agentLogger,
         ];
+
         for (const logger of instances) {
           logger.debug("d");
           logger.info("i");
           logger.warn("w");
           logger.error("e");
         }
+
         assertEquals(counts.debug, 0);
         assertEquals(counts.log >= 5, true);
         assertEquals(counts.warn >= 5, true);
         assertEquals(counts.error >= 5, true);
       } finally {
-        if (prevVF === undefined) deleteEnv("VERYFRONT_DEBUG");
-        else setEnv("VERYFRONT_DEBUG", prevVF);
-        if (prevLV === undefined) deleteEnv("LOG_LEVEL");
-        else setEnv("LOG_LEVEL", prevLV);
+        restoreEnv("VERYFRONT_DEBUG", prevVF);
+        restoreEnv("LOG_LEVEL", prevLV);
         console.debug = orig.debug;
         console.log = orig.log;
         console.warn = orig.warn;
@@ -385,6 +355,7 @@ describe("Logger", () => {
         error: console.error,
       };
       const counts = { debug: 0, log: 0, warn: 0, error: 0 };
+
       console.debug = () => {
         counts.debug++;
       };
@@ -397,6 +368,7 @@ describe("Logger", () => {
       console.error = () => {
         counts.error++;
       };
+
       try {
         setEnv("VERYFRONT_DEBUG", "true");
         setEnv("LOG_LEVEL", "DEBUG");
@@ -409,21 +381,21 @@ describe("Logger", () => {
           mod.bundlerLogger,
           mod.agentLogger,
         ];
+
         for (const logger of instances) {
           logger.debug("d");
           logger.info("i");
           logger.warn("w");
           logger.error("e");
         }
+
         assertEquals(counts.debug >= 6, true);
         assertEquals(counts.log >= 6, true);
         assertEquals(counts.warn >= 6, true);
         assertEquals(counts.error >= 6, true);
       } finally {
-        if (prevVF === undefined) deleteEnv("VERYFRONT_DEBUG");
-        else setEnv("VERYFRONT_DEBUG", prevVF);
-        if (prevLV === undefined) deleteEnv("LOG_LEVEL");
-        else setEnv("LOG_LEVEL", prevLV);
+        restoreEnv("VERYFRONT_DEBUG", prevVF);
+        restoreEnv("LOG_LEVEL", prevLV);
         console.debug = orig.debug;
         console.log = orig.log;
         console.warn = orig.warn;
@@ -438,26 +410,21 @@ describe("Logger", () => {
       const prevLV = getEnv("LOG_LEVEL");
       const orig = { debug: console.debug };
       const messages: string[] = [];
+
       console.debug = (msg: string) => messages.push(msg);
 
       try {
         setEnv("VERYFRONT_DEBUG", "true");
         setEnv("LOG_LEVEL", "DEBUG");
-        const mod = await importSharedLogger(`ts=${Date.now()}`);
-        const logger = mod.logger;
+        const { logger } = await importSharedLogger(`ts=${Date.now()}`);
 
         messages.length = 0;
         logger.debug("test message");
 
-        assertEquals(
-          messages.some((m) => m.includes("test message")),
-          true,
-        );
+        assertEquals(messages.some((m) => m.includes("test message")), true);
       } finally {
-        if (prevVF === undefined) deleteEnv("VERYFRONT_DEBUG");
-        else setEnv("VERYFRONT_DEBUG", prevVF);
-        if (prevLV === undefined) deleteEnv("LOG_LEVEL");
-        else setEnv("LOG_LEVEL", prevLV);
+        restoreEnv("VERYFRONT_DEBUG", prevVF);
+        restoreEnv("LOG_LEVEL", prevLV);
         console.debug = orig.debug;
       }
     });
@@ -467,6 +434,7 @@ describe("Logger", () => {
       const prevFmt = getEnv("LOG_FORMAT");
       const orig = { log: console.log };
       const messages: string[] = [];
+
       console.log = (msg: string) => messages.push(msg);
 
       try {
@@ -477,15 +445,10 @@ describe("Logger", () => {
         messages.length = 0;
         mod.cliLogger.info("test");
 
-        assertEquals(
-          messages.some((m) => m.includes("CLI") && m.includes("test")),
-          true,
-        );
+        assertEquals(messages.some((m) => m.includes("CLI") && m.includes("test")), true);
       } finally {
-        if (prevLV === undefined) deleteEnv("LOG_LEVEL");
-        else setEnv("LOG_LEVEL", prevLV);
-        if (prevFmt === undefined) deleteEnv("LOG_FORMAT");
-        else setEnv("LOG_FORMAT", prevFmt);
+        restoreEnv("LOG_LEVEL", prevLV);
+        restoreEnv("LOG_FORMAT", prevFmt);
         console.log = orig.log;
       }
     });
@@ -503,16 +466,7 @@ describe("Logger", () => {
       };
 
       const messages: string[] = [];
-      // Capture all args and stringify objects for proper matching
-      const capture = (...args: unknown[]) => {
-        for (const arg of args) {
-          if (typeof arg === "string") {
-            messages.push(arg);
-          } else if (arg !== null && typeof arg === "object") {
-            messages.push(JSON.stringify(arg));
-          }
-        }
-      };
+      const capture = captureStrings(messages);
       console.debug = capture;
       console.log = capture;
       console.warn = capture;
@@ -520,8 +474,7 @@ describe("Logger", () => {
 
       try {
         setEnv("LOG_LEVEL", "DEBUG");
-        const mod = await importSharedLogger(`ts=${Date.now()}-time`);
-        const logger = mod.logger;
+        const { logger } = await importSharedLogger(`ts=${Date.now()}-time`);
 
         messages.length = 0;
         const result = await logger.time("test operation", async () => {
@@ -530,22 +483,11 @@ describe("Logger", () => {
         });
 
         assertEquals(result, 42);
-        // New format: "test operation completed" with durationMs in context
-        assertEquals(
-          messages.some((m) => m.includes("test operation completed")),
-          true,
-        );
-        // durationMs is now in context object, which is logged as second arg
-        // or included in JSON output - check for durationMs in any message
-        assertEquals(
-          messages.some((m) => m.includes("durationMs")),
-          true,
-        );
+        assertEquals(messages.some((m) => m.includes("test operation completed")), true);
+        assertEquals(messages.some((m) => m.includes("durationMs")), true);
       } finally {
-        if (prevVF === undefined) deleteEnv("VERYFRONT_DEBUG");
-        else setEnv("VERYFRONT_DEBUG", prevVF);
-        if (prevLV === undefined) deleteEnv("LOG_LEVEL");
-        else setEnv("LOG_LEVEL", prevLV);
+        restoreEnv("VERYFRONT_DEBUG", prevVF);
+        restoreEnv("LOG_LEVEL", prevLV);
         console.debug = orig.debug;
         console.log = orig.log;
         console.warn = orig.warn;
@@ -564,16 +506,7 @@ describe("Logger", () => {
       };
 
       const messages: string[] = [];
-      // Capture all args and stringify objects for proper matching
-      const capture = (...args: unknown[]) => {
-        for (const arg of args) {
-          if (typeof arg === "string") {
-            messages.push(arg);
-          } else if (arg !== null && typeof arg === "object") {
-            messages.push(JSON.stringify(arg));
-          }
-        }
-      };
+      const capture = captureStrings(messages);
       console.debug = capture;
       console.log = capture;
       console.warn = capture;
@@ -581,8 +514,7 @@ describe("Logger", () => {
 
       try {
         setEnv("LOG_LEVEL", "ERROR");
-        const mod = await importSharedLogger(`ts=${Date.now()}-time-error`);
-        const logger = mod.logger;
+        const { logger } = await importSharedLogger(`ts=${Date.now()}-time-error`);
 
         messages.length = 0;
 
@@ -597,21 +529,11 @@ describe("Logger", () => {
           "Test error",
         );
 
-        // New format: "failing operation failed" with durationMs in context
-        assertEquals(
-          messages.some((m) => m.includes("failing operation failed")),
-          true,
-        );
-        // durationMs is now in context object
-        assertEquals(
-          messages.some((m) => m.includes("durationMs")),
-          true,
-        );
+        assertEquals(messages.some((m) => m.includes("failing operation failed")), true);
+        assertEquals(messages.some((m) => m.includes("durationMs")), true);
       } finally {
-        if (prevVF === undefined) deleteEnv("VERYFRONT_DEBUG");
-        else setEnv("VERYFRONT_DEBUG", prevVF);
-        if (prevLV === undefined) deleteEnv("LOG_LEVEL");
-        else setEnv("LOG_LEVEL", prevLV);
+        restoreEnv("VERYFRONT_DEBUG", prevVF);
+        restoreEnv("LOG_LEVEL", prevLV);
         console.debug = orig.debug;
         console.log = orig.log;
         console.warn = orig.warn;
@@ -653,10 +575,8 @@ describe("Logger", () => {
         mod = await importSharedLogger(`t=default-${Date.now()}`);
         assertExists(mod.logger);
       } finally {
-        if (prevVF === undefined) deleteEnv("VERYFRONT_DEBUG");
-        else setEnv("VERYFRONT_DEBUG", prevVF);
-        if (prevLV === undefined) deleteEnv("LOG_LEVEL");
-        else setEnv("LOG_LEVEL", prevLV);
+        restoreEnv("VERYFRONT_DEBUG", prevVF);
+        restoreEnv("LOG_LEVEL", prevLV);
       }
     });
   });

@@ -60,8 +60,54 @@ function evictOldestEntries(): void {
   const toRemove = Math.ceil(entries.length * 0.1);
 
   for (let i = 0; i < toRemove; i++) {
-    const entry = entries[i];
-    if (entry) domainCache.delete(entry[0]);
+    const [key] = entries[i] ?? [];
+    if (key) domainCache.delete(key);
+  }
+}
+
+async function getCachedResult(
+  cacheKey: string,
+  domain: string,
+): Promise<DomainLookupResult | null | undefined> {
+  const now = Date.now();
+
+  if (injectedCacheRepo) {
+    const cached = await injectedCacheRepo.get(cacheKey);
+    if (!cached) return undefined;
+
+    const result = JSON.parse(cached) as DomainLookupResult | null;
+    logger.debug("[DomainLookup] Repository cache hit", {
+      domain,
+      projectSlug: result?.project_slug,
+    });
+    return result;
+  }
+
+  const cached = domainCache.get(cacheKey);
+  if (!cached || cached.expiresAt <= now) return undefined;
+
+  logger.debug("[DomainLookup] Cache hit", {
+    domain,
+    projectSlug: cached.result?.project_slug,
+    ttlRemaining: cached.expiresAt - now,
+  });
+  return cached.result;
+}
+
+function setCachedResult(
+  cacheKey: string,
+  result: DomainLookupResult | null,
+): Promise<void> | void {
+  if (injectedCacheRepo) {
+    return injectedCacheRepo.set(cacheKey, JSON.stringify(result), DOMAIN_CACHE_TTL_SECONDS);
+  }
+
+  const now = Date.now();
+  domainCache.set(cacheKey, { result, expiresAt: now + DOMAIN_CACHE_TTL_MS });
+
+  if (domainCache.size > DOMAIN_CACHE_MAX_ENTRIES / 2) {
+    cleanupExpiredEntries();
+    evictOldestEntries();
   }
 }
 
@@ -73,31 +119,9 @@ export function lookupProjectByDomain(
     "server.domainLookup.lookup",
     async () => {
       const cacheKey = normalizeDomain(domain);
-      const now = Date.now();
 
-      // Try injected cache repository first (for testing or distributed caching)
-      if (injectedCacheRepo) {
-        const cached = await injectedCacheRepo.get(cacheKey);
-        if (cached) {
-          const result = JSON.parse(cached) as DomainLookupResult | null;
-          logger.debug("[DomainLookup] Repository cache hit", {
-            domain,
-            projectSlug: result?.project_slug,
-          });
-          return result;
-        }
-      } else {
-        // Fall back to internal Map-based cache
-        const cached = domainCache.get(cacheKey);
-        if (cached?.expiresAt && cached.expiresAt > now) {
-          logger.debug("[DomainLookup] Cache hit", {
-            domain,
-            projectSlug: cached.result?.project_slug,
-            ttlRemaining: cached.expiresAt - now,
-          });
-          return cached.result;
-        }
-      }
+      const cached = await getCachedResult(cacheKey, domain);
+      if (cached !== undefined) return cached;
 
       const inFlight = inFlightRequests.get(cacheKey);
       if (inFlight) {
@@ -110,22 +134,7 @@ export function lookupProjectByDomain(
 
       try {
         const result = await requestPromise;
-
-        // Store in injected cache repository or internal cache
-        if (injectedCacheRepo) {
-          await injectedCacheRepo.set(cacheKey, JSON.stringify(result), DOMAIN_CACHE_TTL_SECONDS);
-        } else {
-          domainCache.set(cacheKey, {
-            result,
-            expiresAt: now + DOMAIN_CACHE_TTL_MS,
-          });
-
-          if (domainCache.size > DOMAIN_CACHE_MAX_ENTRIES / 2) {
-            cleanupExpiredEntries();
-            evictOldestEntries();
-          }
-        }
-
+        await setCachedResult(cacheKey, result);
         return result;
       } finally {
         inFlightRequests.delete(cacheKey);
@@ -228,9 +237,9 @@ function fetchDomainLookup(
 export function clearDomainCache(): void {
   domainCache.clear();
   inFlightRequests.clear();
-  if (injectedCacheRepo?.clear) {
-    void injectedCacheRepo.clear();
-  }
+
+  if (injectedCacheRepo?.clear) void injectedCacheRepo.clear();
+
   logger.debug("[DomainLookup] Cache cleared");
 }
 
@@ -254,9 +263,7 @@ export function getDomainCacheStats(): { size: number; maxSize: number } {
  * __injectCacheForTests(null); // Restore default
  * ```
  */
-export function __injectCacheForTests(
-  cacheRepo: CacheRepository<string> | null,
-): void {
+export function __injectCacheForTests(cacheRepo: CacheRepository<string> | null): void {
   injectedCacheRepo = cacheRepo;
 }
 

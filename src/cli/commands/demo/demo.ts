@@ -48,7 +48,7 @@ const AUTH_OPTIONS: { id: AuthMethod; label: string }[] = [
 ];
 
 function clearCountdownLine(): void {
-  write("\r  " + " ".repeat(30) + "\r");
+  write(`\r  ${" ".repeat(30)}\r`);
 }
 
 async function countdown(message: (i: number) => string, seconds = 3): Promise<void> {
@@ -62,11 +62,7 @@ async function countdown(message: (i: number) => string, seconds = 3): Promise<v
 function drawAuthOptions(selectedIndex: number): void {
   for (let i = 0; i < AUTH_OPTIONS.length; i++) {
     const opt = AUTH_OPTIONS[i]!;
-    if (i === selectedIndex) {
-      console.log("  " + brand("❯") + " " + opt.label);
-    } else {
-      console.log("    " + muted(opt.label));
-    }
+    console.log(i === selectedIndex ? `  ${brand("❯")} ${opt.label}` : `    ${muted(opt.label)}`);
   }
 }
 
@@ -84,21 +80,21 @@ function redrawAuthOptions(): void {
  */
 async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
   let method: AuthMethod | null = preselectedMethod ?? null;
-  const selectedIndex = method ? AUTH_OPTIONS.findIndex((o) => o.id === method) : 0;
+  const preselectedIndex = method ? AUTH_OPTIONS.findIndex((o) => o.id === method) : 0;
 
   if (autoMode) {
     method ??= AUTH_OPTIONS[0]!.id;
 
     console.log();
-    console.log("  " + dim("Choose authentication method:"));
+    console.log(`  ${dim("Choose authentication method:")}`);
     console.log();
-    drawAuthOptions(selectedIndex);
+    drawAuthOptions(preselectedIndex);
     console.log();
 
     await countdown((i) => `Auto-selecting in ${i}...`);
   } else if (!method) {
     console.log();
-    console.log("  " + dim("Choose authentication method:"));
+    console.log(`  ${dim("Choose authentication method:")}`);
     console.log();
 
     let currentIndex = 0;
@@ -127,7 +123,7 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
         } else if (key === "\x1b[B" || key === "j") {
           currentIndex = Math.min(AUTH_OPTIONS.length - 1, currentIndex + 1);
         } else if (key >= "1" && key <= "4") {
-          method = AUTH_OPTIONS[parseInt(key) - 1]?.id ?? null;
+          method = AUTH_OPTIONS[Number.parseInt(key, 10) - 1]?.id ?? null;
           if (method) break;
         }
 
@@ -145,86 +141,86 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
   console.log();
 
   if (method === "token") {
-    console.log("  " + brand("Enter your API token"));
-    console.log("  " + dim("You can get a token from veryfront.com/settings/api-keys"));
+    console.log(`  ${brand("Enter your API token")}`);
+    console.log(`  ${dim("You can get a token from veryfront.com/settings/api-keys")}`);
     console.log();
 
     const tokenInput = promptSync("  API token:") ?? "";
     if (!tokenInput) {
       console.log();
-      console.log("  " + error("✗") + " No token entered");
+      console.log(`  ${error("✗")} No token entered`);
       return false;
     }
 
     const userInfo = await validateToken(tokenInput);
     if (!userInfo) {
       console.log();
-      console.log("  " + error("✗") + " Invalid token");
+      console.log(`  ${error("✗")} Invalid token`);
       return false;
     }
 
     await saveToken(tokenInput);
     console.log();
-    console.log("  " + success("✓") + " Logged in as " + brand(userInfo.email));
+    console.log(`  ${success("✓")} Logged in as ${brand(userInfo.email)}`);
     return true;
   }
 
   if (!canOpenBrowser()) {
-    console.log("  " + error("Browser login not available in this environment."));
+    console.log(`  ${error("Browser login not available in this environment.")}`);
     return false;
   }
 
-  console.log("  " + dim("Starting authentication server..."));
+  console.log(`  ${dim("Starting authentication server...")}`);
 
   let server: Awaited<ReturnType<typeof startCallbackServer>>;
   try {
     server = await startCallbackServer();
   } catch (e) {
-    console.log("  " + error(`Failed to start server: ${e}`));
+    console.log(`  ${error(`Failed to start server: ${e}`)}`);
     return false;
   }
 
   const callbackUrl = getCallbackUrl(server.port);
   const authUrl = `${getApiUrl()}/auth/${method}?redirect_uri=${encodeURIComponent(callbackUrl)}`;
 
-  console.log("  " + brand("Opening browser to log in..."));
+  console.log(`  ${brand("Opening browser to log in...")}`);
   console.log();
-  console.log("  " + dim("If the browser doesn't open, visit:"));
-  console.log("  " + dim(authUrl));
+  console.log(`  ${dim("If the browser doesn't open, visit:")}`);
+  console.log(`  ${dim(authUrl)}`);
   console.log();
 
   try {
     await openBrowser(authUrl);
   } catch {
-    console.log("  " + dim("Could not open browser automatically."));
+    console.log(`  ${dim("Could not open browser automatically.")}`);
   }
 
-  console.log("  " + muted("Waiting for login..."));
+  console.log(`  ${muted("Waiting for login...")}`);
 
   try {
     const result = await server.waitForCallback(DEFAULT_LOGIN_TIMEOUT_MS);
 
     if (result.error || !result.token) {
       console.log();
-      console.log("  " + error("✗") + " Login failed: " + (result.error || "No token received"));
+      console.log(`  ${error("✗")} Login failed: ${result.error || "No token received"}`);
       return false;
     }
 
     const userInfo = await validateToken(result.token);
     if (!userInfo) {
       console.log();
-      console.log("  " + error("✗") + " Invalid token received");
+      console.log(`  ${error("✗")} Invalid token received`);
       return false;
     }
 
     await saveToken(result.token);
 
     console.log();
-    console.log("  " + success("✓") + " Logged in as " + brand(userInfo.email));
+    console.log(`  ${success("✓")} Logged in as ${brand(userInfo.email)}`);
     return true;
   } catch (e) {
     console.log();
-    console.log("  " + error("✗") + " " + (e instanceof Error ? e.message : String(e)));
+    console.log(`  ${error("✗")} ${e instanceof Error ? e.message : String(e)}`);
     return false;
   } finally {
     await server.stop();
@@ -244,7 +240,7 @@ async function waitForEnter(prompt?: string): Promise<boolean> {
 
   if (prompt) {
     console.log();
-    console.log("  " + muted(prompt));
+    console.log(`  ${muted(prompt)}`);
   }
 
   setRawMode(true);
@@ -308,36 +304,35 @@ async function executeStepAction(
         const userInfo = await validateToken(existingToken);
         if (userInfo) {
           console.log();
-          console.log("  " + success("✓") + " Already logged in as " + brand(userInfo.email));
-          break;
+          console.log(`  ${success("✓")} Already logged in as ${brand(userInfo.email)}`);
+          return;
         }
       }
+
       await demoLogin(loginMethod);
-      break;
+      return;
     }
 
     case "create": {
       await newCommand(projectName, { template: "ai", skipDeploy: true, force: true });
 
       const projectDir = join(cwd(), projectName);
-      const config = await readConfigFile(projectDir);
-      const actualSlug = config?.projectSlug;
-
-      if (!actualSlug) break;
+      const actualSlug = (await readConfigFile(projectDir))?.projectSlug;
+      if (!actualSlug) return;
 
       actualProjectSlug = actualSlug;
 
       const token = await readToken();
-      if (!token) break;
+      if (!token) return;
 
       console.log();
-      console.log("  " + dim("Registering project..."));
+      console.log(`  ${dim("Registering project...")}`);
 
       try {
         await reserveProjectSlug(actualSlug, token);
-        console.log("  " + success("✓") + " Project registered");
+        console.log(`  ${success("✓")} Project registered`);
 
-        console.log("  " + dim("Pushing code..."));
+        console.log(`  ${dim("Pushing code...")}`);
         chdir(projectDir);
         await pushCommand({
           projectDir,
@@ -346,11 +341,11 @@ async function executeStepAction(
           dryRun: false,
           quiet: true,
         });
-        console.log("  " + success("✓") + " Code pushed");
+        console.log(`  ${success("✓")} Code pushed`);
       } catch (e) {
-        console.log("  " + error("✗") + " " + (e instanceof Error ? e.message : String(e)));
+        console.log(`  ${error("✗")} ${e instanceof Error ? e.message : String(e)}`);
       }
-      break;
+      return;
     }
 
     case "dev": {
@@ -358,14 +353,14 @@ async function executeStepAction(
 
       if (autoMode) {
         console.log();
-        console.log("  " + dim("Skipping dev server in auto mode..."));
+        console.log(`  ${dim("Skipping dev server in auto mode...")}`);
         console.log();
-        console.log("  " + success("✓") + " Dev server skipped");
-        break;
+        console.log(`  ${success("✓")} Dev server skipped`);
+        return;
       }
 
       console.log();
-      console.log("  " + dim("Starting dev server..."));
+      console.log(`  ${dim("Starting dev server...")}`);
 
       try {
         const result = await devCommand({
@@ -377,10 +372,10 @@ async function executeStepAction(
 
         await result.ready;
 
-        console.log("  " + success("●") + " " + brand("http://localhost:3000/"));
+        console.log(`  ${success("●")} ${brand("http://localhost:3000/")}`);
         console.log();
 
-        console.log("  " + dim("Opening browser..."));
+        console.log(`  ${dim("Opening browser...")}`);
         try {
           await openBrowser("http://localhost:3000");
         } catch {
@@ -388,27 +383,27 @@ async function executeStepAction(
         }
 
         console.log();
-        console.log("  " + dim("Press Enter to stop the dev server and continue..."));
+        console.log(`  ${dim("Press Enter to stop the dev server and continue...")}`);
 
         await waitForEnter();
 
         console.log();
-        console.log("  " + dim("Stopping dev server..."));
+        console.log(`  ${dim("Stopping dev server...")}`);
         await result.stop();
         await result.done;
       } catch (e) {
-        console.log("  " + error("✗") + " " + (e instanceof Error ? e.message : String(e)));
+        console.log(`  ${error("✗")} ${e instanceof Error ? e.message : String(e)}`);
       }
 
       await delay(500);
       console.log();
-      console.log("  " + success("✓") + " Dev server stopped");
-      break;
+      console.log(`  ${success("✓")} Dev server stopped`);
+      return;
     }
 
     case "deploy": {
       console.log();
-      console.log("  " + dim("Deploying to production..."));
+      console.log(`  ${dim("Deploying to production...")}`);
 
       try {
         await deployCommand({
@@ -419,15 +414,14 @@ async function executeStepAction(
           dryRun: false,
         });
 
-        const deployedUrl = `https://${(actualProjectSlug ?? projectName)}.veryfront.com`;
-        console.log("  " + success("✓") + " Deployed to " + brand(deployedUrl));
+        const deployedUrl = `https://${actualProjectSlug ?? projectName}.veryfront.com`;
+        console.log(`  ${success("✓")} Deployed to ${brand(deployedUrl)}`);
       } catch (e) {
         console.log(
-          "  " + error("✗") + " Deploy failed: " +
-            (e instanceof Error ? e.message : String(e)),
+          `  ${error("✗")} Deploy failed: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
-      break;
+      return;
     }
   }
 }
@@ -450,7 +444,7 @@ interface StepTiming {
   duration?: number;
 }
 
-const stepTimings: Map<string, StepTiming> = new Map();
+const stepTimings = new Map<string, StepTiming>();
 
 function startStepTiming(stepId: string): void {
   stepTimings.set(stepId, { startTime: Date.now() });
@@ -522,7 +516,7 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
     const matrix = new AnimatedDotMatrix({ litColor: "\x1b[38;2;252;143;93m" });
     const textLines = [
       bold(brand("Veryfront")),
-      muted("Interactive Demo" + (autoMode ? " (Auto Mode)" : "")),
+      muted(`Interactive Demo${autoMode ? " (Auto Mode)" : ""}`),
     ];
 
     console.log(matrix.renderWithText(textLines));
@@ -549,7 +543,7 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
     stepTimings.clear();
 
     const total = DEMO_STEPS.length;
-    for (let i = 0; i < DEMO_STEPS.length; i++) {
+    for (let i = 0; i < total; i++) {
       const step = DEMO_STEPS[i]!;
 
       startStepTiming(step.id);
@@ -570,7 +564,7 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
 
         endStepTiming(step.id);
 
-        if (!step.skipPostWait && i < DEMO_STEPS.length - 1) {
+        if (!step.skipPostWait && i < total - 1) {
           if (!(await waitForEnter("Press Enter to continue..."))) return;
         }
         continue;
@@ -578,13 +572,13 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
 
       endStepTiming(step.id);
 
-      if (i < DEMO_STEPS.length - 1) {
+      if (i < total - 1) {
         if (!(await waitForEnter("Press Enter to continue..."))) return;
       }
     }
 
     write(CLEAR_SCREEN + MOVE_HOME);
-    const finalUrl = `https://${(actualProjectSlug ?? projectName)}.veryfront.com`;
+    const finalUrl = `https://${actualProjectSlug ?? projectName}.veryfront.com`;
     console.log();
 
     console.log(
@@ -595,13 +589,13 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
     );
 
     console.log();
-    console.log("  " + bold("Next steps:"));
+    console.log(`  ${bold("Next steps:")}`);
     console.log();
-    console.log("  " + dim("1.") + " Edit your app in " + brand(`${projectName}/`));
-    console.log("  " + dim("2.") + " Run " + brand("veryfront dev") + " to start developing");
-    console.log("  " + dim("3.") + " Run " + brand("veryfront deploy") + " to publish changes");
+    console.log(`  ${dim("1.")} Edit your app in ${brand(`${projectName}/`)}`);
+    console.log(`  ${dim("2.")} Run ${brand("veryfront dev")} to start developing`);
+    console.log(`  ${dim("3.")} Run ${brand("veryfront deploy")} to publish changes`);
     console.log();
-    console.log("  " + dim("Learn more at https://veryfront.com/docs"));
+    console.log(`  ${dim("Learn more at https://veryfront.com/docs")}`);
     console.log();
 
     await waitForEnter("Press Enter to exit...");

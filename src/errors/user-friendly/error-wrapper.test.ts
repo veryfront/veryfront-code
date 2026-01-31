@@ -6,15 +6,15 @@ describe("wrapErrorHandler", () => {
   it("should return result on success", async () => {
     const fn = (x: number) => Promise.resolve(x * 2);
     const wrapped = wrapErrorHandler(fn);
-    const result = await wrapped(5);
-    assertEquals(result, 10);
+
+    assertEquals(await wrapped(5), 10);
   });
 
   it("should preserve function arguments", async () => {
     const fn = (a: string, b: string) => Promise.resolve(`${a}-${b}`);
     const wrapped = wrapErrorHandler(fn);
-    const result = await wrapped("hello", "world");
-    assertEquals(result, "hello-world");
+
+    assertEquals(await wrapped("hello", "world"), "hello-world");
   });
 
   it("should re-throw errors after logging", async () => {
@@ -23,11 +23,7 @@ describe("wrapErrorHandler", () => {
     };
     const wrapped = wrapErrorHandler(fn);
 
-    await assertRejects(
-      () => wrapped(),
-      Error,
-      "test failure",
-    );
+    await assertRejects(() => wrapped(), Error, "test failure");
   });
 
   it("should re-throw non-Error values", async () => {
@@ -36,11 +32,6 @@ describe("wrapErrorHandler", () => {
     };
     const wrapped = wrapErrorHandler(fn);
 
-    try {
-      await wrapped();
-      throw new Error("Should have thrown");
-    } catch (error) {
-      assertEquals(error, "string error");
-    }
+    await assertRejects(() => wrapped(), undefined, "string error");
   });
 });

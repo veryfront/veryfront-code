@@ -23,11 +23,11 @@ export function renderDashboard(state: AppState): string {
 
   const hasProjects = state.projects.items.length > 0;
   const hasExamples = state.examples.items.length > 0;
-  const hasRemoteProjects = state.remote.user && state.remote.projects.length > 0;
+  const hasRemoteProjects = !!state.remote.user && state.remote.projects.length > 0;
 
   if (hasProjects) {
     const isActive = state.activeList === "projects";
-    lines.push(renderSection("Local", state.projects.items.length, isActive));
+    lines.push(renderSection("Local", isActive));
     lines.push(
       renderList(state.projects, {
         maxWidth: maxListWidth,
@@ -39,15 +39,14 @@ export function renderDashboard(state: AppState): string {
     );
   }
 
-  // Remote projects (when logged in)
   if (hasRemoteProjects) {
-    const isRemoteActive = state.activeList === "remoteProjects";
+    const isActive = state.activeList === "remoteProjects";
     const visibleCount = 5;
     const start = state.remote.scrollOffset;
     const end = Math.min(start + visibleCount, state.remote.projects.length);
     const visibleProjects = state.remote.projects.slice(start, end);
 
-    lines.push(renderSection("Remote", state.remote.projects.length, isRemoteActive));
+    lines.push(renderSection("Remote", isActive));
 
     if (start > 0) {
       lines.push(`   ${dim("↑")}  ${dim("more above")}`);
@@ -55,13 +54,9 @@ export function renderDashboard(state: AppState): string {
 
     visibleProjects.forEach((p, i) => {
       const actualIndex = start + i;
-      const isFocused = isRemoteActive && actualIndex === state.remote.focusedIndex;
+      const isFocused = isActive && actualIndex === state.remote.focusedIndex;
       const cursor = isFocused ? brand("›") : " ";
-      // Show number 1-9 or letter a-z for 10+
-      const displayNum = actualIndex + 1;
-      const shortcut = displayNum <= 9
-        ? String(displayNum)
-        : String.fromCharCode(96 + displayNum - 9); // 10='a', 11='b', etc.
+      const shortcut = getShortcut(actualIndex + 1);
       const num = isFocused ? brand(`[${shortcut}]`) : dim(`[${shortcut}]`);
       const label = isFocused ? p.slug : dim(p.slug);
       lines.push(`${cursor} ${num} ${label}`);
@@ -70,12 +65,13 @@ export function renderDashboard(state: AppState): string {
     if (end < state.remote.projects.length) {
       lines.push(`   ${dim("↓")}  ${dim("more below")}`);
     }
+
     lines.push("");
   }
 
   if (hasExamples) {
     const isActive = state.activeList === "examples";
-    lines.push(renderSection("Examples", state.examples.items.length, isActive));
+    lines.push(renderSection("Examples", isActive));
     lines.push(
       renderList(state.examples, {
         maxWidth: maxListWidth,
@@ -92,6 +88,12 @@ export function renderDashboard(state: AppState): string {
   return lines.join("\n");
 }
 
+function getShortcut(displayNum: number): string {
+  if (displayNum <= 9) return String(displayNum);
+  // 10='a', 11='b', etc.
+  return String.fromCharCode(96 + displayNum - 9);
+}
+
 /**
  * Render the banner with agent face and server info inside a box
  */
@@ -105,6 +107,7 @@ function renderBanner(state: AppState): string {
 
   // Server URL and MCP URL - always reserve both lines to prevent jumps
   textLines.push(`${dim("Url")} ${brand(state.server.url)}`);
+
   if (state.mcp.enabled && state.mcp.transport === "http") {
     const port = state.mcp.httpPort ?? 9999;
     textLines.push(`${dim("Mcp")} ${brand(`http://veryfront.me:${port}/mcp`)}`);
@@ -112,7 +115,6 @@ function renderBanner(state: AppState): string {
     textLines.push("");
   }
 
-  // Errors/warnings on separate line if any
   const { errors, warnings } = state.server;
   if (errors > 0 || warnings > 0) {
     const parts: string[] = [];
@@ -142,7 +144,7 @@ function renderBanner(state: AppState): string {
 /**
  * Render a section header
  */
-function renderSection(title: string, _count: number, isActive = true): string {
+function renderSection(title: string, isActive = true): string {
   const indicator = isActive ? brand("›") : " ";
   const titleText = isActive ? title : dim(title);
   return `  ${indicator} ${titleText}`;
@@ -152,13 +154,11 @@ function renderSection(title: string, _count: number, isActive = true): string {
  * Render the help bar at the bottom
  */
 function renderHelpBar(state: AppState): string {
-  // Minimal by default, ? reveals all
   if (!state.showHelp) {
     const userInfo = state.remote.user ? `  ${dim("-")}  ${brand(state.remote.user.email)}` : "";
     return `  ${dim("↑↓ select  enter open  ? more  q quit")}${userInfo}`;
   }
 
-  // Expanded help
   const lines: string[] = [];
   lines.push(`  ${dim("o")} open  ${dim("s")} studio  ${dim("i")} ide`);
 

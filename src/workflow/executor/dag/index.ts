@@ -91,7 +91,7 @@ export class DAGExecutor {
             nodeId,
             status: "failed",
             error,
-            attempt: (nodeStates[nodeId]?.attempt || 0) + 1,
+            attempt: (nodeStates[nodeId]?.attempt ?? 0) + 1,
             completedAt: new Date(),
           };
 
@@ -130,12 +130,12 @@ export class DAGExecutor {
             waiting: false,
             context,
             nodeStates,
-            error: `Node "${nodeId}" failed: ${nodeResult.state.error || "Unknown error"}`,
+            error: `Node "${nodeId}" failed: ${nodeResult.state.error ?? "Unknown error"}`,
           };
         }
 
         if (nodeResult.state.status === "completed" || nodeResult.state.status === "skipped") {
-          for (const dependent of adjList.get(nodeId) || []) {
+          for (const dependent of adjList.get(nodeId) ?? []) {
             inDegree.set(dependent, inDegree.get(dependent)! - 1);
           }
         }
@@ -177,25 +177,18 @@ export class DAGExecutor {
     switch (config.type) {
       case "step":
         return this.executeStepNode(node, context);
-
       case "parallel":
         return this.executeParallelNode(node, config, context, nodeStates);
-
       case "map":
         return this.executeMapNode(node, config, context, nodeStates);
-
       case "branch":
         return this.executeBranchNode(node, config, context, nodeStates);
-
       case "wait":
         return this.executeWaitNode(node, config, context);
-
       case "subWorkflow":
-        return this.executeSubWorkflowNode(node, config, context, nodeStates);
-
+        return this.executeSubWorkflowNode(node, config, context);
       case "loop":
         return this.executeLoopNode(node, config, context, nodeStates);
-
       default:
         throw new Error(
           `Unknown node type "${(config as WorkflowNodeConfig).type}" for node "${node.id}". ` +
@@ -317,9 +310,7 @@ export class DAGExecutor {
         };
       }
 
-      const processorConfig: WorkflowNodeConfig = {
-        ...(config.processor as WorkflowNode).config,
-      };
+      const processorConfig: WorkflowNodeConfig = { ...(config.processor as WorkflowNode).config };
 
       if (processorConfig.type === "step") {
         processorConfig.input = item as Record<string, unknown>;
@@ -382,7 +373,7 @@ export class DAGExecutor {
     const startTime = Date.now();
 
     const conditionResult = await config.condition(context);
-    const branchNodes = conditionResult ? config.then : (config.else || []);
+    const branchNodes = conditionResult ? config.then : (config.else ?? []);
 
     if (branchNodes.length === 0) {
       const state: NodeState = {
@@ -468,7 +459,6 @@ export class DAGExecutor {
     node: WorkflowNode,
     config: SubWorkflowNodeConfig,
     context: WorkflowContext,
-    _nodeStates: Record<string, NodeState>,
   ): Promise<NodeExecutionResult> {
     const startTime = Date.now();
 

@@ -25,14 +25,14 @@ export async function watchMDX(options: CompileOptions): Promise<void> {
 async function getWatchableDirectories(projectDir: string): Promise<string[]> {
   const { fs } = await runtime.get();
   const potentialDirs = ["pages", "layouts", "providers"].map((dir) => join(projectDir, dir));
-  const dirsToWatch: string[] = [];
 
+  const dirsToWatch: string[] = [];
   for (const dir of potentialDirs) {
     try {
       const stat = await fs.stat(dir);
       if (stat.isDirectory) dirsToWatch.push(dir);
     } catch {
-      // Directory doesn't exist, skip it
+      continue;
     }
   }
 

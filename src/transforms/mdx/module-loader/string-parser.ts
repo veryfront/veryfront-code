@@ -12,18 +12,16 @@ export function extractBalancedBlock(
 
     if (ch === '"' || ch === "'") {
       const quote = ch;
-      i++;
 
-      while (i < source.length) {
+      for (i++; i < source.length; i++) {
         const q = source[i];
+
         if (q === "\\") {
-          i += 2;
+          i++;
           continue;
         }
-        if (q === quote) {
-          break;
-        }
-        i++;
+
+        if (q === quote) break;
       }
 
       continue;
@@ -31,10 +29,10 @@ export function extractBalancedBlock(
 
     if (ch === open) depth++;
 
-    if (ch === closeCh) {
-      depth--;
-      if (depth === 0) return source.slice(startIndex, i + 1);
-    }
+    if (ch !== closeCh) continue;
+
+    depth--;
+    if (depth === 0) return source.slice(startIndex, i + 1);
   }
 
   return "";

@@ -46,31 +46,29 @@ export default tool({
       })) as FreeSlot[];
 
       const slots = workingHoursOnly
-        ? freeSlots.filter((slot) => {
-            const startHour = slot.start.getHours();
-            const endHour = slot.end.getHours();
+        ? freeSlots.filter(({ start, end }) => {
+            const startHour = start.getHours();
+            const endHour = end.getHours();
             return startHour >= 9 && endHour <= 18;
           })
         : freeSlots;
 
-      const formattedSlots = slots.slice(0, 10).map((slot) => {
-        const duration = Math.round(
-          (slot.end.getTime() - slot.start.getTime()) / (1000 * 60),
-        );
+      const formattedSlots = slots.slice(0, 10).map(({ start, end }) => {
+        const duration = Math.round((end.getTime() - start.getTime()) / 60000);
 
         return {
-          start: slot.start.toISOString(),
-          end: slot.end.toISOString(),
+          start: start.toISOString(),
+          end: end.toISOString(),
           durationMinutes: duration,
-          date: slot.start.toLocaleDateString("en-US", {
+          date: start.toLocaleDateString("en-US", {
             weekday: "long",
             month: "short",
             day: "numeric",
           }),
-          timeRange: `${slot.start.toLocaleTimeString("en-US", {
+          timeRange: `${start.toLocaleTimeString("en-US", {
             hour: "numeric",
             minute: "2-digit",
-          })} - ${slot.end.toLocaleTimeString("en-US", {
+          })} - ${end.toLocaleTimeString("en-US", {
             hour: "numeric",
             minute: "2-digit",
           })}`,

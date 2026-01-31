@@ -9,20 +9,22 @@ export function extractExportNames(source: string): string[] {
     names.add("default");
   }
 
-  for (const m of source.matchAll(/export\s+function\s+([A-Za-z0-9_]+)/g)) {
-    if (m[1]) names.add(m[1]);
+  for (const match of source.matchAll(/export\s+function\s+([A-Za-z0-9_]+)/g)) {
+    if (match[1]) names.add(match[1]);
   }
 
-  for (const m of source.matchAll(/export\s+class\s+([A-Za-z0-9_]+)/g)) {
-    if (m[1]) names.add(m[1]);
+  for (const match of source.matchAll(/export\s+class\s+([A-Za-z0-9_]+)/g)) {
+    if (match[1]) names.add(match[1]);
   }
 
-  for (const m of source.matchAll(/export\s+(?:const|let|var)\s+([A-Za-z0-9_]+)/g)) {
-    if (m[1]) names.add(m[1]);
+  for (const match of source.matchAll(/export\s+(?:const|let|var)\s+([A-Za-z0-9_]+)/g)) {
+    if (match[1]) names.add(match[1]);
   }
 
-  for (const m of source.matchAll(/export\s*\{([^}]+)\}/g)) {
-    const inner = m[1]?.split(",") ?? [];
+  for (const match of source.matchAll(/export\s*\{([^}]+)\}/g)) {
+    const innerRaw = match[1];
+    if (!innerRaw) continue;
+    const inner = innerRaw.split(",");
     for (const seg of inner) {
       const part = seg.trim();
       if (!part) continue;

@@ -11,7 +11,7 @@ export default tool({
   }),
   async execute({ parentFolderId, name }) {
     const folder = await createFolder({ parentFolderId, name });
-    const path = folder.path_collection?.entries.map((e) => e.name).join("/") ?? "/";
+    const path = folder.path_collection?.entries.map((entry) => entry.name).join("/") ?? "/";
 
     return {
       success: true,

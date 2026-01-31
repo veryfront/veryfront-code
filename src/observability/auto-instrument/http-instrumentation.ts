@@ -66,19 +66,6 @@ export function instrumentHttpHandler(
   };
 }
 
-/**
- * Create an instrumented fetch function without mutating globals
- * Returns a wrapped fetch that adds OpenTelemetry spans
- *
- * @param baseFetch - The fetch function to instrument (defaults to globalThis.fetch)
- * @returns Instrumented fetch function
- *
- * @example
- * ```ts
- * const instrumentedFetch = createInstrumentedFetch()
- * const response = await instrumentedFetch('https://api.example.com')
- * ```
- */
 export function createInstrumentedFetch(
   baseFetch: typeof fetch = globalThis.fetch,
 ): typeof fetch {
@@ -130,10 +117,7 @@ export function createInstrumentedFetch(
         },
       );
     } catch (error) {
-      logger.debug(
-        "[auto-instrument] Fetch span failed, falling back to base fetch",
-        error,
-      );
+      logger.debug("[auto-instrument] Fetch span failed, falling back to base fetch", error);
       return await baseFetch(input, init);
     }
   };
@@ -206,9 +190,17 @@ function extractFetchUrl(input: RequestInfo | URL): string {
 }
 
 function buildErrorAttributes(error: unknown): ErrorAttributes {
+  if (error instanceof Error) {
+    return {
+      error: "true",
+      "error.type": error.constructor.name,
+      "error.message": error.message,
+    };
+  }
+
   return {
     error: "true",
-    "error.type": error instanceof Error ? error.constructor.name : "Unknown",
-    "error.message": error instanceof Error ? error.message : String(error),
+    "error.type": "Unknown",
+    "error.message": String(error),
   };
 }

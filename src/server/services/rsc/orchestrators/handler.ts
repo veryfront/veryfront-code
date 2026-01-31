@@ -17,7 +17,7 @@ export class RSCDevServerHandler {
   private readonly pageHandler: PageHandler;
   private readonly hydratorHandler: HydratorHandler;
 
-  constructor(private projectDir: string) {
+  constructor(private readonly projectDir: string) {
     this.manifestHandler = new ManifestHandler(projectDir);
     this.renderHandler = new RenderHandler(projectDir, () => this.renderer);
     this.streamHandler = new StreamHandler(this.renderHandler);
@@ -54,9 +54,10 @@ export class RSCDevServerHandler {
   private async ensureRenderer(): Promise<void> {
     if (this.renderer) return;
 
-    this.clientManifest = await buildClientManifest(this.projectDir);
+    const clientManifest = await buildClientManifest(this.projectDir);
+    this.clientManifest = clientManifest;
     this.renderer = new RSCRenderer({
-      clientManifest: this.clientManifest,
+      clientManifest,
       projectDir: this.projectDir,
       mode: "development",
     });

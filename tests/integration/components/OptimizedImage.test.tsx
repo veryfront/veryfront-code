@@ -1,7 +1,3 @@
-/**
- * Tests for OptimizedImage Component
- */
-
 import { assertEquals, assertExists } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
 import React from "react";
@@ -45,11 +41,11 @@ describe("OptimizedImage", () => {
         quality: 85,
       };
 
-      const element = React.createElement(OptimizedImage, props as any);
+      const element = React.createElement(OptimizedImage, props);
 
       assertExists(element);
-      assertEquals((element.props as any).formats, ["avif", "webp", "jpeg"]);
-      assertEquals((element.props as any).quality, 85);
+      assertEquals(element.props.formats, ["avif", "webp", "jpeg"]);
+      assertEquals(element.props.quality, 85);
     });
   });
 
@@ -205,7 +201,7 @@ describe("useOptimizedImage", () => {
   });
 
   it("should accept custom options", () => {
-    const { sources, fallback: _fallback } = useOptimizedImage("/images/test.jpg", {
+    const { sources } = useOptimizedImage("/images/test.jpg", {
       formats: ["webp", "jpeg"],
       quality: 90,
     });
@@ -237,19 +233,19 @@ describe("getAspectRatioPadding", () => {
   it("should calculate padding for 16:9 aspect ratio", () => {
     const padding = getAspectRatioPadding(1920, 1080);
 
-    assertEquals(padding, "56.25%"); // 1080/1920 * 100
+    assertEquals(padding, "56.25%");
   });
 
   it("should calculate padding for 4:3 aspect ratio", () => {
     const padding = getAspectRatioPadding(800, 600);
 
-    assertEquals(padding, "75%"); // 600/800 * 100
+    assertEquals(padding, "75%");
   });
 
   it("should calculate padding for 1:1 aspect ratio", () => {
     const padding = getAspectRatioPadding(500, 500);
 
-    assertEquals(padding, "100%"); // 500/500 * 100
+    assertEquals(padding, "100%");
   });
 });
 

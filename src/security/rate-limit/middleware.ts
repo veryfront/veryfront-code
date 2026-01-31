@@ -9,8 +9,7 @@ function defaultKeyGenerator(request: Request): string {
     return forwardedFor.split(",")[0]?.trim() || "unknown";
   }
 
-  const realIp = request.headers.get("x-real-ip");
-  return realIp || "unknown";
+  return request.headers.get("x-real-ip") || "unknown";
 }
 
 function defaultRateLimitExceeded(_request: Request, _key: string, message: string): Response {
@@ -29,10 +28,27 @@ function defaultRateLimitExceeded(_request: Request, _key: string, message: stri
   );
 }
 
-export function createRateLimiter(config: RateLimitConfig): (
-  request: Request,
-  next: (req: Request) => Promise<Response>,
-) => Promise<Response> {
+function getStrategy(strategy: RateLimitConfig["strategy"]) {
+  switch (strategy) {
+    case "sliding-window":
+      return slidingWindowStrategy;
+    case "token-bucket":
+      return tokenBucketStrategy;
+    case "fixed-window":
+    default:
+      return fixedWindowStrategy;
+  }
+}
+
+function applyRateLimitHeaders(response: Response, headers: Headers): void {
+  for (const [name, value] of headers) {
+    response.headers.set(name, value);
+  }
+}
+
+export function createRateLimiter(
+  config: RateLimitConfig,
+): (request: Request, next: (req: Request) => Promise<Response>) => Promise<Response> {
   const {
     maxRequests,
     windowMs,
@@ -44,11 +60,7 @@ export function createRateLimiter(config: RateLimitConfig): (
     store = new MemoryRateLimitStore(),
   } = config;
 
-  const strategyFn = {
-    "sliding-window": slidingWindowStrategy,
-    "token-bucket": tokenBucketStrategy,
-    "fixed-window": fixedWindowStrategy,
-  }[strategy] ?? fixedWindowStrategy;
+  const strategyFn = getStrategy(strategy);
 
   return async function rateLimitMiddleware(
     request: Request,
@@ -79,19 +91,12 @@ export function createRateLimiter(config: RateLimitConfig): (
           ? await onRateLimitExceeded(request, key)
           : defaultRateLimitExceeded(request, key, message);
 
-        for (const [name, value] of headers) {
-          response.headers.set(name, value);
-        }
-
+        applyRateLimitHeaders(response, headers);
         return response;
       }
 
       const response = await next(request);
-
-      for (const [name, value] of headers) {
-        response.headers.set(name, value);
-      }
-
+      applyRateLimitHeaders(response, headers);
       return response;
     } catch (error) {
       logger.error("Rate limiting error", {

@@ -3,50 +3,57 @@ import { describe, it } from "@veryfront/testing/bdd";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 import { createProxyHandler } from "./handler.ts";
 
+function createTokenResponse(): Response {
+  return Response.json({
+    access_token: "test-token",
+    token_type: "Bearer",
+    expires_in: 3600,
+  });
+}
+
+function createNotFoundResponse(): Response {
+  return new Response("Not found", { status: 404 });
+}
+
+function createHandler(port: number) {
+  return createProxyHandler({
+    config: {
+      apiBaseUrl: `http://127.0.0.1:${port}`,
+      clientId: "test-client",
+      clientSecret: "test-secret",
+      previewClientId: "test-client",
+      previewClientSecret: "test-secret",
+    },
+  });
+}
+
 describe("Proxy Handler", () => {
   describe("processRequest with custom domains", () => {
     it("resolves project slug for custom domain via domain lookup", async () => {
-      // Mock API server that returns domain lookup and OAuth token
-      const { server, port } = createMockServer(
-        (req: Request) => {
-          const url = new URL(req.url);
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
 
-          if (url.pathname === "/auth/token") {
-            return Response.json({
-              access_token: "test-token",
-              token_type: "Bearer",
-              expires_in: 3600,
-            });
-          }
+        if (pathname === "/auth/token") return createTokenResponse();
 
-          if (url.pathname.startsWith("/projects/")) {
-            return Response.json({
-              id: "proj-123",
-              slug: "my-project",
-              name: "My Project",
-              environments: [{
-                id: "env-1",
-                name: "production",
-                domains: ["example.com"],
-                active_release_id: "rel-123",
-              }],
-            });
-          }
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+            }],
+          });
+        }
 
-          return new Response("Not found", { status: 404 });
-        },
-      );
+        return createNotFoundResponse();
+      });
 
       try {
-        const handler = createProxyHandler({
-          config: {
-            apiBaseUrl: `http://127.0.0.1:${port}`,
-            clientId: "test-client",
-            clientSecret: "test-secret",
-            previewClientId: "test-client",
-            previewClientSecret: "test-secret",
-          },
-        });
+        const handler = createHandler(port);
 
         const req = new Request("http://example.com/page", {
           headers: { host: "example.com" },
@@ -65,36 +72,17 @@ describe("Proxy Handler", () => {
     });
 
     it("returns 404 error when custom domain not found", async () => {
-      const { server, port } = createMockServer(
-        (req: Request) => {
-          const url = new URL(req.url);
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
 
-          if (url.pathname === "/auth/token") {
-            return Response.json({
-              access_token: "test-token",
-              token_type: "Bearer",
-              expires_in: 3600,
-            });
-          }
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/")) return createNotFoundResponse();
 
-          if (url.pathname.startsWith("/projects/")) {
-            return new Response("Not found", { status: 404 });
-          }
-
-          return new Response("Not found", { status: 404 });
-        },
-      );
+        return createNotFoundResponse();
+      });
 
       try {
-        const handler = createProxyHandler({
-          config: {
-            apiBaseUrl: `http://127.0.0.1:${port}`,
-            clientId: "test-client",
-            clientSecret: "test-secret",
-            previewClientId: "test-client",
-            previewClientSecret: "test-secret",
-          },
-        });
+        const handler = createHandler(port);
 
         const req = new Request("http://unknown-domain.com/page", {
           headers: { host: "unknown-domain.com" },
@@ -104,7 +92,10 @@ describe("Proxy Handler", () => {
 
         assertEquals(ctx.projectSlug, undefined);
         assertEquals(ctx.error?.status, 404);
-        assertEquals(ctx.error?.message, "No project configured for domain: unknown-domain.com");
+        assertEquals(
+          ctx.error?.message,
+          "No project configured for domain: unknown-domain.com",
+        );
 
         await handler.close();
       } finally {
@@ -116,7 +107,7 @@ describe("Proxy Handler", () => {
       const handler = createProxyHandler({
         config: {
           apiBaseUrl: "http://localhost:9999",
-          clientId: "", // No credentials
+          clientId: "",
           clientSecret: "",
           previewClientId: "",
           previewClientSecret: "",
@@ -131,7 +122,10 @@ describe("Proxy Handler", () => {
 
       assertEquals(ctx.projectSlug, undefined);
       assertEquals(ctx.error?.status, 502);
-      assertEquals(ctx.error?.message, "Failed to authenticate for domain: custom-domain.com");
+      assertEquals(
+        ctx.error?.message,
+        "Failed to authenticate for domain: custom-domain.com",
+      );
 
       await handler.close();
     });
@@ -166,47 +160,31 @@ describe("Proxy Handler", () => {
 
   describe("protected environments", () => {
     it("redirects to sign-in for protected custom domain without auth token", async () => {
-      const { server, port } = createMockServer(
-        (req: Request) => {
-          const url = new URL(req.url);
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
 
-          if (url.pathname === "/auth/token") {
-            return Response.json({
-              access_token: "test-token",
-              token_type: "Bearer",
-              expires_in: 3600,
-            });
-          }
+        if (pathname === "/auth/token") return createTokenResponse();
 
-          if (url.pathname.startsWith("/projects/")) {
-            return Response.json({
-              id: "proj-123",
-              slug: "protected-project",
-              name: "Protected Project",
-              environments: [{
-                id: "env-1",
-                name: "production",
-                domains: ["protected.example.com"],
-                active_release_id: "rel-123",
-                protected: true,
-              }],
-            });
-          }
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
 
-          return new Response("Not found", { status: 404 });
-        },
-      );
+        return createNotFoundResponse();
+      });
 
       try {
-        const handler = createProxyHandler({
-          config: {
-            apiBaseUrl: `http://127.0.0.1:${port}`,
-            clientId: "test-client",
-            clientSecret: "test-secret",
-            previewClientId: "test-client",
-            previewClientSecret: "test-secret",
-          },
-        });
+        const handler = createHandler(port);
 
         const req = new Request("http://protected.example.com/page", {
           headers: { host: "protected.example.com" },
@@ -228,47 +206,31 @@ describe("Proxy Handler", () => {
     });
 
     it("allows access to protected custom domain with auth token", async () => {
-      const { server, port } = createMockServer(
-        (req: Request) => {
-          const url = new URL(req.url);
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
 
-          if (url.pathname === "/auth/token") {
-            return Response.json({
-              access_token: "test-token",
-              token_type: "Bearer",
-              expires_in: 3600,
-            });
-          }
+        if (pathname === "/auth/token") return createTokenResponse();
 
-          if (url.pathname.startsWith("/projects/")) {
-            return Response.json({
-              id: "proj-123",
-              slug: "protected-project",
-              name: "Protected Project",
-              environments: [{
-                id: "env-1",
-                name: "production",
-                domains: ["protected.example.com"],
-                active_release_id: "rel-123",
-                protected: true,
-              }],
-            });
-          }
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
 
-          return new Response("Not found", { status: 404 });
-        },
-      );
+        return createNotFoundResponse();
+      });
 
       try {
-        const handler = createProxyHandler({
-          config: {
-            apiBaseUrl: `http://127.0.0.1:${port}`,
-            clientId: "test-client",
-            clientSecret: "test-secret",
-            previewClientId: "test-client",
-            previewClientSecret: "test-secret",
-          },
-        });
+        const handler = createHandler(port);
 
         const req = new Request("http://protected.example.com/page", {
           headers: {
@@ -290,50 +252,37 @@ describe("Proxy Handler", () => {
     });
 
     it("redirects to sign-in for protected veryfront domain without auth token", async () => {
-      const { server, port } = createMockServer(
-        (req: Request) => {
-          const url = new URL(req.url);
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
 
-          if (url.pathname === "/auth/token") {
-            return Response.json({
-              access_token: "test-token",
-              token_type: "Bearer",
-              expires_in: 3600,
-            });
-          }
+        if (pathname === "/auth/token") return createTokenResponse();
 
-          if (url.pathname.startsWith("/projects/")) {
-            return Response.json({
-              id: "proj-123",
-              slug: "protected-project",
-              name: "Protected Project",
-              environments: [{
-                id: "env-1",
-                name: "staging",
-                active_release_id: "rel-123",
-                protected: true,
-              }],
-            });
-          }
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
 
-          return new Response("Not found", { status: 404 });
-        },
-      );
+        return createNotFoundResponse();
+      });
 
       try {
-        const handler = createProxyHandler({
-          config: {
-            apiBaseUrl: `http://127.0.0.1:${port}`,
-            clientId: "test-client",
-            clientSecret: "test-secret",
-            previewClientId: "test-client",
-            previewClientSecret: "test-secret",
-          },
-        });
+        const handler = createHandler(port);
 
-        const req = new Request("http://protected-project.staging.veryfront.com/page", {
-          headers: { host: "protected-project.staging.veryfront.com" },
-        });
+        const req = new Request(
+          "http://protected-project.staging.veryfront.com/page",
+          {
+            headers: { host: "protected-project.staging.veryfront.com" },
+          },
+        );
 
         const ctx = await handler.processRequest(req);
 
@@ -351,53 +300,40 @@ describe("Proxy Handler", () => {
     });
 
     it("allows access to protected veryfront domain with auth token", async () => {
-      const { server, port } = createMockServer(
-        (req: Request) => {
-          const url = new URL(req.url);
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
 
-          if (url.pathname === "/auth/token") {
-            return Response.json({
-              access_token: "test-token",
-              token_type: "Bearer",
-              expires_in: 3600,
-            });
-          }
+        if (pathname === "/auth/token") return createTokenResponse();
 
-          if (url.pathname.startsWith("/projects/")) {
-            return Response.json({
-              id: "proj-123",
-              slug: "protected-project",
-              name: "Protected Project",
-              environments: [{
-                id: "env-1",
-                name: "staging",
-                active_release_id: "rel-123",
-                protected: true,
-              }],
-            });
-          }
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
 
-          return new Response("Not found", { status: 404 });
-        },
-      );
+        return createNotFoundResponse();
+      });
 
       try {
-        const handler = createProxyHandler({
-          config: {
-            apiBaseUrl: `http://127.0.0.1:${port}`,
-            clientId: "test-client",
-            clientSecret: "test-secret",
-            previewClientId: "test-client",
-            previewClientSecret: "test-secret",
-          },
-        });
+        const handler = createHandler(port);
 
-        const req = new Request("http://protected-project.staging.veryfront.com/page", {
-          headers: {
-            host: "protected-project.staging.veryfront.com",
-            cookie: "authToken=user-auth-token",
+        const req = new Request(
+          "http://protected-project.staging.veryfront.com/page",
+          {
+            headers: {
+              host: "protected-project.staging.veryfront.com",
+              cookie: "authToken=user-auth-token",
+            },
           },
-        });
+        );
 
         const ctx = await handler.processRequest(req);
 
@@ -412,47 +348,31 @@ describe("Proxy Handler", () => {
     });
 
     it("allows access to non-protected environment without auth token", async () => {
-      const { server, port } = createMockServer(
-        (req: Request) => {
-          const url = new URL(req.url);
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
 
-          if (url.pathname === "/auth/token") {
-            return Response.json({
-              access_token: "test-token",
-              token_type: "Bearer",
-              expires_in: 3600,
-            });
-          }
+        if (pathname === "/auth/token") return createTokenResponse();
 
-          if (url.pathname.startsWith("/projects/")) {
-            return Response.json({
-              id: "proj-123",
-              slug: "public-project",
-              name: "Public Project",
-              environments: [{
-                id: "env-1",
-                name: "production",
-                domains: ["public.example.com"],
-                active_release_id: "rel-123",
-                protected: false,
-              }],
-            });
-          }
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "public-project",
+            name: "Public Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["public.example.com"],
+              active_release_id: "rel-123",
+              protected: false,
+            }],
+          });
+        }
 
-          return new Response("Not found", { status: 404 });
-        },
-      );
+        return createNotFoundResponse();
+      });
 
       try {
-        const handler = createProxyHandler({
-          config: {
-            apiBaseUrl: `http://127.0.0.1:${port}`,
-            clientId: "test-client",
-            clientSecret: "test-secret",
-            previewClientId: "test-client",
-            previewClientSecret: "test-secret",
-          },
-        });
+        const handler = createHandler(port);
 
         const req = new Request("http://public.example.com/page", {
           headers: { host: "public.example.com" },

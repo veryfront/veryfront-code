@@ -39,8 +39,7 @@ interface NodeWithChildren {
 // Replace node at index with multiple children nodes
 // Reference: https://github.com/mdx-js/mdx/issues/1451#issuecomment-780428572
 function mergeChildren(node: NodeWithChildren, index: number, children: Node[]): void {
-  if (!node.children) return;
-  node.children.splice(index, 1, ...children);
+  node.children?.splice(index, 1, ...children);
 }
 
 const textNodeTypes = new Set([
@@ -110,27 +109,24 @@ interface ExtendedParent extends Parent {
  * - Multiple children with mixed content
  */
 export function remarkMdxRemoveParagraphs(): (tree: Root) => void {
-  return (tree: Root) => {
+  return function transformer(tree: Root): void {
     // First pass: add spacers between elements when parent has non-text children
-    visit(tree, ["paragraph"], (_node, _index, parent) => {
+    visit(tree, "paragraph", (_node, _index, parent) => {
       const extParent = parent as ExtendedParent | undefined;
-      const parentName = extParent?.name ?? extParent?.type ?? extParent?.tagName;
+      if (!extParent) return CONTINUE;
 
+      const parentName = extParent.name ?? extParent.type ?? extParent.tagName;
       if (parentName === "root") return CONTINUE;
 
-      const hasNonTextChild = extParent?.children?.some((child) => !textNodeTypes.has(child.type));
-      if (!hasNonTextChild || !extParent) return CONTINUE;
+      const hasNonTextChild = extParent.children?.some((child) => !textNodeTypes.has(child.type));
+      if (!hasNonTextChild) return CONTINUE;
 
-      const isAlreadySpaced = extParent.children.some((c) => !!c.isMdxTextSpacer);
-      if (isAlreadySpaced) return CONTINUE;
+      if (extParent.children.some((c) => c.isMdxTextSpacer)) return CONTINUE;
 
       const children: (Node & { isMdxTextSpacer?: boolean })[] = [];
       extParent.children.forEach((child, i) => {
         if (i > 0) {
-          children.push({
-            ...(spacer as Node),
-            isMdxTextSpacer: true,
-          });
+          children.push({ ...(spacer as Node), isMdxTextSpacer: true });
         }
         children.push(child);
       });
@@ -140,12 +136,12 @@ export function remarkMdxRemoveParagraphs(): (tree: Root) => void {
     });
 
     // Second pass: unwrap paragraphs
-    visit(tree, ["paragraph"], (node, index, parent) => {
+    visit(tree, "paragraph", (node, index, parent) => {
       const extParent = parent as ExtendedParent | undefined;
-      const paragraphNode = node as Paragraph;
-      const parentName = extParent?.name ?? extParent?.type ?? extParent?.tagName;
-
       if (!extParent) return CONTINUE;
+
+      const paragraphNode = node as Paragraph;
+      const parentName = extParent.name ?? extParent.type ?? extParent.tagName;
 
       const idx = typeof index === "number" ? index : -1;
       const previousChild = idx >= 0 ? extParent.children[idx - 1] : undefined;
@@ -202,7 +198,7 @@ interface CodeWithHProperties extends Code {
 }
 
 export function remarkCodeBlocks(): (tree: Root) => void {
-  return (tree: Root) => {
+  return function transformer(tree: Root): void {
     visit(tree, "code", (node: Code) => {
       const codeNode = node as CodeWithHProperties;
       codeNode.data ??= {};
@@ -229,7 +225,7 @@ interface MDXjsEsm extends Node {
 }
 
 export function remarkMdxImports(): (tree: Root, file: VFile) => void {
-  return (tree: Root, file: VFile) => {
+  return function transformer(tree: Root, file: VFile): void {
     const imports: string[] = [];
 
     visit(tree, "mdxjsEsm", (node: MDXjsEsm) => {

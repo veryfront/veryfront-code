@@ -26,22 +26,24 @@ describe("uninstall command integration", () => {
       capture: true,
     });
 
-    const output = (result.stdout ?? "") + (result.stderr ?? "");
-    return { code: result.code, output };
+    return {
+      code: result.code,
+      output: (result.stdout ?? "") + (result.stderr ?? ""),
+    };
   }
 
-  async function runInstall(target: string): Promise<{ code: number }> {
+  async function runInstall(target: string): Promise<number> {
     const { code } = await runCli("install", target);
-    return { code };
+    return code;
   }
 
   async function runUninstall(target: string): Promise<{ code: number; output: string }> {
-    return await runCli("uninstall", target);
+    return runCli("uninstall", target);
   }
 
   describe("cursor", () => {
     it("should uninstall .cursorrules", async () => {
-      await runInstall("cursor");
+      assertEquals(await runInstall("cursor"), 0);
       assertEquals(await exists(join(tempDir, ".cursorrules")), true);
 
       const { code } = await runUninstall("cursor");
@@ -52,7 +54,7 @@ describe("uninstall command integration", () => {
 
   describe("claude-code", () => {
     it("should uninstall .claude/CLAUDE.md and remove empty directory", async () => {
-      await runInstall("claude-code");
+      assertEquals(await runInstall("claude-code"), 0);
       assertEquals(await exists(join(tempDir, ".claude/CLAUDE.md")), true);
 
       const { code } = await runUninstall("claude-code");
@@ -64,7 +66,7 @@ describe("uninstall command integration", () => {
 
   describe("skill", () => {
     it("should uninstall SKILL.md", async () => {
-      await runInstall("skill");
+      assertEquals(await runInstall("skill"), 0);
       assertEquals(await exists(join(tempDir, "SKILL.md")), true);
 
       const { code } = await runUninstall("skill");
@@ -75,7 +77,7 @@ describe("uninstall command integration", () => {
 
   describe("copilot", () => {
     it("should uninstall .github/copilot-instructions.md", async () => {
-      await runInstall("copilot");
+      assertEquals(await runInstall("copilot"), 0);
       assertEquals(await exists(join(tempDir, ".github/copilot-instructions.md")), true);
 
       const { code } = await runUninstall("copilot");
@@ -86,7 +88,7 @@ describe("uninstall command integration", () => {
 
   describe("windsurf", () => {
     it("should uninstall .windsurfrules", async () => {
-      await runInstall("windsurf");
+      assertEquals(await runInstall("windsurf"), 0);
       assertEquals(await exists(join(tempDir, ".windsurfrules")), true);
 
       const { code } = await runUninstall("windsurf");
@@ -97,7 +99,7 @@ describe("uninstall command integration", () => {
 
   describe("agents", () => {
     it("should uninstall AGENTS.md", async () => {
-      await runInstall("agents");
+      assertEquals(await runInstall("agents"), 0);
       assertEquals(await exists(join(tempDir, "AGENTS.md")), true);
 
       const { code } = await runUninstall("agents");
@@ -108,7 +110,7 @@ describe("uninstall command integration", () => {
 
   describe("all targets", () => {
     it("should uninstall all tools with --target all", async () => {
-      await runInstall("all");
+      assertEquals(await runInstall("all"), 0);
 
       const { code } = await runUninstall("all");
       assertEquals(code, 0);

@@ -3,10 +3,10 @@
  * @module
  */
 
-import { serverLogger as logger } from "#veryfront/utils";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
-import type { OtelInstruments } from "./types.ts";
+import { serverLogger as logger } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
+import type { OtelInstruments } from "./types.ts";
 
 let otelInitialized = false;
 const otel: OtelInstruments = {};

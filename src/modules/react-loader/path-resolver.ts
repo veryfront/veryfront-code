@@ -9,20 +9,17 @@ export function resolveRelativePath(filePath: string, projectDir: string): strin
     return filePath;
   }
 
-  const pathParts = filePath.split("/");
-  const projectParts = normalizedProjectDir.split("/");
-  const lastProjectPart = projectParts.at(-1);
-
+  const lastProjectPart = normalizedProjectDir.split("/").at(-1);
   if (!lastProjectPart) {
     return filePath;
   }
 
-  const projectIndex = pathParts.indexOf(lastProjectPart);
+  const projectIndex = filePath.split("/").indexOf(lastProjectPart);
   if (projectIndex < 0) {
     return filePath;
   }
 
-  return pathParts.slice(projectIndex + 1).join("/");
+  return filePath.split("/").slice(projectIndex + 1).join("/");
 }
 
 export function normalizeModulePath(filePath: string): string {

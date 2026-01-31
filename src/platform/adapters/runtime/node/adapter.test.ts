@@ -2,6 +2,10 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NodeAdapter, nodeAdapter } from "./adapter.ts";
 
+function createAdapter(): NodeAdapter {
+  return new NodeAdapter();
+}
+
 describe("NodeAdapter", () => {
   describe("class", () => {
     it("should export NodeAdapter class", () => {
@@ -16,68 +20,57 @@ describe("NodeAdapter", () => {
   });
 
   describe("instance", () => {
-    function createAdapter(): NodeAdapter {
-      return new NodeAdapter();
-    }
-
     it("should be instantiable", () => {
-      const adapter = createAdapter();
-      assertExists(adapter);
+      assertExists(createAdapter());
     });
 
     it("should have id property", () => {
-      const adapter = createAdapter();
-      assertEquals(adapter.id, "node");
+      assertEquals(createAdapter().id, "node");
     });
 
     it("should have name property", () => {
-      const adapter = createAdapter();
-      assertEquals(adapter.name, "node");
+      assertEquals(createAdapter().name, "node");
     });
 
     it("should have fs adapter", () => {
-      const adapter = createAdapter();
-      assertExists(adapter.fs);
+      assertExists(createAdapter().fs);
     });
 
     it("should have env adapter", () => {
-      const adapter = createAdapter();
-      assertExists(adapter.env);
+      assertExists(createAdapter().env);
     });
 
     it("should have server adapter", () => {
-      const adapter = createAdapter();
-      assertExists(adapter.server);
+      assertExists(createAdapter().server);
     });
 
     it("should have shell adapter", () => {
-      const adapter = createAdapter();
-      assertExists(adapter.shell);
+      assertExists(createAdapter().shell);
     });
 
     it("should have capabilities", () => {
-      const adapter = createAdapter();
-      assertExists(adapter.capabilities);
-      assertEquals(adapter.capabilities.typescript, false);
-      assertEquals(adapter.capabilities.jsx, false);
-      assertEquals(adapter.capabilities.http2, true);
-      assertEquals(adapter.capabilities.websocket, true);
-      assertEquals(adapter.capabilities.workers, true);
-      assertEquals(adapter.capabilities.fileWatching, true);
-      assertEquals(adapter.capabilities.shell, true);
-      assertEquals(adapter.capabilities.writableFs, true);
+      const { capabilities } = createAdapter();
+      assertExists(capabilities);
+      assertEquals(capabilities.typescript, false);
+      assertEquals(capabilities.jsx, false);
+      assertEquals(capabilities.http2, true);
+      assertEquals(capabilities.websocket, true);
+      assertEquals(capabilities.workers, true);
+      assertEquals(capabilities.fileWatching, true);
+      assertEquals(capabilities.shell, true);
+      assertEquals(capabilities.writableFs, true);
     });
 
     it("should have serve method", () => {
-      const adapter = createAdapter();
-      assertExists(adapter.serve);
-      assertEquals(typeof adapter.serve, "function");
+      const { serve } = createAdapter();
+      assertExists(serve);
+      assertEquals(typeof serve, "function");
     });
 
     it("should have shutdown method", () => {
-      const adapter = createAdapter();
-      assertExists(adapter.shutdown);
-      assertEquals(typeof adapter.shutdown, "function");
+      const { shutdown } = createAdapter();
+      assertExists(shutdown);
+      assertEquals(typeof shutdown, "function");
     });
   });
 });

@@ -56,9 +56,9 @@ export class StreamEventEmitter {
     extra: Record<string, unknown>,
     dynamic?: boolean,
   ): void {
-    const event: Record<string, unknown> = { type, toolCallId, ...extra };
-    if (dynamic) event.dynamic = true;
-    this.emit(event);
+    this.emit(
+      dynamic ? { type, toolCallId, ...extra, dynamic: true } : { type, toolCallId, ...extra },
+    );
   }
 
   emitStart(messageId: string): void {

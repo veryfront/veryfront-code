@@ -41,12 +41,8 @@ export default tool({
     muteUponEntry,
     autoRecording,
   }): Promise<{ success: true; message: string }> {
-    const hasSettings =
-      hostVideo !== undefined ||
-      participantVideo !== undefined ||
-      joinBeforeHost !== undefined ||
-      muteUponEntry !== undefined ||
-      autoRecording !== undefined;
+    const settings = { hostVideo, participantVideo, joinBeforeHost, muteUponEntry, autoRecording };
+    const hasSettings = Object.values(settings).some((value) => value !== undefined);
 
     await updateMeeting(meetingId, {
       topic,
@@ -56,14 +52,9 @@ export default tool({
       timezone,
       password,
       agenda,
-      settings: hasSettings
-        ? { hostVideo, participantVideo, joinBeforeHost, muteUponEntry, autoRecording }
-        : undefined,
+      settings: hasSettings ? settings : undefined,
     });
 
-    return {
-      success: true,
-      message: `Meeting ${meetingId} updated successfully`,
-    };
+    return { success: true, message: `Meeting ${meetingId} updated successfully` };
   },
 });

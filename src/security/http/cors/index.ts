@@ -1,8 +1,8 @@
 import { applyCORSHeaders, applyCORSHeadersSync, shouldApplyCORS } from "./headers.ts";
 import { validateCORSConfig, validateOrigin, validateOriginSync } from "./validators.ts";
 
-export { handleCORSPreflight, isPreflightRequest } from "./preflight.ts";
 export { cors, corsSimple } from "./middleware.ts";
+export { handleCORSPreflight, isPreflightRequest } from "./preflight.ts";
 
 export {
   applyCORSHeaders,

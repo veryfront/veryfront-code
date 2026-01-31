@@ -16,12 +16,8 @@ export default tool({
       ),
   }),
   async execute({ baseId, tableIdOrName, fields }) {
-    const { id, createdTime, fields: recordFields } = await createRecord(
-      baseId,
-      tableIdOrName,
-      fields,
-    );
+    const record = await createRecord(baseId, tableIdOrName, fields);
 
-    return { id, createdTime, fields: recordFields };
+    return { id: record.id, createdTime: record.createdTime, fields: record.fields };
   },
 });

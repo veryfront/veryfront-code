@@ -138,7 +138,7 @@ describe("FSAdapterWrapper", () => {
           });
       }
 
-      const wrapper = new FSAdapterWrapper(new CustomAdapter() as unknown as FSAdapter);
+      const wrapper = new FSAdapterWrapper(new CustomAdapter() as FSAdapter);
       assertEquals(wrapper.getAdapterType(), "CustomAdapter");
     });
 
@@ -161,7 +161,7 @@ describe("FSAdapterWrapper", () => {
           });
       }
 
-      const wrapper = new FSAdapterWrapper(new VeryfrontFSAdapter() as unknown as FSAdapter);
+      const wrapper = new FSAdapterWrapper(new VeryfrontFSAdapter() as FSAdapter);
       assertEquals(wrapper.isVeryfrontAdapter(), true);
     });
 
@@ -179,7 +179,7 @@ describe("FSAdapterWrapper", () => {
           });
       }
 
-      const wrapper = new FSAdapterWrapper(new MultiProjectFSAdapter() as unknown as FSAdapter);
+      const wrapper = new FSAdapterWrapper(new MultiProjectFSAdapter() as FSAdapter);
       assertEquals(wrapper.isVeryfrontAdapter(), true);
     });
   });

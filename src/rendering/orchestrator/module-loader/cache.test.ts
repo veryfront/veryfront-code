@@ -4,10 +4,14 @@ import { createEsmCache, createModuleCache, generateHash } from "./cache.ts";
 
 describe("module-loader/cache", () => {
   describe("generateHash", () => {
-    it("should produce a 16-character hex string", async () => {
-      const hash = await generateHash("hello world");
+    async function assertHexHash(input: string): Promise<void> {
+      const hash = await generateHash(input);
       assertEquals(hash.length, 16);
       assertEquals(/^[0-9a-f]+$/.test(hash), true);
+    }
+
+    it("should produce a 16-character hex string", async () => {
+      await assertHexHash("hello world");
     });
 
     it("should produce deterministic output", async () => {
@@ -23,32 +27,35 @@ describe("module-loader/cache", () => {
     });
 
     it("should handle empty string", async () => {
-      const hash = await generateHash("");
-      assertEquals(hash.length, 16);
-      assertEquals(/^[0-9a-f]+$/.test(hash), true);
+      await assertHexHash("");
     });
 
     it("should handle long strings", async () => {
-      const longStr = "x".repeat(100000);
-      const hash = await generateHash(longStr);
+      const hash = await generateHash("x".repeat(100000));
       assertEquals(hash.length, 16);
     });
 
     it("should handle unicode content", async () => {
-      const hash = await generateHash("Hello");
-      assertEquals(hash.length, 16);
-      assertEquals(/^[0-9a-f]+$/.test(hash), true);
+      await assertHexHash("Hello");
     });
   });
 
   describe("createModuleCache", () => {
-    it("should return a Map-compatible object", () => {
-      const cache = createModuleCache();
+    function assertMapLike(cache: {
+      get: unknown;
+      set: unknown;
+      has: unknown;
+      delete: unknown;
+    }): void {
       // Pod-level caches may wrap Map, so check for Map-like interface
       assertEquals(typeof cache.get, "function");
       assertEquals(typeof cache.set, "function");
       assertEquals(typeof cache.has, "function");
       assertEquals(typeof cache.delete, "function");
+    }
+
+    it("should return a Map-compatible object", () => {
+      assertMapLike(createModuleCache());
     });
 
     it("should support basic get/set operations", () => {

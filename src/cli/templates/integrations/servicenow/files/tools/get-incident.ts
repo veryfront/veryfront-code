@@ -7,10 +7,9 @@ import { getServiceNowClient } from "../../lib/servicenow-client.ts";
 import { isServiceNowConnected } from "../../lib/token-store.ts";
 
 function getDisplayValue(value: unknown): unknown {
-  if (value && typeof value === "object" && "display_value" in value) {
-    return (value as { display_value: unknown }).display_value;
-  }
-  return value;
+  if (!value || typeof value !== "object") return value;
+  if (!("display_value" in value)) return value;
+  return (value as { display_value: unknown }).display_value;
 }
 
 export default defineTool({

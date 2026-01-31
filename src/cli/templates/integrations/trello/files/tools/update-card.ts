@@ -31,20 +31,30 @@ export default tool({
       .describe("Array of label IDs for the card (replaces existing)"),
   }),
   async execute({ cardId, ...updates }) {
-    const card = await updateCard(cardId, updates);
+    const {
+      id,
+      name,
+      desc,
+      url,
+      closed,
+      idList,
+      due,
+      dueComplete,
+      labels,
+    } = await updateCard(cardId, updates);
 
     return {
       success: true,
       card: {
-        id: card.id,
-        name: card.name,
-        desc: card.desc,
-        url: card.url,
-        closed: card.closed,
-        idList: card.idList,
-        due: card.due,
-        dueComplete: card.dueComplete,
-        labels: card.labels.map(({ id, name, color }) => ({ id, name, color })),
+        id,
+        name,
+        desc,
+        url,
+        closed,
+        idList,
+        due,
+        dueComplete,
+        labels: labels.map(({ id, name, color }) => ({ id, name, color })),
       },
     };
   },

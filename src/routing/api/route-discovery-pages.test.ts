@@ -48,10 +48,7 @@ describe("route-discovery.ts - Pages Router Discovery", () => {
 
       await discoverPagesRoutes(router, "/project/pages/api", "/api", adapter);
 
-      const routes = router.listRoutes();
-      assertEquals(routes.length, 3);
-
-      const patterns = routes.map((r) => r.pattern).sort();
+      const patterns = router.listRoutes().map((r) => r.pattern).sort();
       assertEquals(patterns, ["/api/comments", "/api/posts", "/api/users"]);
     });
 
@@ -99,10 +96,7 @@ describe("route-discovery.ts - Pages Router Discovery", () => {
 
       await discoverPagesRoutes(router, "/project/pages/api", "/api", adapter);
 
-      const routes = router.listRoutes();
-      assertEquals(routes.length, 4);
-
-      const patterns = routes.map((r) => r.pattern).sort();
+      const patterns = router.listRoutes().map((r) => r.pattern).sort();
       assertEquals(patterns, [
         "/api/javascript",
         "/api/jsx-file",
@@ -138,8 +132,7 @@ describe("route-discovery.ts - Pages Router Discovery", () => {
 
       await discoverPagesRoutes(router, "/project/pages/api", "/api", adapter);
 
-      const routes = router.listRoutes();
-      assertEquals(routes.length, 0);
+      assertEquals(router.listRoutes().length, 0);
     });
   });
 
@@ -244,10 +237,7 @@ describe("route-discovery.ts - Pages Router Discovery", () => {
 
       await discoverPagesRoutes(router, "/project/pages/api", "/api", adapter);
 
-      const routes = router.listRoutes();
-      assertEquals(routes.length, 2);
-
-      const patterns = routes.map((r) => r.pattern).sort();
+      const patterns = router.listRoutes().map((r) => r.pattern).sort();
       assertEquals(patterns, ["/api/hello", "/api/users/[id]"]);
     });
   });
@@ -365,10 +355,7 @@ describe("route-discovery.ts - Pages Router Discovery", () => {
 
       await discoverPagesRoutes(router, "/project/pages/api", "/api", adapter);
 
-      const routes = router.listRoutes();
-      assertEquals(routes.length, 2);
-
-      const patterns = routes.map((r) => r.pattern).sort();
+      const patterns = router.listRoutes().map((r) => r.pattern).sort();
       assertEquals(patterns, ["/api/get_data", "/api/user-profile"]);
     });
 
@@ -383,10 +370,7 @@ describe("route-discovery.ts - Pages Router Discovery", () => {
 
       await discoverPagesRoutes(router, "/project/pages/api", "/api", adapter);
 
-      const routes = router.listRoutes();
-      assertEquals(routes.length, 2);
-
-      const patterns = routes.map((r) => r.pattern).sort();
+      const patterns = router.listRoutes().map((r) => r.pattern).sort();
       assertEquals(patterns, ["/api/123", "/api/v2"]);
     });
 

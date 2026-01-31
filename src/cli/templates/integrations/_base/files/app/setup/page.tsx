@@ -714,16 +714,18 @@ export default function SetupPage(): React.JSX.Element {
   }
 
   async function fetchTokenStorage(): Promise<void> {
+    const fallback: TokenStorageStatus = { mode: "memory", encrypted: false };
+
     try {
       const res = await fetch("/api/integrations/token-storage");
       if (!res.ok) {
-        setTokenStorage({ mode: "memory", encrypted: false });
+        setTokenStorage(fallback);
         return;
       }
       const data = await res.json();
       setTokenStorage(data);
     } catch {
-      setTokenStorage({ mode: "memory", encrypted: false });
+      setTokenStorage(fallback);
     }
   }
 
@@ -738,8 +740,7 @@ export default function SetupPage(): React.JSX.Element {
         integration.name.toLowerCase().includes(query) ||
         integration.id.toLowerCase().includes(query);
 
-      const matchesCategory =
-        selectedCategory === null || guide?.category === selectedCategory;
+      const matchesCategory = selectedCategory === null || guide?.category === selectedCategory;
 
       return matchesSearch && matchesCategory;
     });
@@ -760,6 +761,8 @@ export default function SetupPage(): React.JSX.Element {
   const totalCount = integrations.length;
   const progress = totalCount > 0 ? (connectedCount / totalCount) * 100 : 0;
 
+  const allConnected = connectedCount === totalCount && totalCount > 0;
+
   const setupSteps: SetupStep[] = [
     {
       id: "env",
@@ -778,41 +781,33 @@ export default function SetupPage(): React.JSX.Element {
       id: "connect",
       title: "Connect Services",
       description: "Authorize your app to access each service",
-      completed: connectedCount === totalCount && totalCount > 0,
+      completed: allConnected,
     },
   ];
 
-  const tokenStorageContainerClassName = tokenStorage
-    ? `rounded-2xl p-6 shadow-sm border mb-8 ${
-        tokenStorage.mode === "memory"
+  const tokenStorageStyles = useMemo(() => {
+    if (!tokenStorage) return null;
+
+    const isMemory = tokenStorage.mode === "memory";
+
+    return {
+      container: `rounded-2xl p-6 shadow-sm border mb-8 ${
+        isMemory
           ? "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800"
           : "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800"
-      }`
-    : "";
-
-  const tokenStorageIconWrapperClassName = tokenStorage
-    ? `w-10 h-10 rounded-full flex items-center justify-center ${
-        tokenStorage.mode === "memory"
-          ? "bg-amber-100 dark:bg-amber-900"
-          : "bg-green-100 dark:bg-green-900"
-      }`
-    : "";
-
-  const tokenStorageTitleClassName = tokenStorage
-    ? `font-semibold ${
-        tokenStorage.mode === "memory"
-          ? "text-amber-800 dark:text-amber-200"
-          : "text-green-800 dark:text-green-200"
-      }`
-    : "";
-
-  const tokenStorageTextClassName = tokenStorage
-    ? `text-sm mt-1 ${
-        tokenStorage.mode === "memory"
-          ? "text-amber-700 dark:text-amber-300"
-          : "text-green-700 dark:text-green-300"
-      }`
-    : "";
+      }`,
+      iconWrapper: `w-10 h-10 rounded-full flex items-center justify-center ${
+        isMemory ? "bg-amber-100 dark:bg-amber-900" : "bg-green-100 dark:bg-green-900"
+      }`,
+      title: `font-semibold ${
+        isMemory ? "text-amber-800 dark:text-amber-200" : "text-green-800 dark:text-green-200"
+      }`,
+      text: `text-sm mt-1 ${
+        isMemory ? "text-amber-700 dark:text-amber-300" : "text-green-700 dark:text-green-300"
+      }`,
+      isMemory,
+    };
+  }, [tokenStorage]);
 
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-neutral-900">
@@ -843,11 +838,11 @@ export default function SetupPage(): React.JSX.Element {
           </div>
         </div>
 
-        {tokenStorage && (
-          <div className={tokenStorageContainerClassName}>
+        {tokenStorage && tokenStorageStyles && (
+          <div className={tokenStorageStyles.container}>
             <div className="flex items-start gap-4">
-              <div className={tokenStorageIconWrapperClassName}>
-                {tokenStorage.mode === "memory" ? (
+              <div className={tokenStorageStyles.iconWrapper}>
+                {tokenStorageStyles.isMemory ? (
                   <svg
                     className="w-5 h-5 text-amber-600 dark:text-amber-400"
                     fill="none"
@@ -879,17 +874,17 @@ export default function SetupPage(): React.JSX.Element {
               </div>
 
               <div className="flex-1">
-                <h3 className={tokenStorageTitleClassName}>
+                <h3 className={tokenStorageStyles.title}>
                   Token Storage:{" "}
-                  {tokenStorage.mode === "memory"
+                  {tokenStorageStyles.isMemory
                     ? "Development Mode"
                     : `${tokenStorage.mode.charAt(0).toUpperCase()}${tokenStorage.mode.slice(
                         1,
                       )} Storage`}
                 </h3>
 
-                <p className={tokenStorageTextClassName}>
-                  {tokenStorage.mode === "memory" ? (
+                <p className={tokenStorageStyles.text}>
+                  {tokenStorageStyles.isMemory ? (
                     <>Tokens are stored in memory and will be lost on restart.</>
                   ) : (
                     <>Tokens are persisted to {tokenStorage.mode} storage.</>
@@ -908,7 +903,7 @@ export default function SetupPage(): React.JSX.Element {
                   <span>Encryption enabled {tokenStorage.autoGenerated && "(auto-generated key)"}</span>
                 </div>
 
-                {tokenStorage.mode === "memory" && (
+                {tokenStorageStyles.isMemory && (
                   <div className="mt-4 pt-4 border-t border-amber-200 dark:border-amber-800">
                     <p className="text-sm font-medium text-amber-800 dark:text-amber-200 mb-3">
                       For production, add one of these to your{" "}
@@ -1161,7 +1156,9 @@ export default function SetupPage(): React.JSX.Element {
                                 {guide && (
                                   <button
                                     type="button"
-                                    onClick={() => setExpandedGuide(isExpanded ? null : integration.id)}
+                                    onClick={() =>
+                                      setExpandedGuide(isExpanded ? null : integration.id)
+                                    }
                                     className="px-4 py-2 text-sm font-medium text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white"
                                   >
                                     {isExpanded ? "Hide Guide" : "Setup Guide"}
@@ -1248,7 +1245,7 @@ export default function SetupPage(): React.JSX.Element {
           )}
         </div>
 
-        {connectedCount === totalCount && totalCount > 0 && (
+        {allConnected && (
           <div className="mt-8 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 rounded-2xl p-6 border border-green-200 dark:border-green-800 text-center">
             <div className="text-4xl mb-4">🎉</div>
             <h3 className="text-xl font-semibold text-green-800 dark:text-green-200 mb-2">
@@ -1362,7 +1359,12 @@ function ServiceIcon({ name }: { name: string }): React.JSX.Element {
       </svg>
     ),
     default: (
-      <svg className="w-6 h-6 text-neutral-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <svg
+        className="w-6 h-6 text-neutral-400"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
         <path
           strokeLinecap="round"
           strokeLinejoin="round"

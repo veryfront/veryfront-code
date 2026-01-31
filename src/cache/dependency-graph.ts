@@ -11,12 +11,12 @@ export class DependencyGraph {
   private dependents = new Map<string, Set<string>>();
 
   addModule(filePath: string, dependencies: string[]): void {
-    const deps = this.dependencies.get(filePath) ?? new Set();
+    const deps = this.dependencies.get(filePath) ?? new Set<string>();
 
     for (const dep of dependencies) {
       deps.add(dep);
 
-      const depsOfDep = this.dependents.get(dep) ?? new Set();
+      const depsOfDep = this.dependents.get(dep) ?? new Set<string>();
       depsOfDep.add(filePath);
       this.dependents.set(dep, depsOfDep);
     }
@@ -25,8 +25,7 @@ export class DependencyGraph {
   }
 
   getDirectDependencies(filePath: string): string[] {
-    const deps = this.dependencies.get(filePath);
-    return deps ? Array.from(deps) : [];
+    return Array.from(this.dependencies.get(filePath) ?? []);
   }
 
   getTransitiveDependencies(filePath: string): string[] {
@@ -35,6 +34,7 @@ export class DependencyGraph {
 
     this.collectDeps(filePath, visited, path);
     visited.delete(filePath);
+
     return Array.from(visited);
   }
 
@@ -44,12 +44,12 @@ export class DependencyGraph {
 
     this.collectDependents(filePath, visited, path);
     visited.delete(filePath);
+
     return Array.from(visited);
   }
 
   wouldCreateCycle(from: string, to: string): boolean {
-    const reachable = this.getTransitiveDependencies(to);
-    return reachable.includes(from);
+    return this.getTransitiveDependencies(to).includes(from);
   }
 
   clear(): void {
@@ -66,17 +66,13 @@ export class DependencyGraph {
     visited: Set<string>,
     path: Set<string>,
   ): void {
-    if (path.has(filePath)) return; // Cycle
-    if (visited.has(filePath)) return;
+    if (path.has(filePath) || visited.has(filePath)) return;
 
     visited.add(filePath);
     path.add(filePath);
 
-    const deps = this.dependencies.get(filePath);
-    if (deps) {
-      for (const dep of deps) {
-        this.collectDeps(dep, visited, path);
-      }
+    for (const dep of this.dependencies.get(filePath) ?? []) {
+      this.collectDeps(dep, visited, path);
     }
 
     path.delete(filePath);
@@ -87,17 +83,13 @@ export class DependencyGraph {
     visited: Set<string>,
     path: Set<string>,
   ): void {
-    if (path.has(filePath)) return;
-    if (visited.has(filePath)) return;
+    if (path.has(filePath) || visited.has(filePath)) return;
 
     visited.add(filePath);
     path.add(filePath);
 
-    const depsOfThis = this.dependents.get(filePath);
-    if (depsOfThis) {
-      for (const dep of depsOfThis) {
-        this.collectDependents(dep, visited, path);
-      }
+    for (const dep of this.dependents.get(filePath) ?? []) {
+      this.collectDependents(dep, visited, path);
     }
 
     path.delete(filePath);
@@ -116,10 +108,12 @@ export function filterLocalImports(specifiers: string[]): string[] {
   return specifiers.filter((spec) => {
     // Framework imports are resolved via import map, not filesystem
     if (spec.startsWith("#veryfront/")) return false;
-    if (spec.startsWith("./") || spec.startsWith("../")) return true;
-    if (spec.startsWith("@/")) return true;
-    if (spec.startsWith("file://")) return true;
-    return false;
+    return (
+      spec.startsWith("./") ||
+      spec.startsWith("../") ||
+      spec.startsWith("@/") ||
+      spec.startsWith("file://")
+    );
   });
 }
 
@@ -129,8 +123,7 @@ export function normalizeSpecifierToPath(
   projectDir: string,
 ): string {
   if (specifier.startsWith("@/")) {
-    const path = specifier.slice(2);
-    return normalizeExtension(`${projectDir}/${path}`);
+    return normalizeExtension(`${projectDir}/${specifier.slice(2)}`);
   }
 
   if (specifier.startsWith("./") || specifier.startsWith("../")) {
@@ -142,7 +135,7 @@ export function normalizeSpecifierToPath(
       else if (part !== ".") parts.push(part);
     }
 
-    return normalizeExtension("/" + parts.join("/"));
+    return normalizeExtension(`/${parts.join("/")}`);
   }
 
   if (specifier.startsWith("file://")) {
@@ -164,7 +157,13 @@ export async function computeDepsHash(
   const graph = new DependencyGraph();
   const contentHashes = new Map<string, string>();
 
-  await buildDependencyGraph(filePath, graph, contentHashes, getContent, projectDir);
+  await buildDependencyGraph(
+    filePath,
+    graph,
+    contentHashes,
+    getContent,
+    projectDir,
+  );
 
   const deps = [filePath, ...graph.getTransitiveDependencies(filePath)].sort();
   const combinedHash = deps
@@ -181,7 +180,7 @@ async function buildDependencyGraph(
   contentHashes: Map<string, string>,
   getContent: (path: string) => Promise<string>,
   projectDir: string,
-  visited = new Set<string>(),
+  visited: Set<string> = new Set<string>(),
 ): Promise<void> {
   if (visited.has(filePath)) return;
   visited.add(filePath);
@@ -191,9 +190,7 @@ async function buildDependencyGraph(
     contentHashes.set(filePath, await computeHash(content));
 
     const allImports = await extractImports(content);
-    const localImports = filterLocalImports(allImports);
-
-    const normalizedDeps = localImports.map((spec) =>
+    const normalizedDeps = filterLocalImports(allImports).map((spec) =>
       normalizeSpecifierToPath(spec, filePath, projectDir)
     );
 

@@ -25,8 +25,8 @@ export default tool({
       return {
         documentId: id,
         title,
-        text: client.extractText(document),
         revisionId,
+        text: client.extractText(document),
       };
     }
 

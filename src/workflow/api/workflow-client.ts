@@ -50,8 +50,7 @@ export class WorkflowClient {
       debug: this.debug,
       ...config.executor,
       onWaiting: async (run, nodeId) => {
-        const nodeState = run.nodeStates[nodeId];
-        const input = nodeState?.input as
+        const input = run.nodeStates[nodeId]?.input as
           | { type?: string; message?: string; payload?: unknown }
           | undefined;
 
@@ -94,15 +93,12 @@ export class WorkflowClient {
 
   register(workflow: Workflow | WorkflowDefinition): void {
     const definition = "definition" in workflow ? workflow.definition : workflow;
-
     this.executor.register(definition);
     logger.debug("[WorkflowClient] Registered workflow", { workflowId: definition.id });
   }
 
   registerAll(workflows: Array<Workflow | WorkflowDefinition>): void {
-    for (const workflow of workflows) {
-      this.register(workflow);
-    }
+    for (const workflow of workflows) this.register(workflow);
   }
 
   start<TInput, TOutput = unknown>(
@@ -144,21 +140,11 @@ export class WorkflowClient {
     return this.approvalManager.getPendingApprovals(runId);
   }
 
-  approve(
-    runId: string,
-    approvalId: string,
-    approver: string,
-    comment?: string,
-  ): Promise<void> {
+  approve(runId: string, approvalId: string, approver: string, comment?: string): Promise<void> {
     return this.approvalManager.approve(runId, approvalId, approver, comment);
   }
 
-  reject(
-    runId: string,
-    approvalId: string,
-    approver: string,
-    comment?: string,
-  ): Promise<void> {
+  reject(runId: string, approvalId: string, approver: string, comment?: string): Promise<void> {
     return this.approvalManager.reject(runId, approvalId, approver, comment);
   }
 

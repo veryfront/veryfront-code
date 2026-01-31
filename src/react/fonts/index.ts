@@ -31,19 +31,16 @@ function generateGoogleFontsParam(font: Font): string {
   const escapedName = font.name.replace(/ /g, "+");
   const sortedWeights = sortMixedArray(font.weights ?? [400]);
 
-  let param = `family=${escapedName}:`;
-  if (font.italics) param += "ital,";
-
   const weightParams: Array<string | number> = [];
 
   if (font.italics) {
     for (const w of sortedWeights) weightParams.push(`0,${w}`);
     for (const w of sortedWeights) weightParams.push(`1,${w}`);
-  } else {
-    for (const w of sortedWeights) weightParams.push(w);
+    return `family=${escapedName}:ital,wght@${weightParams.join(";")}&display=swap`;
   }
 
-  return `${param}wght@${weightParams.join(";")}&display=swap`;
+  for (const w of sortedWeights) weightParams.push(w);
+  return `family=${escapedName}:wght@${weightParams.join(";")}&display=swap`;
 }
 
 function generateGoogleFontsHref(fonts: Array<Font>): string {

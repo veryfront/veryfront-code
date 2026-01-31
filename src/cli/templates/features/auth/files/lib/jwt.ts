@@ -18,6 +18,10 @@ function base64UrlDecodeToBytes(input: string): Uint8Array {
   );
 }
 
+function encodeText(input: string): Uint8Array {
+  return new TextEncoder().encode(input);
+}
+
 export async function sign(payload: Record<string, any>): Promise<string> {
   const key = await crypto.subtle.importKey("raw", SECRET_KEY, ALGORITHM, false, [
     "sign",
@@ -31,11 +35,10 @@ export async function sign(payload: Record<string, any>): Promise<string> {
     }),
   );
 
-  const data = new TextEncoder().encode(`${header}.${body}`);
+  const data = encodeText(`${header}.${body}`);
   const signature = await crypto.subtle.sign(ALGORITHM, key, data);
-  const signatureB64 = base64UrlEncode(signature);
 
-  return `${header}.${body}.${signatureB64}`;
+  return `${header}.${body}.${base64UrlEncode(signature)}`;
 }
 
 export async function verify(token: string): Promise<Record<string, any> | null> {
@@ -52,7 +55,7 @@ export async function verify(token: string): Promise<Record<string, any> | null>
     );
 
     const signature = base64UrlDecodeToBytes(signatureB64);
-    const data = new TextEncoder().encode(`${headerB64}.${bodyB64}`);
+    const data = encodeText(`${headerB64}.${bodyB64}`);
 
     const isValid = await crypto.subtle.verify(ALGORITHM, key, signature, data);
     if (!isValid) return null;

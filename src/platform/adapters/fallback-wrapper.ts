@@ -78,7 +78,7 @@ export async function withFallback<T>(
       if (logError) logFallbackSuccess(operationName);
       return result;
     } catch (fallbackError) {
-      return handleFallbackFailure(
+      handleFallbackFailure(
         operationName,
         primaryError,
         fallbackError,
@@ -106,7 +106,7 @@ export function withFallbackSync<T>(
       if (logError) logFallbackSuccess(operationName);
       return result;
     } catch (fallbackError) {
-      return handleFallbackFailure(
+      handleFallbackFailure(
         operationName,
         primaryError,
         fallbackError,
@@ -132,11 +132,9 @@ export function createAdapterFallback<T>(
   options?: Partial<Omit<FallbackOptions, "operationName">>,
 ): AsyncAdapterFallback<T> {
   return {
-    execute: () =>
-      withFallback(adapterOperation, directOperation, {
-        operationName,
-        ...options,
-      }),
+    execute(): Promise<T> {
+      return withFallback(adapterOperation, directOperation, { operationName, ...options });
+    },
   };
 }
 
@@ -147,10 +145,8 @@ export function createAdapterFallbackSync<T>(
   options?: Partial<Omit<FallbackOptions, "operationName">>,
 ): SyncAdapterFallback<T> {
   return {
-    executeSync: () =>
-      withFallbackSync(adapterOperation, directOperation, {
-        operationName,
-        ...options,
-      }),
+    executeSync(): T {
+      return withFallbackSync(adapterOperation, directOperation, { operationName, ...options });
+    },
   };
 }

@@ -55,12 +55,14 @@ function generateApiTemplate(methods: string[]): string {
   return Response.json({ ok: true });
 }`;
     }
+
     return `export async function ${method}(req: Request) {
   const body = await req.json();
   return Response.json({ ok: true, received: body });
 }`;
   });
-  return handlers.join("\n\n") + "\n";
+
+  return `${handlers.join("\n\n")}\n`;
 }
 
 function generateComponentTemplate(componentName: string): string {
@@ -259,7 +261,10 @@ export const vfScaffold: MCPTool<ScaffoldInput, ScaffoldResult> = {
 // ============================================================================
 
 const getConventionsInput = z.object({
-  topic: z.enum(["all", "routing", "api", "components", "ai", "styling"]).optional().default("all")
+  topic: z
+    .enum(["all", "routing", "api", "components", "ai", "styling"])
+    .optional()
+    .default("all")
     .describe("Specific topic to get conventions for"),
 });
 
@@ -400,7 +405,10 @@ export const vfGetConventions: MCPTool<GetConventionsInput, Convention[]> = {
   inputSchema: getConventionsInput,
   execute: (input) => {
     if (input.topic === "all") return Promise.resolve(Object.values(CONVENTIONS));
+
     const convention = CONVENTIONS[input.topic];
-    return Promise.resolve(convention ? [convention] : []);
+    if (!convention) return Promise.resolve([]);
+
+    return Promise.resolve([convention]);
   },
 };

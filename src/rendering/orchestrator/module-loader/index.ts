@@ -42,33 +42,21 @@ const MAX_CREATED_DIRS = 5000;
 /** Cache for created directories to avoid repeated mkdir calls (LRU-style) */
 const createdDirs = new Set<string>();
 
+/** TTL for cached transforms (uses centralized config) */
+const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
+
 /** Prune oldest entries when cache exceeds limit */
 function pruneCreatedDirs(): void {
   if (createdDirs.size <= MAX_CREATED_DIRS) return;
 
-  // Set iteration order is insertion order, so delete first entries
   const toDelete = createdDirs.size - MAX_CREATED_DIRS;
   let deleted = 0;
+
   for (const dir of createdDirs) {
     if (deleted >= toDelete) break;
     createdDirs.delete(dir);
     deleted++;
   }
-}
-
-/** TTL for cached transforms (uses centralized config) */
-const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
-
-export interface ModuleLoaderConfig {
-  projectDir: string;
-  projectId?: string;
-  contentSourceId?: string;
-  adapter: RuntimeAdapter;
-  mode: "development" | "production";
-  moduleCache: Map<string, string>;
-  esmCache: Map<string, string>;
-  /** React version for transforms (from project config) */
-  reactVersion?: string;
 }
 
 function getModuleCacheKey(
@@ -77,8 +65,6 @@ function getModuleCacheKey(
   projectDir?: string,
   contentSourceId?: string,
 ): string {
-  // Include contentSourceId to isolate cache between branches/releases
-  // This prevents serving wrong code in multi-branch deployments
   const base = projectId ?? projectDir ?? "default";
   const source = contentSourceId ?? "default";
   return `${base}:${source}:${filePath}`;
@@ -115,14 +101,11 @@ async function resolveAliasImport(
   imp: AliasImport,
   projectDir: string,
   adapter: RuntimeAdapter,
-  _localAdapter: RuntimeAdapter,
 ): Promise<ResolvedDep> {
   const relativePath = imp.path.substring(2); // Remove @/ prefix
 
-  // @/ alias always resolves to project directory
-  // Try exact path first, then components/ subdirectory
-  const depFilePath = await findSourceFile(relativePath, projectDir, adapter) ??
-    await findSourceFile(`components/${relativePath}`, projectDir, adapter);
+  const depFilePath = (await findSourceFile(relativePath, projectDir, adapter)) ??
+    (await findSourceFile(`components/${relativePath}`, projectDir, adapter));
 
   return { ...imp, relativePath, depFilePath, isLocalLib: false };
 }
@@ -150,7 +133,6 @@ export async function transformModuleWithDeps(
   const cachedPath = moduleCache.get(cacheKey);
   if (cachedPath) return cachedPath;
 
-  // Check MDX-ESM cache to share modules with SSR loader (prevents duplicate React contexts)
   if (projectId && contentSourceId) {
     const baseCacheDir = getMdxEsmCacheDir();
     const projectKey = encodeURIComponent(projectId);
@@ -161,7 +143,9 @@ export async function transformModuleWithDeps(
     if (mdxCacheResult.status === "hit") {
       moduleCache.set(cacheKey, mdxCacheResult.path);
       return mdxCacheResult.path;
-    } else if (mdxCacheResult.status === "corrupted") {
+    }
+
+    if (mdxCacheResult.status === "corrupted") {
       logger.warn("[ModuleLoader] MDX-ESM cache corrupted, will re-transform", {
         filePath,
         reason: mdxCacheResult.reason,
@@ -184,7 +168,7 @@ export async function transformModuleWithDeps(
 
   const resolvedDeps = await parallelMap(
     aliasImports,
-    (imp) => resolveAliasImport(imp, projectDir, adapter, localAdapter),
+    (imp) => resolveAliasImport(imp, projectDir, adapter),
   );
 
   const transformedDeps = await parallelMap(
@@ -228,12 +212,10 @@ export async function transformModuleWithDeps(
   const contentHash = hashCodeHex(fileContent);
   const effectiveProjectId = projectId ?? projectDir;
   const scopedPath = `${effectiveProjectId}:${filePath}`;
-  const transformCacheKey = generateTransformCacheKey(scopedPath, contentHash, true); // ssr=true
+  const transformCacheKey = generateTransformCacheKey(scopedPath, contentHash, true);
 
-  // Initialize transform cache (lazy, only once per pod)
   await initializeTransformCache();
 
-  // Use consolidated transform cache with getOrCompute pattern
   const transformResult = await getOrComputeTransform(
     transformCacheKey,
     () => {
@@ -247,14 +229,13 @@ export async function transformModuleWithDeps(
     },
     TRANSFORM_CACHE_TTL_SECONDS,
   );
+
   let transformedCode = transformResult.code;
 
-  // Validate HTTP bundles using manifest (preferred) or legacy extraction
   const cacheDir = getHttpBundleCacheDir();
   let bundlesValid = true;
 
   if (transformResult.cacheHit && transformResult.bundleManifestId) {
-    // Manifest-based validation: atomic check that ALL bundles exist
     const validation = await validateBundleGroup(transformResult.bundleManifestId, cacheDir);
     if (!validation.valid) {
       logger.warn("[ModuleLoader] Bundle manifest validation failed, re-transforming", {
@@ -265,7 +246,6 @@ export async function transformModuleWithDeps(
       bundlesValid = false;
     }
   } else {
-    // Legacy path: extract bundle paths and ensure they exist
     const bundlePaths = extractHttpBundlePaths(transformedCode);
     if (bundlePaths.length > 0) {
       const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
@@ -280,13 +260,13 @@ export async function transformModuleWithDeps(
   }
 
   if (!bundlesValid) {
-    // Re-transform from source — this will create fresh bundles with a new manifest
     transformedCode = await transformToESM(fileContent, filePath, projectDir, adapter, {
       projectId: effectiveProjectId,
       dev: mode === "development",
       ssr: true,
       reactVersion: config.reactVersion,
     });
+
     setCachedTransformAsync(
       transformCacheKey,
       transformedCode,
@@ -300,7 +280,6 @@ export async function transformModuleWithDeps(
     });
   }
 
-  // Use TRANSFORMED hash for filename (matches SSR loader behavior)
   const transformedHash = hashCodeHex(transformedCode).slice(0, 8);
 
   const relativePath = filePath.startsWith(projectDir)
@@ -310,7 +289,6 @@ export async function transformModuleWithDeps(
   const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, `.${transformedHash}.js`);
   const tempFilePath = join(tmpDir, jsPath);
 
-  // Ensure directory exists (might be nested like lib/ or components/)
   const tempDir = tempFilePath.substring(0, tempFilePath.lastIndexOf("/"));
   await ensureDir(localAdapter, tempDir);
 
@@ -325,16 +303,16 @@ export async function transformModuleWithDeps(
     throw error;
   }
 
-  // Register in MDX-ESM cache index so other loaders can find this module
   if (contentSourceId) {
     const normalizedPath = `_vf_modules/${relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js")}`;
     const mdxCacheKey = `v${VERSION}:${normalizedPath}`;
     const cache = await getModulePathCache(tmpDir);
     cache.set(mdxCacheKey, tempFilePath);
-    // Persist to disk so MDX loader can find it
+
     saveModulePathCache(tmpDir).catch((err) => {
       logger.debug("[ModuleLoader] Failed to save module cache", { error: String(err) });
     });
+
     logger.debug("[ModuleLoader] Registered module in MDX-ESM cache", {
       file: filePath.slice(-40),
       mdxCacheKey,
@@ -344,6 +322,18 @@ export async function transformModuleWithDeps(
 
   moduleCache.set(cacheKey, tempFilePath);
   return tempFilePath;
+}
+
+export interface ModuleLoaderConfig {
+  projectDir: string;
+  projectId?: string;
+  contentSourceId?: string;
+  adapter: RuntimeAdapter;
+  mode: "development" | "production";
+  moduleCache: Map<string, string>;
+  esmCache: Map<string, string>;
+  /** React version for transforms (from project config) */
+  reactVersion?: string;
 }
 
 /**
@@ -360,14 +350,12 @@ async function getModuleCacheDir(config: ModuleLoaderConfig): Promise<string> {
     const sourceKey = encodeURIComponent(contentSourceId);
     const cacheDir = join(baseCacheDir, projectKey, sourceKey);
 
-    // Ensure directory exists
     const { createFileSystem } = await import("#veryfront/platform/compat/fs.ts");
     await createFileSystem().mkdir(cacheDir, { recursive: true });
 
     return cacheDir;
   }
 
-  // Fallback for cases without contentSourceId
   return getProjectTmpDir(projectId ?? projectDir);
 }
 
@@ -388,18 +376,20 @@ export async function loadModule(filePath: string, config: ModuleLoaderConfig): 
   try {
     return await import(moduleUrl);
   } catch (error) {
-    // If import fails due to missing HTTP bundle, try to recover and retry once
     const errorMsg = error instanceof Error ? error.message : String(error);
     const bundleMatch = errorMsg.match(/veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/);
+
     if (bundleMatch) {
       const hash = bundleMatch[1]!;
       logger.warn("[ModuleLoader] Import failed due to missing HTTP bundle, attempting recovery", {
         filePath,
         hash,
       });
+
       const { recoverHttpBundleByHash } = await import("#veryfront/transforms/esm/http-cache.ts");
       const cacheDir = getHttpBundleCacheDir();
       const recovered = await recoverHttpBundleByHash(hash, cacheDir);
+
       if (recovered) {
         logger.info("[ModuleLoader] HTTP bundle recovered, retrying import", { hash });
         return await import(`file://${tempFilePath}?t=${Date.now()}&retry=1`);

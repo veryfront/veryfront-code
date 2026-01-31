@@ -13,7 +13,6 @@ const JS_HEADERS = {
 
 function getUiDirectory(): string {
   const currentFile = new URL(import.meta.url).pathname;
-  // UI moved to src/server/dev-ui/projects/
   return currentFile.replace(/\/handlers\/dev\/projects\/ui-handler\.ts$/, "/dev-ui/projects");
 }
 
@@ -21,8 +20,12 @@ function resolveRelativeImport(currentDir: string, importPath: string): string {
   const parts = currentDir ? currentDir.split("/") : [];
 
   for (const part of importPath.split("/")) {
-    if (part === "..") parts.pop();
-    else if (part !== ".") parts.push(part);
+    if (part === "..") {
+      parts.pop();
+      continue;
+    }
+    if (part === ".") continue;
+    parts.push(part);
   }
 
   return parts.join("/");
@@ -43,9 +46,7 @@ function transformModule(filePath: string, source: string, relativePath: string)
         minify: false,
       });
 
-      const parts = relativePath.split("/");
-      parts.pop();
-      const currentDir = parts.join("/");
+      const currentDir = relativePath.split("/").slice(0, -1).join("/");
 
       return result.code.replace(
         /from\s+["'](\.\.?\/[^"']+)\.tsx?["']/g,
@@ -90,9 +91,10 @@ export function handleProjectsUI(req: Request): Promise<Response | null> {
           headers: { "Content-Type": "text/plain" },
         });
       }
-      const uiDir = getUiDirectory();
 
+      const uiDir = getUiDirectory();
       const module = await readUiSource(uiDir, relativePath);
+
       if (!module) {
         return new Response(`Module not found: ${relativePath}`, {
           status: 404,

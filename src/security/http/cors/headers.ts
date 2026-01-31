@@ -23,8 +23,7 @@ function applyValidatedHeaders(
       .map((v) => v.trim()) ?? [];
 
     if (!varyValues.includes("Origin")) {
-      varyValues.push("Origin");
-      headers.set("Vary", varyValues.join(", "));
+      headers.set("Vary", [...varyValues, "Origin"].join(", "));
     }
   }
 
@@ -62,7 +61,8 @@ export function applyCORSHeaders(options: CORSHeaderOptions): Promise<Response |
 }
 
 export function applyCORSHeadersSync(options: CORSHeaderOptions): Response | void {
-  const validation = validateOriginSync(options.request.headers.get("origin"), options.config);
+  const origin = options.request.headers.get("origin");
+  const validation = validateOriginSync(origin, options.config);
   return applyValidatedHeaders(validation, options);
 }
 
@@ -76,9 +76,5 @@ export function shouldApplyCORS(request: Request, config?: boolean | CORSConfig)
   }
 
   const origin = request.headers.get("origin");
-  if (!origin) {
-    return config.origin === "*";
-  }
-
-  return true;
+  return origin ? true : config.origin === "*";
 }

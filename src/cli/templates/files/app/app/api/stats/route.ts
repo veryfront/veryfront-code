@@ -6,7 +6,7 @@ export async function GET(request: Request): Promise<Response> {
   if (!auth.ok) return auth.response;
 
   const userId = new URL(request.url).searchParams.get("userId");
-  if (!userId) {
+  if (userId == null) {
     return Response.json({ error: "userId parameter required" }, { status: 400 });
   }
 

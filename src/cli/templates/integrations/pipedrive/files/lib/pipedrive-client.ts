@@ -101,8 +101,9 @@ export async function listDeals(options?: {
   if (options?.stageId) params.set("stage_id", options.stageId.toString());
   if (options?.limit) params.set("limit", options.limit.toString());
 
-  const endpoint = buildEndpoint("/deals", params);
-  const response = await pipedriveFetch<PipedriveResponse<PipedriveDeal[]>>(endpoint);
+  const response = await pipedriveFetch<PipedriveResponse<PipedriveDeal[]>>(
+    buildEndpoint("/deals", params),
+  );
 
   return response.data || [];
 }
@@ -177,8 +178,9 @@ export async function listPersons(options?: {
   if (options?.searchTerm) params.set("term", options.searchTerm);
   if (options?.limit) params.set("limit", options.limit.toString());
 
-  const endpoint = buildEndpoint("/persons", params);
-  const response = await pipedriveFetch<PipedriveResponse<PipedrivePerson[]>>(endpoint);
+  const response = await pipedriveFetch<PipedriveResponse<PipedrivePerson[]>>(
+    buildEndpoint("/persons", params),
+  );
 
   return response.data || [];
 }
@@ -214,8 +216,8 @@ export async function listStages(): Promise<PipedriveStage[]> {
 }
 
 export async function getCurrentUser(): Promise<{ id: number; name: string; email: string }> {
-  const response = await pipedriveFetch<
-    PipedriveResponse<{ id: number; name: string; email: string }>
-  >("/users/me");
+  const response = await pipedriveFetch<PipedriveResponse<{ id: number; name: string; email: string }>>(
+    "/users/me",
+  );
   return response.data;
 }

@@ -37,65 +37,67 @@ describe("cli/ui/box", () => {
 
   describe("box", () => {
     it("should create a box around content", () => {
-      const result = box("hello");
-      const lines = result.split("\n");
-      assertEquals(lines.length >= 3, true); // at least top border, content, bottom border
+      const lines = box("hello").split("\n");
+      assertEquals(lines.length >= 3, true);
     });
 
     it("should use rounded style by default", () => {
       const result = box("hi");
-      assertEquals(result.includes("\u256D"), true); // rounded top-left
-      assertEquals(result.includes("\u256E"), true); // rounded top-right
+      assertEquals(result.includes("\u256D"), true);
+      assertEquals(result.includes("\u256E"), true);
     });
 
     it("should use specified border style", () => {
       const result = box("hi", { style: "square" });
-      assertEquals(result.includes("\u250C"), true); // square top-left
+      assertEquals(result.includes("\u250C"), true);
     });
 
     it("should include title in top border", () => {
-      const result = box("content", { title: "Title" });
-      assertEquals(result.includes("Title"), true);
+      assertEquals(box("content", { title: "Title" }).includes("Title"), true);
     });
 
     it("should handle center-aligned title", () => {
-      const result = box("content", { title: "Center", titleAlign: "center" });
-      assertEquals(result.includes("Center"), true);
+      assertEquals(
+        box("content", { title: "Center", titleAlign: "center" }).includes(
+          "Center",
+        ),
+        true,
+      );
     });
 
     it("should handle right-aligned title", () => {
-      const result = box("content", { title: "Right", titleAlign: "right" });
-      assertEquals(result.includes("Right"), true);
+      assertEquals(
+        box("content", { title: "Right", titleAlign: "right" }).includes(
+          "Right",
+        ),
+        true,
+      );
     });
 
     it("should handle multi-line content", () => {
-      const result = box("line1\nline2\nline3");
-      const lines = result.split("\n");
-      assertEquals(lines.length >= 5, true); // top + 3 content + bottom
+      const lines = box("line1\nline2\nline3").split("\n");
+      assertEquals(lines.length >= 5, true);
     });
 
     it("should apply custom width", () => {
-      const result = box("hi", { width: 30 });
-      const firstLine = result.split("\n")[0]!;
-      // The first line (top border) should have visible length of 30
+      const firstLine = box("hi", { width: 30 }).split("\n")[0]!;
       assertEquals(stripAnsi(firstLine).length, 30);
     });
 
     it("should handle zero paddingY", () => {
-      const result = box("hi", { paddingY: 0, padding: 0 });
-      const lines = result.split("\n");
-      // top border + content + bottom border = 3 lines minimum
+      const lines = box("hi", { paddingY: 0, padding: 0 }).split("\n");
       assertEquals(lines.length, 3);
     });
 
     it("should apply border color", () => {
-      const result = box("hi", { borderColor: "\x1b[31m" });
-      assertEquals(result.includes("\x1b[31m"), true);
+      assertEquals(box("hi", { borderColor: "\x1b[31m" }).includes("\x1b[31m"), true);
     });
 
     it("should apply title color", () => {
-      const result = box("hi", { title: "T", titleColor: "\x1b[32m" });
-      assertEquals(result.includes("\x1b[32m"), true);
+      assertEquals(
+        box("hi", { title: "T", titleColor: "\x1b[32m" }).includes("\x1b[32m"),
+        true,
+      );
     });
   });
 
@@ -115,20 +117,17 @@ describe("cli/ui/box", () => {
     });
 
     it("should handle items with different heights (top align)", () => {
-      const result = joinHorizontal("top", 1, "a\nb", "c");
-      const lines = result.split("\n");
+      const lines = joinHorizontal("top", 1, "a\nb", "c").split("\n");
       assertEquals(lines.length, 2);
     });
 
     it("should handle bottom alignment", () => {
-      const result = joinHorizontal("bottom", 1, "a\nb", "c");
-      const lines = result.split("\n");
+      const lines = joinHorizontal("bottom", 1, "a\nb", "c").split("\n");
       assertEquals(lines.length, 2);
     });
 
     it("should handle center alignment", () => {
-      const result = joinHorizontal("center", 1, "a\nb\nc", "d");
-      const lines = result.split("\n");
+      const lines = joinHorizontal("center", 1, "a\nb\nc", "d").split("\n");
       assertEquals(lines.length, 3);
     });
   });
@@ -143,27 +142,22 @@ describe("cli/ui/box", () => {
     });
 
     it("should join items vertically", () => {
-      const result = joinVertical("left", 0, "first", "second");
-      const lines = result.split("\n");
+      const lines = joinVertical("left", 0, "first", "second").split("\n");
       assertEquals(lines.length, 2);
     });
 
     it("should add gap between items", () => {
-      const result = joinVertical("left", 1, "first", "second");
-      const lines = result.split("\n");
-      assertEquals(lines.length, 3); // first + gap + second
+      const lines = joinVertical("left", 1, "first", "second").split("\n");
+      assertEquals(lines.length, 3);
     });
 
     it("should align center", () => {
-      const result = joinVertical("center", 0, "hi", "hello");
-      const lines = result.split("\n");
-      // "hi" should be centered within width of "hello" (5)
+      const lines = joinVertical("center", 0, "hi", "hello").split("\n");
       assertEquals(lines[0]!.length, lines[1]!.length);
     });
 
     it("should align right", () => {
-      const result = joinVertical("right", 0, "hi", "hello");
-      const lines = result.split("\n");
+      const lines = joinVertical("right", 0, "hi", "hello").split("\n");
       assertEquals(lines[0]!.endsWith("hi"), true);
     });
   });
@@ -176,8 +170,7 @@ describe("cli/ui/box", () => {
     });
 
     it("should use specified border style", () => {
-      const result = divider(5, "heavy");
-      assertEquals(result, "\u2501".repeat(5));
+      assertEquals(divider(5, "heavy"), "\u2501".repeat(5));
     });
   });
 
@@ -189,8 +182,7 @@ describe("cli/ui/box", () => {
     });
 
     it("should use specified border style", () => {
-      const result = dividerWithText("Text", 20, "heavy");
-      assertEquals(result.includes("\u2501"), true);
+      assertEquals(dividerWithText("Text", 20, "heavy").includes("\u2501"), true);
     });
   });
 });

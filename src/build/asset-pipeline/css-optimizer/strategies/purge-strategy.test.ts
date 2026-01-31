@@ -1,7 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PurgeStrategy } from "./purge-strategy.ts";
-import type { CSSOptimizationOptions } from "../types/index.ts";
 
 describe("build/asset-pipeline/css-optimizer/strategies/purge-strategy", () => {
   describe("PurgeStrategy", () => {
@@ -14,42 +13,27 @@ describe("build/asset-pipeline/css-optimizer/strategies/purge-strategy", () => {
     describe("canProcess", () => {
       it("should return true when enabled and purge is true", () => {
         const strategy = new PurgeStrategy();
-        assertEquals(
-          strategy.canProcess({ enabled: true, purge: true } as CSSOptimizationOptions),
-          true,
-        );
+        assertEquals(strategy.canProcess({ enabled: true, purge: true }), true);
       });
 
       it("should return true when purge is true and enabled is not set", () => {
         const strategy = new PurgeStrategy();
-        assertEquals(
-          strategy.canProcess({ purge: true } as CSSOptimizationOptions),
-          true,
-        );
+        assertEquals(strategy.canProcess({ purge: true }), true);
       });
 
       it("should return false when purge is false", () => {
         const strategy = new PurgeStrategy();
-        assertEquals(
-          strategy.canProcess({ purge: false } as CSSOptimizationOptions),
-          false,
-        );
+        assertEquals(strategy.canProcess({ purge: false }), false);
       });
 
       it("should return false when disabled", () => {
         const strategy = new PurgeStrategy();
-        assertEquals(
-          strategy.canProcess({ enabled: false, purge: true } as CSSOptimizationOptions),
-          false,
-        );
+        assertEquals(strategy.canProcess({ enabled: false, purge: true }), false);
       });
 
       it("should return false when purge is not set", () => {
         const strategy = new PurgeStrategy();
-        assertEquals(
-          strategy.canProcess({} as CSSOptimizationOptions),
-          false,
-        );
+        assertEquals(strategy.canProcess({}), false);
       });
     });
 
@@ -61,10 +45,12 @@ describe("build/asset-pipeline/css-optimizer/strategies/purge-strategy", () => {
 
       it("should clear used selectors cache", () => {
         const strategy = new PurgeStrategy();
-        // Manually add some selectors to test clearCache
         strategy.getUsedSelectors().add(".test-class");
+
         assertEquals(strategy.getUsedSelectors().size, 1);
+
         strategy.clearCache();
+
         assertEquals(strategy.getUsedSelectors().size, 0);
       });
     });
@@ -72,17 +58,12 @@ describe("build/asset-pipeline/css-optimizer/strategies/purge-strategy", () => {
     describe("process", () => {
       it("should process CSS when used selectors are pre-populated", async () => {
         const strategy = new PurgeStrategy();
-        // Manually populate used selectors
         strategy.getUsedSelectors().add(".used-class");
 
         const css = `.used-class { color: red; }
 .unused-class { color: blue; }`;
 
-        const result = await strategy.process(
-          css,
-          "test.css",
-          {} as CSSOptimizationOptions,
-        );
+        const result = await strategy.process(css, "test.css", {});
 
         assertEquals(typeof result.code, "string");
         assertEquals(result.code.includes(".used-class"), true);
@@ -99,11 +80,7 @@ describe("build/asset-pipeline/css-optimizer/strategies/purge-strategy", () => {
 .keep { display: block; }
 .remove { display: none; }`;
 
-        const result = await strategy.process(
-          css,
-          "test.css",
-          {} as CSSOptimizationOptions,
-        );
+        const result = await strategy.process(css, "test.css", {});
 
         assertEquals(result.code.includes("body"), true);
         assertEquals(result.code.includes(".keep"), true);

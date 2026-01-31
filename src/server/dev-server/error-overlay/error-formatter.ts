@@ -45,12 +45,17 @@ export function getSuggestion(error: Error): string | undefined {
   const message = error.message.toLowerCase();
 
   for (const { patterns, suggestion } of ERROR_SUGGESTIONS) {
-    if (patterns.some((pattern) => message.includes(pattern))) return suggestion;
+    if (patterns.some((pattern) => message.includes(pattern))) {
+      return suggestion;
+    }
   }
 
   return undefined;
 }
 
 export function formatErrorType(type: ErrorType): string {
-  return `${type[0]!.toUpperCase()}${type.slice(1)}`;
+  const firstChar = type[0];
+  if (!firstChar) return "";
+
+  return `${firstChar.toUpperCase()}${type.slice(1)}`;
 }

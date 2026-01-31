@@ -4,27 +4,39 @@ import "../../../_helpers/log-guard.ts";
 
 import { isNotFoundError, mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
 import { join } from "@veryfront/compat/path";
-import { isDeno } from "../../../../src/platform/compat/runtime.ts";
 import { startUniversalServer } from "../../../../src/server/production-server.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Add handler for intentional test errors from boom pages
-// Only register if addEventListener is available (Deno, browsers)
-if (typeof globalThis.addEventListener === "function") {
+function registerUnhandledRejectionGuard(): void {
+  if (typeof globalThis.addEventListener !== "function") return;
+
   globalThis.addEventListener("unhandledrejection", (event) => {
     const reason = (event as PromiseRejectionEvent).reason;
-    if (reason instanceof Error && (reason.message === "boom" || reason.message === "fail")) {
-      event.preventDefault(); // Prevent test failure for intentional errors
-    }
+    if (!(reason instanceof Error)) return;
+
+    if (reason.message !== "boom" && reason.message !== "fail") return;
+
+    event.preventDefault(); // Prevent test failure for intentional errors
   });
 }
+
+async function removeAppDir(projectDir: string): Promise<void> {
+  try {
+    await remove(join(projectDir, "app"), { recursive: true });
+  } catch (e) {
+    if (!isNotFoundError(e)) {
+      console.warn("[TEST] cleanup: failed to remove app dir", e);
+    }
+  }
+}
+
+registerUnhandledRejectionGuard();
 
 describe(
   "Universal Server - SSR",
   { sanitizeOps: false, sanitizeResources: false },
   () => {
-    // Clean up renderer intervals to prevent resource leaks
     afterAll(async () => {
       console.log("[SSR Test] Starting cleanupBundler...");
       await cleanupBundler();
@@ -35,7 +47,6 @@ describe(
       await withTestContext("universal-server-500-fallback", async (context: TestContext) => {
         const dir = join(context.projectDir, "app");
         await mkdir(dir, { recursive: true });
-        // Create a page that throws to trigger SSR error path
         await writeTextFile(
           join(dir, "boom.tsx"),
           `export default function Page(){ throw new Error('fail'); }`,
@@ -52,10 +63,8 @@ describe(
 
         try {
           const res = await fetch(`http://127.0.0.1:${port}/boom`);
-          // Either a rendered error boundary (404) or generic 500; accept either but require HTML
-          const ct = res.headers.get("content-type") || "";
+          const ct = res.headers.get("content-type") ?? "";
           assertMatch(ct, /text\/html/i);
-          // Note: CSP headers only set when security config defines CSP rules
           await res.text();
         } finally {
           await server.stop();
@@ -65,27 +74,15 @@ describe(
 
     it("renders App Router loading/error via universal server", async () => {
       await withTestContext("universal-server-app-loading-error", async (context: TestContext) => {
-        // Clean and set up app router structure
-        try {
-          await remove(join(context.projectDir, "app"), {
-            recursive: true,
-          });
-        } catch (e) {
-          if (!isNotFoundError(e)) {
-            console.warn("[TEST] cleanup: failed to remove app dir", e);
-          }
-        }
-        await mkdir(join(context.projectDir, "app", "a", "b"), {
-          recursive: true,
-        });
+        await removeAppDir(context.projectDir);
 
-        // Root layout with <main>
+        await mkdir(join(context.projectDir, "app", "a", "b"), { recursive: true });
+
         await writeTextFile(
           join(context.projectDir, "app", "layout.tsx"),
           `export default function Root({ children }: any){ return (<html><body><main data-router-focus>{children}</main></body></html>); }`,
         );
 
-        // Segment A loading and error
         await writeTextFile(
           join(context.projectDir, "app", "a", "loading.tsx"),
           `export default function Loading(){ return <p>Loading A...</p>; }`,
@@ -95,7 +92,6 @@ describe(
           `export default function Error({ error }: any){ return <p>ErrA:{String(error&&error.message||error)}</p>; }`,
         );
 
-        // Segment B page that throws
         await writeTextFile(
           join(context.projectDir, "app", "a", "b", "page.tsx"),
           `export default async function Page(){ await new Promise(r=>setTimeout(r, 20)); throw new Error('boom'); }`,
@@ -113,29 +109,18 @@ describe(
         try {
           const res = await fetch(`http://127.0.0.1:${port}/a/b`);
           const html = await res.text();
-          // In production SSR we expect final HTML to include error boundary content
-          if (!(html.includes("ErrA:") || html.includes("Loading A..."))) {
-            throw new Error("Expected loading or error content in HTML");
-          }
+          if (html.includes("ErrA:") || html.includes("Loading A...")) return;
+          throw new Error("Expected loading or error content in HTML");
         } finally {
           await server.stop();
         }
       });
     });
 
-    // TODO: Re-enable after investigating not-found.tsx regression
     it.ignore("renders not-found.tsx for missing App Router page", async () => {
       await withTestContext("universal-server-app-not-found", async (context: TestContext) => {
-        // Ensure clean app dir and create not-found in segment
-        try {
-          await remove(join(context.projectDir, "app"), {
-            recursive: true,
-          });
-        } catch (e) {
-          if (!isNotFoundError(e)) {
-            console.warn("[TEST] cleanup: failed to remove app dir", e);
-          }
-        }
+        await removeAppDir(context.projectDir);
+
         const segDir = join(context.projectDir, "app", "a", "b");
         await mkdir(segDir, { recursive: true });
         await writeTextFile(
@@ -153,7 +138,6 @@ describe(
         await server.ready;
 
         try {
-          // Request a non-existent page within the segment
           const res = await fetch(`http://127.0.0.1:${port}/a/b/missing`);
           assertEquals(res.status, 404);
           const html = await res.text();
@@ -166,7 +150,6 @@ describe(
 
     it("includes metadata (title, description) in SSR HTML", async () => {
       await withTestContext("universal-server-metadata", async (context: TestContext) => {
-        // Create App Router root page with frontmatter metadata
         const appDir = join(context.projectDir, "app");
         await mkdir(appDir, { recursive: true });
         await writeTextFile(
@@ -231,7 +214,6 @@ describe(
 
     it("serves SSR with caching headers and HEAD support", async () => {
       await withTestContext("universal-server-ssr-caching-head", async (context: TestContext) => {
-        // App Router home page
         const appDir = join(context.projectDir, "app");
         await mkdir(appDir, { recursive: true });
         await writeTextFile(join(appDir, "page.mdx"), `# Home SSR\n\nContent here.`);
@@ -248,16 +230,14 @@ describe(
         try {
           const res1 = await fetch(`http://127.0.0.1:${port}/`);
           assertEquals(res1.status, 200);
-          // Streaming mode uses no-cache since ETag isn't supported for fast TTFB
-          const cacheControl = res1.headers.get("cache-control") || "";
+
+          const cacheControl = res1.headers.get("cache-control") ?? "";
           assert(cacheControl.includes("no-cache") || cacheControl.includes("no-store"));
+
           const html1 = await res1.text();
           if (!/Home SSR/.test(html1)) throw new Error("SSR missing content");
 
-          // HEAD should return 200 with appropriate headers
-          const resHead = await fetch(`http://127.0.0.1:${port}/`, {
-            method: "HEAD",
-          });
+          const resHead = await fetch(`http://127.0.0.1:${port}/`, { method: "HEAD" });
           assertEquals(resHead.status, 200);
           await resHead.body?.cancel();
         } finally {

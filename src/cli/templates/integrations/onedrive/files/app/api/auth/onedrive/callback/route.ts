@@ -9,24 +9,28 @@ import { tokenStore } from "../../../../../lib/token-store.ts";
 
 const USER_ID = "current-user";
 
-// Hybrid adapter: uses framework's memoryTokenStore for state (PKCE),
-// but user's tokenStore for actual token storage
 const hybridTokenStore = {
-  async getTokens(serviceId: string) {
+  async getTokens(serviceId: string): Promise<unknown> {
     return tokenStore.getToken(USER_ID, serviceId);
   },
   async setTokens(
     serviceId: string,
     tokens: { accessToken: string; refreshToken?: string; expiresAt?: number },
-  ) {
+  ): Promise<void> {
     await tokenStore.setToken(USER_ID, serviceId, tokens);
   },
-  async clearTokens(serviceId: string) {
+  async clearTokens(serviceId: string): Promise<void> {
     await tokenStore.revokeToken(USER_ID, serviceId);
   },
-  getState: (state: string) => memoryTokenStore.getState(state),
-  setState: (state: { state: string; codeVerifier?: string; createdAt: number }) => memoryTokenStore.setState(state),
-  clearState: (state: string) => memoryTokenStore.clearState(state),
+  getState(state: string): Promise<unknown> {
+    return memoryTokenStore.getState(state);
+  },
+  setState(state: { state: string; codeVerifier?: string; createdAt: number }): Promise<void> {
+    return memoryTokenStore.setState(state);
+  },
+  clearState(state: string): Promise<void> {
+    return memoryTokenStore.clearState(state);
+  },
 };
 
 export const GET = createOAuthCallbackHandler(oneDriveConfig, { tokenStore: hybridTokenStore });

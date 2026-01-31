@@ -72,7 +72,6 @@ describe("testing/deno-compat", () => {
 
     try {
       await stat(capturedPath);
-      throw new Error("Directory should have been removed");
     } catch (error) {
       // Expected: directory no longer exists
       // Deno throws "NotFound", Node.js throws "Error" with ENOENT code
@@ -81,6 +80,9 @@ describe("testing/deno-compat", () => {
         err.name === "NotFound" || err.code === "ENOENT",
         `Expected NotFound or ENOENT error, got: ${err.name} / ${err.code}`,
       );
+      return;
     }
+
+    throw new Error("Directory should have been removed");
   });
 });

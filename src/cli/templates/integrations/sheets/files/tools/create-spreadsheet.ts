@@ -49,17 +49,27 @@ export default tool({
   }),
   async execute({ title, sheets, initialData }) {
     const client = createSheetsClient(DEFAULT_USER_ID);
-
     const spreadsheet = await client.createSpreadsheet({ title, sheets });
 
-    if (initialData) {
-      await client.writeRange({
-        spreadsheetId: spreadsheet.spreadsheetId,
-        range: `${initialData.sheetTitle}!${initialData.range}`,
-        values: initialData.values,
-        valueInputOption: "USER_ENTERED",
-      });
+    if (!initialData) {
+      return {
+        id: spreadsheet.spreadsheetId,
+        title: spreadsheet.properties.title,
+        url: spreadsheet.spreadsheetUrl,
+        sheets: spreadsheet.sheets.map(({ properties }) => ({
+          id: properties.sheetId,
+          title: properties.title,
+          index: properties.index,
+        })),
+      };
     }
+
+    await client.writeRange({
+      spreadsheetId: spreadsheet.spreadsheetId,
+      range: `${initialData.sheetTitle}!${initialData.range}`,
+      values: initialData.values,
+      valueInputOption: "USER_ENTERED",
+    });
 
     return {
       id: spreadsheet.spreadsheetId,

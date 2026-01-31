@@ -9,18 +9,29 @@ export default tool({
     listId: z.string().describe("The ID of the audience list to retrieve"),
   }),
   async execute({ listId }) {
-    const list = await getList(listId);
-    const { contact, campaign_defaults, stats } = list;
+    const {
+      id,
+      web_id,
+      name,
+      date_created,
+      list_rating,
+      permission_reminder,
+      subscribe_url_short,
+      subscribe_url_long,
+      contact,
+      campaign_defaults,
+      stats,
+    } = await getList(listId);
 
     return {
-      id: list.id,
-      webId: list.web_id,
-      name: list.name,
-      dateCreated: list.date_created,
-      listRating: list.list_rating,
-      permissionReminder: list.permission_reminder,
-      subscribeUrlShort: list.subscribe_url_short,
-      subscribeUrlLong: list.subscribe_url_long,
+      id,
+      webId: web_id,
+      name,
+      dateCreated: date_created,
+      listRating: list_rating,
+      permissionReminder: permission_reminder,
+      subscribeUrlShort: subscribe_url_short,
+      subscribeUrlLong: subscribe_url_long,
       contact: {
         company: contact.company,
         address1: contact.address1,

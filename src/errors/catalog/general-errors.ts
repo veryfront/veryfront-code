@@ -14,7 +14,6 @@ export const GENERAL_ERROR_CATALOG: PartialErrorCatalog = {
       "Check GitHub issues for similar problems",
     ],
   ),
-
   [ErrorCode.PERMISSION_DENIED]: createSimpleError(
     ErrorCode.PERMISSION_DENIED,
     "Permission denied",
@@ -25,7 +24,6 @@ export const GENERAL_ERROR_CATALOG: PartialErrorCatalog = {
       "Verify user has write access",
     ],
   ),
-
   [ErrorCode.FILE_NOT_FOUND]: createSimpleError(
     ErrorCode.FILE_NOT_FOUND,
     "File not found",
@@ -36,7 +34,6 @@ export const GENERAL_ERROR_CATALOG: PartialErrorCatalog = {
       "Check for typos in file name",
     ],
   ),
-
   [ErrorCode.INVALID_ARGUMENT]: createSimpleError(
     ErrorCode.INVALID_ARGUMENT,
     "Invalid argument",
@@ -47,7 +44,6 @@ export const GENERAL_ERROR_CATALOG: PartialErrorCatalog = {
       "Run 'veryfront help <command>' for usage",
     ],
   ),
-
   [ErrorCode.TIMEOUT_ERROR]: createSimpleError(
     ErrorCode.TIMEOUT_ERROR,
     "Operation timed out",

@@ -78,8 +78,10 @@ async function detectAppRouterImpl(
   const appDir = join(projectDir, appDirName);
   const pagesDir = join(projectDir, pagesDirName);
 
-  const appStat = await statWithFallback(appDir, adapter);
-  const pagesStat = await statWithFallback(pagesDir, adapter);
+  const [appStat, pagesStat] = await Promise.all([
+    statWithFallback(appDir, adapter),
+    statWithFallback(pagesDir, adapter),
+  ]);
 
   const hasAppDir = Boolean(appStat?.isDirectory);
   const hasPagesDir = Boolean(pagesStat?.isDirectory);
@@ -103,10 +105,7 @@ async function hasRouteFiles(dir: string, adapter: RuntimeAdapter): Promise<bool
       const dotIndex = name.lastIndexOf(".");
       const ext = dotIndex === -1 ? "" : name.slice(dotIndex);
 
-      if (
-        ROUTE_EXTENSIONS.has(ext) &&
-        ROUTE_PATTERNS.some((pattern) => name.startsWith(pattern))
-      ) {
+      if (ROUTE_EXTENSIONS.has(ext) && ROUTE_PATTERNS.some((pattern) => name.startsWith(pattern))) {
         return true;
       }
 
@@ -183,6 +182,7 @@ async function collectDirEntries(
   }>,
 ): Promise<NormalizedDirEntry[]> {
   const entries: NormalizedDirEntry[] = [];
+
   for await (const entry of iterable) {
     entries.push({
       name: entry.name,
@@ -191,6 +191,7 @@ async function collectDirEntries(
       isSymlink: entry.isSymlink ?? false,
     });
   }
+
   return entries;
 }
 
@@ -199,6 +200,7 @@ async function readDirWithFallback(
   adapter: RuntimeAdapter,
 ): Promise<NormalizedDirEntry[]> {
   const fs = createFileSystem();
+
   return await withAdapterFallback(
     () => collectDirEntries(adapter.fs.readDir(dir)),
     () => collectDirEntries(fs.readDir(dir)),

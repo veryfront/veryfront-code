@@ -18,11 +18,10 @@ describe("errors/catalog/index", () => {
 
     it("should return solution for known code", () => {
       const solution = getErrorSolution(ErrorCode.CONFIG_NOT_FOUND);
-      if (solution) {
-        assertEquals(solution.code, ErrorCode.CONFIG_NOT_FOUND);
-        assertEquals(typeof solution.title, "string");
-        assertEquals(typeof solution.message, "string");
-      }
+      assertExists(solution);
+      assertEquals(solution.code, ErrorCode.CONFIG_NOT_FOUND);
+      assertEquals(typeof solution.title, "string");
+      assertEquals(typeof solution.message, "string");
     });
   });
 
@@ -33,45 +32,51 @@ describe("errors/catalog/index", () => {
     });
 
     it("should find errors by title", () => {
-      // Get a known entry from the catalog to search for
       const entries = Object.values(ERROR_CATALOG);
-      if (entries.length > 0) {
-        const first = entries[0];
-        assertExists(first);
-        const word = first.title.split(" ")[0];
-        assertExists(word);
-        const results = searchErrors(word);
-        assertEquals(results.length > 0, true);
-      }
+      assertEquals(entries.length > 0, true);
+
+      const first = entries[0];
+      assertExists(first);
+
+      const word = first.title.split(" ")[0];
+      assertExists(word);
+
+      const results = searchErrors(word);
+      assertEquals(results.length > 0, true);
     });
 
     it("should be case insensitive", () => {
       const entries = Object.values(ERROR_CATALOG);
-      if (entries.length > 0) {
-        const first = entries[0];
-        assertExists(first);
-        const word = first.title.split(" ")[0];
-        assertExists(word);
-        const lower = searchErrors(word.toLowerCase());
-        const upper = searchErrors(word.toUpperCase());
-        assertEquals(lower.length, upper.length);
-      }
+      assertEquals(entries.length > 0, true);
+
+      const first = entries[0];
+      assertExists(first);
+
+      const word = first.title.split(" ")[0];
+      assertExists(word);
+
+      const lower = searchErrors(word.toLowerCase());
+      const upper = searchErrors(word.toUpperCase());
+      assertEquals(lower.length, upper.length);
     });
 
     it("should search in steps", () => {
       const entriesWithSteps = Object.values(ERROR_CATALOG).filter(
         (e) => e.steps && e.steps.length > 0,
       );
-      if (entriesWithSteps.length > 0) {
-        const entry = entriesWithSteps[0];
-        assertExists(entry);
-        const firstStep = entry.steps?.[0];
-        assertExists(firstStep);
-        const stepWord = firstStep.split(" ")[0];
-        assertExists(stepWord);
-        const results = searchErrors(stepWord);
-        assertEquals(results.length > 0, true);
-      }
+      assertEquals(entriesWithSteps.length > 0, true);
+
+      const entry = entriesWithSteps[0];
+      assertExists(entry);
+
+      const firstStep = entry.steps?.[0];
+      assertExists(firstStep);
+
+      const stepWord = firstStep.split(" ")[0];
+      assertExists(stepWord);
+
+      const results = searchErrors(stepWord);
+      assertEquals(results.length > 0, true);
     });
   });
 });

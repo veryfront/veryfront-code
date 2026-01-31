@@ -24,6 +24,14 @@ const VERYFRONT_BROWSER_MAP: Record<string, string> = {
   "veryfront/fonts": "/_vf_modules/react/fonts/index.js",
 };
 
+function normalizeVeryfrontSpecifier(specifier: string): string {
+  if (specifier === "@veryfront") return "veryfront";
+  if (specifier.startsWith("@veryfront/")) {
+    return specifier.replace("@veryfront/", "veryfront/");
+  }
+  return specifier;
+}
+
 export class VeryfrontStrategy implements ImportRewriteStrategy {
   readonly name = "veryfront";
   readonly priority = 1.5;
@@ -43,14 +51,8 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
 
     // SSR: Keep veryfront imports as-is (resolved by runtime)
     if (ctx.target === "ssr") {
-      // Normalize @veryfront/ to veryfront/
-      if (specifier.startsWith("@veryfront/")) {
-        return { specifier: specifier.replace("@veryfront/", "veryfront/") };
-      }
-      if (specifier === "@veryfront") {
-        return { specifier: "veryfront" };
-      }
-      // Keep #veryfront/* and veryfront/* as-is for SSR
+      const normalized = normalizeVeryfrontSpecifier(specifier);
+      if (normalized !== specifier) return { specifier: normalized };
       return { specifier: null };
     }
 
@@ -60,30 +62,18 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
       return { specifier: buildVeryfrontModuleUrl(path) };
     }
 
-    // Browser: Map veryfront/* to module server URLs
-    if (specifier.startsWith("veryfront/")) {
-      const mapped = VERYFRONT_BROWSER_MAP[specifier];
-      if (mapped) {
-        return { specifier: mapped };
-      }
-      // Unknown veryfront/* subpath - convert to module URL as fallback
-      const path = specifier.slice("veryfront/".length);
-      return { specifier: `/_vf_modules/react/${path}/index.js` };
-    }
+    const normalized = normalizeVeryfrontSpecifier(specifier);
 
-    // Normalize @veryfront/ to veryfront/ then apply same mapping
-    if (specifier.startsWith("@veryfront/")) {
-      const normalized = specifier.replace("@veryfront/", "veryfront/");
-      const mapped = VERYFRONT_BROWSER_MAP[normalized];
-      if (mapped) {
-        return { specifier: mapped };
-      }
-      const path = specifier.slice("@veryfront/".length);
-      return { specifier: `/_vf_modules/react/${path}/index.js` };
-    }
-
-    if (specifier === "@veryfront" || specifier === "veryfront") {
+    if (normalized === "veryfront") {
       return { specifier: "/_vf_modules/react/index.js" };
+    }
+
+    if (normalized.startsWith("veryfront/")) {
+      const mapped = VERYFRONT_BROWSER_MAP[normalized];
+      if (mapped) return { specifier: mapped };
+
+      const path = normalized.slice("veryfront/".length);
+      return { specifier: `/_vf_modules/react/${path}/index.js` };
     }
 
     return { specifier: null };

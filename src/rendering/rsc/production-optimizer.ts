@@ -12,10 +12,7 @@ export class RSCProductionOptimizer {
   }
 
   private static minifyHTML(html: string): string {
-    return html
-      .replace(/<!--[\s\S]*?-->/g, "")
-      .replace(/>\s+</g, "><")
-      .trim();
+    return html.replace(/<!--[\s\S]*?-->/g, "").replace(/>\s+</g, "><").trim();
   }
 
   static getCacheHeaders(
@@ -45,8 +42,7 @@ export class RSCProductionOptimizer {
       hash = Math.imul(hash, 16777619);
     }
 
-    const clientRefKeys = Object.keys(payload.clientRefs).sort();
-    for (const key of clientRefKeys) {
+    for (const key of Object.keys(payload.clientRefs).sort()) {
       for (let i = 0; i < key.length; i++) {
         hash ^= key.charCodeAt(i);
         hash = Math.imul(hash, 16777619);
@@ -59,7 +55,7 @@ export class RSCProductionOptimizer {
   static checkETag(requestETag: string | null, payloadETag: string): boolean {
     if (!requestETag) return false;
 
-    const normalizeETag = (etag: string) => etag.replace(/^W\//, "").replace(/"/g, "");
+    const normalizeETag = (etag: string): string => etag.replace(/^W\//, "").replace(/"/g, "");
 
     return normalizeETag(requestETag) === normalizeETag(payloadETag);
   }
@@ -70,12 +66,9 @@ export class RSCProductionOptimizer {
   ): Record<string, string> {
     if (!cdnPrefix) return clientRefs;
 
-    const optimized: Record<string, string> = {};
-    for (const [id, path] of Object.entries(clientRefs)) {
-      optimized[id] = `${cdnPrefix}${path}`;
-    }
-
-    return optimized;
+    return Object.fromEntries(
+      Object.entries(clientRefs).map(([id, path]) => [id, `${cdnPrefix}${path}`]),
+    );
   }
 
   static bundlePayloads(payloads: Map<string, RSCPayload>): {

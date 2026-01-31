@@ -12,25 +12,22 @@ async function sleep(ms: number): Promise<void> {
 
 async function withTimeout<T>(promise: Promise<T>, timeout: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+
   try {
     const timeoutPromise = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        reject(new Error(`${label} timeout after ${timeout}ms`));
-      }, timeout);
+      timer = setTimeout(() => reject(new Error(`${label} timeout after ${timeout}ms`)), timeout);
     });
-    return await Promise.race([promise, timeoutPromise]) as T;
+
+    return await Promise.race([promise, timeoutPromise]);
   } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
+    if (timer) clearTimeout(timer);
   }
 }
 
 async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => {
-    controller.abort();
-  }, timeoutMs);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     return await fetch(url, { signal: controller.signal });
   } finally {
@@ -38,19 +35,32 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Respons
   }
 }
 
-async function closeResponse(res: Response | undefined | null) {
+async function closeResponse(res: Response | undefined | null): Promise<void> {
   if (!res) return;
+
   try {
     await res.body?.cancel?.();
-  } catch (_err) {
+  } catch {
     // ignore cancellation errors in tests
   }
+
   try {
     // fallback read in case cancel is a no-op
     await res.arrayBuffer();
-  } catch (_err) {
+  } catch {
     // body may already be consumed
   }
+}
+
+function getServerUrl(
+  server: TestServer,
+  checkPath: string,
+  defaultPort: number,
+  defaultHostname: string,
+): string {
+  const port = server.port ?? server.addr?.port ?? defaultPort;
+  const hostname = server.hostname ?? server.addr?.hostname ?? defaultHostname;
+  return `http://${hostname}:${port}${checkPath}`;
 }
 
 export interface TestServer {
@@ -76,46 +86,36 @@ export async function waitForServerReady(
   options: { timeout?: number; checkPath?: string; retryDelay?: number } = {},
 ): Promise<void> {
   const { timeout = 10000, checkPath = "/", retryDelay = 50 } = options;
-  const port = server.port || server.addr?.port || 3000;
-  const hostname = server.hostname || server.addr?.hostname || "localhost";
-  const url = `http://${hostname}:${port}${checkPath}`;
+  const url = getServerUrl(server, checkPath, 3000, "localhost");
 
-  // If server has a ready promise, wait for it first
-  if (server.ready && typeof server.ready.then === "function") {
+  if (typeof server.ready?.then === "function") {
     await withTimeout(server.ready, timeout, "Server ready");
   }
 
-  // Then verify the server is actually responding
   const startTime = Date.now();
   let lastError: Error | null = null;
   let attempts = 0;
 
   while (Date.now() - startTime < timeout) {
     attempts++;
+
     try {
       const response = await fetchWithTimeout(url, 2000);
       try {
-        // Any response (including 404) means server is ready
-        if (response.status >= 200 && response.status < 600) {
-          // Make one more request to ensure stability
-          const verifyResponse = await fetchWithTimeout(url, 2000);
-          try {
-            if (verifyResponse.status >= 200 && verifyResponse.status < 600) {
-              return;
-            }
-          } finally {
-            await closeResponse(verifyResponse);
-          }
+        if (response.status < 200 || response.status >= 600) continue;
+
+        const verifyResponse = await fetchWithTimeout(url, 2000);
+        try {
+          if (verifyResponse.status >= 200 && verifyResponse.status < 600) return;
+        } finally {
+          await closeResponse(verifyResponse);
         }
       } finally {
         await closeResponse(response);
       }
     } catch (error) {
       lastError = error as Error;
-      // Only wait if we haven't exceeded timeout
-      if (Date.now() - startTime < timeout) {
-        await sleep(retryDelay);
-      }
+      if (Date.now() - startTime < timeout) await sleep(retryDelay);
     }
   }
 
@@ -132,9 +132,7 @@ export async function waitForServerStopped(
   options: { timeout?: number; checkPath?: string } = {},
 ): Promise<void> {
   const { timeout = 5000, checkPath = "/" } = options;
-  const port = server.port || server.addr?.port || 3000;
-  const hostname = server.hostname || server.addr?.hostname || "localhost";
-  const url = `http://${hostname}:${port}${checkPath}`;
+  const url = getServerUrl(server, checkPath, 3000, "localhost");
 
   const startTime = Date.now();
 
@@ -142,13 +140,11 @@ export async function waitForServerStopped(
     try {
       const res = await fetchWithTimeout(url, 100);
       try {
-        // If fetch succeeds, server is still running
         await sleep(50);
       } finally {
         await closeResponse(res);
       }
     } catch {
-      // Fetch failed, server is stopped
       return;
     }
   }
@@ -197,7 +193,7 @@ export async function createTestDevServer(options: {
   enableHMR?: boolean;
   fileWatcherDebounceMs?: number;
 }): Promise<TestServer> {
-  const port = options.port ?? await getFreePort();
+  const port = options.port ?? (await getFreePort());
   const server = await createDevServer({
     projectDir: options.projectDir,
     port,
@@ -205,23 +201,20 @@ export async function createTestDevServer(options: {
     fileWatcherDebounceMs: options.fileWatcherDebounceMs,
   });
 
-  // Add port and hostname to the server object for consistency
-  const testServer = server as TestServer;
-  testServer.port = port;
-  testServer.hostname = options.hostname || "localhost";
-
-  return testServer;
+  return {
+    ready: server.ready,
+    stop: () => server.stop(),
+    port,
+    hostname: options.hostname ?? "localhost",
+  };
 }
 
 /**
  * Assert response status with better error message
  */
 export function assertResponseOk(response: Response, message?: string): void {
-  if (!response.ok) {
-    throw new Error(
-      message || `Expected OK response but got ${response.status} ${response.statusText}`,
-    );
-  }
+  if (response.ok) return;
+  throw new Error(message ?? `Expected OK response but got ${response.status} ${response.statusText}`);
 }
 
 /**
@@ -233,12 +226,9 @@ export function assertResponseStatus(
   message?: string,
 ): void {
   const statuses = Array.isArray(expectedStatus) ? expectedStatus : [expectedStatus];
+  if (statuses.includes(response.status)) return;
 
-  if (!statuses.includes(response.status)) {
-    throw new Error(
-      message || `Expected status ${statuses.join(" or ")} but got ${response.status}`,
-    );
-  }
+  throw new Error(message ?? `Expected status ${statuses.join(" or ")} but got ${response.status}`);
 }
 
 /**
@@ -248,10 +238,7 @@ export async function cleanupTestDir(dir: string): Promise<void> {
   try {
     await remove(dir, { recursive: true });
   } catch (error) {
-    if (isNotFoundError(error)) {
-      // Already removed, ignore
-      return;
-    }
+    if (isNotFoundError(error)) return;
     console.debug?.(`[test-helper] Failed to remove test dir ${dir}:`, error);
   }
 }
@@ -262,10 +249,11 @@ export async function cleanupTestDir(dir: string): Promise<void> {
 export async function createTestProjectDir(): Promise<string> {
   const dir = await makeTempDir({ prefix: "veryfront_test_" });
 
-  // Create standard directories
-  await mkdir(join(dir, "pages"), { recursive: true });
-  await mkdir(join(dir, "components"), { recursive: true });
-  await mkdir(join(dir, "public"), { recursive: true });
+  await Promise.all([
+    mkdir(join(dir, "pages"), { recursive: true }),
+    mkdir(join(dir, "components"), { recursive: true }),
+    mkdir(join(dir, "public"), { recursive: true }),
+  ]);
 
   return dir;
 }
@@ -278,17 +266,17 @@ export async function createTestProductionServer(options: {
   port?: number;
   hostname?: string;
 }): Promise<TestServer> {
-  const port = options.port ?? await getFreePort();
+  const port = options.port ?? (await getFreePort());
+  const hostname = options.hostname ?? "127.0.0.1";
   const server = await startProductionServer({
     projectDir: options.projectDir,
     port,
-    bindAddress: options.hostname || "127.0.0.1",
+    bindAddress: hostname,
   });
 
-  // Add port and hostname to the server object for test consistency
-  const testServer = server as TestServer;
-  testServer.port = port;
-  testServer.hostname = options.hostname || "127.0.0.1";
-
-  return testServer;
+  return {
+    ...server,
+    port,
+    hostname,
+  };
 }

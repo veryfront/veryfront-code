@@ -168,7 +168,6 @@ export function isMDXFile(filePath: string): boolean {
 }
 
 const MIME_TYPES: Record<string, string> = {
-  // Images
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".png": "image/png",
@@ -176,7 +175,6 @@ const MIME_TYPES: Record<string, string> = {
   ".avif": "image/avif",
   ".gif": "image/gif",
   ".svg": "image/svg+xml",
-  // Scripts
   ".js": "application/javascript",
   ".jsx": "application/javascript",
   ".ts": "application/typescript",
@@ -184,12 +182,10 @@ const MIME_TYPES: Record<string, string> = {
   ".mjs": "application/javascript",
   ".cjs": "application/javascript",
   ".json": "application/json",
-  // Styles
   ".css": "text/css",
   ".scss": "text/x-scss",
   ".sass": "text/x-sass",
   ".less": "text/x-less",
-  // Documents
   ".md": "text/markdown",
   ".mdx": "text/mdx",
   ".html": "text/html",

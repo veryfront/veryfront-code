@@ -12,11 +12,31 @@ import { drainEventLoop } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 import { isDeno } from "../../../../src/platform/compat/runtime.ts";
 
-// WebSocket tests only work in Deno - Bun's WebSocket API requires different integration
 const wsIt = isDeno ? it : it.skip;
 
+function waitForOpen(ws: WebSocket): Promise<void> {
+  return new Promise((resolve) => {
+    ws.onopen = () => resolve();
+  });
+}
+
+function collectMessages(ws: WebSocket, messages: unknown[]): void {
+  ws.onmessage = (event) => {
+    messages.push(JSON.parse(String(event.data)));
+  };
+}
+
+async function stopServer(
+  controller: AbortController,
+  server: HMRServer,
+): Promise<void> {
+  controller.abort();
+  await server.stop();
+  await delay(100);
+  await drainEventLoop();
+}
+
 describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
-  // Clean up renderer intervals to prevent resource leaks
   afterAll(async () => {
     await cleanupBundler();
   });
@@ -52,18 +72,13 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
         context.trackResource(server, "HMR Server");
         server.start();
 
-        // Give server time to start
         await delay(100);
 
-        // Verify server is running by making a request
         const response = await fetch(`http://127.0.0.1:${port}/test`);
         assertEquals(response.status, 404);
         assertEquals(await response.text(), "Not Found");
 
-        controller.abort();
-        await server.stop();
-        await delay(100);
-        await drainEventLoop();
+        await stopServer(controller, server);
       });
     });
   });
@@ -95,10 +110,7 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
         assertEquals(content.includes("Veryfront HMR Runtime"), true);
         assertEquals(content.includes(`ws://' + host + ':${port}`), true);
 
-        controller.abort();
-        await server.stop();
-        await delay(100);
-        await drainEventLoop();
+        await stopServer(controller, server);
       });
     });
   });
@@ -121,20 +133,11 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
         server.start();
         await delay(100);
 
-        // Connect WebSocket client
         const ws = new WebSocket(`ws://127.0.0.1:${port}`);
-
         const messages: unknown[] = [];
-        ws.onmessage = (event) => {
-          messages.push(JSON.parse(event.data as string));
-        };
+        collectMessages(ws, messages);
 
-        // Wait for connection to open
-        await new Promise((resolve) => {
-          ws.onopen = resolve;
-        });
-
-        // Wait for initial connection message
+        await waitForOpen(ws);
         await delay(100);
 
         assertEquals(messages.length, 1);
@@ -142,10 +145,7 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
         assertEquals((messages[0] as { reactRefresh: boolean }).reactRefresh, true);
 
         ws.close();
-        controller.abort();
-        await server.stop();
-        await delay(100);
-        await drainEventLoop();
+        await stopServer(controller, server);
       });
     });
 
@@ -166,18 +166,11 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
         await delay(100);
 
         const ws = new WebSocket(`ws://127.0.0.1:${port}`);
-
         const messages: unknown[] = [];
-        ws.onmessage = (event) => {
-          messages.push(JSON.parse(event.data as string));
-        };
+        collectMessages(ws, messages);
 
-        // Wait for connection
-        await new Promise((resolve) => {
-          ws.onopen = resolve;
-        });
+        await waitForOpen(ws);
 
-        // Send update
         const update: HMRUpdate = {
           type: "update",
           path: "/src/app.tsx",
@@ -185,20 +178,14 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
         };
 
         server.sendUpdate(update);
-
-        // Wait for update message
         await delay(100);
 
-        // Should have connected message and update message
         assertEquals(messages.length, 2);
         assertEquals((messages[1] as { type: string }).type, "update");
         assertEquals((messages[1] as { path: string }).path, "/src/app.tsx");
 
         ws.close();
-        controller.abort();
-        await server.stop();
-        await delay(100);
-        await drainEventLoop();
+        await stopServer(controller, server);
       });
     });
 
@@ -218,57 +205,33 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
         server.start();
         await delay(100);
 
-        // Connect multiple clients
-        const clients = [];
+        const clients: WebSocket[] = [];
         const messageArrays: unknown[][] = [];
 
         for (let i = 0; i < 3; i++) {
           const ws = new WebSocket(`ws://127.0.0.1:${port}`);
           const messages: unknown[] = [];
-
-          ws.onmessage = (event) => {
-            messages.push(JSON.parse(event.data as string));
-          };
+          collectMessages(ws, messages);
 
           clients.push(ws);
           messageArrays.push(messages);
         }
 
-        // Wait for all connections
-        await Promise.all(
-          clients.map(
-            (ws) =>
-              new Promise((resolve) => {
-                ws.onopen = resolve;
-              }),
-          ),
-        );
-
+        await Promise.all(clients.map(waitForOpen));
         await delay(100);
 
-        // Send update to all clients
-        const update: HMRUpdate = {
-          type: "reload",
-        };
-
+        const update: HMRUpdate = { type: "reload" };
         server.sendUpdate(update);
         await delay(100);
 
-        // All clients should receive the update
         for (const messages of messageArrays) {
-          assertEquals(messages.length, 2); // connected + reload
+          assertEquals(messages.length, 2);
           assertEquals((messages[1] as { type: string }).type, "reload");
         }
 
-        // Close all clients
-        for (const ws of clients) {
-          ws.close();
-        }
+        for (const ws of clients) ws.close();
 
-        controller.abort();
-        await server.stop();
-        await delay(100);
-        await drainEventLoop();
+        await stopServer(controller, server);
       });
     });
 
@@ -288,38 +251,20 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
         server.start();
         await delay(100);
 
-        // Connect two clients
         const ws1 = new WebSocket(`ws://127.0.0.1:${port}`);
         const ws2 = new WebSocket(`ws://127.0.0.1:${port}`);
 
         const messages1: unknown[] = [];
         const messages2: unknown[] = [];
+        collectMessages(ws1, messages1);
+        collectMessages(ws2, messages2);
 
-        ws1.onmessage = (event) => {
-          messages1.push(JSON.parse(event.data as string));
-        };
-
-        ws2.onmessage = (event) => {
-          messages2.push(JSON.parse(event.data as string));
-        };
-
-        // Wait for connections
-        await Promise.all([
-          new Promise((resolve) => {
-            ws1.onopen = resolve;
-          }),
-          new Promise((resolve) => {
-            ws2.onopen = resolve;
-          }),
-        ]);
-
+        await Promise.all([waitForOpen(ws1), waitForOpen(ws2)]);
         await delay(100);
 
-        // Close one client
         ws1.close();
         await delay(100);
 
-        // Send update
         const update: HMRUpdate = {
           type: "update",
           path: "/test.css",
@@ -328,16 +273,12 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
         server.sendUpdate(update);
         await delay(100);
 
-        // Only ws2 should receive the update
-        assertEquals(messages1.length, 1); // Only connected message
-        assertEquals(messages2.length, 2); // Connected + update
+        assertEquals(messages1.length, 1);
+        assertEquals(messages2.length, 2);
         assertEquals((messages2[1] as { type: string }).type, "update");
 
         ws2.close();
-        controller.abort();
-        await server.stop();
-        await delay(100);
-        await drainEventLoop();
+        await stopServer(controller, server);
       });
     });
 
@@ -357,20 +298,14 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
         server.start();
         await delay(100);
 
-        // Make a regular HTTP request (no upgrade)
         const response = await fetch(`http://127.0.0.1:${port}/`, {
-          headers: {
-            connection: "keep-alive",
-          },
+          headers: { connection: "keep-alive" },
         });
 
         assertEquals(response.status, 404);
-        await response.text(); // Consume the body to avoid leak
+        await response.text();
 
-        controller.abort();
-        await server.stop();
-        await delay(100);
-        await drainEventLoop();
+        await stopServer(controller, server);
       });
     });
 
@@ -390,31 +325,17 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
         server.start();
         await delay(100);
 
-        // Connect two clients
         const ws1 = new WebSocket(`ws://127.0.0.1:${port}`);
         const ws2 = new WebSocket(`ws://127.0.0.1:${port}`);
 
         const messages: unknown[] = [];
-        ws2.onmessage = (event) => {
-          messages.push(JSON.parse(event.data as string));
-        };
+        collectMessages(ws2, messages);
 
-        // Wait for connections
-        await Promise.all([
-          new Promise((resolve) => {
-            ws1.onopen = resolve;
-          }),
-          new Promise((resolve) => {
-            ws2.onopen = resolve;
-          }),
-        ]);
-
+        await Promise.all([waitForOpen(ws1), waitForOpen(ws2)]);
         await delay(100);
 
-        // Close ws1 but don't wait for close event
         ws1.close();
 
-        // Send update immediately
         const update: HMRUpdate = {
           type: "update",
           path: "/test.js",
@@ -423,14 +344,10 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
         server.sendUpdate(update);
         await delay(100);
 
-        // ws2 should still receive the update
-        assertEquals(messages.length >= 2, true); // At least connected + update
+        assertEquals(messages.length >= 2, true);
 
         ws2.close();
-        controller.abort();
-        await server.stop();
-        await delay(100);
-        await drainEventLoop();
+        await stopServer(controller, server);
       });
     });
   });
@@ -445,9 +362,8 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
         adapter,
       });
 
-      // Access private method via prototype
-      const proto = Object.getPrototypeOf(server);
-      const runtime = proto.getHMRRuntime.call(server) as string;
+      const proto = Object.getPrototypeOf(server) as { getHMRRuntime: () => string };
+      const runtime = proto.getHMRRuntime.call(server);
 
       assertEquals(runtime.includes("reactRefreshEnabled"), true);
       assertEquals(runtime.includes("$RefreshReg$"), true);
@@ -463,10 +379,9 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
         adapter,
       });
 
-      const proto = Object.getPrototypeOf(server);
-      const runtime = proto.getHMRRuntime.call(server) as string;
+      const proto = Object.getPrototypeOf(server) as { getHMRRuntime: () => string };
+      const runtime = proto.getHMRRuntime.call(server);
 
-      // Check runtime handles different message types
       assertEquals(runtime.includes("case 'connected':"), true);
       assertEquals(runtime.includes("case 'update':"), true);
       assertEquals(runtime.includes("case 'reload':"), true);
@@ -475,8 +390,6 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
   });
 
   describe("HMR Server - Shutdown", () => {
-    // Note: This test is skipped due to WebSocket close handshake issues in Deno
-    // The client-side onclose handlers may not fire reliably when the server calls client.close()
     it.ignore("stop closes all client connections", async () => {
       await withTestContext("hmr-stop-closes-clients", async (context) => {
         const adapter = await getAdapter();
@@ -493,36 +406,25 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
         server.start();
         await delay(100);
 
-        // Connect multiple clients
-        const clients = [];
-        const closedPromises = [];
+        const clients: WebSocket[] = [];
+        const closedPromises: Promise<void>[] = [];
 
         for (let i = 0; i < 3; i++) {
           const ws = new WebSocket(`ws://127.0.0.1:${port}`);
-
-          const closedPromise = new Promise((resolve) => {
-            ws.onclose = resolve;
-          });
-
           clients.push(ws);
-          closedPromises.push(closedPromise);
+
+          closedPromises.push(
+            new Promise((resolve) => {
+              ws.onclose = () => resolve();
+            }),
+          );
         }
 
-        // Wait for all connections
-        await Promise.all(
-          clients.map(
-            (ws) =>
-              new Promise((resolve) => {
-                ws.onopen = resolve;
-              }),
-          ),
-        );
+        await Promise.all(clients.map(waitForOpen));
 
-        // Stop server should close all connections
         controller.abort();
         await server.stop();
 
-        // All clients should be closed
         await Promise.all(closedPromises);
 
         for (const ws of clients) {

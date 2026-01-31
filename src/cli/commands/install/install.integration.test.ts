@@ -63,25 +63,35 @@ describe("install command integration", () => {
     }
   }
 
+  async function assertInstallCreatesFile(
+    target: string,
+    relativePath: string,
+    substrings: string[],
+  ): Promise<void> {
+    const { code } = await runInstall(target);
+    assertEquals(code, 0);
+
+    const filePath = join(tempDir, relativePath);
+    await assertFileExists(filePath);
+    await assertFileContains(filePath, substrings);
+  }
+
   describe("cursor", () => {
     it("should install .cursorrules", async () => {
-      const { code } = await runInstall("cursor");
-      assertEquals(code, 0);
-
-      const filePath = join(tempDir, ".cursorrules");
-      await assertFileExists(filePath);
-      await assertFileContains(filePath, ["Veryfront", "veryfront dev", "src/pages/"]);
+      await assertInstallCreatesFile("cursor", ".cursorrules", [
+        "Veryfront",
+        "veryfront dev",
+        "src/pages/",
+      ]);
     });
   });
 
   describe("claude-code", () => {
     it("should install .claude/CLAUDE.md", async () => {
-      const { code } = await runInstall("claude-code");
-      assertEquals(code, 0);
-
-      const filePath = join(tempDir, ".claude/CLAUDE.md");
-      await assertFileExists(filePath);
-      await assertFileContains(filePath, ["Veryfront", "veryfront dev"]);
+      await assertInstallCreatesFile("claude-code", ".claude/CLAUDE.md", [
+        "Veryfront",
+        "veryfront dev",
+      ]);
     });
   });
 
@@ -95,48 +105,39 @@ describe("install command integration", () => {
 
       const content = await readTextFile(filePath);
       assertEquals(content.startsWith("---"), true);
-      for (
-        const substring of [
-          "name: veryfront",
-          "description:",
-          "compatibility:",
-        ]
-      ) {
-        assertEquals(content.includes(substring), true);
-      }
+      await assertFileContains(filePath, [
+        "name: veryfront",
+        "description:",
+        "compatibility:",
+      ]);
     });
   });
 
   describe("copilot", () => {
     it("should install .github/copilot-instructions.md", async () => {
-      const { code } = await runInstall("copilot");
-      assertEquals(code, 0);
-
-      const filePath = join(tempDir, ".github/copilot-instructions.md");
-      await assertFileExists(filePath);
-      await assertFileContains(filePath, ["Veryfront", "veryfront dev"]);
+      await assertInstallCreatesFile(
+        "copilot",
+        ".github/copilot-instructions.md",
+        ["Veryfront", "veryfront dev"],
+      );
     });
   });
 
   describe("windsurf", () => {
     it("should install .windsurfrules", async () => {
-      const { code } = await runInstall("windsurf");
-      assertEquals(code, 0);
-
-      const filePath = join(tempDir, ".windsurfrules");
-      await assertFileExists(filePath);
-      await assertFileContains(filePath, ["Veryfront", "veryfront dev"]);
+      await assertInstallCreatesFile("windsurf", ".windsurfrules", [
+        "Veryfront",
+        "veryfront dev",
+      ]);
     });
   });
 
   describe("agents", () => {
     it("should install AGENTS.md", async () => {
-      const { code } = await runInstall("agents");
-      assertEquals(code, 0);
-
-      const filePath = join(tempDir, "AGENTS.md");
-      await assertFileExists(filePath);
-      await assertFileContains(filePath, ["Veryfront", "npx veryfront"]);
+      await assertInstallCreatesFile("agents", "AGENTS.md", [
+        "Veryfront",
+        "npx veryfront",
+      ]);
     });
   });
 

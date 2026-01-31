@@ -18,7 +18,7 @@ function getEnvVar(env: unknown, key: string): string | undefined {
 
   const getter = envObj?.get;
   if (typeof getter === "function") {
-    return (getter as (k: string) => string | undefined)(key);
+    return getter.call(envObj, key) as string | undefined;
   }
 
   const value = envObj?.[key];
@@ -28,8 +28,7 @@ function getEnvVar(env: unknown, key: string): string | undefined {
 function isValidExporter(
   exporter: unknown,
 ): exporter is "prometheus" | "otlp" | "console" {
-  return exporter === "prometheus" || exporter === "otlp" ||
-    exporter === "console";
+  return exporter === "prometheus" || exporter === "otlp" || exporter === "console";
 }
 
 export function loadConfig(
@@ -38,27 +37,25 @@ export function loadConfig(
 ): MetricsConfig {
   const finalConfig: MetricsConfig = { ...DEFAULT_CONFIG, ...config };
 
-  const applyEnvConfig = (opts: {
+  function applyEnvConfig(opts: {
     enabledFlag?: string;
     veryfrontFlag?: string;
     endpoint?: string;
     metricsEndpoint?: string;
     exporter?: unknown;
-  }): void => {
-    finalConfig.enabled = opts.enabledFlag === "true" ||
-      opts.veryfrontFlag === "1" ||
+  }): void {
+    finalConfig.enabled = opts.enabledFlag === "true" || opts.veryfrontFlag === "1" ||
       finalConfig.enabled;
 
-    finalConfig.endpoint = opts.endpoint || opts.metricsEndpoint ||
-      finalConfig.endpoint;
+    finalConfig.endpoint = opts.endpoint || opts.metricsEndpoint || finalConfig.endpoint;
 
     if (isValidExporter(opts.exporter)) {
       finalConfig.exporter = opts.exporter;
     }
-  };
+  }
 
-  if (adapter?.env) {
-    const env = adapter.env;
+  const env = adapter?.env;
+  if (env) {
     applyEnvConfig({
       enabledFlag: getEnvVar(env, "OTEL_METRICS_ENABLED"),
       veryfrontFlag: getEnvVar(env, "VERYFRONT_OTEL"),

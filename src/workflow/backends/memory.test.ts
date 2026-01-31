@@ -6,7 +6,7 @@ import type { Checkpoint, PendingApproval, WorkflowJob, WorkflowRun } from "../t
 describe("MemoryBackend", () => {
   let backend: MemoryBackend;
 
-  function createTestRun(id: string): WorkflowRun {
+  function createTestRun(id: string, overrides: Partial<WorkflowRun> = {}): WorkflowRun {
     return {
       id,
       workflowId: "test-workflow",
@@ -18,10 +18,21 @@ describe("MemoryBackend", () => {
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),
+      ...overrides,
     };
   }
 
-  beforeEach(() => {
+  function createCheckpoint(id: string, nodeId: string, timestamp: Date): Checkpoint {
+    return {
+      id,
+      nodeId,
+      timestamp,
+      context: { runId: "run-1", workflowId: "test", input: {} },
+      nodeStates: {},
+    };
+  }
+
+  beforeEach((): void => {
     backend = new MemoryBackend();
   });
 
@@ -52,11 +63,10 @@ describe("MemoryBackend", () => {
 
     it("should list runs with filters", async () => {
       await backend.createRun(createTestRun("run-a"));
-      await backend.createRun({ ...createTestRun("run-b"), status: "running" });
-      await backend.createRun({ ...createTestRun("run-c"), workflowId: "other-workflow" });
+      await backend.createRun(createTestRun("run-b", { status: "running" }));
+      await backend.createRun(createTestRun("run-c", { workflowId: "other-workflow" }));
 
       assertEquals((await backend.listRuns({})).length, 3);
-
       assertEquals((await backend.listRuns({ workflowId: "test-workflow" })).length, 2);
 
       const byStatus = await backend.listRuns({ status: "running" });
@@ -68,16 +78,6 @@ describe("MemoryBackend", () => {
   });
 
   describe("Checkpointing", () => {
-    function createCheckpoint(id: string, nodeId: string, timestamp: Date): Checkpoint {
-      return {
-        id,
-        nodeId,
-        timestamp,
-        context: { runId: "run-1", workflowId: "test", input: {} },
-        nodeStates: {},
-      };
-    }
-
     it("should save and retrieve checkpoints", async () => {
       await backend.saveCheckpoint("run-1", createCheckpoint("cp-1", "step-1", new Date()));
 
@@ -222,18 +222,11 @@ describe("MemoryBackend", () => {
 
   describe("Cleanup", () => {
     it("should destroy without errors", async () => {
-      await backend.createRun({
-        id: "temp",
+      await backend.createRun(createTestRun("temp", {
         workflowId: "wf",
-        status: "pending",
         input: {},
-        nodeStates: {},
-        currentNodes: [],
         context: { runId: "temp", workflowId: "wf", input: {} },
-        checkpoints: [],
-        pendingApprovals: [],
-        createdAt: new Date(),
-      });
+      }));
 
       await backend.destroy();
     });

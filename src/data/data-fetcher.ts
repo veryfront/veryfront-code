@@ -39,11 +39,11 @@ export class DataFetcher {
       SpanNames.DATA_FETCH,
       async () => {
         if (preferServerData && pageModule.getServerData) {
-          return await this.serverFetcher.fetch(pageModule, context);
+          return this.serverFetcher.fetch(pageModule, context);
         }
 
         if (pageModule.getStaticData) {
-          return await this.staticFetcher.fetch(pageModule, context);
+          return this.staticFetcher.fetch(pageModule, context);
         }
 
         return { props: {} };
@@ -61,11 +61,11 @@ export class DataFetcher {
   }
 
   clearCache(pattern?: string): void {
-    if (!pattern) {
-      this.cacheManager.clear();
+    if (pattern) {
+      this.cacheManager.clearPattern(pattern);
       return;
     }
 
-    this.cacheManager.clearPattern(pattern);
+    this.cacheManager.clear();
   }
 }

@@ -171,27 +171,33 @@ export class MultiProjectFSAdapter implements FSAdapter {
   }
 
   async readFile(path: string): Promise<string> {
-    return (await this.getAdapter()).readFile(path);
+    const adapter = await this.getAdapter();
+    return adapter.readFile(path);
   }
 
   async readTextFile(path: string): Promise<string> {
-    return (await this.getAdapter()).readTextFile(path);
+    const adapter = await this.getAdapter();
+    return adapter.readTextFile(path);
   }
 
   async exists(path: string): Promise<boolean> {
-    return (await this.getAdapter()).exists(path);
+    const adapter = await this.getAdapter();
+    return adapter.exists(path);
   }
 
   async stat(path: string): Promise<FileInfo> {
-    return (await this.getAdapter()).stat(path);
+    const adapter = await this.getAdapter();
+    return adapter.stat(path);
   }
 
   async readdir(path: string): Promise<DirectoryEntry[]> {
-    return (await this.getAdapter()).readdir(path);
+    const adapter = await this.getAdapter();
+    return adapter.readdir(path);
   }
 
   async resolveFile(basePath: string): Promise<string | null> {
-    return (await this.getAdapter()).resolveFile(basePath);
+    const adapter = await this.getAdapter();
+    return adapter.resolveFile(basePath);
   }
 
   dispose(): void {

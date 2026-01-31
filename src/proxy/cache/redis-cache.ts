@@ -1,10 +1,3 @@
-/**
- * Redis Token Cache
- *
- * Uses the standard `redis` package for cross-runtime compatibility.
- * Works in Deno, Node.js, and Bun.
- */
-
 import { createClient, type RedisClientType } from "redis";
 import type { CacheStats, RedisCacheOptions, TokenCache, TokenCacheEntry } from "./types.ts";
 import { withSpan } from "../tracing.ts";
@@ -15,9 +8,9 @@ const DEFAULT_SCAN_COUNT = 100;
 
 export class RedisCache implements TokenCache {
   private client: RedisClientType | null = null;
-  private prefix: string;
-  private url: string;
-  private connectTimeout: number;
+  private readonly prefix: string;
+  private readonly url: string;
+  private readonly connectTimeout: number;
   private hits = 0;
   private misses = 0;
   private connected = false;
@@ -33,81 +26,97 @@ export class RedisCache implements TokenCache {
   }
 
   async get(key: string): Promise<TokenCacheEntry | null> {
-    return withSpan("cache.redis.get", async () => {
-      try {
-        await this.ensureConnected();
-        const data = await this.client!.get(this.key(key));
+    return withSpan(
+      "cache.redis.get",
+      async () => {
+        try {
+          await this.ensureConnected();
+          const client = this.client!;
+          const data = await client.get(this.key(key));
 
-        if (!data) {
+          if (!data) {
+            this.misses++;
+            return null;
+          }
+
+          const entry = JSON.parse(data) as TokenCacheEntry;
+
+          if (Date.now() >= entry.expiresAt) {
+            await client.del(this.key(key));
+            this.misses++;
+            return null;
+          }
+
+          this.hits++;
+          return entry;
+        } catch (error) {
+          console.error("[RedisCache] Get error:", error);
+          this.connected = false;
           this.misses++;
-          return null;
+          throw error;
         }
-
-        const entry = JSON.parse(data) as TokenCacheEntry;
-
-        if (Date.now() >= entry.expiresAt) {
-          await this.client!.del(this.key(key));
-          this.misses++;
-          return null;
-        }
-
-        this.hits++;
-        return entry;
-      } catch (error) {
-        console.error("[RedisCache] Get error:", error);
-        this.connected = false;
-        this.misses++;
-        throw error;
-      }
-    }, { "cache.key": key });
+      },
+      { "cache.key": key },
+    );
   }
 
   async set(key: string, entry: TokenCacheEntry): Promise<void> {
-    return withSpan("cache.redis.set", async () => {
-      try {
-        await this.ensureConnected();
-        const ttlMs = entry.expiresAt - Date.now();
-        const ttlSeconds = Math.max(1, Math.floor(ttlMs / 1000));
-        await this.client!.setEx(this.key(key), ttlSeconds, JSON.stringify(entry));
-      } catch (error) {
-        console.error("[RedisCache] Set error:", error);
-        this.connected = false;
-        throw error;
-      }
-    }, { "cache.key": key });
+    return withSpan(
+      "cache.redis.set",
+      async () => {
+        try {
+          await this.ensureConnected();
+          const client = this.client!;
+          const ttlMs = entry.expiresAt - Date.now();
+          const ttlSeconds = Math.max(1, Math.floor(ttlMs / 1000));
+          await client.setEx(this.key(key), ttlSeconds, JSON.stringify(entry));
+        } catch (error) {
+          console.error("[RedisCache] Set error:", error);
+          this.connected = false;
+          throw error;
+        }
+      },
+      { "cache.key": key },
+    );
   }
 
   async delete(key: string): Promise<void> {
-    return withSpan("cache.redis.delete", async () => {
-      try {
-        await this.ensureConnected();
-        await this.client!.del(this.key(key));
-      } catch (error) {
-        console.error("[RedisCache] Delete error:", error);
-        this.connected = false;
-        throw error;
-      }
-    }, { "cache.key": key });
+    return withSpan(
+      "cache.redis.delete",
+      async () => {
+        try {
+          await this.ensureConnected();
+          await this.client!.del(this.key(key));
+        } catch (error) {
+          console.error("[RedisCache] Delete error:", error);
+          this.connected = false;
+          throw error;
+        }
+      },
+      { "cache.key": key },
+    );
   }
 
   async clear(): Promise<void> {
     return withSpan("cache.redis.clear", async () => {
       try {
         await this.ensureConnected();
+        const client = this.client!;
 
         const pattern = `${this.prefix}*`;
         let cursor = "0";
         let totalDeleted = 0;
 
         do {
-          const result = await this.client!.scan(cursor, {
+          const { cursor: nextCursor, keys } = await client.scan(cursor, {
             MATCH: pattern,
             COUNT: DEFAULT_SCAN_COUNT,
           });
-          cursor = String(result.cursor);
 
-          if (result.keys.length > 0) {
-            totalDeleted += await this.client!.del(result.keys);
+          cursor = String(nextCursor);
+
+          if (keys.length > 0) {
+            totalDeleted += await client.del(keys);
           }
         } while (cursor !== "0");
 
@@ -126,22 +135,26 @@ export class RedisCache implements TokenCache {
   }
 
   async has(key: string): Promise<boolean> {
-    return withSpan("cache.redis.has", async () => {
-      try {
-        await this.ensureConnected();
-        const exists = await this.client!.exists(this.key(key));
-        return exists === 1;
-      } catch (error) {
-        console.error("[RedisCache] Has error:", error);
-        this.connected = false;
-        throw error;
-      }
-    }, { "cache.key": key });
+    return withSpan(
+      "cache.redis.has",
+      async () => {
+        try {
+          await this.ensureConnected();
+          return (await this.client!.exists(this.key(key))) === 1;
+        } catch (error) {
+          console.error("[RedisCache] Has error:", error);
+          this.connected = false;
+          throw error;
+        }
+      },
+      { "cache.key": key },
+    );
   }
 
   async stats(): Promise<CacheStats> {
     return withSpan("cache.redis.stats", async () => {
       let size = 0;
+
       try {
         await this.ensureConnected();
         size = await this.client!.dbSize();
@@ -156,46 +169,46 @@ export class RedisCache implements TokenCache {
 
   async close(): Promise<void> {
     return withSpan("cache.redis.close", async () => {
-      if (this.client) {
-        try {
-          await this.client.quit();
-        } catch {
-          // Ignore close errors
-        }
-        this.client = null;
+      const client = this.client;
+      if (!client) {
+        this.connected = false;
+        return;
       }
-      this.connected = false;
+
+      try {
+        await client.quit();
+      } catch {
+        // Ignore close errors
+      } finally {
+        this.client = null;
+        this.connected = false;
+      }
     });
   }
 
   private async ensureConnected(): Promise<void> {
     return withSpan("cache.redis.connect", async () => {
-      if (this.connected && this.client) {
-        return;
-      }
+      if (this.connected && this.client) return;
 
-      // Create client with connection options
-      this.client = createClient({
+      const client = createClient({
         url: this.url,
         socket: {
           connectTimeout: this.connectTimeout,
           reconnectStrategy: (retries) => {
             // Exponential backoff with max 3 retries
-            if (retries > 3) {
-              return new Error("Max reconnection attempts reached");
-            }
+            if (retries > 3) return new Error("Max reconnection attempts reached");
             return Math.min(retries * 100, 3000);
           },
         },
       });
 
-      // Handle connection errors
-      this.client.on("error", (err) => {
+      client.on("error", (err) => {
         console.error("[RedisCache] Client error:", err);
         this.connected = false;
       });
 
-      await this.client.connect();
+      this.client = client as RedisClientType;
+      await client.connect();
       this.connected = true;
       console.log("[RedisCache] Connected");
     });

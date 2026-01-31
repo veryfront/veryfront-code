@@ -54,24 +54,23 @@ export default tool({
     customTaskIds,
     teamId,
   }) {
-    const updates: Record<string, unknown> = {
-      ...(name !== undefined ? { name } : {}),
-      ...(description !== undefined ? { description } : {}),
-      ...(status !== undefined ? { status } : {}),
-      ...(priority !== undefined ? { priority } : {}),
-      ...(dueDate !== undefined ? { dueDate } : {}),
-      ...(startDate !== undefined ? { startDate } : {}),
-      ...(timeEstimate !== undefined ? { timeEstimate } : {}),
-      ...(archived !== undefined ? { archived } : {}),
-      ...(addAssignees || removeAssignees
-        ? {
-            assignees: {
-              ...(addAssignees ? { add: addAssignees } : {}),
-              ...(removeAssignees ? { rem: removeAssignees } : {}),
-            },
-          }
-        : {}),
-    };
+    const updates: Record<string, unknown> = {};
+
+    if (name !== undefined) updates.name = name;
+    if (description !== undefined) updates.description = description;
+    if (status !== undefined) updates.status = status;
+    if (priority !== undefined) updates.priority = priority;
+    if (dueDate !== undefined) updates.dueDate = dueDate;
+    if (startDate !== undefined) updates.startDate = startDate;
+    if (timeEstimate !== undefined) updates.timeEstimate = timeEstimate;
+    if (archived !== undefined) updates.archived = archived;
+
+    if (addAssignees || removeAssignees) {
+      updates.assignees = {
+        ...(addAssignees ? { add: addAssignees } : {}),
+        ...(removeAssignees ? { rem: removeAssignees } : {}),
+      };
+    }
 
     const task = await updateTask(
       taskId,

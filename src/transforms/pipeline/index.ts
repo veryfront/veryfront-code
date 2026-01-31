@@ -59,7 +59,6 @@ export function runPipeline(
       const ctx = await createTransformContext(source, filePath, projectDir, options);
       ctx.debug = config?.debug ?? false;
 
-      // Compute config hash (cheap, no I/O)
       const configHash = await computeConfigHash({
         reactVersion: ctx.reactVersion,
         jsxImportSource: ctx.jsxImportSource,
@@ -67,16 +66,7 @@ export function runPipeline(
         dev: ctx.dev,
       });
 
-      // Compute dependency hash when file reader is available
-      const depsHash = options.readFile
-        ? await computeDepsHash(filePath, options.readFile, projectDir).catch((err) => {
-          logger.debug("[PIPELINE] depsHash computation failed, skipping", {
-            file: filePath.slice(-60),
-            error: err instanceof Error ? err.message : String(err),
-          });
-          return undefined;
-        })
-        : undefined;
+      const depsHash = await computeDepsHashSafe(filePath, projectDir, options.readFile);
 
       const cacheKey = generateCacheKey(
         filePath,
@@ -103,16 +93,14 @@ export function runPipeline(
         : basePipeline;
 
       for (const plugin of pipeline) {
-        if (plugin.condition?.(ctx) === false) {
-          continue;
-        }
+        if (plugin.condition?.(ctx) === false) continue;
 
         const stageStart = performance.now();
 
         try {
           ctx.code = await withSpan(
             `transform.stage.${plugin.name}`,
-            async () => await plugin.transform(ctx),
+            async () => plugin.transform(ctx),
             { "transform.stage": plugin.name, "transform.stage_order": plugin.stage },
           );
         } catch (error) {
@@ -151,6 +139,24 @@ export function runPipeline(
   );
 }
 
+async function computeDepsHashSafe(
+  filePath: string,
+  projectDir: string,
+  readFile?: (path: string) => Promise<string>,
+): Promise<string | undefined> {
+  if (!readFile) return undefined;
+
+  try {
+    return await computeDepsHash(filePath, readFile, projectDir);
+  } catch (err) {
+    logger.debug("[PIPELINE] depsHash computation failed, skipping", {
+      file: filePath.slice(-60),
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return undefined;
+  }
+}
+
 export async function transformToESM(
   source: string,
   filePath: string,
@@ -158,15 +164,11 @@ export async function transformToESM(
   adapter: unknown,
   options: TransformOptions,
 ): Promise<string> {
-  if (filePath.endsWith(".css") || filePath.endsWith(".json")) {
-    return source;
-  }
+  if (filePath.endsWith(".css") || filePath.endsWith(".json")) return source;
 
-  // Extract readFile from adapter for dependency tracking
-  const enrichedOptions = options.readFile ? options : {
-    ...options,
-    readFile: buildReadFile(adapter, projectDir),
-  };
+  const enrichedOptions: TransformOptions = options.readFile
+    ? options
+    : { ...options, readFile: buildReadFile(adapter, projectDir) };
 
   const { code } = await runPipeline(source, filePath, projectDir, enrichedOptions);
   return code;
@@ -175,7 +177,8 @@ export async function transformToESM(
 /** Extract readFile from adapter if available, for dependency hash computation. */
 function extractReadFile(adapter: unknown): ((path: string) => Promise<string>) | undefined {
   const a = adapter as { fs?: { readFile?: (path: string) => Promise<string> } } | null;
-  return typeof a?.fs?.readFile === "function" ? (p: string) => a.fs!.readFile!(p) : undefined;
+  if (typeof a?.fs?.readFile !== "function") return undefined;
+  return (path: string) => a.fs!.readFile!(path);
 }
 
 /**
@@ -185,34 +188,21 @@ function extractReadFile(adapter: unknown): ((path: string) => Promise<string>) 
  * This prevents API fetches for file:// or absolute paths outside projectDir
  * (e.g. framework files under /usr/local/lib/node_modules/veryfront).
  */
-function buildReadFile(
-  adapter: unknown,
-  projectDir: string,
-): (path: string) => Promise<string> {
+function buildReadFile(adapter: unknown, projectDir: string): (path: string) => Promise<string> {
   const adapterRead = extractReadFile(adapter);
   const fs = createFileSystem();
   const normalizedProjectDir = projectDir.replace(/\/+$/, "");
 
   return async (path: string): Promise<string> => {
-    let normalizedPath = path;
-    if (normalizedPath.startsWith("file://")) {
-      normalizedPath = normalizedPath.slice("file://".length);
-    }
+    const normalizedPath = path.startsWith("file://") ? path.slice("file://".length) : path;
 
-    const isAbsolute = normalizedPath.startsWith("/");
-    const isOutsideProject = isAbsolute &&
+    const isOutsideProject = normalizedPath.startsWith("/") &&
       normalizedProjectDir.length > 0 &&
       !normalizedPath.startsWith(normalizedProjectDir);
 
-    if (isOutsideProject) {
-      return await fs.readTextFile(normalizedPath);
-    }
-
-    if (adapterRead) {
-      return await adapterRead(normalizedPath);
-    }
-
-    return await fs.readTextFile(normalizedPath);
+    if (isOutsideProject) return fs.readTextFile(normalizedPath);
+    if (adapterRead) return adapterRead(normalizedPath);
+    return fs.readTextFile(normalizedPath);
   };
 }
 

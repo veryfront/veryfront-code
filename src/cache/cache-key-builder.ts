@@ -57,7 +57,7 @@ export function getCurrentCacheKeyContext(): CacheKeyContext {
 }
 
 function getRequestContextFn(): (() => MultiProjectRequestContextType | null) | null {
-  if (_getCurrentRequestContext !== undefined) return _getCurrentRequestContext ?? null;
+  if (_getCurrentRequestContext !== undefined) return _getCurrentRequestContext;
 
   try {
     // deno-lint-ignore no-explicit-any
@@ -74,10 +74,14 @@ function extractCacheKeyContextFromMultiProjectContext(
   reqCtx: MultiProjectRequestContextType,
 ): CacheKeyContext {
   const projectId = reqCtx.projectId || reqCtx.projectSlug || "default";
-  const mode = reqCtx.productionMode ? "production" : "preview";
-  const versionId = reqCtx.productionMode
-    ? (reqCtx.releaseId || "latest")
-    : (reqCtx.branch || "main");
+  const mode: CacheKeyContext["mode"] = reqCtx.productionMode ? "production" : "preview";
+
+  let versionId: string;
+  if (reqCtx.productionMode) {
+    versionId = reqCtx.releaseId || "latest";
+  } else {
+    versionId = reqCtx.branch || "main";
+  }
 
   return { projectId, mode, versionId };
 }
@@ -86,33 +90,40 @@ export function tryGetCacheKeyContext(): CacheKeyContext | null {
   const explicitCtx = cacheKeyContextStorage.getStore();
   if (explicitCtx) return explicitCtx;
 
-  const getReqCtx = getRequestContextFn();
-  const reqCtx = getReqCtx?.();
+  const reqCtx = getRequestContextFn()?.();
   if (!reqCtx) return null;
 
   return extractCacheKeyContextFromMultiProjectContext(reqCtx);
+}
+
+function buildProjectScopedKey(prefix: string, resourceKey: string, ctx: CacheKeyContext): string {
+  return `${prefix}:${ctx.projectId}:${ctx.mode}:${ctx.versionId}:${resourceKey}`;
 }
 
 export function getProjectScopedKey(prefix: string, resourceKey: string): string | null {
   const ctx = tryGetCacheKeyContext();
   if (!ctx || ctx.mode === "preview") return null;
 
-  return `${prefix}:${ctx.projectId}:${ctx.mode}:${ctx.versionId}:${resourceKey}`;
+  return buildProjectScopedKey(prefix, resourceKey, ctx);
 }
 
 export function getProjectScopedKeyAlways(prefix: string, resourceKey: string): string | null {
   const ctx = tryGetCacheKeyContext();
   if (!ctx) return null;
 
-  return `${prefix}:${ctx.projectId}:${ctx.mode}:${ctx.versionId}:${resourceKey}`;
+  return buildProjectScopedKey(prefix, resourceKey, ctx);
 }
 
 export function extractCacheKeyContext(handlerCtx: HandlerContext): CacheKeyContext {
   const projectId = handlerCtx.projectId || handlerCtx.projectSlug || "default";
   const mode = handlerCtx.resolvedEnvironment ?? handlerCtx.requestContext?.mode ?? "preview";
-  const versionId = mode === "production"
-    ? (handlerCtx.releaseId || "latest")
-    : (handlerCtx.parsedDomain?.branch || "main");
+
+  let versionId: string;
+  if (mode === "production") {
+    versionId = handlerCtx.releaseId || "latest";
+  } else {
+    versionId = handlerCtx.parsedDomain?.branch || "main";
+  }
 
   return { projectId, mode, versionId };
 }

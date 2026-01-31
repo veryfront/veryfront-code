@@ -40,18 +40,10 @@ export function createRenderContext(
   ctx: HandlerContext,
   options?: CreateRenderContextOptions,
 ): RenderContext {
-  if (ctx.enriched) {
-    return createRenderContextFromEnriched(ctx.enriched, options);
-  }
+  if (ctx.enriched) return createRenderContextFromEnriched(ctx.enriched, options);
 
-  // Fallback path: when no enriched context (legacy/edge cases)
-  // Validate required fields - no bandaids
-  if (!ctx.config) {
-    throw new Error("RenderContext requires config to be pre-loaded");
-  }
-  if (!ctx.adapter) {
-    throw new Error("RenderContext requires adapter");
-  }
+  if (!ctx.config) throw new Error("RenderContext requires config to be pre-loaded");
+  if (!ctx.adapter) throw new Error("RenderContext requires adapter");
   if (!ctx.projectSlug && !ctx.projectId) {
     throw new Error("RenderContext requires projectSlug or projectId");
   }
@@ -62,14 +54,14 @@ export function createRenderContext(
   const projectSlug = ctx.projectSlug ?? ctx.projectId!;
   const isLocalDev = ctx.requestContext?.isLocalDev ?? false;
 
-  // Use shared utility for contentSourceId - this will throw if production without releaseId
-  const contentSourceId = computeContentSourceId(isLocalDev, environment, branch, ctx.releaseId);
+  const contentSourceId = computeContentSourceId(
+    isLocalDev,
+    environment,
+    branch,
+    ctx.releaseId,
+  );
 
-  // For local dev, always use branch as releaseKey (no real releases in local dev)
-  // For remote production, use releaseId; for remote preview, use branch
-  const releaseKey = isLocalDev
-    ? (branch ?? "main")
-    : (environment === "production" ? ctx.releaseId! : (branch ?? "main"));
+  const releaseKey = getReleaseKey(isLocalDev, environment, branch, ctx.releaseId);
   const cachePrefix = buildRenderCachePrefix(projectId, environment, releaseKey);
 
   return {
@@ -91,16 +83,23 @@ export function createRenderContext(
   };
 }
 
+function getReleaseKey(
+  isLocalDev: boolean,
+  environment: RenderEnvironment,
+  branch: string | null,
+  releaseId?: string,
+): string {
+  if (isLocalDev) return branch ?? "main";
+  if (environment === "production") return releaseId!;
+  return branch ?? "main";
+}
+
 export function createRenderContextFromEnriched(
   enriched: EnrichedContext,
   options?: CreateRenderContextOptions,
 ): RenderContext {
-  if (!enriched.config) {
-    throw new Error("EnrichedContext is missing required config");
-  }
-  if (!enriched.adapter) {
-    throw new Error("EnrichedContext is missing required adapter");
-  }
+  if (!enriched.config) throw new Error("EnrichedContext is missing required config");
+  if (!enriched.adapter) throw new Error("EnrichedContext is missing required adapter");
   if (!enriched.contentSourceId) {
     throw new Error("EnrichedContext is missing required contentSourceId");
   }

@@ -21,11 +21,7 @@ function convertToSlug(relativePath: string): string {
   );
 }
 
-function shouldIncludeRoute(
-  path: string,
-  include: string[] | undefined,
-  exclude: string[] | undefined,
-): boolean {
+function shouldIncludeRoute(path: string, include?: string[], exclude?: string[]): boolean {
   if (include?.length && !include.some((p) => path.startsWith(p))) return false;
   if (exclude?.length && exclude.some((p) => path.startsWith(p))) return false;
   return true;
@@ -104,16 +100,16 @@ async function walkAppSSG(
       const st = await adapter.fs.stat(filePath);
       if (!st.isFile) continue;
 
-      const src = await adapter.fs.readFile(filePath).catch(() => "");
-      if (!isForceDynamic(src)) {
-        const path = `/${segs.join("/")}`;
-        collected.push({
-          path: path === "/" ? "/" : path,
-          pageFile: filePath,
-          segments: [...segs],
-          segmentDirs: [...segDirs],
-        });
-      }
+      const src = (await adapter.fs.readFile(filePath).catch(() => "")) ?? "";
+      if (isForceDynamic(src)) break;
+
+      const path = `/${segs.join("/")}`;
+      collected.push({
+        path: path === "/" ? "/" : path,
+        pageFile: filePath,
+        segments: [...segs],
+        segmentDirs: [...segDirs],
+      });
       break;
     } catch {
       // continue

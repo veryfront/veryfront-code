@@ -1,13 +1,3 @@
-/**
- * CSS Optimizer Module
- *
- * Modular CSS optimization with pluggable strategies.
- * This module provides backward-compatible exports while using
- * a clean, modular internal architecture.
- *
- * @module css-optimizer
- */
-
 export type {
   BrowserTargets,
   CriticalCSSResult,
@@ -20,9 +10,7 @@ export type {
 export { CSSOptimizerService } from "./optimizer-service.ts";
 export { CacheManager, loadCSSManifest } from "./css-bundle-cache.ts";
 export { extractCriticalCSS } from "./critical-css.ts";
-
 export { LightningCSSStrategy, MinificationStrategy, PurgeStrategy } from "./strategies/index.ts";
-
 export * as CSSUtils from "./utils.ts";
 
 import type { CriticalCSSResult, CSSBundle, CSSOptimizationOptions } from "#veryfront/types";
@@ -37,10 +25,7 @@ export class CSSOptimizer {
   private adapter: RuntimeAdapter | null = null;
   private baseDir: string;
 
-  constructor(
-    private options: CSSOptimizationOptions = {},
-    baseDir?: string,
-  ) {
+  constructor(private options: CSSOptimizationOptions = {}, baseDir?: string) {
     this.baseDir = baseDir ?? cwd();
   }
 
@@ -54,13 +39,11 @@ export class CSSOptimizer {
   }
 
   async init(): Promise<boolean> {
-    const service = await this.ensureService();
-    return service.init();
+    return (await this.ensureService()).init();
   }
 
   async optimize(): Promise<Map<string, CSSBundle>> {
-    const service = await this.ensureService();
-    return service.optimize();
+    return (await this.ensureService()).optimize();
   }
 
   async extractCriticalCSS(cssPath: string, htmlContent: string): Promise<CriticalCSSResult> {
@@ -75,14 +58,10 @@ export class CSSOptimizer {
     totalSavings: number;
     averageSavings: number;
   }> {
-    const service = await this.ensureService();
-    return service.getStats();
+    return (await this.ensureService()).getStats();
   }
 }
 
-export function optimizeCSS(
-  options: CSSOptimizationOptions = {},
-): Promise<Map<string, CSSBundle>> {
-  const optimizer = new CSSOptimizer(options);
-  return optimizer.optimize();
+export function optimizeCSS(options: CSSOptimizationOptions = {}): Promise<Map<string, CSSBundle>> {
+  return new CSSOptimizer(options).optimize();
 }

@@ -16,6 +16,18 @@ interface HeadingWithHProperties extends Heading {
   };
 }
 
+function createHeadingProperty(name: string, value: string | number) {
+  return {
+    type: "Property",
+    key: { type: "Identifier", name },
+    value: { type: "Literal", value },
+    kind: "init",
+    method: false,
+    shorthand: false,
+    computed: false,
+  } as const;
+}
+
 export function remarkMdxHeadings(): (tree: Root, file: VFile) => void {
   const slugger = new GithubSlugger();
 
@@ -61,33 +73,9 @@ export function remarkMdxHeadings(): (tree: Root, file: VFile) => void {
                       elements: headings.map((h) => ({
                         type: "ObjectExpression",
                         properties: [
-                          {
-                            type: "Property",
-                            key: { type: "Identifier", name: "text" },
-                            value: { type: "Literal", value: h.text },
-                            kind: "init",
-                            method: false,
-                            shorthand: false,
-                            computed: false,
-                          },
-                          {
-                            type: "Property",
-                            key: { type: "Identifier", name: "id" },
-                            value: { type: "Literal", value: h.id },
-                            kind: "init",
-                            method: false,
-                            shorthand: false,
-                            computed: false,
-                          },
-                          {
-                            type: "Property",
-                            key: { type: "Identifier", name: "level" },
-                            value: { type: "Literal", value: h.level },
-                            kind: "init",
-                            method: false,
-                            shorthand: false,
-                            computed: false,
-                          },
+                          createHeadingProperty("text", h.text),
+                          createHeadingProperty("id", h.id),
+                          createHeadingProperty("level", h.level),
                         ],
                       })),
                     },

@@ -27,12 +27,11 @@ describe(
       const externalFile = join(externalDir, "dep.ts");
 
       try {
-        const mainSource = [
-          `import { dep } from "file://${externalFile}";`,
-          `export default function App() { return dep; }`,
-        ].join("\n");
+        const mainSource = `import { dep } from "file://${externalFile}";
+export default function App() { return dep; }`;
+
         await writeTextFile(mainFile, mainSource);
-        await writeTextFile(externalFile, `export const dep = 1;`);
+        await writeTextFile(externalFile, "export const dep = 1;");
 
         const readCalls: string[] = [];
         const adapter = {
@@ -40,20 +39,20 @@ describe(
             readFile: async (path: string): Promise<string> => {
               readCalls.push(path);
               if (path === externalFile) {
-                throw new Error("Adapter should not read external file:// dependency");
+                throw new Error(
+                  "Adapter should not read external file:// dependency",
+                );
               }
               return await readTextFile(path);
             },
           },
         };
 
-        await transformToESM(
-          mainSource,
-          mainFile,
-          projectDir,
-          adapter,
-          { ssr: true, dev: true, projectId: "test-project" },
-        );
+        await transformToESM(mainSource, mainFile, projectDir, adapter, {
+          ssr: true,
+          dev: true,
+          projectId: "test-project",
+        });
 
         assertEquals(readCalls.includes(externalFile), false);
       } finally {

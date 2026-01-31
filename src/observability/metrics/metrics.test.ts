@@ -21,10 +21,16 @@ async function assertExportedFunction(name: string): Promise<void> {
 
 describe("Metrics Module", () => {
   describe("Module Exports", () => {
-    it("should export initMetrics function", () => assertExportedFunction("initMetrics"));
-    it("should export isMetricsEnabled function", () => assertExportedFunction("isMetricsEnabled"));
-    it("should export getMetricsState function", () => assertExportedFunction("getMetricsState"));
-    it("should export shutdownMetrics function", () => assertExportedFunction("shutdownMetrics"));
+    const exportedFunctions = [
+      "initMetrics",
+      "isMetricsEnabled",
+      "getMetricsState",
+      "shutdownMetrics",
+    ] as const;
+
+    for (const name of exportedFunctions) {
+      it(`should export ${name} function`, () => assertExportedFunction(name));
+    }
 
     it("should export MetricsManager class", async () => {
       const { MetricsManager } = await import("./index.ts");
@@ -34,42 +40,61 @@ describe("Metrics Module", () => {
   });
 
   describe("HTTP Metrics Functions", () => {
-    it("should export recordHttpRequest function", () =>
-      assertExportedFunction("recordHttpRequest"));
-    it("should export recordHttpRequestComplete function", () =>
-      assertExportedFunction("recordHttpRequestComplete"));
+    const exportedFunctions = ["recordHttpRequest", "recordHttpRequestComplete"] as const;
+
+    for (const name of exportedFunctions) {
+      it(`should export ${name} function`, () => assertExportedFunction(name));
+    }
   });
 
   describe("Cache Metrics Functions", () => {
-    it("should export recordCacheGet function", () => assertExportedFunction("recordCacheGet"));
-    it("should export recordCacheSet function", () => assertExportedFunction("recordCacheSet"));
-    it("should export recordCacheInvalidate function", () =>
-      assertExportedFunction("recordCacheInvalidate"));
-    it("should export setCacheSize function", () => assertExportedFunction("setCacheSize"));
+    const exportedFunctions = [
+      "recordCacheGet",
+      "recordCacheSet",
+      "recordCacheInvalidate",
+      "setCacheSize",
+    ] as const;
+
+    for (const name of exportedFunctions) {
+      it(`should export ${name} function`, () => assertExportedFunction(name));
+    }
   });
 
   describe("Render Metrics Functions", () => {
-    it("should export recordRender function", () => assertExportedFunction("recordRender"));
-    it("should export recordRenderError function", () =>
-      assertExportedFunction("recordRenderError"));
+    const exportedFunctions = ["recordRender", "recordRenderError"] as const;
+
+    for (const name of exportedFunctions) {
+      it(`should export ${name} function`, () => assertExportedFunction(name));
+    }
   });
 
   describe("RSC Metrics Functions", () => {
-    it("should export recordRSCRender function", () => assertExportedFunction("recordRSCRender"));
-    it("should export recordRSCStream function", () => assertExportedFunction("recordRSCStream"));
-    it("should export recordRSCRequest function", () => assertExportedFunction("recordRSCRequest"));
-    it("should export recordRSCError function", () => assertExportedFunction("recordRSCError"));
+    const exportedFunctions = [
+      "recordRSCRender",
+      "recordRSCStream",
+      "recordRSCRequest",
+      "recordRSCError",
+    ] as const;
+
+    for (const name of exportedFunctions) {
+      it(`should export ${name} function`, () => assertExportedFunction(name));
+    }
   });
 
   describe("Build Metrics Functions", () => {
-    it("should export recordBuild function", () => assertExportedFunction("recordBuild"));
-    it("should export recordBundle function", () => assertExportedFunction("recordBundle"));
+    const exportedFunctions = ["recordBuild", "recordBundle"] as const;
+
+    for (const name of exportedFunctions) {
+      it(`should export ${name} function`, () => assertExportedFunction(name));
+    }
   });
 
   describe("Data Fetching Metrics Functions", () => {
-    it("should export recordDataFetch function", () => assertExportedFunction("recordDataFetch"));
-    it("should export recordDataFetchError function", () =>
-      assertExportedFunction("recordDataFetchError"));
+    const exportedFunctions = ["recordDataFetch", "recordDataFetchError"] as const;
+
+    for (const name of exportedFunctions) {
+      it(`should export ${name} function`, () => assertExportedFunction(name));
+    }
   });
 
   describe("MetricsManager - Initialization", () => {

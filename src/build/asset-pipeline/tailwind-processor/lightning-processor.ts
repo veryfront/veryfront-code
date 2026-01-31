@@ -52,7 +52,5 @@ function processCSSFallback(css: string, options: LightningCSSOptions): string {
     "/* Tailwind CSS v4 - fallback processing */",
   );
 
-  if (options.minify) return minifyCSS(processed);
-
-  return processed;
+  return options.minify ? minifyCSS(processed) : processed;
 }

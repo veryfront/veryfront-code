@@ -37,9 +37,9 @@ function getCategoryClass(category: string): string {
 
 export function ErrorsTab(): React.JSX.Element {
   const [data, setData] = useState<ErrorsData | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState<string>("");
+  const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedError, setSelectedError] = useState<ErrorEntry | null>(null);
 
@@ -127,14 +127,15 @@ export function ErrorsTab(): React.JSX.Element {
             .sort()
             .map(([cat, catCount]) => {
               const isSelected = selectedCategory === cat;
-              const className = isSelected ? "bg-sky-500 text-white" : getCategoryClass(cat);
 
               return (
                 <button
                   type="button"
                   key={cat}
                   onClick={() => setSelectedCategory(isSelected ? null : cat)}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-full transition-colors ${className}`}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-full transition-colors ${
+                    isSelected ? "bg-sky-500 text-white" : getCategoryClass(cat)
+                  }`}
                 >
                   {cat} ({catCount})
                 </button>
@@ -146,34 +147,37 @@ export function ErrorsTab(): React.JSX.Element {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card title={`ERRORS (${filteredErrors.length})`} className="max-h-[600px] overflow-y-auto">
           <div className="divide-y">
-            {filteredErrors.map((error) => (
+            {filteredErrors.map((err) => (
               <button
-                key={error.code}
+                key={err.code}
                 type="button"
-                onClick={() => setSelectedError(error)}
+                onClick={() => setSelectedError(err)}
                 className={`w-full px-3 py-2.5 text-left hover:bg-gray-50 transition-colors ${
-                  selectedError?.code === error.code ? "bg-sky-50" : ""
+                  selectedError?.code === err.code ? "bg-sky-50" : ""
                 }`}
               >
                 <div className="flex items-center gap-2">
-                  <code className="text-xs font-bold text-red-600">{error.code}</code>
+                  <code className="text-xs font-bold text-red-600">{err.code}</code>
                   <span
                     className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${
-                      getCategoryClass(error.category)
+                      getCategoryClass(
+                        err.category,
+                      )
                     }`}
                   >
-                    {error.category}
+                    {err.category}
                   </span>
                 </div>
-                <div className="text-sm text-gray-900 mt-1">{error.title}</div>
+                <div className="text-sm text-gray-900 mt-1">{err.title}</div>
               </button>
             ))}
           </div>
         </Card>
 
         <Card title="ERROR DETAILS">
-          {selectedError
-            ? (
+          {!selectedError
+            ? <div className="p-4 text-sm text-gray-400">Select an error to view details</div>
+            : (
               <div className="p-4">
                 <div className="mb-4">
                   <code className="text-lg font-bold text-red-600">{selectedError.code}</code>
@@ -233,8 +237,7 @@ export function ErrorsTab(): React.JSX.Element {
                   )
                   : null}
               </div>
-            )
-            : <div className="p-4 text-sm text-gray-400">Select an error to view details</div>}
+            )}
         </Card>
       </div>
     </PageLayout>

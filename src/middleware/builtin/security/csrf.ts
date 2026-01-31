@@ -11,7 +11,7 @@ export function csrfProtection(validate: (token: string) => boolean): Middleware
 
     if (!STATE_CHANGING_METHODS.has(method)) return next();
 
-    const token = req.headers.get("X-CSRF-Token") ?? "";
+    const token = req.headers.get("X-CSRF-Token");
     if (!token || !validate(token)) {
       return new Response("Invalid CSRF token", { status: HTTP_FORBIDDEN });
     }

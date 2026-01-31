@@ -32,13 +32,16 @@ export default tool({
       rev: metadata.rev,
     };
 
-    if (!includeContent) return result;
+    if (!includeContent) {
+      return result;
+    }
 
     if (!metadata.is_downloadable) {
       throw new Error(`File "${path}" is not downloadable`);
     }
 
-    if (metadata.size > 1024 * 1024) {
+    const maxSize = 1024 * 1024;
+    if (metadata.size > maxSize) {
       throw new Error(
         `File is too large to download content (${formatFileSize(
           metadata.size,

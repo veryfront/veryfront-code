@@ -29,7 +29,7 @@ function getEsbuildBinaryName(): string {
     x86_64: "x64",
     aarch64: "arm64",
   };
-  const esbuildArch = archMap[Deno.build.arch] || Deno.build.arch;
+  const esbuildArch = archMap[Deno.build.arch] ?? Deno.build.arch;
   return `@esbuild/${Deno.build.os}-${esbuildArch}`;
 }
 
@@ -37,17 +37,22 @@ function getVFSBasePath(): string {
   const filePath = new URL(import.meta.url).pathname;
 
   const denoCompileMatch = filePath.match(/^(.*\/deno-compile-[^/]+)\//);
-  if (denoCompileMatch?.[1]) {
-    return denoCompileMatch[1];
-  }
+  if (denoCompileMatch?.[1]) return denoCompileMatch[1];
 
   const parts = filePath.split("/");
   const srcIndex = parts.lastIndexOf("src");
-  if (srcIndex > 0) {
-    return parts.slice(0, srcIndex).join("/");
-  }
+  if (srcIndex > 0) return parts.slice(0, srcIndex).join("/");
 
   return `${getTempDir()}/deno-compile-veryfront`;
+}
+
+async function isFile(path: string): Promise<boolean> {
+  try {
+    const stat = await Deno.stat(path);
+    return stat.isFile;
+  } catch {
+    return false;
+  }
 }
 
 async function findEsbuildInVFS(): Promise<string | null> {
@@ -64,26 +69,16 @@ async function findEsbuildInVFS(): Promise<string | null> {
   ];
 
   for (const vfsPath of possiblePaths) {
-    try {
-      const stat = await Deno.stat(vfsPath);
-      if (stat.isFile) return vfsPath;
-    } catch {
-      continue;
-    }
+    if (await isFile(vfsPath)) return vfsPath;
   }
 
   try {
     const nodeModulesPath = `${vfsBase}/node_modules`;
     for await (const entry of Deno.readDir(nodeModulesPath)) {
-      if (entry.name === binaryName || entry.name.startsWith("@esbuild")) {
-        const binPath = `${nodeModulesPath}/${entry.name}/bin/esbuild`;
-        try {
-          const stat = await Deno.stat(binPath);
-          if (stat.isFile) return binPath;
-        } catch {
-          continue;
-        }
-      }
+      if (entry.name !== binaryName && !entry.name.startsWith("@esbuild")) continue;
+
+      const binPath = `${nodeModulesPath}/${entry.name}/bin/esbuild`;
+      if (await isFile(binPath)) return binPath;
     }
   } catch {
     // Can't read node_modules
@@ -98,9 +93,7 @@ async function extractEsbuildBinary(): Promise<string> {
 
   try {
     const stat = await Deno.stat(targetPath);
-    if (stat.isFile && stat.mode && (stat.mode & 0o111)) {
-      return targetPath;
-    }
+    if (stat.isFile && stat.mode && (stat.mode & 0o111)) return targetPath;
   } catch {
     // Doesn't exist, need to extract
   }
@@ -127,18 +120,14 @@ async function extractEsbuildBinary(): Promise<string> {
 
 async function ensureEsbuildBinary(): Promise<void> {
   if (setupComplete) return;
+
   if (setupPromise) {
     await setupPromise;
     return;
   }
 
   setupPromise = (async () => {
-    if (getEnv("ESBUILD_BINARY_PATH")) {
-      setupComplete = true;
-      return;
-    }
-
-    if (!isDenoCompiled) {
+    if (getEnv("ESBUILD_BINARY_PATH") || !isDenoCompiled) {
       setupComplete = true;
       return;
     }
@@ -151,9 +140,9 @@ async function ensureEsbuildBinary(): Promise<void> {
       console.log(`[esbuild] Set ESBUILD_BINARY_PATH=${binaryPath}`);
     } catch (error) {
       console.warn(`[esbuild] Binary extraction failed:`, error);
+    } finally {
+      setupComplete = true;
     }
-
-    setupComplete = true;
   })();
 
   try {
@@ -166,6 +155,7 @@ async function ensureEsbuildBinary(): Promise<void> {
 export async function getEsbuild(): Promise<typeof import("esbuild")> {
   await ensureEsbuildBinary();
   if (esbuildModule) return esbuildModule;
+
   esbuildModule = await import("esbuild");
   return esbuildModule;
 }

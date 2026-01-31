@@ -10,6 +10,7 @@ describe("server/dev-server/error-overlay/overlay-renderer", () => {
         error: new Error("Something went wrong"),
         file: "/test/file.ts",
       });
+
       assertEquals(typeof html, "string");
       assertEquals(html.includes("Something went wrong"), true);
     });
@@ -20,6 +21,7 @@ describe("server/dev-server/error-overlay/overlay-renderer", () => {
         error: new Error("parse error"),
         file: "/src/app/page.tsx",
       });
+
       assertEquals(html.includes("/src/app/page.tsx"), true);
     });
 
@@ -28,6 +30,7 @@ describe("server/dev-server/error-overlay/overlay-renderer", () => {
         type: "hydration",
         error: new Error("mismatch"),
       });
+
       assertEquals(html.includes("Hydration"), true);
     });
 
@@ -37,6 +40,7 @@ describe("server/dev-server/error-overlay/overlay-renderer", () => {
         error: new Error("some error"),
         suggestion: "Try fixing the syntax",
       });
+
       assertEquals(html.includes("Try fixing the syntax"), true);
     });
 
@@ -45,7 +49,7 @@ describe("server/dev-server/error-overlay/overlay-renderer", () => {
         type: "build",
         error: new Error("Cannot find module 'react'"),
       });
-      // Should contain the module-not-found suggestion
+
       assertEquals(html.includes("module exists"), true);
     });
 
@@ -54,6 +58,7 @@ describe("server/dev-server/error-overlay/overlay-renderer", () => {
         type: "build",
         error: new Error("test"),
       });
+
       assertEquals(html.includes("<!DOCTYPE html>") || html.includes("<html"), true);
       assertEquals(html.includes("</html>"), true);
     });
@@ -66,6 +71,7 @@ describe("server/dev-server/error-overlay/overlay-renderer", () => {
         line: 42,
         column: 7,
       });
+
       assertEquals(html.includes("42"), true);
     });
   });
@@ -73,26 +79,30 @@ describe("server/dev-server/error-overlay/overlay-renderer", () => {
   describe("ErrorOverlay.getSuggestion", () => {
     it("should return a suggestion for known error pattern: module not found", () => {
       const suggestion = ErrorOverlay.getSuggestion(new Error("Cannot find module 'react'"));
+
       assertEquals(typeof suggestion, "string");
-      assertEquals(suggestion!.includes("module"), true);
+      assertEquals(suggestion?.includes("module"), true);
     });
 
     it("should return a suggestion for syntax error pattern", () => {
       const suggestion = ErrorOverlay.getSuggestion(new Error("unexpected token <"));
+
       assertEquals(typeof suggestion, "string");
-      assertEquals(suggestion!.includes("syntax"), true);
+      assertEquals(suggestion?.includes("syntax"), true);
     });
 
     it("should return a suggestion for hydration pattern", () => {
       const suggestion = ErrorOverlay.getSuggestion(new Error("hydration mismatch"));
+
       assertEquals(typeof suggestion, "string");
-      assertEquals(suggestion!.includes("Hydration"), true);
+      assertEquals(suggestion?.includes("Hydration"), true);
     });
 
     it("should return a suggestion for hook pattern", () => {
       const suggestion = ErrorOverlay.getSuggestion(new Error("Invalid hook call"));
+
       assertEquals(typeof suggestion, "string");
-      assertEquals(suggestion!.includes("hooks"), true);
+      assertEquals(suggestion?.includes("hooks"), true);
     });
 
     it("should return undefined for unknown errors", () => {
@@ -104,6 +114,7 @@ describe("server/dev-server/error-overlay/overlay-renderer", () => {
   describe("ErrorOverlay.getRuntime", () => {
     it("should return a non-empty string", () => {
       const script = ErrorOverlay.getRuntime();
+
       assertEquals(typeof script, "string");
       assertEquals(script.length > 0, true);
     });

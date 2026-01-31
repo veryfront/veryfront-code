@@ -20,7 +20,7 @@ describe("parseProxyEnvironment", () => {
   });
 
   it("returns undefined for invalid values", () => {
-    for (const value of ["staging", "dev", "PREVIEW", "PRODUCTION"] as const) {
+    for (const value of ["staging", "dev", "PREVIEW", "PRODUCTION"]) {
       assertEquals(parseProxyEnvironment(value), undefined);
     }
   });

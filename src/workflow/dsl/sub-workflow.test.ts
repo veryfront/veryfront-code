@@ -7,9 +7,8 @@ describe("workflow/dsl/sub-workflow", () => {
   describe("subWorkflow", () => {
     it("should create a sub-workflow node", () => {
       const dummyWorkflow = { id: "child", steps: [] };
-      const node = subWorkflow("nested", {
-        workflow: dummyWorkflow,
-      });
+      const node = subWorkflow("nested", { workflow: dummyWorkflow });
+
       assertEquals(node.id, "nested");
       assertEquals(node.config.type, "subWorkflow");
     });
@@ -39,12 +38,9 @@ describe("workflow/dsl/sub-workflow", () => {
         checkpoint: true,
         timeout: "30s",
       });
-      const config = node.config as {
-        checkpoint: boolean;
-        timeout: string;
-      };
-      assertEquals(config.checkpoint, true);
-      assertEquals(config.timeout, "30s");
+
+      assertEquals(node.config.checkpoint, true);
+      assertEquals(node.config.timeout, "30s");
     });
   });
 });

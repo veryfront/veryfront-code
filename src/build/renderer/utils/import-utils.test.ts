@@ -5,35 +5,29 @@ import { extractImports, resolveImportPath } from "./import-utils.ts";
 describe("build/renderer/utils/import-utils", () => {
   describe("extractImports", () => {
     it("should extract named imports", () => {
-      const code = 'import { useState } from "react";';
-      assertEquals(extractImports(code), ["react"]);
+      assertEquals(extractImports('import { useState } from "react";'), ["react"]);
     });
 
     it("should extract default imports", () => {
-      const code = 'import React from "react";';
-      assertEquals(extractImports(code), ["react"]);
+      assertEquals(extractImports('import React from "react";'), ["react"]);
     });
 
     it("should extract namespace imports", () => {
-      const code = 'import * as path from "path";';
-      assertEquals(extractImports(code), ["path"]);
+      assertEquals(extractImports('import * as path from "path";'), ["path"]);
     });
 
     it("should extract side-effect imports", () => {
-      const code = 'import "./styles.css";';
-      assertEquals(extractImports(code), ["./styles.css"]);
+      assertEquals(extractImports('import "./styles.css";'), ["./styles.css"]);
     });
 
     it("should extract dynamic imports", () => {
-      const code = 'const mod = import("./lazy.ts");';
-      assertEquals(extractImports(code), ["./lazy.ts"]);
+      assertEquals(extractImports('const mod = import("./lazy.ts");'), ["./lazy.ts"]);
     });
 
     it("should deduplicate imports", () => {
-      const code = [
-        'import { a } from "react";',
-        'import { b } from "react";',
-      ].join("\n");
+      const code = ['import { a } from "react";', 'import { b } from "react";'].join(
+        "\n",
+      );
       assertEquals(extractImports(code), ["react"]);
     });
 
@@ -43,7 +37,9 @@ describe("build/renderer/utils/import-utils", () => {
         'import { render } from "react-dom";',
         'import "./global.css";',
       ].join("\n");
+
       const imports = extractImports(code);
+
       assertEquals(imports.includes("react"), true);
       assertEquals(imports.includes("react-dom"), true);
       assertEquals(imports.includes("./global.css"), true);
@@ -56,11 +52,7 @@ describe("build/renderer/utils/import-utils", () => {
 
   describe("resolveImportPath", () => {
     it("should resolve relative imports", () => {
-      const result = resolveImportPath(
-        "./utils",
-        "/project/src/app.ts",
-        "/project",
-      );
+      const result = resolveImportPath("./utils", "/project/src/app.ts", "/project");
       assertEquals(result.endsWith("/project/src/utils"), true);
     });
 

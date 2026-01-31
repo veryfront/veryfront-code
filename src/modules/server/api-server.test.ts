@@ -4,16 +4,17 @@ import { APIServer } from "./api-server.ts";
 import type { PageRendererLike, PageRenderResult } from "./api-server.ts";
 
 function createMockRenderer(
-  result?: Partial<PageRenderResult>,
+  result: Partial<PageRenderResult> = {},
   error?: Error,
 ): PageRendererLike {
   return {
-    renderPage: (_slug: string) => {
+    renderPage: () => {
       if (error) throw error;
+
       return Promise.resolve({
-        html: result?.html ?? "<p>Hello</p>",
-        frontmatter: result?.frontmatter ?? {},
-        headings: result?.headings,
+        html: result.html ?? "<p>Hello</p>",
+        frontmatter: result.frontmatter ?? {},
+        headings: result.headings,
       });
     },
   };
@@ -52,9 +53,9 @@ describe("modules/server/api-server", () => {
 
       const response = await server.handleRequest("/_veryfront/data/about.json");
       assertEquals(response instanceof Response, true);
-      assertEquals(response!.headers.get("content-type"), "application/json");
+      assertEquals(response?.headers.get("content-type"), "application/json");
 
-      const body = await response!.json();
+      const body = await response?.json();
       assertEquals(body.slug, "about");
       assertEquals(body.html, "<h1>About</h1>");
       assertEquals(body.frontmatter.title, "About");
@@ -68,7 +69,7 @@ describe("modules/server/api-server", () => {
       const response = await server.handleRequest("/_veryfront/data/.json");
       assertEquals(response instanceof Response, true);
 
-      const body = await response!.json();
+      const body = await response?.json();
       // Empty slug should default to "index" for rendering
       assertEquals(body.slug, "");
     });
@@ -83,19 +84,19 @@ describe("modules/server/api-server", () => {
       });
 
       const response = await server.handleRequest("/_veryfront/data/page.json");
-      const body = await response!.json();
+      const body = await response?.json();
       assertEquals(body.headings, headings);
     });
 
     it("should return 404 on render error", async () => {
       const server = new APIServer({
-        renderer: createMockRenderer(undefined, new Error("Page not found")),
+        renderer: createMockRenderer({}, new Error("Page not found")),
       });
 
       const response = await server.handleRequest("/_veryfront/data/missing.json");
-      assertEquals(response!.status, 404);
+      assertEquals(response?.status, 404);
 
-      const body = await response!.json();
+      const body = await response?.json();
       assertEquals(body.error, "Page not found");
     });
 
@@ -108,9 +109,9 @@ describe("modules/server/api-server", () => {
       const server = new APIServer({ renderer });
 
       const response = await server.handleRequest("/_veryfront/data/bad.json");
-      assertEquals(response!.status, 404);
+      assertEquals(response?.status, 404);
 
-      const body = await response!.json();
+      const body = await response?.json();
       assertEquals(body.error, "string error");
     });
 
@@ -118,7 +119,7 @@ describe("modules/server/api-server", () => {
       const server = new APIServer({ renderer: createMockRenderer() });
 
       const response = await server.handleRequest("/_veryfront/data/page.json");
-      assertEquals(response!.headers.get("cache-control"), "no-cache");
+      assertEquals(response?.headers.get("cache-control"), "no-cache");
     });
 
     it("should handle nested page slugs", async () => {
@@ -127,7 +128,7 @@ describe("modules/server/api-server", () => {
       });
 
       const response = await server.handleRequest("/_veryfront/data/blog/my-post.json");
-      const body = await response!.json();
+      const body = await response?.json();
       assertEquals(body.slug, "blog/my-post");
     });
   });

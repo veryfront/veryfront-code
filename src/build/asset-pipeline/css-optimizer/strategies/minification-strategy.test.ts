@@ -1,7 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MinificationStrategy } from "./minification-strategy.ts";
-import type { CSSOptimizationOptions } from "../types/index.ts";
 
 describe("build/asset-pipeline/css-optimizer/strategies/minification-strategy", () => {
   describe("MinificationStrategy", () => {
@@ -14,16 +13,16 @@ describe("build/asset-pipeline/css-optimizer/strategies/minification-strategy", 
 
     describe("canProcess", () => {
       it("should return true when enabled and minify not disabled", () => {
-        assertEquals(strategy.canProcess({} as CSSOptimizationOptions), true);
-        assertEquals(strategy.canProcess({ enabled: true } as CSSOptimizationOptions), true);
+        assertEquals(strategy.canProcess({}), true);
+        assertEquals(strategy.canProcess({ enabled: true }), true);
       });
 
       it("should return false when disabled", () => {
-        assertEquals(strategy.canProcess({ enabled: false } as CSSOptimizationOptions), false);
+        assertEquals(strategy.canProcess({ enabled: false }), false);
       });
 
       it("should return false when minify is false", () => {
-        assertEquals(strategy.canProcess({ minify: false } as CSSOptimizationOptions), false);
+        assertEquals(strategy.canProcess({ minify: false }), false);
       });
     });
 
@@ -33,19 +32,14 @@ describe("build/asset-pipeline/css-optimizer/strategies/minification-strategy", 
   color: red;
   background: blue;
 }`;
-        const result = await strategy.process(input, "test.css", {} as CSSOptimizationOptions);
-        // basicMinify removes comments, extra whitespace, etc.
+        const result = await strategy.process(input, "test.css", {});
         assertEquals(typeof result.code, "string");
         assertEquals(result.code.length <= input.length, true);
         assertEquals(result.sourceMap, undefined);
       });
 
       it("should return a resolved promise", async () => {
-        const result = await strategy.process(
-          "a { b: c; }",
-          "file.css",
-          {} as CSSOptimizationOptions,
-        );
+        const result = await strategy.process("a { b: c; }", "file.css", {});
         assertEquals(typeof result.code, "string");
       });
     });

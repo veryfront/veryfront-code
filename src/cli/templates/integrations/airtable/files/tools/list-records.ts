@@ -40,7 +40,11 @@ export default tool({
     });
 
     return {
-      records: records.map(({ id, createdTime, fields }) => ({ id, createdTime, fields })),
+      records: records.map((record) => ({
+        id: record.id,
+        createdTime: record.createdTime,
+        fields: record.fields,
+      })),
       count: records.length,
       hasMore: Boolean(offset),
     };

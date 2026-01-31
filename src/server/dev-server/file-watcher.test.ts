@@ -3,7 +3,10 @@ import { expect } from "#std/expect.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { OptimizedFileWatcher } from "./file-watcher.ts";
 
-function createDeferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {
+function createDeferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((res) => {
     resolve = res;
@@ -16,10 +19,9 @@ describe("OptimizedFileWatcher", () => {
     const processedBatches: string[][] = [];
     const completion = createDeferred<void>();
 
-    const watcher = new OptimizedFileWatcher(5, (paths) => {
+    const watcher = new OptimizedFileWatcher(5, async (paths) => {
       processedBatches.push(paths);
       completion.resolve();
-      return Promise.resolve();
     });
 
     watcher.handleChange(["src/pages/index.tsx"]);
@@ -44,9 +46,9 @@ describe("OptimizedFileWatcher", () => {
 
   it("cleanup cancels pending batches", async () => {
     let processed = false;
-    const watcher = new OptimizedFileWatcher(5, () => {
+
+    const watcher = new OptimizedFileWatcher(5, async () => {
       processed = true;
-      return Promise.resolve();
     });
 
     watcher.handleChange(["src/pages/hmr.tsx"]);

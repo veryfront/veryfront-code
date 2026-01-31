@@ -8,8 +8,7 @@ function randomString(length: number): string {
 
   let result = "";
   for (let i = 0; i < length; i++) {
-    const byte = bytes[i];
-    if (byte !== undefined) result += ALPHABET[byte % ALPHABET.length];
+    result += ALPHABET[(bytes[i] ?? 0) % ALPHABET.length];
   }
   return result;
 }

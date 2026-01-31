@@ -66,9 +66,6 @@ export interface BranchResponse {
   projectId: string;
 }
 
-/**
- * Scan local project for files to upload using .vfignore patterns
- */
 async function scanLocalFiles(
   projectDir: string,
   ignoreChecker: IgnoreChecker,
@@ -83,20 +80,14 @@ async function scanLocalFiles(
       const entryPath = join(currentDir, entry.name);
       const relativePath = relative(projectDir, entryPath);
 
-      // Check if path should be ignored
-      if (ignoreChecker.isIgnored(relativePath)) {
-        continue;
-      }
+      if (ignoreChecker.isIgnored(relativePath)) continue;
 
       if (entry.isDirectory) {
         await walk(entryPath);
         continue;
       }
 
-      // Only include supported file extensions
-      if (!ignoreChecker.isSupportedExtension(entry.name)) {
-        continue;
-      }
+      if (!ignoreChecker.isSupportedExtension(entry.name)) continue;
 
       const content = await fs.readTextFile(entryPath);
       ops.push({ path: relativePath, content });
@@ -107,31 +98,25 @@ async function scanLocalFiles(
   return ops;
 }
 
-/**
- * Generate a branch name for CLI push
- */
 export function generateBranchName(): string {
   const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "");
   return `cli/push-${timestamp}`;
 }
 
-/**
- * Create a new branch for the push
- */
 export function createBranch(
   client: ApiClient,
   projectSlug: string,
   branchName: string,
 ): Promise<BranchResponse> {
-  return client.post<BranchResponse>(`/projects/${projectSlug}/branches`, {
-    name: branchName,
-  });
+  return client.post<BranchResponse>(`/projects/${projectSlug}/branches`, { name: branchName });
 }
 
-/**
- * Upload files to the API using the files endpoint
- * When branchId is null, files are pushed directly to main
- */
+function buildFileUrl(projectSlug: string, path: string, branchId: string | null): string {
+  const encodedPath = encodeURIComponent(path);
+  const base = `/projects/${projectSlug}/files/${encodedPath}`;
+  return branchId ? `${base}?branch_id=${branchId}` : base;
+}
+
 export async function uploadFiles(
   client: ApiClient,
   projectSlug: string,
@@ -150,12 +135,7 @@ export async function uploadFiles(
     }
 
     try {
-      const encodedPath = encodeURIComponent(op.path);
-      const url = branchId
-        ? `/projects/${projectSlug}/files/${encodedPath}?branch_id=${branchId}`
-        : `/projects/${projectSlug}/files/${encodedPath}`;
-
-      await client.put(url, { content: op.content });
+      await client.put(buildFileUrl(projectSlug, op.path, branchId), { content: op.content });
       uploaded++;
     } catch (error) {
       cliLogger.error(`Failed to upload ${op.path}:`, error);
@@ -166,9 +146,6 @@ export async function uploadFiles(
   return { uploaded, failed };
 }
 
-/**
- * Delete files from the API that no longer exist locally
- */
 export async function deleteFiles(
   client: ApiClient,
   projectSlug: string,
@@ -187,12 +164,7 @@ export async function deleteFiles(
     }
 
     try {
-      const encodedPath = encodeURIComponent(path);
-      const url = branchId
-        ? `/projects/${projectSlug}/files/${encodedPath}?branch_id=${branchId}`
-        : `/projects/${projectSlug}/files/${encodedPath}`;
-
-      await client.delete(url);
+      await client.delete(buildFileUrl(projectSlug, path, branchId));
       deleted++;
     } catch (error) {
       cliLogger.error(`Failed to delete ${path}:`, error);
@@ -203,16 +175,28 @@ export async function deleteFiles(
   return { deleted, failed };
 }
 
-/**
- * Push local files to Veryfront
- * - By default, creates a new auto-generated branch
- * - With --branch=<name>, creates a branch with that name
- * - With --branch=main, pushes directly to main (no branch creation)
- */
+function formatParts(parts: string[]): string {
+  return parts.join(", ");
+}
+
+function buildSummaryParts(ops: UploadOp[], toDelete: string[]): string[] {
+  const parts: string[] = [];
+  if (ops.length > 0) parts.push(`${ops.length} to upload`);
+  if (toDelete.length > 0) parts.push(`${toDelete.length} to delete`);
+  return parts;
+}
+
+function buildConfirmParts(ops: UploadOp[], toDelete: string[]): string[] {
+  const parts: string[] = [];
+  if (ops.length > 0) parts.push(`upload ${ops.length}`);
+  if (toDelete.length > 0) parts.push(`delete ${toDelete.length}`);
+  return parts;
+}
+
 export function pushCommand(options: PushOptions = {}): Promise<void> {
   return withSpan(
     "cli.command.push",
-    async () => {
+    async (): Promise<void> => {
       const {
         projectSlug: slugOverride,
         projectDir = cwd(),
@@ -228,11 +212,12 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       let config: ResolvedConfig;
       try {
         config = await resolveConfig(projectDir);
-        if (slugOverride) config = { ...config, projectSlug: slugOverride };
       } catch (error) {
         spinner.stop();
         throw error;
       }
+
+      if (slugOverride) config = { ...config, projectSlug: slugOverride };
 
       spinner.update("Loading ignore patterns...");
       const ignorePatterns = await loadIgnorePatterns(projectDir);
@@ -245,10 +230,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       spinner.update("Fetching remote files...");
       const client = createApiClient(config);
       const remoteFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
-      const remotePaths = remoteFiles.map((f) => f.path);
-
-      // Find files to delete (exist remotely but not locally)
-      const toDelete = remotePaths.filter((p) => !localPaths.has(p));
+      const toDelete = remoteFiles.map((f) => f.path).filter((p) => !localPaths.has(p));
 
       if (ops.length === 0 && toDelete.length === 0) {
         spinner.stop();
@@ -262,18 +244,14 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       const isMainBranch = branchName === "main";
 
       if (!quiet) {
-        const parts: string[] = [];
-        if (ops.length > 0) parts.push(`${ops.length} to upload`);
-        if (toDelete.length > 0) parts.push(`${toDelete.length} to delete`);
+        const parts = buildSummaryParts(ops, toDelete);
         cliLogger.info(
-          `\nFound ${parts.join(", ")} for ${isMainBranch ? "main" : `branch "${branchName}"`}.`,
+          `\nFound ${formatParts(parts)} for ${isMainBranch ? "main" : `branch "${branchName}"`}.`,
         );
       }
 
       if (!force && !dryRun) {
-        const parts: string[] = [];
-        if (ops.length > 0) parts.push(`upload ${ops.length}`);
-        if (toDelete.length > 0) parts.push(`delete ${toDelete.length}`);
+        const parts = buildConfirmParts(ops, toDelete);
         const confirmMessage = isMainBranch
           ? `Push to main (${parts.join(", ")} files)?`
           : `Create branch "${branchName}" and ${parts.join(", ")} files?`;
@@ -290,10 +268,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         if (toDelete.length > 0) {
           await deleteFiles(client, config.projectSlug, null, toDelete, true);
         }
+
         if (!quiet) {
-          const parts: string[] = [];
-          if (ops.length > 0) parts.push(`upload ${ops.length}`);
-          if (toDelete.length > 0) parts.push(`delete ${toDelete.length}`);
+          const parts = buildConfirmParts(ops, toDelete);
           logInfo(`Dry run complete. Would ${parts.join(" and ")} files.`);
         }
         return;
@@ -307,11 +284,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       } else {
         spinner.update(`Creating branch "${branchName}"...`);
         try {
-          const createdBranch = await createBranch(
-            client,
-            config.projectSlug,
-            branchName,
-          );
+          const createdBranch = await createBranch(client, config.projectSlug, branchName);
           branchId = createdBranch.id;
         } catch (error) {
           spinner.stop();
@@ -355,17 +328,13 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         } else {
           logSuccess(`Pushed to branch "${branchName}": ${successParts.join(", ")}.`);
           cliLogger.info("");
-          logInfo(`To merge your changes, open Studio and merge the branch:`);
-          cliLogger.info(
-            `  https://veryfront.com/projects/${config.projectSlug}/branches`,
-          );
+          logInfo("To merge your changes, open Studio and merge the branch:");
+          cliLogger.info(`  https://veryfront.com/projects/${config.projectSlug}/branches`);
         }
       }
 
       const failedTotal = uploadResult.failed + deleteResult.failed;
-      if (failedTotal > 0) {
-        logWarning(`Failed: ${failedTotal} files.`);
-      }
+      if (failedTotal > 0) logWarning(`Failed: ${failedTotal} files.`);
     },
     { "cli.dryRun": options.dryRun ?? false },
   );

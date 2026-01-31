@@ -19,7 +19,6 @@ import { delay } from "@std/async";
 
 type StaticDataContext = Omit<DataContext, "request" | "query">;
 
-// Helper to run tests with production mode cache context
 function withProductionContext<T>(fn: () => T | Promise<T>): T | Promise<T> {
   return runWithCacheKeyContext(
     { projectId: "test-project", mode: "production", versionId: "rel_test" },
@@ -34,7 +33,11 @@ function makeContext(url: string): DataContext {
     query: u.searchParams,
     request: new Request(url),
     url: u,
-  } as const;
+  };
+}
+
+function assert(condition: boolean): asserts condition {
+  if (!condition) throw new Error("Assertion failed");
 }
 
 describe("DataFetcher", () => {
@@ -109,9 +112,7 @@ describe("DataFetcher", () => {
           default: () => null,
           getServerData: (ctx: DataContext) => {
             capturedContext = ctx;
-            return {
-              props: {},
-            };
+            return { props: {} };
           },
         };
 
@@ -151,9 +152,7 @@ describe("DataFetcher", () => {
             default: () => null,
             getStaticData: () => {
               callCount++;
-              return {
-                props: { count: callCount },
-              };
+              return { props: { count: callCount } };
             },
           };
 
@@ -266,6 +265,7 @@ describe("DataFetcher", () => {
                 return { props: { a: 2 } };
               },
             };
+
             const resDev = await testFetcher.fetchData(
               pageDev,
               makeContext("http://x"),
@@ -273,22 +273,26 @@ describe("DataFetcher", () => {
             );
             assertEquals(resDev.props, { a: 1 });
 
-            let _staticCalls = 0;
+            let staticCalls = 0;
             const pageProd: PageWithData<{ t: number }> = {
               default: () => null,
               getStaticData() {
-                _staticCalls++;
+                staticCalls++;
                 return { props: { t: Date.now() }, revalidate: 0.001 };
               },
             };
-            const url = "http://x/path";
-            const c = makeContext(url);
+
+            const c = makeContext("http://x/path");
             const first = await testFetcher.fetchData(pageProd, c, "production");
             const second = await testFetcher.fetchData(pageProd, c, "production");
             assertEquals((second.props as any)?.t === (first.props as any)?.t, true);
+
             await delay(5);
+
             const third = await testFetcher.fetchData(pageProd, c, "production");
             assertEquals((third.props as any)?.t === (first.props as any)?.t, true);
+
+            void staticCalls;
           });
         },
       );
@@ -302,9 +306,7 @@ describe("DataFetcher", () => {
 
         const result = await fetcher.fetchData(pageModule, context);
 
-        assertEquals(result, {
-          props: {},
-        });
+        assertEquals(result, { props: {} });
       });
     });
 
@@ -353,6 +355,7 @@ describe("DataFetcher", () => {
           fetcher.clearCache();
 
           await delay(10);
+
           const result2 = await fetcher.fetchData(pageModule, context, "production");
           const timestamp2 = (result2.props as any)?.timestamp;
 
@@ -370,9 +373,7 @@ describe("DataFetcher", () => {
             default: () => null,
             getStaticData: () => {
               callCount++;
-              return {
-                props: { count: callCount },
-              };
+              return { props: { count: callCount } };
             },
           };
 
@@ -426,11 +427,5 @@ describe("DataFetcher", () => {
         assertEquals(nf.notFound, true);
       });
     });
-
-    function assert(condition: boolean): asserts condition {
-      if (!condition) {
-        throw new Error("Assertion failed");
-      }
-    }
   });
 });

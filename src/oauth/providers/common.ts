@@ -1,10 +1,6 @@
 import type { OAuthServiceConfig } from "../types.ts";
 
-function createConfig(config: OAuthServiceConfig): OAuthServiceConfig {
-  return config;
-}
-
-export const githubConfig = createConfig({
+export const githubConfig: OAuthServiceConfig = {
   providerId: "github",
   serviceId: "github",
   displayName: "GitHub",
@@ -15,9 +11,9 @@ export const githubConfig = createConfig({
   apiBaseUrl: "https://api.github.com",
   defaultScopes: ["repo", "user"],
   additionalAuthParams: {},
-});
+};
 
-export const slackConfig = createConfig({
+export const slackConfig: OAuthServiceConfig = {
   providerId: "slack",
   serviceId: "slack",
   displayName: "Slack",
@@ -28,9 +24,9 @@ export const slackConfig = createConfig({
   apiBaseUrl: "https://slack.com/api",
   defaultScopes: ["channels:read", "chat:write", "users:read"],
   additionalAuthParams: {},
-});
+};
 
-export const notionConfig = createConfig({
+export const notionConfig: OAuthServiceConfig = {
   providerId: "notion",
   serviceId: "notion",
   displayName: "Notion",
@@ -44,9 +40,9 @@ export const notionConfig = createConfig({
   additionalAuthParams: {
     owner: "user",
   },
-});
+};
 
-export const figmaConfig = createConfig({
+export const figmaConfig: OAuthServiceConfig = {
   providerId: "figma",
   serviceId: "figma",
   displayName: "Figma",
@@ -57,9 +53,9 @@ export const figmaConfig = createConfig({
   apiBaseUrl: "https://api.figma.com/v1",
   defaultScopes: ["file_read"],
   additionalAuthParams: {},
-});
+};
 
-export const discordConfig = createConfig({
+export const discordConfig: OAuthServiceConfig = {
   providerId: "discord",
   serviceId: "discord",
   displayName: "Discord",
@@ -70,9 +66,9 @@ export const discordConfig = createConfig({
   apiBaseUrl: "https://discord.com/api/v10",
   defaultScopes: ["identify", "guilds"],
   additionalAuthParams: {},
-});
+};
 
-export const linearConfig = createConfig({
+export const linearConfig: OAuthServiceConfig = {
   providerId: "linear",
   serviceId: "linear",
   displayName: "Linear",
@@ -83,9 +79,9 @@ export const linearConfig = createConfig({
   apiBaseUrl: "https://api.linear.app",
   defaultScopes: ["read", "write"],
   additionalAuthParams: {},
-});
+};
 
-export const gitlabConfig = createConfig({
+export const gitlabConfig: OAuthServiceConfig = {
   providerId: "gitlab",
   serviceId: "gitlab",
   displayName: "GitLab",
@@ -96,9 +92,9 @@ export const gitlabConfig = createConfig({
   apiBaseUrl: "https://gitlab.com/api/v4",
   defaultScopes: ["read_user", "api"],
   additionalAuthParams: {},
-});
+};
 
-export const airtableConfig = createConfig({
+export const airtableConfig: OAuthServiceConfig = {
   providerId: "airtable",
   serviceId: "airtable",
   displayName: "Airtable",
@@ -110,9 +106,9 @@ export const airtableConfig = createConfig({
   defaultScopes: ["data.records:read", "data.records:write", "schema.bases:read"],
   useBasicAuth: true,
   additionalAuthParams: {},
-});
+};
 
-export const dropboxConfig = createConfig({
+export const dropboxConfig: OAuthServiceConfig = {
   providerId: "dropbox",
   serviceId: "dropbox",
   displayName: "Dropbox",
@@ -125,9 +121,9 @@ export const dropboxConfig = createConfig({
   additionalAuthParams: {
     token_access_type: "offline",
   },
-});
+};
 
-export const hubspotConfig = createConfig({
+export const hubspotConfig: OAuthServiceConfig = {
   providerId: "hubspot",
   serviceId: "hubspot",
   displayName: "HubSpot",
@@ -138,9 +134,9 @@ export const hubspotConfig = createConfig({
   apiBaseUrl: "https://api.hubapi.com",
   defaultScopes: ["crm.objects.contacts.read", "crm.objects.contacts.write"],
   additionalAuthParams: {},
-});
+};
 
-export const salesforceConfig = createConfig({
+export const salesforceConfig: OAuthServiceConfig = {
   providerId: "salesforce",
   serviceId: "salesforce",
   displayName: "Salesforce",
@@ -151,9 +147,9 @@ export const salesforceConfig = createConfig({
   apiBaseUrl: "https://login.salesforce.com/services/data/v59.0",
   defaultScopes: ["api", "refresh_token"],
   additionalAuthParams: {},
-});
+};
 
-export const twitterConfig = createConfig({
+export const twitterConfig: OAuthServiceConfig = {
   providerId: "twitter",
   serviceId: "twitter",
   displayName: "Twitter/X",
@@ -165,9 +161,9 @@ export const twitterConfig = createConfig({
   defaultScopes: ["tweet.read", "users.read", "offline.access"],
   useBasicAuth: true,
   additionalAuthParams: {},
-});
+};
 
-export const asanaConfig = createConfig({
+export const asanaConfig: OAuthServiceConfig = {
   providerId: "asana",
   serviceId: "asana",
   displayName: "Asana",
@@ -178,9 +174,9 @@ export const asanaConfig = createConfig({
   apiBaseUrl: "https://app.asana.com/api/1.0",
   defaultScopes: ["default"],
   additionalAuthParams: {},
-});
+};
 
-export const mondayConfig = createConfig({
+export const mondayConfig: OAuthServiceConfig = {
   providerId: "monday",
   serviceId: "monday",
   displayName: "Monday.com",
@@ -191,9 +187,9 @@ export const mondayConfig = createConfig({
   apiBaseUrl: "https://api.monday.com/v2",
   defaultScopes: ["me:read", "boards:read", "boards:write"],
   additionalAuthParams: {},
-});
+};
 
-export const zoomConfig = createConfig({
+export const zoomConfig: OAuthServiceConfig = {
   providerId: "zoom",
   serviceId: "zoom",
   displayName: "Zoom",
@@ -205,9 +201,9 @@ export const zoomConfig = createConfig({
   defaultScopes: ["meeting:read", "meeting:write", "user:read"],
   useBasicAuth: true,
   additionalAuthParams: {},
-});
+};
 
-export const intercomConfig = createConfig({
+export const intercomConfig: OAuthServiceConfig = {
   providerId: "intercom",
   serviceId: "intercom",
   displayName: "Intercom",
@@ -218,9 +214,9 @@ export const intercomConfig = createConfig({
   apiBaseUrl: "https://api.intercom.io",
   defaultScopes: [],
   additionalAuthParams: {},
-});
+};
 
-export const freshdeskConfig = createConfig({
+export const freshdeskConfig: OAuthServiceConfig = {
   providerId: "freshdesk",
   serviceId: "freshdesk",
   displayName: "Freshdesk",
@@ -231,9 +227,9 @@ export const freshdeskConfig = createConfig({
   apiBaseUrl: "https://domain.freshdesk.com/api/v2",
   defaultScopes: ["freshdesk"],
   additionalAuthParams: {},
-});
+};
 
-export const mailchimpConfig = createConfig({
+export const mailchimpConfig: OAuthServiceConfig = {
   providerId: "mailchimp",
   serviceId: "mailchimp",
   displayName: "Mailchimp",
@@ -244,9 +240,9 @@ export const mailchimpConfig = createConfig({
   apiBaseUrl: "https://server.api.mailchimp.com/3.0",
   defaultScopes: [],
   additionalAuthParams: {},
-});
+};
 
-export const shopifyConfig = createConfig({
+export const shopifyConfig: OAuthServiceConfig = {
   providerId: "shopify",
   serviceId: "shopify",
   displayName: "Shopify",
@@ -257,9 +253,9 @@ export const shopifyConfig = createConfig({
   apiBaseUrl: "https://shop.myshopify.com/admin/api/2024-01",
   defaultScopes: ["read_products", "write_products", "read_orders"],
   additionalAuthParams: {},
-});
+};
 
-export const quickbooksConfig = createConfig({
+export const quickbooksConfig: OAuthServiceConfig = {
   providerId: "quickbooks",
   serviceId: "quickbooks",
   displayName: "QuickBooks",
@@ -270,9 +266,9 @@ export const quickbooksConfig = createConfig({
   apiBaseUrl: "https://quickbooks.api.intuit.com/v3",
   defaultScopes: ["com.intuit.quickbooks.accounting"],
   additionalAuthParams: {},
-});
+};
 
-export const xeroConfig = createConfig({
+export const xeroConfig: OAuthServiceConfig = {
   providerId: "xero",
   serviceId: "xero",
   displayName: "Xero",
@@ -281,11 +277,17 @@ export const xeroConfig = createConfig({
   clientIdEnvVar: "XERO_CLIENT_ID",
   clientSecretEnvVar: "XERO_CLIENT_SECRET",
   apiBaseUrl: "https://api.xero.com/api.xro/2.0",
-  defaultScopes: ["openid", "profile", "email", "accounting.transactions", "offline_access"],
+  defaultScopes: [
+    "openid",
+    "profile",
+    "email",
+    "accounting.transactions",
+    "offline_access",
+  ],
   additionalAuthParams: {},
-});
+};
 
-export const boxConfig = createConfig({
+export const boxConfig: OAuthServiceConfig = {
   providerId: "box",
   serviceId: "box",
   displayName: "Box",
@@ -296,9 +298,9 @@ export const boxConfig = createConfig({
   apiBaseUrl: "https://api.box.com/2.0",
   defaultScopes: [],
   additionalAuthParams: {},
-});
+};
 
-export const webexConfig = createConfig({
+export const webexConfig: OAuthServiceConfig = {
   providerId: "webex",
   serviceId: "webex",
   displayName: "Webex",
@@ -309,9 +311,9 @@ export const webexConfig = createConfig({
   apiBaseUrl: "https://webexapis.com/v1",
   defaultScopes: ["spark:all", "spark:kms"],
   additionalAuthParams: {},
-});
+};
 
-export const trelloConfig = createConfig({
+export const trelloConfig: OAuthServiceConfig = {
   providerId: "trello",
   serviceId: "trello",
   displayName: "Trello",
@@ -324,9 +326,9 @@ export const trelloConfig = createConfig({
   additionalAuthParams: {
     expiration: "never",
   },
-});
+};
 
-export const clickupConfig = createConfig({
+export const clickupConfig: OAuthServiceConfig = {
   providerId: "clickup",
   serviceId: "clickup",
   displayName: "ClickUp",
@@ -337,9 +339,9 @@ export const clickupConfig = createConfig({
   apiBaseUrl: "https://api.clickup.com/api/v2",
   defaultScopes: [],
   additionalAuthParams: {},
-});
+};
 
-export const pipedriveConfig = createConfig({
+export const pipedriveConfig: OAuthServiceConfig = {
   providerId: "pipedrive",
   serviceId: "pipedrive",
   displayName: "Pipedrive",
@@ -350,7 +352,7 @@ export const pipedriveConfig = createConfig({
   apiBaseUrl: "https://api.pipedrive.com/v1",
   defaultScopes: [],
   additionalAuthParams: {},
-});
+};
 
 export const commonServices = {
   github: githubConfig,

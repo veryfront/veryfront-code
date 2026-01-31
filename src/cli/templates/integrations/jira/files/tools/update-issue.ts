@@ -30,7 +30,9 @@ export default tool({
     status: z
       .string()
       .optional()
-      .describe('New status to transition to (e.g., "In Progress", "Done", "To Do")'),
+      .describe(
+        'New status to transition to (e.g., "In Progress", "Done", "To Do")',
+      ),
   }),
   async execute({
     issueKey,
@@ -41,14 +43,13 @@ export default tool({
     labels,
     status,
   }) {
-    const shouldUpdateFields =
+    if (
       summary !== undefined ||
       description !== undefined ||
       priority !== undefined ||
       assigneeId !== undefined ||
-      labels !== undefined;
-
-    if (shouldUpdateFields) {
+      labels !== undefined
+    ) {
       await updateIssue(issueKey, {
         summary,
         description,
@@ -62,17 +63,16 @@ export default tool({
       const transitions = await getIssueTransitions(issueKey);
       const normalizedStatus = status.toLowerCase();
 
-      const targetTransition = transitions.find(
-        (t) =>
-          t.name.toLowerCase() === normalizedStatus ||
-          t.to.name.toLowerCase() === normalizedStatus,
-      );
+      const targetTransition = transitions.find((t) => {
+        const transitionName = t.name.toLowerCase();
+        const toName = t.to.name.toLowerCase();
+        return transitionName === normalizedStatus || toName === normalizedStatus;
+      });
 
       if (!targetTransition) {
+        const available = transitions.map((t) => t.to.name).join(", ");
         throw new Error(
-          `Status "${status}" not found. Available transitions: ${transitions
-            .map((t) => t.to.name)
-            .join(", ")}`,
+          `Status "${status}" not found. Available transitions: ${available}`,
         );
       }
 

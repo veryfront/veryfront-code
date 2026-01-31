@@ -24,8 +24,9 @@ async function postForm(url: string, body: Record<string, string>): Promise<any>
 
   if (response.ok) return response.json();
 
-  const error = await response.text();
-  throw new Error(`Token request failed: ${response.status} - ${error}`);
+  throw new Error(
+    `Token request failed: ${response.status} - ${await response.text()}`,
+  );
 }
 
 export function getAuthorizationUrl(
@@ -107,7 +108,6 @@ export async function getValidToken(
     await tokenStore.setToken(userId, service, newToken);
     return newToken.accessToken;
   } catch {
-    // Refresh failed, user needs to re-authorize
     await tokenStore.revokeToken(userId, service);
     return null;
   }

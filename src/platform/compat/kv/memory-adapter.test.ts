@@ -4,7 +4,9 @@ import { MemoryKv } from "./memory-adapter.ts";
 
 async function collectEntries<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const entries: T[] = [];
-  for await (const entry of iterable) entries.push(entry);
+  for await (const entry of iterable) {
+    entries.push(entry);
+  }
   return entries;
 }
 

@@ -20,8 +20,7 @@ export function findImages(dir: string): Promise<string[]> {
           })
         ) {
           const ext = extname(entry.path).toLowerCase();
-          if (!supportedExtensionsSet.has(ext)) continue;
-          images.push(entry.path);
+          if (supportedExtensionsSet.has(ext)) images.push(entry.path);
         }
       } catch (error) {
         logger.warn(`Failed to read directory ${dir}`, {

@@ -11,13 +11,11 @@ describe("cli/help/tips", () => {
     });
 
     it("should mention MCP server port", () => {
-      const tips = getDevTips();
-      assertEquals(tips.includes("9999"), true);
+      assertEquals(getDevTips().includes("9999"), true);
     });
 
     it("should mention Ctrl+C", () => {
-      const tips = getDevTips();
-      assertEquals(tips.includes("Ctrl+C"), true);
+      assertEquals(getDevTips().includes("Ctrl+C"), true);
     });
   });
 
@@ -29,24 +27,20 @@ describe("cli/help/tips", () => {
     });
 
     it("should mention dry-run flag", () => {
-      const tips = getBuildTips();
-      assertEquals(tips.includes("--dry-run"), true);
+      assertEquals(getBuildTips().includes("--dry-run"), true);
     });
 
     it("should mention veryfront serve", () => {
-      const tips = getBuildTips();
-      assertEquals(tips.includes("veryfront serve"), true);
+      assertEquals(getBuildTips().includes("veryfront serve"), true);
     });
   });
 
   describe("getInitTemplates", () => {
     it("should list all templates", () => {
       const templates = getInitTemplates();
-      assertEquals(templates.includes("ai"), true);
-      assertEquals(templates.includes("app"), true);
-      assertEquals(templates.includes("blog"), true);
-      assertEquals(templates.includes("docs"), true);
-      assertEquals(templates.includes("minimal"), true);
+      for (const template of ["ai", "app", "blog", "docs", "minimal"]) {
+        assertEquals(templates.includes(template), true);
+      }
     });
   });
 
@@ -54,29 +48,27 @@ describe("cli/help/tips", () => {
     it("should return dev tips for 'dev' command", () => {
       const tips = getCommandTips("dev");
       assertEquals(typeof tips, "string");
-      assertEquals(tips!.includes("HMR"), true);
+      assertEquals(tips?.includes("HMR"), true);
     });
 
     it("should return build tips for 'build' command", () => {
       const tips = getCommandTips("build");
       assertEquals(typeof tips, "string");
-      assertEquals(tips!.includes("analyze-chunks"), true);
+      assertEquals(tips?.includes("analyze-chunks"), true);
     });
 
     it("should return init templates for 'init' command", () => {
       const tips = getCommandTips("init");
       assertEquals(typeof tips, "string");
-      assertEquals(tips!.includes("ai"), true);
+      assertEquals(tips?.includes("ai"), true);
     });
 
     it("should return undefined for unknown command", () => {
-      const tips = getCommandTips("nonexistent");
-      assertEquals(tips, undefined);
+      assertEquals(getCommandTips("nonexistent"), undefined);
     });
 
     it("should return undefined for empty string", () => {
-      const tips = getCommandTips("");
-      assertEquals(tips, undefined);
+      assertEquals(getCommandTips(""), undefined);
     });
   });
 });

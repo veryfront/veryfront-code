@@ -7,7 +7,9 @@ import {
   type RenderContext,
 } from "./render-context.ts";
 
-function makeMockRenderContext(overrides: Partial<RenderContext> = {}): RenderContext {
+function makeMockRenderContext(
+  overrides: Partial<RenderContext> = {},
+): RenderContext {
   return {
     projectId: "proj-123",
     projectSlug: "my-project",
@@ -22,14 +24,33 @@ function makeMockRenderContext(overrides: Partial<RenderContext> = {}): RenderCo
   };
 }
 
+function makeEnrichedContext(overrides: Record<string, unknown> = {}): Record<
+  string,
+  unknown
+> {
+  return {
+    projectId: "p1",
+    projectSlug: "slug",
+    projectDir: "/dir",
+    config: {},
+    adapter: {},
+    cachePrefix: "prefix",
+    environment: "production",
+    contentSourceId: "release-x",
+    mode: "production",
+    ...overrides,
+  };
+}
+
 describe("rendering/context/render-context", () => {
   describe("createCacheKey", () => {
     it("should combine cache prefix and content key", () => {
-      const ctx = makeMockRenderContext({ cachePrefix: "proj-123:production:release-abc" });
+      const ctx = makeMockRenderContext({
+        cachePrefix: "proj-123:production:release-abc",
+      });
       const key = createCacheKey(ctx, "page:/index");
       assertEquals(typeof key, "string");
       assertEquals(key.length > 0, true);
-      // Should contain the content key somehow
       assertEquals(key.includes("page:/index"), true);
     });
 
@@ -41,8 +62,12 @@ describe("rendering/context/render-context", () => {
     });
 
     it("should produce different keys for different contexts", () => {
-      const ctx1 = makeMockRenderContext({ cachePrefix: "proj-1:production:release-a" });
-      const ctx2 = makeMockRenderContext({ cachePrefix: "proj-2:production:release-b" });
+      const ctx1 = makeMockRenderContext({
+        cachePrefix: "proj-1:production:release-a",
+      });
+      const ctx2 = makeMockRenderContext({
+        cachePrefix: "proj-2:production:release-b",
+      });
       const key1 = createCacheKey(ctx1, "page:/index");
       const key2 = createCacheKey(ctx2, "page:/index");
       assertEquals(key1 !== key2, true);
@@ -65,17 +90,7 @@ describe("rendering/context/render-context", () => {
 
   describe("createRenderContextFromEnriched", () => {
     it("should throw when enriched context is missing config", () => {
-      const enriched = {
-        projectId: "p1",
-        projectSlug: "slug",
-        projectDir: "/dir",
-        config: undefined,
-        adapter: {},
-        cachePrefix: "prefix",
-        environment: "production",
-        contentSourceId: "release-x",
-        mode: "production",
-      };
+      const enriched = makeEnrichedContext({ config: undefined });
       assertThrows(
         () => createRenderContextFromEnriched(enriched as any),
         Error,
@@ -84,17 +99,7 @@ describe("rendering/context/render-context", () => {
     });
 
     it("should throw when enriched context is missing adapter", () => {
-      const enriched = {
-        projectId: "p1",
-        projectSlug: "slug",
-        projectDir: "/dir",
-        config: {},
-        adapter: undefined,
-        cachePrefix: "prefix",
-        environment: "production",
-        contentSourceId: "release-x",
-        mode: "production",
-      };
+      const enriched = makeEnrichedContext({ adapter: undefined });
       assertThrows(
         () => createRenderContextFromEnriched(enriched as any),
         Error,
@@ -103,17 +108,7 @@ describe("rendering/context/render-context", () => {
     });
 
     it("should throw when enriched context is missing contentSourceId", () => {
-      const enriched = {
-        projectId: "p1",
-        projectSlug: "slug",
-        projectDir: "/dir",
-        config: {},
-        adapter: {},
-        cachePrefix: "prefix",
-        environment: "production",
-        contentSourceId: undefined,
-        mode: "production",
-      };
+      const enriched = makeEnrichedContext({ contentSourceId: undefined });
       assertThrows(
         () => createRenderContextFromEnriched(enriched as any),
         Error,
@@ -122,22 +117,15 @@ describe("rendering/context/render-context", () => {
     });
 
     it("should create render context from valid enriched context", () => {
-      const enriched = {
-        projectId: "p1",
-        projectSlug: "slug",
-        projectDir: "/dir",
+      const enriched = makeEnrichedContext({
         config: { dev: { port: 3000 } },
         adapter: { fs: {} },
-        cachePrefix: "prefix",
-        environment: "production" as const,
-        contentSourceId: "release-x",
-        mode: "production" as const,
         branch: "main",
         releaseId: "r1",
         token: "tok-123",
         moduleServerUrl: "http://modules.local",
         nonce: "abc",
-      };
+      });
 
       const ctx = createRenderContextFromEnriched(enriched as any);
       assertEquals(ctx.projectId, "p1");
@@ -152,17 +140,7 @@ describe("rendering/context/render-context", () => {
     });
 
     it("should apply options overrides", () => {
-      const enriched = {
-        projectId: "p1",
-        projectSlug: "slug",
-        projectDir: "/dir",
-        config: {},
-        adapter: {},
-        cachePrefix: "prefix",
-        environment: "production" as const,
-        contentSourceId: "release-x",
-        mode: "production" as const,
-      };
+      const enriched = makeEnrichedContext();
 
       const ctx = createRenderContextFromEnriched(enriched as any, {
         port: 8080,

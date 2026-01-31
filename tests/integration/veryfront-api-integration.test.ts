@@ -10,16 +10,12 @@ import type { VeryfrontConfig } from "@veryfront/config";
 import { cleanupBundler } from "@veryfront/rendering/cleanup.ts";
 import { cwd } from "@veryfront/compat/process.ts";
 
-// Disable sanitizers for this integration test suite as the MultiProjectFSAdapter
-// starts background intervals for cleanup that are managed by the adapter lifecycle
 describe("Veryfront API Integration", { sanitizeResources: false, sanitizeOps: false }, () => {
-  // Clean up after each test to ensure intervals are cleared
   afterEach(async () => {
     await cleanupBundler();
   });
+
   describe("bootstrap", () => {
-    // FIXME: This test incorrectly uses cwd() which has veryfront.config.ts with fs.type="veryfront-api"
-    // It should use a temp directory without any config to test local filesystem mode
     it.ignore("should use local filesystem when no fs config", async () => {
       const adapter = await getAdapter();
       const projectDir = cwd();
@@ -35,7 +31,6 @@ describe("Veryfront API Integration", { sanitizeResources: false, sanitizeOps: f
       const adapter = await getAdapter();
       const projectDir = cwd();
 
-      // Mock config by setting it directly (in real scenario, this would be in veryfront.config.ts)
       const _mockConfig: Partial<VeryfrontConfig> = {
         fs: {
           type: "veryfront-api",
@@ -47,18 +42,11 @@ describe("Veryfront API Integration", { sanitizeResources: false, sanitizeOps: f
         },
       };
 
-      // Note: This test would need actual API or mock fetch to fully work
-      // For now, we test that the bootstrap doesn't crash
       try {
         const result = await bootstrap(projectDir, adapter);
-
-        // If bootstrap succeeded, it should have tried to use FSAdapter
-        // In production, this would connect to the API
         assertExists(result.adapter);
         assertExists(result.config);
       } catch (error) {
-        // Expected to fail without real API, but should be VeryfrontAPIError
-        // not a bootstrap crash
         console.log("Expected error (no real API):", (error as Error).message);
       }
     });
@@ -68,7 +56,6 @@ describe("Veryfront API Integration", { sanitizeResources: false, sanitizeOps: f
     it("should wrap FSAdapter methods correctly", async () => {
       const { wrapFSAdapter } = await import("@veryfront/platform/adapters/fs/wrapper.ts");
 
-      // Create mock FSAdapter
       const mockFSAdapter = {
         readTextFile: (path: string) => `content of ${path}`,
         readFile: (path: string) => new TextEncoder().encode(`content of ${path}`),
@@ -104,26 +91,18 @@ describe("Veryfront API Integration", { sanitizeResources: false, sanitizeOps: f
 
       const wrapped = wrapFSAdapter(mockFSAdapter as any);
 
-      // Test readFile
       const content = await wrapped.readFile("test.ts");
       assertEquals(content, "content of test.ts");
 
-      // Test exists
-      const exists = await wrapped.exists("exists.ts");
-      assertEquals(exists, true);
+      assertEquals(await wrapped.exists("exists.ts"), true);
+      assertEquals(await wrapped.exists("notexists.ts"), false);
 
-      const notExists = await wrapped.exists("notexists.ts");
-      assertEquals(notExists, false);
-
-      // Test readDir
       const entries: any[] = [];
-      for await (const entry of wrapped.readDir("dir")) {
-        entries.push(entry);
-      }
+      for await (const entry of wrapped.readDir("dir")) entries.push(entry);
+
       assertEquals(entries.length, 2);
       assertEquals(entries[0]?.name, "file1.ts");
 
-      // Test stat
       const stat = await wrapped.stat("test.ts");
       assertEquals(stat.size, 100);
       assertEquals(stat.isFile, true);
@@ -152,7 +131,6 @@ describe("Veryfront API Integration", { sanitizeResources: false, sanitizeOps: f
 
       const wrapped = wrapFSAdapter(mockFSAdapter as any);
 
-      // makeTempDir should throw
       try {
         await wrapped.makeTempDir("prefix");
         throw new Error("Should have thrown");
@@ -160,7 +138,6 @@ describe("Veryfront API Integration", { sanitizeResources: false, sanitizeOps: f
         assertEquals(error instanceof NotSupportedError, true);
       }
 
-      // watch should throw
       try {
         wrapped.watch("path");
         throw new Error("Should have thrown");

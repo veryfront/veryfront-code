@@ -20,9 +20,11 @@ export interface StreamState {
 
 export interface StreamCallbacks {
   onChunk?: (chunk: string) => void;
-  onUsage?: (
-    usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number },
-  ) => void;
+  onUsage?: (usage: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+  }) => void;
 }
 
 export function createStreamState(): StreamState {
@@ -139,7 +141,7 @@ export function processStreamData(
     let partial = "";
     let eventCount = 0;
 
-    const processLine = (line: string): void => {
+    function processLine(line: string): void {
       try {
         const rawEvent = JSON.parse(line);
         const parseResult = AgentStreamEventSchema.safeParse(rawEvent);
@@ -154,7 +156,20 @@ export function processStreamData(
       } catch (e) {
         logger.warn("[AGENT] Failed to parse stream line:", e);
       }
-    };
+    }
+
+    function processPartialLine(line: string): void {
+      try {
+        const rawEvent = JSON.parse(line);
+        const parseResult = AgentStreamEventSchema.safeParse(rawEvent);
+        if (!parseResult.success) return;
+
+        eventCount++;
+        handleStreamEvent(parseResult.data, state, controller, encoder, textPartId, callbacks);
+      } catch {
+        // Ignore trailing partial
+      }
+    }
 
     while (true) {
       const { done, value } = await reader.read();
@@ -176,18 +191,7 @@ export function processStreamData(
       }
     }
 
-    if (partial.trim()) {
-      try {
-        const rawEvent = JSON.parse(partial);
-        const parseResult = AgentStreamEventSchema.safeParse(rawEvent);
-        if (parseResult.success) {
-          eventCount++;
-          handleStreamEvent(parseResult.data, state, controller, encoder, textPartId, callbacks);
-        }
-      } catch {
-        // Ignore trailing partial
-      }
-    }
+    if (partial.trim()) processPartialLine(partial);
 
     setActiveSpanAttributes({
       "stream.event_count": eventCount,

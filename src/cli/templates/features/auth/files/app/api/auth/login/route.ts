@@ -4,7 +4,8 @@ import { sign } from "../../../../lib/jwt.ts";
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const { email, password } = await req.json();
+    const body = (await req.json()) as { email?: string; password?: string };
+    const { email, password } = body;
 
     if (!email || !password) {
       return Response.json({ error: "Email and password required" }, { status: 400 });

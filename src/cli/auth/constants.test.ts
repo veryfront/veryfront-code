@@ -47,7 +47,7 @@ describe("cli/auth/constants", () => {
   describe("getApiUrl", () => {
     it("should return default API URL when env has no override", () => {
       const env = {} as RuntimeEnv;
-      assertEquals(getApiUrl(env), "https://api.veryfront.com");
+      assertEquals(getApiUrl(env), DEFAULT_API_URL);
     });
 
     it("should return custom API URL from env", () => {

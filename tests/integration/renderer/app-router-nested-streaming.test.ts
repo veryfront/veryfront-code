@@ -1,10 +1,10 @@
-import { assert } from "@veryfront/testing/assert";
 import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
 import { join } from "@veryfront/compat/path";
-import { describe, it } from "@veryfront/testing/bdd";
-import { withTestContext } from "../../_helpers/context.ts";
 import { delay } from "@std/async";
+import { assert } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { scaleMs } from "@veryfront/testing";
+import { withTestContext } from "../../_helpers/context.ts";
 
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
 // See: https://github.com/facebook/react/issues/24669
@@ -20,36 +20,30 @@ describe(
     // Skipping until streaming behavior is more reliable
     it.skip("nested loading+error streaming", async () => {
       await withTestContext("app-router-nested-streaming", async (context) => {
-        // Remove default app and pages directories
         await remove(join(context.projectDir, "app"), { recursive: true });
         await remove(join(context.projectDir, "pages"), { recursive: true });
 
-        // Create minimal pages dir for fallback
         await mkdir(join(context.projectDir, "pages"), { recursive: true });
         await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home\n");
 
-        // Create nested app router structure: /a/b
         const segA = join(context.projectDir, "app", "a");
         const segB = join(segA, "b");
         await mkdir(segB, { recursive: true });
 
-        // Root layout with main
         await writeTextFile(
           join(context.projectDir, "app", "layout.tsx"),
           `export default function Root({ children }: any){ return (<html><body><main data-router-focus>{children}</main></body></html>); }`,
         );
 
-        // Segment A loading and error components
         await writeTextFile(
           join(segA, "loading.tsx"),
           `export default function Loading(){ return <p>Loading A...</p>; }`,
         );
         await writeTextFile(
           join(segA, "error.tsx"),
-          `export default function Error({ error }: any){ return <p>ErrA:{String(error&&error.message||error)}</p>; }`,
+          `export default function Error({ error }: any){ return <p>ErrA:{String(error?.message ?? error)}</p>; }`,
         );
 
-        // Segment B page that throws synchronously (async errors aren't caught by error boundaries in React)
         await writeTextFile(
           join(segB, "page.tsx"),
           `export default function Page(){ throw new Error('boom'); }`,
@@ -66,34 +60,30 @@ describe(
               projectDir: context.projectDir,
               enableHMR: false,
             }),
-          async (_server) => {
-            // Give server time to fully initialize routes
+          async () => {
             await delay(500);
 
-            // Fetch with timeout to avoid hanging test environments
             const ctrl = new AbortController();
             const timer = setTimeout(() => ctrl.abort(), scaleMs(5000));
+
             const res = await fetch(`http://127.0.0.1:${port}/a/b`, {
               signal: ctrl.signal,
             }).catch(() => new Response("", { status: 599 }));
+
             clearTimeout(timer);
+
             const html = await res.text();
 
-            // Accept 200 (success), 404 (route not found but rendering worked), 500 (error), or 599 (timeout)
-            // The test is checking that streaming with loading/error boundaries works,
-            // but the route discovery or rendering might not always complete in time
-            assert(
-              res.status === 200 || res.status === 404 || res.status === 500 || res.status === 599,
-            );
+            assert([200, 404, 500, 599].includes(res.status));
 
-            // If we got a successful response, verify it contains either loading or error state
-            if (res.status === 200 || res.status === 500) {
-              if (!(html.includes("Loading A...") || html.includes("ErrA:"))) {
-                console.error("[DEBUG] Status:", res.status);
-                console.error("[DEBUG] HTML received:\n", html.slice(0, 500));
-              }
-              assert(html.includes("Loading A...") || html.includes("ErrA:"));
+            if (res.status !== 200 && res.status !== 500) return;
+
+            const hasExpected = html.includes("Loading A...") || html.includes("ErrA:");
+            if (!hasExpected) {
+              console.error("[DEBUG] Status:", res.status);
+              console.error("[DEBUG] HTML received:\n", html.slice(0, 500));
             }
+            assert(hasExpected);
           },
         );
       });

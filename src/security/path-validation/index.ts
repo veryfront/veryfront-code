@@ -57,7 +57,7 @@ function getTargetPath(
     return { targetPath: joinPaths(baseDir, normalized) };
   }
 
-  if (!allowAbsolute && level === "strict") {
+  if (level === "strict" && !allowAbsolute) {
     return {
       valid: false,
       error: "Absolute paths not allowed in strict mode",
@@ -94,7 +94,7 @@ export async function validatePath(
     followSymlinks,
   );
 
-  if (isSymlink && level === "strict") {
+  if (level === "strict" && isSymlink) {
     return {
       valid: false,
       error: "Symlinks not allowed in strict mode",
@@ -151,6 +151,5 @@ export function sanitizePathForDisplay(path: string, baseDir: string): string {
     return normalized.slice(normalizedBase.length).replace(/^\//, "");
   }
 
-  const parts = normalized.split("/");
-  return parts.at(-1) || normalized;
+  return normalized.split("/").at(-1) ?? normalized;
 }

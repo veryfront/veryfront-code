@@ -33,8 +33,13 @@ export async function transformToESM(
   const transformStart = performance.now();
   const timings: Record<string, number> = {};
 
-  const { dev = true, jsxImportSource = "react", moduleServerUrl, vendorBundleHash, ssr = false } =
-    options;
+  const {
+    dev = true,
+    jsxImportSource = "react",
+    moduleServerUrl,
+    vendorBundleHash,
+    ssr = false,
+  } = options;
 
   const hashStart = performance.now();
   const contentHash = await computeShortContentHash(source);
@@ -123,13 +128,13 @@ export async function transformToESM(
   code = await resolveCrossProjectImports(code, { apiBaseUrl, ssr });
 
   if (ssr) {
-    const urlBlockResult = await blockExternalUrlImports(code, filePath);
-    code = urlBlockResult.code;
+    const { code: blockedCode, blockedUrls } = await blockExternalUrlImports(code, filePath);
+    code = blockedCode;
 
-    if (urlBlockResult.blockedUrls.length > 0) {
+    if (blockedUrls.length > 0) {
       logger.warn("[ESM-TRANSFORM] Blocked external URL imports in SSR mode", {
         file: filePath.slice(-60),
-        blockedUrls: urlBlockResult.blockedUrls,
+        blockedUrls,
       });
     }
 

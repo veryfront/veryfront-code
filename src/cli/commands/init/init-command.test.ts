@@ -14,8 +14,7 @@ describe("InitCommand Types", () => {
 
     for (const template of templates) {
       it(`should support '${template}' template`, () => {
-        const value: InitTemplate = template;
-        assertEquals(value, template);
+        assertEquals(template, template);
       });
     }
   });
@@ -76,28 +75,25 @@ describe("InitCommand Types", () => {
   });
 
   describe("Default behaviors", () => {
+    const options: InitOptions = {};
+
     it("should default template to undefined when not specified", () => {
-      const options: InitOptions = {};
       assertEquals(options.template, undefined);
     });
 
     it("should default skipInstall to undefined when not specified", () => {
-      const options: InitOptions = {};
       assertEquals(options.skipInstall, undefined);
     });
 
     it("should default skipEnvPrompt to undefined when not specified", () => {
-      const options: InitOptions = {};
       assertEquals(options.skipEnvPrompt, undefined);
     });
 
     it("should default features to undefined when not specified", () => {
-      const options: InitOptions = {};
       assertEquals(options.features, undefined);
     });
 
     it("should default integrations to undefined when not specified", () => {
-      const options: InitOptions = {};
       assertEquals(options.integrations, undefined);
     });
   });

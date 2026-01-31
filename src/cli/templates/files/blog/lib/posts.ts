@@ -35,8 +35,8 @@ function extractFrontmatter(content: string): { attrs: PostMeta; body: string } 
 }
 
 export async function getPosts(): Promise<Post[]> {
-  const posts: Post[] = [];
   const postsDir = getPostsDir();
+  const posts: Post[] = [];
 
   try {
     for await (const entry of fs.readDir(postsDir)) {
@@ -56,9 +56,8 @@ export async function getPosts(): Promise<Post[]> {
 }
 
 export async function getPost(slug: string): Promise<Post | null> {
-  const postsDir = getPostsDir();
-
   try {
+    const postsDir = getPostsDir();
     const content = await fs.readTextFile(join(postsDir, `${slug}.mdx`));
     const { attrs, body } = extractFrontmatter(content);
     return { slug, content: body, ...attrs };

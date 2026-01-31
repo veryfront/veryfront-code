@@ -14,9 +14,11 @@ export interface LRUTrackerInterface {
 export interface LRUNodeInterface<T> {
   key: string;
   entry: T;
-  prev: LRUNodeInterface<T> | null;
-  next: LRUNodeInterface<T> | null;
+  prev: LUNodeInterface<T> | null;
+  next: LUNodeInterface<T> | null;
 }
+
+type LUNodeInterface<T> = LRUNodeInterface<T>;
 
 export interface LRUListManagerInterface<T> {
   getTail(): LRUNodeInterface<T> | null;
@@ -85,8 +87,9 @@ export class EvictionManager<TEntry extends EvictableEntry> {
     listManager.removeNode(node);
     store.delete(node.key);
 
-    if (node.entry.tags) {
-      this.cleanupTags(node.entry.tags, node.key, tagIndex);
+    const tags = node.entry.tags;
+    if (tags) {
+      this.cleanupTags(tags, node.key, tagIndex);
     }
 
     this.onEvict?.(node.key, node.entry.value);
@@ -104,8 +107,7 @@ export class EvictionManager<TEntry extends EvictableEntry> {
   ): number {
     let size = currentSize;
 
-    while (store.size > maxEntries || size > maxSizeBytes) {
-      if (!listManager.getTail()) break;
+    while ((store.size > maxEntries || size > maxSizeBytes) && listManager.getTail()) {
       size = this.evictLRUFromList(listManager, store, tagIndex, size);
     }
 
@@ -140,12 +142,14 @@ export class EvictionManager<TEntry extends EvictableEntry> {
   }
 
   isExpired(entry: TEntry, ttl?: number, now: number = Date.now()): boolean {
-    if (typeof entry.expiry === "number") {
-      return now > entry.expiry;
+    const expiry = entry.expiry;
+    if (typeof expiry === "number") {
+      return now > expiry;
     }
 
-    if (typeof entry.timestamp === "number" && typeof ttl === "number") {
-      return now - entry.timestamp > ttl;
+    const timestamp = entry.timestamp;
+    if (typeof timestamp === "number" && typeof ttl === "number") {
+      return now - timestamp > ttl;
     }
 
     return false;

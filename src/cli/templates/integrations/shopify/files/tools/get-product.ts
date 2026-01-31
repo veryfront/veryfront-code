@@ -22,17 +22,17 @@ export default tool({
       createdAt: product.created_at,
       updatedAt: product.updated_at,
       publishedAt: product.published_at,
-      variants: product.variants.map(({ id, title, price, sku, inventory_quantity }) => ({
-        id,
-        title,
-        price,
-        sku,
-        inventoryQuantity: inventory_quantity,
+      variants: product.variants.map((variant) => ({
+        id: variant.id,
+        title: variant.title,
+        price: variant.price,
+        sku: variant.sku,
+        inventoryQuantity: variant.inventory_quantity,
       })),
-      images: product.images.map(({ id, src, alt }) => ({
-        id,
-        src,
-        alt,
+      images: product.images.map((image) => ({
+        id: image.id,
+        src: image.src,
+        alt: image.alt,
       })),
     };
   },

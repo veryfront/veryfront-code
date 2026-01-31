@@ -11,10 +11,7 @@ function withJoinedExtensions(basePath: string, filenameWithExtBase: string): st
   return SUPPORTED_EXTENSIONS.map((ext) => join(basePath, `${filenameWithExtBase}${ext}`));
 }
 
-export function generateAppRouterCandidates(
-  projectDir: string,
-  normalizedSlug: string,
-): string[] {
+export function generateAppRouterCandidates(projectDir: string, normalizedSlug: string): string[] {
   const appBase = join(projectDir, "app");
 
   if (!normalizedSlug) return withExtensions(appBase, "page");
@@ -35,15 +32,14 @@ export function generatePagesRouterCandidates(
   const isIndex = normalizedSlug === "" || normalizedSlug === "index";
 
   if (isIndex) {
-    return [
-      ...withExtensions(pagesBase, "index"),
-      ...withExtensions(projectDir, "index"),
-    ];
+    return [...withExtensions(pagesBase, "index"), ...withExtensions(projectDir, "index")];
   }
+
+  const pagesSlugBase = join(pagesBase, normalizedSlug);
 
   return [
     ...withJoinedExtensions(pagesBase, normalizedSlug),
-    ...withExtensions(join(pagesBase, normalizedSlug), "index"),
+    ...withExtensions(pagesSlugBase, "index"),
     ...withJoinedExtensions(projectDir, normalizedSlug),
   ];
 }

@@ -39,7 +39,7 @@ function createMockClient(overrides: MockClientOverrides = {}): ApiClient {
 async function expectErrorMessage(fn: () => Promise<unknown>): Promise<string | undefined> {
   try {
     await fn();
-    return undefined;
+    return;
   } catch (e) {
     return (e as Error).message;
   }

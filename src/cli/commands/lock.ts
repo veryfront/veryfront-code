@@ -12,61 +12,47 @@ interface LockOptions {
 }
 
 export async function lockCommand(options: LockOptions): Promise<void> {
-  const {
-    projectDir,
-    update = false,
-    verify = false,
-    clear = false,
-    list = false,
-    force = false,
-  } = options;
+  const { projectDir, update = false, verify = false, clear = false, list = false, force = false } =
+    options;
 
   const lockfile = createLockfileManager(projectDir);
 
-  if (list) {
-    await listLockfile(lockfile);
-    return;
-  }
-
-  if (clear) {
-    if (!force) {
-      const confirmed = await confirmPrompt("Are you sure you want to clear the lockfile?", false);
-      if (!confirmed) {
-        cliLogger.info("Clear operation cancelled.");
-        return;
-      }
-    }
-
-    await clearLockfile(lockfile);
-    return;
-  }
-
-  if (verify) {
-    await verifyLockfile(lockfile);
-    return;
-  }
-
-  if (update) {
-    await updateLockfile(lockfile);
-    return;
-  }
+  if (list) return listLockfile(lockfile);
+  if (clear) return clearLockfileWithConfirm(lockfile, force);
+  if (verify) return verifyLockfile(lockfile);
+  if (update) return updateLockfile(lockfile);
 
   await listLockfile(lockfile);
 }
 
-async function listLockfile(lockfile: ReturnType<typeof createLockfileManager>): Promise<void> {
-  const data = await lockfile.read();
-  const imports = data?.imports ?? {};
+async function clearLockfileWithConfirm(
+  lockfile: ReturnType<typeof createLockfileManager>,
+  force: boolean,
+): Promise<void> {
+  if (!force) {
+    const confirmed = await confirmPrompt("Are you sure you want to clear the lockfile?", false);
+    if (!confirmed) {
+      cliLogger.info("Clear operation cancelled.");
+      return;
+    }
+  }
 
-  if (Object.keys(imports).length === 0) {
+  await clearLockfile(lockfile);
+}
+
+async function listLockfile(lockfile: ReturnType<typeof createLockfileManager>): Promise<void> {
+  const imports = (await lockfile.read())?.imports ?? {};
+  const entries = Object.entries(imports);
+
+  if (entries.length === 0) {
     cliLogger.info("No lockfile entries found.");
     cliLogger.info("Remote imports will be locked automatically when you run 'veryfront dev'.");
     return;
   }
 
-  cliLogger.info(`Lockfile contains ${Object.keys(imports).length} entries:\n`);
+  cliLogger.info(`Lockfile contains ${entries.length} entries:\n`);
 
-  for (const [url, entry] of Object.entries(imports)) {
+  for (const [url, entry] of entries) {
     cliLogger.info(`  ${url}`);
     cliLogger.info(`    → ${entry.resolved}`);
     cliLogger.info(`    ✓ ${entry.integrity.slice(0, 20)}...`);
@@ -88,10 +74,10 @@ async function clearLockfile(lockfile: ReturnType<typeof createLockfileManager>)
 }
 
 async function verifyLockfile(lockfile: ReturnType<typeof createLockfileManager>): Promise<void> {
-  const data = await lockfile.read();
-  const imports = data?.imports ?? {};
+  const imports = (await lockfile.read())?.imports ?? {};
+  const entries = Object.entries(imports);
 
-  if (Object.keys(imports).length === 0) {
+  if (entries.length === 0) {
     cliLogger.info("No lockfile entries to verify.");
     return;
   }
@@ -106,7 +92,7 @@ async function verifyLockfile(lockfile: ReturnType<typeof createLockfileManager>
   const { computeIntegrity } = await import("#veryfront/utils/import-lockfile.ts");
 
   try {
-    for (const [url, entry] of Object.entries(imports)) {
+    for (const [url, entry] of entries) {
       try {
         const response = await fetch(entry.resolved, {
           headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
@@ -118,8 +104,7 @@ async function verifyLockfile(lockfile: ReturnType<typeof createLockfileManager>
           continue;
         }
 
-        const content = await response.text();
-        const integrity = await computeIntegrity(content);
+        const integrity = await computeIntegrity(await response.text());
 
         if (integrity !== entry.integrity) {
           failed++;
@@ -152,10 +137,10 @@ async function verifyLockfile(lockfile: ReturnType<typeof createLockfileManager>
 }
 
 async function updateLockfile(lockfile: ReturnType<typeof createLockfileManager>): Promise<void> {
-  const data = await lockfile.read();
-  const imports = data?.imports ?? {};
+  const imports = (await lockfile.read())?.imports ?? {};
+  const urls = Object.keys(imports);
 
-  if (Object.keys(imports).length === 0) {
+  if (urls.length === 0) {
     cliLogger.info("No lockfile entries to update.");
     cliLogger.info("Run 'veryfront dev' to populate the lockfile.");
     return;
@@ -170,7 +155,7 @@ async function updateLockfile(lockfile: ReturnType<typeof createLockfileManager>
   const { computeIntegrity } = await import("#veryfront/utils/import-lockfile.ts");
 
   try {
-    for (const url of Object.keys(imports)) {
+    for (const url of urls) {
       try {
         const response = await fetch(url, {
           headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
@@ -182,12 +167,10 @@ async function updateLockfile(lockfile: ReturnType<typeof createLockfileManager>
           continue;
         }
 
-        const content = await response.text();
-        const resolvedUrl = response.url || url;
-        const integrity = await computeIntegrity(content);
+        const integrity = await computeIntegrity(await response.text());
 
         await lockfile.set(url, {
-          resolved: resolvedUrl,
+          resolved: response.url || url,
           integrity,
           fetchedAt: new Date().toISOString(),
         });

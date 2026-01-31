@@ -56,15 +56,15 @@ export class RequestHandler {
   }
 
   private logRequest(method: string, pathname: string, status: number, start: number): void {
-    // Skip internal endpoints to reduce noise
     if (pathname.startsWith("/_dev/") || pathname.startsWith("/_veryfront/")) return;
 
     const duration = Math.round(performance.now() - start);
-    getLogBuffer().info(
-      `${method} ${pathname} → ${status} (${duration}ms)`,
-      "http",
-      { method, path: pathname, status, duration },
-    );
+    getLogBuffer().info(`${method} ${pathname} → ${status} (${duration}ms)`, "http", {
+      method,
+      path: pathname,
+      status,
+      duration,
+    });
   }
 
   private handleHealthCheck(pathname: string): Response | null {
@@ -75,15 +75,13 @@ export class RequestHandler {
       });
     }
 
-    if (pathname === "/readyz") {
-      const ready = this.isReady();
-      return new Response(ready ? "ready" : "not-ready", {
-        status: ready ? HTTP_OK : HTTP_UNAVAILABLE,
-        headers: { "content-type": "text/plain" },
-      });
-    }
+    if (pathname !== "/readyz") return null;
 
-    return null;
+    const ready = this.isReady();
+    return new Response(ready ? "ready" : "not-ready", {
+      status: ready ? HTTP_OK : HTTP_UNAVAILABLE,
+      headers: { "content-type": "text/plain" },
+    });
   }
 
   private incrementRequestMetrics(): void {
@@ -102,22 +100,25 @@ export class RequestHandler {
       "X-Content-Type-Options": "nosniff",
     });
 
-    if (normalized === DEV_SERVER_ENDPOINTS.HMR_RUNTIME) {
-      if (!this.hmrServer) return null;
-      if (isHeadRequest) return builder.withContentType(HTTP_CONTENT_TYPES.JS, "", HTTP_OK);
+    switch (normalized) {
+      case DEV_SERVER_ENDPOINTS.HMR_RUNTIME: {
+        if (!this.hmrServer) return null;
+        if (isHeadRequest) return builder.withContentType(HTTP_CONTENT_TYPES.JS, "", HTTP_OK);
 
-      const runtime = this.getHMRRuntime();
-      if (runtime === null) return null;
+        const runtime = this.getHMRRuntime();
+        if (runtime === null) return null;
 
-      return builder.withContentType(HTTP_CONTENT_TYPES.JS, runtime, HTTP_OK);
+        return builder.withContentType(HTTP_CONTENT_TYPES.JS, runtime, HTTP_OK);
+      }
+
+      case DEV_SERVER_ENDPOINTS.ERROR_OVERLAY: {
+        const overlay = isHeadRequest ? null : ErrorOverlay.getRuntime();
+        return builder.withContentType(HTTP_CONTENT_TYPES.JS, overlay, HTTP_OK);
+      }
+
+      default:
+        return null;
     }
-
-    if (normalized === DEV_SERVER_ENDPOINTS.ERROR_OVERLAY) {
-      const overlay = isHeadRequest ? null : ErrorOverlay.getRuntime();
-      return builder.withContentType(HTTP_CONTENT_TYPES.JS, overlay, HTTP_OK);
-    }
-
-    return null;
   }
 
   private normalizeDevEndpoint(pathname: string): string | null {
@@ -127,7 +128,6 @@ export class RequestHandler {
     ]);
 
     if (validEndpoints.has(pathname)) return pathname;
-
     if (!pathname.startsWith("/__veryfront/")) return null;
 
     const rewritten = pathname.replace("/__veryfront/", "/_veryfront/");
@@ -135,9 +135,7 @@ export class RequestHandler {
   }
 
   private getHMRRuntime(): string | null {
-    const runtimeProvider = this.hmrServer as unknown as
-      | { getHMRRuntime?: () => string }
-      | undefined;
+    const runtimeProvider = this.hmrServer as { getHMRRuntime?: () => string } | undefined;
     if (typeof runtimeProvider?.getHMRRuntime !== "function") return null;
 
     try {
@@ -154,11 +152,8 @@ export class RequestHandler {
       this.universalHandler = createVeryfrontHandler(this.projectDir, this.adapter, {
         projectDir: this.projectDir,
         debug: this.isDebug(),
-        // Module server is integrated into main server at /_vf_modules/
-        // Use relative path since modules are served on the same server
         moduleServerUrl: "/_vf_modules",
         config: this.config,
-        // Dev server always runs in local development mode
         envConfig: { isLocalDev: true },
       });
     }
@@ -169,28 +164,19 @@ export class RequestHandler {
   invalidateUniversalHandler(): void {
     this.universalHandler = undefined;
 
-    // Also reset the API handler cache to pick up new/modified handlers
     resetApiHandler(this.projectDir).catch((error) => {
       logger.debug("[dev] resetApiHandler failed", error);
     });
 
-    // Clear config cache so HMR picks up config changes
     clearConfigCache();
-
-    // Clear layout discovery cache so HMR picks up layout changes
     clearLayoutDiscoveryCache();
   }
 
   private handleServerError(error: unknown): Response {
     logger.error("Server error:", error);
 
-    // Capture error for MCP flywheel
     const err = error as Error;
-    getErrorCollector().addRuntimeError(
-      err.message,
-      err.stack,
-      { source: "request-handler" },
-    );
+    getErrorCollector().addRuntimeError(err.message, err.stack, { source: "request-handler" });
 
     return new Response(
       ErrorOverlay.createHTML({

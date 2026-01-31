@@ -18,6 +18,9 @@ if (!isDeno) {
 } else {
   const { DenoAdapter, denoAdapter } = await import("./adapter.ts");
 
+  const testFilePath = new URL(import.meta.url).pathname;
+  const testDirPath = new URL(".", import.meta.url).pathname;
+
   describe("DenoAdapter", () => {
     describe("class instantiation", () => {
       it("should be instantiable", () => {
@@ -119,28 +122,21 @@ if (!isDeno) {
 
     describe("fs behavioral tests", () => {
       it("should read a file that exists", async () => {
-        // Read this test file itself
-        const content = await denoAdapter.fs.readFile(
-          new URL(import.meta.url).pathname,
-        );
+        const content = await denoAdapter.fs.readFile(testFilePath);
         assertExists(content);
         assertEquals(typeof content, "string");
         assertEquals(content.includes("DenoAdapter"), true);
       });
 
       it("should read file bytes", async () => {
-        const bytes = await denoAdapter.fs.readFileBytes(
-          new URL(import.meta.url).pathname,
-        );
+        const bytes = await denoAdapter.fs.readFileBytes(testFilePath);
         assertExists(bytes);
         assertEquals(bytes instanceof Uint8Array, true);
         assertEquals(bytes.length > 0, true);
       });
 
       it("should return true for file that exists", async () => {
-        const exists = await denoAdapter.fs.exists(
-          new URL(import.meta.url).pathname,
-        );
+        const exists = await denoAdapter.fs.exists(testFilePath);
         assertEquals(exists, true);
       });
 
@@ -150,9 +146,7 @@ if (!isDeno) {
       });
 
       it("should stat a file", async () => {
-        const info = await denoAdapter.fs.stat(
-          new URL(import.meta.url).pathname,
-        );
+        const info = await denoAdapter.fs.stat(testFilePath);
         assertExists(info);
         assertEquals(info.isFile, true);
         assertEquals(info.isDirectory, false);
@@ -160,40 +154,39 @@ if (!isDeno) {
       });
 
       it("should stat a directory", async () => {
-        const dir = new URL(".", import.meta.url).pathname;
-        const info = await denoAdapter.fs.stat(dir);
+        const info = await denoAdapter.fs.stat(testDirPath);
         assertExists(info);
         assertEquals(info.isDirectory, true);
         assertEquals(info.isFile, false);
       });
 
       it("should read a directory", async () => {
-        const dir = new URL(".", import.meta.url).pathname;
         const entries: Array<{ name: string; isFile: boolean; isDirectory: boolean }> = [];
-        for await (const entry of denoAdapter.fs.readDir(dir)) {
+        for await (const entry of denoAdapter.fs.readDir(testDirPath)) {
           entries.push(entry);
         }
+
         assertEquals(entries.length > 0, true);
-        // This test file should be in the directory
+
         const thisFile = entries.find((e) => e.name === "adapter.test.ts");
         assertExists(thisFile);
-        assertEquals(thisFile!.isFile, true);
+        assertEquals(thisFile.isFile, true);
       });
 
       it("should create and remove temp dir", async () => {
         const tmpDir = await denoAdapter.fs.makeTempDir("test-deno-adapter-");
         assertExists(tmpDir);
-        const exists = await denoAdapter.fs.exists(tmpDir);
-        assertEquals(exists, true);
+
+        assertEquals(await denoAdapter.fs.exists(tmpDir), true);
 
         await denoAdapter.fs.remove(tmpDir, { recursive: true });
-        const existsAfter = await denoAdapter.fs.exists(tmpDir);
-        assertEquals(existsAfter, false);
+        assertEquals(await denoAdapter.fs.exists(tmpDir), false);
       });
 
       it("should write and read a file", async () => {
         const tmpDir = await denoAdapter.fs.makeTempDir("test-write-");
         const filePath = `${tmpDir}/test.txt`;
+
         try {
           await denoAdapter.fs.writeFile(filePath, "hello from test");
           const content = await denoAdapter.fs.readFile(filePath);
@@ -206,6 +199,7 @@ if (!isDeno) {
       it("should create nested directories", async () => {
         const tmpDir = await denoAdapter.fs.makeTempDir("test-mkdir-");
         const nestedDir = `${tmpDir}/a/b/c`;
+
         try {
           await denoAdapter.fs.mkdir(nestedDir, { recursive: true });
           const info = await denoAdapter.fs.stat(nestedDir);
@@ -244,7 +238,6 @@ if (!isDeno) {
       it("should set and get env var", () => {
         denoAdapter.env.set(testKey, "adapter-test-value");
         assertEquals(denoAdapter.env.get(testKey), "adapter-test-value");
-        // Clean up
         Deno.env.delete(testKey);
       });
 
@@ -282,13 +275,13 @@ if (!isDeno) {
 
     describe("shell behavioral tests", () => {
       it("should statSync a file", () => {
-        const stat = denoAdapter.shell.statSync(new URL(import.meta.url).pathname);
+        const stat = denoAdapter.shell.statSync(testFilePath);
         assertEquals(stat.isFile, true);
         assertEquals(stat.isDirectory, false);
       });
 
       it("should statSync a directory", () => {
-        const stat = denoAdapter.shell.statSync(new URL(".", import.meta.url).pathname);
+        const stat = denoAdapter.shell.statSync(testDirPath);
         assertEquals(stat.isDirectory, true);
         assertEquals(stat.isFile, false);
       });
@@ -303,7 +296,7 @@ if (!isDeno) {
       });
 
       it("should readFileSync a file", () => {
-        const content = denoAdapter.shell.readFileSync(new URL(import.meta.url).pathname);
+        const content = denoAdapter.shell.readFileSync(testFilePath);
         assertEquals(typeof content, "string");
         assertEquals(content.includes("DenoAdapter"), true);
       });
@@ -331,7 +324,7 @@ if (!isDeno) {
 
       it("should handle shutdown when no server is running", async () => {
         const adapter = new DenoAdapter();
-        await adapter.shutdown(); // Should not throw
+        await adapter.shutdown();
       });
     });
   });
@@ -347,17 +340,18 @@ if (!isDeno) {
   });
 
   describe("diffSnapshots helper (via file watcher)", () => {
-    // Test the file watching functionality indirectly
     it("should create a file watcher", () => {
       const tmpDir = Deno.makeTempDirSync({ prefix: "test-watch-" });
+
       try {
         const controller = new AbortController();
         const watcher = denoAdapter.fs.watch(tmpDir, {
           recursive: false,
           signal: controller.signal,
         });
+
         assertExists(watcher);
-        // Close immediately
+
         watcher.close();
         controller.abort();
       } finally {

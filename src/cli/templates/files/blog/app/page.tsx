@@ -6,7 +6,9 @@ export default async function HomePage(): Promise<JSX.Element> {
 
   return (
     <div>
-      <h1 className="mb-8 text-3xl font-bold text-neutral-900 dark:text-white">Latest Posts</h1>
+      <h1 className="mb-8 text-3xl font-bold text-neutral-900 dark:text-white">
+        Latest Posts
+      </h1>
       <BlogPostList posts={posts} />
     </div>
   );

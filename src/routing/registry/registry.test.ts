@@ -24,6 +24,10 @@ function makeCtx(): HandlerContext {
   };
 }
 
+function makeReq(): Request {
+  return new Request("http://localhost/test");
+}
+
 describe("routing/registry/RouteRegistry", () => {
   describe("register()", () => {
     it("should register a handler", () => {
@@ -81,8 +85,7 @@ describe("routing/registry/RouteRegistry", () => {
         }),
       );
 
-      const req = new Request("http://localhost/test");
-      const result = await registry.execute(req, makeCtx());
+      const result = await registry.execute(makeReq(), makeCtx());
       assertEquals(result?.status, 200);
     });
 
@@ -95,8 +98,7 @@ describe("routing/registry/RouteRegistry", () => {
         }),
       );
 
-      const req = new Request("http://localhost/test");
-      const result = await registry.execute(req, makeCtx());
+      const result = await registry.execute(makeReq(), makeCtx());
       assertEquals(result?.status, 200);
       assertEquals(await result?.text(), "found");
     });
@@ -105,8 +107,7 @@ describe("routing/registry/RouteRegistry", () => {
       const registry = new RouteRegistry();
       registry.register(makeHandler("pass", 100, { continue: true }));
 
-      const req = new Request("http://localhost/test");
-      const result = await registry.execute(req, makeCtx());
+      const result = await registry.execute(makeReq(), makeCtx());
       assertEquals(result, null);
     });
 
@@ -119,8 +120,7 @@ describe("routing/registry/RouteRegistry", () => {
         }),
       );
 
-      const req = new Request("http://localhost/test");
-      const result = await registry.execute(req, makeCtx());
+      const result = await registry.execute(makeReq(), makeCtx());
       assertEquals(result, null);
     });
 
@@ -140,8 +140,7 @@ describe("routing/registry/RouteRegistry", () => {
         }),
       );
 
-      const req = new Request("http://localhost/test");
-      const result = await registry.execute(req, makeCtx());
+      const result = await registry.execute(makeReq(), makeCtx());
       assertEquals(await result?.text(), "enabled");
     });
 
@@ -149,10 +148,9 @@ describe("routing/registry/RouteRegistry", () => {
       const registry = new RouteRegistry();
       const errorHandler: Handler = {
         metadata: { name: "erroring", priority: 100 },
-        handle: () => {
-          return Promise.reject(new Error("handler error"));
-        },
+        handle: () => Promise.reject(new Error("handler error")),
       };
+
       registry.register(errorHandler);
       registry.register(
         makeHandler("fallback", 200, {
@@ -160,16 +158,14 @@ describe("routing/registry/RouteRegistry", () => {
         }),
       );
 
-      const req = new Request("http://localhost/test");
-      const result = await registry.execute(req, makeCtx());
+      const result = await registry.execute(makeReq(), makeCtx());
       assertEquals(result?.status, 200);
       assertEquals(await result?.text(), "fallback");
     });
 
     it("should return null on empty registry", async () => {
       const registry = new RouteRegistry();
-      const req = new Request("http://localhost/test");
-      const result = await registry.execute(req, makeCtx());
+      const result = await registry.execute(makeReq(), makeCtx());
       assertEquals(result, null);
     });
   });

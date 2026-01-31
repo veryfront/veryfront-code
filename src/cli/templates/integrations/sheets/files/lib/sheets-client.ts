@@ -6,7 +6,6 @@
 
 import { getValidToken } from "./oauth.ts";
 
-// Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
   // @ts-ignore - Deno global
   if (typeof Deno !== "undefined") return Deno.env.get(key);
@@ -73,9 +72,6 @@ export interface WriteRangeOptions {
   valueInputOption?: "RAW" | "USER_ENTERED";
 }
 
-/**
- * Google Sheets OAuth provider configuration
- */
 export const sheetsOAuthProvider = {
   name: "sheets",
   authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -89,9 +85,6 @@ export const sheetsOAuthProvider = {
   callbackPath: "/api/auth/sheets/callback",
 };
 
-/**
- * Create a Sheets client for a specific user
- */
 export function createSheetsClient(userId: string): {
   listSpreadsheets(options?: {
     maxResults?: number;
@@ -130,10 +123,8 @@ export function createSheetsClient(userId: string): {
 } {
   async function getAccessToken(): Promise<string> {
     const token = await getValidToken(sheetsOAuthProvider, userId, "sheets");
-    if (!token) {
-      throw new Error("Google Sheets not connected. Please connect your Google account first.");
-    }
-    return token;
+    if (token) return token;
+    throw new Error("Google Sheets not connected. Please connect your Google account first.");
   }
 
   async function apiRequest<T>(
@@ -170,9 +161,6 @@ export function createSheetsClient(userId: string): {
   }
 
   return {
-    /**
-     * List spreadsheets from Google Drive
-     */
     async listSpreadsheets(options: {
       maxResults?: number;
       orderBy?: "createdTime" | "modifiedTime" | "name";
@@ -188,16 +176,10 @@ export function createSheetsClient(userId: string): {
       return result.files ?? [];
     },
 
-    /**
-     * Get spreadsheet metadata
-     */
     getSpreadsheet(spreadsheetId: string): Promise<Spreadsheet> {
       return sheetsApiRequest<Spreadsheet>(`/spreadsheets/${spreadsheetId}`);
     },
 
-    /**
-     * Read data from a range
-     */
     async readRange(spreadsheetId: string, range: string): Promise<CellData> {
       const result = await sheetsApiRequest<{ values?: unknown[][]; range: string }>(
         `/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`,
@@ -206,12 +188,9 @@ export function createSheetsClient(userId: string): {
       return { values: result.values ?? [], range: result.range };
     },
 
-    /**
-     * Read multiple ranges at once
-     */
     async readRanges(spreadsheetId: string, ranges: string[]): Promise<CellData[]> {
       const params = new URLSearchParams();
-      for (const range of ranges) params.append("ranges", range);
+      ranges.forEach((range) => params.append("ranges", range));
 
       const result = await sheetsApiRequest<{
         valueRanges: Array<{ values?: unknown[][]; range: string }>;
@@ -220,19 +199,16 @@ export function createSheetsClient(userId: string): {
       return result.valueRanges.map((vr) => ({ values: vr.values ?? [], range: vr.range }));
     },
 
-    /**
-     * Write data to a range
-     */
     writeRange(options: WriteRangeOptions): Promise<{
       updatedRange: string;
       updatedRows: number;
       updatedColumns: number;
       updatedCells: number;
     }> {
+      const valueInputOption = options.valueInputOption ?? "USER_ENTERED";
+
       return sheetsApiRequest(
-        `/spreadsheets/${options.spreadsheetId}/values/${encodeURIComponent(options.range)}?valueInputOption=${
-          options.valueInputOption ?? "USER_ENTERED"
-        }`,
+        `/spreadsheets/${options.spreadsheetId}/values/${encodeURIComponent(options.range)}?valueInputOption=${valueInputOption}`,
         {
           method: "PUT",
           body: JSON.stringify({ values: options.values }),
@@ -240,9 +216,6 @@ export function createSheetsClient(userId: string): {
       );
     },
 
-    /**
-     * Append data to a range
-     */
     appendRange(
       spreadsheetId: string,
       range: string,
@@ -265,18 +238,12 @@ export function createSheetsClient(userId: string): {
       );
     },
 
-    /**
-     * Clear a range
-     */
     clearRange(spreadsheetId: string, range: string): Promise<{ clearedRange: string }> {
       return sheetsApiRequest(`/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:clear`, {
         method: "POST",
       });
     },
 
-    /**
-     * Create a new spreadsheet
-     */
     createSpreadsheet(options: CreateSpreadsheetOptions): Promise<Spreadsheet> {
       const body: {
         properties: { title: string };
@@ -306,9 +273,6 @@ export function createSheetsClient(userId: string): {
       });
     },
 
-    /**
-     * Add a new sheet to an existing spreadsheet
-     */
     async addSheet(
       spreadsheetId: string,
       title: string,
@@ -341,9 +305,6 @@ export function createSheetsClient(userId: string): {
       return { properties };
     },
 
-    /**
-     * Delete a sheet from a spreadsheet
-     */
     async deleteSheet(spreadsheetId: string, sheetId: number): Promise<void> {
       await sheetsApiRequest(`/spreadsheets/${spreadsheetId}:batchUpdate`, {
         method: "POST",

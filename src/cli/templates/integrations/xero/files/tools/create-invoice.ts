@@ -32,7 +32,15 @@ export default tool({
       .optional()
       .describe("Invoice status (defaults to DRAFT)"),
   }),
-  async execute({ contactId, type, date, dueDate, lineItems, reference, status }) {
+  async execute({
+    contactId,
+    type,
+    date,
+    dueDate,
+    lineItems,
+    reference,
+    status,
+  }) {
     const invoice = await createInvoice({
       contactId,
       type,

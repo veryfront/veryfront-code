@@ -125,9 +125,7 @@ export class ModuleResolver {
     }
 
     for (const key of this.cache.keys()) {
-      if (key.includes(pattern)) {
-        this.cache.delete(key);
-      }
+      if (key.includes(pattern)) this.cache.delete(key);
     }
   }
 

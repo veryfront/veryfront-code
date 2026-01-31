@@ -9,7 +9,6 @@ export class MemoryRateLimitStore implements RateLimitStore {
 
   constructor(private cleanupIntervalMs = WINDOW_MS) {
     if (typeof setInterval === "undefined") return;
-
     this.cleanupInterval = setInterval(() => this.cleanup(), cleanupIntervalMs);
   }
 
@@ -30,7 +29,7 @@ export class MemoryRateLimitStore implements RateLimitStore {
     state.requestTimestamps?.push(now);
 
     const timestamps = state.requestTimestamps;
-    if (timestamps && timestamps.length > MAX_TIMESTAMPS_PER_KEY) {
+    if (timestamps?.length && timestamps.length > MAX_TIMESTAMPS_PER_KEY) {
       const windowStart = state.resetTime - WINDOW_MS;
       const filtered = timestamps.filter((t) => t >= windowStart);
       state.requestTimestamps = filtered.length > MAX_TIMESTAMPS_PER_KEY

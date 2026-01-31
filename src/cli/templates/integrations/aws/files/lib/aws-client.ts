@@ -1,6 +1,6 @@
-import { S3Client, ListBucketsCommand, ListObjectsV2Command, GetObjectCommand } from '@aws-sdk/client-s3';
 import { EC2Client, DescribeInstancesCommand } from '@aws-sdk/client-ec2';
 import { LambdaClient, ListFunctionsCommand } from '@aws-sdk/client-lambda';
+import { GetObjectCommand, ListBucketsCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
 
 interface AWSClientConfig {
   region?: string;
@@ -74,6 +74,10 @@ export class AWSClient {
     return new LambdaClient({ region: region ?? this.region, credentials: this.credentials });
   }
 
+  private formatErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : 'Unknown error';
+  }
+
   async listS3Buckets(): Promise<S3Bucket[]> {
     const client = this.getS3Client();
 
@@ -84,7 +88,7 @@ export class AWSClient {
         creationDate: bucket.CreationDate,
       }));
     } catch (error) {
-      throw new Error(`Failed to list S3 buckets: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`Failed to list S3 buckets: ${this.formatErrorMessage(error)}`);
     }
   }
 
@@ -108,9 +112,7 @@ export class AWSClient {
         storageClass: object.StorageClass,
       }));
     } catch (error) {
-      throw new Error(
-        `Failed to list S3 objects in bucket ${bucket}: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
+      throw new Error(`Failed to list S3 objects in bucket ${bucket}: ${this.formatErrorMessage(error)}`);
     }
   }
 
@@ -125,15 +127,11 @@ export class AWSClient {
         }),
       );
 
-      if (!response.Body) {
-        throw new Error('Object body is empty');
-      }
+      if (!response.Body) throw new Error('Object body is empty');
 
-      return await response.Body.transformToString();
+      return response.Body.transformToString();
     } catch (error) {
-      throw new Error(
-        `Failed to get S3 object ${key} from bucket ${bucket}: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
+      throw new Error(`Failed to get S3 object ${key} from bucket ${bucket}: ${this.formatErrorMessage(error)}`);
     }
   }
 
@@ -160,7 +158,7 @@ export class AWSClient {
         }),
       );
     } catch (error) {
-      throw new Error(`Failed to list EC2 instances: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`Failed to list EC2 instances: ${this.formatErrorMessage(error)}`);
     }
   }
 
@@ -182,7 +180,7 @@ export class AWSClient {
         description: func.Description,
       }));
     } catch (error) {
-      throw new Error(`Failed to list Lambda functions: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`Failed to list Lambda functions: ${this.formatErrorMessage(error)}`);
     }
   }
 }
@@ -191,6 +189,7 @@ let awsClient: AWSClient | null = null;
 
 export function getAWSClient(config?: AWSClientConfig): AWSClient {
   if (awsClient) return awsClient;
+
   awsClient = new AWSClient(config);
   return awsClient;
 }

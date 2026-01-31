@@ -89,7 +89,8 @@ export class LogBuffer {
     }
 
     if (filter.pattern) {
-      const pattern = filter.pattern;
+      const { pattern } = filter;
+
       if (typeof pattern === "string") {
         const lower = pattern.toLowerCase();
         results = results.filter((e) => e.message.toLowerCase().includes(lower));
@@ -99,11 +100,10 @@ export class LogBuffer {
     }
 
     if (filter.since != null) {
-      const since = filter.since;
-      results = results.filter((e) => e.timestamp >= since);
+      results = results.filter((e) => e.timestamp >= filter.since!);
     }
 
-    if (filter.limit != null && results.length > filter.limit) {
+    if (filter.limit != null) {
       results = results.slice(-filter.limit);
     }
 
@@ -147,6 +147,7 @@ export class LogBuffer {
 
   format(entries?: LogEntry[]): string {
     const logs = entries ?? this.entries;
+
     return logs
       .map((e) => {
         const time = new Date(e.timestamp).toISOString().slice(11, 23);
@@ -183,6 +184,7 @@ export function interceptConsole(buffer: LogBuffer, source = "console"): () => v
     return args
       .map((a) => {
         if (typeof a === "string") return a;
+
         try {
           return JSON.stringify(a);
         } catch {

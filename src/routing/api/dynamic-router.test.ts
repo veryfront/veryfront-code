@@ -10,7 +10,7 @@ function createRouter(): DynamicRouter {
   return router;
 }
 
-afterEach(() => {
+afterEach((): void => {
   for (const router of routers.splice(0)) router.destroy();
 });
 

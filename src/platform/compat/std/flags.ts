@@ -55,6 +55,8 @@ function nodeParse(args: string[], options: ParseOptions = {}): Args {
 
   const booleans = new Set(getBooleanKeys(options.boolean));
   const strings = new Set(toStringArray(options.string));
+  const collectKeys = new Set(toStringArray(options.collect));
+  const negatables = new Set(toStringArray(options.negatable));
 
   const aliasMap: Record<string, string> = {};
   const aliasGroups: Record<string, string[]> = {};
@@ -69,8 +71,6 @@ function nodeParse(args: string[], options: ParseOptions = {}): Args {
     for (const a of aliasList) aliasGroups[a] = group;
   }
 
-  const collectKeys = new Set(toStringArray(options.collect));
-
   function setWithAliases(key: string, value: unknown): void {
     const keysToSet = aliasGroups[key] ?? [key];
 
@@ -80,8 +80,9 @@ function nodeParse(args: string[], options: ParseOptions = {}): Args {
         continue;
       }
 
-      if (!Array.isArray(result[k])) {
-        result[k] = result[k] !== undefined ? [result[k]] : [];
+      const existing = result[k];
+      if (!Array.isArray(existing)) {
+        result[k] = existing !== undefined ? [existing] : [];
       }
       (result[k] as unknown[]).push(value);
     }
@@ -90,8 +91,6 @@ function nodeParse(args: string[], options: ParseOptions = {}): Args {
   for (const [key, value] of Object.entries(defaults)) {
     result[key] = value;
   }
-
-  const negatables = toStringArray(options.negatable);
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -116,9 +115,9 @@ function nodeParse(args: string[], options: ParseOptions = {}): Args {
       const key = arg.slice(2);
       const realKey = aliasMap[key] ?? key;
 
-      if (key.startsWith("no-") && negatables.length > 0) {
+      if (key.startsWith("no-") && negatables.size > 0) {
         const baseKey = key.slice(3);
-        if (negatables.includes(baseKey)) {
+        if (negatables.has(baseKey)) {
           setWithAliases(baseKey, false);
           continue;
         }

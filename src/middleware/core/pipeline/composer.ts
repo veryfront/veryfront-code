@@ -22,15 +22,13 @@ export function composeMiddleware(
       index = i;
 
       if (i === chain.length) {
-        const result = finalNext();
-        return result instanceof Promise ? result : Promise.resolve(result);
+        return Promise.resolve(finalNext());
       }
 
       const middleware = chain[i];
       if (!middleware) return Promise.resolve(undefined);
 
-      const result = middleware(context, () => dispatch(i + 1));
-      return result instanceof Promise ? result : Promise.resolve(result);
+      return Promise.resolve(middleware(context, () => dispatch(i + 1)));
     }
 
     return dispatch(0);

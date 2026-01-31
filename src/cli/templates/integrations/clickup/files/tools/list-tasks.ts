@@ -20,6 +20,13 @@ export default tool({
     limit: z.number().min(1).max(50).default(20).describe("Maximum number of tasks to return"),
   }),
   async execute({ listId, folderId, spaceId, assignedToMe, includeClosed, statuses, orderBy, limit }) {
+    if (!assignedToMe && !listId && !folderId && !spaceId) {
+      return {
+        tasks: [],
+        message: "Please specify either a listId, folderId, spaceId, or set assignedToMe to true",
+      };
+    }
+
     let tasks;
 
     if (assignedToMe) {
@@ -41,17 +48,12 @@ export default tool({
         statuses,
         orderBy,
       });
-    } else if (listId) {
-      tasks = await listTasks({ listId, includeClosed, statuses, orderBy });
-    } else if (folderId) {
-      tasks = await listTasks({ folderId, includeClosed, statuses, orderBy });
-    } else if (spaceId) {
-      tasks = await listTasks({ spaceId, includeClosed, statuses, orderBy });
     } else {
-      return {
-        tasks: [],
-        message: "Please specify either a listId, folderId, spaceId, or set assignedToMe to true",
-      };
+      const params = { includeClosed, statuses, orderBy };
+
+      if (listId) tasks = await listTasks({ ...params, listId });
+      else if (folderId) tasks = await listTasks({ ...params, folderId });
+      else tasks = await listTasks({ ...params, spaceId: spaceId! });
     }
 
     return tasks.slice(0, limit).map((task) => ({

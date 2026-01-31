@@ -12,13 +12,11 @@ export default tool({
   async execute({ includeAvatar }) {
     const user = await getCurrentUser();
 
-    const avatar = includeAvatar ? getAvatarUrl(user) : undefined;
-
     return {
       id: user.id,
       username: formatUsername(user),
       globalName: user.global_name,
-      avatar,
+      avatar: includeAvatar ? getAvatarUrl(user) : undefined,
       bot: user.bot,
       system: user.system,
       mfaEnabled: user.mfa_enabled,

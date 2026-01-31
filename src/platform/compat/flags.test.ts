@@ -20,29 +20,27 @@ describe("Flags Compat", () => {
 
     it("parses empty args", () => {
       const parsed = parse([]);
+
       assertEquals(parsed._, []);
     });
 
     it("parses with empty options", () => {
       const parsed = parse(["--foo", "bar"], {});
+
       assertEquals(parsed.foo, "bar");
     });
   });
 
   describe("alias option", () => {
     it("parses with alias option", () => {
-      const parsed = parse(["-f", "value"], {
-        alias: { f: "foo" },
-      });
+      const parsed = parse(["-f", "value"], { alias: { f: "foo" } });
 
       assertEquals(parsed.foo, "value");
       assertEquals(parsed.f, "value");
     });
 
     it("parses with multiple aliases", () => {
-      const parsed = parse(["-v"], {
-        alias: { v: ["verbose", "version"] },
-      });
+      const parsed = parse(["-v"], { alias: { v: ["verbose", "version"] } });
 
       assert(parsed.verbose);
       assert(parsed.version);
@@ -137,9 +135,7 @@ describe("Flags Compat", () => {
 
   describe("collect option", () => {
     it("parses with collect option - single value", () => {
-      const parsed = parse(["--tag", "value1"], {
-        collect: ["tag"],
-      });
+      const parsed = parse(["--tag", "value1"], { collect: ["tag"] });
 
       assertEquals(parsed.tag, ["value1"]);
     });
@@ -164,18 +160,14 @@ describe("Flags Compat", () => {
 
   describe("negatable option", () => {
     it("parses with negatable option", () => {
-      const parsed = parse(["--no-color"], {
-        negatable: ["color"],
-      });
+      const parsed = parse(["--no-color"], { negatable: ["color"] });
 
       assertEquals(parsed.color, false);
       assertEquals(parsed["no-color"], undefined);
     });
 
     it("parses with negatable option - positive", () => {
-      const parsed = parse(["--color"], {
-        negatable: ["color"],
-      });
+      const parsed = parse(["--color"], { negatable: ["color"] });
 
       assertEquals(parsed.color, true);
     });
@@ -211,9 +203,7 @@ describe("Flags Compat", () => {
     });
 
     it("parses combined short flags", () => {
-      const parsed = parse(["-abc"], {
-        boolean: ["a", "b", "c"],
-      });
+      const parsed = parse(["-abc"], { boolean: ["a", "b", "c"] });
 
       assertEquals(parsed.a, true);
       assertEquals(parsed.b, true);
@@ -291,9 +281,7 @@ describe("Flags Compat", () => {
     });
 
     it("handles whitespace", () => {
-      const parsed = parse(["--text", "hello world"], {
-        string: ["text"],
-      });
+      const parsed = parse(["--text", "hello world"], { string: ["text"] });
 
       assertEquals(parsed.text, "hello world");
     });

@@ -29,6 +29,7 @@ const jobs = new Map<string, Job>();
 
 export function queueJob(type: string, data: Record<string, unknown>): Promise<string> {
   const id = crypto.randomUUID();
+
   jobs.set(id, {
     id,
     type,
@@ -39,9 +40,7 @@ export function queueJob(type: string, data: Record<string, unknown>): Promise<s
 
   console.log(`[Redis] Queued job ${id} of type ${type}`);
 
-  setTimeout(() => {
-    void processJob(id);
-  }, 100);
+  setTimeout(() => void processJob(id), 100);
 
   return Promise.resolve(id);
 }

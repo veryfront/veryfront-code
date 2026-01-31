@@ -6,9 +6,7 @@ describe("bun.ts exports", () => {
   it("exports BunAdapter class and it is instantiable", () => {
     assertExists(BunAdapter);
     assertEquals(typeof BunAdapter, "function");
-
-    const adapter = new BunAdapter();
-    assertExists(adapter);
+    assertExists(new BunAdapter());
   });
 
   it("exports bunAdapter singleton with expected shape", () => {
@@ -17,15 +15,13 @@ describe("bun.ts exports", () => {
     assertEquals(bunAdapter.id, "bun");
     assertEquals(bunAdapter.name, "bun");
 
-    assertExists(bunAdapter.fs);
-    assertExists(bunAdapter.fs.readFile);
-    assertExists(bunAdapter.fs.writeFile);
-    assertExists(bunAdapter.fs.exists);
+    assertExists(bunAdapter.fs?.readFile);
+    assertExists(bunAdapter.fs?.writeFile);
+    assertExists(bunAdapter.fs?.exists);
 
-    assertExists(bunAdapter.env);
-    assertExists(bunAdapter.env.get);
-    assertExists(bunAdapter.env.set);
-    assertExists(bunAdapter.env.toObject);
+    assertExists(bunAdapter.env?.get);
+    assertExists(bunAdapter.env?.set);
+    assertExists(bunAdapter.env?.toObject);
 
     assertExists(bunAdapter.capabilities);
     assertEquals(bunAdapter.capabilities.typescript, true);
@@ -33,7 +29,6 @@ describe("bun.ts exports", () => {
     assertEquals(bunAdapter.capabilities.websocket, true);
     assertEquals(bunAdapter.capabilities.http2, false);
 
-    assertExists(bunAdapter.serve);
     assertEquals(typeof bunAdapter.serve, "function");
   });
 

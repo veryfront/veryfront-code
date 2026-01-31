@@ -5,7 +5,6 @@ import { HealthHandler, isServerInitialized, setServerInitialized } from "./heal
 describe("server/handlers/monitoring/health", () => {
   describe("setServerInitialized / isServerInitialized", () => {
     it("should default to false", () => {
-      // Reset to known state
       setServerInitialized(false);
       assertEquals(isServerInitialized(), false);
     });
@@ -13,7 +12,6 @@ describe("server/handlers/monitoring/health", () => {
     it("should set to true", () => {
       setServerInitialized(true);
       assertEquals(isServerInitialized(), true);
-      // Clean up
       setServerInitialized(false);
     });
 
@@ -34,7 +32,8 @@ describe("server/handlers/monitoring/health", () => {
       const handler = new HealthHandler();
       const handlerPatterns = handler.metadata.patterns;
       assertExists(handlerPatterns);
-      const patterns = handlerPatterns.map((p) => typeof p === "string" ? p : p.pattern);
+
+      const patterns = handlerPatterns.map((p) => (typeof p === "string" ? p : p.pattern));
       assertEquals(patterns.includes("/healthz"), true);
       assertEquals(patterns.includes("/readyz"), true);
       assertEquals(patterns.includes("/_health"), true);
@@ -44,10 +43,10 @@ describe("server/handlers/monitoring/health", () => {
       const handler = new HealthHandler();
       const handlerPatterns = handler.metadata.patterns;
       assertExists(handlerPatterns);
+
       for (const pattern of handlerPatterns) {
-        if (typeof pattern !== "string") {
-          assertEquals(pattern.exact, true);
-        }
+        if (typeof pattern === "string") continue;
+        assertEquals(pattern.exact, true);
       }
     });
   });

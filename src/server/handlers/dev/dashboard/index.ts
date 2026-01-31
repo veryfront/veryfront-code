@@ -36,12 +36,14 @@ export class DevDashboardHandler extends BaseHandler {
 
     if (pathname.startsWith("/_dev/ui/")) {
       const response = await handleDashboardUI(req);
-      return response ? this.respond(response) : this.respondNotFound();
+      if (response) return this.respond(response);
+      return this.respondNotFound();
     }
 
     if (pathname.startsWith("/_dev/api/")) {
       const response = await handleDashboardAPI(req, ctx);
-      return response ? this.respond(response) : this.respondNotFound();
+      if (response) return this.respond(response);
+      return this.respondNotFound();
     }
 
     return this.respondNotFound();

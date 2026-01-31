@@ -5,35 +5,36 @@ import { generateSrcSet, getImageExtension, getOptimizedPath } from "./helpers.t
 describe("optimized-image helpers", () => {
   describe("getOptimizedPath", () => {
     it("generates path with size and format", () => {
-      const path = getOptimizedPath("/images/photo.png", "webp", 640);
-      assertEquals(path, "/.veryfront/optimized-images/images/photo-640w.webp");
+      assertEquals(
+        getOptimizedPath("/images/photo.png", "webp", 640),
+        "/.veryfront/optimized-images/images/photo-640w.webp",
+      );
     });
 
     it("strips original extension", () => {
-      const path = getOptimizedPath("/hero.jpg", "avif", 1024);
-      assertEquals(path, "/.veryfront/optimized-images/hero-1024w.avif");
+      assertEquals(
+        getOptimizedPath("/hero.jpg", "avif", 1024),
+        "/.veryfront/optimized-images/hero-1024w.avif",
+      );
     });
 
     it("handles nested paths", () => {
-      const path = getOptimizedPath("/assets/blog/cover.jpeg", "webp", 320);
-      assertEquals(path, "/.veryfront/optimized-images/assets/blog/cover-320w.webp");
+      assertEquals(
+        getOptimizedPath("/assets/blog/cover.jpeg", "webp", 320),
+        "/.veryfront/optimized-images/assets/blog/cover-320w.webp",
+      );
     });
   });
 
   describe("generateSrcSet", () => {
     it("generates srcset string with multiple sizes", () => {
-      const srcset = generateSrcSet("/photo.png", "webp", [320, 640, 1024], 80);
-      const parts = srcset.split(", ");
+      const parts = generateSrcSet("/photo.png", "webp", [320, 640, 1024], 80).split(", ");
       assertEquals(parts.length, 3);
-      const first = parts[0];
-      const second = parts[1];
-      const third = parts[2];
-      assertExists(first);
-      assertExists(second);
-      assertExists(third);
-      assertEquals(first.endsWith("320w"), true);
-      assertEquals(second.endsWith("640w"), true);
-      assertEquals(third.endsWith("1024w"), true);
+
+      parts.forEach((part) => assertExists(part));
+      assertEquals(parts[0].endsWith("320w"), true);
+      assertEquals(parts[1].endsWith("640w"), true);
+      assertEquals(parts[2].endsWith("1024w"), true);
     });
 
     it("generates single-size srcset", () => {

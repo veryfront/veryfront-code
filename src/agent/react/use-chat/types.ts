@@ -1,13 +1,15 @@
+export type StreamState = "streaming" | "done";
+
 export interface TextUIPart {
   type: "text";
   text: string;
-  state?: "streaming" | "done";
+  state?: StreamState;
 }
 
 export interface ReasoningUIPart {
   type: "reasoning";
   text: string;
-  state?: "streaming" | "done";
+  state?: StreamState;
 }
 
 export type ToolState =
@@ -60,11 +62,13 @@ export interface UIMessage {
   createdAt?: Date | string;
 }
 
+export type ToolOutputState = "output-available" | "output-error";
+
 export interface ToolOutput {
   tool: string;
   toolCallId: string;
   output?: unknown;
-  state?: "output-available" | "output-error";
+  state?: ToolOutputState;
   errorText?: string;
 }
 

@@ -45,11 +45,31 @@ const FRAMEWORK_LOOKUPS: Array<[prefix: string, frameworkDir: string]> = [
 function findVfModuleImports(code: string): string[] {
   const imports: string[] = [];
   const pattern = /from\s+["'](\/\_vf\_modules\/[^"']+)["']/g;
-  let match;
+
+  let match: RegExpExecArray | null;
   while ((match = pattern.exec(code)) !== null) {
     imports.push(match[1]!);
   }
+
   return [...new Set(imports)];
+}
+
+async function tryReadWithExtensions(
+  fs: ReturnType<typeof createFileSystem>,
+  basePath: string,
+): Promise<{ sourcePath: string; content: string } | null> {
+  for (const ext of EXTENSIONS) {
+    const sourcePath = basePath + ext;
+    try {
+      if (await exists(sourcePath)) {
+        const content = await fs.readTextFile(sourcePath);
+        return { sourcePath, content };
+      }
+    } catch {
+      // Continue trying other extensions
+    }
+  }
+  return null;
 }
 
 /**
@@ -59,7 +79,6 @@ async function resolveFrameworkFile(
   vfModulePath: string,
   fs: ReturnType<typeof createFileSystem>,
 ): Promise<{ sourcePath: string; content: string } | null> {
-  // Strip /_vf_modules/ prefix and query params
   const pathWithoutPrefix = vfModulePath
     .replace(/^\/_vf_modules\//, "")
     .replace(/\?.*$/, "")
@@ -70,34 +89,13 @@ async function resolveFrameworkFile(
 
     const relativePath = pathWithoutPrefix.slice(prefix.length);
 
-    for (const ext of EXTENSIONS) {
-      const sourcePath = join(frameworkDir, prefix, relativePath + ext);
+    const withPrefix = await tryReadWithExtensions(fs, join(frameworkDir, prefix, relativePath));
+    if (withPrefix) return withPrefix;
 
-      try {
-        if (await exists(sourcePath)) {
-          const content = await fs.readTextFile(sourcePath);
-          return { sourcePath, content };
-        }
-      } catch {
-        // Continue trying other extensions
-      }
-    }
+    if (prefix !== "_veryfront/") continue;
 
-    // Try without the prefix in the path (for _veryfront/ which maps directly)
-    if (prefix === "_veryfront/") {
-      for (const ext of EXTENSIONS) {
-        const sourcePath = join(frameworkDir, relativePath + ext);
-
-        try {
-          if (await exists(sourcePath)) {
-            const content = await fs.readTextFile(sourcePath);
-            return { sourcePath, content };
-          }
-        } catch {
-          // Continue trying other extensions
-        }
-      }
-    }
+    const withoutPrefix = await tryReadWithExtensions(fs, join(frameworkDir, relativePath));
+    if (withoutPrefix) return withoutPrefix;
   }
 
   return null;
@@ -107,47 +105,36 @@ async function resolveFrameworkFile(
  * Resolve a #veryfront/ import to the actual framework source file path.
  * Returns the file:// path if found, null otherwise.
  */
-async function resolveVeryfrontImport(
-  specifier: string,
-  _fs: ReturnType<typeof createFileSystem>,
-): Promise<string | null> {
+async function resolveVeryfrontImport(specifier: string): Promise<string | null> {
   if (!specifier.startsWith("#veryfront/")) return null;
 
-  // Strip #veryfront/ prefix to get relative path within src/
   const relativePath = specifier.slice("#veryfront/".length);
-
-  // Build the full path: FRAMEWORK_ROOT/src/relativePath
   const basePath = join(FRAMEWORK_ROOT, "src", relativePath);
 
-  // Try with extensions if no extension provided
-  if (!relativePath.match(/\.(tsx?|jsx?|mjs)$/)) {
-    for (const ext of EXTENSIONS) {
-      const pathWithExt = basePath + ext;
-      try {
-        if (await exists(pathWithExt)) {
-          return `file://${pathWithExt}`;
-        }
-      } catch {
-        // Continue
-      }
-    }
-    // Try index files
-    for (const ext of EXTENSIONS) {
-      const indexPath = join(basePath, "index" + ext);
-      try {
-        if (await exists(indexPath)) {
-          return `file://${indexPath}`;
-        }
-      } catch {
-        // Continue
-      }
-    }
-  } else {
-    // Has extension, try directly
+  const hasExtension = /\.(tsx?|jsx?|mjs)$/.test(relativePath);
+
+  if (hasExtension) {
     try {
-      if (await exists(basePath)) {
-        return `file://${basePath}`;
-      }
+      if (await exists(basePath)) return `file://${basePath}`;
+    } catch {
+      // Continue
+    }
+    return null;
+  }
+
+  for (const ext of EXTENSIONS) {
+    const pathWithExt = basePath + ext;
+    try {
+      if (await exists(pathWithExt)) return `file://${pathWithExt}`;
+    } catch {
+      // Continue
+    }
+  }
+
+  for (const ext of EXTENSIONS) {
+    const indexPath = join(basePath, "index" + ext);
+    try {
+      if (await exists(indexPath)) return `file://${indexPath}`;
     } catch {
       // Continue
     }
@@ -166,15 +153,16 @@ async function transformFrameworkSource(
   sourcePath: string,
   reactVersion: string,
   projectDir: string,
-  fs: ReturnType<typeof createFileSystem>,
+  _fs: ReturnType<typeof createFileSystem>,
 ): Promise<string> {
   const { transform } = await import("esbuild");
 
-  // Determine loader based on extension
   const ext = sourcePath.match(/\.(tsx?|jsx?)$/)?.[1] ?? "tsx";
-  const loader = ext === "tsx" ? "tsx" : ext === "ts" ? "ts" : ext === "jsx" ? "jsx" : "js";
+  let loader: "tsx" | "ts" | "jsx" | "js" = "js";
+  if (ext === "tsx") loader = "tsx";
+  else if (ext === "ts") loader = "ts";
+  else if (ext === "jsx") loader = "jsx";
 
-  // Compile with esbuild
   const result = await transform(content, {
     loader,
     jsx: "automatic",
@@ -185,60 +173,51 @@ async function transformFrameworkSource(
 
   let transformed = result.code;
 
-  // Collect #veryfront/ imports for resolution
   const veryfrontReplacements = new Map<string, string>();
-  const matches = transformed.matchAll(/from\s+["'](#veryfront\/[^"']+)["']/g);
-  for (const match of matches) {
+  for (const match of transformed.matchAll(/from\s+["'](#veryfront\/[^"']+)["']/g)) {
     const specifier = match[1]!;
-    if (!veryfrontReplacements.has(specifier)) {
-      const resolved = await resolveVeryfrontImport(specifier, fs);
-      if (resolved) {
-        veryfrontReplacements.set(specifier, resolved);
-      } else {
-        // Fail fast - unresolved #veryfront/ imports will cause runtime errors
-        throw new Error(
-          `${LOG_PREFIX} Could not resolve framework import "${specifier}" in ${sourcePath}. ` +
-            `Expected to find ${
-              join(FRAMEWORK_ROOT, "src", specifier.slice("#veryfront/".length))
-            }.{ts,tsx,js,jsx} ` +
-            `or an index file at that path.`,
-        );
-      }
+    if (veryfrontReplacements.has(specifier)) continue;
+
+    const resolved = await resolveVeryfrontImport(specifier);
+    if (!resolved) {
+      throw new Error(
+        `${LOG_PREFIX} Could not resolve framework import "${specifier}" in ${sourcePath}. ` +
+          `Expected to find ${
+            join(FRAMEWORK_ROOT, "src", specifier.slice("#veryfront/".length))
+          }.{ts,tsx,js,jsx} ` +
+          `or an index file at that path.`,
+      );
     }
+
+    veryfrontReplacements.set(specifier, resolved);
   }
 
-  // Get the canonical React import map - this ensures we use the exact same URLs
-  // as the rest of the SSR pipeline (with deps=csstype for type consistency)
   const reactImportMap = getReactImportMap(reactVersion);
 
-  // Rewrite React imports to esm.sh URLs AND #veryfront/ imports to file:// paths
-  // This ensures framework code uses the same React as user code
   transformed = await replaceSpecifiers(transformed, (specifier) => {
-    // Check #veryfront/ first
     if (specifier.startsWith("#veryfront/")) {
       return veryfrontReplacements.get(specifier) ?? null;
     }
 
-    // React imports - use the canonical import map for consistency
-    if (reactImportMap[specifier]) {
-      return reactImportMap[specifier];
+    const mapped = reactImportMap[specifier];
+    if (mapped) return mapped;
+
+    if (specifier.startsWith("react/")) {
+      return buildReactUrl("react", reactVersion, "/" + specifier.slice("react/".length), true);
     }
 
-    // Handle react/* subpaths not in the map
-    if (specifier.startsWith("react/")) {
-      const subpath = "/" + specifier.slice("react/".length);
-      return buildReactUrl("react", reactVersion, subpath, true);
-    }
     if (specifier.startsWith("react-dom/")) {
-      const subpath = "/" + specifier.slice("react-dom/".length);
-      return buildReactUrl("react-dom", reactVersion, subpath, true);
+      return buildReactUrl(
+        "react-dom",
+        reactVersion,
+        "/" + specifier.slice("react-dom/".length),
+        true,
+      );
     }
 
     return null;
   });
 
-  // Cache HTTP imports (esm.sh URLs) to local file:// paths
-  // This is critical for compiled binaries which can't do HTTP imports at runtime
   const importMap = await loadImportMap(projectDir);
   const cacheResult = await cacheHttpImportsToLocal(transformed, {
     cacheDir: getHttpBundleCacheDir(),
@@ -273,9 +252,10 @@ async function cacheTransformedCode(
   const contentHash = hashCodeHex(transformed);
   const pathHash = hashCodeHex(vfModulePath);
   const fileName = `vfmod-${VERSION}-${pathHash}-${envKey}-${contentHash}.mjs`;
-  const cachePath = join(cacheDir, "framework", fileName);
+  const frameworkCacheDir = join(cacheDir, "framework");
+  const cachePath = join(frameworkCacheDir, fileName);
 
-  await fs.mkdir(join(cacheDir, "framework"), { recursive: true });
+  await fs.mkdir(frameworkCacheDir, { recursive: true });
   await fs.writeTextFile(cachePath, transformed);
 
   return cachePath;
@@ -297,10 +277,7 @@ export const ssrVfModulesPlugin: TransformPlugin = {
 
   async transform(ctx) {
     const vfModuleImports = findVfModuleImports(ctx.code);
-
-    if (vfModuleImports.length === 0) {
-      return ctx.code;
-    }
+    if (vfModuleImports.length === 0) return ctx.code;
 
     logger.debug(`${LOG_PREFIX} Found ${vfModuleImports.length} /_vf_modules/ imports`);
 
@@ -310,7 +287,6 @@ export const ssrVfModulesPlugin: TransformPlugin = {
     for (const vfModulePath of vfModuleImports) {
       try {
         const resolved = await resolveFrameworkFile(vfModulePath, fs);
-
         if (!resolved) {
           logger.warn(`${LOG_PREFIX} Could not resolve ${vfModulePath}`);
           continue;
@@ -325,7 +301,6 @@ export const ssrVfModulesPlugin: TransformPlugin = {
         );
 
         const cachePath = await cacheTransformedCode(transformed, vfModulePath, fs);
-
         replacements.set(vfModulePath, `file://${cachePath}`);
 
         logger.debug(`${LOG_PREFIX} Transformed ${vfModulePath} -> ${cachePath}`);
@@ -336,13 +311,8 @@ export const ssrVfModulesPlugin: TransformPlugin = {
       }
     }
 
-    if (replacements.size === 0) {
-      return ctx.code;
-    }
+    if (replacements.size === 0) return ctx.code;
 
-    // Replace all /_vf_modules/ imports with file:// paths
-    return replaceSpecifiers(ctx.code, (specifier) => {
-      return replacements.get(specifier) ?? null;
-    });
+    return replaceSpecifiers(ctx.code, (specifier) => replacements.get(specifier) ?? null);
   },
 };

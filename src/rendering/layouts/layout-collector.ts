@@ -18,14 +18,13 @@ function getLayoutKind(path: string): "mdx" | "tsx" {
  * Creates a LayoutItem from a path. For tsx/jsx/ts/js files, creates a tsx kind item.
  * For mdx/md files, creates an mdx kind item with optional bundle.
  */
-function createLayoutItem(
-  layoutPath: string,
-  bundle?: MdxBundle,
-): LayoutItem {
+function createLayoutItem(layoutPath: string, bundle?: MdxBundle): LayoutItem {
   const kind = getLayoutKind(layoutPath);
+
   if (kind === "mdx") {
     return { kind: "mdx", bundle, path: layoutPath };
   }
+
   return {
     kind: "tsx",
     component: undefined,
@@ -54,8 +53,7 @@ export async function discoverComponentsLayoutPath(
 ): Promise<string | null> {
   for (const ext of LAYOUT_EXTENSIONS) {
     const layoutPath = join(projectDir, "components", `layout.${ext}`);
-    const exists = await checker.exists(layoutPath);
-    if (exists) {
+    if (await checker.exists(layoutPath)) {
       return layoutPath;
     }
   }
@@ -104,17 +102,17 @@ export class LayoutCollector {
   }
 
   async collectLayouts(pageInfo: EntityInfo): Promise<LayoutCollectionResult> {
-    return await withSpan(
+    return withSpan(
       SpanNames.LAYOUT_COLLECT,
       async () => {
+        const pagePath = pageInfo.entity.path;
+
         logger.debug("[LayoutCollector] collectLayouts called", {
-          pagePath: pageInfo.entity.path,
+          pagePath,
           projectDir: this.projectDir,
           hasConfig: !!this.config,
           layout: this.config?.layout,
         });
-
-        const pagePath = pageInfo.entity.path;
 
         if (pagePath.includes("/.veryfront/") || pagePath.includes(".veryfront/")) {
           logger.debug("[LayoutCollector] Skipping layouts for .veryfront path", { pagePath });
@@ -142,7 +140,7 @@ export class LayoutCollector {
           },
         );
 
-        return await this.processLayoutResult(
+        return this.processLayoutResult(
           pageInfo,
           hasExplicitFrontmatterLayout,
           layoutBundle,
@@ -165,15 +163,16 @@ export class LayoutCollector {
     layoutName: string | undefined,
   ): Promise<LayoutCollectionResult> {
     if (hasExplicitFrontmatterLayout && layoutPath) {
-      const nestedLayouts: LayoutItem[] = [createLayoutItem(layoutPath, layoutBundle)];
-
       logger.debug("[LayoutCollector] Using frontmatter layout as nestedLayout", {
         layoutPath,
         layoutName,
         kind: getLayoutKind(layoutPath),
       });
 
-      return { layoutBundle: undefined, nestedLayouts };
+      return {
+        layoutBundle: undefined,
+        nestedLayouts: [createLayoutItem(layoutPath, layoutBundle)],
+      };
     }
 
     let nestedLayouts = await withSpan(
@@ -182,34 +181,32 @@ export class LayoutCollector {
       { "layout.page_path": pageInfo.entity.path },
     );
 
-    if (layoutBundle && layoutPath) {
-      const alreadyExists = nestedLayouts.some((l) => l.path === layoutPath);
-      if (alreadyExists) {
-        logger.debug("[LayoutCollector] Skipping config.layout - already in nestedLayouts", {
-          layoutPath,
-        });
-        return { layoutBundle: undefined, nestedLayouts };
-      }
-
-      const kind = getLayoutKind(layoutPath);
-      nestedLayouts = [createLayoutItem(layoutPath, layoutBundle), ...nestedLayouts];
-
-      logger.debug("[LayoutCollector] Added config.layout to nestedLayouts for client hydration", {
-        layoutPath,
-        kind,
-        totalNestedLayouts: nestedLayouts.length,
+    if (!layoutBundle || !layoutPath) {
+      logger.debug("[LayoutCollector] collectLayouts result", {
+        hasLayoutBundle: !!layoutBundle,
+        hasExplicitFrontmatterLayout,
+        nestedLayoutsCount: nestedLayouts.length,
       });
 
+      return { layoutBundle, nestedLayouts };
+    }
+
+    if (nestedLayouts.some((l) => l.path === layoutPath)) {
+      logger.debug("[LayoutCollector] Skipping config.layout - already in nestedLayouts", {
+        layoutPath,
+      });
       return { layoutBundle: undefined, nestedLayouts };
     }
 
-    logger.debug("[LayoutCollector] collectLayouts result", {
-      hasLayoutBundle: !!layoutBundle,
-      hasExplicitFrontmatterLayout,
-      nestedLayoutsCount: nestedLayouts.length,
+    nestedLayouts = [createLayoutItem(layoutPath, layoutBundle), ...nestedLayouts];
+
+    logger.debug("[LayoutCollector] Added config.layout to nestedLayouts for client hydration", {
+      layoutPath,
+      kind: getLayoutKind(layoutPath),
+      totalNestedLayouts: nestedLayouts.length,
     });
 
-    return { layoutBundle, nestedLayouts };
+    return { layoutBundle: undefined, nestedLayouts };
   }
 
   private async collectNamedLayoutWithPath(pageInfo: EntityInfo): Promise<{
@@ -226,17 +223,7 @@ export class LayoutCollector {
       configLayout: this.config?.layout,
     });
 
-    let layoutName: string | null = null;
-
-    if (layoutValue === false || layoutValue === "false") {
-      layoutName = null;
-    } else if (typeof layoutValue === "string" && layoutValue.length > 0) {
-      layoutName = layoutValue;
-    } else if (this.config?.layout === false) {
-      layoutName = null;
-    } else if (typeof this.config?.layout === "string" && this.config.layout.length > 0) {
-      layoutName = this.config.layout;
-    }
+    const layoutName = this.resolveLayoutName(layoutValue);
 
     logger.debug("[LayoutCollector] Resolved layoutName:", { layoutName });
 
@@ -288,13 +275,33 @@ export class LayoutCollector {
     return { layoutBundle, layoutPath, layoutName };
   }
 
+  private resolveLayoutName(layoutValue: string | boolean | undefined): string | null {
+    if (layoutValue === false || layoutValue === "false") {
+      return null;
+    }
+
+    if (typeof layoutValue === "string" && layoutValue.length > 0) {
+      return layoutValue;
+    }
+
+    if (this.config?.layout === false) {
+      return null;
+    }
+
+    if (typeof this.config?.layout === "string" && this.config.layout.length > 0) {
+      return this.config.layout;
+    }
+
+    return null;
+  }
+
   private async collectNestedLayouts(pageInfo: EntityInfo): Promise<LayoutItem[]> {
     const pageFilePath = pageInfo.entity.path;
     const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter);
 
     // Unified path for ALL adapters - discoverNestedLayouts uses adapter.fs.stat()
     // which works for both filesystem and API adapters
-    return await this.collectLayoutsUnified(pageFilePath, useAppRouter);
+    return this.collectLayoutsUnified(pageFilePath, useAppRouter);
   }
 
   private async collectLayoutsUnified(
@@ -317,7 +324,6 @@ export class LayoutCollector {
       this.adapter,
     );
 
-    // If nested layouts found, use them
     if (nestedLayouts.length > 0) {
       logger.debug("[LayoutCollector] Found nested layouts", {
         count: nestedLayouts.length,
@@ -326,8 +332,7 @@ export class LayoutCollector {
       return nestedLayouts;
     }
 
-    // Fallback: check components/layout.*
-    return await this.checkComponentsLayoutFallback();
+    return this.checkComponentsLayoutFallback();
   }
 
   /**
@@ -359,12 +364,12 @@ export class LayoutCollector {
    * Creates a LayoutItem, compiling MDX content if needed.
    */
   private async createLayoutItemWithBundle(layoutPath: string): Promise<LayoutItem> {
-    const kind = getLayoutKind(layoutPath);
-    if (kind === "mdx") {
-      const content = await this.adapter.fs.readFile(layoutPath);
-      const bundle = await this.compileMDX(content, { isLayout: true }, layoutPath);
-      return createLayoutItem(layoutPath, bundle);
+    if (getLayoutKind(layoutPath) !== "mdx") {
+      return createLayoutItem(layoutPath);
     }
-    return createLayoutItem(layoutPath);
+
+    const content = await this.adapter.fs.readFile(layoutPath);
+    const bundle = await this.compileMDX(content, { isLayout: true }, layoutPath);
+    return createLayoutItem(layoutPath, bundle);
   }
 }

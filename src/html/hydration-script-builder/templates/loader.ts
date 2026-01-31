@@ -25,15 +25,19 @@ export const getLoaderScript = (): string => `
     function pathToModuleUrl(path, studioEmbed) {
       const pattern = /(pages|components|app|lib|layouts|shared|features)\\/(.+)\\.(tsx|ts|jsx|mdx)$/;
 
-      let match = path.match(new RegExp('/' + pattern.source));
-      if (!match) match = path.match(new RegExp('^' + pattern.source));
+      const match =
+        path.match(new RegExp('/' + pattern.source)) ||
+        path.match(new RegExp('^' + pattern.source));
 
       let url;
       if (match) {
         url = MODULE_SERVER_URL + '/' + match[1] + '/' + match[2] + '.js';
       } else {
         const hasKnownExt = /\\.(tsx|ts|jsx|mdx|js|mjs)$/.test(path);
-        url = MODULE_SERVER_URL + '/' + (hasKnownExt ? path.replace(/\\.(tsx|ts|jsx|mdx)$/, '.js') : path + '.js');
+        url =
+          MODULE_SERVER_URL +
+          '/' +
+          (hasKnownExt ? path.replace(/\\.(tsx|ts|jsx|mdx)$/, '.js') : path + '.js');
       }
 
       if (studioEmbed) url = appendQueryParam(url, 'studio_embed', 'true');
@@ -43,11 +47,15 @@ export const getLoaderScript = (): string => `
     }
 
     let __studioEmbed = false;
-    function setStudioEmbed(value) { __studioEmbed = value; }
+    function setStudioEmbed(value) {
+      __studioEmbed = value;
+    }
     window.__veryfrontSetStudioEmbed = setStudioEmbed;
 
     let __hmrRefreshTimestamp = null;
-    function setHMRRefreshTimestamp(timestamp) { __hmrRefreshTimestamp = timestamp; }
+    function setHMRRefreshTimestamp(timestamp) {
+      __hmrRefreshTimestamp = timestamp;
+    }
     window.__veryfrontSetHMRRefreshTimestamp = setHMRRefreshTimestamp;
 
     async function loadComponent(path) {
@@ -58,7 +66,8 @@ export const getLoaderScript = (): string => `
         return componentCache.get(path);
       }
 
-      if (loadingPromises.has(path)) return loadingPromises.get(path);
+      const existingPromise = loadingPromises.get(path);
+      if (existingPromise) return existingPromise;
 
       const loadPromise = (async () => {
         try {

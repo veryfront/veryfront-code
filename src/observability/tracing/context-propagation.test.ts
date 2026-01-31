@@ -4,9 +4,6 @@ import { ContextPropagation } from "./context-propagation.ts";
 import type { Context, OpenTelemetryAPI, Span, TextMapPropagator } from "./types.ts";
 
 function createMockApi(): OpenTelemetryAPI {
-  const extractedCarrier: Record<string, string> = {};
-  const injectedCarrier: Record<string, string> = {};
-
   return {
     trace: {
       getTracer: () => ({}) as never,
@@ -15,13 +12,10 @@ function createMockApi(): OpenTelemetryAPI {
     },
     propagation: {
       setGlobalPropagator: () => {},
-      extract: (_context: unknown, carrier: Record<string, string>) => {
-        Object.assign(extractedCarrier, carrier);
-        return { _type: "extracted-context" } as unknown as Context;
-      },
+      extract: (_context: unknown, _carrier: Record<string, string>) =>
+        ({ _type: "extracted-context" }) as unknown as Context,
       inject: (_context: unknown, carrier: Record<string, string>) => {
         carrier["traceparent"] = "00-trace-span-01";
-        Object.assign(injectedCarrier, carrier);
       },
     },
     context: {
@@ -73,6 +67,7 @@ function createMockSpan(): Span {
       return span;
     },
   };
+
   return span;
 }
 
@@ -97,13 +92,12 @@ describe("observability/tracing/context-propagation", () => {
     });
 
     it("should extract context from empty headers", () => {
-      const headers = new Headers();
-      const result = ctx.extractContext(headers);
+      const result = ctx.extractContext(new Headers());
       assertEquals(result !== undefined, true);
     });
 
     it("should return undefined when extraction throws", () => {
-      const badApi = {
+      const badApi: OpenTelemetryAPI = {
         ...api,
         propagation: {
           ...api.propagation,
@@ -111,7 +105,7 @@ describe("observability/tracing/context-propagation", () => {
             throw new Error("extract failed");
           },
         },
-      } as OpenTelemetryAPI;
+      };
       const badCtx = new ContextPropagation(badApi, propagator);
       const result = badCtx.extractContext(new Headers());
       assertEquals(result, undefined);
@@ -134,7 +128,7 @@ describe("observability/tracing/context-propagation", () => {
     });
 
     it("should not throw when injection fails", () => {
-      const badApi = {
+      const badApi: OpenTelemetryAPI = {
         ...api,
         propagation: {
           ...api.propagation,
@@ -142,11 +136,9 @@ describe("observability/tracing/context-propagation", () => {
             throw new Error("inject failed");
           },
         },
-      } as OpenTelemetryAPI;
+      };
       const badCtx = new ContextPropagation(badApi, propagator);
-      const headers = new Headers();
-      badCtx.injectContext({} as Context, headers);
-      // Should not throw
+      badCtx.injectContext({} as Context, new Headers());
     });
   });
 
@@ -157,7 +149,7 @@ describe("observability/tracing/context-propagation", () => {
     });
 
     it("should return undefined when api throws", () => {
-      const badApi = {
+      const badApi: OpenTelemetryAPI = {
         ...api,
         context: {
           ...api.context,
@@ -165,7 +157,7 @@ describe("observability/tracing/context-propagation", () => {
             throw new Error("active failed");
           },
         },
-      } as OpenTelemetryAPI;
+      };
       const badCtx = new ContextPropagation(badApi, propagator);
       const result = badCtx.getActiveContext();
       assertEquals(result, undefined);
@@ -176,9 +168,11 @@ describe("observability/tracing/context-propagation", () => {
     it("should execute function with span context", async () => {
       const span = createMockSpan();
       let executed = false;
+
       await ctx.withActiveSpan(span, () => {
         executed = true;
       });
+
       assertEquals(executed, true);
     });
 
@@ -190,14 +184,17 @@ describe("observability/tracing/context-propagation", () => {
 
     it("should execute function directly when span is null", async () => {
       let executed = false;
+
       await ctx.withActiveSpan(null, () => {
         executed = true;
       });
+
       assertEquals(executed, true);
     });
 
     it("should propagate errors", async () => {
       const span = createMockSpan();
+
       await assertRejects(
         () =>
           // deno-lint-ignore require-await
@@ -218,12 +215,12 @@ describe("observability/tracing/context-propagation", () => {
 
       const result = ctx.withSpan(
         "test-operation",
-        (_span) => "result",
-        (_name) => {
+        () => "result",
+        () => {
           startCalled = true;
           return mockSpan;
         },
-        (_span, _error) => {
+        () => {
           endCalled = true;
         },
       );
@@ -283,12 +280,12 @@ describe("observability/tracing/context-propagation", () => {
 
       const result = await ctx.withSpanAsync(
         "test-operation",
-        (_span) => Promise.resolve("async-result"),
-        (_name) => {
+        () => Promise.resolve("async-result"),
+        () => {
           startCalled = true;
           return mockSpan;
         },
-        (_span, _error) => {
+        () => {
           endCalled = true;
         },
       );

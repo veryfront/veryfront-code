@@ -17,7 +17,6 @@ import type {
   TemplateName,
 } from "./types.ts";
 
-// Re-export types
 export type {
   EnvVarConfig,
   FeatureConfig,
@@ -28,7 +27,6 @@ export type {
   TemplateName,
 };
 
-// Re-export feature functions
 export {
   AVAILABLE_FEATURES,
   featureExists,
@@ -41,9 +39,6 @@ export {
   validateFeatures,
 } from "./feature-loader.ts";
 
-/**
- * Template configurations (env vars, etc.)
- */
 export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
   ai: {
     envVars: [
@@ -59,19 +54,8 @@ export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
   },
 };
 
-/**
- * Templates that use directory-based loading.
- * All templates now use directory-based loading for better maintainability.
- */
 const DIRECTORY_BASED_TEMPLATES: TemplateName[] = ["minimal", "ai", "app", "blog", "docs"];
 
-/**
- * Get a template by name.
- * Prefers directory-based templates.
- *
- * @param name - Template name
- * @returns Array of template files, or null if template not found
- */
 export async function getTemplate(name: TemplateName): Promise<TemplateFile[] | null> {
   if (name === "pages-router" || name === "app-router") {
     return getTemplate("minimal");
@@ -81,26 +65,20 @@ export async function getTemplate(name: TemplateName): Promise<TemplateFile[] | 
     return null;
   }
 
-  const exists = await templateDirectoryExists(name);
-  if (!exists) {
+  if (!(await templateDirectoryExists(name))) {
     return null;
   }
 
   const files = await loadTemplateFromDirectory(name);
+  if (files.length === 0) {
+    return null;
+  }
 
-  return files.length > 0 ? files : null;
+  return files;
 }
 
-/**
- * Get template configuration (env vars, etc.)
- *
- * @param name - Template name
- * @returns Template configuration, or null if none defined
- */
 export function getTemplateConfig(name: TemplateName): TemplateConfig | null {
   return templateConfigs[name] ?? null;
 }
 
-// Legacy exports for backward compatibility
-// All templates should be loaded via async getTemplate()
 export const templates: Record<string, TemplateFile[]> = {};

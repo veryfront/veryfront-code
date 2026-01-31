@@ -5,5 +5,8 @@ export function isRSCEnabled(
   config?: { experimental?: { rsc?: boolean } },
   env?: RuntimeEnv,
 ): boolean {
-  return config?.experimental?.rsc ?? isRscExperimentalEnabled(env);
+  const rsc = config?.experimental?.rsc;
+  if (rsc != null) return rsc;
+
+  return isRscExperimentalEnabled(env);
 }

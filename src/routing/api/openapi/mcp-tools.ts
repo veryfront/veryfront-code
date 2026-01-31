@@ -82,35 +82,39 @@ function buildInputSchema(operation: OpenAPIOperation): z.ZodTypeAny {
 
   for (const param of params) {
     if (param.in !== "path") continue;
-    const paramSchema = buildParamSchema(param);
-    shape[param.name] = param.required ? paramSchema : paramSchema.optional();
+    shape[param.name] = withRequired(buildParamSchema(param), param.required);
   }
 
-  const queryParams = params.filter((p) => p.in === "query");
-  if (queryParams.length) {
-    const queryShape: Record<string, z.ZodTypeAny> = {};
-    for (const param of queryParams) {
-      const paramSchema = buildParamSchema(param);
-      queryShape[param.name] = param.required ? paramSchema : paramSchema.optional();
-    }
-    shape.query = z.object(queryShape).optional().describe("Query parameters");
-  }
-
-  const headerParams = params.filter((p) => p.in === "header");
-  if (headerParams.length) {
-    const headerShape: Record<string, z.ZodTypeAny> = {};
-    for (const param of headerParams) {
-      const paramSchema = buildParamSchema(param);
-      headerShape[param.name] = param.required ? paramSchema : paramSchema.optional();
-    }
-    shape.headers = z.object(headerShape).optional().describe("Request headers");
-  }
+  addParamGroup(shape, params, "query", "query", "Query parameters");
+  addParamGroup(shape, params, "header", "headers", "Request headers");
 
   if (operation.requestBody) {
     shape.body = z.record(z.unknown()).optional().describe("Request body (JSON)");
   }
 
   return z.object(shape);
+}
+
+function addParamGroup(
+  shape: Record<string, z.ZodTypeAny>,
+  params: OpenAPIParameter[],
+  paramIn: "query" | "header",
+  key: "query" | "headers",
+  description: string,
+): void {
+  const groupParams = params.filter((p) => p.in === paramIn);
+  if (!groupParams.length) return;
+
+  const groupShape: Record<string, z.ZodTypeAny> = {};
+  for (const param of groupParams) {
+    groupShape[param.name] = withRequired(buildParamSchema(param), param.required);
+  }
+
+  shape[key] = z.object(groupShape).optional().describe(description);
+}
+
+function withRequired(schema: z.ZodTypeAny, required?: boolean): z.ZodTypeAny {
+  return required ? schema : schema.optional();
 }
 
 function buildParamSchema(param: OpenAPIParameter): z.ZodTypeAny {
@@ -162,7 +166,7 @@ async function executeAPICall(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...config.headers,
-    ...(input.headers as Record<string, string> | undefined),
+    ...((input.headers as Record<string, string> | undefined) ?? {}),
   };
 
   const requestInit: RequestInit = {
@@ -180,9 +184,12 @@ async function executeAPICall(
     const response = await fetch(url, requestInit);
     const contentType = response.headers.get("content-type") ?? "";
 
-    const data = contentType.includes("application/json")
-      ? await response.json()
-      : await response.text();
+    let data: unknown;
+    if (contentType.includes("application/json")) {
+      data = await response.json();
+    } else {
+      data = await response.text();
+    }
 
     return {
       status: response.status,

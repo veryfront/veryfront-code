@@ -49,14 +49,10 @@ export async function resolveModuleFile(
   adapter: RuntimeAdapter,
   projectDir?: string,
 ): Promise<FileResolutionResult | null> {
-  // Strip _vf_modules/ and optional _veryfront/ prefix, query params, then .js extension
-  // The _veryfront/ prefix is used in import maps to route through module server,
-  // but for file resolution we need the underlying framework path (e.g., react/components/Head)
-  // Query params like ?ssr=true are added by the import rewriter but not needed for file lookup
   const filePathWithoutJs = normalizedPath
     .replace(/^_vf_modules\//, "")
     .replace(/^_veryfront\//, "")
-    .replace(/\?.*$/, "") // Strip query parameters (e.g., ?ssr=true)
+    .replace(/\?.*$/, "")
     .replace(/\.js$/, "");
 
   const hasKnownExt = MODULE_EXTENSIONS.some((ext) => filePathWithoutJs.endsWith(ext));
@@ -64,15 +60,12 @@ export async function resolveModuleFile(
     ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
     : filePathWithoutJs;
 
-  // Framework modules (react/, exports/) are local files — skip the API adapter
-  // to avoid unnecessary 404 errors from the remote API.
   const isFramework = isFrameworkPath(filePathWithoutJs);
 
-  if (adapter.fs.resolveFile && !isFramework) {
+  if (!isFramework && adapter.fs.resolveFile) {
     for (const prefix of DIRECTORY_PREFIXES) {
       const basePath = prefix + filePathWithoutExt;
       const resolvedPath = await adapter.fs.resolveFile(basePath);
-
       if (!resolvedPath) continue;
 
       try {
@@ -95,7 +88,9 @@ export async function resolveModuleFile(
       normalizedPath,
       filePathWithoutExt,
     });
-  } else if (projectDir && !isFramework) {
+  }
+
+  if (!isFramework && projectDir && !adapter.fs.resolveFile) {
     const localFs = getLocalFs();
     const normalizedProjectDir = stripTrailingSlashes(projectDir);
 

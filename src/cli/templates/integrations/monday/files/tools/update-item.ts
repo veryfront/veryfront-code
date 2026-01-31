@@ -24,11 +24,11 @@ export default tool({
         id: item.id,
         name: item.name,
         state: item.state,
-        columnValues: item.column_values?.map(({ id, title, text, type }) => ({
-          id,
-          title,
-          text,
-          type,
+        columnValues: item.column_values?.map((column) => ({
+          id: column.id,
+          title: column.title,
+          text: column.text,
+          type: column.type,
         })),
       },
     };

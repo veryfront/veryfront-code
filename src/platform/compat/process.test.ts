@@ -128,6 +128,7 @@ describe("Process Compat", () => {
     it("should include recently set env vars", () => {
       const key = "__TEST_ENV_ALL__";
       setEnv(key, "test-all-value");
+
       try {
         const all = env();
         assertEquals(all[key], "test-all-value");
@@ -147,13 +148,14 @@ describe("Process Compat", () => {
 
     it("should return an absolute path", () => {
       const currentDir = cwd();
-      assertEquals(currentDir.startsWith("/") || currentDir.match(/^[A-Z]:\\/i) !== null, true);
+      assertEquals(currentDir.startsWith("/") || /^[A-Z]:\\/i.test(currentDir), true);
     });
   });
 
   describe("chdir", () => {
     it("should change and restore directory", () => {
       const original = cwd();
+
       try {
         chdir("/tmp");
         const newDir = cwd();
@@ -162,6 +164,7 @@ describe("Process Compat", () => {
       } finally {
         chdir(original);
       }
+
       assertEquals(cwd(), original);
     });
   });
@@ -240,7 +243,6 @@ describe("Process Compat", () => {
 
     it("should contain a version number", () => {
       const version = getRuntimeVersion();
-      // Should contain at least one digit (version number)
       assertEquals(/\d/.test(version) || version === "unknown", true);
     });
   });
@@ -257,7 +259,6 @@ describe("Process Compat", () => {
 
     it("should return reasonable dimensions", () => {
       const size = getTerminalSize();
-      // Even default fallback should be reasonable
       assertEquals(size.columns >= 10, true);
       assertEquals(size.rows >= 5, true);
     });
@@ -330,6 +331,7 @@ describe("Process Compat", () => {
     }, () => {
       const handler = () => {};
       onSignal("SIGINT", handler);
+
       // Clean up to avoid Deno leak detection
       if (typeof Deno !== "undefined") {
         Deno.removeSignalListener("SIGINT", handler);
@@ -342,6 +344,7 @@ describe("Process Compat", () => {
     }, () => {
       const handler = () => {};
       onSignal("SIGTERM", handler);
+
       // Clean up to avoid Deno leak detection
       if (typeof Deno !== "undefined") {
         Deno.removeSignalListener("SIGTERM", handler);
@@ -359,9 +362,7 @@ describe("Process Compat", () => {
 
   describe("getEnvOverlayStorage", () => {
     it("should return null when no overlay is installed", () => {
-      // By default, no overlay should be installed
       const storage = getEnvOverlayStorage();
-      // Could be null or an object depending on test environment setup
       assertEquals(storage === null || typeof storage === "object", true);
     });
   });
@@ -386,7 +387,6 @@ describe("Process Compat", () => {
         assertEquals(result.success, false);
       } catch {
         // In Deno, non-existent commands throw NotFound rather than returning failure
-        // This is expected behavior
       }
     });
 
@@ -397,7 +397,7 @@ describe("Process Compat", () => {
       });
       assertEquals(result.success, false);
       assertExists(result.stderr);
-      assertEquals(result.stderr!.length > 0, true);
+      assertEquals(result.stderr.length > 0, true);
     });
 
     it("should pass environment variables", async () => {
@@ -412,7 +412,6 @@ describe("Process Compat", () => {
     it("should respect cwd option", async () => {
       const result = await runCommand("pwd", { capture: true, cwd: "/tmp" });
       assertEquals(result.success, true);
-      // On macOS /tmp -> /private/tmp
       const output = result.stdout?.trim() ?? "";
       assertEquals(output === "/tmp" || output === "/private/tmp", true);
     });

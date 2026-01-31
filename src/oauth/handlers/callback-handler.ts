@@ -1,8 +1,8 @@
-/**
+/**************************************************
  * OAuth Callback Handler
  *
  * Reusable handler for OAuth callback routes.
- */
+ **************************************************/
 
 import { logger } from "#veryfront/utils";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
@@ -37,18 +37,6 @@ export interface OAuthCallbackHandlerOptions {
   envReader?: EnvReader;
 }
 
-/**
- * Create an OAuth callback route handler
- *
- * @example
- * ```typescript
- * // app/api/auth/gmail/callback/route.ts
- * import { createOAuthCallbackHandler } from "veryfront/oauth";
- * import { gmailConfig } from "veryfront/oauth/providers";
- *
- * export const GET = createOAuthCallbackHandler(gmailConfig);
- * ```
- */
 export function createOAuthCallbackHandler(
   config: OAuthServiceConfig,
   options: OAuthCallbackHandlerOptions = {},
@@ -64,6 +52,32 @@ export function createOAuthCallbackHandler(
     envReader = getEnv,
   } = options;
 
+  function getAppUrl(): string {
+    return baseUrl ?? env.appUrl ?? "http://localhost:3000";
+  }
+
+  function redirectWithError(
+    appUrl: string,
+    errorCode: string,
+    description?: string | null,
+  ): Response {
+    const errorUrl = new URL(errorRedirect, appUrl);
+    errorUrl.searchParams.set("error", errorCode);
+    if (description) errorUrl.searchParams.set("error_description", description);
+    return Response.redirect(errorUrl.toString());
+  }
+
+  async function handleError(
+    appUrl: string,
+    errorCode: string,
+    logMessage?: string,
+    logData?: unknown,
+  ): Promise<Response> {
+    if (logMessage) logger.error(logMessage, { data: logData });
+    await onError?.(config.serviceId, errorCode);
+    return redirectWithError(appUrl, errorCode);
+  }
+
   return async function handler(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const code = url.searchParams.get("code");
@@ -71,24 +85,7 @@ export function createOAuthCallbackHandler(
     const oauthError = url.searchParams.get("error");
     const errorDescription = url.searchParams.get("error_description");
 
-    const appUrl = baseUrl ?? env.appUrl ?? "http://localhost:3000";
-
-    function redirectWithError(errorCode: string, description?: string | null): Response {
-      const errorUrl = new URL(errorRedirect, appUrl);
-      errorUrl.searchParams.set("error", errorCode);
-      if (description) errorUrl.searchParams.set("error_description", description);
-      return Response.redirect(errorUrl.toString());
-    }
-
-    async function handleError(
-      errorCode: string,
-      logMessage?: string,
-      logData?: unknown,
-    ): Promise<Response> {
-      if (logMessage) logger.error(logMessage, { data: logData });
-      await onError?.(config.serviceId, errorCode);
-      return redirectWithError(errorCode);
-    }
+    const appUrl = getAppUrl();
 
     if (oauthError) {
       logger.error("[OAuth] Callback error", {
@@ -97,10 +94,10 @@ export function createOAuthCallbackHandler(
         description: errorDescription,
       });
       await onError?.(config.serviceId, oauthError);
-      return redirectWithError(oauthError, errorDescription);
+      return redirectWithError(appUrl, oauthError, errorDescription);
     }
 
-    if (!code) return handleError("no_code");
+    if (!code) return handleError(appUrl, "no_code");
 
     let oauthState: Awaited<ReturnType<TokenStore["getState"]>> | null = null;
     if (state) {
@@ -123,6 +120,7 @@ export function createOAuthCallbackHandler(
 
       if (!result.success || !result.tokens) {
         return handleError(
+          appUrl,
           result.error ?? "token_exchange_failed",
           `Token exchange failed for ${config.serviceId}:`,
           result.error,
@@ -140,6 +138,7 @@ export function createOAuthCallbackHandler(
       return Response.redirect(successUrl.toString());
     } catch (error) {
       return handleError(
+        appUrl,
         "callback_error",
         `OAuth callback error for ${config.serviceId}:`,
         error,

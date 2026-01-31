@@ -1,22 +1,16 @@
-/**
+/****
  * Response Builder Types
  * Type definitions for response construction
  */
 
 export type { CORSConfig } from "../cors/index.ts";
 
-/**
- * HSTS Configuration
- */
 export interface HSTSConfig {
   maxAge: number;
   includeSubDomains?: boolean;
   preload?: boolean;
 }
 
-/**
- * Security Configuration Interface
- */
 export interface SecurityConfig {
   cors?: boolean | import("../cors/index.ts").CORSConfig;
   csp?: Partial<Record<string, string | string[]>>;
@@ -29,9 +23,6 @@ export interface SecurityConfig {
   [key: string]: unknown;
 }
 
-/**
- * Cache strategy configuration
- */
 export type CacheStrategy =
   | "no-cache"
   | "no-store"
@@ -47,9 +38,6 @@ export type CacheStrategy =
     mustRevalidate?: boolean;
   };
 
-/**
- * Response builder configuration
- */
 export interface ResponseBuilderConfig {
   securityConfig?: SecurityConfig | null;
   isDev?: boolean;

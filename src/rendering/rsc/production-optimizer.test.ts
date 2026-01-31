@@ -69,10 +69,10 @@ describe("rendering/rsc/production-optimizer", () => {
     });
 
     it("should be deterministic", () => {
-      const p = makePayload({ html: "<p>test</p>" });
+      const payload = makePayload({ html: "<p>test</p>" });
       assertEquals(
-        RSCProductionOptimizer.generateETag(p),
-        RSCProductionOptimizer.generateETag(p),
+        RSCProductionOptimizer.generateETag(payload),
+        RSCProductionOptimizer.generateETag(payload),
       );
     });
 

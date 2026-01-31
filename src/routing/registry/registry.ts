@@ -71,10 +71,11 @@ export class RouteRegistry {
             }
 
             if (result.response) {
-              const totalTime = Date.now() - startTime;
               if (this.config.debug) {
                 serverLogger.debug(
-                  `[RouteRegistry] Response from ${handler.metadata.name} (total: ${totalTime}ms)`,
+                  `[RouteRegistry] Response from ${handler.metadata.name} (total: ${
+                    Date.now() - startTime
+                  }ms)`,
                 );
               }
               return result.response;
@@ -104,9 +105,10 @@ export class RouteRegistry {
           }
         }
 
-        const totalTime = Date.now() - startTime;
         if (this.config.debug) {
-          serverLogger.debug(`[RouteRegistry] No handler matched (total: ${totalTime}ms)`);
+          serverLogger.debug(
+            `[RouteRegistry] No handler matched (total: ${Date.now() - startTime}ms)`,
+          );
         }
 
         return null;

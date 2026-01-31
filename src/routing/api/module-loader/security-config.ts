@@ -9,9 +9,11 @@ export async function loadSecurityConfig(
   try {
     const { getConfig } = await import("#veryfront/config");
     const cfg: VeryfrontConfig = await getConfig(projectDir, adapter);
-    const remote = cfg?.security?.remoteHosts;
+    const remote = cfg.security?.remoteHosts;
 
-    if (Array.isArray(remote)) return remote;
+    if (Array.isArray(remote)) {
+      return remote;
+    }
   } catch (e) {
     logger.warn("Failed to load security.remoteHosts", e);
   }

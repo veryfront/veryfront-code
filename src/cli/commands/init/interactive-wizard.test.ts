@@ -37,11 +37,17 @@ describe("interactive-wizard", () => {
     });
 
     it("should return true when template is undefined and integrations is empty", () => {
-      assertEquals(shouldRunWizard({ template: undefined, integrations: [] }), true);
+      assertEquals(
+        shouldRunWizard({ template: undefined, integrations: [] }),
+        true,
+      );
     });
 
     it("should return false when template is undefined but integrations exist", () => {
-      assertEquals(shouldRunWizard({ template: undefined, integrations: ["slack"] }), false);
+      assertEquals(
+        shouldRunWizard({ template: undefined, integrations: ["slack"] }),
+        false,
+      );
     });
   });
 });

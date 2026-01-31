@@ -73,16 +73,11 @@ function transformUIMessages(messages: ParsedMessage[]): ParsedMessage[] {
   const result: ParsedMessage[] = [];
 
   for (const msg of messages) {
-    if (msg.role !== "assistant") {
-      result.push(msg);
-      continue;
-    }
-
-    const toolPartsWithOutput = msg.parts.filter(isToolPartWithOutput);
-
     result.push(msg);
 
-    for (const toolPart of toolPartsWithOutput) {
+    if (msg.role !== "assistant") continue;
+
+    for (const toolPart of msg.parts.filter(isToolPartWithOutput)) {
       result.push({
         id: `tool_${toolPart.toolCallId}`,
         role: "tool",
@@ -107,7 +102,9 @@ export async function POST(request: Request): Promise<Response> {
     const messages = transformUIMessages(rawMessages);
 
     const agent = getAgent("assistant");
-    if (!agent) return Response.json({ error: "Agent not found" }, { status: 404 });
+    if (!agent) {
+      return Response.json({ error: "Agent not found" }, { status: 404 });
+    }
 
     await agent.clearMemory();
 
@@ -119,6 +116,7 @@ export async function POST(request: Request): Promise<Response> {
     if (error instanceof z.ZodError) {
       return Response.json({ error: "Invalid request", details: error.errors }, { status: 400 });
     }
+
     return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 }

@@ -5,7 +5,7 @@ import { getSlugFromPath, normalizeSlug, pathToSlug, slugToPath } from "./slug-n
 describe("slug-normalizer", () => {
   describe("normalizeSlug", () => {
     it("should normalize slashes and segments", () => {
-      const cases: Array<[string, string]> = [
+      const cases: [input: string, expected: string][] = [
         ["/blog/post", "blog/post"],
         ["blog/post/", "blog/post"],
         ["/blog/post/", "blog/post"],
@@ -27,7 +27,7 @@ describe("slug-normalizer", () => {
 
   describe("slugToPath", () => {
     it("should convert slug to path", () => {
-      const cases: Array<[string, string]> = [
+      const cases: [input: string, expected: string][] = [
         ["blog/post", "/blog/post"],
         ["", "/"],
         ["/blog/post/", "/blog/post"],
@@ -46,7 +46,7 @@ describe("slug-normalizer", () => {
 
   describe("pathToSlug", () => {
     it("should convert path to slug", () => {
-      const cases: Array<[string, string]> = [
+      const cases: [input: string, expected: string][] = [
         ["/blog/post", "blog/post"],
         ["/", ""],
         ["/blog/", "blog"],
@@ -65,7 +65,7 @@ describe("slug-normalizer", () => {
 
   describe("getSlugFromPath", () => {
     it("should extract slug from file paths", () => {
-      const cases: Array<[string, string]> = [
+      const cases: [input: string, expected: string][] = [
         ["/project/pages/blog.mdx", "blog"],
         ["/project/pages/about.tsx", "about"],
         ["/project/pages/contact.jsx", "contact"],
@@ -94,32 +94,28 @@ describe("slug-normalizer", () => {
   describe("round-trip conversions", () => {
     it("should convert slug to path and back", () => {
       const slug = "blog/post";
-      const path = slugToPath(slug);
-      const backToSlug = pathToSlug(path);
-      expect(backToSlug).toBe(slug);
+      expect(pathToSlug(slugToPath(slug))).toBe(slug);
     });
 
     it("should convert path to slug and back", () => {
       const path = "/blog/post";
-      const slug = pathToSlug(path);
-      const backToPath = slugToPath(slug);
-      expect(backToPath).toBe(path);
+      expect(slugToPath(pathToSlug(path))).toBe(path);
     });
 
     it("should normalize in both directions", () => {
       const messySlug = "//blog//post//";
       const path = slugToPath(messySlug);
-      const cleanSlug = pathToSlug(path);
-      expect(cleanSlug).toBe("blog/post");
+
+      expect(pathToSlug(path)).toBe("blog/post");
       expect(path).toBe("/blog/post");
     });
 
     it("should handle root path round-trip", () => {
       const path = "/";
       const slug = pathToSlug(path);
-      const backToPath = slugToPath(slug);
+
       expect(slug).toBe("");
-      expect(backToPath).toBe("/");
+      expect(slugToPath(slug)).toBe("/");
     });
   });
 

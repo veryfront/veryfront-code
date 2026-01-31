@@ -8,28 +8,32 @@ const userSchema = z.object({
   role: z.enum(["user", "admin"]).default("user"),
 });
 
-export async function GET(request: Request): Promise<Response> {
+async function requireAuthOrReturn(request: Request): Promise<Response | null> {
   const auth = await requireAuth(request);
-  if (!auth.ok) return auth.response;
+  return auth.ok ? null : auth.response;
+}
+
+export async function GET(request: Request): Promise<Response> {
+  const authResponse = await requireAuthOrReturn(request);
+  if (authResponse) return authResponse;
 
   const users = await getUsers();
   return Response.json({ users });
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const auth = await requireAuth(request);
-  if (!auth.ok) return auth.response;
+  const authResponse = await requireAuthOrReturn(request);
+  if (authResponse) return authResponse;
 
   try {
     const data = userSchema.parse(await request.json());
     const user = await createUser(data);
-
     return Response.json({ user }, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return Response.json(
         { error: "Invalid input", details: error.errors },
-        { status: 400 }
+        { status: 400 },
       );
     }
 

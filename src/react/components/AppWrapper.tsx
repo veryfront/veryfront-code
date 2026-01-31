@@ -23,17 +23,10 @@ export function AppWrapper({
 }: AppWrapperProps): React.ReactNode {
   let content = children;
 
-  if (layout) {
-    content = (
-      <LayoutComponent mdxBundle={layout} components={components} pageContext={pageContext}>
-        {content}
-      </LayoutComponent>
-    );
-  }
-
   for (let i = providers.length - 1; i >= 0; i--) {
     const provider = providers[i];
     if (!provider) continue;
+
     content = (
       <ProviderComponent mdxBundle={provider} components={components}>
         {content}
@@ -41,5 +34,11 @@ export function AppWrapper({
     );
   }
 
-  return content;
+  if (!layout) return content;
+
+  return (
+    <LayoutComponent mdxBundle={layout} components={components} pageContext={pageContext}>
+      {content}
+    </LayoutComponent>
+  );
 }

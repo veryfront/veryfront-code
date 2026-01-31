@@ -5,7 +5,9 @@ import { parseCliArgs } from "./arg-parser.ts";
 import { routeCommand } from "./command-router.ts";
 
 export async function main(): Promise<void> {
-  await routeCommand(parseCliArgs(getArgs()));
+  const args = getArgs();
+  const parsedArgs = parseCliArgs(args);
+  await routeCommand(parsedArgs);
 }
 
 if (import.meta.main) {

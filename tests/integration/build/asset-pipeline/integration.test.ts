@@ -99,11 +99,11 @@ describe("Asset Pipeline", () => {
         }
       }
 
-      if (status.available.length > 0) {
-        for (const avail of status.available) {
-          assertEquals(typeof avail, "string");
-          assertEquals(avail.length > 0, true);
-        }
+      if (status.available.length === 0) return;
+
+      for (const avail of status.available) {
+        assertEquals(typeof avail, "string");
+        assertEquals(avail.length > 0, true);
       }
     });
   });

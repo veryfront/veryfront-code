@@ -217,16 +217,14 @@ async function bundleEmbeddedApp(params: {
     });
 
     const code = appBuild.outputFiles?.[0]?.text;
-    if (!code) {
-      throw toError(
-        createError({
-          type: "build",
-          message: "Failed to generate embedded app bundle: no output files",
-        }),
-      );
-    }
+    if (code) return code;
 
-    return code;
+    throw toError(
+      createError({
+        type: "build",
+        message: "Failed to generate embedded app bundle: no output files",
+      }),
+    );
   } catch (error) {
     logger.error("Failed to bundle embedded app:", error);
     throw toError(

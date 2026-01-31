@@ -16,21 +16,6 @@ export default tool({
   async execute({ issueId }) {
     const issue = await getIssue(issueId);
 
-    const assignee = issue.assignee
-      ? {
-          id: issue.assignee.id,
-          name: issue.assignee.name,
-          email: issue.assignee.email,
-        }
-      : null;
-
-    const project = issue.project
-      ? {
-          id: issue.project.id,
-          name: issue.project.name,
-        }
-      : null;
-
     return {
       id: issue.id,
       identifier: issue.identifier,
@@ -41,13 +26,24 @@ export default tool({
       status: issue.state.name,
       statusType: issue.state.type,
       stateId: issue.state.id,
-      assignee,
+      assignee: issue.assignee
+        ? {
+            id: issue.assignee.id,
+            name: issue.assignee.name,
+            email: issue.assignee.email,
+          }
+        : null,
       team: {
         id: issue.team.id,
         name: issue.team.name,
         key: issue.team.key,
       },
-      project,
+      project: issue.project
+        ? {
+            id: issue.project.id,
+            name: issue.project.name,
+          }
+        : null,
       labels: issue.labels.nodes.map(({ id, name, color }) => ({
         id,
         name,

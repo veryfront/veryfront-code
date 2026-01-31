@@ -97,6 +97,7 @@ export interface HandlerResult {
 
 export enum HandlerPriority {
   CRITICAL = 0, // Auth, security checks
+  EARLY = 25, // HMR, WebSocket handlers (between auth and cors)
   HIGH = 100, // Health checks, metrics
   MEDIUM = 500, // Static files, API routes
   LOW = 1000, // SSR, fallbacks

@@ -22,7 +22,7 @@ interface DiscoveredProjects {
 }
 
 function getProjectSlug(path: string): string {
-  return path.replace(/\/+$/, "").split("/").pop() || "";
+  return path.replace(/\/+$/, "").split("/").pop() ?? "";
 }
 
 async function isVeryFrontProject(projectPath: string): Promise<boolean> {
@@ -45,9 +45,9 @@ async function findProjectsInDirs(baseDirs: string[]): Promise<Map<string, strin
         if (!entry.isDirectory || entry.name.startsWith(".")) continue;
 
         const projectPath = join(absoluteBase, entry.name);
-        if (await isVeryFrontProject(projectPath)) {
-          projects.set(entry.name, resolve(projectPath));
-        }
+        if (!(await isVeryFrontProject(projectPath))) continue;
+
+        projects.set(entry.name, resolve(projectPath));
       }
     } catch {
       // Directory not readable - skip
@@ -62,10 +62,10 @@ async function discoverProjects(explicitPath: string | null): Promise<Discovered
     findProjectsInDirs(["data/projects", "projects"]),
     findProjectsInDirs(["examples"]),
   ]);
+
   const fs = createFileSystem();
   let defaultProject: string | null = null;
 
-  // Add explicit project path if provided
   if (explicitPath) {
     const absolutePath = isAbsolute(explicitPath) ? explicitPath : join(cwd(), explicitPath);
     if (await fs.exists(absolutePath)) {
@@ -75,7 +75,6 @@ async function discoverProjects(explicitPath: string | null): Promise<Discovered
     }
   }
 
-  // Fall back to current directory if no projects found
   if (projects.size === 0 && !defaultProject) {
     const currentDir = cwd();
     if (await isVeryFrontProject(currentDir)) {
@@ -96,18 +95,16 @@ interface ProxySetup {
 async function trySetupProxy(localProjects: Map<string, string>): Promise<ProxySetup> {
   try {
     // Proxy is only available in local dev, not in the npm package
-    const { createProxyHandler, injectContextHeaders } = await import(
-      "../../../proxy/handler.ts"
-    );
+    const { createProxyHandler, injectContextHeaders } = await import("../../../proxy/handler.ts");
     const { createCacheFromEnv } = await import("../../../proxy/cache/index.ts");
 
     const proxyConfig = {
-      apiBaseUrl: getEnv("VERYFRONT_API_BASE_URL") || "http://api.lvh.me:4000",
-      clientId: getEnv("OAUTH_CLIENT_ID") || "",
-      clientSecret: getEnv("OAUTH_CLIENT_SECRET") || "",
-      previewClientId: getEnv("OAUTH_PREVIEW_CLIENT_ID") || "",
-      previewClientSecret: getEnv("OAUTH_PREVIEW_CLIENT_SECRET") || "",
-      apiToken: getEnv("VERYFRONT_API_TOKEN") || "",
+      apiBaseUrl: getEnv("VERYFRONT_API_BASE_URL") ?? "http://api.lvh.me:4000",
+      clientId: getEnv("OAUTH_CLIENT_ID") ?? "",
+      clientSecret: getEnv("OAUTH_CLIENT_SECRET") ?? "",
+      previewClientId: getEnv("OAUTH_PREVIEW_CLIENT_ID") ?? "",
+      previewClientSecret: getEnv("OAUTH_PREVIEW_CLIENT_SECRET") ?? "",
+      apiToken: getEnv("VERYFRONT_API_TOKEN") ?? "",
       localProjects: Object.fromEntries(localProjects),
     };
 

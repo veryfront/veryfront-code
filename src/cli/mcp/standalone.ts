@@ -14,10 +14,6 @@ import { DevServerClient } from "./dev-server-client.ts";
 const DEFAULT_DEV_PORT = 8080;
 const NOT_RUNNING_MSG = "Dev server not running. Start with: veryfront";
 
-// ============================================================================
-// Types
-// ============================================================================
-
 interface JSONRPCRequest {
   jsonrpc: "2.0";
   id?: string | number;
@@ -47,10 +43,6 @@ export interface StandaloneMCPConfig {
   port?: number;
 }
 
-// ============================================================================
-// Standalone MCP Server
-// ============================================================================
-
 export class StandaloneMCPServer {
   private client: DevServerClient;
   private tools: StandaloneTool[];
@@ -75,10 +67,6 @@ export class StandaloneMCPServer {
     this.stdinReader = null;
   }
 
-  // --------------------------------------------------------------------------
-  // stdio transport (same protocol as MCPDevServer)
-  // --------------------------------------------------------------------------
-
   private startStdio(): void {
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
@@ -95,11 +83,12 @@ export class StandaloneMCPServer {
 
           buffer += decoder.decode(value, { stream: true });
 
-          let newlineIndex = buffer.indexOf("\n");
-          while (newlineIndex !== -1) {
+          while (true) {
+            const newlineIndex = buffer.indexOf("\n");
+            if (newlineIndex === -1) break;
+
             const line = buffer.slice(0, newlineIndex).trim();
             buffer = buffer.slice(newlineIndex + 1);
-            newlineIndex = buffer.indexOf("\n");
 
             if (!line) continue;
 
@@ -127,10 +116,6 @@ export class StandaloneMCPServer {
 
     void readLoop();
   }
-
-  // --------------------------------------------------------------------------
-  // JSONRPC dispatch
-  // --------------------------------------------------------------------------
 
   private async handleRequest(request: JSONRPCRequest): Promise<JSONRPCResponse> {
     const { id, method, params } = request;
@@ -162,10 +147,10 @@ export class StandaloneMCPServer {
         return Promise.resolve({});
       case "tools/list":
         return Promise.resolve({
-          tools: this.tools.map((t) => ({
-            name: t.name,
-            description: t.description,
-            inputSchema: t.inputSchema,
+          tools: this.tools.map(({ name, description, inputSchema }) => ({
+            name,
+            description,
+            inputSchema,
           })),
         });
       case "tools/call":
@@ -189,14 +174,8 @@ export class StandaloneMCPServer {
     if (!tool) throw new Error(`Unknown tool: ${name}`);
 
     const result = await tool.execute(args ?? {});
-    return {
-      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-    };
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   }
-
-  // --------------------------------------------------------------------------
-  // Prompts (skills)
-  // --------------------------------------------------------------------------
 
   private handlePromptsList(): unknown {
     return {
@@ -219,12 +198,12 @@ export class StandaloneMCPServer {
   private async handlePromptsGet(params: unknown): Promise<unknown> {
     const { name } = params as { name: string };
 
-    const promptFiles: Record<string, string> = {
-      veryfront: "./skills/veryfront/SKILL.md",
-      flywheel: "./skills/flywheel/SKILL.md",
-    };
+    const filePath = name === "veryfront"
+      ? "./skills/veryfront/SKILL.md"
+      : name === "flywheel"
+      ? "./skills/flywheel/SKILL.md"
+      : undefined;
 
-    const filePath = promptFiles[name];
     if (!filePath) throw new Error(`Unknown prompt: ${name}`);
 
     try {
@@ -240,18 +219,14 @@ export class StandaloneMCPServer {
     }
   }
 
-  // --------------------------------------------------------------------------
-  // Tool definitions (HTTP pull from dev server)
-  // --------------------------------------------------------------------------
-
   private createTools(): StandaloneTool[] {
     const client = this.client;
 
     return [
       {
         name: "vf_get_errors",
-        description: "Get live compile, runtime, bundle, and HMR errors from the dev server. " +
-          "Returns errors from the ErrorCollector with optional type filtering.",
+        description:
+          "Get live compile, runtime, bundle, and HMR errors from the dev server. Returns errors from the ErrorCollector with optional type filtering.",
         inputSchema: {
           type: "object",
           properties: {
@@ -272,8 +247,8 @@ export class StandaloneMCPServer {
       },
       {
         name: "vf_get_logs",
-        description: "Get recent server log entries from the dev server's LogBuffer. " +
-          "Supports filtering by level, source, and pattern.",
+        description:
+          "Get recent server log entries from the dev server's LogBuffer. Supports filtering by level, source, and pattern.",
         inputSchema: {
           type: "object",
           properties: {
@@ -312,12 +287,8 @@ export class StandaloneMCPServer {
       {
         name: "vf_get_status",
         description:
-          "Get dev server status including MCP tool/resource/prompt counts and uptime. " +
-          "Useful for checking if the dev server is running and healthy.",
-        inputSchema: {
-          type: "object",
-          properties: {},
-        },
+          "Get dev server status including MCP tool/resource/prompt counts and uptime. Useful for checking if the dev server is running and healthy.",
+        inputSchema: { type: "object", properties: {} },
         async execute() {
           try {
             return await client.getStats();
@@ -328,8 +299,8 @@ export class StandaloneMCPServer {
       },
       {
         name: "vf_trigger_hmr",
-        description: "Trigger a hot module reload in the browser. " +
-          "Optionally specify a file path that changed.",
+        description:
+          "Trigger a hot module reload in the browser. Optionally specify a file path that changed.",
         inputSchema: {
           type: "object",
           properties: {
@@ -350,10 +321,6 @@ export class StandaloneMCPServer {
     ];
   }
 }
-
-// ============================================================================
-// Factory
-// ============================================================================
 
 export function createStandaloneMCPServer(config: StandaloneMCPConfig = {}): StandaloneMCPServer {
   const server = new StandaloneMCPServer(config);

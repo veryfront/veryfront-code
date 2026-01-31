@@ -1,7 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ProjectIsolationManager } from "./project-isolation.ts";
-import type { IsolationCheckResult } from "./project-isolation.ts";
 
 describe("server/universal-handler/project-isolation", () => {
   function createManager(
@@ -69,7 +68,7 @@ describe("server/universal-handler/project-isolation", () => {
       manager.startRequest("proj");
       manager.completeRequest("proj", true); // failure 2 - opens circuit
 
-      const result: IsolationCheckResult = manager.checkRequest("proj");
+      const result = manager.checkRequest("proj");
       assertEquals(result.allowed, false);
       assertEquals(result.reason, "circuit_open");
       assertEquals(typeof result.waitTimeMs, "number");
@@ -93,8 +92,7 @@ describe("server/universal-handler/project-isolation", () => {
     it("should be a no-op for undefined slug", () => {
       const manager = createManager();
       manager.startRequest(undefined);
-      const stats = manager.getStats();
-      assertEquals(Object.keys(stats).length, 0);
+      assertEquals(Object.keys(manager.getStats()).length, 0);
       manager.shutdown();
     });
 
@@ -102,6 +100,7 @@ describe("server/universal-handler/project-isolation", () => {
       const manager = createManager();
       manager.startRequest("proj");
       manager.startRequest("proj");
+
       const stats = manager.getStats();
       assertEquals(stats["proj"]?.inFlight, 2);
       assertEquals(stats["proj"]?.totalRequests, 2);
@@ -146,6 +145,7 @@ describe("server/universal-handler/project-isolation", () => {
       const manager = createManager();
       manager.startRequest("proj");
       manager.completeRequest("proj", true);
+
       const stats = manager.getStats()["proj"];
       assertEquals(stats?.totalTimeouts, 1);
       assertEquals(stats?.recentFailures, 1);
@@ -209,7 +209,6 @@ describe("server/universal-handler/project-isolation", () => {
       assertEquals(beforeReset.allowed, false);
       assertEquals(beforeReset.reason, "circuit_open");
 
-      // Wait for circuit reset
       await new Promise((resolve) => setTimeout(resolve, 80));
 
       const afterReset = manager.checkRequest("proj");

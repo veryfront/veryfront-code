@@ -22,17 +22,10 @@ export default tool({
   async execute({ database, schema, includeDetails }) {
     const tables = await listTables(database, schema);
 
-    const base = {
-      database,
-      schema,
-      count: tables.length,
-    };
+    const base = { database, schema, count: tables.length };
 
     if (!includeDetails) {
-      return {
-        ...base,
-        tables: tables.map((t) => t.name),
-      };
+      return { ...base, tables: tables.map((t) => t.name) };
     }
 
     return {

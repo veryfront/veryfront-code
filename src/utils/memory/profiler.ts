@@ -79,18 +79,12 @@ function getConfiguredHeapLimit(env: RuntimeEnv = getRuntimeEnv()): number {
   const args = getArgs().join(" ");
 
   const v8FlagsMatch = args.match(/--max-old-space-size=(\d+)/);
-  if (v8FlagsMatch?.[1]) {
-    return parseInt(v8FlagsMatch[1], 10);
-  }
+  if (v8FlagsMatch?.[1]) return parseInt(v8FlagsMatch[1], 10);
 
   const denoV8Match = env.denoV8Flags?.match(/--max-old-space-size=(\d+)/);
-  if (denoV8Match?.[1]) {
-    return parseInt(denoV8Match[1], 10);
-  }
+  if (denoV8Match?.[1]) return parseInt(denoV8Match[1], 10);
 
-  if (env.v8MaxOldSpaceSize && env.v8MaxOldSpaceSize > 0) {
-    return env.v8MaxOldSpaceSize;
-  }
+  if (env.v8MaxOldSpaceSize && env.v8MaxOldSpaceSize > 0) return env.v8MaxOldSpaceSize;
 
   return 5120;
 }
@@ -125,8 +119,7 @@ export function getMemorySnapshot(): MemorySnapshot {
 
 export async function forceGC(): Promise<boolean> {
   try {
-    const size = 100 * 1024 * 1024;
-    const buffer = new Uint8Array(size);
+    const buffer = new Uint8Array(100 * 1024 * 1024);
     buffer.fill(0);
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
     return true;
@@ -136,9 +129,7 @@ export async function forceGC(): Promise<boolean> {
 }
 
 export function startMemoryMonitoring(intervalMs = 30000): void {
-  if (memoryCheckInterval) {
-    clearInterval(memoryCheckInterval);
-  }
+  if (memoryCheckInterval) clearInterval(memoryCheckInterval);
 
   logger.info(`[MemoryProfiler] Starting memory monitoring (interval: ${intervalMs}ms)`);
 
@@ -204,8 +195,11 @@ function getMemoryThreshold(envVar: string, fallback: number): number {
   try {
     const value = typeof Deno !== "undefined" ? Deno.env.get(envVar) : undefined;
     if (!value) return fallback;
+
     const parsed = parseInt(value, 10);
-    return Number.isNaN(parsed) ? fallback : parsed;
+    if (Number.isNaN(parsed)) return fallback;
+
+    return parsed;
   } catch {
     return fallback;
   }
@@ -220,19 +214,21 @@ export function checkMemoryPressure(): {
   heapUsedPercent: number;
 } {
   const heap = getHeapStats();
-  const critical = heap.heapUsedPercent > PROFILER_CRITICAL_THRESHOLD;
-  const warning = heap.heapUsedPercent > PROFILER_WARNING_THRESHOLD;
+  const heapUsedPercent = heap.heapUsedPercent;
+
+  const critical = heapUsedPercent > PROFILER_CRITICAL_THRESHOLD;
+  const warning = heapUsedPercent > PROFILER_WARNING_THRESHOLD;
 
   if (critical) {
     logger.error("[MemoryProfiler] CRITICAL MEMORY PRESSURE", {
-      heapUsedPercent: heap.heapUsedPercent,
+      heapUsedPercent,
       usedMB: heap.usedHeapSizeMB,
       limitMB: heap.heapSizeLimitMB,
       threshold: PROFILER_CRITICAL_THRESHOLD,
     });
   }
 
-  return { critical, warning, heapUsedPercent: heap.heapUsedPercent };
+  return { critical, warning, heapUsedPercent };
 }
 
 export type { MemorySnapshot as MemorySnapshotType };

@@ -1,22 +1,3 @@
-/**
- * Layer 3: Styled Components
- *
- * Production-ready, fully styled components.
- * Built on Layer 2 primitives.
- *
- * @module veryfront/components/ai
- * @example
- * ```tsx
- * import { Chat } from 'veryfront/components/ai';
- * import { useChat } from 'veryfront/agent/react';
- *
- * export default function ChatPage() {
- *   const chat = useChat({ api: '/api/chat' });
- *   return <Chat {...chat} />;
- * }
- * ```
- */
-
 export * from "./theme.ts";
 
 export { Chat, ChatComponents } from "./chat.tsx";

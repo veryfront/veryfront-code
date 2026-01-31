@@ -99,7 +99,11 @@ export async function buildPagesRoutes(
         const { generatePreloadLinks } = await import(
           "../../build/bundler/code-splitter/index.ts"
         );
-        const preloadLinks = generatePreloadLinks(chunkManifest, route.path, "/_veryfront/chunks");
+        const preloadLinks = generatePreloadLinks(
+          chunkManifest,
+          route.path,
+          "/_veryfront/chunks",
+        );
         enhancedHtml = enhancedHtml.replace("</head>", `${preloadLinks}\n</head>`);
       }
 
@@ -116,17 +120,22 @@ ${clientStyles}
 </head>`,
       );
 
-      enhancedHtml = enhancedHtml.replace("</body>", generateClientRuntime(route, result, baseUrl));
+      enhancedHtml = enhancedHtml.replace(
+        "</body>",
+        generateClientRuntime(route, result, baseUrl),
+      );
 
       const outputPath = getOutputPath(outputDir, route.slug);
       await adapter.fs.mkdir(dirname(outputPath), { recursive: true });
 
-      if (!dryRun) {
-        await traceStep(
-          `write:${route.slug}`,
-          () => adapter.fs.writeFile(outputPath, enhancedHtml),
-        );
+      if (dryRun) {
+        stats.pages++;
+        stats.totalSize += getByteLength(enhancedHtml);
+        logger.debug(`Built page: ${route.slug}`);
+        continue;
       }
+
+      await traceStep(`write:${route.slug}`, () => adapter.fs.writeFile(outputPath, enhancedHtml));
 
       stats.pages++;
       stats.totalSize += getByteLength(enhancedHtml);
@@ -139,23 +148,18 @@ ${clientStyles}
         html: result.html,
       };
 
-      if (!dryRun) {
-        const dataPath = join(outputDir, "_veryfront/data", `${route.slug}.json`);
-        await adapter.fs.mkdir(dirname(dataPath), { recursive: true });
-        await traceStep(
-          `data:${route.slug}`,
-          () => adapter.fs.writeFile(dataPath, JSON.stringify(pageData)),
-        );
+      const dataPath = join(outputDir, "_veryfront/data", `${route.slug}.json`);
+      await adapter.fs.mkdir(dirname(dataPath), { recursive: true });
+      await traceStep(
+        `data:${route.slug}`,
+        () => adapter.fs.writeFile(dataPath, JSON.stringify(pageData)),
+      );
 
-        const moduleCode = result.pageModule?.code;
-        if (moduleCode) {
-          const modulePath = join(outputDir, "_veryfront/pages", `${route.slug}.js`);
-          await adapter.fs.mkdir(dirname(modulePath), { recursive: true });
-          await traceStep(
-            `module:${route.slug}`,
-            () => adapter.fs.writeFile(modulePath, moduleCode),
-          );
-        }
+      const moduleCode = result.pageModule?.code;
+      if (moduleCode) {
+        const modulePath = join(outputDir, "_veryfront/pages", `${route.slug}.js`);
+        await adapter.fs.mkdir(dirname(modulePath), { recursive: true });
+        await traceStep(`module:${route.slug}`, () => adapter.fs.writeFile(modulePath, moduleCode));
       }
 
       logger.debug(`Built page: ${route.slug}`);

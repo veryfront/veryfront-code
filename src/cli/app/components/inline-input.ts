@@ -15,10 +15,12 @@ export interface InlineInputOptions {
 /**
  * Render the inline input prompt
  */
-export function renderInput(input: InputState, _options: InlineInputOptions = {}): string {
+export function renderInput(
+  input: InputState,
+  _options: InlineInputOptions = {},
+): string {
   if (!input.active) return "";
 
-  // Build the input line with cursor
   const prompt = `  ${brand(">")} ${input.prompt}: `;
   const beforeCursor = input.value.slice(0, input.cursorPos);
   const cursorChar = input.value[input.cursorPos] ?? " ";
@@ -28,8 +30,6 @@ export function renderInput(input: InputState, _options: InlineInputOptions = {}
   const cursor = `\x1b[7m${cursorChar}\x1b[27m`;
 
   const inputLine = `${prompt}${beforeCursor}${cursor}${afterCursor}`;
-
-  // Hint line
   const hintLine = `  ${dim("Enter")} ${muted("to submit")}  ${dim("Esc")} ${muted("to cancel")}`;
 
   return `${inputLine}\n${hintLine}`;
@@ -45,13 +45,10 @@ export interface RenderLogsOptions {
 /**
  * Render the logs area with optional scrolling
  */
-export function renderLogs(
-  logs: LogEntry[],
-  options: RenderLogsOptions = {},
-): string {
-  const { maxLines = 5, maxWidth = 80, scroll = 0, expanded = false } = options;
-
+export function renderLogs(logs: LogEntry[], options: RenderLogsOptions = {}): string {
   if (logs.length === 0) return "";
+
+  const { maxLines = 5, maxWidth = 80, scroll = 0, expanded = false } = options;
 
   const visibleLines = expanded ? Math.max(maxLines, 15) : maxLines;
   const end = logs.length - scroll;
@@ -65,60 +62,55 @@ export function renderLogs(
     const levelColor = getLevelColor(log.level);
     const levelPrefix = getLevelPrefix(log.level);
 
-    if (expanded) {
-      // When expanded, show structured info if available
-      if (log.meta?.method) {
-        // Request log - show all details in clean format
-        const meta = log.meta;
-        const statusColor = getStatusColor(meta.status || 200);
-        const methodStr = (meta.method || "GET").padEnd(7);
-        const pathStr = meta.path || "/";
-        const statusStr = String(meta.status || 200);
-        const durationStr = `${meta.durationMs || 0}ms`.padStart(6);
-
-        // Line 1: time + method + path
-        lines.push(
-          `  ${dim(time)} ${levelColor(levelPrefix)} ${methodStr}${pathStr}`,
-        );
-
-        // Line 2: status + duration + project info
-        const projectInfo: string[] = [];
-        if (meta.project) projectInfo.push(brand(meta.project));
-        if (meta.env) projectInfo.push(dim(meta.env));
-        if (meta.releaseId) projectInfo.push(dim(`#${meta.releaseId.slice(0, 8)}`));
-
-        lines.push(
-          `  ${"".padEnd(12)}${statusColor(statusStr)} ${dim(durationStr)}${
-            projectInfo.length ? `  ${projectInfo.join(" ")}` : ""
-          }`,
-        );
-      } else {
-        // Regular log - show full message (may wrap to multiple lines)
-        const prefix = `  ${dim(time)} ${levelColor(levelPrefix)} `;
-        const msgLines = wrapText(log.message, maxWidth - 15);
-        lines.push(`${prefix}${msgLines[0] || ""}`);
-        // Indent continuation lines
-        for (let i = 1; i < msgLines.length; i++) {
-          lines.push(`  ${"".padEnd(12)}${msgLines[i]}`);
-        }
-      }
-    } else {
-      // When collapsed, truncate
+    if (!expanded) {
       const maxMsgLen = maxWidth - 15;
       const msg = log.message.length > maxMsgLen
         ? `${log.message.slice(0, maxMsgLen - 3)}...`
         : log.message;
+
       lines.push(`  ${dim(time)} ${levelColor(levelPrefix)} ${msg}`);
+      continue;
+    }
+
+    const meta = log.meta;
+    if (meta?.method) {
+      const status = meta.status || 200;
+      const statusColor = getStatusColor(status);
+      const methodStr = (meta.method || "GET").padEnd(7);
+      const pathStr = meta.path || "/";
+      const statusStr = String(status);
+      const durationStr = `${meta.durationMs || 0}ms`.padStart(6);
+
+      lines.push(`  ${dim(time)} ${levelColor(levelPrefix)} ${methodStr}${pathStr}`);
+
+      const projectInfo: string[] = [];
+      if (meta.project) projectInfo.push(brand(meta.project));
+      if (meta.env) projectInfo.push(dim(meta.env));
+      if (meta.releaseId) projectInfo.push(dim(`#${meta.releaseId.slice(0, 8)}`));
+
+      lines.push(
+        `  ${"".padEnd(12)}${statusColor(statusStr)} ${dim(durationStr)}${
+          projectInfo.length ? `  ${projectInfo.join(" ")}` : ""
+        }`,
+      );
+      continue;
+    }
+
+    const prefix = `  ${dim(time)} ${levelColor(levelPrefix)} `;
+    const msgLines = wrapText(log.message, maxWidth - 15);
+
+    lines.push(`${prefix}${msgLines[0] || ""}`);
+    for (let i = 1; i < msgLines.length; i++) {
+      lines.push(`  ${"".padEnd(12)}${msgLines[i]}`);
     }
   }
 
   if (expanded && logs.length > visibleLines) {
-    const canScrollUp = start > 0;
-    const canScrollDown = scroll > 0;
-    const scrollHint = [];
-    if (canScrollUp) scrollHint.push("↑");
-    if (canScrollDown) scrollHint.push("↓");
-    if (scrollHint.length > 0) {
+    const scrollHint: string[] = [];
+    if (start > 0) scrollHint.push("↑");
+    if (scroll > 0) scrollHint.push("↓");
+
+    if (scrollHint.length) {
       lines.push(`  ${dim(`[${scrollHint.join(" ")}] ${logs.length} total`)}`);
     }
   }
@@ -135,6 +127,7 @@ function wrapText(text: string, maxWidth: number): string[] {
   while (remaining.length > maxWidth) {
     let breakPoint = remaining.lastIndexOf(" ", maxWidth);
     if (breakPoint <= 0) breakPoint = maxWidth;
+
     lines.push(remaining.slice(0, breakPoint));
     remaining = remaining.slice(breakPoint).trimStart();
   }

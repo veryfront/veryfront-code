@@ -2,17 +2,22 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type CacheTier, MultiTierCache } from "./multi-tier.ts";
 
-function createMockTier(name: string): CacheTier<string> & { store: Map<string, string> } {
+function createMockTier(
+  name: string,
+): CacheTier<string> & { store: Map<string, string> } {
   const store = new Map<string, string>();
+
   return {
     name,
     store,
-    get: (key: string) => Promise.resolve(store.get(key) ?? null),
-    set: (key: string, value: string) => {
+    get(key: string) {
+      return Promise.resolve(store.get(key) ?? null);
+    },
+    set(key: string, value: string) {
       store.set(key, value);
       return Promise.resolve();
     },
-    delete: (key: string) => {
+    delete(key: string) {
       store.delete(key);
       return Promise.resolve();
     },
@@ -125,8 +130,10 @@ describe("MultiTierCache", () => {
         l1: createMockTier("l1"),
         asyncBackfill: false,
       });
+
       await cache.set("a", "1");
       await cache.set("b", "2");
+
       assertEquals(cache.getStats().sets, 2);
     });
   });
@@ -195,8 +202,9 @@ describe("MultiTierCache", () => {
       await cache.get("a");
       cache.resetStats();
 
-      assertEquals(cache.getStats().gets, 0);
-      assertEquals(cache.getStats().l1Hits, 0);
+      const stats = cache.getStats();
+      assertEquals(stats.gets, 0);
+      assertEquals(stats.l1Hits, 0);
     });
   });
 

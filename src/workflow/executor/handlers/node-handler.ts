@@ -40,14 +40,17 @@ export abstract class BaseNodeHandler<TConfig extends WorkflowNodeConfig = Workf
     output: unknown,
     executionTime: number,
   ): NodeState {
+    const completedAt = new Date();
+    const startedAt = new Date(completedAt.getTime() - executionTime);
+
     return {
       nodeId,
       status: "completed",
       input,
       output,
       attempt: 1,
-      startedAt: new Date(Date.now() - executionTime),
-      completedAt: new Date(),
+      startedAt,
+      completedAt,
     };
   }
 
@@ -57,14 +60,17 @@ export abstract class BaseNodeHandler<TConfig extends WorkflowNodeConfig = Workf
     error: string,
     executionTime: number,
   ): NodeState {
+    const completedAt = new Date();
+    const startedAt = new Date(completedAt.getTime() - executionTime);
+
     return {
       nodeId,
       status: "failed",
       input,
       error,
       attempt: 1,
-      startedAt: new Date(Date.now() - executionTime),
-      completedAt: new Date(),
+      startedAt,
+      completedAt,
     };
   }
 

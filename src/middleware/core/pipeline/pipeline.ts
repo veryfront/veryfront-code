@@ -37,8 +37,13 @@ export class MiddlewarePipeline {
     executionCtx?: ExecutionContext,
     adapter?: RuntimeAdapter,
   ): Promise<Response> {
-    const handler = this.compose();
-    return executeMiddlewarePipeline(req, handler, env, executionCtx, adapter);
+    return executeMiddlewarePipeline(
+      req,
+      this.compose(),
+      env,
+      executionCtx,
+      adapter,
+    );
   }
 
   async teardown(): Promise<void> {
@@ -55,9 +60,9 @@ export class MiddlewarePipeline {
   }
 
   getMiddleware(): Array<{ name?: string; order?: number }> {
-    return this.middlewares.map((mw, index) => ({
+    return this.middlewares.map((mw, order) => ({
       name: mw.name ?? "anonymous",
-      order: index,
+      order,
     }));
   }
 }

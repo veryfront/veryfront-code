@@ -1,11 +1,4 @@
-/**
- * Server start/stop helpers for E2E tests
- *
- * Manages the Veryfront dev server lifecycle for testing.
- * Uses Deno subprocess to spawn the server and polls for readiness.
- */
-
-import { ChildProcess, spawn } from "child_process";
+import { type ChildProcess, spawn } from "child_process";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
@@ -14,13 +7,7 @@ const PROJECT_ROOT = join(__dirname, "..", "..", "..");
 
 let serverProcess: ChildProcess | null = null;
 
-/**
- * Wait for server to become ready by polling the health endpoint
- */
-async function waitForReady(
-  url: string,
-  timeout: number = 30_000,
-): Promise<void> {
+async function waitForReady(url: string, timeout = 30_000): Promise<void> {
   const start = Date.now();
   const pollInterval = 500;
 
@@ -29,9 +16,7 @@ async function waitForReady(
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 2000);
 
-      const response = await fetch(url, {
-        signal: controller.signal,
-      });
+      const response = await fetch(url, { signal: controller.signal });
 
       clearTimeout(timeoutId);
 
@@ -43,15 +28,12 @@ async function waitForReady(
       // Server not ready yet, continue polling
     }
 
-    await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    await new Promise<void>((resolve) => setTimeout(resolve, pollInterval));
   }
 
   throw new Error(`Server not ready after ${timeout}ms`);
 }
 
-/**
- * Start the Veryfront dev server
- */
 export async function startServer(): Promise<void> {
   if (serverProcess) {
     console.log("Server already running");
@@ -60,30 +42,21 @@ export async function startServer(): Promise<void> {
 
   console.log("Starting Veryfront dev server...");
 
-  // Spawn deno task start
   serverProcess = spawn("deno", ["task", "start"], {
     cwd: PROJECT_ROOT,
     stdio: ["ignore", "pipe", "pipe"],
-    env: {
-      ...process.env,
-      // Ensure consistent environment
-      NODE_ENV: "development",
-    },
+    env: { ...process.env, NODE_ENV: "development" },
   });
 
-  // Log server output for debugging
   serverProcess.stdout?.on("data", (data) => {
-    const output = data.toString();
-    if (process.env.DEBUG) {
-      console.log("[server]", output);
-    }
+    if (!process.env.DEBUG) return;
+    console.log("[server]", data.toString());
   });
 
   serverProcess.stderr?.on("data", (data) => {
     const output = data.toString();
-    if (process.env.DEBUG || output.toLowerCase().includes("error")) {
-      console.error("[server error]", output);
-    }
+    if (!process.env.DEBUG && !output.toLowerCase().includes("error")) return;
+    console.error("[server error]", output);
   });
 
   serverProcess.on("error", (error) => {
@@ -97,13 +70,9 @@ export async function startServer(): Promise<void> {
     serverProcess = null;
   });
 
-  // Wait for server to be ready
   await waitForReady("http://lvh.me:8080", 60_000);
 }
 
-/**
- * Stop the server gracefully
- */
 export async function stopServer(): Promise<void> {
   if (!serverProcess) {
     console.log("No server to stop");
@@ -112,7 +81,7 @@ export async function stopServer(): Promise<void> {
 
   console.log("Stopping server...");
 
-  return new Promise((resolve) => {
+  return new Promise<void>((resolve) => {
     const timeout = setTimeout(() => {
       console.warn("Server did not stop gracefully, killing...");
       serverProcess?.kill("SIGKILL");
@@ -120,20 +89,17 @@ export async function stopServer(): Promise<void> {
       resolve();
     }, 5000);
 
-    serverProcess!.once("exit", () => {
+    serverProcess.once("exit", () => {
       clearTimeout(timeout);
       serverProcess = null;
       console.log("Server stopped");
       resolve();
     });
 
-    serverProcess!.kill("SIGTERM");
+    serverProcess.kill("SIGTERM");
   });
 }
 
-/**
- * Get server status
- */
 export function isServerRunning(): boolean {
   return serverProcess !== null;
 }

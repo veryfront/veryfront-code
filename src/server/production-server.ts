@@ -65,6 +65,7 @@ export function startUniversalServer(
         defaultProjectId,
         defaultEnvironment,
       } = options;
+
       const baseAdapter = options.adapter ?? (await runtime.get());
 
       // Bootstrap framework to initialize FSAdapter if configured
@@ -93,7 +94,7 @@ export function startUniversalServer(
         config: bootstrap.config,
         // When mode is "development", enable dev-only features (e.g., /_veryfront/fs/)
         // Otherwise explicitly disable dev mode (don't rely on NODE_ENV which may not be set in tests)
-        envConfig: mode === "development" ? { isLocalDev: true } : { isLocalDev: false },
+        envConfig: { isLocalDev: mode === "development" },
         defaultProjectSlug,
         defaultProjectId,
         defaultEnvironment,
@@ -120,8 +121,9 @@ export function startUniversalServer(
       });
 
       async function stop(): Promise<void> {
+        setServerInitialized(false);
+
         try {
-          setServerInitialized(false);
           await server.stop();
         } catch (error) {
           logger.debug("Server stop failed", { error });
@@ -130,7 +132,7 @@ export function startUniversalServer(
 
       return { ready, stop };
     },
-    { "server.port": options.port, "server.bindAddress": options.bindAddress || "0.0.0.0" },
+    { "server.port": options.port, "server.bindAddress": options.bindAddress ?? "0.0.0.0" },
   );
 }
 
@@ -144,7 +146,7 @@ if (import.meta.main) {
   onGlobalError((error, type) => {
     // Fatal errors that indicate corrupted process state — let the process crash
     // so the orchestrator (k8s) can restart it cleanly
-    const isFatal = error.name === "RangeError" && error.message.includes("Maximum call stack") ||
+    const isFatal = (error.name === "RangeError" && error.message.includes("Maximum call stack")) ||
       error.message.includes("out of memory") ||
       error.message.includes("allocation failed");
 

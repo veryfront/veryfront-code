@@ -36,12 +36,14 @@ describe("ERROR_SOLUTIONS", () => {
 
   it("should have steps arrays when present", () => {
     for (const [key, solution] of Object.entries(ERROR_SOLUTIONS)) {
-      if (solution.steps !== undefined) {
-        assert(Array.isArray(solution.steps), `${key} steps should be an array`);
-        assert(solution.steps.length > 0, `${key} steps should not be empty`);
-        for (const step of solution.steps) {
-          assert(typeof step === "string" && step.length > 0, `${key} has empty step`);
-        }
+      const steps = solution.steps;
+      if (steps === undefined) continue;
+
+      assert(Array.isArray(steps), `${key} steps should be an array`);
+      assert(steps.length > 0, `${key} steps should not be empty`);
+
+      for (const step of steps) {
+        assert(typeof step === "string" && step.length > 0, `${key} has empty step`);
       }
     }
   });

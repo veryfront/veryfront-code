@@ -34,12 +34,11 @@ const chatRequestSchema = z.object({
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    const { messages } = chatRequestSchema.parse(await request.json());
+    const body = await request.json();
+    const { messages } = chatRequestSchema.parse(body);
 
     const agent = getAgent("assistant");
-    if (!agent) {
-      return Response.json({ error: "Agent not found" }, { status: 404 });
-    }
+    if (!agent) return Response.json({ error: "Agent not found" }, { status: 404 });
 
     const result = await agent.stream({ messages });
     return result.toDataStreamResponse();

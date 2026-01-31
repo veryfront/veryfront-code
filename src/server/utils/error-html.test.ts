@@ -2,6 +2,14 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ErrorPages, generateErrorHtml } from "./error-html.ts";
 
+function assertIncludes(haystack: string, needle: string): void {
+  assertEquals(haystack.includes(needle), true);
+}
+
+function assertNotIncludes(haystack: string, needle: string): void {
+  assertEquals(haystack.includes(needle), false);
+}
+
 describe("server/utils/error-html", () => {
   describe("generateErrorHtml", () => {
     it("should generate styled HTML by default", () => {
@@ -10,10 +18,11 @@ describe("server/utils/error-html", () => {
         title: "Server Error",
         message: "Something broke",
       });
-      assertEquals(html.includes("<!DOCTYPE html>"), true);
-      assertEquals(html.includes("Server Error"), true);
-      assertEquals(html.includes("Something broke"), true);
-      assertEquals(html.includes("500"), true);
+
+      assertIncludes(html, "<!DOCTYPE html>");
+      assertIncludes(html, "Server Error");
+      assertIncludes(html, "Something broke");
+      assertIncludes(html, "500");
     });
 
     it("should generate minimal HTML when minimal=true", () => {
@@ -23,10 +32,10 @@ describe("server/utils/error-html", () => {
         message: "Page not found",
         minimal: true,
       });
-      assertEquals(html.includes("<h1>404 Not Found</h1>"), true);
-      assertEquals(html.includes("Page not found"), true);
-      // Minimal should NOT have the styled CSS
-      assertEquals(html.includes("--bg"), false);
+
+      assertIncludes(html, "<h1>404 Not Found</h1>");
+      assertIncludes(html, "Page not found");
+      assertNotIncludes(html, "--bg");
     });
 
     it("should replace {path} in minimal mode with pathname", () => {
@@ -37,7 +46,8 @@ describe("server/utils/error-html", () => {
         pathname: "/foo/bar",
         minimal: true,
       });
-      assertEquals(html.includes('"/foo/bar"'), true);
+
+      assertIncludes(html, '"/foo/bar"');
     });
 
     it("should include Veryfront favicon in styled mode", () => {
@@ -46,42 +56,49 @@ describe("server/utils/error-html", () => {
         title: "Unavailable",
         message: "Try again",
       });
-      assertEquals(html.includes("veryfront-favicon.png"), true);
+
+      assertIncludes(html, "veryfront-favicon.png");
     });
   });
 
   describe("ErrorPages", () => {
     it("should generate notFound page", () => {
       const html = ErrorPages.notFound("/missing");
-      assertEquals(html.includes("Not Found"), true);
-      assertEquals(html.includes("/missing"), true);
+
+      assertIncludes(html, "Not Found");
+      assertIncludes(html, "/missing");
     });
 
     it("should generate notFound without pathname", () => {
       const html = ErrorPages.notFound();
-      assertEquals(html.includes("Not Found"), true);
-      assertEquals(html.includes("could not be found"), true);
+
+      assertIncludes(html, "Not Found");
+      assertIncludes(html, "could not be found");
     });
 
     it("should generate serverError page", () => {
       const html = ErrorPages.serverError("Render failed");
-      assertEquals(html.includes("Internal Server Error"), true);
-      assertEquals(html.includes("Render failed"), true);
+
+      assertIncludes(html, "Internal Server Error");
+      assertIncludes(html, "Render failed");
     });
 
     it("should generate serverError with default message", () => {
       const html = ErrorPages.serverError();
-      assertEquals(html.includes("Something went wrong"), true);
+
+      assertIncludes(html, "Something went wrong");
     });
 
     it("should generate undeployed page", () => {
       const html = ErrorPages.undeployed();
-      assertEquals(html.includes("Not Yet Deployed"), true);
+
+      assertIncludes(html, "Not Yet Deployed");
     });
 
     it("should generate memoryPressure page", () => {
       const html = ErrorPages.memoryPressure();
-      assertEquals(html.includes("Service Temporarily Unavailable"), true);
+
+      assertIncludes(html, "Service Temporarily Unavailable");
     });
   });
 });

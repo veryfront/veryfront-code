@@ -6,7 +6,9 @@ function formatRate(rate: number): string {
   return `${(rate * 100).toFixed(2)}%`;
 }
 
-function averageRetention(retention: Array<{ retention: Array<{ day: number; rate: number }> }>, day: number): string {
+type RetentionCohort = { retention: Array<{ day: number; rate: number }> };
+
+function averageRetention(retention: RetentionCohort[], day: number): string {
   if (retention.length === 0) return "N/A";
 
   const total = retention.reduce((sum, cohort) => {
@@ -48,19 +50,21 @@ export default tool({
   }> {
     const retention = await getRetention(from, to, event, retentionType);
 
+    const cohorts = retention.map((cohort) => ({
+      date: cohort.date,
+      initialCount: cohort.count,
+      retention: cohort.retention.map((r) => ({
+        day: r.day,
+        count: r.count,
+        rate: formatRate(r.rate),
+      })),
+    }));
+
     return {
       event,
       retentionType,
       dateRange: { from, to },
-      cohorts: retention.map((cohort) => ({
-        date: cohort.date,
-        initialCount: cohort.count,
-        retention: cohort.retention.map((r) => ({
-          day: r.day,
-          count: r.count,
-          rate: formatRate(r.rate),
-        })),
-      })),
+      cohorts,
       summary: {
         totalCohorts: retention.length,
         averageDay1Retention: averageRetention(retention, 1),

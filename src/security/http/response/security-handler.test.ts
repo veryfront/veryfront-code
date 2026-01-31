@@ -8,11 +8,13 @@ import {
 } from "./security-handler.ts";
 import type { SecurityConfig } from "./types.ts";
 
-function createMockAdapter(envMap: Record<string, string> = {}) {
+function createMockAdapter(
+  envMap: Record<string, string> = {},
+): import("#veryfront/platform/adapters/base.ts").RuntimeAdapter {
   return {
     env: {
       get(key: string) {
-        return envMap[key] ?? undefined;
+        return envMap[key];
       },
     },
   } as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
@@ -40,7 +42,9 @@ describe("security/http/response/security-handler", () => {
     });
 
     it("should use env CSP when set", () => {
-      const adapter = createMockAdapter({ VERYFRONT_CSP: "default-src 'self' 'nonce-{NONCE}'" });
+      const adapter = createMockAdapter({
+        VERYFRONT_CSP: "default-src 'self' 'nonce-{NONCE}'",
+      });
       const result = buildCSP(false, "abc123", null, null, adapter);
       assertEquals(result, "default-src 'self' 'nonce-abc123'");
     });
@@ -162,10 +166,11 @@ describe("security/http/response/security-handler", () => {
     it("should set HSTS in production", () => {
       const headers = new Headers();
       applySecurityHeaders(headers, false, "nonce", null);
+
       const hsts = headers.get("Strict-Transport-Security");
       assert(hsts !== null);
-      assert(hsts!.includes("max-age="));
-      assert(hsts!.includes("includeSubDomains"));
+      assert(hsts.includes("max-age="));
+      assert(hsts.includes("includeSubDomains"));
     });
 
     it("should not set HSTS in dev mode", () => {
@@ -223,7 +228,6 @@ describe("security/http/response/security-handler", () => {
         },
       };
       applySecurityHeaders(headers, false, "nonce", null, config);
-      // config.headers are applied at the end, so they override
       assertEquals(headers.get("X-Content-Type-Options"), "custom-value");
     });
   });

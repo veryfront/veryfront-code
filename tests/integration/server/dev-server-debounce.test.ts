@@ -8,11 +8,10 @@
  * - Configuration options
  */
 
-import { assert, assertEquals as _assertEquals, assertExists } from "@veryfront/testing/assert";
+import { assert, assertExists } from "@veryfront/testing/assert";
 import { join } from "@veryfront/compat/path";
 import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import { delay, mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
-import { createDevServer as _createDevServer } from "../../../src/server/dev-server.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import type { TestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
@@ -31,7 +30,8 @@ function getFixtureContent(file: string, variant: FixtureVariant): string {
     return getComponentSource(file, variant);
   }
 
-  return `${variant === "initial" ? "Initial" : "Updated"} content for ${file}`;
+  const label = variant === "initial" ? "Initial" : "Updated";
+  return `${label} content for ${file}`;
 }
 
 function getComponentSource(file: string, variant: FixtureVariant): string {
@@ -50,294 +50,189 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
     await cleanupBundler();
   });
 
-  describe(
-    "Dev Server - Optimized File Watcher",
-    {},
-    () => {
-      it("initializes with configurable debounce timeout", async () => {
-        /**
-         * Verifies that the file watcher can be configured with custom debounce timing
-         */
-        await withTestContext("dev-watcher-config", async (context: TestContext) => {
-          // Create a test page
-          await writeTextFile(
-            join(context.projectDir, "pages", "index.mdx"),
-            "# Test Page",
-          );
+  describe("Dev Server - Optimized File Watcher", {}, () => {
+    it("initializes with configurable debounce timeout", async () => {
+      await withTestContext("dev-watcher-config", async (context: TestContext) => {
+        await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Test Page");
 
-          const customDebounceMs = scaleMs(200);
-          const server = await context.createDevServer({
-            enableHMR: true,
-            fileWatcherDebounceMs: customDebounceMs,
-          });
-
-          // Server should start successfully with custom configuration
-          assertExists(server, "Server should be created");
-
-          // Wait for initial file watcher events to settle, then reset metrics
-          await delay(500);
-
-          // Reset metrics by getting them (this will clear the counters for the test)
-          // The actual fix is that we should only check metrics if this is truly the first test
-          // In batch mode, there may be leftover events from previous tests
-          const initialMetrics = server.getFileWatcherMetrics?.();
-
-          // Skip the initial metrics check in batch mode - it's unreliable
-          // Just verify the metrics object exists
-          if (initialMetrics) {
-            assertExists(initialMetrics.totalFileChangeEvents, "Metrics should track file events");
-            assertExists(
-              initialMetrics.routeDiscoveryCalls,
-              "Metrics should track discovery calls",
-            );
-          }
+        const customDebounceMs = scaleMs(200);
+        const server = await context.createDevServer({
+          enableHMR: true,
+          fileWatcherDebounceMs: customDebounceMs,
         });
+
+        assertExists(server, "Server should be created");
+
+        await delay(500);
+
+        const initialMetrics = server.getFileWatcherMetrics?.();
+        if (!initialMetrics) return;
+
+        assertExists(initialMetrics.totalFileChangeEvents, "Metrics should track file events");
+        assertExists(initialMetrics.routeDiscoveryCalls, "Metrics should track discovery calls");
       });
+    });
 
-      it("batches multiple file changes within debounce window", async () => {
-        /**
-         * Verifies that multiple rapid file changes are batched together
-         */
-        await withTestContext("dev-watcher-batching", async (context: TestContext) => {
-          // Create initial pages
-          await writeTextFile(
-            join(context.projectDir, "pages", "index.mdx"),
-            "# Home",
-          );
-          await writeTextFile(
-            join(context.projectDir, "pages", "about.mdx"),
-            "# About",
-          );
-          await writeTextFile(
-            join(context.projectDir, "pages", "contact.mdx"),
-            "# Contact",
-          );
+    it("batches multiple file changes within debounce window", async () => {
+      await withTestContext("dev-watcher-batching", async (context: TestContext) => {
+        await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
+        await writeTextFile(join(context.projectDir, "pages", "about.mdx"), "# About");
+        await writeTextFile(join(context.projectDir, "pages", "contact.mdx"), "# Contact");
 
-          const server = await context.createDevServer({
-            enableHMR: true,
-            fileWatcherDebounceMs: scaleMs(150), // 150ms debounce
-          });
-
-          // Wait for initial setup
-          await delay(200);
-
-          // Simulate rapid file changes
-          const changes = [];
-          for (let i = 0; i < 5; i++) {
-            changes.push(
-              writeTextFile(
-                join(context.projectDir, "pages", `page${i}.mdx`),
-                `# Page ${i}`,
-              ),
-            );
-          }
-
-          // Execute all changes rapidly (within debounce window)
-          await Promise.all(changes);
-
-          // Wait for debounce to complete
-          await delay(300);
-
-          // Check metrics
-          const metrics = server.getFileWatcherMetrics?.();
-          if (metrics) {
-            // Due to debouncing, we should have fewer discovery calls than file events
-            assert(
-              metrics.routeDiscoveryCalls < metrics.totalFileChangeEvents ||
-                metrics.routeDiscoveryCalls === 0,
-              `Should batch changes: ${metrics.routeDiscoveryCalls} discoveries < ${metrics.totalFileChangeEvents} events`,
-            );
-
-            // Log the reduction percentage for visibility
-            console.log("[TEST] File watcher metrics:", metrics);
-          }
+        const server = await context.createDevServer({
+          enableHMR: true,
+          fileWatcherDebounceMs: scaleMs(150),
         });
+
+        await delay(200);
+
+        const changes: Promise<void>[] = [];
+        for (let i = 0; i < 5; i++) {
+          changes.push(
+            writeTextFile(join(context.projectDir, "pages", `page${i}.mdx`), `# Page ${i}`),
+          );
+        }
+
+        await Promise.all(changes);
+        await delay(300);
+
+        const metrics = server.getFileWatcherMetrics?.();
+        if (!metrics) return;
+
+        assert(
+          metrics.routeDiscoveryCalls < metrics.totalFileChangeEvents || metrics.routeDiscoveryCalls === 0,
+          `Should batch changes: ${metrics.routeDiscoveryCalls} discoveries < ${metrics.totalFileChangeEvents} events`,
+        );
+
+        console.log("[TEST] File watcher metrics:", metrics);
       });
+    });
 
-      it("processes changes immediately after debounce timeout", async () => {
-        /**
-         * Verifies that changes are processed after the debounce period expires
-         */
-        await withTestContext("dev-watcher-timing", async (context: TestContext) => {
-          await writeTextFile(
-            join(context.projectDir, "pages", "index.mdx"),
-            "# Initial",
-          );
+    it("processes changes immediately after debounce timeout", async () => {
+      await withTestContext("dev-watcher-timing", async (context: TestContext) => {
+        await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Initial");
 
-          const debounceBaseMs = 100;
-          const debounceMs = scaleMs(debounceBaseMs);
-          const _server = await context.createDevServer({
-            enableHMR: true,
-            fileWatcherDebounceMs: debounceMs,
-          });
-
-          // Wait for initial setup
-          await delay(200);
-
-          // Make a change
-          const changeTime = Date.now();
-          await writeTextFile(
-            join(context.projectDir, "pages", "test.mdx"),
-            "# Test Page",
-          );
-
-          // Wait for slightly more than debounce time
-          await delay(debounceBaseMs + 50);
-
-          const processTime = Date.now();
-          const elapsed = processTime - changeTime;
-
-          // Processing should happen after debounce but not too long after
-          assert(
-            elapsed >= debounceMs && elapsed < debounceMs + scaleMs(200),
-            `Changes should be processed after ${debounceMs}ms, actual: ${elapsed}ms`,
-          );
+        const debounceBaseMs = 100;
+        const debounceMs = scaleMs(debounceBaseMs);
+        await context.createDevServer({
+          enableHMR: true,
+          fileWatcherDebounceMs: debounceMs,
         });
+
+        await delay(200);
+
+        const changeTime = Date.now();
+        await writeTextFile(join(context.projectDir, "pages", "test.mdx"), "# Test Page");
+
+        await delay(debounceBaseMs + 50);
+
+        const elapsed = Date.now() - changeTime;
+
+        assert(
+          elapsed >= debounceMs && elapsed < debounceMs + scaleMs(200),
+          `Changes should be processed after ${debounceMs}ms, actual: ${elapsed}ms`,
+        );
       });
+    });
 
-      it("cleans up resources on server stop", async () => {
-        /**
-         * Verifies that the optimized watcher properly cleans up on shutdown
-         */
-        await withTestContext("dev-watcher-cleanup", async (context: TestContext) => {
-          await writeTextFile(
-            join(context.projectDir, "pages", "index.mdx"),
-            "# Test",
-          );
+    it("cleans up resources on server stop", async () => {
+      await withTestContext("dev-watcher-cleanup", async (context: TestContext) => {
+        await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Test");
 
-          const server = await context.createDevServer({
-            enableHMR: true,
-            fileWatcherDebounceMs: scaleMs(100),
-          });
-
-          // Make some changes to generate metrics
-          await writeTextFile(
-            join(context.projectDir, "pages", "new.mdx"),
-            "# New Page",
-          );
-
-          await delay(200);
-
-          // Stop the server - should log final metrics and clean up
-          await server.stop();
-
-          // Server should stop cleanly without errors
-          assert(true, "Server stopped without throwing errors");
+        const server = await context.createDevServer({
+          enableHMR: true,
+          fileWatcherDebounceMs: scaleMs(100),
         });
+
+        await writeTextFile(join(context.projectDir, "pages", "new.mdx"), "# New Page");
+        await delay(200);
+
+        await server.stop();
+
+        assert(true, "Server stopped without throwing errors");
       });
+    });
 
-      it("provides accurate performance metrics", async () => {
-        /**
-         * Verifies that performance metrics are accurately tracked and reported
-         */
-        await withTestContext("dev-watcher-metrics", async (context) => {
-          await writeTextFile(
-            join(context.projectDir, "pages", "index.mdx"),
-            "# Home",
-          );
+    it("provides accurate performance metrics", async () => {
+      await withTestContext("dev-watcher-metrics", async (context) => {
+        await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
 
-          const server = await context.createDevServer({
-            enableHMR: true,
-            fileWatcherDebounceMs: scaleMs(100),
-          });
-
-          // Wait for setup
-          await delay(200);
-
-          // Create a batch of changes
-          for (let i = 0; i < 3; i++) {
-            await writeTextFile(
-              join(context.projectDir, "pages", `test${i}.mdx`),
-              `# Test ${i}`,
-            );
-            // Small delay between changes but within debounce window
-            await delay(30);
-          }
-
-          // Wait for processing
-          await delay(200);
-
-          const metrics = server.getFileWatcherMetrics?.();
-          if (metrics) {
-            assertExists(metrics.totalFileChangeEvents, "Should track total events");
-            assertExists(metrics.routeDiscoveryCalls, "Should track discovery calls");
-            assertExists(metrics.averageBatchSize, "Should calculate average batch size");
-            assertExists(metrics.fsOperationReduction, "Should calculate reduction percentage");
-
-            // Average batch size should be greater than 1 if batching is working
-            const avgBatch = parseFloat(metrics.averageBatchSize);
-            if (metrics.routeDiscoveryCalls > 0) {
-              assert(avgBatch >= 1, `Average batch size should be >= 1, got ${avgBatch}`);
-            }
-
-            console.log("[TEST] Final metrics:", metrics);
-          }
+        const server = await context.createDevServer({
+          enableHMR: true,
+          fileWatcherDebounceMs: scaleMs(100),
         });
+
+        await delay(200);
+
+        for (let i = 0; i < 3; i++) {
+          await writeTextFile(join(context.projectDir, "pages", `test${i}.mdx`), `# Test ${i}`);
+          await delay(30);
+        }
+
+        await delay(200);
+
+        const metrics = server.getFileWatcherMetrics?.();
+        if (!metrics) return;
+
+        assertExists(metrics.totalFileChangeEvents, "Should track total events");
+        assertExists(metrics.routeDiscoveryCalls, "Should track discovery calls");
+        assertExists(metrics.averageBatchSize, "Should calculate average batch size");
+        assertExists(metrics.fsOperationReduction, "Should calculate reduction percentage");
+
+        const avgBatch = parseFloat(metrics.averageBatchSize);
+        if (metrics.routeDiscoveryCalls > 0) {
+          assert(avgBatch >= 1, `Average batch size should be >= 1, got ${avgBatch}`);
+        }
+
+        console.log("[TEST] Final metrics:", metrics);
       });
+    });
 
-      it("handles git checkout scenario with many rapid changes", async () => {
-        /**
-         * Simulates a git checkout scenario where many files change at once
-         */
-        await withTestContext("dev-watcher-git-checkout", async (context) => {
-          // Create initial file structure
-          const initialFiles = [
-            "pages/index.mdx",
-            "pages/about.mdx",
-            "pages/products/list.mdx",
-            "pages/products/detail.mdx",
-            "components/Header.tsx",
-            "components/Footer.tsx",
-          ];
+    it("handles git checkout scenario with many rapid changes", async () => {
+      await withTestContext("dev-watcher-git-checkout", async (context) => {
+        const initialFiles = [
+          "pages/index.mdx",
+          "pages/about.mdx",
+          "pages/products/list.mdx",
+          "pages/products/detail.mdx",
+          "components/Header.tsx",
+          "components/Footer.tsx",
+        ];
 
-          for (const file of initialFiles) {
-            const dir = file.includes("/")
-              ? join(context.projectDir, file.substring(0, file.lastIndexOf("/")))
-              : context.projectDir;
-            await mkdir(dir, { recursive: true });
-            await writeTextFile(
-              join(context.projectDir, file),
-              getFixtureContent(file, "initial"),
-            );
-          }
+        for (const file of initialFiles) {
+          const lastSlash = file.lastIndexOf("/");
+          const dir = lastSlash >= 0 ? join(context.projectDir, file.slice(0, lastSlash)) : context.projectDir;
 
-          const server = await context.createDevServer({
-            enableHMR: true,
-            fileWatcherDebounceMs: scaleMs(100),
-          });
+          await mkdir(dir, { recursive: true });
+          await writeTextFile(join(context.projectDir, file), getFixtureContent(file, "initial"));
+        }
 
-          // Wait for initial setup
-          await delay(200);
-
-          // Simulate git checkout - change all files rapidly
-          const changes = initialFiles.map((file) =>
-            writeTextFile(
-              join(context.projectDir, file),
-              getFixtureContent(file, "updated"),
-            )
-          );
-
-          await Promise.all(changes);
-
-          // Wait for debounce processing
-          await delay(200);
-
-          const metrics = server.getFileWatcherMetrics?.();
-          if (metrics && metrics.routeDiscoveryCalls > 0) {
-            // With 6 file changes, we should see significant batching
-            const reduction = parseFloat(metrics.fsOperationReduction.replace("%", ""));
-            assert(
-              reduction > 0 || metrics.routeDiscoveryCalls === 0,
-              `Should show reduction in FS operations for git checkout scenario: ${metrics.fsOperationReduction}`,
-            );
-
-            console.log(
-              `[TEST] Git checkout scenario - ${initialFiles.length} files changed:`,
-              metrics,
-            );
-          }
+        const server = await context.createDevServer({
+          enableHMR: true,
+          fileWatcherDebounceMs: scaleMs(100),
         });
+
+        await delay(200);
+
+        await Promise.all(
+          initialFiles.map((file) =>
+            writeTextFile(join(context.projectDir, file), getFixtureContent(file, "updated"))
+          ),
+        );
+
+        await delay(200);
+
+        const metrics = server.getFileWatcherMetrics?.();
+        if (!metrics || metrics.routeDiscoveryCalls <= 0) return;
+
+        const reduction = parseFloat(metrics.fsOperationReduction.replace("%", ""));
+        assert(
+          reduction > 0 || metrics.routeDiscoveryCalls === 0,
+          `Should show reduction in FS operations for git checkout scenario: ${metrics.fsOperationReduction}`,
+        );
+
+        console.log(`[TEST] Git checkout scenario - ${initialFiles.length} files changed:`, metrics);
       });
-    },
-  );
+    });
+  });
 });

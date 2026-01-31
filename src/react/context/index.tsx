@@ -28,7 +28,7 @@ const defaultPageContext: PageContextValue = {
   mdxHeadings: [],
 };
 
-const PageContextContext = React.createContext<PageContextValue>(defaultPageContext);
+const PageContextContext = React.createContext(defaultPageContext);
 
 export interface PageContextProviderProps {
   children: React.ReactNode;
@@ -39,10 +39,11 @@ export function PageContextProvider({
   children,
   pageContext,
 }: PageContextProviderProps): React.ReactElement {
-  return React.createElement(PageContextContext.Provider, {
-    value: pageContext ?? defaultPageContext,
-    children,
-  });
+  return (
+    <PageContextContext.Provider value={pageContext ?? defaultPageContext}>
+      {children}
+    </PageContextContext.Provider>
+  );
 }
 
 export function usePageContext(): PageContextValue {

@@ -15,10 +15,17 @@ function createHandler(
   return handler;
 }
 
+async function createInitializedHandler(
+  projectDir: string,
+  adapter: ReturnType<typeof createMockAdapter>,
+): Promise<APIRouteHandler> {
+  const handler = createHandler(projectDir, adapter);
+  await handler.initialize();
+  return handler;
+}
+
 afterEach((): void => {
-  while (handlers.length) {
-    handlers.pop()?.destroy();
-  }
+  while (handlers.length) handlers.pop()?.destroy();
 });
 
 describe("APIRouteHandler", () => {
@@ -49,8 +56,7 @@ describe("APIRouteHandler", () => {
   describe("request handling - unmatched routes", () => {
     it("should return null for non-API routes", async () => {
       const adapter = createMockAdapter();
-      const handler = createHandler("/test/project", adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler("/test/project", adapter);
 
       const request = new Request("http://localhost/about");
       const response = await handler.handle(request);
@@ -60,8 +66,7 @@ describe("APIRouteHandler", () => {
 
     it("should return null for root path", async () => {
       const adapter = createMockAdapter();
-      const handler = createHandler("/test/project", adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler("/test/project", adapter);
 
       const request = new Request("http://localhost/");
       const response = await handler.handle(request);
@@ -71,8 +76,7 @@ describe("APIRouteHandler", () => {
 
     it("should return 404 for unmatched /api routes", async () => {
       const adapter = createMockAdapter();
-      const handler = createHandler("/test/project", adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler("/test/project", adapter);
 
       const request = new Request("http://localhost/api/notfound");
       const response = await handler.handle(request);
@@ -84,8 +88,7 @@ describe("APIRouteHandler", () => {
 
     it("should return 404 for exact /api path when no route matches", async () => {
       const adapter = createMockAdapter();
-      const handler = createHandler("/test/project", adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler("/test/project", adapter);
 
       const request = new Request("http://localhost/api");
       const response = await handler.handle(request);
@@ -95,8 +98,7 @@ describe("APIRouteHandler", () => {
 
     it("should return 404 for nested unmatched /api routes", async () => {
       const adapter = createMockAdapter();
-      const handler = createHandler("/test/project", adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler("/test/project", adapter);
 
       const request = new Request("http://localhost/api/v1/users/123/posts/456");
       const response = await handler.handle(request);
@@ -108,8 +110,7 @@ describe("APIRouteHandler", () => {
   describe("OPTIONS/CORS handling", () => {
     it("should handle OPTIONS preflight requests with secure-by-default CORS", async () => {
       const adapter = createMockAdapter();
-      const handler = createHandler("/test/project", adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler("/test/project", adapter);
 
       const request = new Request("http://localhost/api/test", {
         method: "OPTIONS",
@@ -128,8 +129,7 @@ describe("APIRouteHandler", () => {
 
     it("should handle OPTIONS with no origin header", async () => {
       const adapter = createMockAdapter();
-      const handler = createHandler("/test/project", adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler("/test/project", adapter);
 
       const request = new Request("http://localhost/api/test", { method: "OPTIONS" });
       const response = await handler.handle(request);
@@ -140,8 +140,7 @@ describe("APIRouteHandler", () => {
 
     it("should handle OPTIONS for /api root", async () => {
       const adapter = createMockAdapter();
-      const handler = createHandler("/test/project", adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler("/test/project", adapter);
 
       const request = new Request("http://localhost/api", {
         method: "OPTIONS",
@@ -279,9 +278,7 @@ describe("APIRouteHandler", () => {
 
       adapter.fs.readDir = async function* (path: string) {
         callCount++;
-        if (callCount === 1) {
-          throw new Error("First call fails");
-        }
+        if (callCount === 1) throw new Error("First call fails");
         yield* originalReadDir.call(adapter.fs, path);
       };
 

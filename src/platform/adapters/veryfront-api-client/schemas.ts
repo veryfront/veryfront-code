@@ -84,12 +84,14 @@ export const EnvironmentSchema = z.object({
   name: z.string(),
 });
 
-export const BranchFileListItemSchema = z.object({
+const BranchFileFields = {
   id: z.string().optional(),
   version_id: z.string().optional(),
   content: z.string(),
   ...BaseFileFields,
-});
+};
+
+export const BranchFileListItemSchema = z.object(BranchFileFields);
 
 export const ListBranchFilesResponseSchema = z.object({
   data: z.array(BranchFileListItemSchema),
@@ -97,18 +99,15 @@ export const ListBranchFilesResponseSchema = z.object({
   _links: LinksSchema.optional(),
 });
 
-export const BranchFileDetailSchema = z.object({
-  id: z.string().optional(),
-  version_id: z.string().optional(),
-  content: z.string(),
-  ...BaseFileFields,
-});
+export const BranchFileDetailSchema = z.object(BranchFileFields);
 
-export const EnvironmentFileListItemSchema = z.object({
+const VersionedFileWithContentFields = {
   ...VersionedFileFields,
   content: z.string(),
   ...BaseFileFields,
-});
+};
+
+export const EnvironmentFileListItemSchema = z.object(VersionedFileWithContentFields);
 
 export const ListEnvironmentFilesResponseSchema = z.object({
   data: z.array(EnvironmentFileListItemSchema),
@@ -118,17 +117,11 @@ export const ListEnvironmentFilesResponseSchema = z.object({
 });
 
 export const EnvironmentFileDetailSchema = z.object({
-  ...VersionedFileFields,
-  content: z.string(),
-  ...BaseFileFields,
+  ...VersionedFileWithContentFields,
   ...EnvironmentMetaFields,
 });
 
-export const ReleaseFileListItemSchema = z.object({
-  ...VersionedFileFields,
-  content: z.string(),
-  ...BaseFileFields,
-});
+export const ReleaseFileListItemSchema = z.object(VersionedFileWithContentFields);
 
 export const ListReleaseFilesResponseSchema = z.object({
   data: z.array(ReleaseFileListItemSchema),
@@ -138,9 +131,7 @@ export const ListReleaseFilesResponseSchema = z.object({
 });
 
 export const ReleaseFileDetailSchema = z.object({
-  ...VersionedFileFields,
-  content: z.string(),
-  ...BaseFileFields,
+  ...VersionedFileWithContentFields,
   ...ReleaseMetaFields,
 });
 

@@ -32,13 +32,7 @@ interface CleanOptions {
 }
 
 export async function cleanCommand(options: CleanOptions): Promise<void> {
-  const {
-    projectDir,
-    cache: cleanCache = false,
-    build: cleanBuild = false,
-    all = false,
-    force = false,
-  } = options;
+  const { projectDir, cache = false, build = false, all = false, force = false } = options;
 
   if (all && !force) {
     logWarning("This will remove node_modules, .deno, and .veryfront directories.");
@@ -56,12 +50,12 @@ export async function cleanCommand(options: CleanOptions): Promise<void> {
   spinner.start();
 
   try {
-    if (cleanBuild || all) {
+    if (build || all) {
       spinner.update("Cleaning dist directory...");
       await cleanDirectory(join(projectDir, "dist"));
     }
 
-    if (cleanCache || all) {
+    if (cache || all) {
       spinner.update("Cleaning cache...");
       await cleanCacheStore(projectDir);
     }
@@ -129,30 +123,29 @@ function createRenderCacheStore(
 ): CacheStore | null {
   const { projectDir, cacheDir, renderConfig } = context;
 
-  switch (type) {
-    case "filesystem":
-      return new FilesystemCacheStore({
-        baseDir: join(projectDir, cacheDir, "render"),
-      });
-
-    case "kv":
-      return new KVCacheStore({
-        path: renderConfig.kvPath,
-      });
-
-    case "redis":
-      if (!renderConfig.redisUrl) return null;
-      return new RedisCacheStore({
-        url: renderConfig.redisUrl,
-        keyPrefix: renderConfig.redisKeyPrefix ?? "veryfront:render:",
-        enableFallback: false,
-      });
-
-    case "memory":
-    default:
-      return new MemoryCacheStore({
-        maxEntries: renderConfig.maxEntries,
-        ttlMs: renderConfig.ttl,
-      });
+  if (type === "filesystem") {
+    return new FilesystemCacheStore({
+      baseDir: join(projectDir, cacheDir, "render"),
+    });
   }
+
+  if (type === "kv") {
+    return new KVCacheStore({
+      path: renderConfig.kvPath,
+    });
+  }
+
+  if (type === "redis") {
+    if (!renderConfig.redisUrl) return null;
+    return new RedisCacheStore({
+      url: renderConfig.redisUrl,
+      keyPrefix: renderConfig.redisKeyPrefix ?? "veryfront:render:",
+      enableFallback: false,
+    });
+  }
+
+  return new MemoryCacheStore({
+    maxEntries: renderConfig.maxEntries,
+    ttlMs: renderConfig.ttl,
+  });
 }

@@ -14,8 +14,7 @@ describe("observability/simple-metrics/otel-instruments", () => {
 
   describe("getOtelInstruments", () => {
     it("should return an instruments object", () => {
-      const instruments = getOtelInstruments();
-      assertEquals(typeof instruments, "object");
+      assertEquals(typeof getOtelInstruments(), "object");
     });
 
     it("should return empty object before initialization", () => {
@@ -29,9 +28,10 @@ describe("observability/simple-metrics/otel-instruments", () => {
   describe("resetOtelInstruments", () => {
     it("should clear all instruments", () => {
       const instruments = getOtelInstruments();
-      // Manually set something to verify reset
-      (instruments as Record<string, unknown>).meter = "fake-meter";
+      instruments.meter = "fake-meter" as never;
+
       resetOtelInstruments();
+
       assertEquals(getOtelInstruments().meter, undefined);
     });
 
@@ -39,14 +39,11 @@ describe("observability/simple-metrics/otel-instruments", () => {
       resetOtelInstruments();
       resetOtelInstruments();
       resetOtelInstruments();
-      // Should not throw
     });
 
     it("should allow re-initialization after reset", async () => {
-      // Attempt initialization (may fail in test env without OTel)
       await safeOtelOperation(() => {}, "test");
       resetOtelInstruments();
-      // Second call should work too
       await safeOtelOperation(() => {}, "test");
     });
   });
@@ -54,26 +51,25 @@ describe("observability/simple-metrics/otel-instruments", () => {
   describe("safeLogWarn", () => {
     it("should not throw when logging a message", () => {
       safeLogWarn("test warning");
-      // Should not throw
     });
 
     it("should not throw when logging with error", () => {
       safeLogWarn("test warning", new Error("test error"));
-      // Should not throw
     });
 
     it("should not throw when logging with non-Error", () => {
       safeLogWarn("test warning", "string error");
-      // Should not throw
     });
   });
 
   describe("safeOtelOperation", () => {
     it("should execute the operation", async () => {
       let executed = false;
+
       await safeOtelOperation(() => {
         executed = true;
       }, "test op");
+
       assertEquals(executed, true);
     });
 
@@ -81,17 +77,17 @@ describe("observability/simple-metrics/otel-instruments", () => {
       await safeOtelOperation(() => {
         throw new Error("operation failed");
       }, "failing op");
-      // Should not throw
     });
 
     it("should not throw when operation rejects", async () => {
-      await safeOtelOperation(() => Promise.reject(new Error("async failure")), "async failing op");
-      // Should not throw
+      await safeOtelOperation(
+        () => Promise.reject(new Error("async failure")),
+        "async failing op",
+      );
     });
 
     it("should handle void operations", async () => {
       await safeOtelOperation(() => {}, "void op");
-      // Should not throw
     });
   });
 });

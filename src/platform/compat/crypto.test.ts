@@ -3,9 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createCrypto } from "./crypto.ts";
 
 function toHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function assertHasNonZeroBytes(array: Uint8Array, message: string): void {
@@ -50,7 +48,6 @@ describe("Crypto Compat", () => {
 
     it("produces different values", () => {
       const crypto = createCrypto();
-
       const array1 = new Uint8Array(32);
       const array2 = new Uint8Array(32);
 
@@ -88,7 +85,6 @@ describe("Crypto Compat", () => {
 
     it("generates unique UUIDs", () => {
       const crypto = createCrypto();
-
       const uuids = new Set<string>();
       const count = 1000;
 
@@ -103,7 +99,7 @@ describe("Crypto Compat", () => {
   describe("subtle crypto", () => {
     it("is available", () => {
       const crypto = createCrypto();
-      const subtle = crypto.subtle;
+      const { subtle } = crypto;
 
       assertExists(subtle);
       assertExists(subtle.digest);
@@ -200,10 +196,10 @@ describe("Crypto Compat", () => {
       );
 
       assertExists(keyPair);
-      assertExists((keyPair as CryptoKeyPair).publicKey);
-      assertExists((keyPair as CryptoKeyPair).privateKey);
 
       const { publicKey, privateKey } = keyPair as CryptoKeyPair;
+      assertExists(publicKey);
+      assertExists(privateKey);
       assertEquals(publicKey.type, "public");
       assertEquals(privateKey.type, "private");
     });
@@ -281,7 +277,6 @@ describe("Crypto Compat", () => {
       const exportedArray = new Uint8Array(exportedKey);
       assertEquals(exportedArray.length, 32);
 
-      // Compare byte by byte to handle Buffer vs Uint8Array
       for (let i = 0; i < keyData.length; i++) {
         assertEquals(exportedArray[i], keyData[i]);
       }

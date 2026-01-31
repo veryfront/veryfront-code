@@ -54,8 +54,10 @@ describe("constants/server", () => {
     });
 
     it("should prepend default base path for relative filenames", () => {
-      const result = normalizeChunkPath("chunk-abc.js");
-      assertEquals(result, `${INTERNAL_PREFIX}/chunks/chunk-abc.js`);
+      assertEquals(
+        normalizeChunkPath("chunk-abc.js"),
+        `${INTERNAL_PREFIX}/chunks/chunk-abc.js`,
+      );
     });
 
     it("should prepend custom base path", () => {

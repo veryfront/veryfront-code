@@ -5,8 +5,7 @@ import { hasBunRuntime, hasDenoRuntime, hasNodeProcess } from "./runtime-guards.
 describe("runtime-guards", () => {
   describe("hasDenoRuntime", () => {
     it("should return true for Deno-like global", () => {
-      const global = { Deno: { env: { get: () => undefined } } };
-      assertEquals(hasDenoRuntime(global), true);
+      assertEquals(hasDenoRuntime({ Deno: { env: { get: () => undefined } } }), true);
     });
 
     it("should return false for missing Deno", () => {
@@ -14,8 +13,7 @@ describe("runtime-guards", () => {
     });
 
     it("should return false for Deno without env.get function", () => {
-      const global = { Deno: { env: {} } };
-      assertEquals(hasDenoRuntime(global), false);
+      assertEquals(hasDenoRuntime({ Deno: { env: {} } }), false);
     });
 
     it("should return false for null", () => {
@@ -33,8 +31,7 @@ describe("runtime-guards", () => {
 
   describe("hasNodeProcess", () => {
     it("should return true for Node-like global", () => {
-      const global = { process: { env: {} } };
-      assertEquals(hasNodeProcess(global), true);
+      assertEquals(hasNodeProcess({ process: { env: {} } }), true);
     });
 
     it("should return false for missing process", () => {
@@ -42,8 +39,7 @@ describe("runtime-guards", () => {
     });
 
     it("should return false for process without env object", () => {
-      const global = { process: {} };
-      assertEquals(hasNodeProcess(global), false);
+      assertEquals(hasNodeProcess({ process: {} }), false);
     });
 
     it("should return false for null", () => {
@@ -53,8 +49,7 @@ describe("runtime-guards", () => {
 
   describe("hasBunRuntime", () => {
     it("should return true for Bun-like global", () => {
-      const global = { Bun: { version: "1.0.0" } };
-      assertEquals(hasBunRuntime(global), true);
+      assertEquals(hasBunRuntime({ Bun: { version: "1.0.0" } }), true);
     });
 
     it("should return false for missing Bun", () => {

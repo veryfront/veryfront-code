@@ -29,9 +29,11 @@ export const listEC2InstancesTool = tool({
         };
       }
 
+      const count = instances.length;
+
       return {
         success: true,
-        message: `Found ${instances.length} EC2 instance${instances.length === 1 ? '' : 's'}${regionMessage}.`,
+        message: `Found ${count} EC2 instance${count === 1 ? '' : 's'}${regionMessage}.`,
         instances: instances.map((instance) => ({
           instanceId: instance.instanceId,
           instanceType: instance.instanceType,
@@ -42,7 +44,7 @@ export const listEC2InstancesTool = tool({
           availabilityZone: instance.availabilityZone ?? 'N/A',
           launchTime: instance.launchTime?.toISOString(),
         })),
-        count: instances.length,
+        count,
         region,
       };
     } catch (error) {

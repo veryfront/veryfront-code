@@ -58,53 +58,51 @@ async function promptAuthMethod(): Promise<AuthMethod> {
     }
   }
 
+  function redrawOptions(): void {
+    writeStdout(`\x1b[${AUTH_OPTIONS.length}A`);
+    for (let i = 0; i < AUTH_OPTIONS.length; i++) {
+      writeStdout("\x1b[2K\x1b[1B");
+    }
+    writeStdout(`\x1b[${AUTH_OPTIONS.length}A`);
+    drawOptions();
+  }
+
   drawOptions();
 
   setRawMode(true);
   const reader = getStdinReader();
   const dec = new TextDecoder();
-  let result: AuthMethod = "google";
 
   try {
     while (true) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done) return "google";
 
       const key = dec.decode(value);
 
-      if (key === "\x03") {
-        // Ctrl+C - default to token (will prompt)
-        result = "token";
-        break;
-      }
-
-      if (key === "\r" || key === "\n") {
-        result = AUTH_OPTIONS[selectedIndex]?.id ?? "token";
-        break;
-      }
+      if (key === "\x03") return "token"; // Ctrl+C - default to token (will prompt)
+      if (key === "\r" || key === "\n") return AUTH_OPTIONS[selectedIndex]?.id ?? "token";
 
       if (key === "\x1b[A" || key === "k") {
         selectedIndex = Math.max(0, selectedIndex - 1);
-      } else if (key === "\x1b[B" || key === "j") {
-        selectedIndex = Math.min(AUTH_OPTIONS.length - 1, selectedIndex + 1);
-      } else if (key >= "1" && key <= "4") {
-        result = AUTH_OPTIONS[Number.parseInt(key, 10) - 1]?.id ?? "token";
-        break;
+        redrawOptions();
+        continue;
       }
 
-      writeStdout(`\x1b[${AUTH_OPTIONS.length}A`);
-      for (let i = 0; i < AUTH_OPTIONS.length; i++) {
-        writeStdout("\x1b[2K\x1b[1B");
+      if (key === "\x1b[B" || key === "j") {
+        selectedIndex = Math.min(AUTH_OPTIONS.length - 1, selectedIndex + 1);
+        redrawOptions();
+        continue;
       }
-      writeStdout(`\x1b[${AUTH_OPTIONS.length}A`);
-      drawOptions();
+
+      if (key >= "1" && key <= "4") {
+        return AUTH_OPTIONS[Number.parseInt(key, 10) - 1]?.id ?? "token";
+      }
     }
   } finally {
     reader.releaseLock();
     setRawMode(false);
   }
-
-  return result;
 }
 
 async function loginWithOAuth(provider: "google" | "github" | "microsoft"): Promise<string | null> {

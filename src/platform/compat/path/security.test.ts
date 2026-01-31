@@ -17,8 +17,7 @@ describe("platform/compat/path/security", () => {
     });
 
     it("should reject extremely long paths", () => {
-      const longPath = "a".repeat(10000);
-      assertEquals(validatePathSecurity(longPath), false);
+      assertEquals(validatePathSecurity("a".repeat(10000)), false);
     });
 
     it("should accept single dot components", () => {
@@ -30,7 +29,6 @@ describe("platform/compat/path/security", () => {
     });
 
     it("should reject excessive parent traversal", () => {
-      // Multiple consecutive .. segments
       const deepTraversal = "../".repeat(20) + "etc/passwd";
       assertEquals(validatePathSecurity(deepTraversal), false);
     });

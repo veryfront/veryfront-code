@@ -23,7 +23,7 @@ export class PageLoader {
   private evictIfFull<T>(map: Map<string, T>): void {
     if (map.size < MAX_CACHE_SIZE) return;
 
-    const oldest = map.keys().next().value as string | undefined;
+    const oldest = map.keys().next().value;
     if (oldest) map.delete(oldest);
   }
 
@@ -61,10 +61,7 @@ export class PageLoader {
   }
 
   async fetchPageData(path: string): Promise<RouteData> {
-    const jsonData = await this.tryFetchJSON(path);
-    if (jsonData) return jsonData;
-
-    return this.fetchAndParseHTML(path);
+    return (await this.tryFetchJSON(path)) ?? this.fetchAndParseHTML(path);
   }
 
   private async tryFetchJSON(path: string): Promise<RouteData | null> {
@@ -109,14 +106,13 @@ export class PageLoader {
       return pending;
     }
 
-    const request = this.createPendingRequest(path, this.pendingRequests, async () => {
+    logger.debug(`[Veryfront] Creating pending request for ${path}`);
+
+    return this.createPendingRequest(path, this.pendingRequests, async () => {
       const data = await this.fetchPageData(path);
       this.setCache(path, data);
       return data;
     });
-
-    logger.debug(`[Veryfront] Reusing pending request for ${path}`);
-    return request;
   }
 
   async prefetch(path: string): Promise<void> {
@@ -152,7 +148,7 @@ export class PageLoader {
       });
     }
 
-    return await response.json();
+    return response.json();
   }
 
   loadSpaPageData(path: string): Promise<SpaPageData> {
@@ -168,14 +164,13 @@ export class PageLoader {
       return pending;
     }
 
-    const request = this.createPendingRequest(path, this.pendingSpaRequests, async () => {
+    logger.debug(`[Veryfront] Creating pending SPA request for ${path}`);
+
+    return this.createPendingRequest(path, this.pendingSpaRequests, async () => {
       const data = await this.fetchSpaPageData(path);
       this.setSpaCache(path, data);
       return data;
     });
-
-    logger.debug(`[Veryfront] Reusing pending SPA request for ${path}`);
-    return request;
   }
 
   async prefetchSpaPageData(path: string): Promise<void> {

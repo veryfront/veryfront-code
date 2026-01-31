@@ -60,7 +60,7 @@ function toPathStat(
   return {
     isFile: info.isFile as boolean,
     isDirectory: info.isDirectory as boolean,
-    isSymlink: (info as { isSymlink?: boolean }).isSymlink ?? false,
+    isSymlink: info.isSymlink ?? false,
     size: info.size ?? 0,
   };
 }

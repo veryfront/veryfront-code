@@ -13,7 +13,7 @@ type State = { state: string; codeVerifier?: string; createdAt: number };
 // Hybrid adapter: uses framework's memoryTokenStore for state (PKCE),
 // but user's tokenStore for actual token storage
 const hybridTokenStore = {
-  async getTokens(serviceId: string): Promise<Tokens | null> {
+  getTokens(serviceId: string): Promise<Tokens | null> {
     return tokenStore.getToken("current-user", serviceId);
   },
   async setTokens(serviceId: string, tokens: Tokens): Promise<void> {
@@ -25,8 +25,8 @@ const hybridTokenStore = {
   getState(state: string): ReturnType<typeof memoryTokenStore.getState> {
     return memoryTokenStore.getState(state);
   },
-  setState(state: State): ReturnType<typeof memoryTokenStore.setState> {
-    return memoryTokenStore.setState(state);
+  setState(stateObj: State): ReturnType<typeof memoryTokenStore.setState> {
+    return memoryTokenStore.setState(stateObj);
   },
   clearState(state: string): ReturnType<typeof memoryTokenStore.clearState> {
     return memoryTokenStore.clearState(state);

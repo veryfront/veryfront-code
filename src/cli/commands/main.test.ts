@@ -79,7 +79,8 @@ describe("main", () => {
 
   describe("MenuAction type", () => {
     it("covers all expected actions", () => {
-      assertEquals(["new", "dev", "deploy", "login", "help", "exit"].length, 6);
+      const actions = ["new", "dev", "deploy", "login", "help", "exit"];
+      assertEquals(actions.length, 6);
     });
   });
 });

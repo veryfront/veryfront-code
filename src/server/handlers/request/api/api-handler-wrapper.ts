@@ -1,9 +1,3 @@
-/**
- * API Handler Wrapper
- *
- * Main handler class that wraps API route handling for both Pages Router and App Router.
- */
-
 import { BaseHandler } from "../../response/base.ts";
 import type {
   HandlerContext,
@@ -26,19 +20,6 @@ type FsWrapper = {
   ) => Promise<T>;
 };
 
-/**
- * API handler wrapper for Pages and App Router
- *
- * Handles:
- * - Pages Router API routes (/api/*)
- * - App Router route.ts handlers
- *
- * @example
- * ```ts
- * const handler = new ApiHandlerWrapper(projectDir, adapter);
- * const result = await handler.handle(request, context);
- * ```
- */
 export class ApiHandlerWrapper extends BaseHandler {
   private projectDir: string;
   private adapter: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
@@ -46,7 +27,7 @@ export class ApiHandlerWrapper extends BaseHandler {
 
   metadata: HandlerMetadata = {
     name: "ApiHandlerWrapper",
-    priority: PRIORITY_MEDIUM_API as HandlerPriority, // MEDIUM priority
+    priority: PRIORITY_MEDIUM_API as HandlerPriority,
   };
 
   constructor(
@@ -58,31 +39,17 @@ export class ApiHandlerWrapper extends BaseHandler {
     this.adapter = adapter;
   }
 
-  /**
-   * Pre-initialize the API handler to discover routes before any requests
-   * Call this after construction to avoid first-request 404s
-   */
   async initialize(): Promise<void> {
-    if (!this.initPromise) {
-      this.initPromise = (async () => {
-        // Pre-warm the API handler cache
-        await getApiHandler({
-          projectDir: this.projectDir,
-          adapter: this.adapter,
-        } as HandlerContext);
-      })();
-    }
+    this.initPromise ??= (async () => {
+      await getApiHandler({
+        projectDir: this.projectDir,
+        adapter: this.adapter,
+      } as HandlerContext);
+    })();
 
     await this.initPromise;
   }
 
-  /**
-   * Handles incoming requests for API routes
-   *
-   * @param req - The incoming request
-   * @param ctx - Handler context
-   * @returns Handler result (respond or continue)
-   */
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const { pathname } = new URL(req.url);
 
@@ -98,12 +65,12 @@ export class ApiHandlerWrapper extends BaseHandler {
 
     const fsWrapper = ctx.adapter.fs as FsWrapper;
 
-    if (
-      !ctx.projectSlug ||
-      typeof fsWrapper.isMultiProjectMode !== "function" ||
-      !fsWrapper.isMultiProjectMode()
-    ) {
-      return await this.handleWithContext(req, ctx, pathname);
+    const isMultiProject = !!ctx.projectSlug &&
+      typeof fsWrapper.isMultiProjectMode === "function" &&
+      fsWrapper.isMultiProjectMode();
+
+    if (!isMultiProject) {
+      return this.handleWithContext(req, ctx, pathname);
     }
 
     const isProduction = ctx.requestContext?.mode === "production";
@@ -119,18 +86,15 @@ export class ApiHandlerWrapper extends BaseHandler {
       ctx,
     );
 
-    return await fsWrapper.runWithContext!(
-      ctx.projectSlug,
-      ctx.proxyToken || "",
+    return fsWrapper.runWithContext!(
+      ctx.projectSlug!,
+      ctx.proxyToken ?? "",
       () => this.handleWithContext(req, ctx, pathname),
       ctx.projectId,
       { productionMode: isProduction, releaseId: ctx.releaseId },
     );
   }
 
-  /**
-   * Internal handler that runs within project context
-   */
   private handleWithContext(
     req: Request,
     ctx: HandlerContext,
@@ -183,7 +147,7 @@ export class ApiHandlerWrapper extends BaseHandler {
       {
         "api.pathname": pathname,
         "api.method": req.method,
-        "api.projectSlug": ctx.projectSlug || "unknown",
+        "api.projectSlug": ctx.projectSlug ?? "unknown",
       },
     );
   }

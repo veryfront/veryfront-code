@@ -19,14 +19,16 @@ export interface EmbeddingResult {
   embedding: number[];
 }
 
+export interface EmbeddingUsage {
+  promptTokens: number;
+  totalTokens: number;
+}
+
 export interface EmbeddingResponse {
   embeddings: EmbeddingResult[];
   model: string;
   dimension: number;
-  usage?: {
-    promptTokens: number;
-    totalTokens: number;
-  };
+  usage?: EmbeddingUsage;
 }
 
 export interface EmbeddingProvider {

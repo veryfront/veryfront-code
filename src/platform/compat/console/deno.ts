@@ -1,7 +1,3 @@
-/**
- * Deno console styling implementation using std/fmt/colors.ts
- */
-
 import {
   blue,
   bold,
@@ -18,7 +14,6 @@ import {
   white,
   yellow,
 } from "#std/fmt/colors.ts";
-
 import type { ConsoleStyler } from "./types.ts";
 
 export const colors: ConsoleStyler = {

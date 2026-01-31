@@ -4,12 +4,9 @@ export {
   getConfig,
   type GetConfigOptions,
 } from "./loader.ts";
-
 export { defineConfig } from "./define-config.ts";
-
 export type { VeryfrontConfig } from "./types.ts";
 
-export type { RuntimeEnv } from "./runtime-env.ts";
 export {
   _resetRuntimeEnv,
   _setRuntimeEnvForTesting,
@@ -17,9 +14,9 @@ export {
   getRuntimeEnv,
   initRuntimeEnv,
   isRuntimeEnvInitialized,
+  type RuntimeEnv,
 } from "./runtime-env.ts";
 
-export type { RuntimeConfig, RuntimeInfo } from "./runtime-config.ts";
 export {
   _resetRuntimeConfig,
   _setRuntimeConfigForTesting,
@@ -29,6 +26,8 @@ export {
   getRuntimeConfig,
   initRuntimeConfig,
   isRuntimeConfigInitialized,
+  type RuntimeConfig,
+  type RuntimeInfo,
   updateRuntimeConfig,
 } from "./runtime-config.ts";
 

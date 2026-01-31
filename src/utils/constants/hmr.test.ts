@@ -4,25 +4,13 @@ import { isValidHMRMessageType } from "./hmr.ts";
 
 describe("constants/hmr", () => {
   describe("isValidHMRMessageType", () => {
-    it("should return true for 'connected'", () => {
-      assertEquals(isValidHMRMessageType("connected"), true);
-    });
+    const validTypes = ["connected", "update", "reload", "ping", "pong"] as const;
 
-    it("should return true for 'update'", () => {
-      assertEquals(isValidHMRMessageType("update"), true);
-    });
-
-    it("should return true for 'reload'", () => {
-      assertEquals(isValidHMRMessageType("reload"), true);
-    });
-
-    it("should return true for 'ping'", () => {
-      assertEquals(isValidHMRMessageType("ping"), true);
-    });
-
-    it("should return true for 'pong'", () => {
-      assertEquals(isValidHMRMessageType("pong"), true);
-    });
+    for (const type of validTypes) {
+      it(`should return true for '${type}'`, () => {
+        assertEquals(isValidHMRMessageType(type), true);
+      });
+    }
 
     it("should return false for invalid message type", () => {
       assertEquals(isValidHMRMessageType("invalid"), false);

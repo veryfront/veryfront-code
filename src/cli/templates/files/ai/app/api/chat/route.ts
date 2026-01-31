@@ -66,7 +66,7 @@ function isToolPartWithOutput(part: unknown): part is ToolPartWithOutput {
   if (typeof type !== "string") return false;
   if (!type.startsWith("tool-") || type === "tool-result") return false;
 
-  return "output" in p && p.output !== undefined;
+  return p.output !== undefined;
 }
 
 /**
@@ -78,16 +78,11 @@ function transformUIMessages(messages: ParsedMessage[]): ParsedMessage[] {
   const result: ParsedMessage[] = [];
 
   for (const msg of messages) {
-    if (msg.role !== "assistant") {
-      result.push(msg);
-      continue;
-    }
-
-    const toolPartsWithOutput = msg.parts.filter(isToolPartWithOutput);
-
     result.push(msg);
 
-    for (const toolPart of toolPartsWithOutput) {
+    if (msg.role !== "assistant") continue;
+
+    for (const toolPart of msg.parts.filter(isToolPartWithOutput)) {
       result.push({
         id: `tool_${toolPart.toolCallId}`,
         role: "tool",
@@ -110,10 +105,10 @@ export async function POST(request: Request): Promise<Response> {
     const body = await request.json();
     const { messages: rawMessages } = chatRequestSchema.parse(body);
 
-    const messages = transformUIMessages(rawMessages);
-
     const agent = getAgent("assistant");
-    if (!agent) return Response.json({ error: "Agent not found" }, { status: 404 });
+    if (!agent) {
+      return Response.json({ error: "Agent not found" }, { status: 404 });
+    }
 
     // Clear server-side memory before each request
     // The client (useChat) manages full conversation history
@@ -124,7 +119,7 @@ export async function POST(request: Request): Promise<Response> {
     const userId = "current-user";
 
     const result = await agent.stream({
-      messages,
+      messages: transformUIMessages(rawMessages),
       context: { userId },
     });
 

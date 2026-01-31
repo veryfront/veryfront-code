@@ -43,8 +43,7 @@ export class ViewportPrefetch {
   }
 
   private observeLinks(root: Document | HTMLElement): void {
-    const anchors = root.querySelectorAll<HTMLAnchorElement>('a[href]:not([target="_blank"])') ??
-      document.createDocumentFragment().querySelectorAll<HTMLAnchorElement>("a");
+    const anchors = root.querySelectorAll<HTMLAnchorElement>('a[href]:not([target="_blank"])');
     const isViewportEnabled = Boolean(this.prefetchOptions.viewport);
 
     for (const anchor of anchors) {
@@ -54,7 +53,7 @@ export class ViewportPrefetch {
   }
 
   private shouldObserveAnchor(anchor: HTMLAnchorElement, isViewportEnabled: boolean): boolean {
-    const href = anchor.getAttribute("href") ?? "";
+    const href = anchor.getAttribute("href");
     if (!href) return false;
     if (href.startsWith("http") || href.startsWith("#")) return false;
     if (anchor.getAttribute("download")) return false;

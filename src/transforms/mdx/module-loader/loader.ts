@@ -10,7 +10,7 @@ export function loadMDXModule(
 ): Promise<MDXModule | null> {
   return withSpan(
     "transforms.mdx.loadMDXModule",
-    async () => {
+    async (): Promise<MDXModule | null> => {
       try {
         const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
         const adapter = await runtime.get();
@@ -26,7 +26,7 @@ export function loadMDXModule(
           );
         }
 
-        return loadESMModule(moduleCode, modulePath, projectDir, adapter);
+        return await loadESMModule(moduleCode, modulePath, projectDir, adapter);
       } catch (error) {
         logger.error(`Failed to load MDX module from ${modulePath}:`, error);
         return null;

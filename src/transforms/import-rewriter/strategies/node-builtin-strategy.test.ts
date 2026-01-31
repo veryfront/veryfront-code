@@ -3,7 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
 import { nodeBuiltinStrategy } from "./node-builtin-strategy.ts";
 
-function makeCtx(overrides?: Partial<RewriteContext>): RewriteContext {
+function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
   return {
     filePath: "/project/pages/index.tsx",
     projectDir: "/project",
@@ -48,10 +48,7 @@ describe("NodeBuiltinStrategy", () => {
 
   describe("rewrite", () => {
     it("should return null for SSR target (keep as-is)", () => {
-      const result = nodeBuiltinStrategy.rewrite(
-        makeInfo("node:fs"),
-        makeCtx({ target: "ssr" }),
-      );
+      const result = nodeBuiltinStrategy.rewrite(makeInfo("node:fs"), makeCtx({ target: "ssr" }));
       assertEquals(result.specifier, null);
     });
 
@@ -60,7 +57,7 @@ describe("NodeBuiltinStrategy", () => {
         makeInfo("node:async_hooks"),
         makeCtx({ target: "browser" }),
       );
-      assertEquals(result.specifier!.includes("node-async-hooks"), true);
+      assertEquals(result.specifier?.includes("node-async-hooks"), true);
     });
 
     it("should return noop URL for unknown builtin in browser", () => {
@@ -68,7 +65,7 @@ describe("NodeBuiltinStrategy", () => {
         makeInfo("node:fs"),
         makeCtx({ target: "browser" }),
       );
-      assertEquals(result.specifier!.includes("node-noop"), true);
+      assertEquals(result.specifier?.includes("node-noop"), true);
     });
   });
 });

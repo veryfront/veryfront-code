@@ -21,9 +21,10 @@ export class APIServer {
     if (!pathname.startsWith("/_veryfront/data/")) return null;
 
     const slug = pathname.replace("/_veryfront/data/", "").replace(".json", "");
+    const pageSlug = slug || "index";
 
     try {
-      const result = await this.options.renderer.renderPage(slug || "index");
+      const result = await this.options.renderer.renderPage(pageSlug);
 
       return new Response(
         JSON.stringify({

@@ -27,13 +27,14 @@ export function getColorLevel(): ColorLevel {
   if (term.includes("256color") || term.includes("256")) return "256";
 
   const termProgram = envObj.TERM_PROGRAM ?? "";
-  if (termProgram === "iTerm.app") return "truecolor";
-  if (termProgram === "Apple_Terminal") return "truecolor";
-  if (termProgram === "Hyper") return "truecolor";
-  if (termProgram === "vscode") return "truecolor";
+  if (
+    termProgram === "iTerm.app" || termProgram === "Apple_Terminal" || termProgram === "Hyper" ||
+    termProgram === "vscode"
+  ) {
+    return "truecolor";
+  }
 
-  if (term) return "16";
-  return "none";
+  return term ? "16" : "none";
 }
 
 export function shouldUseColor(): boolean {
@@ -67,7 +68,10 @@ function rgbTo256(r: number, g: number, b: number): number {
     return Math.round(((r - 8) / 247) * 24) + 232;
   }
 
-  const toIndex = (v: number) => Math.round((v / 255) * 5);
+  function toIndex(v: number): number {
+    return Math.round((v / 255) * 5);
+  }
+
   return 16 + toIndex(r) * 36 + toIndex(g) * 6 + toIndex(b);
 }
 
@@ -88,17 +92,9 @@ function rgbTo16(r: number, g: number, b: number): number {
   return bright ? color + 8 : color;
 }
 
-function applyColor(
-  text: string,
-  r: number,
-  g: number,
-  b: number,
-  isBackground: boolean,
-): string {
+function applyColor(text: string, r: number, g: number, b: number, isBackground: boolean): string {
   const level = getCachedColorLevel();
   if (level === "none") return text;
-
-  const base = isBackground ? 40 : 30;
 
   if (level === "truecolor") {
     const code = isBackground ? 48 : 38;
@@ -110,6 +106,7 @@ function applyColor(
     return `${ESC}[${code};5;${rgbTo256(r, g, b)}m${text}${RESET}`;
   }
 
+  const base = isBackground ? 40 : 30;
   return `${ESC}[${base + rgbTo16(r, g, b)}m${text}${RESET}`;
 }
 
@@ -123,9 +120,13 @@ export function bgColor(text: string, hex: string): string {
   return applyColor(text, r, g, b, true);
 }
 
-const rgb = (r: number, g: number, b: number) => (text: string) => applyColor(text, r, g, b, false);
-const bgRgb = (r: number, g: number, b: number) => (text: string) =>
-  applyColor(text, r, g, b, true);
+function rgb(r: number, g: number, b: number): (text: string) => string {
+  return (text: string) => applyColor(text, r, g, b, false);
+}
+
+function bgRgb(r: number, g: number, b: number): (text: string) => string {
+  return (text: string) => applyColor(text, r, g, b, true);
+}
 
 export const brand = rgb(252, 143, 93);
 export const brandBg = bgRgb(252, 143, 93);
@@ -166,10 +167,9 @@ export function animatedMatrix(frame: number): string {
  * @returns Text with shimmer effect applied
  */
 export function shimmer(text: string, frame: number, waveWidth = 3): string {
-  // Brand orange gradient: bright → normal → dim
-  const bright = (char: string) => applyColor(char, 255, 180, 140, false); // Brighter orange
-  const normal = (char: string) => applyColor(char, 252, 143, 93, false); // Brand orange
-  const dimmed = (char: string) => applyColor(char, 180, 100, 65, false); // Dimmer orange
+  const bright = (char: string) => applyColor(char, 255, 180, 140, false);
+  const normal = (char: string) => applyColor(char, 252, 143, 93, false);
+  const dimmed = (char: string) => applyColor(char, 180, 100, 65, false);
 
   const len = text.length;
   const wavePos = frame % (len + waveWidth * 2);
@@ -180,16 +180,12 @@ export function shimmer(text: string, frame: number, waveWidth = 3): string {
     const distFromWave = i - (wavePos - waveWidth);
 
     if (distFromWave >= 0 && distFromWave < waveWidth) {
-      // In the bright wave
       const intensity = 1 - Math.abs(distFromWave - waveWidth / 2) / (waveWidth / 2);
-      if (intensity > 0.6) {
-        result += bright(char);
-      } else {
-        result += normal(char);
-      }
-    } else {
-      result += dimmed(char);
+      result += intensity > 0.6 ? bright(char) : normal(char);
+      continue;
     }
+
+    result += dimmed(char);
   }
 
   return result;

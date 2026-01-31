@@ -26,11 +26,11 @@ export function ensureValidReactElement(
     logFinalElementCheck(finalChild);
   }
 
-  if (isReactElement(finalChild)) {
-    return finalChild as React.ReactElement;
+  if (!isReactElement(finalChild)) {
+    return React.createElement(React.Fragment, undefined, finalChild);
   }
 
-  return React.createElement(React.Fragment, undefined, finalChild);
+  return finalChild as React.ReactElement;
 }
 
 function performDeepInspection(

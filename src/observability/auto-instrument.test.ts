@@ -34,11 +34,22 @@ beforeEach((): void => {
   __resetAutoInstrumentForTests();
 });
 
+function withMockFetch<T>(mock: typeof fetch | undefined, fn: () => T): T {
+  const originalFetch = globalThis.fetch;
+  // @ts-ignore - allow setting undefined for tests
+  globalThis.fetch = mock;
+
+  try {
+    return fn();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 describe("Auto-Instrumentation", () => {
   describe("initAutoInstrumentation", () => {
     it("should initialize with default configuration", async () => {
       await initAutoInstrumentation();
-
       assertEquals(isAutoInstrumentEnabled(), true);
     });
 
@@ -332,17 +343,6 @@ describe("Auto-Instrumentation", () => {
   });
 
   describe("instrumentFetch", () => {
-    function withMockFetch<T>(mock: typeof fetch | undefined, fn: () => T): T {
-      const originalFetch = globalThis.fetch;
-      // @ts-ignore - allow setting undefined for tests
-      globalThis.fetch = mock;
-      try {
-        return fn();
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
-    }
-
     it("should instrument global fetch", () => {
       withMockFetch(globalThis.fetch, () => {
         instrumentFetch();
@@ -588,30 +588,20 @@ describe("Auto-Instrumentation", () => {
 
   describe("instrument (async wrapper)", () => {
     it("should instrument async function", async () => {
-      const fn = (...args: unknown[]): Promise<number> => {
-        const [x] = args as [number];
-        return Promise.resolve(x * 2);
-      };
-      const instrumented = instrument(fn, "test.operation") as (x: number) => Promise<number>;
+      const fn = (x: number): Promise<number> => Promise.resolve(x * 2);
+      const instrumented = instrument(fn, "test.operation");
 
       const result = await instrumented(5);
       assertEquals(result, 10);
     });
 
     it("should record custom attributes from function args", async () => {
-      const fn = (
-        ...args: unknown[]
-      ): Promise<{ userId: string; action: string }> => {
-        const [userId, action] = args as [string, string];
-        return Promise.resolve({ userId, action });
-      };
+      const fn = (userId: string, action: string): Promise<{ userId: string; action: string }> =>
+        Promise.resolve({ userId, action });
 
       const instrumented = instrument(fn, "user.action", {
-        attributes: (args: unknown[]) => {
-          const [userId, action] = args as [string, string];
-          return { userId, action };
-        },
-      }) as (userId: string, action: string) => Promise<{ userId: string; action: string }>;
+        attributes: ([userId, action]: unknown[]) => ({ userId, action }),
+      });
 
       const result = await instrumented("user-123", "login");
       assertEquals(result.userId, "user-123");
@@ -659,27 +649,18 @@ describe("Auto-Instrumentation", () => {
 
   describe("instrumentSync (sync wrapper)", () => {
     it("should instrument synchronous function", () => {
-      const fn = (...args: unknown[]): number => {
-        const [x] = args as [number];
-        return x * 3;
-      };
-      const instrumented = instrumentSync(fn, "sync.operation") as (x: number) => number;
+      const fn = (x: number): number => x * 3;
+      const instrumented = instrumentSync(fn, "sync.operation");
 
       const result = instrumented(5);
       assertEquals(result, 15);
     });
 
     it("should record custom attributes", () => {
-      const fn = (...args: unknown[]): string => {
-        const [name] = args as [string];
-        return `Hello, ${name}`;
-      };
+      const fn = (name: string): string => `Hello, ${name}`;
       const instrumented = instrumentSync(fn, "greet", {
-        attributes: (args: unknown[]) => {
-          const [name] = args as [string];
-          return { name };
-        },
-      }) as (name: string) => string;
+        attributes: ([name]: unknown[]) => ({ name }),
+      });
 
       const result = instrumented("World");
       assertEquals(result, "Hello, World");
@@ -717,7 +698,7 @@ describe("Auto-Instrumentation", () => {
       const results: number[] = [];
 
       // deno-lint-ignore require-await
-      await instrumentBatch("test.batch", items, async (item: number, _index: number) => {
+      await instrumentBatch("test.batch", items, async (item: number) => {
         results.push(item * 2);
       });
 
@@ -733,12 +714,12 @@ describe("Auto-Instrumentation", () => {
         "sized.batch",
         items,
         // deno-lint-ignore require-await
-        async (item: number, _index: number) => {
+        async (item: number) => {
           currentBatch.push(item);
-          if (currentBatch.length === 10) {
-            batches.push([...currentBatch]);
-            currentBatch = [];
-          }
+          if (currentBatch.length !== 10) return;
+
+          batches.push([...currentBatch]);
+          currentBatch = [];
         },
         { batchSize: 10 },
       );

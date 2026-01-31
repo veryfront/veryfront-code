@@ -22,13 +22,7 @@ describe("shared-watcher", () => {
     });
 
     it("should create an async iterator", () => {
-      const eventQueue: any[] = [];
-      const iterator = createWatcherIterator(
-        eventQueue,
-        () => {},
-        () => false,
-        () => false,
-      );
+      const iterator = createWatcherIterator([], () => {}, () => false, () => false);
 
       assertExists(iterator);
       assertExists(iterator.next);
@@ -36,12 +30,7 @@ describe("shared-watcher", () => {
     });
 
     it("should return done when closed", async () => {
-      const iterator = createWatcherIterator(
-        [],
-        () => {},
-        () => true,
-        () => false,
-      );
+      const iterator = createWatcherIterator([], () => {}, () => true, () => false);
 
       const result = await iterator.next();
       assertEquals(result.done, true);
@@ -49,12 +38,7 @@ describe("shared-watcher", () => {
 
     it("should return events from queue", async () => {
       const event = { kind: "modify" as const, paths: ["/test/file.ts"] };
-      const iterator = createWatcherIterator(
-        [event],
-        () => {},
-        () => false,
-        () => false,
-      );
+      const iterator = createWatcherIterator([event], () => {}, () => false, () => false);
 
       const result = await iterator.next();
       assertEquals(result.done, false);

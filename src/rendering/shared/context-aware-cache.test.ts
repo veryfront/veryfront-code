@@ -4,35 +4,38 @@ import { ContextAwareCacheCoordinator } from "./context-aware-cache.ts";
 import type { CacheStore } from "../cache/types.ts";
 import type { RenderContext } from "../context/render-context.ts";
 
-/** In-memory cache store for testing */
 function createInMemoryStore(): CacheStore & { data: Map<string, unknown> } {
   const data = new Map<string, unknown>();
+
   return {
     data,
-    get: (key: string) => Promise.resolve(data.get(key) as any),
-    set: (key: string, value: unknown) => {
+    get(key: string) {
+      return Promise.resolve(data.get(key));
+    },
+    set(key: string, value: unknown) {
       data.set(key, value);
       return Promise.resolve();
     },
-    delete: (key: string) => {
+    delete(key: string) {
       data.delete(key);
       return Promise.resolve();
     },
-    deleteByPrefix: (prefix: string) => {
+    deleteByPrefix(prefix: string) {
       let deleted = 0;
+
       for (const key of data.keys()) {
-        if (key.startsWith(prefix)) {
-          data.delete(key);
-          deleted++;
-        }
+        if (!key.startsWith(prefix)) continue;
+        data.delete(key);
+        deleted++;
       }
+
       return Promise.resolve(deleted);
     },
-    clear: () => {
+    clear() {
       data.clear();
       return Promise.resolve();
     },
-    destroy: () => {
+    destroy() {
       data.clear();
       return Promise.resolve();
     },
@@ -108,7 +111,7 @@ describe("rendering/shared/context-aware-cache", () => {
         html: "<h1>Stream</h1>",
         frontmatter: {},
         headings: [],
-        stream: {} as ReadableStream, // non-null stream
+        stream: {} as ReadableStream,
         ssrHash: "def",
       };
 
@@ -144,7 +147,6 @@ describe("rendering/shared/context-aware-cache", () => {
 
       await cache.persistResult(renderResult as any, "ttl-page", ctx);
 
-      // Wait for TTL to expire
       await new Promise((r) => setTimeout(r, 10));
 
       const lookup = await cache.checkCache("ttl-page", ctx);
@@ -166,15 +168,12 @@ describe("rendering/shared/context-aware-cache", () => {
 
       await cache.persistResult(renderResult as any, "themed", ctx, "light");
 
-      // Light theme should hit
       const lightLookup = await cache.checkCache("themed", ctx, "light");
       assertEquals(lightLookup.hit, true);
 
-      // Dark theme should miss
       const darkLookup = await cache.checkCache("themed", ctx, "dark");
       assertEquals(darkLookup.hit, false);
 
-      // No theme should miss
       const noThemeLookup = await cache.checkCache("themed", ctx);
       assertEquals(noThemeLookup.hit, false);
     });
@@ -251,12 +250,10 @@ describe("rendering/shared/context-aware-cache", () => {
       const lookup = await cache.checkCache("clone-test", ctx);
       assertEquals(lookup.hit, true);
 
-      // Mutate the returned result
       if (lookup.cachedResult) {
         lookup.cachedResult.html = "MUTATED";
       }
 
-      // Re-fetch should return original
       const reLookup = await cache.checkCache("clone-test", ctx);
       assertEquals(reLookup.cachedResult?.html, "<h1>Original</h1>");
     });

@@ -28,7 +28,7 @@ type NextLoad = (
   context?: LoadContext,
 ) => Promise<{ format: string; source: string | ArrayBuffer; shortCircuit?: boolean }>;
 
-function isHttpUrl(value: string | undefined): boolean {
+function isHttpUrl(value?: string): boolean {
   return value?.startsWith("https://") || value?.startsWith("http://") || false;
 }
 
@@ -126,9 +126,7 @@ export async function load(
   context: LoadContext,
   nextLoad: NextLoad,
 ): Promise<{ format: string; source: string | ArrayBuffer; shortCircuit?: boolean }> {
-  if (!isHttpUrl(url)) {
-    return nextLoad(url, context);
-  }
+  if (!isHttpUrl(url)) return nextLoad(url, context);
 
   return {
     format: "module",
@@ -140,6 +138,5 @@ export async function load(
 export function initialize(data?: { clearCache?: boolean }): void {
   if (!data?.clearCache) return;
 
-  // Could clear cache here if needed
   logger.debug("[http-loader] Initialized with cache clearing");
 }

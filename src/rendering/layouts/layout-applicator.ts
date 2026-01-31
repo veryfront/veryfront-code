@@ -90,18 +90,16 @@ export class LayoutApplicator {
         const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter);
         const pageFilePath = pageInfo.entity.path;
 
-        const isDotPath = pageFilePath.split("/").some((s) =>
-          s.startsWith(".") && s !== "." && s !== ".."
-        );
-
-        if (!useAppRouter && !isDotPath) {
-          wrappedElement = await this.wrapWithAppComponent(wrappedElement);
-        } else if (isDotPath) {
-          logger.debug("Skipping wrapWithAppComponent - dot-prefixed path");
-        }
+        const isDotPath = pageFilePath
+          .split("/")
+          .some((s) => s.startsWith(".") && s !== "." && s !== "..");
 
         if (useAppRouter) {
           wrappedElement = await this.wrapWithReservedComponents(wrappedElement, pageFilePath);
+        } else if (isDotPath) {
+          logger.debug("Skipping wrapWithAppComponent - dot-prefixed path");
+        } else {
+          wrappedElement = await this.wrapWithAppComponent(wrappedElement);
         }
 
         const React = await getProjectReact();
@@ -254,9 +252,7 @@ export class LayoutApplicator {
             );
           }
 
-          if (!App) {
-            return pageElement;
-          }
+          if (!App) return pageElement;
 
           const React = await getProjectReact();
           logger.debug("Wrapped page with App component");
@@ -280,10 +276,7 @@ export class LayoutApplicator {
         "@veryfront/transforms/plugins/plugin-loader.ts"
       );
 
-      let body = source;
-      if (source.trim().startsWith("---")) {
-        body = extract(source).body;
-      }
+      const body = source.trim().startsWith("---") ? extract(source).body : source;
 
       const [remarkPlugins, rehypePlugins] = await Promise.all([
         getRemarkPlugins(),

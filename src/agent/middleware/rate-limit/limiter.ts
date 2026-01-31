@@ -16,7 +16,13 @@ export interface RateLimitResult {
   retryAfter?: number;
 }
 
-class FixedWindowLimiter {
+interface Limiter {
+  check(identifier: string): RateLimitResult;
+  reset(identifier: string): void;
+  clear(): void;
+}
+
+class FixedWindowLimiter implements Limiter {
   private requests = new Map<string, { count: number; resetAt: number }>();
 
   constructor(private config: RateLimitConfig) {}
@@ -27,7 +33,6 @@ class FixedWindowLimiter {
 
     if (!entry || now >= entry.resetAt) {
       const resetAt = now + this.config.windowMs;
-
       this.requests.set(identifier, { count: 1, resetAt });
 
       return {
@@ -37,21 +42,21 @@ class FixedWindowLimiter {
       };
     }
 
-    if (entry.count < this.config.maxRequests) {
-      entry.count++;
-
+    if (entry.count >= this.config.maxRequests) {
       return {
-        allowed: true,
-        remaining: this.config.maxRequests - entry.count,
+        allowed: false,
+        remaining: 0,
         resetAt: entry.resetAt,
+        retryAfter: Math.ceil((entry.resetAt - now) / 1000),
       };
     }
 
+    entry.count++;
+
     return {
-      allowed: false,
-      remaining: 0,
+      allowed: true,
+      remaining: this.config.maxRequests - entry.count,
       resetAt: entry.resetAt,
-      retryAfter: Math.ceil((entry.resetAt - now) / 1000),
     };
   }
 
@@ -64,7 +69,7 @@ class FixedWindowLimiter {
   }
 }
 
-class TokenBucketLimiter {
+class TokenBucketLimiter implements Limiter {
   private buckets = new Map<string, { tokens: number; lastRefill: number }>();
   private refillRate: number;
 
@@ -77,43 +82,37 @@ class TokenBucketLimiter {
     const bucket = this.buckets.get(identifier);
 
     if (!bucket) {
-      const newBucket = {
-        tokens: this.config.maxRequests - 1,
-        lastRefill: now,
-      };
-
-      this.buckets.set(identifier, newBucket);
+      const tokens = this.config.maxRequests - 1;
+      this.buckets.set(identifier, { tokens, lastRefill: now });
 
       return {
         allowed: true,
-        remaining: newBucket.tokens,
+        remaining: tokens,
         resetAt: now + this.config.windowMs,
       };
     }
 
     const timePassed = now - bucket.lastRefill;
-    const tokensToAdd = timePassed * this.refillRate;
-
-    bucket.tokens = Math.min(this.config.maxRequests, bucket.tokens + tokensToAdd);
+    bucket.tokens = Math.min(this.config.maxRequests, bucket.tokens + timePassed * this.refillRate);
     bucket.lastRefill = now;
 
-    if (bucket.tokens >= 1) {
-      bucket.tokens--;
+    if (bucket.tokens < 1) {
+      const timeUntilToken = (1 - bucket.tokens) / this.refillRate;
 
       return {
-        allowed: true,
-        remaining: Math.floor(bucket.tokens),
+        allowed: false,
+        remaining: 0,
         resetAt: now + this.config.windowMs,
+        retryAfter: Math.ceil(timeUntilToken / 1000),
       };
     }
 
-    const timeUntilToken = (1 - bucket.tokens) / this.refillRate;
+    bucket.tokens--;
 
     return {
-      allowed: false,
-      remaining: 0,
+      allowed: true,
+      remaining: Math.floor(bucket.tokens),
       resetAt: now + this.config.windowMs,
-      retryAfter: Math.ceil(timeUntilToken / 1000),
     };
   }
 
@@ -126,7 +125,7 @@ class TokenBucketLimiter {
   }
 }
 
-function createLimiterByStrategy(config: RateLimitConfig): FixedWindowLimiter | TokenBucketLimiter {
+function createLimiterByStrategy(config: RateLimitConfig): Limiter {
   if (config.strategy === "fixed-window") return new FixedWindowLimiter(config);
   return new TokenBucketLimiter(config);
 }
@@ -175,21 +174,19 @@ export function rateLimitMiddleware(
           "rateLimit.strategy": config.strategy,
         });
 
-        if (!result.allowed) {
-          setActiveSpanAttributes({
-            "rateLimit.retryAfter": result.retryAfter ?? 0,
-          });
+        if (result.allowed) return next();
 
-          throw toError(
-            createError({
-              type: "agent",
-              message: config.errorMessage ??
-                `Rate limit exceeded. Try again in ${result.retryAfter} seconds.`,
-            }),
-          );
-        }
+        setActiveSpanAttributes({
+          "rateLimit.retryAfter": result.retryAfter ?? 0,
+        });
 
-        return next();
+        throw toError(
+          createError({
+            type: "agent",
+            message: config.errorMessage ??
+              `Rate limit exceeded. Try again in ${result.retryAfter} seconds.`,
+          }),
+        );
       },
       {
         "rateLimit.strategy": config.strategy,

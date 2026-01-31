@@ -6,10 +6,13 @@ import {
   getSecurityHeader as coreGetSecurityHeader,
 } from "#veryfront/security/http/response/security-handler.ts";
 
+function isDev(ctx: HandlerContext): boolean {
+  return ctx.requestContext?.isLocalDev ?? false;
+}
+
 export function buildCSP(ctx: HandlerContext): string {
-  const isDev = ctx.requestContext?.isLocalDev ?? false;
   return coreBuildCSP(
-    isDev,
+    isDev(ctx),
     generateNonce(),
     ctx.cspUserHeader ?? null,
     ctx.securityConfig,
@@ -26,11 +29,9 @@ export function getSecurityHeader(
 }
 
 export function applySecurityHeaders(headers: Headers, ctx: HandlerContext): void {
-  const isDev = ctx.requestContext?.isLocalDev ?? false;
-
   coreApplySecurityHeaders(
     headers,
-    isDev,
+    isDev(ctx),
     generateNonce(),
     ctx.cspUserHeader ?? null,
     ctx.securityConfig,

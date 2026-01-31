@@ -1,8 +1,3 @@
-/**
- * Unit tests for fast-scaffold module
- * @module cli/commands/new/fast-scaffold.test
- */
-
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ScaffoldResult } from "./fast-scaffold.ts";
@@ -46,7 +41,7 @@ describe("fast-scaffold", () => {
   describe("file generation", () => {
     it("should create .veryfrontrc with correct structure", () => {
       const slug = "test-project";
-      const content = JSON.stringify({ projectSlug: slug }, null, 2) + "\n";
+      const content = `${JSON.stringify({ projectSlug: slug }, null, 2)}\n`;
 
       assertExists(content);
       assertEquals(JSON.parse(content).projectSlug, slug);
@@ -77,13 +72,15 @@ describe("fast-scaffold", () => {
 
   describe(".env.example generation", () => {
     it("should create .env.example with documentation headers", () => {
-      const content = [
-        "# Environment variables",
-        "# Copy this file to .env and fill in your values",
-        "",
-        "# OpenAI API key (https://platform.openai.com/api-keys)",
-        "OPENAI_API_KEY=sk-...",
-      ].join("\n") + "\n";
+      const content = `${
+        [
+          "# Environment variables",
+          "# Copy this file to .env and fill in your values",
+          "",
+          "# OpenAI API key (https://platform.openai.com/api-keys)",
+          "OPENAI_API_KEY=sk-...",
+        ].join("\n")
+      }\n`;
 
       assertExists(content);
       assertEquals(content.includes("# Environment variables"), true);
@@ -102,7 +99,7 @@ describe("fast-scaffold", () => {
         lines.push(`${name}=${placeholder}`);
       }
 
-      const content = lines.join("\n") + "\n";
+      const content = `${lines.join("\n")}\n`;
       assertEquals(content.includes("# Integration credentials"), true);
       assertEquals(content.includes("GITHUB_CLIENT_ID"), true);
     });

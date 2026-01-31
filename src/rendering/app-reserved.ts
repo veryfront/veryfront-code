@@ -12,12 +12,11 @@ export const RESERVED_COMPONENTS = {
 };
 
 export function collectAncestorDirs(segmentDir: string, appRootDir: string): string[] {
-  const normalize = (p: string) => normalizePath(p);
-  const getDirname = (p: string) => normalize(p).replace(/\/?[^/]+\/?$/, "");
+  const getDirname = (p: string) => normalizePath(p).replace(/\/?[^/]+\/?$/, "");
 
   const dirs: string[] = [];
-  let current = normalize(segmentDir);
-  const root = normalize(appRootDir);
+  let current = normalizePath(segmentDir);
+  const root = normalizePath(appRootDir);
 
   while (current.startsWith(root)) {
     dirs.push(current);
@@ -40,7 +39,6 @@ interface ErrorBoundaryProps {
   children?: BundledReact.ReactNode;
 }
 
-// Use a more flexible type that works with both npm: and esm.sh React imports
 type ReactLike = {
   createElement: typeof BundledReact.createElement;
 };

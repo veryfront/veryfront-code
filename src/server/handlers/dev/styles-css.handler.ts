@@ -19,6 +19,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 
 const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
+const SKIP_DIRS = new Set(["node_modules", ".cache", ".git", "dist", "build", ".vscode"]);
 
 export class StylesCSSHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -29,11 +30,9 @@ export class StylesCSSHandler extends BaseHandler {
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    if (!this.shouldHandle(req, ctx)) {
-      return this.continue();
-    }
+    if (!this.shouldHandle(req, ctx)) return this.continue();
 
-    return await this.withProxyContext(ctx, async () => {
+    return this.withProxyContext(ctx, async () => {
       const responseBuilder = this.createResponseBuilder(ctx).withCache("no-cache");
       const rawCss = await this.loadStylesheet(ctx);
 
@@ -46,9 +45,9 @@ export class StylesCSSHandler extends BaseHandler {
           error: formatted.message,
           suggestion: formatted.suggestion,
         });
+
         const errorMessage =
           `${formatted.title}: ${formatted.message}\nSuggestion: ${formatted.suggestion}`;
-        // Surface error in CSS so developers can see it
         const errorCSS = `/*
   ╔══════════════════════════════════════════════════════════════╗
   ║  TAILWIND CSS COMPILATION ERROR                               ║
@@ -77,7 +76,6 @@ body::before {
         );
       }
 
-      // Warn if CSS is unexpectedly empty (no error but no output)
       if (!result.css && candidates.size > 0) {
         logger.warn("[StylesCSSHandler] CSS is empty despite having candidates", {
           candidates: candidates.size,
@@ -98,18 +96,15 @@ body::before {
   private async loadStylesheet(ctx: HandlerContext): Promise<string> {
     const configuredPath = ctx.config?.tailwind?.stylesheet;
 
-    // If user explicitly configured a stylesheet, it must exist
     if (configuredPath) {
       const filePath = joinPath(ctx.projectDir, configuredPath);
-      return await ctx.adapter.fs.readFile(filePath);
+      return ctx.adapter.fs.readFile(filePath);
     }
 
-    // Try default globals.css
     const globalsPath = joinPath(ctx.projectDir, "globals.css");
     try {
       return await ctx.adapter.fs.readFile(globalsPath);
     } catch {
-      // No stylesheet found, use default Tailwind import
       logger.debug("[StylesCSSHandler] No stylesheet found, using default");
       return `@import "tailwindcss";
 @custom-variant dark (&:is(.dark, [data-theme="dark"]) *, &:is(.dark, [data-theme="dark"]));`;
@@ -117,34 +112,30 @@ body::before {
   }
 
   private async extractProjectCandidates(ctx: HandlerContext): Promise<Set<string>> {
-    const candidates = new Set<string>();
+    const wrappedFs = ctx.adapter.fs as { getUnderlyingAdapter?: () => unknown };
+    const getUnderlyingAdapter = wrappedFs.getUnderlyingAdapter;
 
-    const wrappedFs = ctx.adapter.fs as unknown as {
-      getUnderlyingAdapter?: () => unknown;
-    };
-
-    if (typeof wrappedFs.getUnderlyingAdapter !== "function") {
-      // Fallback: scan local files directly for local development
+    if (typeof getUnderlyingAdapter !== "function") {
       logger.debug(
         "[StylesCSSHandler] No FS adapter wrapper, falling back to local file scanning",
       );
-      return await this.scanLocalFiles(ctx.projectDir, ctx);
+      return this.scanLocalFiles(ctx.projectDir, ctx);
     }
 
-    const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
+    const fsAdapter = getUnderlyingAdapter() as {
       getAllSourceFiles?: () =>
         | Array<{ path: string; content?: string }>
         | Promise<Array<{ path: string; content?: string }>>;
     };
 
     if (typeof fsAdapter.getAllSourceFiles !== "function") {
-      // Fallback: scan local files directly for local development
       logger.debug(
         "[StylesCSSHandler] FS adapter missing getAllSourceFiles, falling back to local file scanning",
       );
-      return await this.scanLocalFiles(ctx.projectDir, ctx);
+      return this.scanLocalFiles(ctx.projectDir, ctx);
     }
 
+    const candidates = new Set<string>();
     const files = await fsAdapter.getAllSourceFiles();
 
     for (const file of files) {
@@ -166,40 +157,37 @@ body::before {
   private async scanLocalFiles(projectDir: string, ctx: HandlerContext): Promise<Set<string>> {
     const candidates = new Set<string>();
     const fs = createFileSystem();
-    const SKIP_DIRS = new Set(["node_modules", ".cache", ".git", "dist", "build", ".vscode"]);
 
     const scanDir = async (dir: string): Promise<void> => {
+      let entries: AsyncIterable<{ name: string; isDirectory: boolean; isFile: boolean }>;
       try {
-        for await (const entry of fs.readDir(dir)) {
-          const fullPath = join(dir, entry.name);
-
-          if (entry.isDirectory) {
-            if (!SKIP_DIRS.has(entry.name)) {
-              await scanDir(fullPath);
-            }
-            continue;
-          }
-
-          if (!entry.isFile) continue;
-          if (!SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) continue;
-
-          try {
-            const content = await ctx.adapter.fs.readFile(fullPath);
-            for (const cls of extractCandidates(content)) {
-              candidates.add(cls);
-            }
-          } catch {
-            // Skip files that can't be read
-          }
-        }
+        entries = fs.readDir(dir);
       } catch {
-        // Skip directories that can't be read
+        return;
+      }
+
+      for await (const entry of entries) {
+        const fullPath = join(dir, entry.name);
+
+        if (entry.isDirectory) {
+          if (!SKIP_DIRS.has(entry.name)) await scanDir(fullPath);
+          continue;
+        }
+
+        if (!entry.isFile) continue;
+        if (!SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) continue;
+
+        try {
+          const content = await ctx.adapter.fs.readFile(fullPath);
+          for (const cls of extractCandidates(content)) candidates.add(cls);
+        } catch {
+          // Skip files that can't be read
+        }
       }
     };
 
     try {
       await scanDir(projectDir);
-
       logger.debug("[StylesCSSHandler] Local file scan complete", {
         projectDir,
         candidates: candidates.size,

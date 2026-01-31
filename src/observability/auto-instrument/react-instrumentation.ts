@@ -13,15 +13,10 @@ export function instrumentReactRender<T>(
 
       try {
         const result = renderFn();
-
-        if (result instanceof Promise) {
-          const resolved = await result;
-          recordRenderDuration(span, startTime);
-          return resolved;
-        }
+        const resolved = result instanceof Promise ? await result : result;
 
         recordRenderDuration(span, startTime);
-        return result;
+        return resolved;
       } catch (error) {
         handleRenderError(span, error, componentName);
         throw error;
@@ -46,6 +41,7 @@ export function instrumentErrorHandler(
 
 function handleRenderError(span: Span | null, error: unknown, componentName: string): void {
   recordRenderError({ component: componentName });
+
   // endSpan is handled by withActiveSpan automatically,
   // but we need to record the exception and status
   if (!span) return;

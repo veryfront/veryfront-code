@@ -11,7 +11,7 @@ interface User {
 
 export default function DashboardPage(): React.JSX.Element | null {
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
     void checkAuth();
@@ -25,13 +25,13 @@ export default function DashboardPage(): React.JSX.Element | null {
         return;
       }
 
-      const data: { user?: User } = await response.json();
-      if (!data.user) {
+      const { user: fetchedUser }: { user?: User } = await response.json();
+      if (!fetchedUser) {
         globalThis.location.href = "/login";
         return;
       }
 
-      setUser(data.user);
+      setUser(fetchedUser);
     } catch (error) {
       console.error("Auth check failed:", error);
       globalThis.location.href = "/login";

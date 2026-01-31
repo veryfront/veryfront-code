@@ -22,13 +22,12 @@ export default tool({
       .describe("Expected close date in format YYYY-MM-DD or timestamp"),
   }),
   async execute({ dealname, amount, dealstage, pipeline, closedate }) {
-    const properties: Record<string, string> = {
-      dealname,
-      ...(amount ? { amount } : {}),
-      ...(dealstage ? { dealstage } : {}),
-      ...(pipeline ? { pipeline } : {}),
-      ...(closedate ? { closedate } : {}),
-    };
+    const properties: Record<string, string> = { dealname };
+
+    if (amount) properties.amount = amount;
+    if (dealstage) properties.dealstage = dealstage;
+    if (pipeline) properties.pipeline = pipeline;
+    if (closedate) properties.closedate = closedate;
 
     const deal = await createDeal(properties);
     const name = formatDealName(deal);

@@ -16,10 +16,6 @@ import {
   type RequestContext,
   runWithRequestContextAsync,
 } from "#veryfront/utils/logger/request-context.ts";
-
-const logger = getBaseLogger("SERVER");
-import { requestTracker } from "./request-tracker.ts";
-import { projectIsolation } from "./project-isolation.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
@@ -74,17 +70,19 @@ import { OpenAPIHandler } from "../handlers/request/openapi.handler.ts";
 import { OpenAPIDocsHandler } from "../handlers/request/openapi-docs.handler.ts";
 import { DevDashboardHandler } from "../handlers/dev/dashboard/index.ts";
 import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
+import { requestTracker } from "./request-tracker.ts";
+import { projectIsolation } from "./project-isolation.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
+
+const logger = getBaseLogger("SERVER");
 
 /** Check if host is a private/internal IP address */
 function isInternalHost(host: string): boolean {
   const hostname = host.split(":")[0] ?? "";
 
-  if (
-    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
-  ) {
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") {
     return true;
   }
 
@@ -102,12 +100,7 @@ function isInternalHost(host: string): boolean {
 }
 
 /** Monitoring paths that should skip domain lookup */
-const MONITORING_PATHS = new Set([
-  "/healthz",
-  "/readyz",
-  "/_health",
-  "/_metrics",
-]);
+const MONITORING_PATHS = new Set(["/healthz", "/readyz", "/_health", "/_metrics"]);
 
 /** Request timeout in milliseconds (configurable via REQUEST_TIMEOUT_MS env var) */
 const REQUEST_TIMEOUT_MS = getTimeoutFromEnv();
@@ -133,18 +126,8 @@ const LIGHTWEIGHT_PATH_PREFIXES = [
   "/_lib_modules/",
 ];
 
-/**
- * Check if request path is lightweight (module requests, static assets).
- * These paths should skip per-project concurrency limiting because:
- * 1. They're fast once initialized (no SSR rendering)
- * 2. Many are requested concurrently during page hydration
- * 3. They share initialization overhead (one slow init benefits all)
- */
 function isLightweightPath(pathname: string): boolean {
-  for (const prefix of LIGHTWEIGHT_PATH_PREFIXES) {
-    if (pathname.startsWith(prefix)) return true;
-  }
-  return false;
+  return LIGHTWEIGHT_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
 export interface UniversalHandlerOptions {
@@ -167,15 +150,6 @@ export interface UniversalHandlerOptions {
   defaultEnvironment?: "preview" | "production";
 }
 
-/**
- * Create a universal, runtime-agnostic HTTP handler using the provided adapter.
- *
- * This implementation uses a modular handler-based architecture with:
- * - RouteRegistry for managing handlers
- * - Priority-based handler execution
- * - Clean separation of concerns
- * - Easy extensibility
- */
 export function createVeryfrontHandler(
   projectDir: string,
   adapter: RuntimeAdapter,
@@ -194,24 +168,21 @@ export function createVeryfrontHandler(
 
   logDebug("[universal] handler initialized", { projectDir });
 
-  const securityLoader = new SecurityConfigLoader(
-    projectDir,
-    adapter,
-    opts.config,
-  );
+  const securityLoader = new SecurityConfigLoader(projectDir, adapter, opts.config);
 
   let config: VeryfrontConfig | undefined = opts.config;
-  const configPromise = opts.config ? Promise.resolve(opts.config) : getConfig(projectDir, adapter)
-    .then((c) => {
-      config = c;
-      return c;
-    })
-    .catch((error) => {
-      logger.warn("[universal] Failed to load config, using defaults", {
-        error: getErrorMessage(error),
+  const configPromise =
+    (opts.config ? Promise.resolve(opts.config) : getConfig(projectDir, adapter))
+      .then((c) => {
+        config = c;
+        return c;
+      })
+      .catch((error) => {
+        logger.warn("[universal] Failed to load config, using defaults", {
+          error: getErrorMessage(error),
+        });
+        return undefined;
       });
-      return undefined;
-    });
 
   const registry = new RouteRegistry({
     debug: opts.debug,
@@ -221,32 +192,32 @@ export function createVeryfrontHandler(
   const apiHandler = new ApiHandlerWrapper(projectDir, adapter);
 
   registry.registerAll([
-    new AuthHandler(), // Priority: 0 (CRITICAL)
-    new HMRHandler(), // Priority: 25 (preview mode HMR WebSocket)
-    new CorsHandler(), // Priority: 50
-    new HealthHandler(), // Priority: 100 (HIGH)
-    new MetricsHandler(), // Priority: 100 (HIGH)
-    new MemoryDebugHandler(), // Priority: 100 (HIGH, memory profiling endpoints)
-    new ClientLogHandler(), // Priority: 200 (HIGH, dev only)
-    new DevEndpointsHandler(), // Priority: 300 (HIGH, dev only)
-    new StylesCSSHandler(), // Priority: 300 (HIGH, serves styles.css for HMR)
-    new DebugContextHandler(), // Priority: 300 (HIGH, dev only - context debugging)
-    new OpenAPIHandler(), // Priority: 300 (HIGH, serves /_openapi.json)
-    new OpenAPIDocsHandler(), // Priority: 300 (HIGH, serves /_docs with Scalar UI)
-    new DevDashboardHandler(), // Priority: 300 (HIGH, dev only - unified dev dashboard at /_dev)
-    new ProjectsHandler(), // Priority: HIGH (multi-project mode landing page with React UI)
-    new StudioEndpointsHandler(), // Priority: 300 (HIGH, Studio iframe scripts)
-    new CSSHandler(), // Priority: 300 (HIGH, serves /_vf/css/[hash].css)
-    new DevFileHandler(), // Priority: 400 (dev only)
-    new SnippetHandler(), // Priority: 450 (before static, handles @/ component previews)
-    new StaticHandler(), // Priority: 500 (MEDIUM_STATIC)
-    new LibModulesHandler(), // Priority: 550 (MEDIUM_LIB_MODULES, self-hosted veryfront modules)
-    new RSCHandler(), // Priority: 600 (MEDIUM, runs before static to expose RSC endpoints)
-    new ModuleHandler(), // Priority: 600 (MEDIUM)
-    apiHandler, // Priority: 700 (MEDIUM)
-    new MarkdownPreviewHandler(), // Priority: 900 (preview/dev only - serves .md files with GitHub styling)
-    new SSRHandler(), // Priority: 1000 (LOW)
-    new NotFoundHandler(), // Priority: 10000 (FALLBACK)
+    new AuthHandler(),
+    new HMRHandler(),
+    new CorsHandler(),
+    new HealthHandler(),
+    new MetricsHandler(),
+    new MemoryDebugHandler(),
+    new ClientLogHandler(),
+    new DevEndpointsHandler(),
+    new StylesCSSHandler(),
+    new DebugContextHandler(),
+    new OpenAPIHandler(),
+    new OpenAPIDocsHandler(),
+    new DevDashboardHandler(),
+    new ProjectsHandler(),
+    new StudioEndpointsHandler(),
+    new CSSHandler(),
+    new DevFileHandler(),
+    new SnippetHandler(),
+    new StaticHandler(),
+    new LibModulesHandler(),
+    new RSCHandler(),
+    new ModuleHandler(),
+    apiHandler,
+    new MarkdownPreviewHandler(),
+    new SSRHandler(),
+    new NotFoundHandler(),
   ]);
 
   const isProxyMode = opts.config?.fs?.veryfront?.proxyMode === true;
@@ -275,24 +246,18 @@ export function createVeryfrontHandler(
         if (!stat?.isDirectory) continue;
 
         const [hasApp, hasPages, hasComponents] = await Promise.all([
-          adapter.fs.stat(`${projectPath}/app`).then((s) => s?.isDirectory)
-            .catch(() => false),
-          adapter.fs.stat(`${projectPath}/pages`).then((s) => s?.isDirectory)
-            .catch(() => false),
-          adapter.fs
-            .stat(`${projectPath}/components`)
-            .then((s) => s?.isDirectory)
-            .catch(() => false),
+          adapter.fs.stat(`${projectPath}/app`).then((s) => s?.isDirectory).catch(() => false),
+          adapter.fs.stat(`${projectPath}/pages`).then((s) => s?.isDirectory).catch(() => false),
+          adapter.fs.stat(`${projectPath}/components`).then((s) => s?.isDirectory).catch(() =>
+            false
+          ),
         ]);
 
         if (!hasApp && !hasPages && !hasComponents) continue;
 
         const absolutePath = projectPath.startsWith("/") ? projectPath : `${cwd()}/${projectPath}`;
         localProjectCache.set(slug, absolutePath);
-        logger.debug("[universal] Discovered local project", {
-          slug,
-          path: absolutePath,
-        });
+        logger.debug("[universal] Discovered local project", { slug, path: absolutePath });
         return absolutePath;
       } catch {
         // Directory doesn't exist, continue
@@ -311,9 +276,7 @@ export function createVeryfrontHandler(
   });
 
   if (isProxyMode) {
-    logger.debug(
-      "[universal] Running in proxy mode - lazy initialization enabled",
-    );
+    logger.debug("[universal] Running in proxy mode - lazy initialization enabled");
   }
 
   const handler = async (req: Request): Promise<Response> => {
@@ -327,17 +290,10 @@ export function createVeryfrontHandler(
 
     const url = new URL(req.url);
 
-    // Early return for monitoring paths - skip expensive context building
-    // (domain lookups, project resolution, enriched context, etc.)
-    // Health checks (/healthz, /readyz, /_health) and metrics (/_metrics) need minimal context
-    // but still need auth/security config loaded
     if (isMonitoringPath(url.pathname)) {
       try {
-        // Wait for ready and security config to load (needed for auth checks)
         await readyPromise;
-        if (!isProxyMode) {
-          await securityLoader.ensureLoaded();
-        }
+        if (!isProxyMode) await securityLoader.ensureLoaded();
 
         const minimalCtx: HandlerContext = {
           projectDir,
@@ -356,19 +312,16 @@ export function createVeryfrontHandler(
       }
     }
 
-    const trackingRequestId = req.headers.get("x-request-id") ??
-      crypto.randomUUID();
+    const trackingRequestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
 
-    // Extract request context for logging
-    const host = req.headers.get("host") ?? url.host;
-    const domain = host.replace(/:\d+$/, "");
+    const hostHeader = req.headers.get("host") ?? url.host;
+    const domain = hostHeader.replace(/:\d+$/, "");
     const projectSlugHeader = req.headers.get("x-project-slug") ?? undefined;
     const projectIdHeader = req.headers.get("x-project-id") ?? undefined;
     const releaseIdHeader = req.headers.get("x-release-id") ?? undefined;
     const branchIdHeader = req.headers.get("x-branch-id") ?? undefined;
     const branchNameHeader = req.headers.get("x-branch-name") ?? undefined;
 
-    // Create request-scoped logger with bound context
     const reqLogger = logger.child({
       requestId: trackingRequestId,
       request_url: req.url,
@@ -381,7 +334,6 @@ export function createVeryfrontHandler(
       pathname: url.pathname,
     });
 
-    // Create request context for AsyncLocalStorage propagation
     const loggerContext: RequestContext = {
       logger: reqLogger,
       requestId: trackingRequestId,
@@ -390,8 +342,6 @@ export function createVeryfrontHandler(
       domain,
     };
 
-    // Run the entire request within the AsyncLocalStorage context
-    // This makes the request-scoped logger available to ALL code in the call stack
     return runWithRequestContextAsync(loggerContext, async () => {
       const parentContext = extractContext(req.headers);
       const spanInfo = startServerSpan(req.method, url.pathname, parentContext);
@@ -418,12 +368,11 @@ export function createVeryfrontHandler(
         earlyReleaseId || undefined,
       );
 
-      // Skip concurrency limiting for lightweight paths (modules, static assets)
-      // These requests are fast once initialized and shouldn't block each other
       const shouldCheckIsolation = !isLightweightPath(url.pathname);
       const isolationCheck = shouldCheckIsolation
         ? projectIsolation.checkRequest(earlyProjectSlug)
         : { allowed: true };
+
       if (!isolationCheck.allowed) {
         requestTracker.complete(trackingRequestId, 503, false);
 
@@ -444,11 +393,7 @@ export function createVeryfrontHandler(
             headers: {
               "Content-Type": "application/json",
               ...(isolationCheck.waitTimeMs
-                ? {
-                  "Retry-After": String(
-                    Math.ceil(isolationCheck.waitTimeMs / 1000),
-                  ),
-                }
+                ? { "Retry-After": String(Math.ceil(isolationCheck.waitTimeMs / 1000)) }
                 : {}),
             },
           },
@@ -458,7 +403,6 @@ export function createVeryfrontHandler(
         return response;
       }
 
-      // Only track isolation for heavyweight requests (SSR, API routes)
       if (shouldCheckIsolation) {
         projectIsolation.startRequest(earlyProjectSlug);
       }
@@ -478,13 +422,11 @@ export function createVeryfrontHandler(
         const executeHandler = async (): Promise<Response> => {
           const reqCtx = createRequestContext(req, opts.envConfig);
 
-          const wsSlugOverride = url.searchParams.get("x-project-slug") ||
-            undefined;
+          const wsSlugOverride = url.searchParams.get("x-project-slug") || undefined;
           const proxyProjectPath = req.headers.get("x-project-path") || undefined;
 
           let proxyEnv = parseProxyEnvironment(
-            req.headers.get("x-environment") ||
-              url.searchParams.get("x-environment"),
+            req.headers.get("x-environment") || url.searchParams.get("x-environment"),
           );
 
           const forwardedHost = req.headers.get("x-forwarded-host") || undefined;
@@ -498,10 +440,9 @@ export function createVeryfrontHandler(
           const proxyToken = reqCtx.token || undefined;
           const proxyReleaseId = req.headers.get("x-release-id") || undefined;
           const proxyProjectId = req.headers.get("x-project-id") || undefined;
-          const proxyContentSourceId = req.headers.get("x-content-source-id") ||
-            undefined;
-          let projectId: string | undefined = proxyProjectId ||
-            opts.defaultProjectId;
+          const proxyContentSourceId = req.headers.get("x-content-source-id") || undefined;
+
+          let projectId: string | undefined = proxyProjectId || opts.defaultProjectId;
           let releaseId: string | undefined = proxyReleaseId;
           let environmentName: string | undefined;
 
@@ -521,35 +462,28 @@ export function createVeryfrontHandler(
             proxyProjectId,
           });
 
-          // Monitoring paths have early return above, so only check for internal hosts
           const shouldSkipDomainLookup = isInternalHost(host);
 
           if (
-            !projectSlug &&
-            !parsedDomain.isVeryfrontDomain &&
-            config?.fs?.veryfront &&
+            !projectSlug && !parsedDomain.isVeryfrontDomain && config?.fs?.veryfront &&
             !shouldSkipDomainLookup
           ) {
-            const effectiveToken = proxyToken || config.fs.veryfront.apiToken ||
-              "";
-            const baseUrl = (config.fs.veryfront as { baseUrl?: string; apiBaseUrl?: string })
-              .baseUrl ||
+            const effectiveToken = proxyToken || config.fs.veryfront.apiToken || "";
+            const baseUrl =
+              (config.fs.veryfront as { baseUrl?: string; apiBaseUrl?: string }).baseUrl ||
               config.fs.veryfront.apiBaseUrl ||
               "https://api.veryfront.com";
 
             const lookupHost = forwardedHost || host;
 
             if (effectiveToken) {
-              logger.debug(
-                "[universal] Custom domain detected, looking up project",
-                {
-                  host: lookupHost,
-                  originalHost: host,
-                  forwardedHost,
-                  hasProxyToken: !!proxyToken,
-                  hasConfigToken: !!config.fs.veryfront.apiToken,
-                },
-              );
+              logger.debug("[universal] Custom domain detected, looking up project", {
+                host: lookupHost,
+                originalHost: host,
+                forwardedHost,
+                hasProxyToken: !!proxyToken,
+                hasConfigToken: !!config.fs.veryfront.apiToken,
+              });
 
               const lookupResult = await withSpan(
                 SpanNames.DOMAIN_LOOKUP,
@@ -564,7 +498,6 @@ export function createVeryfrontHandler(
               if (lookupResult) {
                 projectSlug = lookupResult.project_slug;
                 projectId = projectId || lookupResult.project_id;
-                // Only use lookup result if proxy didn't provide releaseId
                 releaseId = releaseId || lookupResult.release_id || undefined;
                 environmentName = lookupResult.environment?.name;
 
@@ -579,19 +512,14 @@ export function createVeryfrontHandler(
                   releaseId: lookupResult.release_id,
                 });
               } else {
-                logger.warn("[universal] No project found for domain", {
-                  host: lookupHost,
-                });
+                logger.warn("[universal] No project found for domain", { host: lookupHost });
               }
             } else {
-              logger.warn(
-                "[universal] Cannot look up custom domain - no API token available",
-                {
-                  host: lookupHost,
-                  hasProxyToken: !!proxyToken,
-                  hasConfigToken: !!config?.fs?.veryfront?.apiToken,
-                },
-              );
+              logger.warn("[universal] Cannot look up custom domain - no API token available", {
+                host: lookupHost,
+                hasProxyToken: !!proxyToken,
+                hasConfigToken: !!config?.fs?.veryfront?.apiToken,
+              });
             }
           }
 
@@ -600,14 +528,13 @@ export function createVeryfrontHandler(
             parsedDomain.isDraft === false &&
             projectSlug &&
             !releaseId &&
-            !proxyToken && // Skip domain lookup in proxy mode - proxy already provides releaseId
+            !proxyToken &&
             config?.fs?.veryfront &&
             !shouldSkipDomainLookup
           ) {
-            const effectiveToken = proxyToken || config.fs.veryfront.apiToken ||
-              "";
-            const baseUrl = (config.fs.veryfront as { baseUrl?: string; apiBaseUrl?: string })
-              .baseUrl ||
+            const effectiveToken = proxyToken || config.fs.veryfront.apiToken || "";
+            const baseUrl =
+              (config.fs.veryfront as { baseUrl?: string; apiBaseUrl?: string }).baseUrl ||
               config.fs.veryfront.apiBaseUrl ||
               "https://api.veryfront.com";
 
@@ -625,27 +552,20 @@ export function createVeryfrontHandler(
               if (lookupResult?.release_id) {
                 releaseId = lookupResult.release_id;
                 projectId = projectId || lookupResult.project_id;
-                environmentName = environmentName ||
-                  lookupResult.environment?.name;
+                environmentName = environmentName || lookupResult.environment?.name;
                 proxyEnv = "production";
 
-                logger.debug(
-                  "[universal] Veryfront domain release lookup successful",
-                  {
-                    projectSlug,
-                    releaseId,
-                    projectId,
-                    environmentName,
-                  },
-                );
+                logger.debug("[universal] Veryfront domain release lookup successful", {
+                  projectSlug,
+                  releaseId,
+                  projectId,
+                  environmentName,
+                });
               }
             }
           }
 
-          if (
-            parsedDomain.slug && configuredSlug &&
-            parsedDomain.slug !== configuredSlug
-          ) {
+          if (parsedDomain.slug && configuredSlug && parsedDomain.slug !== configuredSlug) {
             logDebug("[universal] Project slug mismatch", {
               fromUrl: parsedDomain.slug,
               fromConfig: configuredSlug,
@@ -670,27 +590,16 @@ export function createVeryfrontHandler(
             });
           }
 
-          // Handle veryfront domains without a project slug - serve projects page
-          // This must happen before context building which requires a project
           const isProjectsPath = url.pathname === "/" ||
             url.pathname.startsWith("/_projects") ||
             url.pathname === "/_vf/api/projects";
 
           if (
-            !projectSlug &&
-            !parsedDomain.slug &&
-            parsedDomain.isVeryfrontDomain &&
-            isProjectsPath
+            !projectSlug && !parsedDomain.slug && parsedDomain.isVeryfrontDomain && isProjectsPath
           ) {
-            const { PROJECTS_SHELL_HTML } = await import(
-              "../handlers/dev/projects/html-shell.ts"
-            );
-            const { handleProjectsAPI } = await import(
-              "../handlers/dev/projects/api.ts"
-            );
-            const { handleProjectsUI } = await import(
-              "../handlers/dev/projects/ui-handler.ts"
-            );
+            const { PROJECTS_SHELL_HTML } = await import("../handlers/dev/projects/html-shell.ts");
+            const { handleProjectsAPI } = await import("../handlers/dev/projects/api.ts");
+            const { handleProjectsUI } = await import("../handlers/dev/projects/ui-handler.ts");
 
             if (
               url.pathname === "/" || url.pathname === "/_projects" ||
@@ -712,18 +621,18 @@ export function createVeryfrontHandler(
               if (response) return response;
             }
 
-            // Handle /_vf/api/projects - discover and return local projects
             if (url.pathname === "/_vf/api/projects") {
-              // Use native filesystem to discover local projects
               const nativeFs = createFileSystem();
               const basePath = cwd();
+
               for (const dir of standardProjectDirs) {
                 try {
                   const dirPath = `${basePath}/${dir}`;
-                  const dirExists = await nativeFs.exists(dirPath);
-                  if (!dirExists) continue;
+                  if (!(await nativeFs.exists(dirPath))) continue;
+
                   for await (const entry of nativeFs.readDir(dirPath)) {
                     if (entry.name.startsWith(".") || !entry.isDirectory) continue;
+
                     const projectPath = `${dirPath}/${entry.name}`;
                     try {
                       const [hasApp, hasPages, hasComponents] = await Promise.all([
@@ -731,6 +640,7 @@ export function createVeryfrontHandler(
                         nativeFs.exists(`${projectPath}/pages`),
                         nativeFs.exists(`${projectPath}/components`),
                       ]);
+
                       if (hasApp || hasPages || hasComponents) {
                         localProjectCache.set(entry.name, projectPath);
                       }
@@ -743,22 +653,18 @@ export function createVeryfrontHandler(
                 }
               }
 
-              const localProjects = Array.from(localProjectCache.entries()).map(
-                ([slug, path]) => ({
-                  id: slug,
-                  name: slug,
-                  slug,
-                  path,
-                  updated_at: new Date().toISOString(),
-                }),
-              );
-              return new Response(
-                JSON.stringify({ data: localProjects }),
-                {
-                  status: 200,
-                  headers: { "Content-Type": "application/json" },
-                },
-              );
+              const localProjects = Array.from(localProjectCache.entries()).map(([slug, path]) => ({
+                id: slug,
+                name: slug,
+                slug,
+                path,
+                updated_at: new Date().toISOString(),
+              }));
+
+              return new Response(JSON.stringify({ data: localProjects }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              });
             }
 
             return new Response("Not found", { status: 404 });
@@ -772,7 +678,6 @@ export function createVeryfrontHandler(
             : undefined;
 
           const isLocalProject = !!localProjectPath;
-
           let effectiveConfig: VeryfrontConfig | undefined = config;
 
           if (isLocalProject && localProjectPath) {
@@ -807,48 +712,39 @@ export function createVeryfrontHandler(
                 router: effectiveConfig?.router,
               });
             } catch (error) {
-              logger.warn(
-                "[universal] Failed to load project config, using defaults",
-                {
-                  projectSlug,
-                  projectDir: effectiveProjectDir,
-                  error: getErrorMessage(error),
-                },
-              );
+              logger.warn("[universal] Failed to load project config, using defaults", {
+                projectSlug,
+                projectDir: effectiveProjectDir,
+                error: getErrorMessage(error),
+              });
             }
           } else if (isProxyMode && projectSlug && proxyToken) {
-            // Load config in proxy mode so enrichedContext can be created with correct environment
-            // Must wrap in runWithContext to set project context for MultiProjectFSAdapter
             try {
-              effectiveConfig = await timeAsync(
-                "config:load-proxy-project",
-                () => {
-                  // Access runWithContext via the fs adapter (ExtendedFileSystemAdapter)
-                  if (
-                    isExtendedFSAdapter(effectiveAdapter.fs) &&
-                    effectiveAdapter.fs.runWithContext
-                  ) {
-                    return effectiveAdapter.fs.runWithContext(
-                      projectSlug,
-                      proxyToken,
-                      () =>
-                        getConfig(effectiveProjectDir, effectiveAdapter, {
-                          cacheKey: projectId || projectSlug,
-                        }),
-                      projectId,
-                      {
-                        productionMode: proxyEnv === "production",
-                        releaseId,
-                        branch: reqCtx.branch || parsedDomain.branch || null,
-                        environmentName,
-                      },
-                    );
-                  }
-                  return getConfig(effectiveProjectDir, effectiveAdapter, {
-                    cacheKey: projectId || projectSlug,
-                  });
-                },
-              );
+              effectiveConfig = await timeAsync("config:load-proxy-project", () => {
+                if (
+                  isExtendedFSAdapter(effectiveAdapter.fs) && effectiveAdapter.fs.runWithContext
+                ) {
+                  return effectiveAdapter.fs.runWithContext(
+                    projectSlug,
+                    proxyToken,
+                    () =>
+                      getConfig(effectiveProjectDir, effectiveAdapter, {
+                        cacheKey: projectId || projectSlug,
+                      }),
+                    projectId,
+                    {
+                      productionMode: proxyEnv === "production",
+                      releaseId,
+                      branch: reqCtx.branch || parsedDomain.branch || null,
+                      environmentName,
+                    },
+                  );
+                }
+
+                return getConfig(effectiveProjectDir, effectiveAdapter, {
+                  cacheKey: projectId || projectSlug,
+                });
+              });
 
               logger.debug("[universal] Loaded config in proxy mode", {
                 projectSlug,
@@ -857,13 +753,10 @@ export function createVeryfrontHandler(
                 router: effectiveConfig?.router,
               });
             } catch (error) {
-              logger.warn(
-                "[universal] Failed to load proxy config, using defaults",
-                {
-                  projectSlug,
-                  error: getErrorMessage(error),
-                },
-              );
+              logger.warn("[universal] Failed to load proxy config, using defaults", {
+                projectSlug,
+                error: getErrorMessage(error),
+              });
             }
           }
 
@@ -872,21 +765,17 @@ export function createVeryfrontHandler(
             : reqCtx.mode;
 
           if (
-            isProxyMode && resolvedEnvironment === "production" && projectSlug &&
-            !releaseId &&
+            isProxyMode && resolvedEnvironment === "production" && projectSlug && !releaseId &&
             !isLocalProject
           ) {
-            logger.error(
-              "[universal] Missing releaseId in proxy mode (production)",
-              {
-                projectSlug,
-                projectId,
-                environmentName,
-                host,
-                proxyEnv,
-                resolvedEnvironment,
-              },
-            );
+            logger.error("[universal] Missing releaseId in proxy mode (production)", {
+              projectSlug,
+              projectId,
+              environmentName,
+              host,
+              proxyEnv,
+              resolvedEnvironment,
+            });
 
             return new Response(
               JSON.stringify({
@@ -898,11 +787,11 @@ export function createVeryfrontHandler(
             );
           }
 
-          // In standalone (non-proxy) mode without releaseId, fallback to configured environment
-          // or preview by default. This allows test servers and local development to work.
           const isStandaloneWithoutRelease = !isProxyMode &&
             resolvedEnvironment === "production" &&
-            !releaseId && !reqCtx.isLocalDev && !isLocalProject;
+            !releaseId &&
+            !reqCtx.isLocalDev &&
+            !isLocalProject;
 
           if (isStandaloneWithoutRelease) {
             const fallbackEnv = opts.defaultEnvironment ?? "preview";
@@ -914,30 +803,25 @@ export function createVeryfrontHandler(
                 fallbackEnv,
               },
             );
+
             resolvedEnvironment = fallbackEnv;
 
-            // If falling back to production environment, generate a synthetic releaseId
-            // to satisfy cache key requirements
             if (fallbackEnv === "production" && !releaseId) {
               releaseId = "standalone-dev";
-              logger.debug(
-                "[universal] Using synthetic releaseId for standalone production mode",
-                {
-                  projectSlug,
-                  releaseId,
-                },
-              );
+              logger.debug("[universal] Using synthetic releaseId for standalone production mode", {
+                projectSlug,
+                releaseId,
+              });
             }
           }
 
-          // Use proxy header if available, otherwise compute using shared utility
-          // Note: Monitoring paths have early return above, so they never reach here
-          const contentSourceId = proxyContentSourceId ?? computeContentSourceId(
-            reqCtx.isLocalDev || isLocalProject,
-            resolvedEnvironment,
-            reqCtx.branch,
-            releaseId,
-          );
+          const contentSourceId = proxyContentSourceId ??
+            computeContentSourceId(
+              reqCtx.isLocalDev || isLocalProject,
+              resolvedEnvironment,
+              reqCtx.branch,
+              releaseId,
+            );
 
           const enrichedContext = effectiveConfig && projectSlug
             ? buildEnrichedContext({
@@ -993,13 +877,10 @@ export function createVeryfrontHandler(
 
           if (response) return response;
 
-          logDebug("[universal] No handler produced response (unexpected)", {
-            path: url.pathname,
-          });
+          logDebug("[universal] No handler produced response (unexpected)", { path: url.pathname });
           return new Response("Internal Server Error", { status: 500 });
         };
 
-        // Note: Monitoring paths have early return above, so timeout always applies here
         let response: Response;
         let error: Error | undefined;
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -1012,10 +893,7 @@ export function createVeryfrontHandler(
           response = await Promise.race([
             executeWithContext(),
             new Promise<never>((_, reject) => {
-              timeoutId = setTimeout(
-                () => reject(TIMEOUT_SENTINEL),
-                REQUEST_TIMEOUT_MS,
-              );
+              timeoutId = setTimeout(() => reject(TIMEOUT_SENTINEL), REQUEST_TIMEOUT_MS);
             }),
           ]);
         } catch (e) {
@@ -1050,7 +928,6 @@ export function createVeryfrontHandler(
         const isTimeout = response.status === HTTP_GATEWAY_TIMEOUT;
         requestTracker.complete(trackingRequestId, response.status, isTimeout);
 
-        // Only complete isolation tracking if we started it (heavyweight requests)
         if (shouldCheckIsolation) {
           projectIsolation.completeRequest(earlyProjectSlug, isTimeout);
         }

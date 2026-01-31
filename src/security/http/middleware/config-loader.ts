@@ -10,9 +10,9 @@ export function isValidSecurityConfig(config: unknown): config is SecurityConfig
 
   if (cfg.csp !== undefined && (cfg.csp == null || typeof cfg.csp !== "object")) return false;
 
+  const cors = cfg.cors;
   if (
-    cfg.cors !== undefined && typeof cfg.cors !== "boolean" &&
-    (cfg.cors == null || typeof cfg.cors !== "object")
+    cors !== undefined && typeof cors !== "boolean" && (cors == null || typeof cors !== "object")
   ) {
     return false;
   }
@@ -30,7 +30,7 @@ export function loadSecurityConfig(
 ): Promise<SecurityConfig | null> {
   return withSpan(
     "security.config.load",
-    async () => {
+    async (): Promise<SecurityConfig | null> => {
       try {
         const { getConfig } = await import("#veryfront/config");
         const cfg = await getConfig(projectDir, adapter);

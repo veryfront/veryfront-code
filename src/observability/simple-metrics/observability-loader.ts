@@ -6,8 +6,7 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import type { ObservabilityMetrics } from "./types.ts";
 
-let observabilityMetrics: ObservabilityMetrics | null = null;
-let observabilityLoadAttempted = false;
+let loadingPromise: Promise<ObservabilityMetrics | null> | null = null;
 
 /**
  * Get observability metrics with lazy loading
@@ -21,32 +20,32 @@ let observabilityLoadAttempted = false;
  * ```
  */
 export async function getObservabilityMetrics(): Promise<ObservabilityMetrics | null> {
-  if (observabilityLoadAttempted) return observabilityMetrics;
+  if (loadingPromise) return loadingPromise;
 
-  observabilityLoadAttempted = true;
+  loadingPromise = (async () => {
+    try {
+      const mod = await import("../../observability/metrics/index.ts");
+      return {
+        recordRender: mod.recordRender,
+        recordCacheGet: mod.recordCacheGet,
+        recordCacheSet: mod.recordCacheSet,
+        recordCacheInvalidate: mod.recordCacheInvalidate,
+        recordHttpRequest: mod.recordHttpRequest,
+        recordRSCRequest: mod.recordRSCRequest,
+        recordRSCStream: mod.recordRSCStream,
+      };
+    } catch (error) {
+      logger.debug("[metrics] Observability module not available (metrics disabled)", { error });
+      return null;
+    }
+  })();
 
-  try {
-    const mod = await import("../../observability/metrics/index.ts");
-    observabilityMetrics = {
-      recordRender: mod.recordRender,
-      recordCacheGet: mod.recordCacheGet,
-      recordCacheSet: mod.recordCacheSet,
-      recordCacheInvalidate: mod.recordCacheInvalidate,
-      recordHttpRequest: mod.recordHttpRequest,
-      recordRSCRequest: mod.recordRSCRequest,
-      recordRSCStream: mod.recordRSCStream,
-    };
-    return observabilityMetrics;
-  } catch (error) {
-    logger.debug("[metrics] Observability module not available (metrics disabled)", { error });
-    return null;
-  }
+  return loadingPromise;
 }
 
 /**
  * Reset observability loader state (useful for testing)
  */
 export function resetObservabilityLoader(): void {
-  observabilityMetrics = null;
-  observabilityLoadAttempted = false;
+  loadingPromise = null;
 }

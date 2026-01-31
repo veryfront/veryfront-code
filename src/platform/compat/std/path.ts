@@ -1,12 +1,3 @@
-/**
- * Portable @std/path shim for Node.js and Bun.
- *
- * In Deno: Uses @std/path
- * In Node.js/Bun: Re-exports from @veryfront/compat/path and node:path
- *
- * @module
- */
-
 import { isDeno } from "../runtime.ts";
 
 export {
@@ -27,7 +18,7 @@ export {
   toFileUrl,
 } from "../path/index.ts";
 
-interface PosixPath {
+export interface PosixPath {
   join(...paths: string[]): string;
   resolve(...paths: string[]): string;
   normalize(path: string): string;
@@ -43,4 +34,3 @@ interface PosixPath {
 const { posix } = isDeno ? await import("#std/path.ts") : await import("node:path");
 
 export { posix };
-export type { PosixPath };

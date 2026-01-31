@@ -146,20 +146,19 @@ async function hashContent(content: string): Promise<string> {
 }
 
 function getModuleServerBase(moduleServerUrl?: string): string {
-  if (
-    moduleServerUrl &&
-    (moduleServerUrl.startsWith("http://") || moduleServerUrl.startsWith("https://"))
-  ) {
-    // Deno's dynamic import() only supports file:// and http:// schemes.
-    // In production, the module server is always local (same pod), so
-    // downgrade https:// to http:// to avoid "Received protocol 'https:'" errors.
+  if (!moduleServerUrl) return "http://localhost:3002";
+
+  if (moduleServerUrl.startsWith("http://")) return moduleServerUrl;
+  if (moduleServerUrl.startsWith("https://")) {
     return moduleServerUrl.replace(/^https:\/\//, "http://");
   }
+
   return "http://localhost:3002";
 }
 
 function getServerPort(moduleServerUrl?: string): number | undefined {
   if (!moduleServerUrl) return undefined;
+
   try {
     const url = new URL(moduleServerUrl);
     return url.port ? parseInt(url.port, 10) : undefined;
@@ -199,9 +198,10 @@ export function renderSnippet(
         });
 
         const hash = await hashContent(mdxContent + (options.projectSlug ?? ""));
+        const frontmatter = bundle.frontmatter ?? {};
         const cacheEntry: SnippetCacheEntry = {
           code: bundle.compiledCode,
-          frontmatter: bundle.frontmatter ?? {},
+          frontmatter,
         };
 
         snippetCache.set(hash, cacheEntry);
@@ -244,18 +244,14 @@ export function renderSnippet(
 
         const module = await import(snippetUrl);
         const MDXContent = module.default || module.MDXContent;
-        if (!MDXContent) {
-          throw new Error("No MDXContent export found in compiled snippet");
-        }
+        if (!MDXContent) throw new Error("No MDXContent export found in compiled snippet");
 
         const [{ renderToString }, React] = await Promise.all([
           import("react-dom/server"),
           import("react"),
         ]);
 
-        const element = React.createElement(MDXContent, {
-          frontmatter: bundle.frontmatter ?? {},
-        });
+        const element = React.createElement(MDXContent, { frontmatter });
         const bodyHtml = renderToString(element);
 
         logger.debug("[SnippetRenderer] SSR complete", {
@@ -288,7 +284,7 @@ export function renderSnippet(
           pageId: options.pageId,
         });
 
-        return { html, frontmatter: bundle.frontmatter ?? {} };
+        return { html, frontmatter };
       } catch (error) {
         logger.error("[SnippetRenderer] Render failed", {
           error: error instanceof Error ? error.message : String(error),
@@ -312,11 +308,9 @@ function generateErrorHTML(error: unknown, options: SnippetRenderOptions): strin
   const message = error instanceof Error ? error.message : String(error);
   const stack = error instanceof Error ? error.stack : undefined;
   const nonce = options.nonce ? ` nonce="${options.nonce}"` : "";
-
-  let stackHtml = "";
-  if (options.mode === "development" && stack) {
-    stackHtml = `<div class="error-stack">${escapeHtml(stack)}</div>`;
-  }
+  const stackHtml = options.mode === "development" && stack
+    ? `<div class="error-stack">${escapeHtml(stack)}</div>`
+    : "";
 
   return `<!DOCTYPE html>
 <html lang="en">

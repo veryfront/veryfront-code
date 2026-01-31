@@ -34,9 +34,7 @@ export function formatHeader(): string {
   const output: string[] = [""];
 
   for (let i = 0; i < maxHeight; i++) {
-    const logoLine = logoLines[i] ?? LOGO_FALLBACK;
-    const textLine = textLines[i] ?? "";
-    output.push(`  ${logoLine}   ${textLine}`);
+    output.push(`  ${logoLines[i] ?? LOGO_FALLBACK}   ${textLines[i] ?? ""}`);
   }
 
   return output.join("\n");

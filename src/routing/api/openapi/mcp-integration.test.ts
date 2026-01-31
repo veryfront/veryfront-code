@@ -52,10 +52,7 @@ describe("routing/api/openapi/mcp-integration", () => {
     });
 
     it("should return true when mcp config is empty object", () => {
-      assertEquals(
-        isOpenAPIMCPEnabled({ openapi: { mcp: {} } }),
-        true,
-      );
+      assertEquals(isOpenAPIMCPEnabled({ openapi: { mcp: {} } }), true);
     });
 
     it("should return true when only resource is set to true", () => {

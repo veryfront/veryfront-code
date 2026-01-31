@@ -11,10 +11,12 @@ describe("factory", () => {
         message: "Veryfront could not find veryfront.config.js",
       });
 
-      expect(solution.code).toBe(ErrorCode.CONFIG_NOT_FOUND);
-      expect(solution.title).toBe("Configuration file not found");
-      expect(solution.message).toBe("Veryfront could not find veryfront.config.js");
-      expect(solution.docs).toBe("https://veryfront.com/docs/errors/VF001");
+      expect(solution).toMatchObject({
+        code: ErrorCode.CONFIG_NOT_FOUND,
+        title: "Configuration file not found",
+        message: "Veryfront could not find veryfront.config.js",
+        docs: "https://veryfront.com/docs/errors/VF001",
+      });
     });
 
     it("should create error solution with steps", () => {
@@ -97,14 +99,16 @@ describe("factory", () => {
         relatedErrors: [ErrorCode.REQUEST_ERROR],
       });
 
-      expect(solution.code).toBe(ErrorCode.API_ERROR);
-      expect(solution.title).toBe("API Error");
-      expect(solution.message).toBe("API request failed");
-      expect(solution.steps).toEqual(["Check API endpoint", "Verify authentication"]);
-      expect(solution.example).toBe('fetch("/api/data")');
-      expect(solution.tips).toEqual(["Use correct HTTP method"]);
-      expect(solution.relatedErrors).toEqual([ErrorCode.REQUEST_ERROR]);
-      expect(solution.docs).toBe("https://veryfront.com/docs/errors/VF205");
+      expect(solution).toMatchObject({
+        code: ErrorCode.API_ERROR,
+        title: "API Error",
+        message: "API request failed",
+        steps: ["Check API endpoint", "Verify authentication"],
+        example: 'fetch("/api/data")',
+        tips: ["Use correct HTTP method"],
+        relatedErrors: [ErrorCode.REQUEST_ERROR],
+        docs: "https://veryfront.com/docs/errors/VF205",
+      });
     });
 
     it("should handle empty steps array", () => {
@@ -152,8 +156,7 @@ describe("factory", () => {
       ];
 
       for (const [code, docs] of cases) {
-        const solution = createErrorSolution(code, { title: "Title", message: "Message" });
-        expect(solution.docs).toBe(docs);
+        expect(createErrorSolution(code, { title: "Title", message: "Message" }).docs).toBe(docs);
       }
     });
 
@@ -193,11 +196,13 @@ describe("factory", () => {
         ["Check error messages", "Fix TypeScript errors"],
       );
 
-      expect(solution.code).toBe(ErrorCode.BUILD_FAILED);
-      expect(solution.title).toBe("Build failed");
-      expect(solution.message).toBe("The build process encountered errors");
-      expect(solution.steps).toEqual(["Check error messages", "Fix TypeScript errors"]);
-      expect(solution.docs).toBe("https://veryfront.com/docs/errors/VF100");
+      expect(solution).toMatchObject({
+        code: ErrorCode.BUILD_FAILED,
+        title: "Build failed",
+        message: "The build process encountered errors",
+        steps: ["Check error messages", "Fix TypeScript errors"],
+        docs: "https://veryfront.com/docs/errors/VF100",
+      });
     });
 
     it("should auto-generate docs URL", () => {
@@ -268,8 +273,7 @@ describe("factory", () => {
       ];
 
       for (const [code, docs] of cases) {
-        const solution = createSimpleError(code, "Title", "Message", ["Step"]);
-        expect(solution.docs).toBe(docs);
+        expect(createSimpleError(code, "Title", "Message", ["Step"]).docs).toBe(docs);
       }
     });
 
@@ -324,11 +328,13 @@ describe("factory", () => {
         steps,
       });
 
-      expect(simple.code).toBe(full.code);
-      expect(simple.title).toBe(full.title);
-      expect(simple.message).toBe(full.message);
-      expect(simple.steps).toEqual(full.steps);
-      expect(simple.docs).toBe(full.docs);
+      expect(simple).toMatchObject({
+        code: full.code,
+        title: full.title,
+        message: full.message,
+        steps: full.steps,
+        docs: full.docs,
+      });
     });
 
     it("should createSimpleError use createErrorSolution internally", () => {

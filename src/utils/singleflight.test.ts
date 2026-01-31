@@ -13,10 +13,10 @@ describe("Singleflight", () => {
     const sf = new Singleflight<number>();
     let callCount = 0;
 
-    const operation = () => {
+    function operation(): Promise<number> {
       callCount++;
-      return new Promise<number>((resolve) => setTimeout(() => resolve(42), 50));
-    };
+      return new Promise((resolve) => setTimeout(() => resolve(42), 50));
+    }
 
     const [r1, r2, r3] = await Promise.all([
       sf.do("key", operation),
@@ -34,10 +34,10 @@ describe("Singleflight", () => {
     const sf = new Singleflight<string>();
     let callCount = 0;
 
-    const operation = (val: string) => {
+    function operation(val: string): Promise<string> {
       callCount++;
       return Promise.resolve(val);
-    };
+    }
 
     const [r1, r2] = await Promise.all([
       sf.do("a", () => operation("first")),
@@ -53,6 +53,7 @@ describe("Singleflight", () => {
     const sf = new Singleflight<number>();
 
     await sf.do("key", () => Promise.resolve(1));
+
     assertEquals(sf.has("key"), false);
     assertEquals(sf.size, 0);
   });
@@ -85,17 +86,20 @@ describe("Singleflight", () => {
 
   it("should report in-flight status via has()", async () => {
     const sf = new Singleflight<number>();
-    let resolveOp!: (v: number) => void;
+    let resolveOp: ((v: number) => void) | undefined;
 
-    const promise = sf.do("key", () =>
-      new Promise<number>((r) => {
-        resolveOp = r;
-      }));
+    const promise = sf.do(
+      "key",
+      () =>
+        new Promise<number>((resolve) => {
+          resolveOp = resolve;
+        }),
+    );
 
     assertEquals(sf.has("key"), true);
     assertEquals(sf.size, 1);
 
-    resolveOp(1);
+    resolveOp?.(1);
     await promise;
 
     assertEquals(sf.has("key"), false);

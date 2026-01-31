@@ -1,9 +1,3 @@
-/**
- * Build utilities barrel export
- * Consolidated utilities for the build pipeline
- */
-
-// Asset utilities (CSS, Images, Tailwind)
 export {
   calculateAspectRatio,
   CSS_EXTENSIONS,

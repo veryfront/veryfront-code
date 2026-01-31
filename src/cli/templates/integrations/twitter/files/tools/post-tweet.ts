@@ -15,14 +15,6 @@ export default tool({
   execute: async ({ text }, context) => {
     const userId = context?.userId ?? "current-user";
 
-    if (text.length > 280) {
-      return {
-        error: "Tweet text exceeds 280 character limit",
-        length: text.length,
-        maxLength: 280,
-      };
-    }
-
     try {
       const twitter = createTwitterClient(userId);
       const result = await twitter.postTweet(text);

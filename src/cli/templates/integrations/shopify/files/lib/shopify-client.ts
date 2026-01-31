@@ -109,10 +109,15 @@ async function shopifyFetch<T>(endpoint: string, options: RequestInit = {}): Pro
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({} as { errors?: string }));
-    throw new Error(
-      `Shopify API error: ${response.status} ${error.errors ?? response.statusText}`,
-    );
+    let errors: string | undefined;
+    try {
+      const body = (await response.json()) as { errors?: string };
+      errors = body.errors;
+    } catch {
+      // ignore JSON parse errors
+    }
+
+    throw new Error(`Shopify API error: ${response.status} ${errors ?? response.statusText}`);
   }
 
   return response.json();
@@ -128,15 +133,15 @@ export async function listProducts(options?: {
   if (options?.status) params.set("status", options.status);
   if (options?.productType) params.set("product_type", options.productType);
 
-  const response = await shopifyFetch<{ products: ShopifyProduct[] }>(
+  const { products } = await shopifyFetch<{ products: ShopifyProduct[] }>(
     `/products.json${buildQuery(params)}`,
   );
-  return response.products;
+  return products;
 }
 
 export async function getProduct(productId: number | string): Promise<ShopifyProduct> {
-  const response = await shopifyFetch<{ product: ShopifyProduct }>(`/products/${productId}.json`);
-  return response.product;
+  const { product } = await shopifyFetch<{ product: ShopifyProduct }>(`/products/${productId}.json`);
+  return product;
 }
 
 export async function listOrders(options?: {
@@ -151,33 +156,36 @@ export async function listOrders(options?: {
   if (options?.financialStatus) params.set("financial_status", options.financialStatus);
   if (options?.fulfillmentStatus) params.set("fulfillment_status", options.fulfillmentStatus);
 
-  const response = await shopifyFetch<{ orders: ShopifyOrder[] }>(
+  const { orders } = await shopifyFetch<{ orders: ShopifyOrder[] }>(
     `/orders.json${buildQuery(params)}`,
   );
-  return response.orders;
+  return orders;
 }
 
 export async function getOrder(orderId: number | string): Promise<ShopifyOrder> {
-  const response = await shopifyFetch<{ order: ShopifyOrder }>(`/orders/${orderId}.json`);
-  return response.order;
+  const { order } = await shopifyFetch<{ order: ShopifyOrder }>(`/orders/${orderId}.json`);
+  return order;
 }
 
-export async function listCustomers(options?: { limit?: number; query?: string }): Promise<ShopifyCustomer[]> {
+export async function listCustomers(options?: {
+  limit?: number;
+  query?: string;
+}): Promise<ShopifyCustomer[]> {
   const params = new URLSearchParams();
   if (options?.limit) params.set("limit", options.limit.toString());
   if (options?.query) params.set("query", options.query);
 
-  const response = await shopifyFetch<{ customers: ShopifyCustomer[] }>(
+  const { customers } = await shopifyFetch<{ customers: ShopifyCustomer[] }>(
     `/customers.json${buildQuery(params)}`,
   );
-  return response.customers;
+  return customers;
 }
 
 export async function getCustomer(customerId: number | string): Promise<ShopifyCustomer> {
-  const response = await shopifyFetch<{ customer: ShopifyCustomer }>(
+  const { customer } = await shopifyFetch<{ customer: ShopifyCustomer }>(
     `/customers/${customerId}.json`,
   );
-  return response.customer;
+  return customer;
 }
 
 export async function getShopInfo(): Promise<{
@@ -188,7 +196,7 @@ export async function getShopInfo(): Promise<{
   currency: string;
   timezone: string;
 }> {
-  const response = await shopifyFetch<{
+  const { shop } = await shopifyFetch<{
     shop: {
       id: number;
       name: string;
@@ -199,5 +207,5 @@ export async function getShopInfo(): Promise<{
     };
   }>("/shop.json");
 
-  return response.shop;
+  return shop;
 }

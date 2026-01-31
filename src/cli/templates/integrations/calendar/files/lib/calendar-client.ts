@@ -6,18 +6,19 @@
 
 import { getValidToken } from "./oauth.ts";
 
-// Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
   // @ts-ignore - Deno global
   if (typeof Deno !== "undefined") {
     // @ts-ignore - Deno global
     return Deno.env.get(key);
   }
+
   // @ts-ignore - process global
   if (typeof process !== "undefined" && process.env) {
     // @ts-ignore - process global
     return process.env[key];
   }
+
   return undefined;
 }
 
@@ -79,31 +80,36 @@ export const calendarOAuthProvider = {
   callbackPath: "/api/auth/calendar/callback",
 };
 
+type ListEventsOptions = {
+  maxResults?: number;
+  timeMin?: Date | string;
+  timeMax?: Date | string;
+  calendarId?: string;
+};
+
+type FreeBusyOptions = {
+  timeMin: Date | string;
+  timeMax: Date | string;
+  calendarId?: string;
+};
+
+type FindFreeSlotsOptions = FreeBusyOptions & {
+  durationMinutes: number;
+};
+
+type CalendarClientShape = {
+  listEvents(options?: ListEventsOptions): Promise<CalendarEvent[]>;
+  getTodayEvents(): Promise<CalendarEvent[]>;
+  createEvent(options: CreateEventOptions, calendarId?: string): Promise<CalendarEvent>;
+  getFreeBusy(options: FreeBusyOptions): Promise<FreeBusySlot[]>;
+  findFreeSlots(options: FindFreeSlotsOptions): Promise<Array<{ start: Date; end: Date }>>;
+  deleteEvent(eventId: string, calendarId?: string): Promise<void>;
+};
+
 /**
  * Create a Calendar client for a specific user
  */
-export function createCalendarClient(userId: string): {
-  listEvents(options?: {
-    maxResults?: number;
-    timeMin?: Date | string;
-    timeMax?: Date | string;
-    calendarId?: string;
-  }): Promise<CalendarEvent[]>;
-  getTodayEvents(): Promise<CalendarEvent[]>;
-  createEvent(options: CreateEventOptions, calendarId?: string): Promise<CalendarEvent>;
-  getFreeBusy(options: {
-    timeMin: Date | string;
-    timeMax: Date | string;
-    calendarId?: string;
-  }): Promise<FreeBusySlot[]>;
-  findFreeSlots(options: {
-    timeMin: Date | string;
-    timeMax: Date | string;
-    durationMinutes: number;
-    calendarId?: string;
-  }): Promise<Array<{ start: Date; end: Date }>>;
-  deleteEvent(eventId: string, calendarId?: string): Promise<void>;
-} {
+export function createCalendarClient(userId: string): CalendarClientShape {
   async function getAccessToken(): Promise<string> {
     const token = await getValidToken(calendarOAuthProvider, userId, "calendar");
     if (!token) {
@@ -132,18 +138,11 @@ export function createCalendarClient(userId: string): {
     return response.json();
   }
 
-  async function listEvents(options: {
-    maxResults?: number;
-    timeMin?: Date | string;
-    timeMax?: Date | string;
-    calendarId?: string;
-  } = {}): Promise<CalendarEvent[]> {
+  async function listEvents(options: ListEventsOptions = {}): Promise<CalendarEvent[]> {
     const params = new URLSearchParams();
 
-    params.set(
-      "timeMin",
-      options.timeMin ? new Date(options.timeMin).toISOString() : new Date().toISOString(),
-    );
+    const timeMin = options.timeMin ? new Date(options.timeMin) : new Date();
+    params.set("timeMin", timeMin.toISOString());
 
     if (options.timeMax) {
       params.set("timeMax", new Date(options.timeMax).toISOString());
@@ -168,11 +167,7 @@ export function createCalendarClient(userId: string): {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    return listEvents({
-      timeMin: today,
-      timeMax: tomorrow,
-      maxResults: 50,
-    });
+    return listEvents({ timeMin: today, timeMax: tomorrow, maxResults: 50 });
   }
 
   function createEvent(options: CreateEventOptions, calendarId = "primary"): Promise<CalendarEvent> {
@@ -184,14 +179,8 @@ export function createCalendarClient(userId: string): {
       summary: options.summary,
       description: options.description,
       location: options.location,
-      start: {
-        dateTime: startDate,
-        timeZone,
-      },
-      end: {
-        dateTime: endDate,
-        timeZone,
-      },
+      start: { dateTime: startDate, timeZone },
+      end: { dateTime: endDate, timeZone },
       attendees: options.attendees?.map((email) => ({ email })),
     };
 
@@ -201,11 +190,7 @@ export function createCalendarClient(userId: string): {
     });
   }
 
-  async function getFreeBusy(options: {
-    timeMin: Date | string;
-    timeMax: Date | string;
-    calendarId?: string;
-  }): Promise<FreeBusySlot[]> {
+  async function getFreeBusy(options: FreeBusyOptions): Promise<FreeBusySlot[]> {
     const calendarId = options.calendarId ?? "primary";
 
     const result = await apiRequest<{
@@ -222,17 +207,10 @@ export function createCalendarClient(userId: string): {
     return result.calendars[calendarId]?.busy ?? [];
   }
 
-  async function findFreeSlots(options: {
-    timeMin: Date | string;
-    timeMax: Date | string;
-    durationMinutes: number;
-    calendarId?: string;
-  }): Promise<Array<{ start: Date; end: Date }>> {
-    const busySlots = await getFreeBusy({
-      timeMin: options.timeMin,
-      timeMax: options.timeMax,
-      calendarId: options.calendarId,
-    });
+  async function findFreeSlots(
+    options: FindFreeSlotsOptions,
+  ): Promise<Array<{ start: Date; end: Date }>> {
+    const busySlots = await getFreeBusy(options);
 
     const freeSlots: Array<{ start: Date; end: Date }> = [];
     const rangeStart = new Date(options.timeMin);
@@ -249,6 +227,7 @@ export function createCalendarClient(userId: string): {
       if (busy.start.getTime() - currentStart.getTime() >= durationMs) {
         freeSlots.push({ start: new Date(currentStart), end: new Date(busy.start) });
       }
+
       if (busy.end > currentStart) {
         currentStart = busy.end;
       }
@@ -268,9 +247,7 @@ export function createCalendarClient(userId: string): {
       `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${eventId}`,
       {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
+        headers: { Authorization: `Bearer ${accessToken}` },
       },
     );
 

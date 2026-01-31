@@ -20,7 +20,7 @@ interface ServiceConnectionsProps {
 
 function useIntegrationStatus(): { status: Record<string, boolean>; loading: boolean } {
   const [status, setStatus] = useState<Record<string, boolean>>({});
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
     async function checkStatus(): Promise<void> {
@@ -38,7 +38,7 @@ function useIntegrationStatus(): { status: Record<string, boolean>; loading: boo
 
         setStatus(statusMap);
       } catch (error) {
-        console.error("Failed to check service status:", err);
+        console.error("Failed to check service status:", error);
       } finally {
         setLoading(false);
       }
@@ -50,18 +50,21 @@ function useIntegrationStatus(): { status: Record<string, boolean>; loading: boo
   return { status, loading };
 }
 
+function withStatus(
+  services: ServiceConnectionsProps["services"],
+  status: Record<string, boolean>,
+): Service[] {
+  return services.map((service) => ({
+    ...service,
+    connected: status[service.id] ?? false,
+  }));
+}
+
 export function ServiceConnections({
   services,
   className = "",
 }: ServiceConnectionsProps): React.ReactElement {
   const { status, loading } = useIntegrationStatus();
-
-  const servicesWithStatus: Service[] = services.map((s) => ({
-    ...s,
-    connected: status[s.id] ?? false,
-  }));
-
-  const connectedCount = servicesWithStatus.filter((s) => s.connected).length;
 
   if (loading) {
     return (
@@ -70,6 +73,12 @@ export function ServiceConnections({
       </div>
     );
   }
+
+  const servicesWithStatus = withStatus(services, status);
+  const connectedCount = servicesWithStatus.reduce(
+    (count, service) => count + (service.connected ? 1 : 0),
+    0,
+  );
 
   return (
     <div className={`flex items-center gap-2 ${className}`}>
@@ -98,9 +107,9 @@ function ServiceBadge({ service }: { service: Service }): React.ReactElement {
     );
   }
 
-  function handleConnect(): void {
+  const handleConnect = (): void => {
     globalThis.location.href = service.authUrl;
-  }
+  };
 
   return (
     <button
@@ -121,14 +130,10 @@ export function ServiceConnectionsCard({
 }: ServiceConnectionsProps): React.ReactElement | null {
   const { status, loading } = useIntegrationStatus();
 
-  const servicesWithStatus: Service[] = services.map((s) => ({
-    ...s,
-    connected: status[s.id] ?? false,
-  }));
+  if (loading) return null;
 
-  const disconnectedServices = servicesWithStatus.filter((s) => !s.connected);
-
-  if (loading || disconnectedServices.length === 0) return null;
+  const disconnectedServices = withStatus(services, status).filter((service) => !service.connected);
+  if (disconnectedServices.length === 0) return null;
 
   return (
     <div

@@ -47,9 +47,7 @@ export function createCacheInstruments(
     unit: "entries",
   });
 
-  cacheSizeGauge.addCallback((result: ObservableResult) => {
-    result.observe(runtimeState.cacheSize);
-  });
+  cacheSizeGauge.addCallback((result: ObservableResult) => result.observe(runtimeState.cacheSize));
 
   return {
     cacheGetCounter,

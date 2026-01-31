@@ -34,8 +34,8 @@ export function injectHTMLContent(
   let html = template;
 
   html = html.replace(/{{\s*content\s*}}/gi, content);
-  html = html.replace(/{{\s*title\s*}}/gi, metadata.title || "");
-  html = html.replace(/{{\s*description\s*}}/gi, metadata.description || "");
+  html = html.replace(/{{\s*title\s*}}/gi, metadata.title ?? "");
+  html = html.replace(/{{\s*description\s*}}/gi, metadata.description ?? "");
 
   if (/{{\s*meta\s*}}/i.test(html)) {
     html = html.replace(/{{\s*meta\s*}}/gi, generateMetaTags(metadata));
@@ -83,20 +83,21 @@ export function injectHTMLContent(
     html = html.replace(/{{\s*devScripts\s*}}/gi, "");
     html = html.replace(/{{\s*devStyles\s*}}/gi, "");
 
+    const prodScripts = getProdScripts(options.slug);
     const hasProdScriptsPlaceholder = /{{\s*prodScripts\s*}}/i.test(html);
 
     if (hasProdScriptsPlaceholder) {
-      html = html.replace(/{{\s*prodScripts\s*}}/gi, getProdScripts(options.slug));
+      html = html.replace(/{{\s*prodScripts\s*}}/gi, prodScripts);
     } else if (hasBodyClose) {
-      html = html.replace(/<\/body>/i, `${getProdScripts(options.slug)}</body>`);
+      html = html.replace(/<\/body>/i, `${prodScripts}</body>`);
     }
   }
 
   // Inject Studio bridge script when embedded in Studio iframe
   if (options.studioEmbed && hasBodyClose) {
     const studioScripts = getStudioScripts({
-      projectId: options.projectId || options.slug,
-      pageId: options.pageId || options.slug,
+      projectId: options.projectId ?? options.slug,
+      pageId: options.pageId ?? options.slug,
       nonce: options.nonce,
     });
     html = html.replace(/<\/body>/i, `${studioScripts}</body>`);

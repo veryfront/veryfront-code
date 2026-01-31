@@ -104,6 +104,8 @@ export class MDXCacheAdapter {
       const codeHash = await computeCodeHash(bundleCode);
       const size = new TextEncoder().encode(bundle.compiledCode).length;
 
+      const { version: reactVersion } = await import("react");
+
       const metadata: BundleMetadata = {
         hash: contentHash,
         codeHash,
@@ -113,7 +115,7 @@ export class MDXCacheAdapter {
         mode: this.mode,
         meta: {
           type: "mdx",
-          reactVersion: (await import("react")).version,
+          reactVersion,
           headings: bundle.headings ?? [],
         },
       };
@@ -139,6 +141,7 @@ export class MDXCacheAdapter {
     try {
       const contentHash = await this.computeHash(content);
       const cacheKey = this.getCacheKey(contentHash);
+
       await this.manifestStore.deleteBundle(cacheKey);
       logger.debug("[mdx-cache] Invalidated cached bundle", { cacheKey });
     } catch (error) {

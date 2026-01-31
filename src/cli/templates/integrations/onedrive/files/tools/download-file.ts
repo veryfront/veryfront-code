@@ -15,11 +15,11 @@ export default tool({
   async execute({ itemId, preview }) {
     const { content, metadata } = await downloadFile(itemId);
 
-    const isTruncated = preview && content.length > 1000;
+    const shouldTruncate = preview && content.length > 1000;
 
     return {
       content: preview ? content.substring(0, 1000) : content,
-      isTruncated,
+      isTruncated: shouldTruncate,
       metadata: {
         id: metadata.id,
         name: metadata.name,
@@ -30,7 +30,7 @@ export default tool({
         lastModifiedDateTime: metadata.lastModifiedDateTime,
         webUrl: metadata.webUrl,
       },
-      message: isTruncated
+      message: shouldTruncate
         ? `Retrieved preview (first 1000 characters) of ${metadata.name}`
         : `Retrieved full content of ${metadata.name}`,
     };

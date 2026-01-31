@@ -112,15 +112,15 @@ export function computeContentSourceId(
   branch: string | null | undefined,
   releaseId: string | null | undefined,
 ): string {
-  if (isLocalDev) {
-    return `local-${branch ?? "main"}`;
-  }
+  if (isLocalDev) return `local-${branch ?? "main"}`;
+
   if (environment === "production") {
     if (!releaseId) {
       throw new Error("Missing releaseId for production contentSourceId");
     }
     return `release-${releaseId}`;
   }
+
   return `preview-${branch ?? "main"}`;
 }
 
@@ -171,22 +171,17 @@ function getSourceTypeKey(sourceType: FileSourceType): string {
 }
 
 function buildSourceQualifier(ctx: FileOperationContext): string {
-  switch (ctx.sourceType) {
-    case "branch":
-      return ctx.branch ?? "main";
-    case "release":
-      if (!ctx.releaseId) {
-        throw new Error(`Missing releaseId for release sourceType (project: ${ctx.projectSlug})`);
-      }
-      return ctx.releaseId;
-    case "environment":
-      if (!ctx.releaseId) {
-        throw new Error(
-          `Missing releaseId for environment sourceType (project: ${ctx.projectSlug})`,
-        );
-      }
-      return `${ctx.environmentName}:${ctx.releaseId}`;
+  if (ctx.sourceType === "branch") return ctx.branch ?? "main";
+
+  if (!ctx.releaseId) {
+    throw new Error(
+      `Missing releaseId for ${ctx.sourceType} sourceType (project: ${ctx.projectSlug})`,
+    );
   }
+
+  if (ctx.sourceType === "release") return ctx.releaseId;
+
+  return `${ctx.environmentName}:${ctx.releaseId}`;
 }
 
 function buildFileOperationPrefix(
@@ -362,11 +357,15 @@ export function buildProxyManagerCacheKey(
   branch: string | null,
 ): string {
   const mode = productionMode ? "production" : "preview";
-  if (productionMode && !releaseId) {
-    throw new Error(`Missing releaseId in production for ${projectSlug}`);
+
+  if (productionMode) {
+    if (!releaseId) {
+      throw new Error(`Missing releaseId in production for ${projectSlug}`);
+    }
+    return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${releaseId}`;
   }
-  const qualifier = productionMode ? releaseId! : (branch ?? "main");
-  return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${qualifier}`;
+
+  return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${branch ?? "main"}`;
 }
 
 export function createCacheKeyFilter(options: {
@@ -383,8 +382,10 @@ export function createCacheKeyFilter(options: {
 
     if (options.projectId) {
       const projectId = options.projectId;
-      const hasProjectId = parts[1] === projectId || (parts.length > 2 && parts[2] === projectId) ||
+      const hasProjectId = parts[1] === projectId ||
+        (parts.length > 2 && parts[2] === projectId) ||
         parts.includes(projectId);
+
       if (!hasProjectId) return false;
     }
 
@@ -405,7 +406,7 @@ export function getAllKeysForProject(projectId: string): Map<string, string[]> {
 
 export function getAllKeysForProjectAsync(
   projectId: string,
-  includeRedis = true,
+  includeRedis: boolean = true,
 ): Promise<{ memory: Map<string, string[]>; redis: Map<string, string[]> }> {
   return withSpan(
     SpanNames.CACHE_KEYS_GET_ALL_ASYNC,

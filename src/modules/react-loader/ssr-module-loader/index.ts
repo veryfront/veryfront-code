@@ -10,7 +10,8 @@ export type {
 export {
   CIRCUIT_BREAKER_RESET_MS,
   CIRCUIT_BREAKER_THRESHOLD,
-  MAX_CONCURRENT_TRANSFORMS,
+  getMaxConcurrentTransforms,
+  getTransformPerProjectLimit,
   REDIS_KEY_PREFIX,
   REDIS_TTL_SECONDS,
   SSR_MODULE_CACHE_MAX_ENTRIES,

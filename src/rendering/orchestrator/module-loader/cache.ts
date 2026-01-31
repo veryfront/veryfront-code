@@ -8,7 +8,6 @@
  * @module rendering/orchestrator/module-loader/cache
  */
 
-// Re-export pod-level cache factories
 export { createEsmCache, createModuleCache } from "#veryfront/cache/module-cache.ts";
 
 const HEX_CHARS = "0123456789abcdef";
@@ -20,8 +19,9 @@ export async function generateHash(str: string): Promise<string> {
 
   let hex = "";
   for (let i = 0; i < 8; i++) {
-    const byte = bytes[i]!;
-    hex += HEX_CHARS.charAt(byte >> 4) + HEX_CHARS.charAt(byte & 0xf);
+    const byte = bytes[i] ?? 0;
+    hex += (HEX_CHARS[byte >> 4] ?? "0") + (HEX_CHARS[byte & 0xf] ?? "0");
   }
+
   return hex;
 }

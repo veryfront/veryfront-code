@@ -16,6 +16,20 @@ import {
   vfRemoteUpdateFile,
 } from "./remote-file-tools.ts";
 
+function assertSchemaSuccess<T>(
+  result: { success: true; data: T } | { success: false },
+): asserts result is { success: true; data: T } {
+  assertEquals(result.success, true);
+}
+
+async function assertExecuteError(
+  promise: Promise<{ success: boolean; error?: unknown }>,
+): Promise<void> {
+  const result = await promise;
+  assertEquals(result.success, false);
+  assertExists(result.error);
+}
+
 describe("cli/mcp/remote-file-tools", () => {
   describe("remoteFileTools array", () => {
     it("should export all remote tools", () => {
@@ -24,8 +38,7 @@ describe("cli/mcp/remote-file-tools", () => {
 
     it("should have unique names", () => {
       const names = remoteFileTools.map((t) => t.name);
-      const unique = new Set(names);
-      assertEquals(names.length, unique.size);
+      assertEquals(names.length, new Set(names).size);
     });
 
     it("should have name and description for each tool", () => {
@@ -62,6 +75,7 @@ describe("cli/mcp/remote-file-tools", () => {
         "vf_remote_delete_branch",
       ];
       const actualNames = remoteFileTools.map((t) => t.name);
+
       for (const name of expectedNames) {
         assertEquals(actualNames.includes(name), true, `Missing tool: ${name}`);
       }
@@ -90,21 +104,17 @@ describe("cli/mcp/remote-file-tools", () => {
         pattern: "*.tsx",
         limit: 10,
       });
-      assertEquals(result.success, true);
-      if (result.success) {
-        assertEquals(result.data.project, "my-project");
-        assertEquals(result.data.branch, "feature");
-        assertEquals(result.data.pattern, "*.tsx");
-        assertEquals(result.data.limit, 10);
-      }
+      assertSchemaSuccess(result);
+      assertEquals(result.data.project, "my-project");
+      assertEquals(result.data.branch, "feature");
+      assertEquals(result.data.pattern, "*.tsx");
+      assertEquals(result.data.limit, 10);
     });
 
     it("should default limit to 50", () => {
       const result = vfRemoteListFiles.inputSchema.safeParse({ project: "my-project" });
-      assertEquals(result.success, true);
-      if (result.success) {
-        assertEquals(result.data.limit, 50);
-      }
+      assertSchemaSuccess(result);
+      assertEquals(result.data.limit, 50);
     });
   });
 
@@ -212,10 +222,8 @@ describe("cli/mcp/remote-file-tools", () => {
         project: "my-project",
         query: "test",
       });
-      assertEquals(result.success, true);
-      if (result.success) {
-        assertEquals(result.data.max_results, 50);
-      }
+      assertSchemaSuccess(result);
+      assertEquals(result.data.max_results, 50);
     });
   });
 
@@ -399,85 +407,85 @@ describe("cli/mcp/remote-file-tools", () => {
 
   describe("tool execute without API token", () => {
     it("should return error for list files without token", async () => {
-      const result = await vfRemoteListFiles.execute({
-        project: "test",
-        limit: 50,
-      });
-      assertEquals(result.success, false);
-      assertExists(result.error);
+      await assertExecuteError(
+        vfRemoteListFiles.execute({
+          project: "test",
+          limit: 50,
+        }),
+      );
     });
 
     it("should return error for get file without token", async () => {
-      const result = await vfRemoteGetFile.execute({
-        project: "test",
-        path: "index.tsx",
-      });
-      assertEquals(result.success, false);
-      assertExists(result.error);
+      await assertExecuteError(
+        vfRemoteGetFile.execute({
+          project: "test",
+          path: "index.tsx",
+        }),
+      );
     });
 
     it("should return error for delete file without token", async () => {
-      const result = await vfRemoteDeleteFile.execute({
-        project: "test",
-        path: "index.tsx",
-      });
-      assertEquals(result.success, false);
-      assertExists(result.error);
+      await assertExecuteError(
+        vfRemoteDeleteFile.execute({
+          project: "test",
+          path: "index.tsx",
+        }),
+      );
     });
 
     it("should return error for move file without token", async () => {
-      const result = await vfRemoteMoveFile.execute({
-        project: "test",
-        source_path: "a.tsx",
-        destination_path: "b.tsx",
-      });
-      assertEquals(result.success, false);
-      assertExists(result.error);
+      await assertExecuteError(
+        vfRemoteMoveFile.execute({
+          project: "test",
+          source_path: "a.tsx",
+          destination_path: "b.tsx",
+        }),
+      );
     });
 
     it("should return error for list branches without token", async () => {
-      const result = await vfRemoteListBranches.execute({
-        project: "test",
-        status: "all",
-      });
-      assertEquals(result.success, false);
-      assertExists(result.error);
+      await assertExecuteError(
+        vfRemoteListBranches.execute({
+          project: "test",
+          status: "all",
+        }),
+      );
     });
 
     it("should return error for create branch without token", async () => {
-      const result = await vfRemoteCreateBranch.execute({
-        project: "test",
-        name: "feature",
-      });
-      assertEquals(result.success, false);
-      assertExists(result.error);
+      await assertExecuteError(
+        vfRemoteCreateBranch.execute({
+          project: "test",
+          name: "feature",
+        }),
+      );
     });
 
     it("should return error for merge branch without token", async () => {
-      const result = await vfRemoteMergeBranch.execute({
-        project: "test",
-        branch_id: "branch-1",
-      });
-      assertEquals(result.success, false);
-      assertExists(result.error);
+      await assertExecuteError(
+        vfRemoteMergeBranch.execute({
+          project: "test",
+          branch_id: "branch-1",
+        }),
+      );
     });
 
     it("should return error for delete branch without token", async () => {
-      const result = await vfRemoteDeleteBranch.execute({
-        project: "test",
-        branch_id: "branch-1",
-      });
-      assertEquals(result.success, false);
-      assertExists(result.error);
+      await assertExecuteError(
+        vfRemoteDeleteBranch.execute({
+          project: "test",
+          branch_id: "branch-1",
+        }),
+      );
     });
 
     it("should return error for create project without token", async () => {
-      const result = await vfRemoteCreateProject.execute({
-        name: "Test",
-        slug: "test",
-      });
-      assertEquals(result.success, false);
-      assertExists(result.error);
+      await assertExecuteError(
+        vfRemoteCreateProject.execute({
+          name: "Test",
+          slug: "test",
+        }),
+      );
     });
   });
 });

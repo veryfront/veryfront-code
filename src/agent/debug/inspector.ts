@@ -1,4 +1,4 @@
-/**
+/****
  * Agent & Tool Inspector
  *
  * Debugging utilities for inspecting agent execution and tool calls.
@@ -11,7 +11,6 @@ import { getMCPRegistry, getMCPStats } from "#veryfront/mcp";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 
 export interface InspectionReport {
-  /** Agent information */
   agent: {
     id: string;
     model: string;
@@ -19,7 +18,6 @@ export interface InspectionReport {
     memoryType: string;
   };
 
-  /** Execution details */
   execution: {
     input: string | Message[];
     output: string;
@@ -28,7 +26,6 @@ export interface InspectionReport {
     executionTime: number;
   };
 
-  /** Tool usage */
   tools: {
     called: Array<{
       name: string;
@@ -40,13 +37,11 @@ export interface InspectionReport {
     available: string[];
   };
 
-  /** Memory usage */
   memory: {
     messagesCount: number;
     estimatedTokens: number;
   };
 
-  /** Token usage */
   usage?: {
     promptTokens: number;
     completionTokens: number;
@@ -54,17 +49,6 @@ export interface InspectionReport {
   };
 }
 
-/**
- * Inspect an agent execution
- *
- * @example
- * ```typescript
- * import { inspectAgent } from 'veryfront/agent/debug';
- *
- * const report = await inspectAgent(myAgent, 'Test input');
- * console.log(report);
- * ```
- */
 export async function inspectAgent(
   agent: Agent,
   input: string | Message[],
@@ -111,9 +95,6 @@ export async function inspectAgent(
   };
 }
 
-/**
- * Print inspection report
- */
 export function printInspectionReport(report: InspectionReport): void {
   agentLogger.info("\n=== Agent Inspection Report ===\n");
 
@@ -143,7 +124,9 @@ export function printInspectionReport(report: InspectionReport): void {
     agentLogger.info(`    ${i + 1}. ${tool.name}(${JSON.stringify(tool.args)})`);
     agentLogger.info(`       Status: ${tool.status}`);
     agentLogger.info(`       Time: ${tool.executionTime}ms`);
-    agentLogger.info(`       Result: ${JSON.stringify(tool.result).substring(0, 100)}...`);
+    agentLogger.info(
+      `       Result: ${JSON.stringify(tool.result).substring(0, 100)}...`,
+    );
   }
   agentLogger.info("");
 
@@ -159,9 +142,6 @@ export function printInspectionReport(report: InspectionReport): void {
   agentLogger.info(`  Total: ${report.usage.totalTokens}\n`);
 }
 
-/**
- * Get MCP registry overview
- */
 export function getRegistryOverview(): {
   tools: Array<{ id: string; description: string }>;
   resources: Array<{ id: string; pattern: string; description: string }>;
@@ -190,9 +170,6 @@ export function getRegistryOverview(): {
   };
 }
 
-/**
- * Print registry overview
- */
 export function printRegistryOverview(): void {
   const overview = getRegistryOverview();
 

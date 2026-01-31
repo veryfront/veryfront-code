@@ -19,11 +19,9 @@ export async function transformJsx(
   source: string,
   options: TransformOptions = {},
 ): Promise<TransformResult> {
-  const loader = options.loader ?? "tsx";
   const esbuild = await getEsbuild();
-
   const result = await esbuild.transform(source, {
-    loader,
+    loader: options.loader ?? "tsx",
     jsx: "automatic",
     jsxImportSource: "react",
     format: "esm",
@@ -36,6 +34,7 @@ export async function transformJsx(
 /** Call at server startup to ensure esbuild binary is available. */
 export async function initializeTransform(): Promise<void> {
   if (esbuildInitialized) return;
+
   await initializeEsbuild();
   esbuildInitialized = true;
 }

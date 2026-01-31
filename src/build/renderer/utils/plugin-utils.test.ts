@@ -18,9 +18,8 @@ describe("build/renderer/utils/plugin-utils", () => {
       const result = normalizePlugins(
         [[pluginA], [pluginB]] as unknown as import("unified").PluggableList,
       );
-      assertEquals(result.length, 2);
-      assertEquals(result[0], pluginA);
-      assertEquals(result[1], pluginB);
+
+      assertEquals(result, [pluginA, pluginB]);
     });
 
     it("should pass through a flat array of plugins", () => {
@@ -29,9 +28,8 @@ describe("build/renderer/utils/plugin-utils", () => {
       const result = normalizePlugins(
         [pluginA, pluginB] as unknown as import("unified").PluggableList,
       );
-      assertEquals(result.length, 2);
-      assertEquals(result[0], pluginA);
-      assertEquals(result[1], pluginB);
+
+      assertEquals(result, [pluginA, pluginB]);
     });
   });
 });

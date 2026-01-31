@@ -4,7 +4,8 @@ import { getEnvironmentType } from "./domain-lookup.ts";
 import type { DomainLookupResult } from "./domain-lookup.ts";
 
 function makeResult(envName: string | null): DomainLookupResult | null {
-  if (!envName) return null;
+  if (envName == null) return null;
+
   return {
     project_id: "p1",
     project_slug: "test",
@@ -28,6 +29,7 @@ describe("server/utils/domain-lookup", () => {
         environment: null,
         release_id: null,
       };
+
       assertEquals(getEnvironmentType(result), undefined);
     });
 

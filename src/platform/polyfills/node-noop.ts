@@ -6,5 +6,4 @@
  * Any actual usage of the imported API will fail at call-site, which
  * surfaces the problem clearly instead of a cryptic module resolution error.
  */
-
 export default {};

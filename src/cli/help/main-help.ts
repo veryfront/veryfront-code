@@ -15,8 +15,9 @@ export function showMainHelp(): void {
   console.log(`  ${bold("Usage:")} veryfront <command> [options]`);
   console.log();
 
-  console.log(`  ${formatSectionHeader("Commands")}`);
   const commands = Object.values(COMMANDS);
+
+  console.log(`  ${formatSectionHeader("Commands")}`);
   for (const line of formatCommandList(commands)) {
     console.log(line);
   }

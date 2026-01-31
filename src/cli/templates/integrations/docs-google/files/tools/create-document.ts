@@ -22,8 +22,8 @@ export default tool({
       ? await client.createDocumentWithContent(title, content)
       : await client.createDocument({ title });
 
-    const documents = await client.listDocuments({ maxResults: 1 });
-    const webViewLink = documents.find((d) => d.id === document.documentId)?.webViewLink;
+    const [docMeta] = await client.listDocuments({ maxResults: 1 });
+    const webViewLink = docMeta?.id === document.documentId ? docMeta.webViewLink : undefined;
 
     return {
       documentId: document.documentId,

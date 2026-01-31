@@ -9,18 +9,17 @@ async function resolveProjectDir(args: ParsedArgs): Promise<string> {
   const projectArg = args.project ? String(args.project) : undefined;
 
   if (projectArg) {
-    const resolved = isAbsolute(projectArg) ? projectArg : join(cwd(), projectArg);
-    cliLogger.debug("Using project directory from --project flag", { projectDir: resolved });
-    return resolved;
+    const projectDir = isAbsolute(projectArg) ? projectArg : join(cwd(), projectArg);
+    cliLogger.debug("Using project directory from --project flag", { projectDir });
+    return projectDir;
   }
 
   const projectDir = cwd();
   const fs = createFileSystem();
 
-  const configPaths = [
-    join(projectDir, "veryfront.config.ts"),
-    join(projectDir, "veryfront.config.js"),
-  ];
+  const configPaths = ["veryfront.config.ts", "veryfront.config.js"].map((file) =>
+    join(projectDir, file)
+  );
 
   for (const configPath of configPaths) {
     if (await fs.exists(configPath)) return projectDir;

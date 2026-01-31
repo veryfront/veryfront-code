@@ -27,15 +27,13 @@ export default tool({
   async execute({ max, type, sortBy }) {
     const rooms = await listRooms({ max, type, sortBy });
 
-    return rooms.map(
-      ({ id, title, type, isLocked, lastActivity, created }) => ({
-        id,
-        title,
-        type,
-        isLocked,
-        lastActivity,
-        created,
-      }),
-    );
+    return rooms.map((room) => ({
+      id: room.id,
+      title: room.title,
+      type: room.type,
+      isLocked: room.isLocked,
+      lastActivity: room.lastActivity,
+      created: room.created,
+    }));
   },
 });

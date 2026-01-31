@@ -35,9 +35,9 @@ export function handleVirtualModule(
           .build(vmResponse.body, vmResponse.status);
 
         return respond(response);
-      } catch (e) {
+      } catch (error) {
         return respond(
-          ResponseBuilder.error(500, `Virtual Module Error: ${getErrorMessage(e)}`, req, {
+          ResponseBuilder.error(500, `Virtual Module Error: ${getErrorMessage(error)}`, req, {
             securityConfig: ctx.securityConfig,
             corsConfig: ctx.securityConfig?.cors,
           }),

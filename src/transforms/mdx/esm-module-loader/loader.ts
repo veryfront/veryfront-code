@@ -422,8 +422,8 @@ async function transformJsxImports(
  * - Node.js/Bun: Must cache HTTP imports to local file:// paths.
  */
 async function cacheHttpImports(code: string, importMap: ImportMapConfig): Promise<string> {
-  const canDoNativeHttpImports = isDeno && !isDenoCompiled;
-  if (canDoNativeHttpImports) return code;
+  if (isDeno && !isDenoCompiled) return code;
+
   const result = await cacheHttpImportsToLocal(code, {
     cacheDir: getHttpBundleCacheDir(),
     importMap,
@@ -521,14 +521,14 @@ async function doLoadModuleESM(
     rewritten = await transformReactToLocalPaths(rewritten);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformReactToLocalPaths DONE`, { projectSlug });
 
-    let codeHash = hashString(rewritten);
     if (!context.projectId) {
       throw new Error(
         `Missing projectId for MDX module cache (projectSlug: ${context.projectSlug})`,
       );
     }
-    const namespace = context.projectId;
-    const namespaceKey = encodeURIComponent(namespace);
+
+    let codeHash = hashString(rewritten);
+    const namespaceKey = encodeURIComponent(context.projectId);
     let compositeKey = `${namespaceKey}:${codeHash}`;
 
     const cached = context.moduleCache.get(compositeKey);
@@ -598,16 +598,17 @@ async function doLoadModuleESM(
     // Proactively ensure all HTTP bundles exist before import.
     // Deno runtime handles HTTP imports natively, but compiled Deno binaries cannot
     // dynamically import HTTP URLs - they need local file:// paths like Node.js/Bun.
-    const needsHttpBundleCheck = !isDeno || isDenoCompiled;
-    if (needsHttpBundleCheck) {
+    if (!isDeno || isDenoCompiled) {
       const bundlePaths = extractHttpBundlePaths(rewritten);
       if (bundlePaths.length > 0) {
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Checking HTTP bundles`, {
           count: bundlePaths.length,
           projectSlug,
         });
+
         const cacheDir = getHttpBundleCacheDir();
         const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+
         if (failed.length > 0) {
           // Recovery: re-run HTTP caching to re-fetch expired bundles from esm.sh.
           // This happens when distributed cache entries expire (24h TTL) and the local
@@ -619,6 +620,7 @@ async function doLoadModuleESM(
               projectSlug,
             },
           );
+
           const originalFilePath = filePath;
           const refreshResult = await cacheHttpImportsToLocal(rewritten, {
             cacheDir,
@@ -632,6 +634,7 @@ async function doLoadModuleESM(
           await mdxWriteFlight.do(refreshedPath, async () => {
             await getLocalFs().writeTextFile(refreshedPath, rewritten);
           });
+
           filePath = refreshedPath;
           codeHash = refreshedHash;
           compositeKey = `${namespaceKey}:${codeHash}`;

@@ -84,10 +84,7 @@ interface QuickBooksCustomer {
   };
 }
 
-async function quickbooksFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+async function quickbooksFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with QuickBooks. Please connect your account.");
@@ -120,9 +117,10 @@ export async function listInvoices(options?: {
 }): Promise<QuickBooksInvoice[]> {
   const maxResults = options?.maxResults ?? 100;
 
-  const query = options?.customerId
-    ? `SELECT * FROM Invoice WHERE CustomerRef = '${options.customerId}' MAXRESULTS ${maxResults}`
-    : `SELECT * FROM Invoice MAXRESULTS ${maxResults}`;
+  let query = `SELECT * FROM Invoice MAXRESULTS ${maxResults}`;
+  if (options?.customerId) {
+    query = `SELECT * FROM Invoice WHERE CustomerRef = '${options.customerId}' MAXRESULTS ${maxResults}`;
+  }
 
   const response = await quickbooksFetch<QuickBooksResponse<QuickBooksInvoice>>(
     `/query?query=${encodeURIComponent(query)}`,
@@ -182,20 +180,16 @@ export async function createInvoice(options: {
   const invoiceData: Record<string, unknown> = {
     CustomerRef: { value: options.customerId },
     Line: lines,
-    ...(options.txnDate ? { TxnDate: options.txnDate } : {}),
-    ...(options.dueDate ? { DueDate: options.dueDate } : {}),
-    ...(options.customerMemo
-      ? { CustomerMemo: { value: options.customerMemo } }
-      : {}),
   };
 
-  const response = await quickbooksFetch<QuickBooksResponse<QuickBooksInvoice>>(
-    "/invoice",
-    {
-      method: "POST",
-      body: JSON.stringify(invoiceData),
-    },
-  );
+  if (options.txnDate) invoiceData.TxnDate = options.txnDate;
+  if (options.dueDate) invoiceData.DueDate = options.dueDate;
+  if (options.customerMemo) invoiceData.CustomerMemo = { value: options.customerMemo };
+
+  const response = await quickbooksFetch<QuickBooksResponse<QuickBooksInvoice>>("/invoice", {
+    method: "POST",
+    body: JSON.stringify(invoiceData),
+  });
 
   const invoice = response.Invoice;
   if (!invoice) {
@@ -211,10 +205,10 @@ export async function listCustomers(options?: {
 }): Promise<QuickBooksCustomer[]> {
   const maxResults = options?.maxResults ?? 100;
 
-  const query =
-    options?.active === undefined
-      ? `SELECT * FROM Customer MAXRESULTS ${maxResults}`
-      : `SELECT * FROM Customer WHERE Active = ${options.active} MAXRESULTS ${maxResults}`;
+  let query = `SELECT * FROM Customer MAXRESULTS ${maxResults}`;
+  if (options?.active !== undefined) {
+    query = `SELECT * FROM Customer WHERE Active = ${options.active} MAXRESULTS ${maxResults}`;
+  }
 
   const response = await quickbooksFetch<QuickBooksResponse<QuickBooksCustomer>>(
     `/query?query=${encodeURIComponent(query)}`,

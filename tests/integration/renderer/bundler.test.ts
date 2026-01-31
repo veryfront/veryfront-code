@@ -90,15 +90,9 @@ custom: value
   describe("Cross-Module Imports", () => {
     it("should preserve named exports from imported MDX", async () => {
       await withTestContext("mdx-cross-import-named", async (context) => {
-        // Create provider directory
-        await mkdir(join(context.projectDir, "providers"), {
-          recursive: true,
-        });
-        await mkdir(join(context.projectDir, "pages"), {
-          recursive: true,
-        });
+        await mkdir(join(context.projectDir, "providers"), { recursive: true });
+        await mkdir(join(context.projectDir, "pages"), { recursive: true });
 
-        // Create an MDX file with named exports
         const providerContent = `---
 title: TestProvider
 ---
@@ -118,7 +112,6 @@ export default function TestProvider({ children }) {
         const providerPath = join(context.projectDir, "providers", "TestProvider.mdx");
         await writeTextFile(providerPath, providerContent);
 
-        // Compile MDX and assert it contains key symbols
         const result = await compileMDXRuntime(
           "development",
           context.projectDir,
@@ -127,23 +120,16 @@ export default function TestProvider({ children }) {
           providerPath,
           "server",
         );
-        const compiledMDX = String(result.compiledCode);
-        // Verify named symbols are present; format can vary
-        assertStringIncludes(compiledMDX, "TestContext");
+
+        assertStringIncludes(String(result.compiledCode), "TestContext");
       });
     });
 
     it("should handle MDX compilation with imports", async () => {
       await withTestContext("mdx-cross-import-bundle", async (context) => {
-        // Create provider and pages directories
-        await mkdir(join(context.projectDir, "providers"), {
-          recursive: true,
-        });
-        await mkdir(join(context.projectDir, "pages"), {
-          recursive: true,
-        });
+        await mkdir(join(context.projectDir, "providers"), { recursive: true });
+        await mkdir(join(context.projectDir, "pages"), { recursive: true });
 
-        // Create the provider file
         const providerContent = `---
 title: TestProvider
 ---
@@ -158,7 +144,6 @@ export default function TestProvider({ children }) {
         const providerPath = join(context.projectDir, "providers", "TestProvider.mdx");
         await writeTextFile(providerPath, providerContent);
 
-        // Create a page that imports from an MDX provider
         const pageContent = `---
 title: Test Page
 ---
@@ -173,7 +158,6 @@ This page imports from an MDX provider.
         const pagePath = join(context.projectDir, "pages", "test-page.mdx");
         await writeTextFile(pagePath, pageContent);
 
-        // Compile the page
         const result = await compileMDXRuntime(
           "development",
           context.projectDir,
@@ -183,7 +167,6 @@ This page imports from an MDX provider.
           "server",
         );
 
-        // Verify the compilation succeeded
         assert(result.compiledCode);
         assertStringIncludes(String(result.compiledCode), "Page with Import");
       });
@@ -208,9 +191,8 @@ This page imports from an MDX provider.
             "server",
           );
           assert(false, "Should have thrown an error");
-        } catch (_error) {
-          // Accept our MDX error message wording
-          assertStringIncludes((_error as Error).message, "MDX compilation error");
+        } catch (error) {
+          assertStringIncludes((error as Error).message, "MDX compilation error");
         }
       });
     });
@@ -228,7 +210,6 @@ import { NonExistentComponent } from "./missing-module.js";
 <NonExistentComponent />
 `;
 
-        // Should compile but may have runtime issues
         const result = await compileMDXRuntime(
           "development",
           context.projectDir,
@@ -238,7 +219,6 @@ import { NonExistentComponent } from "./missing-module.js";
           "server",
         );
 
-        // Should not throw during compilation
         assert(result);
       });
     });
@@ -261,7 +241,6 @@ This is a test paragraph.
           "server",
         );
 
-        // Our MDX compile path should handle basic headings
         assertStringIncludes(String(result.compiledCode), "Test Heading");
       });
     });
@@ -288,10 +267,10 @@ export async function load() {
           "browser",
         );
 
-        // Output should exist and still contain import("lodash")
         if (!result.compiledCode) {
           throw new Error("No output produced for dynamic import test");
         }
+
         assertStringIncludes(String(result.compiledCode), 'import("lodash")');
       });
     });

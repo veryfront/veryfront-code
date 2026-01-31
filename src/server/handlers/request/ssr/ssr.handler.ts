@@ -35,9 +35,7 @@ import { ErrorPages } from "../../../utils/error-html.ts";
  * Config override (PRODUCTION_MODE) takes precedence.
  */
 export function isProductionMode(ctx: HandlerContext, _url?: URL): boolean {
-  if (ctx.config?.fs?.veryfront?.productionMode === true) {
-    return true;
-  }
+  if (ctx.config?.fs?.veryfront?.productionMode === true) return true;
 
   const environment = ctx.resolvedEnvironment ?? ctx.requestContext?.mode;
   return environment === "production";
@@ -67,7 +65,6 @@ export class SSRHandler extends BaseHandler {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
-    // Quick rejections
     if (pathname.startsWith("/_veryfront/")) {
       return Promise.resolve(this.continue());
     }
@@ -83,7 +80,6 @@ export class SSRHandler extends BaseHandler {
     const requestId = `${slug || "index"}-${Date.now()}`;
     startRequest(requestId);
 
-    // Block dot segments in production
     const hasDotSegment = slug.split("/").some((segment) => segment.startsWith("."));
     if (hasDotSegment && isProductionMode(ctx, url)) {
       this.logDebug("Dot path blocked in production", { slug }, ctx);
@@ -92,13 +88,9 @@ export class SSRHandler extends BaseHandler {
 
     this.logDebug("SSR attempt", { pathname, slug }, ctx);
 
-    // Setup context and delegate to handleWithContext
     return this.setupContextAndRender(req, ctx, slug, requestId, url);
   }
 
-  /**
-   * Setup multi-project context if needed, then render
-   */
   private setupContextAndRender(
     req: Request,
     ctx: HandlerContext,
@@ -108,10 +100,9 @@ export class SSRHandler extends BaseHandler {
   ): Promise<HandlerResult> {
     try {
       const fsAdapter = ctx.adapter.fs;
-      const hasMultiProjectSupport = isExtendedFSAdapter(fsAdapter) &&
-        fsAdapter.isMultiProjectMode();
+      const isExtended = isExtendedFSAdapter(fsAdapter);
 
-      if (ctx.projectSlug && hasMultiProjectSupport) {
+      if (ctx.projectSlug && isExtended && fsAdapter.isMultiProjectMode()) {
         const prodMode = isProductionMode(ctx, url);
         const branch = ctx.parsedDomain?.branch ?? null;
         const effectiveToken = ctx.proxyToken || getEnv("VERYFRONT_API_TOKEN") || "";
@@ -136,13 +127,11 @@ export class SSRHandler extends BaseHandler {
         );
       }
 
-      // Setup contextual mode if available
-      if (isExtendedFSAdapter(fsAdapter) && fsAdapter.isContextualMode()) {
+      if (isExtended && fsAdapter.isContextualMode()) {
         try {
-          if (ctx.proxyToken) {
-            fsAdapter.setRequestToken(ctx.proxyToken);
-          }
+          if (ctx.proxyToken) fsAdapter.setRequestToken(ctx.proxyToken);
           fsAdapter.setRequestBranch(ctx.parsedDomain?.branch ?? null);
+
           const prodMode = isProductionMode(ctx, url);
           fsAdapter.setProductionMode(prodMode, ctx.releaseId);
         } catch {
@@ -161,9 +150,6 @@ export class SSRHandler extends BaseHandler {
     }
   }
 
-  /**
-   * Handle SSR rendering with proper context
-   */
   private handleWithContext(
     req: Request,
     ctx: HandlerContext,
@@ -174,7 +160,6 @@ export class SSRHandler extends BaseHandler {
     return withSpan(
       "ssr.handleWithContext",
       async () => {
-        // Check memory pressure
         const memoryStatus = this.ssrService.checkMemoryPressure();
         if (memoryStatus.shouldReject) {
           this.logDebug("Rejecting due to memory pressure", { slug }, ctx);
@@ -182,7 +167,6 @@ export class SSRHandler extends BaseHandler {
           return this.buildResponse(req, ctx, result, generateNonce());
         }
 
-        // Prepare render options
         const nonce = generateNonce();
         const studioEmbed = url.searchParams.get("studio_embed") === "true";
         const projectId = ctx.projectId || url.searchParams.get("project_id") ||
@@ -192,7 +176,6 @@ export class SSRHandler extends BaseHandler {
           url.searchParams.get("no_hmr") === "1";
         const useNoCache = shouldUseNoCacheHeadersFromHandler(ctx);
 
-        // Render page via service
         const result = await this.ssrService.renderPage(ctx, {
           request: req,
           url,
@@ -207,7 +190,6 @@ export class SSRHandler extends BaseHandler {
 
         endRequest(requestId);
 
-        // Handle custom fallbacks for errors
         if (result.errorType === "not-found") {
           return this.handleNotFound(req, ctx, slug, nonce);
         }
@@ -217,16 +199,12 @@ export class SSRHandler extends BaseHandler {
           if (customResponse) return customResponse;
         }
 
-        // Build and return response
         return this.buildResponse(req, ctx, result, nonce);
       },
       { "ssr.slug": slug, "ssr.projectSlug": ctx.projectSlug || "unknown" },
     );
   }
 
-  /**
-   * Handle not-found with custom fallbacks
-   */
   private async handleNotFound(
     req: Request,
     ctx: HandlerContext,
@@ -235,22 +213,15 @@ export class SSRHandler extends BaseHandler {
   ): Promise<HandlerResult> {
     const builder = this.createResponseBuilder(ctx, nonce);
 
-    // Try custom not-found page
     const notFoundResponse = await tryNotFoundFallback(req, slug, ctx, builder);
-    if (notFoundResponse) {
-      return this.respond(notFoundResponse);
-    }
+    if (notFoundResponse) return this.respond(notFoundResponse);
 
-    // Try custom error page
     const customResponse = await tryErrorPageFallback(req, ctx, builder, {
       statusCode: 404,
       pathname: slug || "/",
     });
-    if (customResponse) {
-      return this.respond(customResponse);
-    }
+    if (customResponse) return this.respond(customResponse);
 
-    // Use default not-found page
     const result: SSRRenderResult = {
       status: 404,
       html: ErrorPages.notFound(slug || "/"),
@@ -259,12 +230,10 @@ export class SSRHandler extends BaseHandler {
       errorType: "not-found",
       slug,
     };
+
     return this.buildResponse(req, ctx, result, nonce);
   }
 
-  /**
-   * Try custom error page fallback
-   */
   private async tryCustomErrorFallback(
     req: Request,
     ctx: HandlerContext,
@@ -277,15 +246,10 @@ export class SSRHandler extends BaseHandler {
       error: result.error,
       pathname: result.slug || "/",
     });
-    if (customResponse) {
-      return this.respond(customResponse);
-    }
-    return null;
+
+    return customResponse ? this.respond(customResponse) : null;
   }
 
-  /**
-   * Build HTTP response from render result
-   */
   private async buildResponse(
     req: Request,
     ctx: HandlerContext,
@@ -296,7 +260,6 @@ export class SSRHandler extends BaseHandler {
     const isHeadRequest = req.method.toUpperCase() === "HEAD";
     const isDev = ctx.requestContext?.isLocalDev ?? false;
 
-    // Handle streaming response
     if (result.isStreaming && result.stream) {
       const response = builder
         .withCORS(req, ctx.securityConfig?.cors)
@@ -305,16 +268,14 @@ export class SSRHandler extends BaseHandler {
         .withCache("no-cache")
         .withContentType(getContentType(".html"), result.stream, result.status);
 
-      if (isHeadRequest) {
-        await response.body?.cancel().catch(() => {});
-        return this.respond(
-          new Response(null, { status: response.status, headers: response.headers }),
-        );
-      }
-      return this.respond(response);
+      if (!isHeadRequest) return this.respond(response);
+
+      await response.body?.cancel().catch(() => {});
+      return this.respond(
+        new Response(null, { status: response.status, headers: response.headers }),
+      );
     }
 
-    // Handle ETag matching (304 Not Modified)
     if (!isDev && result.etag && hasMatchingEtag(req, result.etag)) {
       return this.respond(
         builder
@@ -325,22 +286,16 @@ export class SSRHandler extends BaseHandler {
       );
     }
 
-    // Build standard response
-    // Fallback to error page if neither html nor stream is available
     const content = result.html || result.stream || ErrorPages.serverError();
     const body = isHeadRequest ? null : content;
+
     let response = builder
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined)
       .withCache(result.cacheStrategy);
 
-    if (!result.isStreaming) {
-      response = response.withClientHints();
-    }
-
-    if (result.etag) {
-      response = response.withETag(result.etag);
-    }
+    if (!result.isStreaming) response = response.withClientHints();
+    if (result.etag) response = response.withETag(result.etag);
 
     const finalResponse = response.withContentType(
       getContentType(".html"),
@@ -348,13 +303,11 @@ export class SSRHandler extends BaseHandler {
       result.status,
     );
 
-    if (isHeadRequest && finalResponse.body) {
-      await finalResponse.body.cancel().catch(() => {});
-      return this.respond(
-        new Response(null, { status: finalResponse.status, headers: finalResponse.headers }),
-      );
-    }
+    if (!isHeadRequest || !finalResponse.body) return this.respond(finalResponse);
 
-    return this.respond(finalResponse);
+    await finalResponse.body.cancel().catch(() => {});
+    return this.respond(
+      new Response(null, { status: finalResponse.status, headers: finalResponse.headers }),
+    );
   }
 }

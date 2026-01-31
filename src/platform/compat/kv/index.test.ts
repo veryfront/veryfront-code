@@ -3,28 +3,18 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createKVStore, MemoryKv, openKv, polyfillDenoKv, SqliteKv } from "./index.ts";
 
 describe("compat/kv/index.ts exports", () => {
-  it("should export openKv function", () => {
-    assertExists(openKv);
-    assertEquals(typeof openKv, "function");
-  });
+  const cases: Array<[string, unknown]> = [
+    ["openKv function", openKv],
+    ["createKVStore function", createKVStore],
+    ["polyfillDenoKv function", polyfillDenoKv],
+    ["MemoryKv class", MemoryKv],
+    ["SqliteKv class", SqliteKv],
+  ];
 
-  it("should export createKVStore function", () => {
-    assertExists(createKVStore);
-    assertEquals(typeof createKVStore, "function");
-  });
-
-  it("should export polyfillDenoKv function", () => {
-    assertExists(polyfillDenoKv);
-    assertEquals(typeof polyfillDenoKv, "function");
-  });
-
-  it("should export MemoryKv class", () => {
-    assertExists(MemoryKv);
-    assertEquals(typeof MemoryKv, "function");
-  });
-
-  it("should export SqliteKv class", () => {
-    assertExists(SqliteKv);
-    assertEquals(typeof SqliteKv, "function");
-  });
+  for (const [name, value] of cases) {
+    it(`should export ${name}`, () => {
+      assertExists(value);
+      assertEquals(typeof value, "function");
+    });
+  }
 });

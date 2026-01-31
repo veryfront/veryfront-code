@@ -9,23 +9,18 @@ export function validateCompileParams(
   content: string,
   options: CompileOptions,
 ): void {
-  if (typeof filePath !== "string" || !filePath) {
-    throw new TypeError("filePath must be a non-empty string");
-  }
+  if (!filePath) throw new TypeError("filePath must be a non-empty string");
+  if (typeof filePath !== "string") throw new TypeError("filePath must be a non-empty string");
 
-  if (typeof content !== "string") {
-    throw new TypeError("content must be a string");
-  }
+  if (typeof content !== "string") throw new TypeError("content must be a string");
 
-  if (typeof options !== "object" || !options) {
-    throw new TypeError("options must be an object");
-  }
+  if (!options || typeof options !== "object") throw new TypeError("options must be an object");
 
-  if (typeof options.projectDir !== "string" || !options.projectDir) {
+  if (!options.projectDir || typeof options.projectDir !== "string") {
     throw new TypeError("options.projectDir must be a non-empty string");
   }
 
-  if (typeof options.outputDir !== "string" || !options.outputDir) {
+  if (!options.outputDir || typeof options.outputDir !== "string") {
     throw new TypeError("options.outputDir must be a non-empty string");
   }
 
@@ -35,7 +30,7 @@ export function validateCompileParams(
 }
 
 export async function validateFileExists(filePath: string, content: string): Promise<void> {
-  if (content && content.trim() !== "") return;
+  if (content.trim()) return;
 
   try {
     if (await fs.exists(filePath)) return;

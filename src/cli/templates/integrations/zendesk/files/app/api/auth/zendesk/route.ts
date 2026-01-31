@@ -13,8 +13,8 @@ export function GET(request: Request): Response {
     return Response.json({ error: "Zendesk OAuth not configured" }, { status: 500 });
   }
 
-  const { protocol, host } = new URL(request.url);
-  const baseUrl = getEnv("NEXT_PUBLIC_APP_URL") ?? `${protocol}//${host}`;
+  const url = new URL(request.url);
+  const baseUrl = getEnv("NEXT_PUBLIC_APP_URL") ?? `${url.protocol}//${url.host}`;
   const redirectUri = `${baseUrl}/api/auth/zendesk/callback`;
 
   const authUrl = new URL(`https://${subdomain}.zendesk.com/oauth/authorizations/new`);

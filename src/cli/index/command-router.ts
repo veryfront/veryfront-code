@@ -54,9 +54,7 @@ function handleValidationError(error: z.ZodError, commandName: string): void {
   cliLogger.error(`Invalid ${commandName} arguments:\n${issues}`);
 
   const command = COMMANDS[commandName];
-  if (command?.usage) {
-    cliLogger.info(`Usage: ${command.usage}`);
-  }
+  if (command?.usage) cliLogger.info(`Usage: ${command.usage}`);
 }
 
 /**
@@ -96,23 +94,29 @@ function parseLoginMethod(
   return undefined;
 }
 
+function resolvePathFromCwd(path: string): string {
+  return path.startsWith("/") ? path : join(cwd(), path);
+}
+
+function parseBranchArg(args: ParsedArgs): string | undefined {
+  return args.branch ? String(args.branch) : args.b ? String(args.b) : undefined;
+}
+
+function parseOutputArg(args: ParsedArgs): string | undefined {
+  return args.output ? String(args.output) : args.o ? String(args.o) : undefined;
+}
+
 /**
  * Route and execute the appropriate CLI command
  *
  * @param args - Parsed CLI arguments
  */
 export async function routeCommand(args: ParsedArgs): Promise<void> {
-  if (args["no-color"]) {
-    setColorMode(false);
-  } else if (args.color) {
-    setColorMode(true);
-  }
+  if (args["no-color"]) setColorMode(false);
+  else if (args.color) setColorMode(true);
 
-  if (args.verbose) {
-    setVerboseMode(true);
-  } else if (args.quiet || args.q) {
-    setQuietMode(true);
-  }
+  if (args.verbose) setVerboseMode(true);
+  else if (args.quiet || args.q) setQuietMode(true);
 
   if (args.version || args.v) {
     cliLogger.info(`Veryfront CLI v${VERSION}`);
@@ -141,10 +145,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         const configPath = args.config || args.c;
         if (configPath) {
           const fs = createFileSystem();
-          const configPathStr = String(configPath);
-          const resolvedPath = configPathStr.startsWith("/")
-            ? configPathStr
-            : join(cwd(), configPathStr);
+          const resolvedPath = resolvePathFromCwd(String(configPath));
 
           try {
             const configContent = await fs.readTextFile(resolvedPath);
@@ -157,19 +158,17 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
               env?: Record<string, string>;
             };
 
-            name = name || config.name;
-            template = template || config.template;
-            integrations = integrations || config.integrations;
-            skipInstall = skipInstall || config.skipInstall || false;
-            skipEnvPrompt = skipEnvPrompt || config.skipEnvPrompt || false;
+            name ||= config.name;
+            template ||= config.template;
+            integrations ||= config.integrations;
+            skipInstall ||= config.skipInstall ?? false;
+            skipEnvPrompt ||= config.skipEnvPrompt ?? false;
             env = config.env;
 
             cliLogger.debug(`Loaded config from ${resolvedPath}`);
           } catch (error) {
             cliLogger.error(`Failed to read config file: ${resolvedPath}`);
-            if (error instanceof SyntaxError) {
-              cliLogger.error("Invalid JSON syntax in config file");
-            }
+            if (error instanceof SyntaxError) cliLogger.error("Invalid JSON syntax in config file");
             exitProcess(1);
             return;
           }
@@ -209,19 +208,18 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         const bindAddress = String(args.hostname || args.host || "0.0.0.0");
 
         if (mode === "proxy") {
-          // Proxy-only mode: run OAuth token proxy
           showLogo();
           cliLogger.info(`Starting proxy server on ${bindAddress}:${port}`);
 
-          // Set environment variables for proxy
           const { setEnv } = await import("#veryfront/platform/compat/process.ts");
           setEnv("PORT", String(port));
           setEnv("HOST", bindAddress);
 
-          // Import and run proxy main
           await import("../../../proxy/main.ts");
-        } else if (mode === "renderer" || mode === "combined") {
-          // Renderer mode: run SSR production server
+          break;
+        }
+
+        if (mode === "renderer" || mode === "combined") {
           showLogo();
 
           const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
@@ -266,6 +264,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
             /* never resolve */
           });
         }
+
         break;
       }
 
@@ -289,7 +288,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         showLogo();
         await analyzeChunksCommand({
           projectDir: cwd(),
-          output: args.output ? String(args.output) : args.o ? String(args.o) : undefined,
+          output: parseOutputArg(args),
         });
         break;
 
@@ -325,14 +324,13 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
         const projectSlug = args._.length > 1 ? String(args._[1]) : undefined;
         const projects = parseCsvArg(args.projects);
-
         const projectDir = resolveProjectDir(args, ["project-dir", "dir", "d"]);
 
         await pullCommand({
           projectSlug,
           projects,
           projectDir,
-          branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
+          branch: parseBranchArg(args),
           env: args.env ? String(args.env) : undefined,
           release: args.release ? String(args.release) : undefined,
           force: Boolean(args.force) || Boolean(args.f),
@@ -348,7 +346,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
         await pushCommand({
           projectDir,
-          branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
+          branch: parseBranchArg(args),
           force: Boolean(args.force) || Boolean(args.f),
           dryRun: Boolean(args["dry-run"]),
         });
@@ -364,6 +362,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           exitProcess(1);
           return;
         }
+
         await mergeCommand(result.data);
         break;
       }
@@ -377,6 +376,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           exitProcess(1);
           return;
         }
+
         await deployCommand(result.data);
         break;
       }
@@ -388,6 +388,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           exitProcess(1);
           return;
         }
+
         await upCommand(result.data);
         break;
       }
@@ -409,6 +410,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           exitProcess(1);
           return;
         }
+
         await newCommand(name, result.data);
         break;
       }
@@ -476,7 +478,6 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         return;
 
       case undefined:
-        // Default: run full TUI dashboard (like `deno task start`)
         await handleStartCommand(args);
         break;
 
@@ -492,9 +493,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     console.log(formattedError);
     console.log();
 
-    if (!(error instanceof Error)) {
-      handleError(new Error(String(error)));
-    }
+    if (!(error instanceof Error)) handleError(new Error(String(error)));
 
     exitProcess(1);
     throw error;

@@ -1,7 +1,3 @@
-/**
- * Tests for Dynamic Router
- */
-
 import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { DynamicRouter } from "./api-route-matcher.ts";
@@ -15,9 +11,7 @@ function createRouter(): DynamicRouter {
 }
 
 afterEach((): void => {
-  while (routers.length) {
-    routers.pop()?.destroy();
-  }
+  while (routers.length) routers.pop()?.destroy();
 });
 
 describe("DynamicRouter", () => {

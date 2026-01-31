@@ -32,8 +32,7 @@ function validateMDXModule(module: MDXModule, context: Record<string, unknown>):
 }
 
 function getNamespacedKey(suffix: string): string {
-  const ns = getCacheNamespace() ?? "default";
-  return `${ns}:${suffix}`;
+  return `${getCacheNamespace() ?? "default"}:${suffix}`;
 }
 
 export async function loadMDXModule(modulePath: string): Promise<MDXModule> {
@@ -61,12 +60,25 @@ export async function loadCompiledMDXModule(
     const cached = mdxModuleCache.get(key);
     if (cached) return cached;
 
-    if (isBrowserEnvironment()) return await loadViaBlobURL(compiledCode, cacheKey, key);
+    if (isBrowserEnvironment()) {
+      return await loadViaBlobURL(compiledCode, cacheKey, key);
+    }
 
     return await loadViaTempFile(compiledCode, cacheKey, key);
   } catch (error) {
     throw wrapError(error, "Failed to load compiled MDX module", { cacheKey });
   }
+}
+
+async function loadAndCacheModule(
+  modulePath: string,
+  key: string,
+  context: Record<string, unknown>,
+): Promise<MDXModule> {
+  const module = (await import(modulePath)) as MDXModule;
+  validateMDXModule(module, context);
+  mdxModuleCache.set(key, module);
+  return module;
 }
 
 async function loadViaTempFile(
@@ -77,10 +89,10 @@ async function loadViaTempFile(
   const tempModulePath = await writeTempMDXModule(compiledCode, cacheKey);
 
   try {
-    const module = (await import(tempModulePath)) as MDXModule;
-    validateMDXModule(module, { cacheKey, codePreview: compiledCode.substring(0, 200) });
-    mdxModuleCache.set(key, module);
-    return module;
+    return await loadAndCacheModule(tempModulePath, key, {
+      cacheKey,
+      codePreview: compiledCode.substring(0, 200),
+    });
   } finally {
     cleanupTempModule(tempModulePath).catch((error) =>
       logger.debug("[MDX] Failed to cleanup temp module:", error)
@@ -98,10 +110,10 @@ async function loadViaBlobURL(
   const blobURL = URL.createObjectURL(blob);
 
   try {
-    const module = (await import(blobURL)) as MDXModule;
-    validateMDXModule(module, { cacheKey, codePreview: compiledCode.substring(0, 200) });
-    mdxModuleCache.set(key, module);
-    return module;
+    return await loadAndCacheModule(blobURL, key, {
+      cacheKey,
+      codePreview: compiledCode.substring(0, 200),
+    });
   } finally {
     URL.revokeObjectURL(blobURL);
   }
@@ -142,9 +154,8 @@ async function ensureTempDir(): Promise<string> {
   const tempDir = `${cwd()}/.veryfront/temp/mdx-modules`;
 
   try {
-    if (!(await adapter.fs.exists(tempDir))) {
-      await adapter.fs.mkdir(tempDir, { recursive: true });
-    }
+    if (await adapter.fs.exists(tempDir)) return tempDir;
+    await adapter.fs.mkdir(tempDir, { recursive: true });
     return tempDir;
   } catch (error) {
     logger.warn("[MDX] Failed to create temp directory, using system temp:", error);

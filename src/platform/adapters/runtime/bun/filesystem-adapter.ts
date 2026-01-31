@@ -23,7 +23,7 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
 
   async readFileBytes(path: string): Promise<Uint8Array> {
     const file = Bun.file(path);
-    const buffer = await (file as unknown as Blob).arrayBuffer();
+    const buffer = await (file as unknown as { arrayBuffer(): Promise<ArrayBuffer> }).arrayBuffer();
     return new Uint8Array(buffer);
   }
 
@@ -32,8 +32,9 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
   }
 
   async exists(path: string): Promise<boolean> {
+    const { stat } = await import("node:fs/promises");
+
     try {
-      const { stat } = await import("node:fs/promises");
       await stat(path);
       return true;
     } catch {

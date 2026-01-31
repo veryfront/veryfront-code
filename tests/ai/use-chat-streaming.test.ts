@@ -5,7 +5,6 @@
 import { describe, it } from "@veryfront/testing/bdd";
 import { assertEquals, assertExists } from "@veryfront/testing/assert";
 
-// Import AI SDK v5 compatible types for testing
 import type {
   ToolState,
   ToolUIPart,
@@ -13,9 +12,6 @@ import type {
   UIMessagePart,
 } from "../../src/agent/react/use-chat/index.ts";
 
-/**
- * Internal tool tracking during streaming (mirrors implementation)
- */
 interface StreamingToolCall {
   toolCallId: string;
   toolName: string;
@@ -25,20 +21,15 @@ interface StreamingToolCall {
   state: ToolState;
 }
 
-/**
- * Internal reasoning tracking during streaming
- */
 interface StreamingReasoning {
   id: string;
   text: string;
   isComplete: boolean;
 }
 
-/**
- * Create a mock SSE stream from v5 events
- */
 function createV5Stream(events: Array<Record<string, unknown>>): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
+
   return new ReadableStream({
     start(controller) {
       for (const event of events) {
@@ -49,10 +40,6 @@ function createV5Stream(events: Array<Record<string, unknown>>): ReadableStream<
   });
 }
 
-/**
- * Simplified stream processor for testing (mirrors handleStreamingResponse logic)
- * Returns AI SDK v5 compatible UIMessage format
- */
 async function processV5Stream(
   stream: ReadableStream<Uint8Array>,
 ): Promise<{
@@ -65,14 +52,15 @@ async function processV5Stream(
   const decoder = new TextDecoder();
 
   const textBlocks = new Map<string, { text: string; state: "streaming" | "done" }>();
-  let currentTextId = "";
-  let messageId = "";
-
   const toolCalls = new Map<string, StreamingToolCall>();
   const reasoningBlocks = new Map<string, StreamingReasoning>();
+
   const messageParts: UIMessagePart[] = [];
   const messages: UIMessage[] = [];
   const dataEvents: unknown[] = [];
+
+  let currentTextId = "";
+  let messageId = "";
 
   while (true) {
     const { done, value } = await reader.read();
@@ -82,142 +70,139 @@ async function processV5Stream(
     const lines = chunk.split("\n").filter((line) => line.trim());
 
     for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        const data = line.slice(6);
-        if (data === "[DONE]") continue;
+      if (!line.startsWith("data: ")) continue;
 
-        try {
-          const parsed = JSON.parse(data);
+      const data = line.slice(6);
+      if (data === "[DONE]") continue;
 
-          switch (parsed.type) {
-            case "start":
-              messageId = parsed.messageId || "test-msg";
-              textBlocks.clear();
-              break;
+      let parsed: any;
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        continue;
+      }
 
-            case "text-start":
-              currentTextId = parsed.id || "text-0";
-              textBlocks.set(currentTextId, { text: "", state: "streaming" });
-              break;
+      switch (parsed.type) {
+        case "start": {
+          messageId = parsed.messageId || "test-msg";
+          textBlocks.clear();
+          break;
+        }
 
-            case "text-delta": {
-              const textId = parsed.id || currentTextId || "default";
-              const delta = parsed.delta || "";
-              if (!textBlocks.has(textId)) {
-                textBlocks.set(textId, { text: "", state: "streaming" });
-                currentTextId = textId;
-              }
-              const block = textBlocks.get(textId)!;
-              block.text += delta;
-              break;
-            }
+        case "text-start": {
+          currentTextId = parsed.id || "text-0";
+          textBlocks.set(currentTextId, { text: "", state: "streaming" });
+          break;
+        }
 
-            case "text-end": {
-              const textId = parsed.id || currentTextId;
-              const block = textBlocks.get(textId);
-              if (block && block.text) {
-                block.state = "done";
-                messageParts.push({ type: "text", text: block.text, state: "done" });
-              }
-              break;
-            }
+        case "text-delta": {
+          const textId = parsed.id || currentTextId || "default";
+          const delta = parsed.delta || "";
 
-            case "tool-input-start": {
-              const toolCallId = parsed.toolCallId;
-              toolCalls.set(toolCallId, {
-                toolCallId,
-                toolName: parsed.toolName,
-                inputText: "",
-                state: "input-streaming",
-              });
-              break;
-            }
-
-            case "tool-input-delta": {
-              const toolCall = toolCalls.get(parsed.toolCallId);
-              if (toolCall) {
-                toolCall.inputText += parsed.inputTextDelta || "";
-              }
-              break;
-            }
-
-            case "tool-input-available": {
-              const toolCall = toolCalls.get(parsed.toolCallId);
-              if (toolCall) {
-                toolCall.input = parsed.input;
-                toolCall.state = "input-available";
-                messageParts.push({
-                  type: "tool-call",
-                  toolCallId: parsed.toolCallId,
-                  toolName: toolCall.toolName,
-                  state: "input-available",
-                  input: toolCall.input,
-                });
-              }
-              break;
-            }
-
-            case "tool-output-available": {
-              const toolCall = toolCalls.get(parsed.toolCallId);
-              if (toolCall) {
-                toolCall.output = parsed.output;
-                toolCall.state = "output-available";
-                messageParts.push({
-                  type: "tool-result",
-                  toolCallId: parsed.toolCallId,
-                  toolName: toolCall.toolName,
-                  result: toolCall.output,
-                });
-              }
-              break;
-            }
-
-            case "reasoning-start": {
-              reasoningBlocks.set(parsed.id, {
-                id: parsed.id,
-                text: "",
-                isComplete: false,
-              });
-              break;
-            }
-
-            case "reasoning-delta": {
-              const reasoning = reasoningBlocks.get(parsed.id);
-              if (reasoning) {
-                reasoning.text += parsed.delta || "";
-              }
-              break;
-            }
-
-            case "reasoning-end": {
-              const reasoning = reasoningBlocks.get(parsed.id);
-              if (reasoning) {
-                reasoning.isComplete = true;
-                messageParts.push({
-                  type: "reasoning",
-                  text: reasoning.text,
-                  state: "done",
-                });
-              }
-              break;
-            }
-
-            case "finish": {
-              // AI SDK v5: UIMessage uses parts array, no content string
-              messages.push({
-                id: messageId,
-                role: "assistant",
-                parts: [...messageParts],
-              });
-              break;
-            }
-
-            case "data":
-              dataEvents.push(parsed.data || parsed.value);
-              break;
+          if (!textBlocks.has(textId)) {
+            textBlocks.set(textId, { text: "", state: "streaming" });
+            currentTextId = textId;
           }
-        } catch {
-          // Skip invalid JSON
+
+          const block = textBlocks.get(textId)!;
+          block.text += delta;
+          break;
+        }
+
+        case "text-end": {
+          const textId = parsed.id || currentTextId;
+          const block = textBlocks.get(textId);
+          if (!block?.text) break;
+
+          block.state = "done";
+          messageParts.push({ type: "text", text: block.text, state: "done" });
+          break;
+        }
+
+        case "tool-input-start": {
+          const toolCallId = parsed.toolCallId;
+          toolCalls.set(toolCallId, {
+            toolCallId,
+            toolName: parsed.toolName,
+            inputText: "",
+            state: "input-streaming",
+          });
+          break;
+        }
+
+        case "tool-input-delta": {
+          const toolCall = toolCalls.get(parsed.toolCallId);
+          if (!toolCall) break;
+
+          toolCall.inputText += parsed.inputTextDelta || "";
+          break;
+        }
+
+        case "tool-input-available": {
+          const toolCall = toolCalls.get(parsed.toolCallId);
+          if (!toolCall) break;
+
+          toolCall.input = parsed.input;
+          toolCall.state = "input-available";
+          messageParts.push({
+            type: "tool-call",
+            toolCallId: parsed.toolCallId,
+            toolName: toolCall.toolName,
+            state: "input-available",
+            input: toolCall.input,
+          });
+          break;
+        }
+
+        case "tool-output-available": {
+          const toolCall = toolCalls.get(parsed.toolCallId);
+          if (!toolCall) break;
+
+          toolCall.output = parsed.output;
+          toolCall.state = "output-available";
+          messageParts.push({
+            type: "tool-result",
+            toolCallId: parsed.toolCallId,
+            toolName: toolCall.toolName,
+            result: toolCall.output,
+          });
+          break;
+        }
+
+        case "reasoning-start": {
+          reasoningBlocks.set(parsed.id, { id: parsed.id, text: "", isComplete: false });
+          break;
+        }
+
+        case "reasoning-delta": {
+          const reasoning = reasoningBlocks.get(parsed.id);
+          if (!reasoning) break;
+
+          reasoning.text += parsed.delta || "";
+          break;
+        }
+
+        case "reasoning-end": {
+          const reasoning = reasoningBlocks.get(parsed.id);
+          if (!reasoning) break;
+
+          reasoning.isComplete = true;
+          messageParts.push({ type: "reasoning", text: reasoning.text, state: "done" });
+          break;
+        }
+
+        case "finish": {
+          messages.push({
+            id: messageId,
+            role: "assistant",
+            parts: [...messageParts],
+          });
+          break;
+        }
+
+        case "data": {
+          dataEvents.push(parsed.data ?? parsed.value);
+          break;
         }
       }
     }
@@ -225,15 +210,12 @@ async function processV5Stream(
 
   return {
     messages,
-    toolCalls: Array.from(toolCalls.values()),
-    reasoningBlocks: Array.from(reasoningBlocks.values()),
+    toolCalls: [...toolCalls.values()],
+    reasoningBlocks: [...reasoningBlocks.values()],
     dataEvents,
   };
 }
 
-/**
- * Helper to get text content from UIMessage parts
- */
 function getTextContent(message: UIMessage): string {
   return message.parts
     .filter((p): p is { type: "text"; text: string } => p.type === "text")
@@ -290,7 +272,6 @@ describe("v5 UI Message Stream Protocol", () => {
     const toolCall = result.toolCalls[0]!;
     const msg = result.messages[0]!;
 
-    // Check tool calls tracking
     assertEquals(result.toolCalls.length, 1);
     assertEquals(toolCall.toolCallId, "call-1");
     assertEquals(toolCall.toolName, "getWeather");
@@ -298,10 +279,8 @@ describe("v5 UI Message Stream Protocol", () => {
     assertEquals(toolCall.output, { temp: 72, weather: "sunny" });
     assertEquals(toolCall.state, "output-available");
 
-    // Check message parts - AI SDK v5 format
     assertEquals(msg.parts.length, 3);
 
-    // Tool call part
     const toolCallPart = msg.parts[0] as ToolUIPart;
     assertEquals(toolCallPart.type, "tool-call");
     assertEquals(toolCallPart.toolCallId, "call-1");
@@ -309,7 +288,6 @@ describe("v5 UI Message Stream Protocol", () => {
     assertEquals(toolCallPart.state, "input-available");
     assertEquals(toolCallPart.input, { city: "Tokyo" });
 
-    // Tool result part
     assertEquals(msg.parts[1], {
       type: "tool-result",
       toolCallId: "call-1",
@@ -317,7 +295,6 @@ describe("v5 UI Message Stream Protocol", () => {
       result: { temp: 72, weather: "sunny" },
     });
 
-    // Text part
     assertEquals(msg.parts[2], {
       type: "text",
       text: "The weather in Tokyo is sunny.",
@@ -342,13 +319,11 @@ describe("v5 UI Message Stream Protocol", () => {
     const reasoning = result.reasoningBlocks[0]!;
     const msg = result.messages[0]!;
 
-    // Check reasoning blocks tracking
     assertEquals(result.reasoningBlocks.length, 1);
     assertEquals(reasoning.id, "reason-1");
     assertEquals(reasoning.text, "Let me think... The answer is 42.");
     assertEquals(reasoning.isComplete, true);
 
-    // Check message parts - AI SDK v5 format
     assertEquals(msg.parts.length, 2);
     assertEquals(msg.parts[0], {
       type: "reasoning",
@@ -411,12 +386,10 @@ describe("v5 UI Message Stream Protocol", () => {
     const result = await processV5Stream(stream);
     const msg = result.messages[0]!;
 
-    // AI SDK v5: UIMessage uses parts array, not content string
     assertExists(msg.parts);
     assertEquals(msg.parts.length, 1);
     assertEquals(msg.parts[0]!.type, "text");
 
-    // No content property in v5 UIMessage
     assertEquals("content" in msg, false);
   });
 });

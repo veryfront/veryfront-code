@@ -5,13 +5,11 @@ import { getConfig } from "#veryfront/config";
 import { cliLogger } from "#veryfront/utils";
 import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
 
-let fs: FileSystem;
-
 export async function routesCommand(
   projectDir: string,
   options: { json?: boolean } = {},
 ): Promise<void> {
-  fs = createFileSystem();
+  const fs = createFileSystem();
   const adapter = await runtime.get();
   await getConfig(projectDir, adapter);
 
@@ -44,7 +42,7 @@ export async function routesCommand(
   const apis: string[] = [];
   const apiDir = join(projectDir, "pages", "api");
   if (await fs.exists(apiDir)) {
-    await collectApiPatterns(apiDir, "/api", apis);
+    await collectApiPatterns(fs, apiDir, "/api", apis);
   }
 
   if (options.json) {
@@ -63,15 +61,19 @@ export async function routesCommand(
   }
 }
 
-async function collectApiPatterns(dir: string, prefix: string, out: string[]): Promise<void> {
+async function collectApiPatterns(
+  fs: FileSystem,
+  dir: string,
+  prefix: string,
+  out: string[],
+): Promise<void> {
   const entries = fs.readDir(dir);
 
   for await (const entry of entries) {
     const fullPath = join(dir, entry.name);
 
     if (entry.isDirectory) {
-      const nextPrefix = `${prefix}/${entry.name}`;
-      await collectApiPatterns(fullPath, nextPrefix, out);
+      await collectApiPatterns(fs, fullPath, `${prefix}/${entry.name}`, out);
       continue;
     }
 
@@ -79,11 +81,7 @@ async function collectApiPatterns(dir: string, prefix: string, out: string[]): P
 
     const nameWithoutExt = entry.name.replace(/\.(ts|js|tsx|jsx)$/i, "");
     const routePath = `${prefix}/${nameWithoutExt}`;
-
-    let pattern = routePath.replace(/\/index$/, "");
-    if (pattern === prefix && nameWithoutExt === "index") {
-      pattern = prefix;
-    }
+    const pattern = routePath.replace(/\/index$/, "");
 
     out.push(pattern);
   }

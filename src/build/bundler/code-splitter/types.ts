@@ -6,11 +6,11 @@ export interface SplitOptions {
   projectDir: string;
   outDir: string;
   mode: "development" | "production";
-  routes: Array<{
+  routes: {
     path: string;
     file: string;
     name?: string;
-  }>;
+  }[];
   shared?: string[];
   external?: string[];
   moduleResolution?: "cdn" | "self-hosted" | "bundled";

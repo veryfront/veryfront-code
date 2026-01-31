@@ -89,11 +89,13 @@ export async function buildVendorBundle(
   const code = new TextDecoder().decode(output.contents);
   const hash = await computeHash(code);
 
-  const exports = Object.fromEntries(
-    Object.keys(imports).map((key) => [key, sanitizeExportName(key)]),
-  );
-
-  return { code, hash, exports };
+  return {
+    code,
+    hash,
+    exports: Object.fromEntries(
+      Object.keys(imports).map((key) => [key, sanitizeExportName(key)]),
+    ),
+  };
 }
 
 /**
@@ -107,17 +109,16 @@ export async function buildVendorBundle(
  * ```
  */
 function createVirtualEntry(imports: Record<string, string>): string {
-  const lines: string[] = [];
+  const importLines: string[] = [];
   const exportNames: string[] = [];
 
   for (const [specifier, url] of Object.entries(imports)) {
     const exportName = sanitizeExportName(specifier);
-    lines.push(`import * as ${exportName} from '${url}';`);
+    importLines.push(`import * as ${exportName} from '${url}';`);
     exportNames.push(exportName);
   }
 
-  lines.push(`export { ${exportNames.join(", ")} };`);
-  return lines.join("\n");
+  return [...importLines, `export { ${exportNames.join(", ")} };`].join("\n");
 }
 
 /**
@@ -143,6 +144,7 @@ function sanitizeExportName(specifier: string): string {
 async function computeHash(content: string): Promise<string> {
   const data = new TextEncoder().encode(content);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+
   return Array.from(new Uint8Array(hashBuffer))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("")

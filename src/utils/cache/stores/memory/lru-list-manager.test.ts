@@ -7,11 +7,28 @@ function createNode(key: string): LRUNode<unknown> {
   return new LRUNode(key, { value: key, size: 1, lastAccessed: Date.now() });
 }
 
+function createListWithNodes(...keys: string[]): {
+  list: LRUListManager<unknown>;
+  nodes: Record<string, LRUNode<unknown>>;
+} {
+  const list = new LRUListManager<unknown>();
+  const nodes: Record<string, LRUNode<unknown>> = {};
+
+  for (const key of keys) {
+    const node = createNode(key);
+    nodes[key] = node;
+    list.addToFront(node);
+  }
+
+  return { list, nodes };
+}
+
 describe("LRUListManager", () => {
   describe("addToFront", () => {
     it("should set single node as both head and tail", () => {
       const list = new LRUListManager<unknown>();
       const node = createNode("a");
+
       list.addToFront(node);
 
       assertEquals(list.getHead(), node);
@@ -19,26 +36,14 @@ describe("LRUListManager", () => {
     });
 
     it("should add new nodes to front", () => {
-      const list = new LRUListManager<unknown>();
-      const a = createNode("a");
-      const b = createNode("b");
+      const { list, nodes } = createListWithNodes("a", "b");
 
-      list.addToFront(a);
-      list.addToFront(b);
-
-      assertEquals(list.getHead(), b);
-      assertEquals(list.getTail(), a);
+      assertEquals(list.getHead(), nodes.b);
+      assertEquals(list.getTail(), nodes.a);
     });
 
     it("should maintain correct order with multiple nodes", () => {
-      const list = new LRUListManager<unknown>();
-      const a = createNode("a");
-      const b = createNode("b");
-      const c = createNode("c");
-
-      list.addToFront(a);
-      list.addToFront(b);
-      list.addToFront(c);
+      const { list } = createListWithNodes("a", "b", "c");
 
       assertEquals(list.getHead()?.key, "c");
       assertEquals(list.getHead()?.next?.key, "b");
@@ -48,48 +53,27 @@ describe("LRUListManager", () => {
 
   describe("moveToFront", () => {
     it("should be no-op for head node", () => {
-      const list = new LRUListManager<unknown>();
-      const a = createNode("a");
-      const b = createNode("b");
-      list.addToFront(a);
-      list.addToFront(b);
+      const { list, nodes } = createListWithNodes("a", "b");
 
-      list.moveToFront(b);
+      list.moveToFront(nodes.b);
+
       assertEquals(list.getHead()?.key, "b");
       assertEquals(list.getTail()?.key, "a");
     });
 
     it("should move tail to front", () => {
-      const list = new LRUListManager<unknown>();
-      const a = createNode("a");
-      const b = createNode("b");
-      const c = createNode("c");
+      const { list, nodes } = createListWithNodes("a", "b", "c");
 
-      list.addToFront(a);
-      list.addToFront(b);
-      list.addToFront(c);
-      // Order: c -> b -> a
-
-      list.moveToFront(a);
-      // Order: a -> c -> b
+      list.moveToFront(nodes.a);
 
       assertEquals(list.getHead()?.key, "a");
       assertEquals(list.getTail()?.key, "b");
     });
 
     it("should move middle node to front", () => {
-      const list = new LRUListManager<unknown>();
-      const a = createNode("a");
-      const b = createNode("b");
-      const c = createNode("c");
+      const { list, nodes } = createListWithNodes("a", "b", "c");
 
-      list.addToFront(a);
-      list.addToFront(b);
-      list.addToFront(c);
-      // Order: c -> b -> a
-
-      list.moveToFront(b);
-      // Order: b -> c -> a
+      list.moveToFront(nodes.b);
 
       assertEquals(list.getHead()?.key, "b");
       assertEquals(list.getHead()?.next?.key, "c");
@@ -99,40 +83,28 @@ describe("LRUListManager", () => {
 
   describe("removeNode", () => {
     it("should remove head node", () => {
-      const list = new LRUListManager<unknown>();
-      const a = createNode("a");
-      const b = createNode("b");
-      list.addToFront(a);
-      list.addToFront(b);
+      const { list, nodes } = createListWithNodes("a", "b");
 
-      list.removeNode(b);
+      list.removeNode(nodes.b);
+
       assertEquals(list.getHead()?.key, "a");
       assertEquals(list.getTail()?.key, "a");
     });
 
     it("should remove tail node", () => {
-      const list = new LRUListManager<unknown>();
-      const a = createNode("a");
-      const b = createNode("b");
-      list.addToFront(a);
-      list.addToFront(b);
+      const { list, nodes } = createListWithNodes("a", "b");
 
-      list.removeNode(a);
+      list.removeNode(nodes.a);
+
       assertEquals(list.getHead()?.key, "b");
       assertEquals(list.getTail()?.key, "b");
     });
 
     it("should remove middle node", () => {
-      const list = new LRUListManager<unknown>();
-      const a = createNode("a");
-      const b = createNode("b");
-      const c = createNode("c");
+      const { list, nodes } = createListWithNodes("a", "b", "c");
 
-      list.addToFront(a);
-      list.addToFront(b);
-      list.addToFront(c);
+      list.removeNode(nodes.b);
 
-      list.removeNode(b);
       assertEquals(list.getHead()?.key, "c");
       assertEquals(list.getHead()?.next?.key, "a");
       assertEquals(list.getTail()?.key, "a");
@@ -141,11 +113,10 @@ describe("LRUListManager", () => {
 
   describe("clear", () => {
     it("should reset head and tail to null", () => {
-      const list = new LRUListManager<unknown>();
-      list.addToFront(createNode("a"));
-      list.addToFront(createNode("b"));
+      const { list } = createListWithNodes("a", "b");
 
       list.clear();
+
       assertEquals(list.getHead(), null);
       assertEquals(list.getTail(), null);
     });

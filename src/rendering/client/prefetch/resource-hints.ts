@@ -40,14 +40,9 @@ export class ResourceHintsManager {
     link.rel = hint.type;
     link.href = hint.href;
 
-    const as = hint.as;
-    if (as) link.setAttribute("as", as);
-
-    const crossOrigin = hint.crossOrigin;
-    if (crossOrigin) link.setAttribute("crossorigin", crossOrigin);
-
-    const media = hint.media;
-    if (media) link.setAttribute("media", media);
+    if (hint.as) link.setAttribute("as", hint.as);
+    if (hint.crossOrigin) link.setAttribute("crossorigin", hint.crossOrigin);
+    if (hint.media) link.setAttribute("media", hint.media);
 
     document.head.appendChild(link);
   }
@@ -69,12 +64,15 @@ export class ResourceHintsManager {
   }
 
   private isValidResourceHintType(rel: string): rel is ResourceHint["type"] {
-    return (
-      rel === "prefetch" ||
-      rel === "preload" ||
-      rel === "preconnect" ||
-      rel === "dns-prefetch"
-    );
+    switch (rel) {
+      case "prefetch":
+      case "preload":
+      case "preconnect":
+      case "dns-prefetch":
+        return true;
+      default:
+        return false;
+    }
   }
 
   private extractPreloadLinks(
@@ -82,15 +80,15 @@ export class ResourceHintsManager {
     prefetchedUrls: Set<string>,
     hints: ResourceHint[],
   ): void {
-    for (
-      const link of doc.querySelectorAll<HTMLLinkElement>(
-        'link[rel="preload"], link[rel="prefetch"]',
-      )
-    ) {
+    const links = doc.querySelectorAll<HTMLLinkElement>(
+      'link[rel="preload"], link[rel="prefetch"]',
+    );
+
+    for (const link of links) {
       const href = link.href;
-      if (!href || prefetchedUrls.has(href) || !this.isValidResourceHintType(link.rel)) {
-        continue;
-      }
+      if (!href) continue;
+      if (prefetchedUrls.has(href)) continue;
+      if (!this.isValidResourceHintType(link.rel)) continue;
 
       hints.push({
         type: link.rel,

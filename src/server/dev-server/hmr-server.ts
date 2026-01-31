@@ -38,7 +38,9 @@ export class HMRServer {
 
   constructor(private options: HMRServerOptions) {
     this.maxMessageSize = options.maxMessageSize ?? HMR_MAX_MESSAGE_SIZE_BYTES;
-    this.rateLimiter = new RateLimiter(options.maxMessagesPerMinute ?? HMR_MAX_MESSAGES_PER_MINUTE);
+    this.rateLimiter = new RateLimiter(
+      options.maxMessagesPerMinute ?? HMR_MAX_MESSAGES_PER_MINUTE,
+    );
   }
 
   /**
@@ -59,14 +61,15 @@ export class HMRServer {
       const url = new URL(req.url);
 
       if (req.headers.get("upgrade") === "websocket") {
-        if (!this.options.adapter?.server) {
+        const server = this.options.adapter?.server;
+        if (!server) {
           return new Response("WebSocket not supported in this runtime", {
             status: HTTP_NOT_IMPLEMENTED,
           });
         }
 
         try {
-          const { socket, response } = this.options.adapter.server.upgradeWebSocket(req);
+          const { socket, response } = server.upgradeWebSocket(req);
 
           setupWebSocketHandlers(socket, {
             clients: this.clients,
@@ -138,11 +141,8 @@ export class HMRServer {
   async stop(): Promise<void> {
     try {
       this.abortController?.abort();
-
       await closeAllConnections(this.clients, this.rateLimiter);
-
       await this.server?.stop();
-
       logger.debug("HMR server stopped");
     } catch (error) {
       logger.debug("[HMRServer] Server shutdown failed", { error });

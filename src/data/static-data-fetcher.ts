@@ -29,8 +29,10 @@ const projectRevalidationCounts = new Map<string, number>();
 /** Acquire a revalidation slot for a project (returns false if at per-project limit) */
 function acquireRevalidationSlot(projectId: string): boolean {
   if (REVALIDATION_PER_PROJECT_LIMIT <= 0) return true;
+
   const current = projectRevalidationCounts.get(projectId) ?? 0;
   if (current >= REVALIDATION_PER_PROJECT_LIMIT) return false;
+
   projectRevalidationCounts.set(projectId, current + 1);
   return true;
 }
@@ -38,11 +40,17 @@ function acquireRevalidationSlot(projectId: string): boolean {
 /** Release a revalidation slot for a project */
 function releaseRevalidationSlot(projectId: string): void {
   const current = projectRevalidationCounts.get(projectId) ?? 0;
+
   if (current <= 1) {
     projectRevalidationCounts.delete(projectId);
-  } else {
-    projectRevalidationCounts.set(projectId, current - 1);
+    return;
   }
+
+  projectRevalidationCounts.set(projectId, current - 1);
+}
+
+function getProjectId(context: DataContext, fallback: string): string {
+  return context.request?.headers?.get("x-project-id") ?? context.url?.hostname ?? fallback;
 }
 
 export class StaticDataFetcher {
@@ -114,10 +122,10 @@ export class StaticDataFetcher {
           durationMs,
           timeoutMs: DATA_FETCH_TIMEOUT_MS,
         });
-      } else {
-        this.logError("DATA_FETCH_ERROR getStaticData failed", error, { pathname, durationMs });
+        throw error;
       }
 
+      this.logError("DATA_FETCH_ERROR getStaticData failed", error, { pathname, durationMs });
       throw error;
     }
   }
@@ -129,8 +137,7 @@ export class StaticDataFetcher {
   ): Promise<DataResult> {
     const pathname = context.url?.pathname ?? "unknown";
     // Extract projectId from request headers (set by proxy) for proper circuit breaker isolation
-    const projectId = context.request?.headers?.get("x-project-id") ??
-      context.url?.hostname ?? "default";
+    const projectId = getProjectId(context, "default");
     const start = performance.now();
 
     // Circuit breaker per project to prevent cascade failures
@@ -173,21 +180,24 @@ export class StaticDataFetcher {
           retryAfterMs: error.nextAttemptMs,
           cacheKey,
         });
-      } else if (error instanceof TimeoutError) {
+        throw error;
+      }
+
+      if (error instanceof TimeoutError) {
         serverLogger.error("DATA_FETCH_TIMEOUT getStaticData timed out", {
           pathname,
           durationMs,
           timeoutMs: DATA_FETCH_TIMEOUT_MS,
           cacheKey,
         });
-      } else {
-        this.logError("DATA_FETCH_ERROR getStaticData failed", error, {
-          pathname,
-          durationMs,
-          cacheKey,
-        });
+        throw error;
       }
 
+      this.logError("DATA_FETCH_ERROR getStaticData failed", error, {
+        pathname,
+        durationMs,
+        cacheKey,
+      });
       throw error;
     }
   }
@@ -201,8 +211,7 @@ export class StaticDataFetcher {
 
     const pathname = context.url?.pathname ?? "unknown";
     // Use projectId from request headers for proper per-project fairness
-    const projectId = context.request?.headers?.get("x-project-id") ??
-      context.url?.hostname ?? "unknown";
+    const projectId = getProjectId(context, "unknown");
 
     // Check per-project limit before acquiring global semaphore
     if (!acquireRevalidationSlot(projectId)) {
@@ -244,13 +253,14 @@ export class StaticDataFetcher {
               timeoutMs: REVALIDATION_TIMEOUT_MS,
               cacheKey,
             });
-          } else {
-            this.logError("DATA_REVALIDATION_ERROR background revalidation failed", error, {
-              pathname,
-              durationMs,
-              cacheKey,
-            });
+            return;
           }
+
+          this.logError("DATA_REVALIDATION_ERROR background revalidation failed", error, {
+            pathname,
+            durationMs,
+            cacheKey,
+          });
         }
       });
     } catch {

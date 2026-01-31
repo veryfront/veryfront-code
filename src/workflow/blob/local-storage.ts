@@ -38,7 +38,6 @@ export class LocalBlobStorage implements BlobStorage {
     await this.fs.mkdir(dirname(filePath), { recursive: true });
 
     const { bytes, size } = await this.normalizeToBytes(data);
-
     await this.fs.writeFile(filePath, bytes);
 
     const createdAt = this.now();
@@ -56,7 +55,6 @@ export class LocalBlobStorage implements BlobStorage {
     };
 
     await this.fs.writeTextFile(metaPath, JSON.stringify(ref));
-
     return ref;
   }
 
@@ -68,9 +66,7 @@ export class LocalBlobStorage implements BlobStorage {
       return { bytes, size: bytes.length };
     }
 
-    if (data instanceof Uint8Array) {
-      return { bytes: data, size: data.length };
-    }
+    if (data instanceof Uint8Array) return { bytes: data, size: data.length };
 
     if (data instanceof Blob) {
       const bytes = new Uint8Array(await data.arrayBuffer());
@@ -125,7 +121,7 @@ export class LocalBlobStorage implements BlobStorage {
   }
 
   async exists(id: string): Promise<boolean> {
-    return await this.fs.exists(this.getPath(id));
+    return this.fs.exists(this.getPath(id));
   }
 
   async stat(id: string): Promise<BlobRef | null> {
@@ -149,7 +145,6 @@ export class LocalBlobStorage implements BlobStorage {
   async cleanupExpiredBlobs(): Promise<void> {
     const now = this.now();
 
-    // Iterate over prefixes (00-ff)
     for (let i = 0; i < 256; i++) {
       const prefix = i.toString(16).padStart(2, "0");
       const prefixDir = join(this.rootDir, prefix);

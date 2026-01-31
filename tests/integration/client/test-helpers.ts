@@ -1,12 +1,3 @@
-/**
- * Client-side Test Helpers
- * Provides comprehensive DOM and Browser API mocks for client-side testing
- */
-
-// ============================================================================
-// Type Definitions for Global Mocks
-// ============================================================================
-
 type GlobalWithBrowserAPIs = typeof globalThis & {
   location: Location;
   history: History;
@@ -22,10 +13,6 @@ type GlobalWithBrowserAPIs = typeof globalThis & {
   fetch: typeof fetch;
 };
 
-// ============================================================================
-// IntersectionObserver Mock
-// ============================================================================
-
 export class MockIntersectionObserver {
   private callback: IntersectionObserverCallback;
   private options: IntersectionObserverInit;
@@ -33,7 +20,7 @@ export class MockIntersectionObserver {
 
   constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
     this.callback = callback;
-    this.options = options || {};
+    this.options = options ?? {};
   }
 
   observe(element: Element): void {
@@ -49,35 +36,40 @@ export class MockIntersectionObserver {
   }
 
   triggerIntersection(element: Element, isIntersecting: boolean): void {
+    const rect = {
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      top: 0,
+      right: 100,
+      bottom: 100,
+      left: 0,
+      toJSON: () => ({}),
+    } as DOMRectReadOnly;
+
+    const intersectionRect = {
+      x: 0,
+      y: 0,
+      width: isIntersecting ? 100 : 0,
+      height: isIntersecting ? 100 : 0,
+      top: 0,
+      right: isIntersecting ? 100 : 0,
+      bottom: isIntersecting ? 100 : 0,
+      left: 0,
+      toJSON: () => ({}),
+    } as DOMRectReadOnly;
+
     const entry: IntersectionObserverEntry = {
       target: element,
       isIntersecting,
       intersectionRatio: isIntersecting ? 1 : 0,
-      boundingClientRect: {
-        x: 0,
-        y: 0,
-        width: 100,
-        height: 100,
-        top: 0,
-        right: 100,
-        bottom: 100,
-        left: 0,
-        toJSON: () => ({}),
-      } as DOMRectReadOnly,
-      intersectionRect: {
-        x: 0,
-        y: 0,
-        width: isIntersecting ? 100 : 0,
-        height: isIntersecting ? 100 : 0,
-        top: 0,
-        right: isIntersecting ? 100 : 0,
-        bottom: isIntersecting ? 100 : 0,
-        left: 0,
-        toJSON: () => ({}),
-      } as DOMRectReadOnly,
+      boundingClientRect: rect,
+      intersectionRect,
       rootBounds: null,
       time: Date.now(),
     };
+
     this.callback([entry], this as unknown as IntersectionObserver);
   }
 
@@ -89,10 +81,6 @@ export class MockIntersectionObserver {
     return this.options;
   }
 }
-
-// ============================================================================
-// MutationObserver Mock
-// ============================================================================
 
 export class MockMutationObserver {
   private callback: MutationCallback;
@@ -116,23 +104,20 @@ export class MockMutationObserver {
 
   triggerMutation(mutation: Partial<MutationRecord>): void {
     const record: MutationRecord = {
-      type: mutation.type || "childList",
-      target: mutation.target || document.body,
-      addedNodes: mutation.addedNodes || ([] as unknown as NodeList),
-      removedNodes: mutation.removedNodes || ([] as unknown as NodeList),
-      previousSibling: mutation.previousSibling || null,
-      nextSibling: mutation.nextSibling || null,
-      attributeName: mutation.attributeName || null,
-      attributeNamespace: mutation.attributeNamespace || null,
-      oldValue: mutation.oldValue || null,
+      type: mutation.type ?? "childList",
+      target: mutation.target ?? document.body,
+      addedNodes: mutation.addedNodes ?? ([] as unknown as NodeList),
+      removedNodes: mutation.removedNodes ?? ([] as unknown as NodeList),
+      previousSibling: mutation.previousSibling ?? null,
+      nextSibling: mutation.nextSibling ?? null,
+      attributeName: mutation.attributeName ?? null,
+      attributeNamespace: mutation.attributeNamespace ?? null,
+      oldValue: mutation.oldValue ?? null,
     };
+
     this.callback([record], this as unknown as MutationObserver);
   }
 }
-
-// ============================================================================
-// Network Information API Mock
-// ============================================================================
 
 export interface MockNetworkInformation {
   effectiveType: "4g" | "wifi" | "3g" | "2g" | "slow-2g";
@@ -145,8 +130,8 @@ export function createMockNavigator(
   connection?: Partial<MockNetworkInformation>,
 ): Navigator {
   const mockConnection: MockNetworkInformation = {
-    effectiveType: connection?.effectiveType || "4g",
-    saveData: connection?.saveData || false,
+    effectiveType: connection?.effectiveType ?? "4g",
+    saveData: connection?.saveData ?? false,
     downlink: connection?.downlink,
     rtt: connection?.rtt,
   };
@@ -156,10 +141,6 @@ export function createMockNavigator(
     connection: mockConnection,
   } as unknown as Navigator;
 }
-
-// ============================================================================
-// History API Mock
-// ============================================================================
 
 export interface MockHistory {
   state: any;
@@ -180,6 +161,15 @@ export function createMockHistory(options?: {
   const states: any[] = [];
   let currentIndex = 0;
 
+  function updateLocation(url?: string | URL | null): void {
+    if (!url) return;
+
+    const urlStr = typeof url === "string" ? url : url.toString();
+    const global = globalThis as GlobalWithBrowserAPIs;
+    (global.location as unknown as MockLocation).pathname = urlStr;
+    (global.location as unknown as MockLocation).href = `${global.location.origin}${urlStr}`;
+  }
+
   return {
     state: currentState,
     length: 1,
@@ -190,39 +180,24 @@ export function createMockHistory(options?: {
       states.push({ state, url });
       currentIndex = states.length - 1;
       options?.onPushState?.(state, title, url);
-
-      // Update location
-      if (url) {
-        const urlStr = typeof url === "string" ? url : url?.toString() || "";
-        const global = globalThis as GlobalWithBrowserAPIs;
-        (global.location as MockLocation).pathname = urlStr;
-        (global.location as MockLocation).href = `${global.location.origin}${urlStr}`;
-      }
+      updateLocation(url);
     },
 
     replaceState(state: any, title: string, url?: string | URL | null): void {
       currentState = state;
-      if (states[currentIndex]) {
-        states[currentIndex] = { state, url };
-      }
+      if (states[currentIndex]) states[currentIndex] = { state, url };
       options?.onReplaceState?.(state, title, url);
-
-      // Update location
-      if (url) {
-        const urlStr = typeof url === "string" ? url : url?.toString() || "";
-        const global = globalThis as GlobalWithBrowserAPIs;
-        (global.location as MockLocation).pathname = urlStr;
-        (global.location as MockLocation).href = `${global.location.origin}${urlStr}`;
-      }
+      updateLocation(url);
     },
 
     go(delta?: number): void {
-      if (delta === undefined || delta === 0) return;
+      if (!delta) return;
+
       const newIndex = currentIndex + delta;
-      if (newIndex >= 0 && newIndex < states.length) {
-        currentIndex = newIndex;
-        currentState = states[currentIndex].state;
-      }
+      if (newIndex < 0 || newIndex >= states.length) return;
+
+      currentIndex = newIndex;
+      currentState = states[currentIndex].state;
     },
 
     back(): void {
@@ -234,10 +209,6 @@ export function createMockHistory(options?: {
     },
   };
 }
-
-// ============================================================================
-// Location API Mock
-// ============================================================================
 
 export interface MockLocation {
   href: string;
@@ -283,18 +254,11 @@ export function createMockLocation(url = "http://localhost:3000/"): MockLocation
   };
 }
 
-// ============================================================================
-// requestIdleCallback Mock
-// ============================================================================
-
 export function setupRequestIdleCallback(): void {
   const global = globalThis as GlobalWithBrowserAPIs;
 
   if (!global.requestIdleCallback) {
-    global.requestIdleCallback = (
-      callback: IdleRequestCallback,
-      _options?: IdleRequestOptions,
-    ) => {
+    global.requestIdleCallback = (callback: IdleRequestCallback) => {
       const start = Date.now();
       return setTimeout(() => {
         callback({
@@ -312,47 +276,36 @@ export function setupRequestIdleCallback(): void {
   }
 }
 
-// ============================================================================
-// DOMParser Mock
-// ============================================================================
-
 export class MockDOMParser {
   parseFromString(html: string, _type: DOMParserSupportedType): Document {
-    // Create a minimal document with basic DOM methods
     const doc = {
       documentElement: null as unknown as HTMLElement,
       head: null as unknown as HTMLHeadElement,
       body: null as unknown as HTMLBodyElement,
       querySelectorAll(selector: string): NodeListOf<Element> {
-        // Simple parsing for common selectors
         const elements: Element[] = [];
 
         if (selector.includes("script[src")) {
           const scriptMatches = html.matchAll(/<script[^>]*src=["']([^"']+)["'][^>]*>/g);
           for (const match of scriptMatches) {
+            if (!match[1]) continue;
             const script = document.createElement("script");
-            if (match[1]) {
-              script.setAttribute("src", match[1]);
-              elements.push(script);
-            }
+            script.setAttribute("src", match[1]);
+            elements.push(script);
           }
         }
 
         if (selector.includes('link[rel="stylesheet"]') || selector.includes("link")) {
           const linkMatches = html.matchAll(/<link[^>]*href=["']([^"']+)["'][^>]*>/g);
           for (const match of linkMatches) {
+            if (!match[1]) continue;
             const link = document.createElement("link");
-            if (match[1]) {
-              link.setAttribute("href", match[1]);
-              if (match[0].includes("stylesheet")) {
-                link.setAttribute("rel", "stylesheet");
-              }
-              elements.push(link);
-            }
+            link.setAttribute("href", match[1]);
+            if (match[0].includes("stylesheet")) link.setAttribute("rel", "stylesheet");
+            elements.push(link);
           }
         }
 
-        // Handle script[data-veryfront-page] selector
         if (selector.includes("script[data-veryfront-page]")) {
           const scriptMatches = html.matchAll(
             /<script[^>]*data-veryfront-page[^>]*>([\s\S]*?)<\/script>/g,
@@ -360,7 +313,7 @@ export class MockDOMParser {
           for (const match of scriptMatches) {
             const script = document.createElement("script");
             script.setAttribute("data-veryfront-page", "");
-            script.textContent = match[1] || "";
+            script.textContent = match[1] ?? "";
             elements.push(script);
           }
         }
@@ -369,43 +322,30 @@ export class MockDOMParser {
       },
       querySelector(selector: string): Element | null {
         const all = this.querySelectorAll(selector);
-        return all.length > 0 ? (all[0] || null) : null;
+        return all.length > 0 ? (all[0] ?? null) : null;
       },
       getElementById(id: string): Element | null {
-        // Parse the HTML to find element with matching id
         const idMatch = html.match(
           new RegExp(`<[^>]*id=["']${id}["'][^>]*>([\\s\\S]*?)</[^>]+>`, "i"),
         );
-        if (idMatch) {
-          const el = document.createElement("div");
-          el.id = id;
-          el.innerHTML = idMatch[1] || "";
-          return el;
-        }
-        return null;
+        if (!idMatch) return null;
+
+        const el = document.createElement("div");
+        el.id = id;
+        el.innerHTML = idMatch[1] ?? "";
+        return el;
       },
       implementation: document.implementation,
     };
 
-    // Parse body content
     const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-    if (bodyMatch && bodyMatch[1] !== undefined) {
-      const bodyDiv = document.createElement("div");
-      bodyDiv.innerHTML = bodyMatch[1];
-      doc.body = bodyDiv as unknown as HTMLBodyElement;
-    } else {
-      const bodyDiv = document.createElement("div");
-      bodyDiv.innerHTML = html;
-      doc.body = bodyDiv as unknown as HTMLBodyElement;
-    }
+    const bodyDiv = document.createElement("div");
+    bodyDiv.innerHTML = bodyMatch?.[1] ?? html;
+    doc.body = bodyDiv as unknown as HTMLBodyElement;
 
     return doc as unknown as Document;
   }
 }
-
-// ============================================================================
-// ReactDOM Mock
-// ============================================================================
 
 export interface MockRoot {
   render(component: any): void;
@@ -429,24 +369,15 @@ export const mockReactDOM = {
   },
 };
 
-// ============================================================================
-// Fetch Mock
-// ============================================================================
-
 export type MockFetchResponse =
   | Response
   | Error
   | ((url: string, init?: RequestInit) => Response | Promise<Response>);
 
-// Capture original fetch at module level for reliable restoration across parallel tests
 const originalFetch = globalThis.fetch;
 
 export class FetchMock {
   private responses = new Map<string, MockFetchResponse>();
-
-  constructor() {
-    // Use module-level originalFetch instead of instance-level capture
-  }
 
   set(url: string, response: MockFetchResponse): void {
     this.responses.set(url, response);
@@ -458,17 +389,17 @@ export class FetchMock {
 
   install(): void {
     const global = globalThis as GlobalWithBrowserAPIs;
-    global.fetch = async (input: URL | RequestInfo, init?: RequestInit) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : (input as Request).url;
 
-      // Try to find response by exact URL match first
+    global.fetch = async (input: URL | RequestInfo, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : (input as Request).url;
+
       let response = this.responses.get(url);
 
-      // If not found and URL is absolute, try matching by pathname
       if (!response) {
         try {
           const urlObj = new URL(url);
@@ -478,18 +409,14 @@ export class FetchMock {
         }
       }
 
-      if (response instanceof Error) {
-        throw response;
-      }
+      if (response instanceof Error) throw response;
 
       if (typeof response === "function") {
         const result = response(url, init);
         return result instanceof Promise ? await result : result;
       }
 
-      if (response) {
-        return response;
-      }
+      if (response) return response;
 
       return new Response("Not Found", { status: 404 });
     };
@@ -501,10 +428,6 @@ export class FetchMock {
   }
 }
 
-// ============================================================================
-// Minimal Document Mock
-// ============================================================================
-
 /**
  * Helper function to match an element against a CSS selector
  * Supports: tag, [attr], [attr="value"], [attr='value']
@@ -512,36 +435,25 @@ export class FetchMock {
 function matchesSelector(element: any, selector: string): boolean {
   if (!element || !selector) return false;
 
-  // Parse selector into tag and attribute parts
   const tagMatch = selector.match(/^([a-zA-Z]+)?/);
   const tag = tagMatch?.[1];
 
-  // If tag is specified, check it matches
-  if (tag && element.tagName?.toLowerCase() !== tag.toLowerCase()) {
-    return false;
-  }
+  if (tag && element.tagName?.toLowerCase() !== tag.toLowerCase()) return false;
 
-  // Extract all attribute conditions like [rel="prefetch"], [href="/script.js"]
   const attrPattern = /\[([a-zA-Z-]+)(?:=["']([^"']+)["'])?\]/g;
-  let attrMatch;
+  let attrMatch: RegExpExecArray | null;
 
   while ((attrMatch = attrPattern.exec(selector)) !== null) {
     const attrName = attrMatch[1];
     const attrValue = attrMatch[2];
 
     if (!element.attributes) return false;
-    if (!attrName) continue; // Skip if attribute name is not captured
+    if (!attrName) continue;
 
     if (attrValue !== undefined) {
-      // Attribute must equal specific value
-      if (element.attributes[attrName] !== attrValue) {
-        return false;
-      }
+      if (element.attributes[attrName] !== attrValue) return false;
     } else {
-      // Attribute must exist
-      if (!(attrName in element.attributes)) {
-        return false;
-      }
+      if (!(attrName in element.attributes)) return false;
     }
   }
 
@@ -580,26 +492,24 @@ type MockElement = {
   removeEventListener: (type: string, listener: unknown) => void;
 };
 
-function createMinimalDocument() {
+function createMinimalDocument(): any {
   const elementsById = new Map<string, MockElement>();
 
   const head = {
     _children: [] as MockElement[],
-    appendChild: function (child: MockElement) {
+    appendChild(child: MockElement) {
       this._children.push(child);
       return child;
     },
-    removeChild: function (child: MockElement) {
+    removeChild(child: MockElement) {
       const index = this._children.indexOf(child);
-      if (index > -1) {
-        this._children.splice(index, 1);
-      }
+      if (index > -1) this._children.splice(index, 1);
       return child;
     },
-    querySelector: function (selector: string) {
+    querySelector(selector: string) {
       return this._children.find((el) => matchesSelector(el, selector)) || null;
     },
-    querySelectorAll: function (selector: string) {
+    querySelectorAll(selector: string) {
       return this._children.filter((el) => matchesSelector(el, selector));
     },
   };
@@ -607,55 +517,41 @@ function createMinimalDocument() {
   const body = {
     classList: {
       _classes: new Set<string>(),
-      add: function (...tokens: string[]) {
-        tokens.forEach((token) => this._classes.add(token));
+      add(...tokens: string[]) {
+        for (const token of tokens) this._classes.add(token);
       },
-      remove: function (...tokens: string[]) {
-        tokens.forEach((token) => this._classes.delete(token));
+      remove(...tokens: string[]) {
+        for (const token of tokens) this._classes.delete(token);
       },
-      toggle: function (token: string, force?: boolean) {
+      toggle(token: string, force?: boolean) {
         if (force === true) {
           this._classes.add(token);
           return true;
-        } else if (force === false) {
+        }
+        if (force === false) {
           this._classes.delete(token);
           return false;
-        } else {
-          if (this._classes.has(token)) {
-            this._classes.delete(token);
-            return false;
-          } else {
-            this._classes.add(token);
-            return true;
-          }
         }
+        if (this._classes.has(token)) {
+          this._classes.delete(token);
+          return false;
+        }
+        this._classes.add(token);
+        return true;
       },
-      contains: function (token: string) {
+      contains(token: string) {
         return this._classes.has(token);
       },
     },
     appendChild: (child: MockElement) => {
-      if (!body._children) {
-        body._children = [];
-      }
       body._children.push(child);
-      // Track elements by ID
-      if (child.id) {
-        elementsById.set(child.id, child);
-      }
+      if (child.id) elementsById.set(child.id, child);
       return child;
     },
     removeChild: (child: MockElement) => {
-      if (body._children) {
-        const index = body._children.indexOf(child);
-        if (index > -1) {
-          body._children.splice(index, 1);
-        }
-      }
-      // Remove from ID tracking
-      if (child.id) {
-        elementsById.delete(child.id);
-      }
+      const index = body._children.indexOf(child);
+      if (index > -1) body._children.splice(index, 1);
+      if (child.id) elementsById.delete(child.id);
       return child;
     },
     querySelector: (_selector: string) => null,
@@ -663,7 +559,7 @@ function createMinimalDocument() {
     _children: [] as MockElement[],
   };
 
-  const doc = {
+  const doc: any = {
     head,
     body,
     title: "",
@@ -672,10 +568,10 @@ function createMinimalDocument() {
     createElement: (tag: string): MockElement => {
       const el: MockElement = {
         tagName: tag.toUpperCase(),
-        attributes: {} as Record<string, string>,
+        attributes: {},
         dataset: {},
         style: {},
-        children: [] as MockElement[],
+        children: [],
         parentElement: null,
         href: "",
         hostname: "",
@@ -684,45 +580,43 @@ function createMinimalDocument() {
         target: "",
         id: "",
         className: "",
-        nodeType: 1, // ELEMENT_NODE
+        nodeType: 1,
         nodeName: tag.toUpperCase(),
         ownerDocument: doc,
         textContent: "",
 
-        getAttribute: function (name: string) {
+        getAttribute(name: string) {
           return this.attributes[name] || null;
         },
-        setAttribute: function (name: string, value: string) {
+        setAttribute(name: string, value: string) {
           this.attributes[name] = value;
-          if (name === "data-prefetch") {
-            this.dataset.prefetch = value;
-          }
-          if (name === "data-no-prefetch") {
-            this.dataset.noPrefetch = value;
-          }
+
+          if (name === "data-prefetch") this.dataset.prefetch = value;
+          if (name === "data-no-prefetch") this.dataset.noPrefetch = value;
+
           if (name === "id") {
             this.id = value;
             elementsById.set(value, this);
           }
         },
-        hasAttribute: function (name: string) {
+        hasAttribute(name: string) {
           return name in this.attributes;
         },
-        removeAttribute: function (name: string) {
+        removeAttribute(name: string) {
           delete this.attributes[name];
         },
-        appendChild: function (child: MockElement) {
+        appendChild(child: MockElement) {
           this.children.push(child);
           child.parentElement = this;
           return child;
         },
-        append: function (...children: MockElement[]) {
+        append(...children: MockElement[]) {
           for (const child of children) {
             this.children.push(child);
             child.parentElement = this;
           }
         },
-        removeChild: function (child: MockElement) {
+        removeChild(child: MockElement) {
           const index = this.children.indexOf(child);
           if (index > -1) {
             this.children.splice(index, 1);
@@ -737,7 +631,6 @@ function createMinimalDocument() {
         removeEventListener: (_type: string, _listener: unknown) => {},
       };
 
-      // Special handling for anchor tags
       if (tag === "a") {
         Object.defineProperty(el, "href", {
           get() {
@@ -747,7 +640,6 @@ function createMinimalDocument() {
               const url = new URL(this._href, global.location?.origin || "http://localhost:3000");
               return url.href;
             } catch {
-              // Invalid URL, return as is
               return this._href;
             }
           },
@@ -767,7 +659,6 @@ function createMinimalDocument() {
         });
       }
 
-      // Special handling for link tags
       if (tag === "link") {
         Object.defineProperty(el, "rel", {
           get() {
@@ -787,32 +678,26 @@ function createMinimalDocument() {
         });
       }
 
-      // Track id if set directly
-      if (el.id) {
-        elementsById.set(el.id, el);
-      }
+      if (el.id) elementsById.set(el.id, el);
 
       return el;
     },
     querySelector: (selector: string) => {
-      // Handle #id selector
       if (selector.startsWith("#")) {
         const id = selector.slice(1);
         return elementsById.get(id) || null;
       }
-      // Handle simple tag selectors for meta/script tags
+
       if (selector === 'meta[name="description"]') {
         const meta = doc.createElement("meta");
         meta.setAttribute("name", "description");
         return meta;
       }
 
-      // Search through head and body children
       const allChildren = [...head._children, ...body._children];
       return allChildren.find((el) => matchesSelector(el, selector)) || null;
     },
     querySelectorAll: (selector: string) => {
-      // Search through head and body children
       const allChildren = [...head._children, ...body._children];
       return allChildren.filter((el) => matchesSelector(el, selector));
     },
@@ -824,10 +709,6 @@ function createMinimalDocument() {
 
   return doc;
 }
-
-// ============================================================================
-// Complete DOM Environment Setup
-// ============================================================================
 
 export interface DOMEnvironmentOptions {
   url?: string;
@@ -848,7 +729,6 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
   const fetchMock = new FetchMock();
   const global = globalThis as GlobalWithBrowserAPIs;
 
-  // Store original values
   const originalDocument = global.document;
   const originalIntersectionObserver = global.IntersectionObserver;
   const originalMutationObserver = global.MutationObserver;
@@ -861,20 +741,22 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
   const originalRemoveEventListener = globalThis.removeEventListener;
   const originalScrollTo = (globalThis as any).scrollTo;
 
-  // Setup globalThis.addEventListener/removeEventListener for Node.js
-  // (these don't exist in Node.js but are used by browser code)
   const eventListeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+
   if (typeof globalThis.addEventListener !== "function") {
     (globalThis as any).addEventListener = (
       type: string,
       listener: EventListenerOrEventListenerObject,
     ) => {
-      if (!eventListeners.has(type)) {
-        eventListeners.set(type, new Set());
+      let listeners = eventListeners.get(type);
+      if (!listeners) {
+        listeners = new Set();
+        eventListeners.set(type, listeners);
       }
-      eventListeners.get(type)!.add(listener);
+      listeners.add(listener);
     };
   }
+
   if (typeof globalThis.removeEventListener !== "function") {
     (globalThis as any).removeEventListener = (
       type: string,
@@ -883,44 +765,35 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
       eventListeners.get(type)?.delete(listener);
     };
   }
+
   if (typeof globalThis.dispatchEvent !== "function") {
     (globalThis as any).dispatchEvent = (event: Event) => {
       const listeners = eventListeners.get(event.type);
-      if (listeners) {
-        for (const listener of listeners) {
-          if (typeof listener === "function") {
-            listener(event);
-          } else {
-            listener.handleEvent(event);
-          }
-        }
+      if (!listeners) return true;
+
+      for (const listener of listeners) {
+        if (typeof listener === "function") listener(event);
+        else listener.handleEvent(event);
       }
       return true;
     };
   }
 
-  // Setup scrollTo mock for Node.js (used by router)
   if (typeof (globalThis as any).scrollTo !== "function") {
     (globalThis as any).scrollTo = (_x: number, _y: number) => {
       // No-op in tests
     };
   }
 
-  // Setup mock document if it doesn't exist, is not functional, or is an SSR stub
   const isSSRStubDocument = (originalDocument as any)?.__veryfrontSSRStub === true;
-  if (
-    !originalDocument || typeof originalDocument.createElement !== "function" || isSSRStubDocument
-  ) {
+  if (!originalDocument || typeof originalDocument.createElement !== "function" || isSSRStubDocument) {
     global.document = createMinimalDocument() as unknown as Document;
   }
 
-  // Setup mocks
   global.IntersectionObserver = class extends MockIntersectionObserver {
     constructor(callback: IntersectionObserverCallback, opts?: IntersectionObserverInit) {
       super(callback, opts);
-      if (options.trackObservers !== false) {
-        mockObservers.push(this);
-      }
+      if (options.trackObservers !== false) mockObservers.push(this);
     }
   } as unknown as typeof IntersectionObserver;
 
@@ -942,7 +815,6 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
 
   global.ReactDOM = mockReactDOM;
 
-  // Setup MouseEvent and PopStateEvent if not available
   if (typeof global.MouseEvent === "undefined") {
     global.MouseEvent = class MockMouseEvent extends Event {
       constructor(type: string, eventInitDict?: MouseEventInit) {
@@ -962,8 +834,7 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
   setupRequestIdleCallback();
   fetchMock.install();
 
-  // Cleanup function
-  const cleanup = () => {
+  const cleanup = (): void => {
     global.document = originalDocument;
     global.IntersectionObserver = originalIntersectionObserver;
     global.MutationObserver = originalMutationObserver;
@@ -979,22 +850,14 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
     global.history = originalHistory;
     global.ReactDOM = originalReactDOM;
 
-    // Restore addEventListener/removeEventListener/scrollTo
-    if (originalAddEventListener) {
-      (globalThis as any).addEventListener = originalAddEventListener;
-    } else {
-      delete (globalThis as any).addEventListener;
-    }
-    if (originalRemoveEventListener) {
-      (globalThis as any).removeEventListener = originalRemoveEventListener;
-    } else {
-      delete (globalThis as any).removeEventListener;
-    }
-    if (originalScrollTo) {
-      (globalThis as any).scrollTo = originalScrollTo;
-    } else {
-      delete (globalThis as any).scrollTo;
-    }
+    if (originalAddEventListener) (globalThis as any).addEventListener = originalAddEventListener;
+    else delete (globalThis as any).addEventListener;
+
+    if (originalRemoveEventListener) (globalThis as any).removeEventListener = originalRemoveEventListener;
+    else delete (globalThis as any).removeEventListener;
+
+    if (originalScrollTo) (globalThis as any).scrollTo = originalScrollTo;
+    else delete (globalThis as any).scrollTo;
 
     fetchMock.uninstall();
     mockObservers.length = 0;

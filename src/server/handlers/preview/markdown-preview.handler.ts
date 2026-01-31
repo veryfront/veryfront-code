@@ -26,32 +26,24 @@ export class MarkdownPreviewHandler extends BaseHandler {
     name: "MarkdownPreviewHandler",
     priority: PRIORITY_MARKDOWN_PREVIEW,
     patterns: [{ pattern: /\.md$/, method: "GET" }],
-    enabled: (ctx) => {
-      return ctx.requestContext?.isLocalDev === true || ctx.requestContext?.mode === "preview";
-    },
+    enabled: (ctx) =>
+      ctx.requestContext?.isLocalDev === true || ctx.requestContext?.mode === "preview",
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
-    // Only handle .md files (not .mdx which are page components)
     if (!pathname.endsWith(".md")) {
       logger.debug("[MarkdownPreviewHandler] Skipping - no .md extension", { pathname });
       return this.continue();
     }
 
-    // Skip files in pages/ or app/ directories - those are routed normally
-    if (pathname.includes("/pages/") || pathname.includes("/app/")) {
+    if (pathname.includes("/pages/") || pathname.includes("/app/") || pathname.startsWith("/_")) {
       return this.continue();
     }
 
-    // Skip internal paths
-    if (pathname.startsWith("/_")) {
-      return this.continue();
-    }
-
-    const filePath = pathname.replace(/^\//, ""); // Remove leading slash
+    const filePath = pathname.replace(/^\//, "");
     const fsAdapter = ctx.adapter.fs;
 
     logger.debug("[MarkdownPreviewHandler] Attempting to serve", {
@@ -61,9 +53,7 @@ export class MarkdownPreviewHandler extends BaseHandler {
       projectSlug: ctx.projectSlug,
     });
 
-    // Handle multi-project mode (preview)
-    const hasMultiProjectSupport = isExtendedFSAdapter(fsAdapter) &&
-      fsAdapter.isMultiProjectMode();
+    const hasMultiProjectSupport = isExtendedFSAdapter(fsAdapter) && fsAdapter.isMultiProjectMode();
 
     if (ctx.projectSlug && hasMultiProjectSupport) {
       const effectiveToken = ctx.proxyToken || getEnv("VERYFRONT_API_TOKEN") || "";
@@ -75,19 +65,16 @@ export class MarkdownPreviewHandler extends BaseHandler {
         () => this.renderMarkdown(req, ctx, filePath, url),
         ctx.projectId,
         {
-          productionMode: false, // Preview mode
+          productionMode: false,
           branch,
           environmentName: ctx.environmentName,
         },
       );
     }
 
-    // Handle contextual mode (single project)
     if (isExtendedFSAdapter(fsAdapter) && fsAdapter.isContextualMode()) {
       try {
-        if (ctx.proxyToken) {
-          fsAdapter.setRequestToken(ctx.proxyToken);
-        }
+        if (ctx.proxyToken) fsAdapter.setRequestToken(ctx.proxyToken);
         fsAdapter.setRequestBranch(ctx.parsedDomain?.branch ?? null);
         fsAdapter.setProductionMode(false);
       } catch {
@@ -105,35 +92,29 @@ export class MarkdownPreviewHandler extends BaseHandler {
     url: URL,
   ): Promise<HandlerResult> {
     try {
-      // Try to resolve the file path (handles extension lookup)
       const resolveFile = ctx.adapter.fs.resolveFile;
-      let resolvedPath: string | null = null;
+      const resolvedPath = resolveFile ? await resolveFile.call(ctx.adapter.fs, filePath) : null;
 
       if (resolveFile) {
-        // Try the exact path first
-        resolvedPath = await resolveFile.call(ctx.adapter.fs, filePath);
         logger.debug("[MarkdownPreviewHandler] resolveFile result", { filePath, resolvedPath });
       }
 
-      // Read file content
       let content: string;
       try {
-        const pathToRead = resolvedPath || filePath;
-        content = await ctx.adapter.fs.readFile(pathToRead);
+        content = await ctx.adapter.fs.readFile(resolvedPath ?? filePath);
       } catch {
         logger.debug("[MarkdownPreviewHandler] File not found", { filePath, resolvedPath });
-        // Return project's styled 404 page
+
         const builder = this.createResponseBuilder(ctx);
         const notFoundResponse = await tryNotFoundFallback(req, filePath, ctx, builder);
-        if (notFoundResponse) {
-          return this.respond(notFoundResponse);
-        }
+        if (notFoundResponse) return this.respond(notFoundResponse);
+
         return this.continue();
       }
 
-      // Extract frontmatter
       let frontmatter: Record<string, unknown> = {};
       let body = content;
+
       try {
         const extracted = extract(content);
         frontmatter = extracted.attrs as Record<string, unknown>;
@@ -142,13 +123,11 @@ export class MarkdownPreviewHandler extends BaseHandler {
         // No frontmatter or malformed YAML
       }
 
-      // Check for prose: false opt-out
       if (frontmatter.prose === false) {
         logger.debug("[MarkdownPreviewHandler] Skipping - prose: false", { filePath });
         return this.continue();
       }
 
-      // Compile markdown
       const bundle = await compileMarkdownRuntime(
         "development",
         ctx.projectDir,
@@ -158,19 +137,23 @@ export class MarkdownPreviewHandler extends BaseHandler {
         "server",
       );
 
-      // Get color scheme from URL param or client hint
       const colorModeParam = url.searchParams.get("color_mode")?.toLowerCase();
-      const clientHint = req.headers.get("Sec-CH-Prefers-Color-Scheme")?.replace(/"/g, "").trim()
+      const clientHint = req.headers
+        .get("Sec-CH-Prefers-Color-Scheme")
+        ?.replace(/"/g, "")
+        .trim()
         .toLowerCase();
-      const theme = (colorModeParam === "light" || colorModeParam === "dark")
-        ? colorModeParam
-        : (clientHint === "light" || clientHint === "dark")
-        ? clientHint
-        : null;
+
+      let theme: "light" | "dark" | null = null;
+      if (colorModeParam === "light" || colorModeParam === "dark") {
+        theme = colorModeParam;
+      } else if (clientHint === "light" || clientHint === "dark") {
+        theme = clientHint;
+      }
+
       const title = (frontmatter.title as string) || filePath;
       const description = (frontmatter.description as string) || "";
 
-      // Check for studio embed mode
       const studioEmbed = url.searchParams.get("studio_embed") === "true";
       const studioScript = studioEmbed
         ? `<script>${
@@ -182,7 +165,6 @@ export class MarkdownPreviewHandler extends BaseHandler {
         }</script>`
         : "";
 
-      // Generate simple static HTML (no React hydration, no layouts, no app)
       const themeAttrs = theme ? ` data-theme="${theme}" style="color-scheme: ${theme};"` : "";
       const html = `<!DOCTYPE html>
 <html lang="en"${themeAttrs}>

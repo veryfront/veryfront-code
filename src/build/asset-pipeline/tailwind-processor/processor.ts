@@ -23,7 +23,7 @@ export class TailwindProcessor {
   process(): Promise<TailwindProcessResult> {
     return withSpan(
       "build.tailwind.process",
-      async () => {
+      async (): Promise<TailwindProcessResult> => {
         const {
           inputFile,
           outputFile,
@@ -68,10 +68,11 @@ export class TailwindProcessor {
           detectedUtilities,
         };
 
-        if (!outputFile) return result;
+        if (!outputFile) {
+          return result;
+        }
 
-        const dirPath = dirname(outputFile);
-        await secureFs.mkdir(dirPath, { recursive: true });
+        await secureFs.mkdir(dirname(outputFile), { recursive: true });
         await secureFs.writeFile(outputFile, processedCSS);
 
         logger.info("Tailwind CSS processed successfully", {

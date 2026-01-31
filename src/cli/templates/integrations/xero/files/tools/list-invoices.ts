@@ -25,21 +25,38 @@ export default tool({
   async execute({ status, type, contactId, limit }) {
     const invoices = await listInvoices({ status, type, contactId, limit });
 
-    return invoices.map((invoice) => ({
-      invoiceId: invoice.InvoiceID,
-      invoiceNumber: invoice.InvoiceNumber,
-      type: invoice.Type,
-      status: invoice.Status,
-      contact: invoice.Contact.Name,
-      date: invoice.Date,
-      dueDate: invoice.DueDate,
-      subTotal: invoice.SubTotal,
-      totalTax: invoice.TotalTax,
-      total: invoice.Total,
-      amountDue: invoice.AmountDue,
-      amountPaid: invoice.AmountPaid,
-      currencyCode: invoice.CurrencyCode,
-      reference: invoice.Reference,
-    }));
+    return invoices.map(
+      ({
+        InvoiceID,
+        InvoiceNumber,
+        Type,
+        Status,
+        Contact,
+        Date,
+        DueDate,
+        SubTotal,
+        TotalTax,
+        Total,
+        AmountDue,
+        AmountPaid,
+        CurrencyCode,
+        Reference,
+      }) => ({
+        invoiceId: InvoiceID,
+        invoiceNumber: InvoiceNumber,
+        type: Type,
+        status: Status,
+        contact: Contact.Name,
+        date: Date,
+        dueDate: DueDate,
+        subTotal: SubTotal,
+        totalTax: TotalTax,
+        total: Total,
+        amountDue: AmountDue,
+        amountPaid: AmountPaid,
+        currencyCode: CurrencyCode,
+        reference: Reference,
+      }),
+    );
   },
 });

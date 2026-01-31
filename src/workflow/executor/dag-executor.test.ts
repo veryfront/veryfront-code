@@ -12,15 +12,15 @@ import { DAGExecutor } from "./dag-executor.ts";
 import { StepExecutor } from "./step-executor.ts";
 
 function createMockStepExecutor(
-  executionOrder?: string[],
-  failingNodes?: Set<string>,
+  executionOrder: string[] = [],
+  failingNodes: Set<string> = new Set(),
 ): StepExecutor {
   const executor = new StepExecutor({});
 
   executor.execute = (node: WorkflowNode, _context: WorkflowContext) => {
-    executionOrder?.push(node.id);
+    executionOrder.push(node.id);
 
-    if (failingNodes?.has(node.id)) {
+    if (failingNodes.has(node.id)) {
       return Promise.resolve({
         success: false,
         error: "Step failed",

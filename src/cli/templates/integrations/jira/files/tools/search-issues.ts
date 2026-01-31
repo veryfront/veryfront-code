@@ -31,26 +31,26 @@ export default tool({
     return {
       total: result.total,
       issues: result.issues.map((issue) => {
-        const { fields } = issue;
+        const issueFields = issue.fields;
 
         return {
           key: issue.key,
           id: issue.id,
-          summary: fields.summary,
-          description: extractDescriptionText(fields.description),
-          status: fields.status.name,
-          statusCategory: fields.status.statusCategory.name,
-          type: fields.issuetype.name,
-          priority: fields.priority?.name,
-          assignee: fields.assignee?.displayName,
-          reporter: fields.reporter?.displayName,
+          summary: issueFields.summary,
+          description: extractDescriptionText(issueFields.description),
+          status: issueFields.status.name,
+          statusCategory: issueFields.status.statusCategory.name,
+          type: issueFields.issuetype.name,
+          priority: issueFields.priority?.name,
+          assignee: issueFields.assignee?.displayName,
+          reporter: issueFields.reporter?.displayName,
           project: {
-            key: fields.project.key,
-            name: fields.project.name,
+            key: issueFields.project.key,
+            name: issueFields.project.name,
           },
-          created: fields.created,
-          updated: fields.updated,
-          labels: fields.labels ?? [],
+          created: issueFields.created,
+          updated: issueFields.updated,
+          labels: issueFields.labels ?? [],
         };
       }),
     };

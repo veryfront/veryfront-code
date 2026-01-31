@@ -41,10 +41,8 @@ export async function handleStreamingResponse(
     if (done) return;
 
     const chunk = decoder.decode(value, { stream: true });
-    const lines = chunk.split("\n");
-
-    for (const line of lines) {
-      if (!line.trim() || !line.startsWith("data: ")) continue;
+    for (const line of chunk.split("\n")) {
+      if (!line.startsWith("data: ") || !line.trim()) continue;
 
       const data = line.slice(6);
       try {
@@ -124,7 +122,7 @@ function processEvent(
       return;
 
     case "data":
-      onData((parsed.data ?? parsed.value) as unknown);
+      onData(parsed.data ?? parsed.value);
       return;
 
     default:

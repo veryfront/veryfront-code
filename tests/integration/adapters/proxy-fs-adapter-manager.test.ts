@@ -9,19 +9,20 @@ import { assert, assertEquals } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
 import { ProxyFSAdapterManager } from "@veryfront/platform/adapters/fs/veryfront/proxy-manager.ts";
 
+function createLocalManager(): ProxyFSAdapterManager {
+  return new ProxyFSAdapterManager({
+    baseConfig: { type: "local", projectDir: "/tmp" },
+  });
+}
+
 describe("ProxyFSAdapterManager - Cache Isolation", () => {
   it("preview and production requests get separate adapters", () => {
-    const manager = new ProxyFSAdapterManager({
-      baseConfig: { type: "local", projectDir: "/tmp" },
-    });
+    const manager = createLocalManager();
 
     try {
-      // Initially no adapters exist
       assertEquals(manager.hasAdapter("my-project", false, null), false);
       assertEquals(manager.hasAdapter("my-project", true, "release-1"), false);
 
-      // After checking, they should still be separate keys
-      // (hasAdapter doesn't create adapters, just checks)
       assertEquals(manager.hasAdapter("my-project", false, null), false);
       assertEquals(manager.hasAdapter("my-project", true, "release-1"), false);
     } finally {
@@ -30,16 +31,12 @@ describe("ProxyFSAdapterManager - Cache Isolation", () => {
   });
 
   it("different releaseIds are treated as separate cache entries", () => {
-    const manager = new ProxyFSAdapterManager({
-      baseConfig: { type: "local", projectDir: "/tmp" },
-    });
+    const manager = createLocalManager();
 
     try {
-      // Different release IDs should be separate
       assertEquals(manager.hasAdapter("my-project", true, "release-1"), false);
       assertEquals(manager.hasAdapter("my-project", true, "release-2"), false);
 
-      // They should remain independent
       const stats = manager.getStats();
       assertEquals(stats.adapters, 0);
     } finally {
@@ -60,8 +57,6 @@ describe("ProxyFSAdapterManager - Cache Isolation", () => {
     });
 
     try {
-      // We can't easily create real adapters without a real API,
-      // but we can verify the stats structure is correct
       const stats = manager.getStats();
       assertEquals(stats.adapters, 0);
       assertEquals(typeof stats.stats, "object");
@@ -76,38 +71,20 @@ describe("ProxyFSAdapterManager - Cache Isolation", () => {
       cleanupIntervalMs: 1000,
     });
 
-    // Should not throw
     manager.dispose();
-
-    // Double dispose should be safe
     manager.dispose();
   });
 
   it("hasAdapter correctly distinguishes preview vs production", () => {
-    const manager = new ProxyFSAdapterManager({
-      baseConfig: { type: "local", projectDir: "/tmp" },
-    });
+    const manager = createLocalManager();
 
     try {
-      // These should all be treated as different cache keys:
-      // - my-project:preview
-      // - my-project:production:release-1
-      // - my-project:production:release-2
-      assert(!manager.hasAdapter("my-project", false, null)); // preview
-      assert(!manager.hasAdapter("my-project", true, "release-1")); // production:release-1
-      assert(!manager.hasAdapter("my-project", true, "release-2")); // production:release-2
+      assertEquals(manager.hasAdapter("my-project", false, null), false);
+      assertEquals(manager.hasAdapter("my-project", true, "release-1"), false);
+      assertEquals(manager.hasAdapter("my-project", true, "release-2"), false);
 
-      // Production without releaseId should throw
-      let threw = false;
-      try {
-        manager.hasAdapter("my-project", true, null);
-      } catch {
-        threw = true;
-      }
-      assert(threw, "Expected error when releaseId is missing in production mode");
+      assertThrows(() => manager.hasAdapter("my-project", true, null));
 
-      // Verify they're truly independent by checking hasAdapter signature
-      // takes productionMode and releaseId into account
       assertEquals(
         manager.hasAdapter("my-project", false, null),
         manager.hasAdapter("my-project", false, "ignored-in-preview"),
@@ -117,3 +94,13 @@ describe("ProxyFSAdapterManager - Cache Isolation", () => {
     }
   });
 });
+
+function assertThrows(fn: () => void): void {
+  let threw = false;
+  try {
+    fn();
+  } catch {
+    threw = true;
+  }
+  assert(threw, "Expected error when releaseId is missing in production mode");
+}

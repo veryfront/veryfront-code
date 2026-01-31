@@ -7,16 +7,13 @@ function createAdapter(): NodeBasedShellAdapter {
 }
 
 describe("NodeBasedShellAdapter", () => {
-  describe("class", () => {
-    it("should export NodeBasedShellAdapter class", () => {
-      assertExists(NodeBasedShellAdapter);
-      assertEquals(typeof NodeBasedShellAdapter, "function");
-    });
+  it("should export NodeBasedShellAdapter class", () => {
+    assertExists(NodeBasedShellAdapter);
+    assertEquals(typeof NodeBasedShellAdapter, "function");
+  });
 
-    it("should be instantiable", () => {
-      const adapter = createAdapter();
-      assertExists(adapter);
-    });
+  it("should be instantiable", () => {
+    assertExists(createAdapter());
   });
 
   describe("statSync", () => {
@@ -27,22 +24,19 @@ describe("NodeBasedShellAdapter", () => {
     });
 
     it("should stat existing directory", () => {
-      const adapter = createAdapter();
-      const result = adapter.statSync(".");
+      const result = createAdapter().statSync(".");
       assertEquals(result.isDirectory, true);
       assertEquals(result.isFile, false);
     });
 
     it("should stat existing file", () => {
-      const adapter = createAdapter();
-      const result = adapter.statSync("./deno.json");
+      const result = createAdapter().statSync("./deno.json");
       assertEquals(result.isFile, true);
       assertEquals(result.isDirectory, false);
     });
 
     it("should throw for non-existent path", () => {
-      const adapter = createAdapter();
-      assertThrows(() => adapter.statSync("./non-existent-file-12345.txt"), Error);
+      assertThrows(() => createAdapter().statSync("./non-existent-file-12345.txt"), Error);
     });
   });
 
@@ -54,15 +48,13 @@ describe("NodeBasedShellAdapter", () => {
     });
 
     it("should read existing file", () => {
-      const adapter = createAdapter();
-      const content = adapter.readFileSync("./deno.json");
+      const content = createAdapter().readFileSync("./deno.json");
       assertEquals(typeof content, "string");
       assertEquals(content.length > 0, true);
     });
 
     it("should throw for non-existent file", () => {
-      const adapter = createAdapter();
-      assertThrows(() => adapter.readFileSync("./non-existent-file-12345.txt"), Error);
+      assertThrows(() => createAdapter().readFileSync("./non-existent-file-12345.txt"), Error);
     });
   });
 });

@@ -22,11 +22,16 @@ function createContext(overrides: Partial<DataContext> = {}): DataContext {
   };
 }
 
+function createFetcher(): { cache: CacheManager; fetcher: StaticDataFetcher } {
+  const cache = new CacheManager();
+  const fetcher = new StaticDataFetcher(cache);
+  return { cache, fetcher };
+}
+
 describe("StaticDataFetcher", () => {
   describe("constructor", () => {
     it("should create instance with cache manager", () => {
-      const cache = new CacheManager();
-      const fetcher = new StaticDataFetcher(cache);
+      const { fetcher } = createFetcher();
       assertExists(fetcher);
     });
 
@@ -40,8 +45,7 @@ describe("StaticDataFetcher", () => {
 
   describe("fetch", () => {
     it("should return empty props when getStaticData is not defined", async () => {
-      const cache = new CacheManager();
-      const fetcher = new StaticDataFetcher(cache);
+      const { fetcher } = createFetcher();
       const pageModule: PageWithData = { default: () => null };
 
       const result = await fetcher.fetch(pageModule, createContext());
@@ -50,8 +54,7 @@ describe("StaticDataFetcher", () => {
     });
 
     it("should call getStaticData with params and url", async () => {
-      const cache = new CacheManager();
-      const fetcher = new StaticDataFetcher(cache);
+      const { fetcher } = createFetcher();
       let receivedParams: Record<string, string | string[]> | undefined;
       let receivedUrl: URL | undefined;
 
@@ -78,8 +81,7 @@ describe("StaticDataFetcher", () => {
     });
 
     it("should NOT pass request or query to getStaticData", async () => {
-      const cache = new CacheManager();
-      const fetcher = new StaticDataFetcher(cache);
+      const { fetcher } = createFetcher();
       let receivedContext:
         | { params?: unknown; url?: unknown; request?: unknown; query?: unknown }
         | undefined;
@@ -100,8 +102,7 @@ describe("StaticDataFetcher", () => {
     });
 
     it("should return props from getStaticData", async () => {
-      const cache = new CacheManager();
-      const fetcher = new StaticDataFetcher(cache);
+      const { fetcher } = createFetcher();
       const pageModule: PageWithData<{ title: string }> = {
         default: () => null,
         getStaticData: () => ({ props: { title: "Static Title" } }),
@@ -114,8 +115,7 @@ describe("StaticDataFetcher", () => {
 
     it("should cache result after fetch in production mode", async () => {
       await withProductionContext(async () => {
-        const cache = new CacheManager();
-        const fetcher = new StaticDataFetcher(cache);
+        const { fetcher } = createFetcher();
         let callCount = 0;
 
         const pageModule: PageWithData<{ count: number }> = {
@@ -139,8 +139,7 @@ describe("StaticDataFetcher", () => {
 
     it("should create unique cache keys per path in production mode", async () => {
       await withProductionContext(async () => {
-        const cache = new CacheManager();
-        const fetcher = new StaticDataFetcher(cache);
+        const { fetcher } = createFetcher();
         let callCount = 0;
 
         const pageModule: PageWithData = {
@@ -168,8 +167,7 @@ describe("StaticDataFetcher", () => {
     });
 
     it("should handle redirect result", async () => {
-      const cache = new CacheManager();
-      const fetcher = new StaticDataFetcher(cache);
+      const { fetcher } = createFetcher();
       const pageModule: PageWithData = {
         default: () => null,
         getStaticData: () => ({ redirect: { destination: "/moved", permanent: true } }),
@@ -182,8 +180,7 @@ describe("StaticDataFetcher", () => {
     });
 
     it("should handle notFound result", async () => {
-      const cache = new CacheManager();
-      const fetcher = new StaticDataFetcher(cache);
+      const { fetcher } = createFetcher();
       const pageModule: PageWithData = {
         default: () => null,
         getStaticData: () => ({ notFound: true }),
@@ -195,8 +192,7 @@ describe("StaticDataFetcher", () => {
     });
 
     it("should throw when getStaticData throws", async () => {
-      const cache = new CacheManager();
-      const fetcher = new StaticDataFetcher(cache);
+      const { fetcher } = createFetcher();
       const pageModule: PageWithData = {
         default: () => null,
         getStaticData: () => {
@@ -212,8 +208,7 @@ describe("StaticDataFetcher", () => {
     });
 
     it("should support synchronous getStaticData", async () => {
-      const cache = new CacheManager();
-      const fetcher = new StaticDataFetcher(cache);
+      const { fetcher } = createFetcher();
       const pageModule: PageWithData<{ sync: boolean }> = {
         default: () => null,
         getStaticData: () => ({ props: { sync: true } }),
@@ -226,8 +221,7 @@ describe("StaticDataFetcher", () => {
 
     it("should cache with revalidate time in production mode", async () => {
       await withProductionContext(async () => {
-        const cache = new CacheManager();
-        const fetcher = new StaticDataFetcher(cache);
+        const { cache, fetcher } = createFetcher();
         const pageModule: PageWithData = {
           default: () => null,
           getStaticData: () => ({ props: { data: "cached" }, revalidate: 60 }),
@@ -250,8 +244,7 @@ describe("StaticDataFetcher", () => {
       await runWithCacheKeyContext(
         { projectId: "test", mode: "preview", versionId: "main" },
         async () => {
-          const cache = new CacheManager();
-          const fetcher = new StaticDataFetcher(cache);
+          const { fetcher } = createFetcher();
           let callCount = 0;
 
           const pageModule: PageWithData<{ count: number }> = {
@@ -276,8 +269,7 @@ describe("StaticDataFetcher", () => {
 
     it("should return cached data when fresh in production mode", async () => {
       await withProductionContext(async () => {
-        const cache = new CacheManager();
-        const fetcher = new StaticDataFetcher(cache);
+        const { fetcher } = createFetcher();
         let callCount = 0;
 
         const pageModule: PageWithData<{ version: number }> = {

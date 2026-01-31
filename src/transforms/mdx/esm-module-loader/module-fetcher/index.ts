@@ -1,4 +1,4 @@
-/**
+/****
  * Module Fetcher
  *
  * Fetches and caches ESM modules for MDX rendering.
@@ -29,6 +29,7 @@ import {
 } from "../../../esm/bundle-manifest.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import {
+  FRAMEWORK_ROOT,
   LOG_PREFIX_MDX_LOADER,
   RELATIVE_IMPORT_PATTERN,
   UNRESOLVED_VF_MODULES_PATTERN,
@@ -42,7 +43,6 @@ import { resolveModuleFile } from "../resolution/file-finder.ts";
 import { recordSSRModules } from "../../../../modules/manifest/route-module-manifest.ts";
 import { getDistributedTransformBackend } from "#veryfront/transforms/esm/transform-cache.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
-import { FRAMEWORK_ROOT } from "../constants.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
 
 /** TTL for cached transforms (uses centralized config) */
@@ -141,19 +141,15 @@ export function rewriteDntImports(code: string, sourceFilePath: string): string 
 
   const sourceDir = dirname(sourceFilePath);
 
-  return code.replace(
-    /from\s+["'](\.\.?\/[^"']+)["']/g,
-    (_match, relativePath: string) => {
+  return code
+    .replace(/from\s+["'](\.\.?\/[^"']+)["']/g, (_match, relativePath: string) => {
       const absolutePath = resolve(sourceDir, relativePath);
       return `from "file://${absolutePath}"`;
-    },
-  ).replace(
-    /import\s+["'](\.\.?\/[^"']+)["']/g,
-    (_match, relativePath: string) => {
+    })
+    .replace(/import\s+["'](\.\.?\/[^"']+)["']/g, (_match, relativePath: string) => {
       const absolutePath = resolve(sourceDir, relativePath);
       return `import "file://${absolutePath}"`;
-    },
-  );
+    });
 }
 
 function getVersionedPathCacheKey(normalizedPath: string): string {
@@ -189,15 +185,13 @@ async function hasIncompatibleFrameworkPaths(code: string, log: Logger): Promise
   // Global regexes maintain lastIndex state that can interleave between concurrent calls.
   const allFilePathsPattern = /file:\/\/([^"'\s]+)/gi;
 
-  // Extract all file:// paths from the code
   const allPaths: string[] = [];
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = allFilePathsPattern.exec(code)) !== null) {
-    allPaths.push(match[1] as string);
+    if (match[1]) allPaths.push(match[1]);
   }
 
   for (const path of allPaths) {
-    // Check HTTP bundle cache paths
     if (path.includes("veryfront-http-bundle")) {
       if (!path.startsWith(localHttpCacheDir)) {
         log.debug(`${LOG_PREFIX_MDX_LOADER} HTTP bundle path from different environment`, {
@@ -209,7 +203,6 @@ async function hasIncompatibleFrameworkPaths(code: string, log: Logger): Promise
       continue;
     }
 
-    // Check MDX ESM cache paths (vfmod files)
     if (path.includes("veryfront-mdx-esm")) {
       if (!path.startsWith(localMdxCacheDir)) {
         log.debug(`${LOG_PREFIX_MDX_LOADER} MDX cache path from different environment`, {
@@ -221,27 +214,25 @@ async function hasIncompatibleFrameworkPaths(code: string, log: Logger): Promise
       continue;
     }
 
-    // Check framework source paths (paths to /src/ that aren't cache paths)
-    if (path.includes("/src/") && !path.includes(".cache")) {
-      if (!path.startsWith(FRAMEWORK_ROOT)) {
-        log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path from different environment`, {
-          path,
-          expectedRoot: FRAMEWORK_ROOT,
-        });
-        return true;
-      }
+    if (!path.includes("/src/") || path.includes(".cache")) continue;
 
-      // Also verify the file actually exists
-      try {
-        const stat = await localFs.stat(path);
-        if (!stat?.isFile) {
-          log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path does not exist`, { path });
-          return true;
-        }
-      } catch {
-        log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path not accessible`, { path });
+    if (!path.startsWith(FRAMEWORK_ROOT)) {
+      log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path from different environment`, {
+        path,
+        expectedRoot: FRAMEWORK_ROOT,
+      });
+      return true;
+    }
+
+    try {
+      const stat = await localFs.stat(path);
+      if (!stat?.isFile) {
+        log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path does not exist`, { path });
         return true;
       }
+    } catch {
+      log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path not accessible`, { path });
+      return true;
     }
   }
 
@@ -267,11 +258,7 @@ const renderSessions = new Map<string, RenderSession>();
  * Start a render session to track module loading.
  * Call this before rendering a page.
  */
-export function startRenderSession(
-  sessionId: string,
-  projectSlug?: string,
-  route?: string,
-): void {
+export function startRenderSession(sessionId: string, projectSlug?: string, route?: string): void {
   renderSessions.set(sessionId, { modules: new Set(), projectSlug, route });
   globalLogger.debug(`${LOG_PREFIX_MDX_LOADER} Started render session`, {
     sessionId,
@@ -303,19 +290,17 @@ export function endRenderSession(sessionId: string): void {
 
   if (session.projectSlug !== undefined && session.route !== undefined) {
     if (modulePaths.length > 0) recordSSRModules(session.projectSlug, session.route, modulePaths);
-    renderSessions.delete(sessionId);
-    return;
+  } else {
+    // This is normal in local dev/tests where projectSlug isn't set
+    // The manifest is an optimization for production, not required
+    globalLogger.debug(
+      `${LOG_PREFIX_MDX_LOADER} Cannot record to manifest - missing projectSlug or route`,
+      {
+        projectSlug: session.projectSlug,
+        route: session.route,
+      },
+    );
   }
-
-  // This is normal in local dev/tests where projectSlug isn't set
-  // The manifest is an optimization for production, not required
-  globalLogger.debug(
-    `${LOG_PREFIX_MDX_LOADER} Cannot record to manifest - missing projectSlug or route`,
-    {
-      projectSlug: session.projectSlug,
-      route: session.route,
-    },
-  );
 
   renderSessions.delete(sessionId);
 }
@@ -351,8 +336,7 @@ function normalizePath(modulePath: string, parentModulePath?: string): string {
   if (!modulePath.startsWith("./") && !modulePath.startsWith("../")) return normalizedPath;
 
   const parentDir = parentModulePath.replace(/\/[^/]+$/, "");
-  const joinedPath = posix.join(parentDir, modulePath);
-  normalizedPath = posix.normalize(joinedPath);
+  normalizedPath = posix.normalize(posix.join(parentDir, modulePath));
 
   if (!normalizedPath.startsWith("_vf_modules/")) normalizedPath = `_vf_modules/${normalizedPath}`;
   return normalizedPath;
@@ -427,6 +411,7 @@ async function processNestedImports(
         projectSlug,
       });
     }
+
     const stubPath = await createStubModule(modulePath, result, original, esmCacheDir);
     if (stubPath) result = result.replace(original, `from "file://${stubPath}"`);
   }
@@ -497,9 +482,7 @@ async function fetchModuleViaHTTP(
     return null;
   }
 
-  log.debug(
-    `${LOG_PREFIX_MDX_LOADER} Direct read failed, falling back to HTTP: ${normalizedPath}`,
-  );
+  log.debug(`${LOG_PREFIX_MDX_LOADER} Direct read failed, falling back to HTTP: ${normalizedPath}`);
 
   const port = adapter.env.get("VERYFRONT_DEV_PORT") || adapter.env.get("PORT") || "3001";
   const host = projectSlug ? `${projectSlug}.lvh.me` : "localhost";
@@ -518,9 +501,7 @@ async function fetchModuleViaHTTP(
   );
 
   if (!response.ok) {
-    log.warn(
-      `${LOG_PREFIX_MDX_LOADER} HTTP fetch also failed: ${moduleUrl} (${response.status})`,
-    );
+    log.warn(`${LOG_PREFIX_MDX_LOADER} HTTP fetch also failed: ${moduleUrl} (${response.status})`);
     return null;
   }
 
@@ -548,6 +529,46 @@ async function fetchModuleViaHTTP(
   return moduleCode;
 }
 
+async function validateCachedModule(
+  normalizedPath: string,
+  cachedPath: string,
+  cachedCode: string,
+  log: Logger,
+  pathCache: Map<string, string>,
+  versionedKey: string,
+): Promise<boolean> {
+  const bundlePaths = extractHttpBundlePaths(cachedCode);
+  if (bundlePaths.length > 0) {
+    const cacheDir = getHttpBundleCacheDir();
+    const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+    if (failed.length > 0) {
+      log.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has missing HTTP bundles`, {
+        normalizedPath,
+        cachedPath,
+        failed,
+      });
+      pathCache.delete(versionedKey);
+      return false;
+    }
+  }
+
+  if (!(await hasIncompatibleFrameworkPaths(cachedCode, log))) return true;
+
+  log.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible framework paths`, {
+    normalizedPath,
+    cachedPath,
+    frameworkRoot: FRAMEWORK_ROOT,
+  });
+
+  pathCache.delete(versionedKey);
+  try {
+    await getLocalFs().remove(cachedPath);
+  } catch {
+    /* ignore removal errors */
+  }
+  return false;
+}
+
 /**
  * Fetch and cache a module.
  * This is the main entry point for module fetching operations.
@@ -561,13 +582,9 @@ export async function fetchAndCacheModule(
   const normalizedPath = normalizePath(modulePath, parentModulePath);
   const projectSlug = context.projectSlug || "unknown";
 
-  // Initialize deadline on first call, then propagate through recursive calls
   const now = Date.now();
-  if (!context.transformDeadline) {
-    context.transformDeadline = now + TRANSFORM_TREE_TIMEOUT_MS;
-  }
+  context.transformDeadline ??= now + TRANSFORM_TREE_TIMEOUT_MS;
 
-  // Check if we've exceeded the deadline
   if (now > context.transformDeadline) {
     const elapsedMs = TRANSFORM_TREE_TIMEOUT_MS + (now - context.transformDeadline);
     log.error(`${LOG_PREFIX_MDX_LOADER} Transform tree timeout exceeded`, {
@@ -645,60 +662,22 @@ async function doFetchAndCacheModule(
     try {
       const stat = await getLocalFs().stat(cachedPath);
       if (stat?.isFile) {
-        // Verify HTTP bundles in cached module exist before returning
-        // The cached module may reference file:// paths to HTTP bundles that
-        // were created on a different pod and may not exist locally
         const cachedCode = await getLocalFs().readTextFile(cachedPath);
-        const bundlePaths = extractHttpBundlePaths(cachedCode);
-        if (bundlePaths.length > 0) {
-          const cacheDir = getHttpBundleCacheDir();
-          const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-          if (failed.length > 0) {
-            log.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has missing HTTP bundles`, {
-              normalizedPath,
-              cachedPath,
-              failed,
-            });
-            // Invalidate this cache entry - HTTP bundles can't be recovered
-            pathCache.delete(versionedKey);
-            // Continue to re-transform
-          } else if (await hasIncompatibleFrameworkPaths(cachedCode, log)) {
-            // Framework paths from different environment - invalidate and re-transform
-            log.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible framework paths`, {
-              normalizedPath,
-              cachedPath,
-              frameworkRoot: FRAMEWORK_ROOT,
-            });
-            pathCache.delete(versionedKey);
-            // Delete the stale file so it gets recreated
-            try {
-              await getLocalFs().remove(cachedPath);
-            } catch { /* ignore removal errors */ }
-            // Continue to re-transform
-          } else {
-            recordModuleToSession(normalizedPath);
-            return cachedPath;
-          }
-        } else if (await hasIncompatibleFrameworkPaths(cachedCode, log)) {
-          // Framework paths from different environment - invalidate and re-transform
-          log.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible framework paths`, {
+        if (
+          await validateCachedModule(
             normalizedPath,
             cachedPath,
-            frameworkRoot: FRAMEWORK_ROOT,
-          });
-          pathCache.delete(versionedKey);
-          // Delete the stale file so it gets recreated
-          try {
-            await getLocalFs().remove(cachedPath);
-          } catch { /* ignore removal errors */ }
-          // Continue to re-transform
-        } else {
+            cachedCode,
+            log,
+            pathCache,
+            versionedKey,
+          )
+        ) {
           recordModuleToSession(normalizedPath);
           return cachedPath;
         }
       }
     } catch {
-      // Cache entry is stale, remove it
       pathCache.delete(versionedKey);
     }
   }
@@ -715,6 +694,7 @@ async function doFetchAndCacheModule(
         projectSlug,
         context.isLocalDev,
       );
+
       if (moduleCode) {
         return await cacheModule(normalizedPath, moduleCode, esmCacheDir, pathCache, log);
       }
@@ -749,12 +729,10 @@ async function doFetchAndCacheModule(
             cacheKey: transformCacheKey,
           });
 
-          // Check for bundle manifest (companion key pattern)
           const bundleManifestKey = `${transformCacheKey}:bm`;
           const manifestId = await distributedCache.get(bundleManifestKey).catch(() => null);
 
           if (manifestId) {
-            // Manifest-based validation: atomic check that ALL bundles exist
             const cacheDir = getHttpBundleCacheDir();
             const validation = await validateBundleGroup(manifestId, cacheDir);
             if (!validation.valid) {
@@ -766,7 +744,6 @@ async function doFetchAndCacheModule(
               moduleCode = null;
             }
           } else {
-            // Legacy path: extract bundle paths and ensure they exist
             const bundlePaths = extractHttpBundlePaths(cached);
             if (bundlePaths.length > 0) {
               const cacheDir = getHttpBundleCacheDir();
@@ -781,7 +758,6 @@ async function doFetchAndCacheModule(
             }
           }
 
-          // CRITICAL: Check for framework source paths from a different environment.
           if (moduleCode && await hasIncompatibleFrameworkPaths(cached, log)) {
             log.warn(`${LOG_PREFIX_MDX_LOADER} Cached code has incompatible framework paths`, {
               normalizedPath,
@@ -832,15 +808,9 @@ async function doFetchAndCacheModule(
         outputLength: moduleCode.length,
       });
 
-      // Cached .mjs files don't have access to deno.json import maps
-      moduleCode = rewriteVeryfrontImports(moduleCode);
-
-      // Rewrite _dnt.polyfills.js / _dnt.shims.js relative imports to absolute file:// paths.
-      // Without this, cached modules in /app/.cache/ would have broken relative paths.
-      moduleCode = rewriteDntImports(moduleCode, actualFilePath);
+      moduleCode = rewriteDntImports(rewriteVeryfrontImports(moduleCode), actualFilePath);
 
       if (distributedCache) {
-        // Store transformed code in distributed cache
         distributedCache
           .set(transformCacheKey, moduleCode, TRANSFORM_CACHE_TTL_SECONDS)
           .catch((error) => {
@@ -850,24 +820,25 @@ async function doFetchAndCacheModule(
             });
           });
 
-        // Create and store bundle manifest companion key for atomic validation
         const bundlePaths = extractHttpBundlePaths(moduleCode);
         if (bundlePaths.length > 0) {
           const entries = bundlePaths.map((b) => ({ hash: b.hash, url: "", sizeBytes: 0 }));
-          createBundleManifest(entries).then(async (manifest) => {
-            await storeBundleManifest(manifest);
-            const bundleManifestKey = `${transformCacheKey}:bm`;
-            await distributedCache.set(
-              bundleManifestKey,
-              manifest.manifestId,
-              TRANSFORM_CACHE_TTL_SECONDS,
-            );
-          }).catch((error) => {
-            log.debug(`${LOG_PREFIX_MDX_LOADER} Bundle manifest creation failed`, {
-              normalizedPath,
-              error,
+          createBundleManifest(entries)
+            .then(async (manifest) => {
+              await storeBundleManifest(manifest);
+              const bundleManifestKey = `${transformCacheKey}:bm`;
+              await distributedCache.set(
+                bundleManifestKey,
+                manifest.manifestId,
+                TRANSFORM_CACHE_TTL_SECONDS,
+              );
+            })
+            .catch((error) => {
+              log.debug(`${LOG_PREFIX_MDX_LOADER} Bundle manifest creation failed`, {
+                normalizedPath,
+                error,
+              });
             });
-          });
         }
       }
     }
@@ -909,14 +880,11 @@ async function doFetchAndCacheModule(
       projectSlug,
     );
 
-    log.debug(
-      `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports START`,
-      {
-        projectSlug,
-        normalizedPath,
-        count: relative.length,
-      },
-    );
+    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports START`, {
+      projectSlug,
+      normalizedPath,
+      count: relative.length,
+    });
     const relStart = performance.now();
     const relativeResults = await Promise.all(
       relative.map(async ({ original, path }) => ({
@@ -925,14 +893,11 @@ async function doFetchAndCacheModule(
         relativePath: path,
       })),
     );
-    log.debug(
-      `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports DONE`,
-      {
-        projectSlug,
-        normalizedPath,
-        relMs: (performance.now() - relStart).toFixed(1),
-      },
-    );
+    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports DONE`, {
+      projectSlug,
+      normalizedPath,
+      relMs: (performance.now() - relStart).toFixed(1),
+    });
     moduleCode = await processNestedImports(
       moduleCode,
       relativeResults,
@@ -963,10 +928,7 @@ async function doFetchAndCacheModule(
     return finalCachedPath;
   } catch (error) {
     log.warn(`${LOG_PREFIX_MDX_LOADER} Failed to process ${normalizedPath}`, error);
-    // Rethrow MissingModuleError when strictMissingModules is enabled
-    if (error instanceof Error && error.name === "MissingModuleError") {
-      throw error;
-    }
+    if (error instanceof Error && error.name === "MissingModuleError") throw error;
     return null;
   }
 }

@@ -35,23 +35,13 @@ export default tool({
     createFolderIfNeeded,
     folderPath,
   }) {
-    let targetFolderId = folderId;
-
-    if (createFolderIfNeeded && folderPath && !folderId) {
-      const folders = folderPath.split("/").filter(Boolean);
-      let currentFolderId: string | undefined;
-
-      for (const folderName of folders) {
-        try {
-          const folder = await createFolder(siteId, driveId, folderName, currentFolderId);
-          currentFolderId = folder.id;
-        } catch (error) {
-          console.warn(`Note: Could not create folder "${folderName}":`, error);
-        }
-      }
-
-      targetFolderId = currentFolderId;
-    }
+    const targetFolderId = await resolveTargetFolderId({
+      siteId,
+      driveId,
+      folderId,
+      createFolderIfNeeded,
+      folderPath,
+    });
 
     const file = await uploadFile(siteId, driveId, fileName, content, targetFolderId);
 
@@ -69,6 +59,36 @@ export default tool({
     };
   },
 });
+
+async function resolveTargetFolderId({
+  siteId,
+  driveId,
+  folderId,
+  createFolderIfNeeded,
+  folderPath,
+}: {
+  siteId: string;
+  driveId: string;
+  folderId?: string;
+  createFolderIfNeeded: boolean;
+  folderPath?: string;
+}): Promise<string | undefined> {
+  if (!createFolderIfNeeded || !folderPath || folderId) return folderId;
+
+  const folders = folderPath.split("/").filter(Boolean);
+  let currentFolderId: string | undefined;
+
+  for (const folderName of folders) {
+    try {
+      const folder = await createFolder(siteId, driveId, folderName, currentFolderId);
+      currentFolderId = folder.id;
+    } catch (error) {
+      console.warn(`Note: Could not create folder "${folderName}":`, error);
+    }
+  }
+
+  return currentFolderId;
+}
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 Bytes";

@@ -10,7 +10,6 @@ export type {
   Handler,
   HandlerContext,
   HandlerMetadata,
-  HandlerPriority,
   HandlerResult,
   MiddlewareFunction,
   ParsedDomain,
@@ -19,3 +18,5 @@ export type {
   RouteRegistryConfig,
   SecurityConfig,
 } from "#veryfront/types";
+
+export { HandlerPriority } from "#veryfront/types";

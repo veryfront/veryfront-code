@@ -68,14 +68,14 @@ function createFsAdapterPlugin(fsAdapter: FileSystemAdapter): Plugin {
         const basePath = pathHelper.resolve(importerDir, args.path);
 
         const resolvedPath = await resolveWithExtensions(basePath);
-        if (resolvedPath) {
-          return { path: resolvedPath, namespace: "fsadapter" };
-        }
+        if (resolvedPath) return { path: resolvedPath, namespace: "fsadapter" };
 
         return {
-          errors: [{
-            text: `Could not resolve "${args.path}" from "${importerDir}" via fsAdapter`,
-          }],
+          errors: [
+            {
+              text: `Could not resolve "${args.path}" from "${importerDir}" via fsAdapter`,
+            },
+          ],
         };
       });
 
@@ -89,9 +89,11 @@ function createFsAdapterPlugin(fsAdapter: FileSystemAdapter): Plugin {
           };
         } catch (error) {
           return {
-            errors: [{
-              text: `Failed to load "${args.path}" from fsAdapter: ${error}`,
-            }],
+            errors: [
+              {
+                text: `Failed to load "${args.path}" from fsAdapter: ${error}`,
+              },
+            ],
           };
         }
       });
@@ -100,17 +102,16 @@ function createFsAdapterPlugin(fsAdapter: FileSystemAdapter): Plugin {
 }
 
 async function importModule(file: string, context: FileDiscoveryContext): Promise<unknown> {
-  if (transpileCache.has(file)) return transpileCache.get(file);
+  const cached = transpileCache.get(file);
+  if (cached) return cached;
 
   const filePath = file.replace("file://", "");
 
   let source: string;
   try {
-    if (context.fsAdapter) {
-      source = await context.fsAdapter.readFile(filePath);
-    } else {
-      source = await createFileSystem().readTextFile(filePath);
-    }
+    source = context.fsAdapter
+      ? await context.fsAdapter.readFile(filePath)
+      : await createFileSystem().readTextFile(filePath);
   } catch (error) {
     throw new Error(`Failed to read file ${filePath}: ${error}`);
   }
@@ -576,7 +577,7 @@ async function findTypeScriptFiles(dir: string, context: FileDiscoveryContext): 
         }
 
         if (entry.isDirectory) {
-          files.push(...await findTypeScriptFiles(filePath, context));
+          files.push(...(await findTypeScriptFiles(filePath, context)));
         }
       }
 
@@ -595,7 +596,7 @@ async function findTypeScriptFiles(dir: string, context: FileDiscoveryContext): 
       }
 
       if (entry.isDirectory()) {
-        files.push(...await findTypeScriptFiles(filePath, context));
+        files.push(...(await findTypeScriptFiles(filePath, context)));
       }
     }
   } catch {

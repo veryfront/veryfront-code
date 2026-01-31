@@ -36,7 +36,6 @@ function getActivityColor(type: string): string {
 
 export async function RecentActivity({ userId }: { userId: string }): Promise<React.JSX.Element> {
   const activities = await getRecentActivity(userId);
-  const hasActivities = activities.length > 0;
 
   return (
     <div className="bg-white/60 dark:bg-slate-800/60 backdrop-blur-lg rounded-2xl shadow-sm border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
@@ -58,7 +57,7 @@ export async function RecentActivity({ userId }: { userId: string }): Promise<Re
         </a>
       </div>
 
-      {hasActivities ? (
+      {activities.length > 0 ? (
         <div className="divide-y divide-slate-200/50 dark:divide-slate-700/50">
           {activities.map((activity) => (
             <div

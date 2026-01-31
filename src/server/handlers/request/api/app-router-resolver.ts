@@ -29,11 +29,11 @@ export async function resolveAppRouteFile(
   const params: Record<string, string | string[]> = {};
 
   for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i]!;
+    const seg = segments[i];
+    if (!seg) continue;
 
-    let names: string[];
+    const names: string[] = [];
     try {
-      names = [];
       for await (const e of ctx.adapter.fs.readDir(current)) {
         if (e.isDirectory) names.push(e.name);
       }

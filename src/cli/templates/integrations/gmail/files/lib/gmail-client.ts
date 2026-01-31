@@ -53,7 +53,6 @@ const tokenStoreAdapter = {
   async clearTokens(serviceId: string): Promise<void> {
     await tokenStore.revokeToken("current-user", serviceId);
   },
-  // State methods not needed for API client
   async getState(): Promise<null> {
     return null;
   },
@@ -103,13 +102,15 @@ export function createGmailClient(): {
     ): Promise<GmailMessageList> {
       const params = new URLSearchParams();
 
-      if (options.maxResults) params.set("maxResults", String(options.maxResults));
+      if (options.maxResults != null) params.set("maxResults", String(options.maxResults));
       if (options.query) params.set("q", options.query);
-      if (options.labelIds) params.set("labelIds", options.labelIds.join(","));
+      if (options.labelIds?.length) params.set("labelIds", options.labelIds.join(","));
       if (options.pageToken) params.set("pageToken", options.pageToken);
 
       const query = params.toString();
-      return apiRequest<GmailMessageList>(`/users/me/messages${query ? `?${query}` : ""}`);
+      const url = query ? `/users/me/messages?${query}` : "/users/me/messages";
+
+      return apiRequest<GmailMessageList>(url);
     },
 
     getMessage(messageId: string, format: "full" | "metadata" | "minimal" = "full"): Promise<GmailMessage> {
@@ -132,7 +133,6 @@ export function createGmailClient(): {
       if (options.replyTo) headers.push(`Reply-To: ${options.replyTo}`);
 
       const email = `${headers.join("\r\n")}\r\n\r\n${options.body}`;
-
       const encodedEmail = btoa(email).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
       return apiRequest<{ id: string; threadId: string }>("/users/me/messages/send", {
@@ -144,7 +144,6 @@ export function createGmailClient(): {
     async searchEmails(query: string, maxResults = 10): Promise<GmailMessage[]> {
       const list = await this.listMessages({ query, maxResults });
       if (!list.messages?.length) return [];
-
       return Promise.all(list.messages.map((m) => this.getMessage(m.id, "metadata")));
     },
 
@@ -172,8 +171,7 @@ export function parseEmailHeaders(
   headers: Array<{ name: string; value: string }>,
 ): { from: string; to: string; subject: string; date: string } {
   function getHeader(name: string): string {
-    const header = headers.find((h) => h.name.toLowerCase() === name.toLowerCase());
-    return header?.value ?? "";
+    return headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? "";
   }
 
   return {

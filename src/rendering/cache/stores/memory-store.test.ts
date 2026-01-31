@@ -14,16 +14,13 @@ describe("rendering/cache/stores/memory-store", () => {
   describe("MemoryCacheStore", () => {
     it("should get and set values", async () => {
       const store = new MemoryCacheStore();
-      const payload = makePayload();
-      await store.set("key1", payload);
-      const result = await store.get("key1");
-      assertEquals(result?.result.html, "<p>test</p>");
+      await store.set("key1", makePayload());
+      assertEquals((await store.get("key1"))?.result.html, "<p>test</p>");
     });
 
     it("should return undefined for missing keys", async () => {
       const store = new MemoryCacheStore();
-      const result = await store.get("missing");
-      assertEquals(result, undefined);
+      assertEquals(await store.get("missing"), undefined);
     });
 
     it("should delete entries", async () => {
@@ -39,8 +36,7 @@ describe("rendering/cache/stores/memory-store", () => {
       await store.set("proj:a:page2", makePayload("a2"));
       await store.set("proj:b:page1", makePayload("b1"));
 
-      const deleted = await store.deleteByPrefix("proj:a:");
-      assertEquals(deleted, 2);
+      assertEquals(await store.deleteByPrefix("proj:a:"), 2);
       assertEquals(await store.get("proj:a:page1"), undefined);
       assertEquals(await store.get("proj:a:page2"), undefined);
       assertEquals((await store.get("proj:b:page1"))?.result.html, "b1");
@@ -60,7 +56,7 @@ describe("rendering/cache/stores/memory-store", () => {
       await store.set("a", makePayload("a"));
       await store.set("b", makePayload("b"));
       await store.set("c", makePayload("c"));
-      // LRU eviction: 'a' should be evicted
+
       assertEquals(await store.get("a"), undefined);
       assertEquals((await store.get("c"))?.result.html, "c");
     });

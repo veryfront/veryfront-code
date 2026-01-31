@@ -1,3 +1,5 @@
+import { getExtensionName } from "../../../utils/path-utils.ts";
+
 export function getOptimizedPath(
   src: string,
   format: string,
@@ -5,14 +7,13 @@ export function getOptimizedPath(
   _quality: number = 80,
 ): string {
   const basePath = src.replace(/\.[^.]+$/, "");
-  const optimizedDir = ".veryfront/optimized-images";
-  return `/${optimizedDir}${basePath}-${size}w.${format}`;
+  return `/.veryfront/optimized-images${basePath}-${size}w.${format}`;
 }
 
 export function generateSrcSet(
   src: string,
   format: string,
-  sizes: number[],
+  sizes: readonly number[],
   quality: number,
 ): string {
   return sizes
@@ -20,12 +21,9 @@ export function generateSrcSet(
     .join(", ");
 }
 
-import { getExtensionName } from "../../../utils/path-utils.ts";
-
 /**
  * Get image file extension, defaulting to "jpeg" if none found.
  */
 export function getImageExtension(src: string): string {
-  const ext = getExtensionName(src);
-  return ext || "jpeg";
+  return getExtensionName(src) || "jpeg";
 }

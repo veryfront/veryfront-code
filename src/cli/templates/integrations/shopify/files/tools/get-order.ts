@@ -10,8 +10,6 @@ export default tool({
   }),
   async execute({ orderId }) {
     const order = await getOrder(orderId);
-    const customer = order.customer;
-    const shippingAddress = order.shipping_address;
 
     return {
       id: order.id,
@@ -25,12 +23,12 @@ export default tool({
       currency: order.currency,
       financialStatus: order.financial_status,
       fulfillmentStatus: order.fulfillment_status,
-      customer: customer
+      customer: order.customer
         ? {
-            id: customer.id,
-            email: customer.email,
-            firstName: customer.first_name,
-            lastName: customer.last_name,
+            id: order.customer.id,
+            email: order.customer.email,
+            firstName: order.customer.first_name,
+            lastName: order.customer.last_name,
           }
         : null,
       lineItems: order.line_items.map((item) => ({
@@ -41,13 +39,13 @@ export default tool({
         sku: item.sku,
         variantTitle: item.variant_title,
       })),
-      shippingAddress: shippingAddress
+      shippingAddress: order.shipping_address
         ? {
-            address1: shippingAddress.address1,
-            city: shippingAddress.city,
-            province: shippingAddress.province,
-            country: shippingAddress.country,
-            zip: shippingAddress.zip,
+            address1: order.shipping_address.address1,
+            city: order.shipping_address.city,
+            province: order.shipping_address.province,
+            country: order.shipping_address.country,
+            zip: order.shipping_address.zip,
           }
         : null,
     };

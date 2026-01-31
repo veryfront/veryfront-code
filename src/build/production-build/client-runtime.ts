@@ -39,14 +39,14 @@ async function statFile(path: string): Promise<FileStatResult | null> {
   try {
     const stat = await fs.stat(path);
     return { isFile: stat.isFile };
-  } catch (error: unknown) {
-    throw error;
+  } catch {
+    return null;
   }
 }
 
 async function readTextFile(path: string): Promise<string> {
   const fs = createFileSystem();
-  return await fs.readTextFile(path);
+  return fs.readTextFile(path);
 }
 
 const moduleDir = dirname(fromFileUrl(import.meta.url));
@@ -117,7 +117,7 @@ export async function generateRouterScript(_adapter: RuntimeAdapter): Promise<st
     return CLIENT_ROUTER_BUNDLE;
   }
 
-  return await bundleClientEntry("../../rendering/client/router.ts");
+  return bundleClientEntry("../../rendering/client/router.ts");
 }
 
 /**
@@ -130,7 +130,7 @@ export async function generatePrefetchScript(_adapter: RuntimeAdapter): Promise<
     return CLIENT_PREFETCH_BUNDLE;
   }
 
-  return await bundleClientEntry("../../rendering/client/prefetch.ts");
+  return bundleClientEntry("../../rendering/client/prefetch.ts");
 }
 
 /**
@@ -210,9 +210,7 @@ function determineImporterDir(args: OnResolveArgs): string {
 async function resolveFromCandidates(basePath: string): Promise<string | null> {
   for (const candidate of buildCandidatePaths(basePath)) {
     const stat = await statFile(candidate);
-    if (stat?.isFile) {
-      return candidate;
-    }
+    if (stat?.isFile) return candidate;
   }
   return null;
 }
@@ -220,9 +218,7 @@ async function resolveFromCandidates(basePath: string): Promise<string | null> {
 function buildCandidatePaths(basePath: string): string[] {
   const normalizedBase = stripTrailingSeparator(basePath);
 
-  if (hasSupportedExtension(normalizedBase)) {
-    return [normalizedBase];
-  }
+  if (hasSupportedExtension(normalizedBase)) return [normalizedBase];
 
   const withExtensions = moduleExtensions.map((extension) => `${normalizedBase}${extension}`);
   const indexCandidates = moduleExtensions.map((extension) =>
@@ -246,17 +242,9 @@ function stripSpecifier(specifier: string): string {
   const queryIndex = specifier.indexOf("?");
   const hashIndex = specifier.indexOf("#");
 
-  if (queryIndex === -1 && hashIndex === -1) {
-    return specifier;
-  }
-
-  if (queryIndex === -1) {
-    return specifier.slice(0, hashIndex);
-  }
-
-  if (hashIndex === -1) {
-    return specifier.slice(0, queryIndex);
-  }
+  if (queryIndex === -1 && hashIndex === -1) return specifier;
+  if (queryIndex === -1) return specifier.slice(0, hashIndex);
+  if (hashIndex === -1) return specifier.slice(0, queryIndex);
 
   return specifier.slice(0, Math.min(queryIndex, hashIndex));
 }

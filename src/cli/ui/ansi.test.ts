@@ -110,21 +110,21 @@ describe("cli/ui/ansi", () => {
     });
 
     it("should generate 16-color foreground", () => {
-      assertEquals(fg16(1), `${CSI}31m`); // red
+      assertEquals(fg16(1), `${CSI}31m`);
     });
 
     it("should generate 16-color background", () => {
-      assertEquals(bg16(4), `${CSI}44m`); // blue background
+      assertEquals(bg16(4), `${CSI}44m`);
     });
   });
 
   describe("ANSI_REGEX", () => {
     it("should match ANSI escape codes", () => {
+      ANSI_REGEX.lastIndex = 0;
       assertEquals(ANSI_REGEX.test("\x1b[31m"), true);
     });
 
     it("should match bold code", () => {
-      // Reset lastIndex since ANSI_REGEX is global
       ANSI_REGEX.lastIndex = 0;
       assertEquals(ANSI_REGEX.test("\x1b[1m"), true);
     });

@@ -25,20 +25,26 @@ export default tool({
     const { contacts, hasMore } = await listContacts({ page, perPage });
 
     return {
-      contacts: contacts.slice(0, limit).map((contact) => ({
-        id: contact.id,
-        email: contact.email,
-        name: contact.name,
-        phone: contact.phone,
-        role: contact.role,
-        createdAt: new Date(contact.created_at * 1000).toISOString(),
-        updatedAt: new Date(contact.updated_at * 1000).toISOString(),
-        lastSeenAt: contact.last_seen_at
+      contacts: contacts.slice(0, limit).map((contact) => {
+        const createdAt = new Date(contact.created_at * 1000).toISOString();
+        const updatedAt = new Date(contact.updated_at * 1000).toISOString();
+        const lastSeenAt = contact.last_seen_at
           ? new Date(contact.last_seen_at * 1000).toISOString()
-          : null,
-        ownerId: contact.owner_id,
-        tags: contact.tags?.map((tag) => tag.name),
-      })),
+          : null;
+
+        return {
+          id: contact.id,
+          email: contact.email,
+          name: contact.name,
+          phone: contact.phone,
+          role: contact.role,
+          createdAt,
+          updatedAt,
+          lastSeenAt,
+          ownerId: contact.owner_id,
+          tags: contact.tags?.map((tag) => tag.name),
+        };
+      }),
       hasMore,
       page,
     };

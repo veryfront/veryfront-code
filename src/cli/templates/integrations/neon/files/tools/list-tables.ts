@@ -16,29 +16,30 @@ export default tool({
   async execute({ schema, includeRowCounts }) {
     const tables = await listTables(schema);
 
-    const results = [];
-    for (const table of tables) {
-      const result: {
-        tablename: string;
-        schemaname: string;
-        tableowner: string;
-        rowCount?: number;
-      } = {
-        tablename: table.tablename,
-        schemaname: table.schemaname,
-        tableowner: table.tableowner,
-      };
+    const results = await Promise.all(
+      tables.map(async (table) => {
+        const result: {
+          tablename: string;
+          schemaname: string;
+          tableowner: string;
+          rowCount?: number;
+        } = {
+          tablename: table.tablename,
+          schemaname: table.schemaname,
+          tableowner: table.tableowner,
+        };
 
-      if (includeRowCounts) {
+        if (!includeRowCounts) return result;
+
         try {
           result.rowCount = await getTableRowCount(table.tablename, schema);
         } catch {
           result.rowCount = undefined;
         }
-      }
 
-      results.push(result);
-    }
+        return result;
+      }),
+    );
 
     return {
       schema,

@@ -27,7 +27,7 @@ describe("errors/catalog/route-errors", () => {
         assertEquals(typeof solution.message, "string", `message should be string for ${code}`);
         assertEquals(typeof solution.docs, "string", `docs should be string for ${code}`);
         assertEquals(Array.isArray(solution.steps), true, `steps should be array for ${code}`);
-        assertEquals(solution.steps!.length > 0, true, `steps should not be empty for ${code}`);
+        assertEquals(solution.steps.length > 0, true, `steps should not be empty for ${code}`);
       }
     });
 
@@ -38,7 +38,7 @@ describe("errors/catalog/route-errors", () => {
     it("INVALID_ROUTE_FILE should have an example", () => {
       const solution = ROUTE_ERROR_CATALOG[ErrorCode.INVALID_ROUTE_FILE]!;
       assertEquals(typeof solution.example, "string");
-      assertEquals(solution.example!.includes("GET"), true);
+      assertEquals(solution.example.includes("GET"), true);
     });
   });
 });

@@ -1,14 +1,26 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-
-// The issues module exports only issuesCommand, but we can test the
-// internal formatting and parsing logic by importing the module's
-// helpers. Since they are not exported, we test via the module's
-// public behavior and test the types/data structures.
-
-// We can import and test the issues module's schema utilities
 import { parseState } from "../../issues/index.ts";
 import type { Issue } from "../../issues/index.ts";
+
+function parseLabels(arg: string | undefined): string[] | undefined {
+  if (!arg) return undefined;
+
+  const values = arg.split(",").map((s) => s.trim()).filter(Boolean);
+  return values.length ? values : undefined;
+}
+
+function getJsonFlag(args: { json?: boolean; j?: boolean }): boolean {
+  return Boolean(args.json || args.j);
+}
+
+function getId(
+  args: { _: (string | number)[] },
+  index: number,
+): string | undefined {
+  const value = args._[index];
+  return typeof value === "string" ? value : undefined;
+}
 
 describe("cli/commands/issues", () => {
   describe("parseState utility (from issues core)", () => {
@@ -77,11 +89,8 @@ describe("cli/commands/issues", () => {
   });
 
   describe("issuesCommand arg parsing patterns", () => {
-    // Test the arg shapes that issuesCommand expects
     it("should accept minimal args structure", () => {
-      const args = {
-        _: ["issues"],
-      };
+      const args = { _: ["issues"] };
       assertEquals(args._[0], "issues");
     });
 
@@ -181,57 +190,40 @@ describe("cli/commands/issues", () => {
   });
 
   describe("comma-separated label parsing pattern", () => {
-    // Tests the pattern used in parseLabels (private function in issues.ts)
-    function parseLabels(arg: string | undefined): string[] | undefined {
-      if (!arg) return undefined;
-      const values = arg
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      return values.length ? values : undefined;
-    }
-
     it("should parse single label", () => {
-      const result = parseLabels("bug");
-      assertEquals(result, ["bug"]);
+      assertEquals(parseLabels("bug"), ["bug"]);
     });
 
     it("should parse multiple labels", () => {
-      const result = parseLabels("bug,feature,priority:high");
-      assertEquals(result, ["bug", "feature", "priority:high"]);
+      assertEquals(parseLabels("bug,feature,priority:high"), [
+        "bug",
+        "feature",
+        "priority:high",
+      ]);
     });
 
     it("should trim whitespace", () => {
-      const result = parseLabels(" bug , feature , fix ");
-      assertEquals(result, ["bug", "feature", "fix"]);
+      assertEquals(parseLabels(" bug , feature , fix "), ["bug", "feature", "fix"]);
     });
 
     it("should return undefined for empty string", () => {
-      const result = parseLabels("");
-      assertEquals(result, undefined);
+      assertEquals(parseLabels(""), undefined);
     });
 
     it("should return undefined for undefined", () => {
-      const result = parseLabels(undefined);
-      assertEquals(result, undefined);
+      assertEquals(parseLabels(undefined), undefined);
     });
 
     it("should filter empty segments", () => {
-      const result = parseLabels("bug,,feature,");
-      assertEquals(result, ["bug", "feature"]);
+      assertEquals(parseLabels("bug,,feature,"), ["bug", "feature"]);
     });
 
     it("should return undefined for all-empty segments", () => {
-      const result = parseLabels(",,,");
-      assertEquals(result, undefined);
+      assertEquals(parseLabels(",,,"), undefined);
     });
   });
 
   describe("JSON flag parsing pattern", () => {
-    function getJsonFlag(args: { json?: boolean; j?: boolean }): boolean {
-      return Boolean(args.json || args.j);
-    }
-
     it("should return false by default", () => {
       assertEquals(getJsonFlag({}), false);
     });
@@ -250,14 +242,6 @@ describe("cli/commands/issues", () => {
   });
 
   describe("getId pattern", () => {
-    function getId(
-      args: { _: (string | number)[] },
-      index: number,
-    ): string | undefined {
-      const value = args._[index];
-      return typeof value === "string" ? value : undefined;
-    }
-
     it("should return string at index", () => {
       assertEquals(getId({ _: ["issues", "view", "ISSUE-001"] }, 2), "ISSUE-001");
     });

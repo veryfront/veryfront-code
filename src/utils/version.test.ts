@@ -28,24 +28,20 @@ describe("version", () => {
 
   describe("createBuildVersion", () => {
     it("should return object with framework version", () => {
-      const build = createBuildVersion();
-      assertEquals(build.framework, VERSION);
+      assertEquals(createBuildVersion().framework, VERSION);
     });
 
     it("should return object with server start time", () => {
-      const build = createBuildVersion();
-      assertEquals(build.serverStart, SERVER_START_TIME);
+      assertEquals(createBuildVersion().serverStart, SERVER_START_TIME);
     });
 
     it("should include projectUpdated when provided", () => {
       const timestamp = "2024-06-15T12:00:00Z";
-      const build = createBuildVersion(timestamp);
-      assertEquals(build.projectUpdated, timestamp);
+      assertEquals(createBuildVersion(timestamp).projectUpdated, timestamp);
     });
 
     it("should have undefined projectUpdated when not provided", () => {
-      const build = createBuildVersion();
-      assertEquals(build.projectUpdated, undefined);
+      assertEquals(createBuildVersion().projectUpdated, undefined);
     });
   });
 });

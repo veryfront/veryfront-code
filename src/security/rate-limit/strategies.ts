@@ -39,7 +39,7 @@ export function slidingWindowStrategy(
     async () => {
       // Fallback to fixed window for non-memory stores
       if (!(store instanceof MemoryRateLimitStore)) {
-        return await fixedWindowStrategy(key, config, store);
+        return fixedWindowStrategy(key, config, store);
       }
 
       const now = Date.now();
@@ -81,19 +81,21 @@ export function tokenBucketStrategy(
     async () => {
       // Fallback to fixed window for non-memory stores
       if (!(store instanceof MemoryRateLimitStore)) {
-        return await fixedWindowStrategy(key, config, store);
+        return fixedWindowStrategy(key, config, store);
       }
 
       const now = Date.now();
       const refillRate = config.maxRequests / config.windowMs; // tokens per ms
-      const state = store.getState(key) ?? {
+
+      const existingState = store.getState(key);
+      const state = existingState ?? {
         // Start with full bucket, consume one token
         count: config.maxRequests - 1,
         resetTime: now,
         requestTimestamps: [now],
       };
 
-      if (!store.getState(key)) {
+      if (!existingState) {
         store.setState(key, state);
         const remaining = Math.floor(state.count);
         const resetTime = now + (config.maxRequests - remaining) / refillRate;

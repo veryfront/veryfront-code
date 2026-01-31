@@ -4,18 +4,16 @@ import { generateSrcSet, getImageExtension, getOptimizedPath } from "./helpers.t
 const DEFAULT_SIZES = [...RESPONSIVE_IMAGE_WIDTHS];
 const DEFAULT_FORMATS: Array<"avif" | "webp" | "jpeg"> = ["avif", "webp", "jpeg"];
 
+type ImageFormat = "avif" | "webp" | "jpeg" | "png";
+
 export function useOptimizedImage(
   src: string,
-  options: {
-    formats?: Array<"avif" | "webp" | "jpeg" | "png">;
-    quality?: number;
-  } = {},
+  options: { formats?: ImageFormat[]; quality?: number } = {},
 ): {
-  sources: Array<{ format: "avif" | "webp" | "jpeg" | "png"; srcSet: string; type: string }>;
+  sources: Array<{ format: ImageFormat; srcSet: string; type: string }>;
   fallback: string;
 } {
-  const formats = options.formats ?? DEFAULT_FORMATS;
-  const quality = options.quality ?? 80;
+  const { formats = DEFAULT_FORMATS, quality = 80 } = options;
 
   const sources = formats.map((format) => ({
     format,

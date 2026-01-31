@@ -1,6 +1,3 @@
-/**
- * Base embedding provider
- */
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type {
   EmbeddingDimension,
@@ -63,9 +60,6 @@ export abstract class BaseEmbeddingProvider implements EmbeddingProvider {
     return this.transformResponse(data, model);
   }
 
-  /**
-   * Batch embed with automatic chunking
-   */
   async embedBatch(inputs: string[]): Promise<EmbeddingResponse> {
     const batchSize = this.config.batchSize ?? 100;
     if (inputs.length <= batchSize) return this.embed({ inputs });
@@ -86,7 +80,7 @@ export abstract class BaseEmbeddingProvider implements EmbeddingProvider {
       model = response.model;
       dimension = response.dimension;
 
-      const usage = response.usage;
+      const { usage } = response;
       if (usage) {
         promptTokens += usage.promptTokens;
         totalTokens += usage.totalTokens;

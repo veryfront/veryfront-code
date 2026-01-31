@@ -7,7 +7,7 @@
 
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { isBun, isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 async function getDefaultAdapter(): Promise<RuntimeAdapter> {
@@ -19,11 +19,6 @@ async function getDefaultAdapter(): Promise<RuntimeAdapter> {
   if (isBun) {
     const { bunAdapter } = await import("#veryfront/platform/adapters/runtime/bun/index.ts");
     return bunAdapter;
-  }
-
-  if (isNode) {
-    const { nodeAdapter } = await import("#veryfront/platform/adapters/runtime/node/index.ts");
-    return nodeAdapter;
   }
 
   const { nodeAdapter } = await import("#veryfront/platform/adapters/runtime/node/index.ts");
@@ -90,9 +85,9 @@ export async function* discoverFiles(
 
   const runtimeAdapter = adapter ?? (await getDefaultAdapter());
 
-  yield* walkDirectory(
-    baseDir,
-    0,
+  yield* walkDirectory({
+    dir: baseDir,
+    currentDepth: 0,
     maxDepth,
     extensions,
     patterns,
@@ -100,22 +95,37 @@ export async function* discoverFiles(
     includeDirs,
     recursive,
     followSymlinks,
-    runtimeAdapter,
-  );
+    adapter: runtimeAdapter,
+  });
 }
 
-async function* walkDirectory(
-  dir: string,
-  currentDepth: number,
-  maxDepth: number,
-  extensions: string[] | undefined,
-  patterns: string[] | undefined,
-  ignorePatterns: string[] | undefined,
-  includeDirs: boolean,
-  recursive: boolean,
-  followSymlinks: boolean,
-  adapter: RuntimeAdapter,
-): AsyncGenerator<FileDiscoveryResult> {
+interface WalkDirectoryOptions {
+  dir: string;
+  currentDepth: number;
+  maxDepth: number;
+  extensions: string[] | undefined;
+  patterns: string[] | undefined;
+  ignorePatterns: string[] | undefined;
+  includeDirs: boolean;
+  recursive: boolean;
+  followSymlinks: boolean;
+  adapter: RuntimeAdapter;
+}
+
+async function* walkDirectory(options: WalkDirectoryOptions): AsyncGenerator<FileDiscoveryResult> {
+  const {
+    dir,
+    currentDepth,
+    maxDepth,
+    extensions,
+    patterns,
+    ignorePatterns,
+    includeDirs,
+    recursive,
+    followSymlinks,
+    adapter,
+  } = options;
+
   if (currentDepth > maxDepth) return;
 
   try {
@@ -139,18 +149,11 @@ async function* walkDirectory(
 
         if (!recursive) continue;
 
-        yield* walkDirectory(
-          fullPath,
-          currentDepth + 1,
-          maxDepth,
-          extensions,
-          patterns,
-          ignorePatterns,
-          includeDirs,
-          recursive,
-          followSymlinks,
-          adapter,
-        );
+        yield* walkDirectory({
+          ...options,
+          dir: fullPath,
+          currentDepth: currentDepth + 1,
+        });
         continue;
       }
 
@@ -175,18 +178,11 @@ async function* walkDirectory(
         if (stat.isDirectory) {
           if (!recursive) continue;
 
-          yield* walkDirectory(
-            fullPath,
-            currentDepth + 1,
-            maxDepth,
-            extensions,
-            patterns,
-            ignorePatterns,
-            includeDirs,
-            recursive,
-            followSymlinks,
-            adapter,
-          );
+          yield* walkDirectory({
+            ...options,
+            dir: fullPath,
+            currentDepth: currentDepth + 1,
+          });
           continue;
         }
 
@@ -209,9 +205,7 @@ async function* walkDirectory(
   }
 }
 
-export async function collectFiles(
-  options: FileDiscoveryOptions,
-): Promise<FileDiscoveryResult[]> {
+export async function collectFiles(options: FileDiscoveryOptions): Promise<FileDiscoveryResult[]> {
   return await withSpan(
     "utils.collectFiles",
     async () => {
@@ -227,9 +221,7 @@ export async function collectFiles(
   );
 }
 
-export async function hasMatchingFiles(
-  options: FileDiscoveryOptions,
-): Promise<boolean> {
+export async function hasMatchingFiles(options: FileDiscoveryOptions): Promise<boolean> {
   return await withSpan(
     "utils.hasMatchingFiles",
     async () => {

@@ -15,22 +15,25 @@ import {
   discoverNestedLayouts,
   clearLayoutDiscoveryCache,
 } from "../../../src/rendering/layouts/utils/discovery.ts";
-import type { RuntimeAdapter, FileSystemAdapter } from "../../../src/platform/adapters/base.ts";
+import type {
+  RuntimeAdapter,
+  FileSystemAdapter,
+} from "../../../src/platform/adapters/base.ts";
 
-// Mock adapter that simulates the Veryfront API filesystem
 function createMockAdapter(existingFiles: Set<string>): RuntimeAdapter {
   const mockFS: FileSystemAdapter = {
     stat: async (path: string) => {
-      if (existingFiles.has(path)) {
-        return {
-          isFile: true,
-          isDirectory: false,
-          isSymlink: false,
-          size: 100,
-          mtime: new Date(),
-        };
+      if (!existingFiles.has(path)) {
+        throw new Error(`File not found: ${path}`);
       }
-      throw new Error(`File not found: ${path}`);
+
+      return {
+        isFile: true,
+        isDirectory: false,
+        isSymlink: false,
+        size: 100,
+        mtime: new Date(),
+      };
     },
     readFile: async () => "",
     writeFile: async () => {},
@@ -66,7 +69,10 @@ function createMockAdapter(existingFiles: Set<string>): RuntimeAdapter {
       toObject: () => ({}),
     },
     server: {
-      upgradeWebSocket: () => ({ socket: {} as WebSocket, response: new Response() }),
+      upgradeWebSocket: () => ({
+        socket: {} as WebSocket,
+        response: new Response(),
+      }),
     },
     serve: async () => ({
       stop: async () => {},
@@ -100,7 +106,6 @@ describe("001.1 Layout Discovery Unified", () => {
         adapter,
       );
 
-      // Should find both the root layout and dashboard layout
       assertEquals(layouts.length, 2, "Should find 2 nested layouts");
 
       const paths = layouts.map((l) => l.path);
@@ -131,12 +136,14 @@ describe("001.1 Layout Discovery Unified", () => {
         adapter,
       );
 
-      // Should find all 3 layouts
       assertEquals(layouts.length, 3, "Should find 3 nested layouts");
 
       const paths = layouts.map((l) => l.path);
       assert(paths.includes("/project/app/layout.tsx"), "Should include root layout");
-      assert(paths.includes("/project/app/admin/layout.tsx"), "Should include admin layout");
+      assert(
+        paths.includes("/project/app/admin/layout.tsx"),
+        "Should include admin layout",
+      );
       assert(
         paths.includes("/project/app/admin/users/layout.tsx"),
         "Should include users layout",
@@ -145,9 +152,7 @@ describe("001.1 Layout Discovery Unified", () => {
 
     it("should handle pages without nested layouts", async () => {
       const projectDir = "/project";
-      const existingFiles = new Set([
-        "/project/app/about/page.tsx",
-      ]);
+      const existingFiles = new Set(["/project/app/about/page.tsx"]);
 
       const adapter = createMockAdapter(existingFiles);
       const pageFilePath = "/project/app/about/page.tsx";

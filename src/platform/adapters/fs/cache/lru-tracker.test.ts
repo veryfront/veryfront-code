@@ -26,6 +26,7 @@ describe("LRUTracker", () => {
   describe("update", () => {
     it("should add new key", () => {
       tracker.update("key1");
+
       assertEquals(tracker.size, 1);
     });
 

@@ -115,8 +115,7 @@ describe("veryfront-error", () => {
       };
       const error = toError(veryfrontError);
 
-      // Context is attached but not enumerable
-      assertEquals((error as unknown as { context: VeryfrontErrorData }).context, veryfrontError);
+      assertEquals((error as { context: VeryfrontErrorData }).context, veryfrontError);
     });
   });
 
@@ -194,7 +193,6 @@ describe("veryfront-error", () => {
       const result1 = ensureError("test");
       const result2 = ensureError("test");
 
-      // Use reference comparison - each call should create a new Error instance
       assert(result1 !== result2, "Expected different Error instances");
     });
   });

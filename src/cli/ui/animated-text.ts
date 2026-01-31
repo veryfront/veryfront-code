@@ -1,4 +1,4 @@
-/**
+/****
  * Animated text output utilities for CLI demos
  *
  * @module cli/ui/animated-text
@@ -31,12 +31,10 @@ export async function typeText(
   text: string,
   options: TypewriterOptions = {},
 ): Promise<void> {
-  const {
-    charDelay = TYPEWRITER_CHAR_DELAY_MS,
-    wordDelay = TYPEWRITER_WORD_DELAY_MS,
-    mode = "char",
-    hideCursor = true,
-  } = options;
+  const charDelay = options.charDelay ?? TYPEWRITER_CHAR_DELAY_MS;
+  const wordDelay = options.wordDelay ?? TYPEWRITER_WORD_DELAY_MS;
+  const mode = options.mode ?? "char";
+  const hideCursor = options.hideCursor ?? true;
 
   if (hideCursor) writeStdout(cursor.hide);
 
@@ -44,7 +42,9 @@ export async function typeText(
     if (mode === "word") {
       const words = text.split(" ");
       for (let i = 0; i < words.length; i++) {
-        writeStdout(words[i] + (i < words.length - 1 ? " " : ""));
+        const word = words[i];
+        if (word) writeStdout(word);
+        if (i < words.length - 1) writeStdout(" ");
         await delay(wordDelay);
       }
       return;

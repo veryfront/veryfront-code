@@ -6,6 +6,7 @@ describe("feature-detector", () => {
   describe("detectFeatures", () => {
     it("returns all features disabled for React 17", () => {
       const features = detectFeatures(17, 0, false);
+
       assertEquals(features.suspense, false);
       assertEquals(features.streaming, false);
       assertEquals(features.automaticBatching, false);
@@ -15,6 +16,7 @@ describe("feature-detector", () => {
       assertEquals(features.useOptimistic, false);
       assertEquals(features.renderToPipeableStream, false);
       assertEquals(features.renderToReadableStream, false);
+
       // Always available
       assertEquals(features.renderToString, true);
       assertEquals(features.renderToStaticMarkup, true);
@@ -23,12 +25,14 @@ describe("feature-detector", () => {
 
     it("enables React 18 features for major=18", () => {
       const features = detectFeatures(18, 2, false);
+
       assertEquals(features.suspense, true);
       assertEquals(features.streaming, true);
       assertEquals(features.automaticBatching, true);
       assertEquals(features.transitions, true);
       assertEquals(features.renderToPipeableStream, true);
       assertEquals(features.renderToReadableStream, true);
+
       // React 19 features still off
       assertEquals(features.useFormStatus, false);
       assertEquals(features.serverActions, false);
@@ -42,11 +46,13 @@ describe("feature-detector", () => {
 
     it("enables React 19 features when isReact19Flag is true", () => {
       const features = detectFeatures(19, 0, true);
+
       assertEquals(features.useFormStatus, true);
       assertEquals(features.useOptimistic, true);
       assertEquals(features.serverActions, true);
       assertEquals(features.improvedSuspense, true);
       assertEquals(features.enhancedStreaming, true);
+
       // Also has React 18+ features
       assertEquals(features.suspense, true);
       assertEquals(features.streaming, true);
@@ -54,6 +60,7 @@ describe("feature-detector", () => {
 
     it("treats major >= 18 as React 18+ for base features", () => {
       const features = detectFeatures(20, 0, false);
+
       assertEquals(features.suspense, true);
       assertEquals(features.streaming, true);
     });

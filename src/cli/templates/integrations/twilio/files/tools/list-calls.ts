@@ -93,26 +93,28 @@ export default tool({
         answeredBy: call.answered_by,
       }));
 
-      const totalDuration = calls.reduce(
-        (sum, call) => sum + (call.duration ? parseInt(call.duration, 10) : 0),
-        0,
-      );
+      const totalDuration = calls.reduce((sum, call) => {
+        if (!call.duration) return sum;
+        return sum + parseInt(call.duration, 10);
+      }, 0);
 
       const statusCounts = calls.reduce<Record<string, number>>((acc, call) => {
         acc[call.status] = (acc[call.status] ?? 0) + 1;
         return acc;
       }, {});
 
+      const callCount = calls.length;
+
       return {
         success: true,
-        count: calls.length,
+        count: callCount,
         calls: formattedCalls,
         statistics: {
-          totalCalls: calls.length,
+          totalCalls: callCount,
           totalDuration: `${totalDuration} seconds (${Math.round(totalDuration / 60)} minutes)`,
           statusBreakdown: statusCounts,
         },
-        message: `Found ${calls.length} call${calls.length === 1 ? "" : "s"}.`,
+        message: `Found ${callCount} call${callCount === 1 ? "" : "s"}.`,
       };
     } catch (error) {
       if (error instanceof Error && error.message.includes("not configured")) {

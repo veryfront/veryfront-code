@@ -24,22 +24,22 @@ export function parseMDXCode(compiledCode: string): ParsedMDX {
     }
 
     const defaultImport = match[2];
-    if (defaultImport) {
-      imports.set(defaultImport, { name: defaultImport, path, isDefault: true });
-    }
+    if (!defaultImport) continue;
+
+    imports.set(defaultImport, { name: defaultImport, path, isDefault: true });
   }
 
   const cleanedCode = compiledCode
-    .replace(importRegex, "") // Remove top-level imports
-    .replace(/^\s*export\s+\{[\s\S]*?\};?\s*$/gm, "") // Remove named exports
-    .replace(/^\s*export\s+default\s+function/gm, "function") // Convert default export function
-    .replace(/^\s*export\s+default\s+/gm, "") // Remove other default exports
-    .replace(/^\s*export\s+(const|function)\s+/gm, "$1 ") // Convert export const/function
-    .replace(/^\s*import\s+React\s+from.*?;?\s*$/gm, "") // Remove React imports
+    .replace(importRegex, "")
+    .replace(/^\s*export\s+\{[\s\S]*?\};?\s*$/gm, "")
+    .replace(/^\s*export\s+default\s+function/gm, "function")
+    .replace(/^\s*export\s+default\s+/gm, "")
+    .replace(/^\s*export\s+(const|function)\s+/gm, "$1 ")
+    .replace(/^\s*import\s+React\s+from.*?;?\s*$/gm, "")
     .replace(
       /^\s*const\s+(React|Fragment|Fragment2|jsx|jsx2|jsxs|jsxs2)\s*=.*?;?\s*$/gm,
       "",
-    ); // Remove runtime declarations
+    );
 
   if (cleanedCode.includes("import React")) {
     logger.warn("Import React still in cleaned code");
@@ -57,9 +57,8 @@ export function parseMDXCode(compiledCode: string): ParsedMDX {
 
   const metadata = extractMetadata(cleanedCode);
   for (const [key, value] of Object.entries(metadata)) {
-    if (value !== undefined) {
-      (exports as Record<string, unknown>)[key] = value;
-    }
+    if (value === undefined) continue;
+    (exports as Record<string, unknown>)[key] = value;
   }
 
   return { code: cleanedCode, imports, exports };

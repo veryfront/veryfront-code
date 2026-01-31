@@ -9,6 +9,7 @@ describe("security/http/cors/preflight", () => {
         method: "OPTIONS",
         headers: { "Access-Control-Request-Method": "POST" },
       });
+
       assertEquals(isPreflightRequest(req), true);
     });
 
@@ -17,6 +18,7 @@ describe("security/http/cors/preflight", () => {
         method: "OPTIONS",
         headers: { "Access-Control-Request-Headers": "Content-Type" },
       });
+
       assertEquals(isPreflightRequest(req), true);
     });
 
@@ -25,11 +27,13 @@ describe("security/http/cors/preflight", () => {
         method: "GET",
         headers: { "Access-Control-Request-Method": "POST" },
       });
+
       assertEquals(isPreflightRequest(req), false);
     });
 
     it("should return false for plain OPTIONS without CORS headers", () => {
       const req = new Request("http://localhost/", { method: "OPTIONS" });
+
       assertEquals(isPreflightRequest(req), false);
     });
   });

@@ -27,27 +27,27 @@ describe("observability/tracing/manager", () => {
     });
 
     it("should return uninitialized state", () => {
-      const state = manager.getState();
-      assertEquals(state.initialized, false);
-      assertEquals(state.degraded, false);
-      assertEquals(state.tracer, null);
-      assertEquals(state.api, null);
-      assertEquals(state.propagator, null);
+      assertEquals(manager.getState(), {
+        initialized: false,
+        degraded: false,
+        tracer: null,
+        api: null,
+        propagator: null,
+      });
     });
   });
 
   describe("initialize", () => {
     it("should mark as initialized with disabled config", async () => {
       await manager.initialize({ enabled: false });
-      const state = manager.getState();
-      assertEquals(state.initialized, true);
+      assertEquals(manager.getState().initialized, true);
       assertEquals(manager.isEnabled(), false);
     });
 
     it("should skip duplicate initialization", async () => {
       await manager.initialize({ enabled: false });
-      await manager.initialize({ enabled: true }); // Should be skipped
-      assertEquals(manager.isEnabled(), false); // Still disabled from first init
+      await manager.initialize({ enabled: true });
+      assertEquals(manager.isEnabled(), false);
     });
 
     it("should accept empty config", async () => {
@@ -70,12 +70,10 @@ describe("observability/tracing/manager", () => {
     it("should accept config with adapter", async () => {
       const mockAdapter = {
         env: {
-          get: (key: string) => {
-            if (key === "OTEL_TRACES_ENABLED") return "false";
-            return undefined;
-          },
+          get: (key: string) => (key === "OTEL_TRACES_ENABLED" ? "false" : undefined),
         },
       } as never;
+
       await manager.initialize({ enabled: false }, mockAdapter);
       assertEquals(manager.getState().initialized, true);
     });
@@ -106,20 +104,17 @@ describe("observability/tracing/manager", () => {
   describe("shutdown", () => {
     it("should not throw when not initialized", () => {
       manager.shutdown();
-      // No error
     });
 
     it("should not throw when called after initialization", async () => {
       await manager.initialize({ enabled: false });
       manager.shutdown();
-      // No error
     });
 
     it("should be idempotent", async () => {
       await manager.initialize({ enabled: false });
       manager.shutdown();
       manager.shutdown();
-      // No error
     });
   });
 
@@ -133,6 +128,7 @@ describe("observability/tracing/manager", () => {
     it("should return state snapshot", () => {
       const state1 = manager.getState();
       const state2 = manager.getState();
+
       assertEquals(state1.initialized, state2.initialized);
       assertEquals(state1.degraded, state2.degraded);
     });

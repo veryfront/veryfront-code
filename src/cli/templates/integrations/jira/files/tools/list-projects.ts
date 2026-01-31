@@ -12,19 +12,23 @@ export default tool({
 
     return {
       total: projects.length,
-      projects: projects.map((project) => ({
-        key: project.key,
-        id: project.id,
-        name: project.name,
-        projectType: project.projectTypeKey,
-        lead: project.lead
+      projects: projects.map((project) => {
+        const lead = project.lead
           ? {
               displayName: project.lead.displayName,
               accountId: project.lead.accountId,
             }
-          : null,
-        avatarUrl: project.avatarUrls?.["48x48"],
-      })),
+          : null;
+
+        return {
+          key: project.key,
+          id: project.id,
+          name: project.name,
+          projectType: project.projectTypeKey,
+          lead,
+          avatarUrl: project.avatarUrls?.["48x48"],
+        };
+      }),
     };
   },
 });

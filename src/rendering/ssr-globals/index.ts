@@ -40,16 +40,13 @@ function setGlobal(name: string, value: unknown): void {
 }
 
 function setGlobalIfMissing(name: string, value: unknown): void {
-  if (typeof (globalThis as Record<string, unknown>)[name] !== "undefined") return;
+  if ((globalThis as Record<string, unknown>)[name] !== undefined) return;
   setGlobal(name, value);
 }
 
 export function setupSSRGlobals(): void {
   if (isSSRGlobalsActive()) return;
-
-  if (typeof globalThis.window !== "undefined" && typeof globalThis.document !== "undefined") {
-    return;
-  }
+  if (globalThis.window !== undefined && globalThis.document !== undefined) return;
 
   const windowStub = createWindowStub();
 

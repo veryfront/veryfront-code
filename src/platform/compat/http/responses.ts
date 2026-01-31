@@ -32,6 +32,16 @@ function withCorrelationId(headers: Headers, options?: ResponseOptions): void {
   if (correlationId) headers.set("X-Correlation-Id", correlationId);
 }
 
+function createHeaders(
+  options?: ResponseOptions,
+  init?: (headers: Headers) => void,
+): Headers {
+  const headers = new Headers(options?.headers);
+  init?.(headers);
+  withCorrelationId(headers, options);
+  return headers;
+}
+
 export function errorResponse(
   status: HttpStatusCode,
   message?: string,
@@ -40,9 +50,9 @@ export function errorResponse(
   const statusText = getStatusText(status);
   const body = message ?? statusText;
 
-  const headers = new Headers(options?.headers);
-  headers.set("Content-Type", "text/plain; charset=utf-8");
-  withCorrelationId(headers, options);
+  const headers = createHeaders(options, (h) => {
+    h.set("Content-Type", "text/plain; charset=utf-8");
+  });
 
   return new Response(body, {
     ...options,
@@ -57,9 +67,9 @@ export function jsonResponse<T>(
   status: HttpStatusCode = HttpStatus.OK,
   options?: ResponseOptions,
 ): Response {
-  const headers = new Headers(options?.headers);
-  headers.set("Content-Type", "application/json; charset=utf-8");
-  withCorrelationId(headers, options);
+  const headers = createHeaders(options, (h) => {
+    h.set("Content-Type", "application/json; charset=utf-8");
+  });
 
   try {
     return new Response(JSON.stringify(data), {
@@ -85,9 +95,9 @@ export function redirectResponse(
   }
 
   const status = permanent ? HttpStatus.MOVED_PERMANENTLY : HttpStatus.FOUND;
-  const headers = new Headers(options?.headers);
-  headers.set("Location", url);
-  withCorrelationId(headers, options);
+  const headers = createHeaders(options, (h) => {
+    h.set("Location", url);
+  });
 
   return new Response(null, {
     ...options,
@@ -126,9 +136,9 @@ export function serviceUnavailable(message?: string, options?: ResponseOptions):
 
 export function methodNotAllowed(allowed: string[], options?: ResponseOptions): Response {
   const allow = allowed.join(", ");
-  const headers = new Headers(options?.headers);
-  headers.set("Allow", allow);
-  withCorrelationId(headers, options);
+  const headers = createHeaders(options, (h) => {
+    h.set("Allow", allow);
+  });
 
   return errorResponse(
     HttpStatus.METHOD_NOT_ALLOWED,
@@ -143,9 +153,9 @@ export function ok<T>(data?: T, options?: ResponseOptions): Response {
 }
 
 export function created<T>(data?: T, location?: string, options?: ResponseOptions): Response {
-  const headers = new Headers(options?.headers);
-  if (location) headers.set("Location", location);
-  withCorrelationId(headers, options);
+  const headers = createHeaders(options, (h) => {
+    if (location) h.set("Location", location);
+  });
 
   if (data === undefined) {
     return new Response(null, { status: HttpStatus.CREATED, headers, ...options });
@@ -163,9 +173,9 @@ export function jsonErrorResponse(
   error: string,
   options?: ResponseOptions,
 ): Response {
-  const headers = new Headers(options?.headers);
-  headers.set("Content-Type", "application/json; charset=utf-8");
-  withCorrelationId(headers, options);
+  const headers = createHeaders(options, (h) => {
+    h.set("Content-Type", "application/json; charset=utf-8");
+  });
 
   return new Response(JSON.stringify({ ok: false, error }), {
     ...options,

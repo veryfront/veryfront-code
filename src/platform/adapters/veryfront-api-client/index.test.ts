@@ -5,27 +5,31 @@ describe("veryfront-api-client/index.ts exports", () => {
   it("should export expected members", async () => {
     const mod = await import("./index.ts");
 
-    assertExists(mod.VeryfrontAPIClient);
-    assertEquals(typeof mod.VeryfrontAPIClient, "function");
+    const expected: Array<[string, string]> = [
+      ["VeryfrontAPIClient", "function"],
+      ["VeryfrontAPIOperations", "function"],
+      ["requestWithRetry", "function"],
+      ["VeryfrontAPIError", "function"],
+      ["API_ENDPOINTS", "object"],
+    ];
 
-    assertExists(mod.VeryfrontAPIOperations);
-    assertEquals(typeof mod.VeryfrontAPIOperations, "function");
+    for (const [key, type] of expected) {
+      assertExists(mod[key as keyof typeof mod]);
+      assertEquals(typeof mod[key as keyof typeof mod], type);
+    }
 
-    assertExists(mod.requestWithRetry);
-    assertEquals(typeof mod.requestWithRetry, "function");
+    const schemas = [
+      "BranchFileDetailSchema",
+      "EnvironmentFileDetailSchema",
+      "ListBranchFilesResponseSchema",
+      "ListEnvironmentFilesResponseSchema",
+      "ListProjectsResponseSchema",
+      "ProjectFileSchema",
+      "ProjectSchema",
+    ] as const;
 
-    assertExists(mod.VeryfrontAPIError);
-    assertEquals(typeof mod.VeryfrontAPIError, "function");
-
-    assertExists(mod.API_ENDPOINTS);
-    assertEquals(typeof mod.API_ENDPOINTS, "object");
-
-    assertExists(mod.BranchFileDetailSchema);
-    assertExists(mod.EnvironmentFileDetailSchema);
-    assertExists(mod.ListBranchFilesResponseSchema);
-    assertExists(mod.ListEnvironmentFilesResponseSchema);
-    assertExists(mod.ListProjectsResponseSchema);
-    assertExists(mod.ProjectFileSchema);
-    assertExists(mod.ProjectSchema);
+    for (const key of schemas) {
+      assertExists(mod[key]);
+    }
   });
 });

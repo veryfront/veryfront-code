@@ -1,7 +1,3 @@
-/**
- * Workflow Registry Tests
- */
-
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getAllWorkflowIds, getWorkflow, registerWorkflow, workflowRegistry } from "./registry.ts";
@@ -12,7 +8,7 @@ import { parallel } from "./dsl/parallel.ts";
 import { branch } from "./dsl/branch.ts";
 
 function node(id: string, type: string): WorkflowNode {
-  return { id, config: { type } } as WorkflowNode;
+  return { id, config: { type } as WorkflowNode["config"] };
 }
 
 describe("WorkflowRegistry", () => {
@@ -172,8 +168,8 @@ describe("WorkflowRegistry", () => {
     it("should count schemas", () => {
       workflowRegistry.register({
         id: "schema-test",
-        inputSchema: {} as unknown as import("zod").ZodSchema,
-        outputSchema: {} as unknown as import("zod").ZodSchema,
+        inputSchema: {} as import("zod").ZodSchema,
+        outputSchema: {} as import("zod").ZodSchema,
         steps: [],
       });
 

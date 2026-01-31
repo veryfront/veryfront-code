@@ -12,7 +12,6 @@ export type {
   Handler,
   HandlerContext,
   HandlerMetadata,
-  HandlerPriority,
   HandlerResult,
   MiddlewareFunction,
   MiddlewareFunction as ServerMiddlewareFunction,
@@ -22,6 +21,7 @@ export type {
   RouteRegistryConfig,
   SecurityConfig,
 } from "./server.ts";
+export { HandlerPriority } from "./server.ts";
 export type {
   ClientComponentMeta,
   ComponentAnalysis,
@@ -68,9 +68,6 @@ export type {
   Unbrand,
   UserId,
 } from "./branded.ts";
-
-// Runtime branded value utilities removed — zero production consumers.
-// See P2-2 Dead Export Audit.
 
 export type ComponentProps = Record<string, unknown>;
 

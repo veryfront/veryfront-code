@@ -1,7 +1,7 @@
-import { rendererLogger as logger } from "#veryfront/utils";
 import { PAGE_TRANSITION_DELAY_MS } from "#veryfront/config";
-import { applyHeadDirectives, executeScripts, manageFocus, updateMetaTags } from "./dom-utils.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { applyHeadDirectives, executeScripts, manageFocus, updateMetaTags } from "./dom-utils.ts";
 import type { RouteData } from "./page-loader.ts";
 
 export class PageTransition {
@@ -35,6 +35,7 @@ export class PageTransition {
   ): void {
     if (this.pendingTransitionTimeout !== undefined) {
       clearTimeout(this.pendingTransitionTimeout);
+      this.pendingTransitionTimeout = undefined;
     }
 
     rootElement.style.opacity = "0";
@@ -43,7 +44,7 @@ export class PageTransition {
       this.pendingTransitionTimeout = undefined;
 
       // Server-rendered RSC HTML is trusted; validateTrustedHtml provides defense-in-depth
-      rootElement.innerHTML = validateTrustedHtml(String(data.html ?? ""));
+      rootElement.innerHTML = validateTrustedHtml(String(data.html));
       rootElement.style.opacity = "1";
 
       executeScripts(rootElement);

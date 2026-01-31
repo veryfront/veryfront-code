@@ -20,8 +20,7 @@ describe("system-errors", () => {
 
     it("should include context", () => {
       const error = new FileSystemError("Not found", { path: "/test" });
-      const context = error.context as { path?: string } | undefined;
-      assertEquals(context?.path, "/test");
+      assertEquals((error.context as { path?: string } | undefined)?.path, "/test");
     });
   });
 

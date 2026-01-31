@@ -18,9 +18,8 @@ import { PathNormalizer } from "./path-normalizer.ts";
 import { ReadOperations } from "./read-operations.ts";
 import { DirectoryOperations } from "./directory-operations.ts";
 import { StatOperations } from "./stat-operations.ts";
-import { buildFileListCacheKey } from "./cache-keys.ts";
+import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { isPrefixBeingInvalidated } from "./invalidation-state.ts";
-import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
 import { WebSocketManager } from "./websocket-manager.ts";
 
 function isSourceFile(path: string): boolean {
@@ -95,6 +94,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
           logger.debug("[VeryfrontFSAdapter] getFileList: no contentContext");
           return undefined;
         }
+
         const cacheKey = buildFileListCacheKey(this.contentContext);
         const result = await this.cache.getAsync<
           Array<{
@@ -106,11 +106,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
             updated_at?: string;
           }>
         >(cacheKey);
+
         logger.debug("[VeryfrontFSAdapter] getFileList lookup", {
           cacheKey,
           hasResult: !!result,
           resultSize: result?.length ?? 0,
         });
+
         return result;
       },
       isPersistentCacheInvalidated: (prefix: string) => this.isPersistentCacheInvalidated(prefix),
@@ -130,6 +132,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.normalizer,
       contentContextGetter,
     );
+
     this.readOps = new ReadOperations(
       this.client,
       this.cache,
@@ -141,19 +144,23 @@ export class VeryfrontFSAdapter implements FSAdapter {
           logger.debug("[VeryfrontFSAdapter] getFileListCache: no contentContext");
           return undefined;
         }
+
         const cacheKey = buildFileListCacheKey(this.contentContext);
         const result = await this.cache.getAsync<Array<{ path: string; content?: string }>>(
           cacheKey,
         );
+
         logger.debug("[VeryfrontFSAdapter] getFileListCache lookup", {
           cacheKey,
           hasResult: !!result,
           resultSize: result?.length ?? 0,
           hasContent: result?.filter((f) => f.content)?.length ?? 0,
         });
+
         return result;
       },
     );
+
     this.dirOps = new DirectoryOperations(
       this.client,
       this.cache,
@@ -223,23 +230,17 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const step2Start = performance.now();
 
     const cachedProject = this.client.getCachedProject();
-    if (cachedProject) {
-      this.projectData = cachedProject;
-      logger.debug("[VeryfrontFSAdapter] Step 2: getProject DONE (from cache)", {
+    this.projectData = cachedProject ?? (await this.client.getProject(projectId));
+
+    logger.debug(
+      `[VeryfrontFSAdapter] Step 2: getProject DONE (${cachedProject ? "from cache" : "from API"})`,
+      {
         projectSlug,
         provider: this.projectData.provider,
         layout: this.projectData.layout,
         duration: `${(performance.now() - step2Start).toFixed(2)}ms`,
-      });
-    } else {
-      this.projectData = await this.client.getProject(projectId);
-      logger.debug("[VeryfrontFSAdapter] Step 2: getProject DONE (from API)", {
-        projectSlug,
-        provider: this.projectData.provider,
-        layout: this.projectData.layout,
-        duration: `${(performance.now() - step2Start).toFixed(2)}ms`,
-      });
-    }
+      },
+    );
 
     if (!this.contentContext) {
       logger.debug("[VeryfrontFSAdapter] Step 3: resolveContentSource START", { projectSlug });
@@ -291,7 +292,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
       // Trigger CSS pre-generation for non-branch environments (fire-and-forget)
       // This runs in parallel with the rest of initialization
-      if (this.contentContext?.sourceType !== "branch" && sourceFilesWithContent.length > 0) {
+      if (this.contentContext.sourceType !== "branch" && sourceFilesWithContent.length > 0) {
         this.triggerCSSPregeneration(files).catch(() => {
           // Error already logged in triggerCSSPregeneration
         });
@@ -387,10 +388,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     switch (this.contentContext.sourceType) {
       case "branch":
         return this.client.listAllFiles();
-
       case "environment":
         return this.client.listAllEnvironmentFiles(this.contentContext.environmentName!);
-
       case "release":
         return this.client.listPublishedFiles(undefined, this.contentContext.releaseId);
     }
@@ -507,8 +506,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const cachedFiles = this.cache.get(cacheKey) as
       | Array<{ id?: string; path: string }>
       | undefined;
-    const file = cachedFiles?.find((f) => f.path === normalizedPath);
-    return file?.id;
+
+    return cachedFiles?.find((f) => f.path === normalizedPath)?.id;
   }
 
   getFilePathByEntityId(entityId: string): string | undefined {
@@ -518,6 +517,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const cachedFiles = this.cache.get(cacheKey) as
       | Array<{ id?: string; path: string }>
       | undefined;
+
     return cachedFiles?.find((f) => f.id === entityId)?.path;
   }
 
@@ -528,6 +528,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (cachedPath) return { path: cachedPath };
 
     logger.debug("[VeryfrontFSAdapter] Fetching file by entity ID from API", { entityId });
+
     try {
       const file = await this.client.getFileById(entityId);
       if (!file) return undefined;
@@ -659,6 +660,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
       let stylesheetPath: string | undefined;
       const projectDir = this.normalizer.getProjectDir();
+
       if (projectDir) {
         try {
           const { runtime } = await import("#veryfront/platform/adapters/registry.ts");

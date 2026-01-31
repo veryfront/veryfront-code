@@ -59,7 +59,6 @@ describe("rendering/rsc/server-renderer/component-detector", () => {
     });
 
     it("should return Unknown for anonymous component", () => {
-      // Create a truly anonymous component with no name properties
       const comp = Object.assign(Object.create(null), {}) as unknown as RSCComponent;
       assertEquals(getComponentId(comp), "Unknown");
     });
@@ -69,7 +68,7 @@ describe("rendering/rsc/server-renderer/component-detector", () => {
     it("should register a client ref with manifest path", () => {
       const manifest = new Map([["Btn", { id: "Btn", path: "/btn.js", exports: [] }]]);
       const refs = new Map<string, string>();
-      const comp = makeComponent({});
+      const comp = makeComponent();
       registerClientRef("Btn", comp, manifest, refs);
       assertEquals(refs.get("Btn"), "/btn.js");
     });
@@ -82,14 +81,14 @@ describe("rendering/rsc/server-renderer/component-detector", () => {
     });
 
     it("should use default path when no meta or __rsc_path", () => {
-      const comp = makeComponent({});
+      const comp = makeComponent();
       const refs = new Map<string, string>();
       registerClientRef("Foo", comp, new Map(), refs);
       assertEquals(refs.get("Foo"), "/_veryfront/client/Foo.js");
     });
 
     it("should not overwrite existing ref", () => {
-      const comp = makeComponent({});
+      const comp = makeComponent();
       const refs = new Map<string, string>([["Foo", "/existing.js"]]);
       registerClientRef("Foo", comp, new Map(), refs);
       assertEquals(refs.get("Foo"), "/existing.js");

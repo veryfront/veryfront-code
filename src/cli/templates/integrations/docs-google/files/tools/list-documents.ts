@@ -24,22 +24,13 @@ export default tool({
     const client = createDocsClient(DEFAULT_USER_ID);
     const documents = await client.listDocuments({ maxResults, orderBy });
 
-    return documents.map(
-      ({
-        id,
-        name,
-        webViewLink: url,
-        createdTime,
-        modifiedTime,
-        thumbnailLink: thumbnail,
-      }) => ({
-        id,
-        name,
-        url,
-        createdTime,
-        modifiedTime,
-        thumbnail,
-      }),
-    );
+    return documents.map((doc) => ({
+      id: doc.id,
+      name: doc.name,
+      url: doc.webViewLink,
+      createdTime: doc.createdTime,
+      modifiedTime: doc.modifiedTime,
+      thumbnail: doc.thumbnailLink,
+    }));
   },
 });

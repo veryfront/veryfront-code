@@ -38,14 +38,13 @@ const LOCKFILES: Array<{ file: string; pm: PackageManager }> = [
   { file: "package-lock.json", pm: "npm" },
 ];
 
-async function detectFromDir(dir: string): Promise<PackageManager | undefined> {
+async function detectFromDir(
+  dir: string,
+): Promise<{ pm: PackageManager; file: string } | undefined> {
   const fs = createFileSystem();
 
-  for (const { file, pm } of LOCKFILES) {
-    const lockPath = join(dir, file);
-    if (await fs.exists(lockPath)) {
-      return pm;
-    }
+  for (const lock of LOCKFILES) {
+    if (await fs.exists(join(dir, lock.file))) return lock;
   }
 
   return undefined;
@@ -68,17 +67,16 @@ export async function detectPackageManager(
 
   const detected = await detectFromDir(projectDir);
   if (detected) {
-    const file = LOCKFILES.find((l) => l.pm === detected)?.file;
-    if (file) logger.debug(`Detected ${detected} from ${file}`);
-    return detected;
+    logger.debug(`Detected ${detected.pm} from ${detected.file}`);
+    return detected.pm;
   }
 
-  const parentDir = join(projectDir, "..");
-  const detectedFromParent = await detectFromDir(parentDir);
+  const detectedFromParent = await detectFromDir(join(projectDir, ".."));
   if (detectedFromParent) {
-    const file = LOCKFILES.find((l) => l.pm === detectedFromParent)?.file;
-    if (file) logger.debug(`Detected ${detectedFromParent} from parent directory ${file}`);
-    return detectedFromParent;
+    logger.debug(
+      `Detected ${detectedFromParent.pm} from parent directory ${detectedFromParent.file}`,
+    );
+    return detectedFromParent.pm;
   }
 
   return "npm";
@@ -114,16 +112,14 @@ export async function installDependencies(
 ): Promise<boolean> {
   const silent = options.silent ?? false;
   const pm = await detectPackageManager(projectDir, options.packageManager);
-  const command = getInstallCommand(pm);
 
   if (!silent) logger.info(`Installing dependencies with ${pm}...`);
 
   try {
-    const [cmd, ...args] = command.split(" ");
+    const [cmd, ...args] = getInstallCommand(pm).split(" ");
     if (!cmd) throw new Error("Invalid command");
 
     const code = await executeCommand(cmd, args, projectDir, silent);
-
     if (code !== 0) {
       logger.error(`Failed to install dependencies (exit code: ${code})`);
       return false;

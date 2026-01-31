@@ -44,7 +44,7 @@ function setClientModCache(key: string, mod: ClientModule): void {
   globalThis.__VF_CLIENT_MOD_CACHE ??= new Map();
 
   if (globalThis.__VF_CLIENT_MOD_CACHE.size >= MAX_CLIENT_MOD_CACHE_SIZE) {
-    const oldest = globalThis.__VF_CLIENT_MOD_CACHE.keys().next().value as string | undefined;
+    const oldest = globalThis.__VF_CLIENT_MOD_CACHE.keys().next().value;
     if (oldest) globalThis.__VF_CLIENT_MOD_CACHE.delete(oldest);
   }
 
@@ -78,7 +78,7 @@ async function importClientModule(manifest: Manifest, rel: string): Promise<Clie
   if (!abs) return null;
 
   const devUrl = resolveImportUrlDev(abs);
-  const cacheKey = `${rel}#${manifest.hash || ""}`;
+  const cacheKey = `${rel}#${manifest.hash ?? ""}`;
 
   try {
     const cached = globalThis.__VF_CLIENT_MOD_CACHE?.get(cacheKey);
@@ -103,11 +103,13 @@ async function importClientModule(manifest: Manifest, rel: string): Promise<Clie
     const v = manifest.hash ? `&v=${encodeURIComponent(manifest.hash)}` : "";
     const url = `/_veryfront/rsc/module?rel=${encodeURIComponent(rel)}${v}`;
     const mod = (await import(url)) as ClientModule;
+
     try {
       setClientModCache(cacheKey, mod);
     } catch (e) {
       rscLogger.debug("hydrate: cache set failed (prod)", e);
     }
+
     return mod;
   } catch (e) {
     rscLogger.debug("hydrate: failed to import prod url", { rel, error: e });
@@ -129,7 +131,7 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
     return;
   }
 
-  const nodes = Array.from(doc.querySelectorAll("[data-client-ref]")) as HTMLElement[];
+  const nodes = Array.from(doc.querySelectorAll<HTMLElement>("[data-client-ref]"));
 
   try {
     const lastHash = globalThis.__VF_MANIFEST_HASH;
@@ -141,7 +143,7 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
 
   if (nodes.length === 0) {
     try {
-      globalThis.__VF_MANIFEST_HASH = manifest.hash || "";
+      globalThis.__VF_MANIFEST_HASH = manifest.hash ?? "";
     } catch (e) {
       rscLogger.debug("hydrate: set hash failed", e);
     }
@@ -151,7 +153,7 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
   try {
     if (globalThis.__VF_TEST_MODE__) {
       globalThis.__VF_HYDRATE_CALLED = true;
-      globalThis.__VF_MANIFEST_HASH = manifest.hash || "";
+      globalThis.__VF_MANIFEST_HASH = manifest.hash ?? "";
       return;
     }
   } catch (e) {
@@ -162,7 +164,7 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
   const { createRoot } = await import(REACT_DOM_CLIENT_URL);
 
   for (const el of nodes) {
-    const ref = el.dataset?.clientRef || "";
+    const ref = el.dataset?.clientRef ?? "";
     if (!ref || el.dataset?.hydrated === "true") continue;
 
     const parsed = parseClientRef(ref);
@@ -184,7 +186,7 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
   }
 
   try {
-    globalThis.__VF_MANIFEST_HASH = manifest.hash || "";
+    globalThis.__VF_MANIFEST_HASH = manifest.hash ?? "";
   } catch (e) {
     rscLogger.debug("hydrate: set hash failed (post)", e);
   }

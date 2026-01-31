@@ -93,14 +93,24 @@ interface PostHogListResponse<T> {
 }
 
 interface PostHogError {
-  type: string;
-  code: string;
-  detail: string;
-  attr: string | null;
+  detail?: string;
 }
 
 function getPostHogHost(): string {
   return process.env.POSTHOG_HOST ?? DEFAULT_POSTHOG_HOST;
+}
+
+function buildParams(
+  options?: Record<string, string | number | boolean | undefined>,
+): Record<string, string | number | boolean> | undefined {
+  if (!options) return undefined;
+
+  const params: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(options)) {
+    if (value !== undefined) params[key] = value;
+  }
+
+  return Object.keys(params).length ? params : undefined;
 }
 
 async function posthogFetch<T>(
@@ -113,10 +123,8 @@ async function posthogFetch<T>(
   }
 
   const url = new URL(`${getPostHogHost()}/api${endpoint}`);
-  if (options.params) {
-    for (const [key, value] of Object.entries(options.params)) {
-      url.searchParams.append(key, String(value));
-    }
+  for (const [key, value] of Object.entries(options.params ?? {})) {
+    url.searchParams.append(key, String(value));
   }
 
   const headers: Record<string, string> = {
@@ -130,7 +138,7 @@ async function posthogFetch<T>(
 
   if (!response.ok) {
     const error = data as PostHogError;
-    throw new Error(`PostHog API error: ${response.status} ${error.detail || response.statusText}`);
+    throw new Error(`PostHog API error: ${response.status} ${error.detail ?? response.statusText}`);
   }
 
   return data as T;
@@ -139,11 +147,8 @@ async function posthogFetch<T>(
 export function getInsights(options?: {
   limit?: number;
 }): Promise<PostHogListResponse<PostHogInsight>> {
-  const params: Record<string, string | number> = {};
-  if (options?.limit) params.limit = options.limit;
-
   return posthogFetch<PostHogListResponse<PostHogInsight>>("/projects/@current/insights/", {
-    params,
+    params: buildParams({ limit: options?.limit }),
   });
 }
 
@@ -188,12 +193,9 @@ export function getFunnels(options: {
 export function getFeatureFlags(options?: {
   limit?: number;
 }): Promise<PostHogListResponse<PostHogFeatureFlag>> {
-  const params: Record<string, string | number> = {};
-  if (options?.limit) params.limit = options.limit;
-
   return posthogFetch<PostHogListResponse<PostHogFeatureFlag>>(
     "/projects/@current/feature_flags/",
-    { params },
+    { params: buildParams({ limit: options?.limit }) },
   );
 }
 
@@ -205,12 +207,8 @@ export function listPersons(options?: {
   limit?: number;
   search?: string;
 }): Promise<PostHogListResponse<PostHogPerson>> {
-  const params: Record<string, string | number> = {};
-  if (options?.limit) params.limit = options.limit;
-  if (options?.search) params.search = options.search;
-
   return posthogFetch<PostHogListResponse<PostHogPerson>>("/projects/@current/persons/", {
-    params,
+    params: buildParams({ limit: options?.limit, search: options?.search }),
   });
 }
 
@@ -241,9 +239,8 @@ export function calculateConversionRate(funnel: PostHogFunnel): number {
   if (funnel.steps.length < 2) return 0;
 
   const firstStep = funnel.steps[0];
-  const lastStep = funnel.steps[funnel.steps.length - 1];
-
   if (firstStep.count === 0) return 0;
 
+  const lastStep = funnel.steps[funnel.steps.length - 1];
   return (lastStep.count / firstStep.count) * 100;
 }

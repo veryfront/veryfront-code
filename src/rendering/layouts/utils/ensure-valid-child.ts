@@ -35,15 +35,15 @@ export function ensureValidChild(
     return child;
   }
 
-  if (typeof child === "object") {
-    const debugInfo = getElementDebugInfo(child);
-    logger.error("[ensureValidChild] Invalid child: object is not a React element", {
-      keys: Object.keys(child).slice(0, 10),
-      hasSymbol: debugInfo.hasSymbol,
-      symbolValue: debugInfo.symbolValue,
-      type: debugInfo.type,
-    });
-  }
+  if (typeof child !== "object") return null;
+
+  const debugInfo = getElementDebugInfo(child);
+  logger.error("[ensureValidChild] Invalid child: object is not a React element", {
+    keys: Object.keys(child).slice(0, 10),
+    hasSymbol: debugInfo.hasSymbol,
+    symbolValue: debugInfo.symbolValue,
+    type: debugInfo.type,
+  });
 
   return null;
 }

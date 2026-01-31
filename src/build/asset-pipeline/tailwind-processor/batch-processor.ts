@@ -38,8 +38,7 @@ export function processTailwindCSSInDirectory(
           if (!entry.isFile || !entry.name.endsWith(".css")) continue;
 
           const filePath = join(cssPath, entry.name);
-          const isTailwind = await isTailwindV4File(filePath, projectDir, adapter);
-          if (!isTailwind) continue;
+          if (!(await isTailwindV4File(filePath, projectDir, adapter))) continue;
 
           logger.info("Found Tailwind v4 file", { file: filePath });
 

@@ -2,6 +2,10 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { estimateSize } from "./size-estimator.ts";
 
+function assertJsonSize(value: unknown): void {
+  assertEquals(estimateSize(value), JSON.stringify(value).length * 2);
+}
+
 describe("estimateSize", () => {
   it("should export estimateSize function", () => {
     assertExists(estimateSize);
@@ -37,10 +41,6 @@ describe("estimateSize", () => {
   });
 
   describe("object", () => {
-    function assertJsonSize(value: unknown): void {
-      assertEquals(estimateSize(value), JSON.stringify(value).length * 2);
-    }
-
     it("should return JSON length * 2 for objects", () => {
       assertJsonSize({ foo: "bar" });
     });

@@ -18,14 +18,13 @@ export async function POST(request: Request): Promise<Response> {
     const session = await createSession(user);
 
     const secureFlag = getEnv("NODE_ENV") === "production" ? "; Secure" : "";
+    const cookie = `session=${session.token}; Path=/; HttpOnly; SameSite=Strict${secureFlag}`;
 
     return Response.json(
       { user, token: session.token },
       {
         status: 201,
-        headers: {
-          "Set-Cookie": `session=${session.token}; Path=/; HttpOnly; SameSite=Strict${secureFlag}`,
-        },
+        headers: { "Set-Cookie": cookie },
       }
     );
   } catch (error) {

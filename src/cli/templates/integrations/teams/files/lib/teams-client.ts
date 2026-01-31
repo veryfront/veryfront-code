@@ -96,7 +96,7 @@ export interface Channel {
 
 function buildEndpoint(path: string, params?: URLSearchParams): string {
   const queryString = params?.toString();
-  return `${path}${queryString ? `?${queryString}` : ""}`;
+  return queryString ? `${path}?${queryString}` : path;
 }
 
 async function graphFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -117,7 +117,7 @@ async function graphFetch<T>(endpoint: string, options: RequestInit = {}): Promi
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({} as any));
+    const error = await response.json().catch(() => ({}));
     throw new Error(
       `Microsoft Graph API error: ${response.status} ${error?.error?.message ?? response.statusText}`,
     );
@@ -156,9 +156,7 @@ export function sendChatMessage(
 ): Promise<ChatMessage> {
   return graphFetch<ChatMessage>(`/me/chats/${chatId}/messages`, {
     method: "POST",
-    body: JSON.stringify({
-      body: { contentType, content },
-    }),
+    body: JSON.stringify({ body: { contentType, content } }),
   });
 }
 
@@ -170,10 +168,7 @@ export async function listTeams(options?: { limit?: number }): Promise<Team[]> {
   return response.value ?? [];
 }
 
-export async function listChannels(
-  teamId: string,
-  options?: { limit?: number },
-): Promise<Channel[]> {
+export async function listChannels(teamId: string, options?: { limit?: number }): Promise<Channel[]> {
   const params = new URLSearchParams();
   if (options?.limit) params.set("$top", options.limit.toString());
 
@@ -190,10 +185,8 @@ export function sendChannelMessage(
   contentType: "text" | "html" = "text",
   subject?: string,
 ): Promise<ChatMessage> {
-  const body: Record<string, unknown> = {
-    body: { contentType, content },
-    ...(subject ? { subject } : {}),
-  };
+  const body: Record<string, unknown> = { body: { contentType, content } };
+  if (subject) body.subject = subject;
 
   return graphFetch<ChatMessage>(`/teams/${teamId}/channels/${channelId}/messages`, {
     method: "POST",
@@ -228,11 +221,7 @@ export function getCurrentUser(): Promise<{
 export function getChatDisplayName(chat: TeamsChat): string {
   if (chat.topic) return chat.topic;
 
-  const memberNames = chat.members
-    ?.map((m) => m.displayName)
-    .filter(Boolean)
-    .join(", ");
-
+  const memberNames = chat.members?.flatMap((m) => (m.displayName ? [m.displayName] : [])).join(", ");
   if (memberNames) return memberNames;
 
   return chat.chatType === "oneOnOne" ? "Direct Chat" : "Group Chat";

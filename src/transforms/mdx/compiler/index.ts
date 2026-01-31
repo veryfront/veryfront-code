@@ -10,8 +10,7 @@ import { compileMarkdownRuntime } from "../../md/compiler/index.ts";
 import type { CompilationMode, CompilationTarget, MdxRuntimeBundle } from "./types.ts";
 
 function isMarkdownFile(filePath?: string): boolean {
-  if (!filePath) return false;
-  return filePath.endsWith(".md");
+  return filePath?.endsWith(".md") ?? false;
 }
 
 export function compileContent(
@@ -34,5 +33,6 @@ export function compileContent(
       baseUrl,
     );
   }
+
   return compileMDXRuntime(mode, projectDir, content, frontmatter, filePath, target, baseUrl);
 }

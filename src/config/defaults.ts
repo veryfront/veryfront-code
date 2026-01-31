@@ -45,7 +45,6 @@ export const defaultConfig = {
     port: DEFAULT_PORT,
     hostname: "0.0.0.0",
   },
-
   timeouts: {
     default: DEFAULT_TIMEOUT_MS,
     api: 30000,
@@ -53,14 +52,12 @@ export const defaultConfig = {
     hmr: 30000,
     sandbox: SANDBOX_TIMEOUT_MS,
   },
-
   cache: {
     jit: {
       maxSize: DEFAULT_CACHE_MAX_SIZE,
       tempDirPrefix: "vf-bundle-",
     },
   },
-
   metrics: {
     ssrBoundaries: DURATION_HISTOGRAM_BOUNDARIES_MS,
   },

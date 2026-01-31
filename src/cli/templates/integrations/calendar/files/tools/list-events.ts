@@ -24,53 +24,40 @@ export default tool({
       .max(100)
       .default(10)
       .describe("Maximum number of events to return"),
-    daysAhead: z
-      .number()
-      .min(1)
-      .max(30)
-      .default(7)
-      .describe("Number of days to look ahead"),
+    daysAhead: z.number().min(1).max(30).default(7).describe("Number of days to look ahead"),
     todayOnly: z.boolean().default(false).describe("Only show events for today"),
   }),
   execute: async ({ maxResults, daysAhead, todayOnly }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = context?.userId ?? "current-user";
 
     try {
       const calendar = createCalendarClient(userId);
 
-      let events: CalendarEvent[];
-
-      if (todayOnly) {
-        events = (await calendar.getTodayEvents()) as CalendarEvent[];
-      } else {
-        const now = new Date();
-        const futureDate = new Date();
-        futureDate.setDate(futureDate.getDate() + daysAhead);
-
-        events = (await calendar.listEvents({
-          maxResults,
-          timeMin: now,
-          timeMax: futureDate,
-        })) as CalendarEvent[];
-      }
+      const events = todayOnly
+        ? ((await calendar.getTodayEvents()) as CalendarEvent[])
+        : ((await calendar.listEvents({
+            maxResults,
+            timeMin: new Date(),
+            timeMax: new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000),
+          })) as CalendarEvent[]);
 
       return {
         events: events.map((event) => ({
           id: event.id,
           title: event.summary,
-          description: event.description || null,
-          location: event.location || null,
+          description: event.description ?? null,
+          location: event.location ?? null,
           start: event.start.dateTime || event.start.date,
           end: event.end.dateTime || event.end.date,
           isAllDay: !event.start.dateTime,
           status: event.status,
           url: event.htmlLink,
-          attendees: event.attendees?.map((a) => ({
-            email: a.email,
-            name: a.displayName,
-            status: a.responseStatus,
-          })) ?? [],
+          attendees:
+            event.attendees?.map((a) => ({
+              email: a.email,
+              name: a.displayName,
+              status: a.responseStatus,
+            })) ?? [],
         })),
         count: events.length,
         message: todayOnly

@@ -71,6 +71,7 @@ export class ProjectIsolationManager {
       totalRequests: 0,
       totalTimeouts: 0,
     };
+
     this.projects.set(projectSlug, state);
     return state;
   }
@@ -193,16 +194,12 @@ function parseEnvInt(name: string, fallback: number): number {
   const value = getEnv(name);
   if (!value) return fallback;
 
-  const parsed = parseInt(value, 10);
+  const parsed = Number.parseInt(value, 10);
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
-const maxConcurrent = parseEnvInt("PROJECT_MAX_CONCURRENT", 20);
-const circuitThreshold = parseEnvInt("PROJECT_CIRCUIT_THRESHOLD", 5);
-const circuitResetMs = parseEnvInt("PROJECT_CIRCUIT_RESET_MS", 30_000);
-
 export const projectIsolation = new ProjectIsolationManager({
-  maxConcurrentPerProject: maxConcurrent,
-  circuitBreakerThreshold: circuitThreshold,
-  circuitResetTimeMs: circuitResetMs,
+  maxConcurrentPerProject: parseEnvInt("PROJECT_MAX_CONCURRENT", 20),
+  circuitBreakerThreshold: parseEnvInt("PROJECT_CIRCUIT_THRESHOLD", 5),
+  circuitResetTimeMs: parseEnvInt("PROJECT_CIRCUIT_RESET_MS", 30_000),
 });

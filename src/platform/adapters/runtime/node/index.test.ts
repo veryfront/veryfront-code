@@ -17,51 +17,37 @@ function assertExportedFunction(value: unknown): void {
 }
 
 describe("runtime/node/index.ts exports", () => {
-  describe("NodeAdapter", () => {
-    it("should export NodeAdapter class", () => {
-      assertExportedFunction(NodeAdapter);
-    });
-
-    it("should export nodeAdapter singleton", () => {
-      assertExists(nodeAdapter);
-      assertEquals(nodeAdapter.id, "node");
-      assertEquals(nodeAdapter.name, "node");
-    });
+  it("should export NodeAdapter class", () => {
+    assertExportedFunction(NodeAdapter);
   });
 
-  describe("NodeFileSystemAdapter", () => {
-    it("should export NodeFileSystemAdapter class", () => {
-      assertExportedFunction(NodeFileSystemAdapter);
-    });
+  it("should export nodeAdapter singleton", () => {
+    assertExists(nodeAdapter);
+    assertEquals(nodeAdapter.id, "node");
+    assertEquals(nodeAdapter.name, "node");
   });
 
-  describe("NodeEnvironmentAdapter", () => {
-    it("should export NodeEnvironmentAdapter class", () => {
-      assertExportedFunction(NodeEnvironmentAdapter);
-    });
+  it("should export NodeFileSystemAdapter class", () => {
+    assertExportedFunction(NodeFileSystemAdapter);
   });
 
-  describe("NodeServerAdapter", () => {
-    it("should export NodeServerAdapter class", () => {
-      assertExportedFunction(NodeServerAdapter);
-    });
+  it("should export NodeEnvironmentAdapter class", () => {
+    assertExportedFunction(NodeEnvironmentAdapter);
   });
 
-  describe("NodeWebSocket", () => {
-    it("should export NodeWebSocket class", () => {
-      assertExportedFunction(NodeWebSocket);
-    });
+  it("should export NodeServerAdapter class", () => {
+    assertExportedFunction(NodeServerAdapter);
   });
 
-  describe("NodeServer", () => {
-    it("should export NodeServer class", () => {
-      assertExportedFunction(NodeServer);
-    });
+  it("should export NodeWebSocket class", () => {
+    assertExportedFunction(NodeWebSocket);
   });
 
-  describe("createNodeServer", () => {
-    it("should export createNodeServer function", () => {
-      assertExportedFunction(createNodeServer);
-    });
+  it("should export NodeServer class", () => {
+    assertExportedFunction(NodeServer);
+  });
+
+  it("should export createNodeServer function", () => {
+    assertExportedFunction(createNodeServer);
   });
 });

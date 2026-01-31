@@ -2,44 +2,33 @@ import type { Element, Root } from "hast";
 import { visit } from "unist-util-visit";
 
 export function rehypeMermaid(): (tree: Root) => void {
-  return (tree: Root): void => {
+  return function transform(tree: Root): void {
     visit(tree, "element", (node: Element, index, parent) => {
       if (node.tagName !== "pre" || node.children.length !== 1) return;
 
-      const firstChild = node.children[0];
-      if (
-        !firstChild ||
-        firstChild.type !== "element" ||
-        firstChild.tagName !== "code"
-      ) {
-        return;
-      }
+      const codeNode = node.children[0];
+      if (!codeNode || codeNode.type !== "element" || codeNode.tagName !== "code") return;
 
-      const codeNode = firstChild;
+      if (!parent || typeof index !== "number") return;
+
       const className = codeNode.properties?.className;
-
-      let isMermaid = false;
-      if (Array.isArray(className)) {
-        isMermaid = className.some((c) => {
+      const isMermaid = Array.isArray(className)
+        ? className.some((c) => {
           const s = String(c);
           return s.includes("mermaid") || s.includes("language-mermaid");
-        });
-      } else {
-        isMermaid = String(className ?? "").includes("mermaid");
-      }
+        })
+        : String(className ?? "").includes("mermaid");
 
-      if (!isMermaid || !parent || typeof index !== "number") return;
-
-      const textContent = extractText(codeNode);
+      if (!isMermaid) return;
 
       const mermaidDiv: Element = {
         type: "element",
         tagName: "div",
         properties: { className: ["mermaid"] },
-        children: [{ type: "text", value: textContent }],
+        children: [{ type: "text", value: extractText(codeNode) }],
       };
 
-      (parent.children as Element[])[index] = mermaidDiv;
+      parent.children[index] = mermaidDiv;
     });
   };
 }

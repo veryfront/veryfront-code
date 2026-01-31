@@ -30,10 +30,10 @@ export function MessageActions({
   const handleCopy = React.useCallback(async (): Promise<void> => {
     try {
       await navigator.clipboard.writeText(content);
-      setCopiedWithTimeout();
     } catch {
       // Fallback for older browsers
       fallbackCopy();
+    } finally {
       setCopiedWithTimeout();
     }
   }, [content, fallbackCopy, setCopiedWithTimeout]);

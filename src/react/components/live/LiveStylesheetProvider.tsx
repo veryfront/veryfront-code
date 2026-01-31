@@ -12,7 +12,7 @@ export function LiveStylesheetProvider({
   useEffect(() => {
     data.styles.forEach((css, id) => {
       const elementId = `vf-style-${id}`;
-      let styleEl = document.getElementById(elementId);
+      let styleEl = document.getElementById(elementId) as HTMLStyleElement | null;
 
       if (!styleEl) {
         styleEl = document.createElement("style");
@@ -26,7 +26,8 @@ export function LiveStylesheetProvider({
 
     document.querySelectorAll("[data-vf-style]").forEach((el) => {
       const id = el.getAttribute("data-vf-style");
-      if (id && !data.styles.has(id)) el.remove();
+      if (!id || data.styles.has(id)) return;
+      el.remove();
     });
   }, [data.styles]);
 

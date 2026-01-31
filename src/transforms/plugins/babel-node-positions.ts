@@ -39,7 +39,7 @@ function resolveDefaultExport<T>(mod: unknown): T {
   if (typeof m.default === "function") return m.default as T;
 
   const nested = m.default as { default?: T } | undefined;
-  if (nested && typeof nested.default === "function") return nested.default as T;
+  if (typeof nested?.default === "function") return nested.default as T;
 
   return mod as T;
 }
@@ -87,21 +87,19 @@ function getElementName(openingElement: t.JSXOpeningElement): string {
 
   if (t.isJSXIdentifier(name)) return name.name;
 
-  if (t.isJSXMemberExpression(name)) {
-    const parts: string[] = [];
-    let current: t.JSXMemberExpression | t.JSXIdentifier = name;
+  if (!t.isJSXMemberExpression(name)) return "DynamicComponent";
 
-    while (t.isJSXMemberExpression(current)) {
-      if (t.isJSXIdentifier(current.property)) parts.unshift(current.property.name);
-      current = current.object;
-    }
+  const parts: string[] = [];
+  let current: t.JSXMemberExpression | t.JSXIdentifier = name;
 
-    if (t.isJSXIdentifier(current)) parts.unshift(current.name);
-
-    return parts.length ? parts.join(".") : "MemberExpression";
+  while (t.isJSXMemberExpression(current)) {
+    if (t.isJSXIdentifier(current.property)) parts.unshift(current.property.name);
+    current = current.object;
   }
 
-  return "DynamicComponent";
+  if (t.isJSXIdentifier(current)) parts.unshift(current.name);
+
+  return parts.length ? parts.join(".") : "MemberExpression";
 }
 
 function isFragment(openingElement: t.JSXOpeningElement): boolean {
@@ -184,12 +182,10 @@ export function injectNodePositions(source: string, _options: TransformOptions):
       },
     });
 
-    const output = generate(ast as t.Node, {
+    return generate(ast as t.Node, {
       retainLines: true,
       compact: false,
-    });
-
-    return output.code;
+    }).code;
   } catch {
     return source;
   }

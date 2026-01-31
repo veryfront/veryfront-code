@@ -32,6 +32,7 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
 
   async exists(path: string): Promise<boolean> {
     const fs = await import("node:fs/promises");
+
     try {
       await fs.access(path);
       return true;
@@ -95,6 +96,10 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
     const eventQueue: FileChangeEvent[] = [];
     let resolver: ((value: IteratorResult<FileChangeEvent>) => void) | null = null;
 
+    const setResolver = (r: ((value: IteratorResult<FileChangeEvent>) => void) | null): void => {
+      resolver = r;
+    };
+
     Promise.all(
       pathArray.map((path) =>
         setupNodeFsWatcher(path, {
@@ -103,11 +108,10 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
           signal,
           eventQueue,
           getResolver: () => resolver,
-          setResolver: (r) => {
-            resolver = r;
-          },
+          setResolver,
           watchers,
-          onError: (error, path) => serverLogger.error(`File watcher error for ${path}:`, error),
+          onError: (error, watchPath) =>
+            serverLogger.error(`File watcher error for ${watchPath}:`, error),
         })
       ),
     ).catch((error) => {
