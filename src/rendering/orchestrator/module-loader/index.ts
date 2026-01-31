@@ -1,7 +1,8 @@
 /****
  * Module Loader
  *
- * Loads and transforms modules for SSR, handling @/ imports and cached HTTP dependencies.
+ * Loads and transforms modules for SSR, handling local imports (@/ alias and relative)
+ * and cached HTTP dependencies.
  *
  * @module rendering/orchestrator/module-loader
  */
@@ -22,7 +23,7 @@ import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.
 import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
 import { validateBundleGroup } from "#veryfront/transforms/esm/bundle-manifest.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { dirname, join, normalize } from "#veryfront/platform/compat/path/index.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import {
@@ -89,6 +90,7 @@ async function ensureDir(adapter: RuntimeAdapter, dir: string): Promise<void> {
 }
 
 type AliasImport = { full: string; path: string };
+type RelativeImport = { full: string; path: string; fromDir: string };
 type ResolvedDep = {
   full: string;
   path: string;
@@ -110,8 +112,64 @@ async function resolveAliasImport(
   return { ...imp, relativePath, depFilePath, isLocalLib: false };
 }
 
+async function resolveRelativeImport(
+  imp: RelativeImport,
+  adapter: RuntimeAdapter,
+): Promise<ResolvedDep> {
+  // Resolve the path relative to the file's directory and normalize to resolve ..
+  const basePath = normalize(join(imp.fromDir, imp.path));
+
+  logger.debug("[ModuleLoader] Resolving relative import:", {
+    path: imp.path,
+    fromDir: imp.fromDir,
+    basePath,
+  });
+
+  // Try to find the source file with various extensions
+  const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
+  let depFilePath: string | null = null;
+
+  // First try the exact path (in case it already has an extension)
+  if (await adapter.fs.exists(basePath)) {
+    const stat = await adapter.fs.stat(basePath);
+    if (!stat.isDirectory) {
+      depFilePath = basePath;
+    }
+  }
+
+  // Try with extensions
+  if (!depFilePath) {
+    for (const ext of extensions) {
+      const pathWithExt = basePath + ext;
+      if (await adapter.fs.exists(pathWithExt)) {
+        depFilePath = pathWithExt;
+        break;
+      }
+    }
+  }
+
+  // Try index files if path is a directory
+  if (!depFilePath) {
+    for (const ext of extensions) {
+      const indexPath = join(basePath, `index${ext}`);
+      if (await adapter.fs.exists(indexPath)) {
+        depFilePath = indexPath;
+        break;
+      }
+    }
+  }
+
+  return {
+    full: imp.full,
+    path: imp.path,
+    relativePath: imp.path,
+    depFilePath,
+    isLocalLib: false,
+  };
+}
+
 /**
- * Transform a module and all its @/ dependencies.
+ * Transform a module and all its local dependencies (@/ alias and relative imports).
  *
  * @param filePath - Path to the module
  * @param tmpDir - Temp directory for caching
@@ -156,20 +214,43 @@ export async function transformModuleWithDeps(
   const readAdapter = useLocalAdapter ? localAdapter : adapter;
   let fileContent = decodeFileContent(await readAdapter.fs.readFile(filePath));
 
+  const fileDir = dirname(filePath);
+
+  // Match @/ alias imports
   const aliasImports: AliasImport[] = [...fileContent.matchAll(/from\s+["'](@\/[^"']+)["']/g)].map(
     (m) => ({ full: m[0], path: m[1]! }),
   );
 
+  // Match relative imports (./ and ../) - exclude npm:, http://, https://, file://
+  const relativeImports: RelativeImport[] = [
+    ...fileContent.matchAll(/from\s+["'](\.\.?\/[^"']+)["']/g),
+  ]
+    .map((m) => ({ full: m[0], path: m[1]!, fromDir: fileDir }))
+    // Filter out already-transformed file:// imports
+    .filter((imp) => !imp.path.includes("file://"));
+
   logger.debug("[ModuleLoader] Processing file:", {
     filePath,
     aliasImportsCount: aliasImports.length,
+    relativeImportsCount: relativeImports.length,
     aliasImports: aliasImports.map((i) => i.path),
+    relativeImports: relativeImports.map((i) => i.path),
   });
 
-  const resolvedDeps = await parallelMap(
+  // Resolve alias imports
+  const resolvedAliasDeps = await parallelMap(
     aliasImports,
     (imp) => resolveAliasImport(imp, projectDir, adapter),
   );
+
+  // Resolve relative imports
+  const resolvedRelativeDeps = await parallelMap(
+    relativeImports,
+    (imp) => resolveRelativeImport(imp, adapter),
+  );
+
+  // Combine all resolved dependencies
+  const resolvedDeps = [...resolvedAliasDeps, ...resolvedRelativeDeps];
 
   const transformedDeps = await parallelMap(
     resolvedDeps.filter((d) => d.depFilePath),
