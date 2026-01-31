@@ -319,7 +319,7 @@
     "rlm:example": "deno run -A scripts/rlm-ts/examples/basic.ts",
     "rlm:explore": "deno run -A scripts/rlm-ts/apps/explore.ts",
     "rlm:audit": "deno run -A scripts/rlm-ts/apps/audit.ts",
-    "start-split": "./scripts/split-mode/start.sh",
+    "start-split": "deno run --allow-all scripts/split-mode/start.ts",
     "test-split": "./scripts/split-mode/test.sh"
   },
   "lint": {

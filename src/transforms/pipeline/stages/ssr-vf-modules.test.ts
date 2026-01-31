@@ -202,39 +202,35 @@ describe("ssr-vf-modules integration", { sanitizeOps: false, sanitizeResources: 
     assertStringIncludes(result!.sourcePath, "router");
   });
 
-  it("resolves #veryfront/ imports to file:// paths", async () => {
-    const fs = createFileSystem();
-    const { resolveVeryfrontImport } = _testExports;
+  it("resolves #veryfront/ specifiers to source paths", async () => {
+    const { resolveVeryfrontSourcePath } = _testExports;
 
-    const result = await resolveVeryfrontImport("#veryfront/utils", fs);
+    const result = await resolveVeryfrontSourcePath("#veryfront/utils");
 
     assertEquals(result !== null, true, "Should resolve #veryfront/utils");
-    assertEquals(result!.startsWith("file://"), true, "Should return file:// URL");
     assertStringIncludes(result!, "/src/utils");
   });
 
   it("returns null for non-existent #veryfront/ imports", async () => {
-    const fs = createFileSystem();
-    const { resolveVeryfrontImport } = _testExports;
+    const { resolveVeryfrontSourcePath } = _testExports;
 
-    const result = await resolveVeryfrontImport("#veryfront/does-not-exist-xyz", fs);
+    const result = await resolveVeryfrontSourcePath("#veryfront/does-not-exist-xyz");
     assertEquals(result, null);
   });
 
   it("returns null for non-#veryfront/ specifiers", async () => {
-    const fs = createFileSystem();
-    const { resolveVeryfrontImport } = _testExports;
+    const { resolveVeryfrontSourcePath } = _testExports;
 
-    const result = await resolveVeryfrontImport("react", fs);
+    const result = await resolveVeryfrontSourcePath("react");
     assertEquals(result, null);
   });
 
-  it("FRAMEWORK_ROOT is included in file:// paths for cache isolation", async () => {
-    const fs = createFileSystem();
-    const { resolveVeryfrontImport, FRAMEWORK_ROOT } = _testExports;
+  it("source paths include FRAMEWORK_ROOT for cache isolation", async () => {
+    const { resolveVeryfrontSourcePath, FRAMEWORK_ROOT } = _testExports;
 
-    // This ensures different environments (source vs compiled binary) don't share cache files
-    const result = await resolveVeryfrontImport("#veryfront/utils", fs);
+    // This ensures different environments (source vs compiled binary) have different paths
+    const result = await resolveVeryfrontSourcePath("#veryfront/utils");
+
     assertEquals(result !== null, true, "Should resolve #veryfront/utils");
     assertStringIncludes(
       result!,

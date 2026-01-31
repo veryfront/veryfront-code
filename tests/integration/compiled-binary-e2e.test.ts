@@ -142,8 +142,11 @@ async function startBinaryServer(projectDir: string, nodeEnv = "development"): P
   const port = portCounter++;
   const cacheDir = await Deno.makeTempDir({ prefix: nodeEnv === "production" ? "vf-cache-prod-" : "vf-cache-" });
 
+  // Use `serve --mode=renderer` for production-like testing of the compiled binary.
+  // The `dev` command is for development mode with HMR - not what we want to test here.
   const process = new Deno.Command(BINARY_PATH, {
-    args: ["dev", "-p", String(port), "--project", projectDir],
+    args: ["serve", "--mode=renderer", "-p", String(port)],
+    cwd: projectDir, // Set working directory instead of --project flag
     env: {
       ...Deno.env.toObject(),
       NODE_ENV: nodeEnv,

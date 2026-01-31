@@ -107,9 +107,9 @@ async function resolveFrameworkFile(
 
 /**
  * Resolve a #veryfront/ import to the actual framework source file path.
- * Returns the file:// path if found, null otherwise.
+ * Returns the resolved path if found, null otherwise.
  */
-async function resolveVeryfrontImport(specifier: string): Promise<string | null> {
+async function resolveVeryfrontSourcePath(specifier: string): Promise<string | null> {
   if (!specifier.startsWith("#veryfront/")) return null;
 
   const relativePath = specifier.slice("#veryfront/".length);
@@ -119,7 +119,7 @@ async function resolveVeryfrontImport(specifier: string): Promise<string | null>
 
   if (hasExtension) {
     try {
-      if (await exists(basePath)) return `file://${basePath}`;
+      if (await exists(basePath)) return basePath;
     } catch {
       // Continue
     }
@@ -129,7 +129,7 @@ async function resolveVeryfrontImport(specifier: string): Promise<string | null>
   for (const ext of EXTENSIONS) {
     const pathWithExt = basePath + ext;
     try {
-      if (await exists(pathWithExt)) return `file://${pathWithExt}`;
+      if (await exists(pathWithExt)) return pathWithExt;
     } catch {
       // Continue
     }
@@ -138,7 +138,7 @@ async function resolveVeryfrontImport(specifier: string): Promise<string | null>
   for (const ext of EXTENSIONS) {
     const indexPath = join(basePath, "index" + ext);
     try {
-      if (await exists(indexPath)) return `file://${indexPath}`;
+      if (await exists(indexPath)) return indexPath;
     } catch {
       // Continue
     }
@@ -147,17 +147,24 @@ async function resolveVeryfrontImport(specifier: string): Promise<string | null>
   return null;
 }
 
+// Cache for already-transformed #veryfront/ dependencies to avoid cycles and redundant work
+const veryfrontTransformCache = new Map<string, string>();
+
+interface TransformContext {
+  reactVersion: string;
+  projectDir: string;
+  fs: ReturnType<typeof createFileSystem>;
+}
+
 /**
- * Transform framework source code with React import rewriting.
- * Uses esbuild to compile TSX/JSX and rewrites React imports to cached esm.sh bundles.
- * Also resolves #veryfront/ imports to file:// paths for runtime compatibility.
+ * Core transformation logic for framework TypeScript/TSX files.
+ * Compiles to JavaScript and recursively resolves all #veryfront/ imports.
  */
-async function transformFrameworkSource(
+async function transformFrameworkCode(
   content: string,
   sourcePath: string,
-  reactVersion: string,
-  projectDir: string,
-  _fs: ReturnType<typeof createFileSystem>,
+  ctx: TransformContext,
+  throwOnMissingImport = false,
 ): Promise<string> {
   const { transform } = await import("esbuild");
 
@@ -177,13 +184,16 @@ async function transformFrameworkSource(
 
   let transformed = result.code;
 
+  // Collect and recursively resolve all #veryfront/ imports
   const veryfrontReplacements = new Map<string, string>();
   for (const match of transformed.matchAll(/from\s+["'](#veryfront\/[^"']+)["']/g)) {
     const specifier = match[1]!;
     if (veryfrontReplacements.has(specifier)) continue;
 
-    const resolved = await resolveVeryfrontImport(specifier);
-    if (!resolved) {
+    const resolved = await resolveAndTransformVeryfrontImport(specifier, ctx);
+    if (resolved) {
+      veryfrontReplacements.set(specifier, resolved);
+    } else if (throwOnMissingImport) {
       throw new Error(
         `${LOG_PREFIX} Could not resolve framework import "${specifier}" in ${sourcePath}. ` +
           `Expected to find ${
@@ -192,11 +202,10 @@ async function transformFrameworkSource(
           `or an index file at that path.`,
       );
     }
-
-    veryfrontReplacements.set(specifier, resolved);
   }
 
-  const reactImportMap = getReactImportMap(reactVersion);
+  // Rewrite imports to resolved paths
+  const reactImportMap = getReactImportMap(ctx.reactVersion);
 
   transformed = await replaceSpecifiers(transformed, (specifier) => {
     if (specifier.startsWith("#veryfront/")) {
@@ -207,13 +216,13 @@ async function transformFrameworkSource(
     if (mapped) return mapped;
 
     if (specifier.startsWith("react/")) {
-      return buildReactUrl("react", reactVersion, "/" + specifier.slice("react/".length), true);
+      return buildReactUrl("react", ctx.reactVersion, "/" + specifier.slice("react/".length), true);
     }
 
     if (specifier.startsWith("react-dom/")) {
       return buildReactUrl(
         "react-dom",
-        reactVersion,
+        ctx.reactVersion,
         "/" + specifier.slice("react-dom/".length),
         true,
       );
@@ -222,14 +231,74 @@ async function transformFrameworkSource(
     return null;
   });
 
-  const importMap = await loadImportMap(projectDir);
+  // Cache HTTP imports to local filesystem
+  const importMap = await loadImportMap(ctx.projectDir);
   const cacheResult = await cacheHttpImportsToLocal(transformed, {
     cacheDir: getHttpBundleCacheDir(),
     importMap,
-    reactVersion,
+    reactVersion: ctx.reactVersion,
   });
 
   return cacheResult.code;
+}
+
+/**
+ * Resolve a #veryfront/ import to a file:// path pointing to transformed JavaScript.
+ * Recursively transforms dependencies and caches them for reuse.
+ */
+async function resolveAndTransformVeryfrontImport(
+  specifier: string,
+  ctx: TransformContext,
+): Promise<string | null> {
+  // Check in-memory cache first (handles cycles and avoids redundant work)
+  const cached = veryfrontTransformCache.get(specifier);
+  if (cached) return cached;
+
+  const sourcePath = await resolveVeryfrontSourcePath(specifier);
+  if (!sourcePath) return null;
+
+  try {
+    const content = await ctx.fs.readTextFile(sourcePath);
+
+    // Transform the dependency (recursively handles its own #veryfront/ imports)
+    const transformed = await transformFrameworkCode(content, sourcePath, ctx, false);
+
+    // Cache the transformed code to filesystem
+    const cachePath = await cacheTransformedCode(transformed, specifier, ctx.fs);
+    const fileUrl = `file://${cachePath}`;
+
+    // Store in memory cache for this session
+    veryfrontTransformCache.set(specifier, fileUrl);
+
+    logger.debug(`${LOG_PREFIX} Transformed #veryfront/ dependency`, {
+      specifier,
+      sourcePath,
+      cachePath,
+    });
+
+    return fileUrl;
+  } catch (error) {
+    logger.warn(`${LOG_PREFIX} Failed to transform #veryfront/ dependency: ${specifier}`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    // Return null on failure - caller will handle missing imports appropriately.
+    // No fallback to raw TypeScript paths as these fail in compiled binaries.
+    return null;
+  }
+}
+
+/**
+ * Transform framework source code with React import rewriting.
+ * Entry point for top-level framework modules (e.g., Head.tsx, Router.tsx).
+ */
+async function transformFrameworkSource(
+  content: string,
+  sourcePath: string,
+  reactVersion: string,
+  projectDir: string,
+  fs: ReturnType<typeof createFileSystem>,
+): Promise<string> {
+  return transformFrameworkCode(content, sourcePath, { reactVersion, projectDir, fs }, true);
 }
 
 /**
@@ -280,7 +349,8 @@ async function cacheTransformedCode(
 export const _testExports = {
   findVfModuleImports,
   resolveFrameworkFile,
-  resolveVeryfrontImport,
+  resolveVeryfrontSourcePath,
+  resolveAndTransformVeryfrontImport,
   FRAMEWORK_ROOT,
   EXTENSIONS,
 };
