@@ -12,7 +12,7 @@ import {
   injectContextHeaders,
   type ProxyContext,
 } from "./handler.ts";
-import { createMockServer } from "../tests/_helpers/utils.ts";
+import { createMockServer } from "../../tests/_helpers/utils.ts";
 
 /**
  * Helper: Extract all proxy-injected headers from a request.

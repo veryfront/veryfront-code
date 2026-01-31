@@ -1,6 +1,6 @@
 import { assertEquals } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
-import { createMockServer } from "../tests/_helpers/utils.ts";
+import { createMockServer } from "../../tests/_helpers/utils.ts";
 import { createProxyHandler } from "./handler.ts";
 
 describe("Proxy Handler", () => {

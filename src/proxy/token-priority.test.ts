@@ -7,7 +7,7 @@
 import { assertEquals } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
 import { createProxyHandler } from "./handler.ts";
-import { createMockServer } from "../tests/_helpers/utils.ts";
+import { createMockServer } from "../../tests/_helpers/utils.ts";
 
 describe("Token Priority Cascade", () => {
   describe("preview scope token priority", () => {

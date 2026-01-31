@@ -22,7 +22,7 @@ import type { CacheOptions, TokenCache } from "./types.ts";
 import { MemoryCache } from "./memory-cache.ts";
 import { RedisCache } from "./redis-cache.ts";
 import { ResilientCache } from "./resilient-cache.ts";
-import { getEnv } from "../../src/platform/compat/process.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { proxyLogger } from "../logger.ts";
 import { withSpan } from "../tracing.ts";
 

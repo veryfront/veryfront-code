@@ -11,7 +11,7 @@ function getEnv(key: string): string | undefined {
 }
 
 // Import version from root deno.json (the source of truth)
-import denoConfig from "../deno.json" with { type: "json" };
+import denoConfig from "../../deno.json" with { type: "json" };
 import { getTraceContext } from "./tracing.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 

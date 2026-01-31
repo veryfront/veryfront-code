@@ -245,8 +245,8 @@ async function main(): Promise<void> {
   }
 
   // Import dependencies
-  const { createProxyHandler, injectContextHeaders } = await import("../proxy/handler.ts");
-  const { createCacheFromEnv } = await import("../proxy/cache/index.ts");
+  const { createProxyHandler, injectContextHeaders } = await import("../src/proxy/handler.ts");
+  const { createCacheFromEnv } = await import("../src/proxy/cache/index.ts");
   const { createDevServer } = await import("../src/server/dev-server.ts");
 
   // Create proxy handler - combine projects and examples for routing

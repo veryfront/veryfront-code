@@ -17,7 +17,7 @@ function getEnv(key: string): string | undefined {
 }
 
 // Import version from root deno.json (the source of truth)
-import denoConfig from "../deno.json" with { type: "json" };
+import denoConfig from "../../deno.json" with { type: "json" };
 
 // Get version from environment variable or root deno.json
 const VERYFRONT_VERSION: string = getEnv("VERYFRONT_VERSION") ??

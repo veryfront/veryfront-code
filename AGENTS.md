@@ -34,6 +34,7 @@ src/
 ├── config/        # Configuration loading and validation
 ├── modules/       # Module resolution and import maps
 ├── platform/      # Multi-runtime adapters (Deno/Node/Bun)
+├── proxy/         # OAuth token proxy (can run standalone or combined)
 ├── rendering/     # SSR, RSC, streaming, hydration
 ├── routing/       # File-based routing, API routes
 ├── server/        # Dev and production servers
@@ -44,8 +45,6 @@ tests/
 ├── integration/   # Server and E2E tests
 ├── validation/    # State isolation tests
 └── _helpers/      # Test utilities
-
-proxy/             # OAuth token proxy (separate service)
 ```
 
 ## Development Commands

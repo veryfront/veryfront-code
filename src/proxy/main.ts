@@ -29,12 +29,12 @@ import {
   withSpan,
 } from "./tracing.ts";
 import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
-import { parseProjectDomain } from "../src/server/utils/domain-parser.ts";
-import { exit, getEnv, onSignal } from "../src/platform/compat/process.ts";
+import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
+import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import {
   createHttpServer,
   upgradeWebSocket,
-} from "../src/platform/compat/http/index.ts";
+} from "#veryfront/platform/compat/http/index.ts";
 
 // Configuration from environment variables
 const config: ProxyConfig = {

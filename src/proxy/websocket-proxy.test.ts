@@ -1,6 +1,6 @@
 import { assertEquals } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
-import { parseProjectDomain } from "../src/server/utils/domain-parser.ts";
+import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 
 describe("Proxy WebSocket Handler Tests", () => {
   describe("parseProjectDomain Import", () => {

@@ -13,13 +13,13 @@
  */
 
 import { TokenManager, type TokenScope } from "./token-manager.ts";
-import { type ParsedDomain, parseProjectDomain } from "../src/server/utils/domain-parser.ts";
+import { type ParsedDomain, parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import type { TokenCache } from "./cache/types.ts";
-import { createFileSystem } from "../src/platform/compat/fs.ts";
-import { cwd } from "../src/platform/compat/process.ts";
-import { join } from "../src/platform/compat/path/index.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
-import { computeContentSourceId } from "../src/cache/keys.ts";
+import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 
 /**
  * Domain lookup result from API.
