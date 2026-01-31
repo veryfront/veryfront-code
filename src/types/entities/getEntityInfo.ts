@@ -22,11 +22,25 @@ export async function getEntityInfo(
   return await withSpan(
     "types.getEntityInfo",
     async () => {
+      // Normalize path for Veryfront API adapter
+      let normalizedPath = filePath;
+      if (adapter) {
+        const adapterFs = adapter.fs;
+        if (isExtendedFSAdapter(adapterFs) && adapterFs.isVeryfrontAdapter()) {
+          // API adapter needs relative paths, not absolute paths
+          normalizedPath = filePath
+            .replace(/^.*?\/pages\//, "pages/")
+            .replace(/^.*?\/components\//, "components/")
+            .replace(/^.*?\/app\//, "app/")
+            .replace(/^.*?\/layouts\//, "layouts/");
+        }
+      }
+
       try {
         if (adapter) {
           try {
             const stat = await withFallback(
-              () => adapter.fs.stat(filePath),
+              () => adapter.fs.stat(normalizedPath),
               async () => {
                 const exists = await fs.exists(filePath);
                 if (!exists) {
@@ -61,7 +75,7 @@ export async function getEntityInfo(
 
         const content = adapter
           ? await withFallback(
-            () => adapter.fs.readFile(filePath),
+            () => adapter.fs.readFile(normalizedPath),
             () => fs.readTextFile(filePath),
             { operationName: "readFile:getEntityInfo", logError: false },
           )
