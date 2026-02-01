@@ -104,7 +104,8 @@ describe("Cache Portability", () => {
 
     it("tokenizes paths from any environment (aggressive mode)", () => {
       // Simulate code from a different build server
-      const buildServerCode = `import x from "file:///home/ci/projects/.cache/veryfront-http-bundle/http-123.mjs"`;
+      const buildServerCode =
+        `import x from "file:///home/ci/projects/.cache/veryfront-http-bundle/http-123.mjs"`;
       const tokenized = tokenizeAllVeryFrontPaths(buildServerCode);
 
       assert(tokenized.includes(CACHE_DIR_TOKEN), "Should contain token");
@@ -143,7 +144,8 @@ describe("Cache Portability", () => {
     });
 
     it("replaces tokens with local cache directory", () => {
-      const portable = `import x from "file://${CACHE_DIR_TOKEN}/veryfront-http-bundle/http-123.mjs"`;
+      const portable =
+        `import x from "file://${CACHE_DIR_TOKEN}/veryfront-http-bundle/http-123.mjs"`;
       const local = detokenizeAllCachePaths(portable);
 
       assert(!local.includes(CACHE_DIR_TOKEN), "Should not contain token");
@@ -337,8 +339,7 @@ describe("Cache Portability", () => {
       const localCacheDir = getCacheBaseDir();
       // Transform cache stores JSON with code inside
       const entry = {
-        code:
-          `import x from "file://${localCacheDir}/veryfront-http-bundle/http-123.mjs"`,
+        code: `import x from "file://${localCacheDir}/veryfront-http-bundle/http-123.mjs"`,
         hash: "abc123",
         timestamp: Date.now(),
       };

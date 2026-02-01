@@ -10,8 +10,8 @@ import { CircuitBreakerOpen, getCircuitBreaker } from "../utils/circuit-breaker.
 import { MEMORY_CACHE_MAX_ENTRIES } from "../utils/constants/cache.ts";
 import type { CacheBackend } from "./types.ts";
 import {
-  createTokenizingGateway,
   type CodeCacheGateway,
+  createTokenizingGateway,
   type TokenizingCacheGateway,
 } from "./tokenizing-gateway.ts";
 

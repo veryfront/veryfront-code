@@ -8,10 +8,7 @@ import {
   type TokenizingCacheGateway,
 } from "../../cache/backend.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import {
-  detokenizeAllCachePaths,
-  tokenizeAllVeryFrontPaths,
-} from "../../cache/paths.ts";
+import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "../../cache/paths.ts";
 
 const DEFAULT_TTL_SECONDS = 300; // 5 minutes
 const FALLBACK_MAX_ENTRIES = 500;
@@ -53,7 +50,7 @@ function getEffectiveCacheGateway(): TokenizingCacheGateway | CacheBackend | nul
 }
 
 // Backward compatibility: provide CacheBackend interface
-function getEffectiveCacheBackend(): CacheBackend | null {
+function _getEffectiveCacheBackend(): CacheBackend | null {
   const gateway = getEffectiveCacheGateway();
   return gateway as CacheBackend | null;
 }
@@ -234,9 +231,7 @@ export function setCachedTransform(
   const isDistributed = "isDistributed" in gateway
     ? (gateway as TokenizingCacheGateway).isDistributed()
     : gateway.type !== "memory";
-  const entryToStore = isDistributed
-    ? { ...entry, code: tokenizeAllVeryFrontPaths(code) }
-    : entry;
+  const entryToStore = isDistributed ? { ...entry, code: tokenizeAllVeryFrontPaths(code) } : entry;
   gateway.set(key, JSON.stringify(entryToStore), normalizeTtl(ttlSeconds)).catch((error) => {
     logger.debug("[TransformCache] Backend set failed", { key, error });
   });

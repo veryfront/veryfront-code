@@ -4,11 +4,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { type RedisClient } from "#veryfront/utils/redis-client.ts";
 import { buildRedisSSRModuleKey } from "#veryfront/cache";
 import { getSSRModuleRedisTTL } from "../constants.ts";
-import {
-  CacheBackends,
-  createDistributedCodeCacheAccessor,
-  type TokenizingCacheGateway,
-} from "#veryfront/cache/backend.ts";
+import { CacheBackends, createDistributedCodeCacheAccessor } from "#veryfront/cache/backend.ts";
 
 /**
  * Lazy-loaded distributed cache gateway for cross-pod sharing.
