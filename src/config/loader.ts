@@ -3,7 +3,7 @@ import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./schema.ts";
 import { extname, join, resolve } from "#veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { isBun } from "#veryfront/platform/compat/runtime.ts";
+import { isBun, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
@@ -33,10 +33,18 @@ function getDefaultImportMapForConfig(): { imports: ReturnType<typeof getReactIm
  * Otherwise uses local filesystem.
  */
 function getDefaultFsConfig(): VeryfrontConfig["fs"] {
-  const isProxyMode = getEnv("PROXY_MODE") === "1";
+  const proxyModeEnv = getEnv("PROXY_MODE");
+  const isProxyMode = proxyModeEnv === "1";
   const apiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
 
+  serverLogger.info("[CONFIG] getDefaultFsConfig called", {
+    proxyModeEnv,
+    isProxyMode,
+    apiBaseUrl: apiBaseUrl ? apiBaseUrl.slice(0, 30) : "(not set)",
+  });
+
   if (isProxyMode && apiBaseUrl) {
+    serverLogger.info("[CONFIG] Using veryfront-api filesystem (proxy mode)");
     return {
       type: "veryfront-api",
       veryfront: {
@@ -48,6 +56,7 @@ function getDefaultFsConfig(): VeryfrontConfig["fs"] {
     };
   }
 
+  serverLogger.info("[CONFIG] Using local filesystem (no proxy mode)");
   return { type: "local" };
 }
 
@@ -244,17 +253,43 @@ async function loadConfigFromTempFile(
   loadUrl: (tempFile: string) => string,
 ): Promise<unknown> {
   const fs = createFileSystem();
-  const extension = extname(configPath) || ".mjs";
+  const originalExt = extname(configPath) || ".mjs";
+
+  // In compiled Deno binaries, we can't import TypeScript directly.
+  // Convert .ts/.tsx to .mjs and strip TypeScript-specific syntax.
+  const needsTranspile = isDenoCompiled && (originalExt === ".ts" || originalExt === ".tsx");
+  const extension = needsTranspile ? ".mjs" : originalExt;
+  const processedSource = needsTranspile ? stripTypeScriptSyntax(source) : source;
+
   const tempDir = await fs.makeTempDir({ prefix: "vf-config-" });
   const tempFile = join(tempDir, `config${extension}`);
 
   try {
-    await fs.writeTextFile(tempFile, source);
+    await fs.writeTextFile(tempFile, processedSource);
     const configModule = await import(loadUrl(tempFile));
     return configModule.default || configModule;
   } finally {
     await fs.remove(tempDir, { recursive: true });
   }
+}
+
+/**
+ * Strip TypeScript-specific syntax for runtime import in compiled binaries.
+ * This is a simple transformation for config files which typically don't use complex TS features.
+ */
+function stripTypeScriptSyntax(source: string): string {
+  return source
+    // Remove 'as const' assertions
+    .replace(/\s+as\s+const\b/g, "")
+    // Remove type annotations (: string, : number, etc.)
+    .replace(
+      /:\s*(?:string|number|boolean|any|unknown|never|void|null|undefined)(?:\[\])?(?=\s*[,;=\)\}])/g,
+      "",
+    )
+    // Remove 'as Type' assertions
+    .replace(/\s+as\s+[A-Z][a-zA-Z0-9]*(?:<[^>]+>)?/g, "")
+    // Remove generic type parameters from function calls
+    .replace(/<[A-Z][a-zA-Z0-9]*(?:\s*,\s*[A-Z][a-zA-Z0-9]*)*>/g, "");
 }
 
 /**
@@ -269,14 +304,28 @@ function loadConfigFromVirtualFS(
   return withSpan(
     SpanNames.CONFIG_LOAD_PROJECT,
     async () => {
+      serverLogger.info("[CONFIG] Loading config from virtual filesystem (API)", { configPath });
       const content = await adapter.fs.readFile(configPath);
       const source = typeof content === "string" ? content : new TextDecoder().decode(content);
+      serverLogger.info("[CONFIG] Got config source from API", {
+        configPath,
+        sourceLength: source.length,
+        sourcePreview: source.slice(0, 200),
+      });
 
       const userConfig = await loadConfigFromTempFile(
         source,
         configPath,
         (tempFile) => `file://${tempFile}?v=${Date.now()}`,
       );
+
+      serverLogger.info("[CONFIG] Loaded config from virtual filesystem", {
+        configPath,
+        hasApp: !!(userConfig as Record<string, unknown>)?.app,
+        hasLayout: !!(userConfig as Record<string, unknown>)?.layout,
+        hasRouter: !!(userConfig as Record<string, unknown>)?.router,
+        configKeys: Object.keys(userConfig as Record<string, unknown>),
+      });
 
       return validateAndCacheConfig(userConfig, cacheKey);
     },
@@ -289,11 +338,28 @@ async function loadAndMergeConfig(
   cacheKey: string,
   adapter: RuntimeAdapter,
 ): Promise<VeryfrontConfig> {
-  if (isVirtualFilesystem(adapter.fs)) {
+  const isVirtualFS = isVirtualFilesystem(adapter.fs);
+  serverLogger.info("[CONFIG] loadAndMergeConfig called", {
+    configPath,
+    cacheKey,
+    isVirtualFS,
+    isBun,
+    isDenoCompiled,
+  });
+
+  if (isVirtualFS) {
+    serverLogger.info("[CONFIG] Using virtual filesystem (API) for config", { configPath });
     return loadConfigFromVirtualFS(configPath, cacheKey, adapter);
   }
 
-  if (isBun) {
+  // Bun and compiled Deno binaries can't dynamically import TypeScript files directly.
+  // We need to read the source, write to a temp file, and import from there.
+  if (isBun || isDenoCompiled) {
+    serverLogger.info("[CONFIG] Using temp file import for Bun/compiled Deno", {
+      configPath,
+      isBun,
+      isDenoCompiled,
+    });
     const fs = createFileSystem();
     const source = await fs.readTextFile(configPath);
 
@@ -302,6 +368,11 @@ async function loadAndMergeConfig(
       configPath,
       (tempFile) => `file://${tempFile}`,
     );
+    serverLogger.info("[CONFIG] Successfully loaded config via temp file", {
+      configPath,
+      hasApp: !!(userConfig as Record<string, unknown>)?.app,
+      hasRouter: !!(userConfig as Record<string, unknown>)?.router,
+    });
     return validateAndCacheConfig(userConfig, cacheKey);
   }
 
@@ -350,9 +421,11 @@ export function getConfig(
 
       const cached = configCacheByProject.get(effectiveCacheKey);
       if (cached?.revision === cacheRevision) {
-        serverLogger.debug("[CONFIG] Cache HIT - using cached config", {
+        serverLogger.info("[CONFIG] Cache HIT - using cached config", {
           cacheKey: effectiveCacheKey,
           isVirtualFS,
+          hasApp: !!cached.config.app,
+          hasLayout: !!(cached.config as Record<string, unknown>).layout,
           duration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
         });
         return cached.config;
@@ -365,24 +438,36 @@ export function getConfig(
 
       const configFiles = ["veryfront.config.js", "veryfront.config.ts", "veryfront.config.mjs"];
 
+      // For virtual filesystem, config is at project root ("/"), not the local projectDir
+      const configBaseDir = isVirtualFS ? "/" : projectDir;
+
       for (const configFile of configFiles) {
-        const configPath = join(projectDir, configFile);
-        if (!(await adapter.fs.exists(configPath))) continue;
+        const configPath = join(configBaseDir, configFile);
+        const exists = await adapter.fs.exists(configPath);
+        serverLogger.info("[CONFIG] Checking config file", { configPath, exists, isVirtualFS });
+        if (!exists) continue;
 
         try {
           const merged = await loadAndMergeConfig(configPath, effectiveCacheKey, adapter);
+          serverLogger.info("[CONFIG] Successfully loaded config", {
+            configFile,
+            hasApp: !!merged.app,
+            hasLayout: !!(merged as Record<string, unknown>).layout,
+            configKeys: Object.keys(merged),
+          });
           return merged;
         } catch (error) {
-          if (isConfigError(error)) throw error;
-
-          serverLogger.debug(`[CONFIG] Failed to load ${configFile}, trying next:`, {
+          serverLogger.warn(`[CONFIG] Failed to load ${configFile}, trying next:`, {
             error: getErrorMessage(error),
           });
+          if (isConfigError(error)) throw error;
         }
       }
 
-      serverLogger.debug("[CONFIG] No config file found, using defaults", {
+      serverLogger.warn("[CONFIG] No config file found, using defaults", {
         effectiveCacheKey,
+        projectDir,
+        isVirtualFS,
         duration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
       });
 

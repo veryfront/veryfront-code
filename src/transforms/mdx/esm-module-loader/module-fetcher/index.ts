@@ -26,7 +26,6 @@ import {
   ensureHttpBundlesExist,
   tokenizeCachePaths,
 } from "../../../esm/http-cache.ts";
-import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import {
@@ -560,6 +559,16 @@ async function fetchModuleViaHTTP(
   return moduleCode;
 }
 
+/**
+ * Check if code contains raw HTTP URLs that would fail in compiled binary mode.
+ * Compiled binaries cannot do dynamic HTTP imports.
+ */
+function hasRawHttpImports(code: string): boolean {
+  // Match HTTP URLs in import statements: from "https://..." or from 'https://...'
+  const httpImportPattern = /from\s+["'](https?:\/\/[^"']+)["']/gi;
+  return httpImportPattern.test(code);
+}
+
 async function validateCachedModule(
   normalizedPath: string,
   cachedPath: string,
@@ -568,6 +577,25 @@ async function validateCachedModule(
   pathCache: Map<string, string>,
   versionedKey: string,
 ): Promise<boolean> {
+  // Reject caches with raw HTTP URLs - all modules should use file:// paths.
+  // This ensures consistency between compiled and non-compiled modes.
+  if (hasRawHttpImports(cachedCode)) {
+    log.warn(
+      `${LOG_PREFIX_MDX_LOADER} Cached module has raw HTTP imports, invalidating legacy cache`,
+      {
+        normalizedPath,
+        cachedPath,
+      },
+    );
+    pathCache.delete(versionedKey);
+    try {
+      await getLocalFs().remove(cachedPath);
+    } catch {
+      /* ignore removal errors */
+    }
+    return false;
+  }
+
   const bundlePaths = extractHttpBundlePaths(cachedCode);
   if (bundlePaths.length > 0) {
     const cacheDir = getHttpBundleCacheDir();
@@ -828,6 +856,24 @@ async function doFetchAndCacheModule(
               moduleCode = null;
             }
           }
+
+          // Safety net: Convert any remaining HTTP imports to local file:// paths.
+          // New cache entries should already have file:// paths, but old entries might have HTTP URLs.
+          // This is a no-op for properly cached entries and fixes legacy cache entries.
+          if (moduleCode) {
+            const importMap = await loadImportMap(projectDir);
+            const cacheResult = await cacheHttpImportsToLocal(moduleCode, {
+              cacheDir: getHttpBundleCacheDir(),
+              importMap,
+              reactVersion: context.reactVersion,
+            });
+            if (cacheResult.code !== moduleCode) {
+              log.debug(`${LOG_PREFIX_MDX_LOADER} Converted HTTP imports from legacy cache entry`, {
+                normalizedPath,
+              });
+              moduleCode = cacheResult.code;
+            }
+          }
         }
       } catch (error) {
         log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache get failed`, {
@@ -879,11 +925,12 @@ async function doFetchAndCacheModule(
       // Rewrite _dnt.polyfills.js / _dnt.shims.js relative imports to absolute file:// paths
       moduleCode = rewriteDntImports(moduleCode, actualFilePath);
 
-      // Cache HTTP imports (esm.sh URLs) to local file:// paths for compiled binaries.
-      // Native Deno can do dynamic HTTP imports, but deno compile'd binaries cannot.
-      // This MUST happen before caching to disk or distributed cache.
-      if (isDenoCompiled) {
-        log.debug(`${LOG_PREFIX_MDX_LOADER} Caching HTTP imports for compiled binary`, {
+      // Cache HTTP imports (esm.sh URLs) to local file:// paths.
+      // This ensures the same cache works for both compiled and non-compiled Deno.
+      // Compiled binaries cannot do dynamic HTTP imports, but non-compiled Deno
+      // also works fine with file:// paths, so we always cache for consistency.
+      {
+        log.debug(`${LOG_PREFIX_MDX_LOADER} Caching HTTP imports to local files`, {
           normalizedPath,
         });
         const importMap = await loadImportMap(projectDir);

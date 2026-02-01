@@ -150,10 +150,36 @@ export function parseRenderCacheKey(cacheKey: string): {
   };
 }
 
+/**
+ * Create a portable key from a path string.
+ * Combines a hash (for uniqueness) with the folder name (for readability).
+ * Example: "/Users/alice/projects/my-app" → "local-7a3b2f1c-my-app"
+ *
+ * This ensures cache keys are:
+ * - Portable across different machines and environments
+ * - Debuggable (folder name visible at a glance)
+ * - Unique (hash prevents collisions for same folder name in different locations)
+ */
+function hashPathWithName(path: string): string {
+  if (!path) return "local-default";
+
+  // Extract folder name for readability
+  const folderName = path.split("/").filter(Boolean).pop() || "unknown";
+
+  // Generate hash for uniqueness
+  let hash = 0;
+  for (let i = 0; i < path.length; i++) {
+    hash = (hash << 5) - hash + path.charCodeAt(i);
+    hash |= 0;
+  }
+
+  return `local-${Math.abs(hash).toString(16)}-${folderName}`;
+}
+
 export function buildConfigCacheKey(projectIdOrDir: string, isVirtualFilesystem: boolean): string {
   const baseKey = isVirtualFilesystem
     ? `${CacheKeyPrefix.CONFIG_VIRTUAL}:${projectIdOrDir}`
-    : projectIdOrDir;
+    : `${CacheKeyPrefix.CONFIG}:${hashPathWithName(projectIdOrDir)}`;
 
   return `${baseKey}:${VERSION}`;
 }
@@ -265,6 +291,34 @@ export interface TransformCacheKeyOptions {
 }
 
 /**
+ * Normalize a file path for use in cache keys.
+ * Converts absolute paths to portable format: hash + filename for uniqueness and debuggability.
+ *
+ * Examples:
+ * - "/Users/alice/project/components/Button.tsx" → "a3f2b1c4-Button.tsx"
+ * - "components/Button.tsx" → "components/Button.tsx" (already relative)
+ */
+function normalizeFilePath(filePath: string): string {
+  // Already relative path - keep as-is
+  if (!filePath.startsWith("/")) {
+    return filePath;
+  }
+
+  // Extract filename for readability
+  const parts = filePath.split("/");
+  const fileName = parts.pop() || "unknown";
+
+  // Hash the full path for uniqueness
+  let hash = 0;
+  for (let i = 0; i < filePath.length; i++) {
+    hash = (hash << 5) - hash + filePath.charCodeAt(i);
+    hash |= 0;
+  }
+
+  return `${Math.abs(hash).toString(16)}-${fileName}`;
+}
+
+/**
  * Build a transform cache key with full dependency tracking.
  *
  * Key format: v{VERSION}:{projectId}:{filePath}:{contentHash}:{depsHash}:{configHash}:{target}
@@ -287,8 +341,9 @@ export function buildTransformCacheKey(
   const depsKey = options?.depsHash ? `:deps:${options.depsHash.slice(0, 8)}` : "";
   const configKey = options?.configHash ? `:cfg:${options.configHash.slice(0, 8)}` : "";
   const projectKey = options?.projectId ? `${options.projectId}:` : "";
+  const normalizedPath = normalizeFilePath(filePath);
 
-  return `v${VERSION}:${projectKey}${filePath}:${contentHash}:${target}${studioKey}${depsKey}${configKey}`;
+  return `v${VERSION}:${projectKey}${normalizedPath}:${contentHash}:${target}${studioKey}${depsKey}${configKey}`;
 }
 
 export function buildContentHashCacheKey(

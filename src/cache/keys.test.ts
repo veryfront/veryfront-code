@@ -71,7 +71,12 @@ describe("cache/keys", () => {
     });
 
     it("should build key for local filesystem", () => {
-      assertMatch(buildConfigCacheKey("/path/to/project", false), /^\/path\/to\/project:.+$/);
+      // Should use hashed path with folder name, not absolute path
+      // Format: config:local-{hash}-{folderName}:{version}
+      assertMatch(
+        buildConfigCacheKey("/path/to/project", false),
+        /^config:local-[a-f0-9]+-project:.+$/,
+      );
     });
   });
 

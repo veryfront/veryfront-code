@@ -132,7 +132,10 @@ const FRAMEWORK_SOURCE_PATH_RE = new RegExp(
  *    (after FSAdapter normalizes absolute paths like /Users/.../veryfront-renderer/src/...)
  */
 export function isFrameworkSourcePath(normalizedPath: string): boolean {
-  if (normalizedPath.startsWith("_veryfront/")) {
+  // Check for _veryfront/ prefix (with or without embedded: prefix)
+  if (
+    normalizedPath.startsWith("_veryfront/") || normalizedPath.startsWith("embedded:_veryfront/")
+  ) {
     return true;
   }
   return FRAMEWORK_SOURCE_PATH_RE.test(normalizedPath);

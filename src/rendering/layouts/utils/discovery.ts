@@ -69,10 +69,28 @@ export async function discoverNestedLayouts(
   const cached = layoutDiscoveryCache.get(key);
   if (cached) {
     cached.accessedAt = Date.now();
+    logger.info("[discovery] Layout cache HIT", {
+      pageFilePath,
+      rootDir,
+      layoutCount: cached.layouts.length,
+      layoutPaths: cached.layouts.map((l) => l.path),
+    });
     return cached.layouts;
   }
 
+  logger.info("[discovery] Layout cache MISS, discovering layouts", {
+    pageFilePath,
+    rootDir,
+    projectDir,
+  });
+
   const layouts = await discoverNestedLayoutsImpl(pageFilePath, rootDir, adapter);
+
+  logger.info("[discovery] Found layouts", {
+    pageFilePath,
+    layoutCount: layouts.length,
+    layoutPaths: layouts.map((l) => l.path),
+  });
 
   evictOldestEntries();
   layoutDiscoveryCache.set(key, { layouts, accessedAt: Date.now(), projectDir });

@@ -27,7 +27,6 @@ import {
   extractHttpBundlePaths,
 } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import { isDeno, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { replaceSpecifiers } from "../../esm/lexer.ts";
 import { setupSSRGlobals } from "../../../rendering/ssr-globals.ts";
 import type { MDXFrontmatter, MDXModule } from "../types.ts";
@@ -457,10 +456,11 @@ async function transformJsxImports(
  * - Deno compiled binary: CANNOT dynamically import HTTP URLs at runtime,
  *   so we must cache them to local file:// paths (like Node.js/Bun).
  * - Node.js/Bun: Must cache HTTP imports to local file:// paths.
+ *
+ * Note: We always cache HTTP imports for consistency between compiled and
+ * non-compiled modes, allowing them to share the same cache.
  */
 async function cacheHttpImports(code: string, importMap: ImportMapConfig): Promise<string> {
-  if (isDeno && !isDenoCompiled) return code;
-
   const result = await cacheHttpImportsToLocal(code, {
     cacheDir: getHttpBundleCacheDir(),
     importMap,
@@ -633,11 +633,10 @@ async function doLoadModuleESM(
     await ensureCacheNodeModules();
 
     // Proactively ensure all HTTP bundles exist before import.
-    // Deno runtime handles HTTP imports natively, but compiled Deno binaries cannot
-    // dynamically import HTTP URLs - they need local file:// paths like Node.js/Bun.
+    // All modules now use local file:// paths for consistency between
+    // compiled and non-compiled modes (shared cache).
     // We use recursive extraction to find bundles imported by VF modules too.
-    const needsHttpBundleCheck = !isDeno || isDenoCompiled;
-    if (needsHttpBundleCheck) {
+    {
       // Extract HTTP bundles from MDX code AND any VF modules it imports (recursively)
       const bundlePaths = await extractAllHttpBundlePathsRecursive(rewritten);
       if (bundlePaths.length > 0) {

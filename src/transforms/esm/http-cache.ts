@@ -12,7 +12,6 @@ import { gunzipSync } from "node:zlib";
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { basename, isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { isDeno, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
@@ -558,17 +557,90 @@ function resolveBareSpecifier(
   return `https://esm.sh/${specifier}?target=es2022`;
 }
 
+/**
+ * Asynchronously refresh the distributed cache entry for a local bundle.
+ * This is fire-and-forget to avoid blocking the hot path.
+ */
+function refreshDistributedCacheAsync(
+  hash: number,
+  code: string,
+  cacheDir: string,
+  normalizedUrl: string,
+): void {
+  getDistributedCache().then(async (distributed) => {
+    if (!distributed) return;
+
+    const hashStr = String(hash);
+    const now = Date.now();
+    const lastRefresh = getLastDistributedRefresh().get(hashStr);
+    const needsRefresh = !lastRefresh || now - lastRefresh > DISTRIBUTED_REFRESH_INTERVAL_MS;
+
+    if (needsRefresh) {
+      try {
+        const portableCode = tokenizeCachePaths(code, cacheDir);
+        await Promise.all([
+          distributed.set(
+            distributedKey("url", hash),
+            portableCode,
+            HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+          ),
+          distributed.set(
+            distributedKey("code", hash),
+            portableCode,
+            HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+          ),
+          distributed.set(
+            distributedKey("hash", hash),
+            normalizedUrl,
+            HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+          ),
+        ]);
+        getLastDistributedRefresh().set(hashStr, now);
+        logger.debug("[HTTP-CACHE] Refreshed distributed cache TTL", { hash });
+
+        const manifestId = getManifestIdForHash(hashStr);
+        if (manifestId) {
+          refreshManifestTTL(manifestId).catch((err) => {
+            logger.debug("[HTTP-CACHE] Manifest TTL refresh failed", {
+              manifestId: manifestId.slice(0, 12),
+              err,
+            });
+          });
+        }
+      } catch (error) {
+        logger.debug("[HTTP-CACHE] Distributed cache refresh failed", { hash, error });
+      }
+    }
+  }).catch((err) => {
+    logger.debug("[HTTP-CACHE] Distributed cache async refresh error", { err });
+  });
+}
+
+/**
+ * Track bundle for manifest accumulation if in accumulation context.
+ */
+function trackBundleAccumulator(hash: number, normalizedUrl: string, cachePath: string): void {
+  const accumulator = bundleAccumulatorStorage.getStore();
+  if (accumulator) {
+    createFileSystem().stat(cachePath).then((stat) => {
+      accumulator.push({
+        hash: String(hash),
+        url: normalizedUrl,
+        sizeBytes: stat?.size ?? 0,
+      });
+    }).catch(() => {
+      // Ignore stat errors
+    });
+  }
+}
+
 async function cacheHttpModuleInternal(url: string, options: CacheOptions): Promise<string | null> {
   const normalizedUrl = normalizeHttpUrl(url);
 
-  const canDoNativeHttpImports = isDeno && !isDenoCompiled;
-  if (canDoNativeHttpImports && isReactCoreUrl(normalizedUrl)) {
-    logger.debug(
-      "[HTTP-CACHE] Skipping React core module for Deno runtime (prevents multiple instances)",
-      { url: normalizedUrl },
-    );
-    return null;
-  }
+  // Note: We always cache HTTP modules to local file:// paths, including React core.
+  // This ensures the same cache works for both compiled and non-compiled Deno.
+  // Multiple React instances are prevented because all modules use the same
+  // normalized URL -> same hash -> same local file path.
 
   const cacheDir = ensureAbsoluteDir(options.cacheDir);
   const cacheKey = `${cacheDir}:${normalizedUrl}`;
@@ -584,66 +656,33 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
   const fs = createFileSystem();
 
   if (await exists(cachePath)) {
-    getCachedPaths().set(cacheKey, cachePath);
+    // Validate that dependencies also exist locally before returning
+    const code = await fs.readTextFile(cachePath);
+    const deps = extractBundleDeps(code);
 
-    const distributed = await getDistributedCache();
-    if (distributed) {
-      const hashStr = String(hash);
-      const now = Date.now();
-      const lastRefresh = getLastDistributedRefresh().get(hashStr);
-      const needsRefresh = !lastRefresh || now - lastRefresh > DISTRIBUTED_REFRESH_INTERVAL_MS;
-
-      if (needsRefresh) {
-        try {
-          const code = await fs.readTextFile(cachePath);
-          // Tokenize cache paths for cross-environment portability
-          const portableCode = tokenizeCachePaths(code, cacheDir);
-          await Promise.all([
-            distributed.set(
-              distributedKey("url", hash),
-              portableCode,
-              HTTP_MODULE_DISTRIBUTED_TTL_SEC,
-            ),
-            distributed.set(
-              distributedKey("code", hash),
-              portableCode,
-              HTTP_MODULE_DISTRIBUTED_TTL_SEC,
-            ),
-            distributed.set(
-              distributedKey("hash", hash),
-              normalizedUrl,
-              HTTP_MODULE_DISTRIBUTED_TTL_SEC,
-            ),
-          ]);
-          getLastDistributedRefresh().set(hashStr, now);
-          logger.debug("[HTTP-CACHE] Refreshed distributed cache TTL", { hash });
-
-          const manifestId = getManifestIdForHash(hashStr);
-          if (manifestId) {
-            refreshManifestTTL(manifestId).catch((err) => {
-              logger.debug("[HTTP-CACHE] Manifest TTL refresh failed", {
-                manifestId: manifestId.slice(0, 12),
-                err,
-              });
-            });
-          }
-        } catch (error) {
-          logger.debug("[HTTP-CACHE] Distributed cache refresh failed", { hash, error });
-        }
+    if (deps.length > 0) {
+      const depsValid = await validateBundleDepsExist(deps, cacheDir);
+      if (!depsValid) {
+        logger.warn("[HTTP-CACHE] Local cache has missing deps, will re-fetch", {
+          url: normalizedUrl,
+          hash,
+          missingDeps: deps.length,
+        });
+        // Don't return - fall through to re-fetch
+      } else {
+        // Deps valid, can return the cached file
+        getCachedPaths().set(cacheKey, cachePath);
+        refreshDistributedCacheAsync(hash, code, cacheDir, normalizedUrl);
+        trackBundleAccumulator(hash, normalizedUrl, cachePath);
+        return cachePath;
       }
+    } else {
+      // No deps, can return immediately
+      getCachedPaths().set(cacheKey, cachePath);
+      refreshDistributedCacheAsync(hash, code, cacheDir, normalizedUrl);
+      trackBundleAccumulator(hash, normalizedUrl, cachePath);
+      return cachePath;
     }
-
-    const accumulator = bundleAccumulatorStorage.getStore();
-    if (accumulator) {
-      const stat = await createFileSystem().stat(cachePath);
-      accumulator.push({
-        hash: String(hash),
-        url: normalizedUrl,
-        sizeBytes: stat?.size ?? 0,
-      });
-    }
-
-    return cachePath;
   }
 
   const processingStack = getProcessingStack();
@@ -848,9 +887,8 @@ async function resolveSpecifier(
   if (isExternalScheme(specifier) || isInternalBare(specifier)) return null;
 
   if (specifier.startsWith("npm:")) {
-    const canDoNativeNpmImports = isDeno && !isDenoCompiled;
-    if (canDoNativeNpmImports) return specifier;
-
+    // Always cache npm: imports to local files for consistency between
+    // compiled and non-compiled modes.
     const bareSpecifier = specifier.slice(4);
     const cached = await cacheHttpModule(`https://esm.sh/${bareSpecifier}`, options);
     if (!cached) return bareSpecifier;
@@ -880,11 +918,8 @@ async function resolveSpecifier(
 
     const resolved = new URL(specifier, baseUrl).toString();
 
-    const canDoNativeHttpImports = isDeno && !isDenoCompiled;
-    if (canDoNativeHttpImports && isReactCoreUrl(resolved)) {
-      return normalizeHttpUrl(resolved);
-    }
-
+    // Always cache to local files, including React core modules.
+    // This ensures consistency between compiled and non-compiled modes.
     const cached = await cacheHttpModule(resolved, options);
     if (!cached) return null;
 
