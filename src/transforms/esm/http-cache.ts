@@ -676,10 +676,20 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 
   const processingStack = getProcessingStack();
   if (processingStack.has(normalizedUrl)) {
-    logger.debug("[HTTP-CACHE] Circular dependency detected, returning expected path", {
+    // Only return early if the file actually exists on disk.
+    // This prevents "Module not found" errors when circular dependency detection
+    // triggers but the file hasn't been written yet (e.g., after pod restart).
+    if (await exists(cachePath)) {
+      logger.debug("[HTTP-CACHE] Circular dependency detected, file exists", {
+        url: normalizedUrl,
+      });
+      return cachePath;
+    }
+    logger.warn("[HTTP-CACHE] Circular dependency detected but file missing, will fetch", {
       url: normalizedUrl,
+      cachePath,
     });
-    return cachePath;
+    // Don't return - fall through to fetch
   }
 
   const inFlight = inFlightHttpFetches.get(cacheKey);
@@ -693,12 +703,8 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     if (cacheResult.code) {
       const cachedCode = cacheResult.code as unknown as string;
 
-      const depPattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-(\d+)\.mjs)/gi;
-      const deps: Array<{ path: string; hash: string }> = [];
-      let depMatch: RegExpExecArray | null;
-      while ((depMatch = depPattern.exec(cachedCode)) !== null) {
-        deps.push({ path: depMatch[1]!, hash: depMatch[2]! });
-      }
+      // Use extractBundleDeps to handle both absolute (file://) and relative (./http-*.mjs) paths
+      const deps = extractBundleDeps(cachedCode);
 
       if (deps.length > 0) {
         const depsExist = await validateBundleDepsExist(deps, cacheDir);
