@@ -202,8 +202,8 @@ describe("Strategy Unit Tests", () => {
       }
     });
 
-    it("should map @veryfront/* to module server URLs for browser", async () => {
-      const code = `import { Head } from "#veryfront/head";`;
+    it("should map veryfront/* to module server URLs for browser", async () => {
+      const code = `import { Head } from "veryfront/head";`;
       const result = await rewriteImports(code, createContext({ target: "browser" }));
       expect(result).toContain("/_vf_modules/_veryfront/react/components/Head.js");
     });
