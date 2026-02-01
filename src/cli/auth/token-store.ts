@@ -13,9 +13,9 @@ function getTokenPath(env: RuntimeEnv = getRuntimeEnv()): string {
   return join(getConfigDir(env), TOKEN_FILE_NAME);
 }
 
-export async function readToken(): Promise<string | null> {
+export async function readToken(env?: RuntimeEnv): Promise<string | null> {
   const fs = createFileSystem();
-  const tokenPath = getTokenPath();
+  const tokenPath = getTokenPath(env);
 
   try {
     if (!(await fs.exists(tokenPath))) return null;
@@ -27,10 +27,10 @@ export async function readToken(): Promise<string | null> {
   }
 }
 
-export async function saveToken(token: string): Promise<void> {
+export async function saveToken(token: string, env?: RuntimeEnv): Promise<void> {
   const fs = createFileSystem();
-  const configDir = getConfigDir();
-  const tokenPath = getTokenPath();
+  const configDir = getConfigDir(env);
+  const tokenPath = getTokenPath(env);
 
   if (!(await fs.exists(configDir))) {
     await fs.mkdir(configDir, { recursive: true });
@@ -40,9 +40,9 @@ export async function saveToken(token: string): Promise<void> {
   await fs.chmod(tokenPath, TOKEN_FILE_PERMISSIONS);
 }
 
-export async function deleteToken(): Promise<void> {
+export async function deleteToken(env?: RuntimeEnv): Promise<void> {
   const fs = createFileSystem();
-  const tokenPath = getTokenPath();
+  const tokenPath = getTokenPath(env);
 
   try {
     if (!(await fs.exists(tokenPath))) return;
@@ -52,10 +52,10 @@ export async function deleteToken(): Promise<void> {
   }
 }
 
-export async function hasToken(): Promise<boolean> {
-  return (await readToken()) !== null;
+export async function hasToken(env?: RuntimeEnv): Promise<boolean> {
+  return (await readToken(env)) !== null;
 }
 
-export function getTokenLocation(): string {
-  return getTokenPath();
+export function getTokenLocation(env?: RuntimeEnv): string {
+  return getTokenPath(env);
 }

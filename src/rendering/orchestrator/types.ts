@@ -47,6 +47,8 @@ export interface RenderOptions {
   delivery?: "string" | "stream";
   request?: Request;
   url?: URL;
+  /** Optional cache key override; defaults to slug + normalized query params */
+  cacheKey?: string;
   nonce?: string;
   studioEmbed?: boolean;
   projectId?: string;
@@ -62,6 +64,8 @@ export interface RenderOptions {
   contentSourceId?: string;
   /** Skip cache check in pipeline (cache already checked by Renderer) */
   skipCacheCheck?: boolean;
+  /** Skip cache persistence (used for prefetch/aux renders like CSS generation) */
+  skipCachePersist?: boolean;
   /** Disable HMR scripts (for embedded iframes where WebSocket is unwanted) */
   noHmr?: boolean;
 }

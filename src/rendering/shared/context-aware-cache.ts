@@ -17,6 +17,8 @@ interface CachePayload {
   result: RenderResult;
   storedAt: number;
   expiresAt?: number;
+  /** Optional serialized form of result.nodeMap for JSON-based stores */
+  nodeMapEntries?: Array<[number, unknown]>;
 }
 
 export interface ContextAwareCacheLookupResult {
@@ -27,14 +29,15 @@ export interface ContextAwareCacheLookupResult {
 
 export class ContextAwareCacheCoordinator {
   private store: CacheStore;
-  private ttlMs?: number;
+  private ttlMs: number | undefined;
+  private readonly defaultTtlMs = 5 * 60 * 1000; // 5 minutes
 
   constructor(options: ContextAwareCacheOptions = {}) {
-    this.ttlMs = options.ttlMs;
+    this.ttlMs = options.ttlMs ?? this.defaultTtlMs;
     this.store = options.store ??
       new MemoryCacheStore({
         maxEntries: options.memory?.maxEntries ?? 500,
-        ttlMs: options.memory?.ttlMs ?? options.ttlMs,
+        ttlMs: options.memory?.ttlMs ?? this.ttlMs,
       });
   }
 
@@ -42,8 +45,9 @@ export class ContextAwareCacheCoordinator {
     slug: string,
     ctx: RenderContext,
     colorScheme?: "light" | "dark",
+    cacheKeyOverride?: string,
   ): Promise<ContextAwareCacheLookupResult> {
-    const cacheKey = this.getCacheKey(slug, ctx, colorScheme);
+    const cacheKey = this.getCacheKey(slug, ctx, colorScheme, cacheKeyOverride);
 
     return withSpan(
       SpanNames.CACHE_CHECK_SPECULATIVE,
@@ -85,7 +89,7 @@ export class ContextAwareCacheCoordinator {
         });
 
         return {
-          cachedResult: this.cloneResult(cached.result),
+          cachedResult: this.cloneResult(cached.result, cached.nodeMapEntries),
           cacheKey,
           hit: true,
         };
@@ -105,14 +109,16 @@ export class ContextAwareCacheCoordinator {
     slug: string,
     ctx: RenderContext,
     colorScheme?: "light" | "dark",
+    cacheKeyOverride?: string,
   ): Promise<void> {
     if (!result || result.stream) return;
 
-    const cacheKey = this.getCacheKey(slug, ctx, colorScheme);
+    const cacheKey = this.getCacheKey(slug, ctx, colorScheme, cacheKeyOverride);
     const now = Date.now();
 
     await this.store.set(cacheKey, {
       result: this.cloneResult(result),
+      nodeMapEntries: result.nodeMap ? Array.from(result.nodeMap.entries()) : undefined,
       storedAt: now,
       expiresAt: this.ttlMs ? now + this.ttlMs : undefined,
     });
@@ -172,6 +178,17 @@ export class ContextAwareCacheCoordinator {
   }
 
   async clearSlug(slug: string, ctx: RenderContext): Promise<void> {
+    if (this.store.deleteByPrefix) {
+      const prefix = createCacheKey(ctx, `page:${slug}`);
+      await this.store.deleteByPrefix(prefix);
+      logger.debug("[ContextAwareCache] Cleared slug from cache by prefix", {
+        slug,
+        projectId: ctx.projectId,
+        prefix,
+      });
+      return;
+    }
+
     const keys = [
       createCacheKey(ctx, `page:${slug}`),
       createCacheKey(ctx, `page:${slug}:theme-light`),
@@ -204,23 +221,42 @@ export class ContextAwareCacheCoordinator {
     slug: string,
     ctx: RenderContext,
     colorScheme?: "light" | "dark",
+    cacheKeyOverride?: string,
   ): string {
     // Use hyphen instead of equals sign (API cache key validation only allows: a-z A-Z 0-9 _ : . * - /)
     const themeKey = colorScheme ? `:theme-${colorScheme}` : "";
-    return createCacheKey(ctx, `page:${slug}${themeKey}`);
+    const contentKey = cacheKeyOverride ?? `page:${slug}${themeKey}`;
+    return createCacheKey(ctx, contentKey);
   }
 
   private isExpired(entry: CachePayload): boolean {
     return typeof entry.expiresAt === "number" && Date.now() > entry.expiresAt;
   }
 
-  private cloneResult(result: RenderResult): RenderResult {
+  private cloneResult(
+    result: RenderResult,
+    nodeMapEntries?: Array<[number, unknown]>,
+  ): RenderResult {
+    let nodeMap: Map<number, unknown> | undefined;
+    if (nodeMapEntries) {
+      nodeMap = new Map(nodeMapEntries);
+    } else if (result.nodeMap instanceof Map) {
+      nodeMap = new Map(result.nodeMap);
+    } else if (result.nodeMap && typeof result.nodeMap === "object") {
+      nodeMap = new Map(
+        Object.entries(result.nodeMap as Record<string, unknown>).map(([k, v]) => [
+          Number(k),
+          v,
+        ]),
+      );
+    }
+
     const cloned: RenderResult = {
       html: result.html,
       css: result.css,
       frontmatter: { ...result.frontmatter },
       headings: result.headings ? [...result.headings] : [],
-      nodeMap: result.nodeMap ? new Map(result.nodeMap) : undefined,
+      nodeMap,
       stream: null,
       ssrHash: result.ssrHash,
     };

@@ -4,6 +4,8 @@ export interface CachePayload {
   result: RenderResult;
   storedAt: number;
   expiresAt?: number;
+  /** Optional serialized form of result.nodeMap for JSON-based stores */
+  nodeMapEntries?: Array<[number, unknown]>;
 }
 
 export interface CacheStore {

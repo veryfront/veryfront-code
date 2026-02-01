@@ -307,7 +307,10 @@ export class Renderer {
           environment: ctx.environment,
         });
 
-        const cacheResult = await this.cache.checkCache(slug, ctx, options?.colorScheme);
+        const cacheKey = this.buildCacheKey(slug, options);
+        const cacheResult = cacheKey
+          ? await this.cache.checkCache(slug, ctx, options?.colorScheme, cacheKey)
+          : { hit: false, cacheKey: "" };
         if (cacheResult.hit && cacheResult.cachedResult) {
           logger.debug("[Renderer] Cache hit", {
             slug,
@@ -355,7 +358,7 @@ export class Renderer {
         }
 
         try {
-          return await this.doRenderPage(slug, ctx, options, startTime);
+          return await this.doRenderPage(slug, ctx, options, startTime, cacheKey);
         } finally {
           renderSemaphore.release();
           await releaseProjectSlot(ctx.projectId);
@@ -383,16 +386,42 @@ export class Renderer {
     }`;
   }
 
+  /**
+   * Compute a cache key that is query-aware and avoids caching personalized responses
+   * (Authorization / Cookie / x-api-key) unless the caller explicitly provides one.
+   */
+  private buildCacheKey(slug: string, options?: RenderOptions): string | null {
+    if (options?.cacheKey) return options.cacheKey;
+
+    const req = options?.request;
+    if (req) {
+      const hasAuth = req.headers.has("authorization") ||
+        req.headers.has("cookie") ||
+        req.headers.has("x-api-key");
+      if (hasAuth) return null;
+    }
+
+    const url = options?.url;
+    if (!url) return slug;
+
+    const params = new URLSearchParams(url.searchParams);
+    const sorted = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
+    const queryString = sorted.map(([k, v]) => `${k}=${v}`).join("&");
+    return queryString ? `${slug}?${queryString}` : slug;
+  }
+
   private async doRenderPage(
     slug: string,
     ctx: RenderContext,
     options: RenderOptions | undefined,
     startTime: number,
+    cacheKey: string | null,
   ): Promise<RenderResult> {
-    const flightKey = this.getSingleflightKey(slug, ctx, options?.colorScheme);
-    const isFollower = this.renderFlight.has(flightKey);
+    const effectiveKey = cacheKey ?? crypto.randomUUID();
+    const flightKey = this.getSingleflightKey(effectiveKey, ctx, options?.colorScheme);
+    const isFollower = cacheKey ? this.renderFlight.has(flightKey) : false;
 
-    const cachedData = await this.renderFlight.do(flightKey, async () => {
+    const runRender = async () => {
       const services = this.createServicesForContext(ctx, options?.colorScheme);
 
       let result: RenderResult;
@@ -406,6 +435,7 @@ export class Renderer {
             environment: ctx.environment,
             contentSourceId: ctx.contentSourceId,
             skipCacheCheck: true,
+            skipCachePersist: true,
           }),
           RENDER_PIPELINE_TIMEOUT_MS,
           `Render pipeline for ${ctx.projectId}:${slug}`,
@@ -421,7 +451,9 @@ export class Renderer {
         throw error;
       }
 
-      await this.cache.persistResult(result, slug, ctx, options?.colorScheme);
+      if (cacheKey) {
+        await this.cache.persistResult(result, slug, ctx, options?.colorScheme, cacheKey);
+      }
 
       logger.debug("[Renderer] Render complete (leader)", {
         slug,
@@ -437,7 +469,11 @@ export class Renderer {
         ssrHash: result.ssrHash,
         pageModule: result.pageModule,
       };
-    });
+    };
+
+    const cachedData = cacheKey
+      ? await this.renderFlight.do(flightKey, runRender)
+      : await runRender();
 
     if (isFollower) {
       logger.debug("[Renderer] Render deduplicated (follower)", {
@@ -574,17 +610,17 @@ export class Renderer {
     });
 
     const pipelineCacheCoordinator = {
-      checkCache: async (slug: string) => {
-        const result = await this.cache.checkCache(slug, ctx, colorScheme);
+      checkCache: async (slug: string, cacheKey?: string) => {
+        const result = await this.cache.checkCache(slug, ctx, colorScheme, cacheKey);
         return {
           cachedResult: result.cachedResult,
           depAwareSlug: slug,
-          moduleCacheKey: slug,
+          moduleCacheKey: cacheKey ?? slug,
           cachedModule: result.cachedResult?.pageModule,
         };
       },
-      persistResult: async (result: RenderResult, slug: string) => {
-        await this.cache.persistResult(result, slug, ctx, colorScheme);
+      persistResult: async (result: RenderResult, slug: string, cacheKey?: string) => {
+        await this.cache.persistResult(result, slug, ctx, colorScheme, cacheKey);
       },
       clearAll: () => this.cache.clearAll(),
       clearSlug: (slug: string) => this.cache.clearSlug(slug, ctx),
