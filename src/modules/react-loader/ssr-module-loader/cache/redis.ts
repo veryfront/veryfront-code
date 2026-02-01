@@ -2,16 +2,19 @@
 
 import { rendererLogger as logger } from "#veryfront/utils";
 import { type RedisClient } from "#veryfront/utils/redis-client.ts";
-import {
-  buildRedisSSRModuleKey,
-  detokenizeAllCachePaths,
-  tokenizeAllVeryFrontPaths,
-} from "#veryfront/cache";
+import { buildRedisSSRModuleKey } from "#veryfront/cache";
 import { getSSRModuleRedisTTL } from "../constants.ts";
-import { CacheBackends, createDistributedCacheAccessor } from "#veryfront/cache/backend.ts";
+import {
+  CacheBackends,
+  createDistributedCodeCacheAccessor,
+  type TokenizingCacheGateway,
+} from "#veryfront/cache/backend.ts";
 
-/** Lazy-loaded distributed cache backend for cross-pod sharing */
-const getDistributedCache = createDistributedCacheAccessor(
+/**
+ * Lazy-loaded distributed cache gateway for cross-pod sharing.
+ * Uses TokenizingCacheGateway to automatically handle tokenization/detokenization.
+ */
+const getDistributedCodeCache = createDistributedCodeCacheAccessor(
   () => CacheBackends.ssrModule(),
   "SSR-MODULE-LOADER",
 );
@@ -26,7 +29,7 @@ export function redisKey(key: string): string {
 
 /** Initialize distributed caching for SSR modules */
 export async function initializeSSRDistributedCache(): Promise<boolean> {
-  return (await getDistributedCache()) !== null;
+  return (await getDistributedCodeCache()) !== null;
 }
 
 /** Check if distributed caching is enabled for SSR modules */
@@ -53,39 +56,40 @@ export function getRedisClientInstance(): RedisClient | null {
   return null;
 }
 
+/**
+ * Get code from distributed cache with automatic detokenization.
+ * The TokenizingCacheGateway handles replacing __VF_CACHE_DIR__ tokens with local paths.
+ */
 export async function getFromRedis(cacheKey: string): Promise<string | null> {
-  const backend = await getDistributedCache();
-  if (!backend) return null;
+  const gateway = await getDistributedCodeCache();
+  if (!gateway) return null;
 
   try {
-    const cachedCode = await backend.get(cacheKey);
-    if (!cachedCode) return null;
-
-    // CRITICAL: Always detokenize after reading from distributed cache
-    // This replaces __VF_CACHE_DIR__ tokens with local cache paths
-    return detokenizeAllCachePaths(cachedCode);
+    // Use getCode() for automatic detokenization
+    return await gateway.getCode(cacheKey);
   } catch (error) {
     logger.debug("[SSR-MODULE-LOADER] Distributed cache get failed", { key: cacheKey, error });
     return null;
   }
 }
 
-/** Store transformed code in Redis with environment-aware TTL */
+/**
+ * Store transformed code in distributed cache with automatic tokenization.
+ * The TokenizingCacheGateway handles replacing absolute file:// paths with __VF_CACHE_DIR__ tokens.
+ */
 export async function setInRedis(
   cacheKey: string,
   code: string,
   options?: { isProduction?: boolean; ttlSeconds?: number },
 ): Promise<void> {
-  const backend = await getDistributedCache();
-  if (!backend) return;
+  const gateway = await getDistributedCodeCache();
+  if (!gateway) return;
 
   const ttl = options?.ttlSeconds ?? getSSRModuleRedisTTL(options?.isProduction ?? true);
 
   try {
-    // CRITICAL: Always tokenize before storing in distributed cache
-    // This replaces absolute file:// paths with __VF_CACHE_DIR__ tokens for cross-pod portability
-    const portableCode = tokenizeAllVeryFrontPaths(code);
-    await backend.set(cacheKey, portableCode, ttl);
+    // Use setCode() for automatic tokenization
+    await gateway.setCode(cacheKey, code, ttl);
   } catch (error) {
     logger.debug("[SSR-MODULE-LOADER] Distributed cache set failed", { key: cacheKey, error });
   }

@@ -39,8 +39,9 @@ const HARDCODED_PATH_PATTERNS = [
   // Windows paths
   /file:\/\/\/[A-Za-z]:\/[^"'\s]*\.cache\//,
   // Veryfront-specific cache directories (match anywhere in path)
-  /file:\/\/[^"'\s]*veryfront-http-bundle\//,
-  /file:\/\/[^"'\s]*veryfront-mdx-esm\//,
+  // Note: These patterns exclude paths with __VF_CACHE_DIR__ token (already portable)
+  /file:\/\/(?!__VF_CACHE_DIR__)[^"'\s]*veryfront-http-bundle\//,
+  /file:\/\/(?!__VF_CACHE_DIR__)[^"'\s]*veryfront-mdx-esm\//,
 ];
 
 /**

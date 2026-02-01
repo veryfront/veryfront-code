@@ -1,9 +1,17 @@
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
 import { buildTransformCacheKey } from "../../cache/keys.ts";
-import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "../../cache/backend.ts";
+import {
+  type CacheBackend,
+  CacheBackends,
+  MemoryCacheBackend,
+  type TokenizingCacheGateway,
+} from "../../cache/backend.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "../../cache/paths.ts";
+import {
+  detokenizeAllCachePaths,
+  tokenizeAllVeryFrontPaths,
+} from "../../cache/paths.ts";
 
 const DEFAULT_TTL_SECONDS = 300; // 5 minutes
 const FALLBACK_MAX_ENTRIES = 500;
@@ -16,7 +24,7 @@ export interface TransformCacheEntry {
   bundleManifestId?: string;
 }
 
-let cacheBackend: CacheBackend | null = null;
+let cacheGateway: TokenizingCacheGateway | null = null;
 let cacheInitialized = false;
 let cacheInitPromise: Promise<void> | null = null;
 
@@ -34,14 +42,20 @@ export interface LocalFallbackLike<K, V> {
 
 /** Injected caches for testing */
 let injectedLocalFallback: LocalFallbackLike<string, TransformCacheEntry> | null = null;
-let injectedCacheBackend: CacheBackend | null | undefined = undefined; // undefined = not injected
+let injectedCacheGateway: TokenizingCacheGateway | CacheBackend | null | undefined = undefined;
 
 function getLocalFallback(): LocalFallbackLike<string, TransformCacheEntry> {
   return injectedLocalFallback ?? defaultLocalFallback;
 }
 
+function getEffectiveCacheGateway(): TokenizingCacheGateway | CacheBackend | null {
+  return injectedCacheGateway !== undefined ? injectedCacheGateway : cacheGateway;
+}
+
+// Backward compatibility: provide CacheBackend interface
 function getEffectiveCacheBackend(): CacheBackend | null {
-  return injectedCacheBackend !== undefined ? injectedCacheBackend : cacheBackend;
+  const gateway = getEffectiveCacheGateway();
+  return gateway as CacheBackend | null;
 }
 
 /**
@@ -56,12 +70,12 @@ export function __injectCachesForTests(
 ): void {
   if (caches === null) {
     injectedLocalFallback = null;
-    injectedCacheBackend = undefined;
+    injectedCacheGateway = undefined;
     return;
   }
 
   if (caches.localFallback !== undefined) injectedLocalFallback = caches.localFallback;
-  if (caches.cacheBackend !== undefined) injectedCacheBackend = caches.cacheBackend;
+  if (caches.cacheBackend !== undefined) injectedCacheGateway = caches.cacheBackend;
 }
 
 /**
@@ -71,26 +85,30 @@ export function __injectCachesForTests(
 export function __resetInitStateForTests(): void {
   cacheInitialized = false;
   cacheInitPromise = null;
-  cacheBackend = null;
+  cacheGateway = null;
 }
 
 registerCache("transform-cache", () => ({
   name: "transform-cache",
   entries: getLocalFallback().size,
   maxEntries: FALLBACK_MAX_ENTRIES,
-  backend: getEffectiveCacheBackend()?.type ?? "uninitialized",
+  backend: getEffectiveCacheGateway()?.type ?? "uninitialized",
 }));
 
 export async function initializeTransformCache(): Promise<boolean> {
-  if (cacheInitialized) return cacheBackend?.type !== "memory";
+  if (cacheInitialized) return cacheGateway?.type !== "memory";
 
   cacheInitPromise ??= (async () => {
     try {
-      cacheBackend = await CacheBackends.transform();
-      logger.info("[TransformCache] Initialized", { backend: cacheBackend.type });
+      // Use TokenizingCacheGateway for consistent interface and isDistributed() checks
+      cacheGateway = await CacheBackends.codeStore("TRANSFORM-CACHE", { keyPrefix: "transform" });
+      logger.info("[TransformCache] Initialized with gateway", { backend: cacheGateway.type });
     } catch (error) {
       logger.warn("[TransformCache] Backend init failed, using memory", { error });
-      cacheBackend = new MemoryCacheBackend(FALLBACK_MAX_ENTRIES);
+      // Fallback to memory backend wrapped in gateway for consistent interface
+      const memBackend = new MemoryCacheBackend(FALLBACK_MAX_ENTRIES);
+      const { createTokenizingGateway } = await import("../../cache/tokenizing-gateway.ts");
+      cacheGateway = createTokenizingGateway(memBackend, "TRANSFORM-CACHE");
     } finally {
       cacheInitialized = true;
     }
@@ -99,12 +117,17 @@ export async function initializeTransformCache(): Promise<boolean> {
   await cacheInitPromise;
   cacheInitPromise = null;
 
-  return cacheBackend?.type !== "memory";
+  return cacheGateway?.type !== "memory";
 }
 
 export function isDistributedCacheEnabled(): boolean {
-  const backend = getEffectiveCacheBackend();
-  return backend !== null && backend.type !== "memory";
+  const gateway = getEffectiveCacheGateway();
+  if (!gateway) return false;
+  // Use gateway's isDistributed() if available, otherwise check type
+  if ("isDistributed" in gateway && typeof gateway.isDistributed === "function") {
+    return (gateway as TokenizingCacheGateway).isDistributed();
+  }
+  return gateway.type !== "memory";
 }
 
 export interface CacheKeyOptions {
@@ -126,20 +149,24 @@ export function generateCacheKey(
 export async function getCachedTransformAsync(
   key: string,
 ): Promise<TransformCacheEntry | undefined> {
-  const backend = getEffectiveCacheBackend();
+  const gateway = getEffectiveCacheGateway();
 
-  if (backend) {
+  if (gateway) {
     try {
-      const raw = await backend.get(key);
+      // Use raw get() since we store JSON and handle tokenization at the entry level
+      const raw = await gateway.get(key);
       if (raw) {
         const entry = JSON.parse(raw) as TransformCacheEntry;
         if (!entry.code) {
           logger.warn("[TransformCache] Cache entry has empty code, discarding", { key });
           return undefined;
         }
-        // CRITICAL: Always detokenize code from distributed cache
-        // This replaces __VF_CACHE_DIR__ tokens with local cache paths
-        if (backend.type !== "memory") {
+        // Detokenize code from distributed cache
+        // The gateway's isDistributed() tells us if we need to detokenize
+        const isDistributed = "isDistributed" in gateway
+          ? (gateway as TokenizingCacheGateway).isDistributed()
+          : gateway.type !== "memory";
+        if (isDistributed) {
           entry.code = detokenizeAllCachePaths(entry.code);
         }
         return entry;
@@ -153,8 +180,8 @@ export async function getCachedTransformAsync(
 }
 
 export function getCachedTransform(key: string): TransformCacheEntry | undefined {
-  const backend = getEffectiveCacheBackend();
-  if (backend && backend.type !== "memory") return undefined;
+  const gateway = getEffectiveCacheGateway();
+  if (gateway && gateway.type !== "memory") return undefined;
   return getLocalFallback().get(key);
 }
 
@@ -166,16 +193,19 @@ export async function setCachedTransformAsync(
   bundleManifestId?: string,
 ): Promise<void> {
   const entry: TransformCacheEntry = { code, hash, timestamp: Date.now(), bundleManifestId };
-  const backend = getEffectiveCacheBackend();
+  const gateway = getEffectiveCacheGateway();
 
-  if (backend) {
+  if (gateway) {
     try {
-      // CRITICAL: Always tokenize code before storing in distributed cache
+      // Tokenize code before storing in distributed cache
       // This replaces absolute file:// paths with __VF_CACHE_DIR__ tokens for cross-pod portability
-      const entryToStore = backend.type !== "memory"
+      const isDistributed = "isDistributed" in gateway
+        ? (gateway as TokenizingCacheGateway).isDistributed()
+        : gateway.type !== "memory";
+      const entryToStore = isDistributed
         ? { ...entry, code: tokenizeAllVeryFrontPaths(code) }
         : entry;
-      await backend.set(key, JSON.stringify(entryToStore), normalizeTtl(ttlSeconds));
+      await gateway.set(key, JSON.stringify(entryToStore), normalizeTtl(ttlSeconds));
       return;
     } catch (error) {
       logger.debug("[TransformCache] Backend set failed", { key, error });
@@ -192,23 +222,26 @@ export function setCachedTransform(
   ttlSeconds: number = DEFAULT_TTL_SECONDS,
 ): void {
   const entry: TransformCacheEntry = { code, hash, timestamp: Date.now() };
-  const backend = getEffectiveCacheBackend();
+  const gateway = getEffectiveCacheGateway();
 
-  if (!backend) {
+  if (!gateway) {
     setLocalFallback(key, entry);
     return;
   }
 
-  // CRITICAL: Always tokenize code before storing in distributed cache
+  // Tokenize code before storing in distributed cache
   // This replaces absolute file:// paths with __VF_CACHE_DIR__ tokens for cross-pod portability
-  const entryToStore = backend.type !== "memory"
+  const isDistributed = "isDistributed" in gateway
+    ? (gateway as TokenizingCacheGateway).isDistributed()
+    : gateway.type !== "memory";
+  const entryToStore = isDistributed
     ? { ...entry, code: tokenizeAllVeryFrontPaths(code) }
     : entry;
-  backend.set(key, JSON.stringify(entryToStore), normalizeTtl(ttlSeconds)).catch((error) => {
+  gateway.set(key, JSON.stringify(entryToStore), normalizeTtl(ttlSeconds)).catch((error) => {
     logger.debug("[TransformCache] Backend set failed", { key, error });
   });
 
-  if (backend.type === "memory") setLocalFallback(key, entry);
+  if (gateway.type === "memory") setLocalFallback(key, entry);
 }
 
 function normalizeTtl(ttlSeconds: number): number {
@@ -239,9 +272,9 @@ export function destroyTransformCache(): void {
 
 export async function getDistributedTransformBackend(): Promise<CacheBackend | null> {
   await initializeTransformCache();
-  const backend = getEffectiveCacheBackend();
-  if (!backend || backend.type === "memory") return null;
-  return backend;
+  const gateway = getEffectiveCacheGateway();
+  if (!gateway || gateway.type === "memory") return null;
+  return gateway as CacheBackend;
 }
 
 export interface TransformCacheResult {
@@ -282,7 +315,7 @@ export function getTransformCacheStats(): {
   return {
     fallbackEntries: getLocalFallback().size,
     maxFallbackEntries: FALLBACK_MAX_ENTRIES,
-    backend: getEffectiveCacheBackend()?.type ?? "uninitialized",
+    backend: getEffectiveCacheGateway()?.type ?? "uninitialized",
   };
 }
 
@@ -358,7 +391,7 @@ export async function warmupTransformCache(
     skipped,
     total: entries.length,
     durationMs,
-    backend: getEffectiveCacheBackend()?.type,
+    backend: getEffectiveCacheGateway()?.type,
   });
 
   return { success, failed, skipped, durationMs };
@@ -369,9 +402,9 @@ export async function prewarmProjectTransforms(
   filePaths: string[],
 ): Promise<number> {
   await initializeTransformCache();
-  const backend = getEffectiveCacheBackend();
+  const gateway = getEffectiveCacheGateway();
 
-  if (!backend || backend.type === "memory") {
+  if (!gateway || gateway.type === "memory") {
     logger.debug("[TransformCache] Prewarm skipped - no distributed cache");
     return 0;
   }
@@ -380,10 +413,10 @@ export async function prewarmProjectTransforms(
   for (const filePath of filePaths) {
     try {
       const pattern = `v*:${projectId}:${filePath}:*:ssr`;
-      const scan = (backend as any).scan;
+      const scan = (gateway as any).scan;
       if (typeof scan !== "function") continue;
 
-      const keys = await scan.call(backend, pattern, 10);
+      const keys = await scan.call(gateway, pattern, 10);
       for (const key of keys) {
         const cached = await getCachedTransformAsync(key);
         if (!cached) continue;
