@@ -18,17 +18,17 @@ import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import { CacheBackends, createDistributedCacheAccessor } from "#veryfront/cache/backend.ts";
 import { HTTP_MODULE_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import type {
-  LocalModuleCode,
-  PortableModuleCode,
   BundleHash,
-  NormalizedUrl,
   DecodeResult,
+  LocalModuleCode,
+  NormalizedUrl,
+  PortableModuleCode,
 } from "./http-cache-types.ts";
 import {
-  CACHE_DIR_TOKEN,
+  asBundleHash,
   assertLocal,
   assertPortable,
-  asBundleHash,
+  CACHE_DIR_TOKEN,
   CacheInvariantError,
 } from "./http-cache-invariants.ts";
 
@@ -81,8 +81,8 @@ function decodeGzip(content: string): DecodeResult {
   const base64Data = content.startsWith("gz:")
     ? content.slice(3)
     : content.startsWith("gzip:")
-      ? content.slice(5)
-      : null;
+    ? content.slice(5)
+    : null;
 
   if (!base64Data) {
     return { code: content, wasGzipped: false, decodeFailed: false };
@@ -305,11 +305,9 @@ export class HttpBundleCache {
       for (let i = 0; i < codeKeys.length; i += BATCH_FETCH_CHUNK_SIZE) {
         const chunk = codeKeys.slice(i, i + BATCH_FETCH_CHUNK_SIZE);
 
-        const chunkResults = distributed.getBatch
-          ? await distributed.getBatch(chunk)
-          : new Map(
-              await Promise.all(chunk.map(async (key) => [key, await distributed.get(key)] as const)),
-            );
+        const chunkResults = distributed.getBatch ? await distributed.getBatch(chunk) : new Map(
+          await Promise.all(chunk.map(async (key) => [key, await distributed.get(key)] as const)),
+        );
 
         for (const [key, rawCode] of chunkResults) {
           if (!rawCode) continue;
@@ -376,4 +374,4 @@ export const httpBundleCache = new HttpBundleCache();
  * Re-export transformation functions for use in migration.
  * These should eventually be removed once all code uses the wrapper.
  */
-export { tokenize, detokenize, asBundleHash };
+export { asBundleHash, detokenize, tokenize };

@@ -8,7 +8,7 @@
  */
 
 import { rendererLogger as logger } from "#veryfront/utils";
-import type { LocalModuleCode, PortableModuleCode, BundleHash } from "./http-cache-types.ts";
+import type { BundleHash, LocalModuleCode, PortableModuleCode } from "./http-cache-types.ts";
 
 /**
  * Portable cache directory token for cross-environment compatibility.

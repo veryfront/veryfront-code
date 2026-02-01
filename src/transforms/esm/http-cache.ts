@@ -40,8 +40,8 @@ import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 // Type-safe cache wrapper (new architecture)
 import { httpBundleCache } from "./http-cache-wrapper.ts";
 import {
-  CACHE_DIR_TOKEN,
   asLocalModuleCode,
+  CACHE_DIR_TOKEN,
   CacheInvariantError,
 } from "./http-cache-invariants.ts";
 
