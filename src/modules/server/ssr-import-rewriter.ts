@@ -1,4 +1,4 @@
-import { getReactImportMap, getReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import { DEFAULT_REACT_VERSION, getReactImportMap } from "#veryfront/transforms/esm/package-registry.ts";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 
@@ -47,7 +47,7 @@ function resolveReactForRuntime(specifier: string, version?: string): string | n
   // For Deno: Use esm.sh URLs (Deno supports HTTP imports natively).
   // For Node.js: Use esm.sh URLs which will be cached to disk by cacheHttpImportsToLocal.
   // The cached bundles are ESM-compatible and can be imported via file:// URLs.
-  const v = version ?? getReactVersion();
+  const v = version ?? DEFAULT_REACT_VERSION;
   const mapped = getReactImportMap(v)[specifier];
   if (mapped) return mapped;
 
@@ -65,7 +65,7 @@ function resolveReactForRuntime(specifier: string, version?: string): string | n
 }
 
 function rewriteBareImports(code: string, version?: string): string {
-  const v = version ?? getReactVersion();
+  const v = version ?? DEFAULT_REACT_VERSION;
 
   return code.replace(/from\s+["']([^"'./][^"']*)["']/g, (_match, specifier: string) => {
     const bareSpecifier = specifier.startsWith("npm:") ? specifier.slice(4) : specifier;

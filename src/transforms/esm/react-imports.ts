@@ -1,5 +1,5 @@
 import { replaceSpecifiers } from "./lexer.ts";
-import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
+import { DEFAULT_REACT_VERSION, getReactImportMap } from "./package-registry.ts";
 import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 
@@ -19,7 +19,7 @@ function getVeryfrontModulePaths(): Record<string, string> {
 export async function resolveReactImports(
   code: string,
   forSSR: boolean = false,
-  reactVersion: string = REACT_VERSION,
+  reactVersion: string = DEFAULT_REACT_VERSION,
 ): Promise<string> {
   const reactImports = getReactImportMap(reactVersion);
 
@@ -42,7 +42,7 @@ export async function resolveReactImports(
 export function addDepsToEsmShUrls(
   code: string,
   _forSSR: boolean = false,
-  reactVersion: string = REACT_VERSION,
+  reactVersion: string = DEFAULT_REACT_VERSION,
 ): Promise<string> {
   return Promise.resolve(
     replaceSpecifiers(code, (specifier) => {

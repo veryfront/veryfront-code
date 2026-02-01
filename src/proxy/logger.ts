@@ -14,6 +14,10 @@ import denoConfig from "../../deno.json" with { type: "json" };
 import { getTraceContext } from "./tracing.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 
+// NOTE: Formatting utilities are INLINED below instead of imported from ../utils/logger/core.ts
+// because the proxy Docker build only copies src/proxy/ and has no access to src/utils/.
+// Keep these in sync with src/utils/logger/core.ts if changes are needed.
+
 /**
  * Request context for proxy logging.
  * Stored in AsyncLocalStorage to propagate through the call stack.
@@ -71,7 +75,14 @@ const MIN_LOG_LEVEL: LogLevel = (() => {
   return "info"; // Default: suppress debug logs
 })();
 
+// ============================================================================
+// INLINED FORMATTING UTILITIES (from src/utils/logger/core.ts)
+// These must be kept in sync with core.ts but cannot be imported due to
+// Docker build constraints (proxy is built independently).
+// ============================================================================
+
 const TAG_WIDTH = 10;
+const PREFIX_WIDTH = 23; // timestamp(8) + gap(2) + tag(10) + space(1) + glyph(1) + space(1)
 
 const LEVEL_GLYPHS: Record<LogLevel, string> = {
   debug: "·",
@@ -88,7 +99,7 @@ const ANSI = {
   green: "\u001b[32m",
   yellow: "\u001b[33m",
   cyan: "\u001b[36m",
-};
+} as const;
 
 const LEVEL_COLORS: Record<LogLevel, string> = {
   debug: ANSI.gray,
@@ -106,6 +117,81 @@ function formatTimestamp(date: Date = new Date()): string {
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
+
+function colorize(text: string, color: string | undefined, enable: boolean): string {
+  if (!enable || !color) return text;
+  return `${color}${text}${ANSI.reset}`;
+}
+
+function normalizeText(value: string): string {
+  return value.replace(/\s+/g, " ");
+}
+
+function truncateText(value: string, maxLength = 80): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength - 1)}…`;
+}
+
+function formatValue(value: unknown): string {
+  if (typeof value === "string") {
+    const trimmed = normalizeText(value);
+    return /\s/.test(trimmed) ? JSON.stringify(trimmed) : trimmed;
+  }
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(value);
+  } catch {
+    text = String(value);
+  }
+
+  if (text === undefined) return "undefined";
+  return truncateText(normalizeText(text));
+}
+
+interface SerializedError {
+  name: string;
+  message: string;
+  stack?: string;
+}
+
+function formatErrorText(error: SerializedError | undefined): string {
+  if (!error) return "";
+  const text = `${error.name}: ${error.message}`;
+  return truncateText(normalizeText(text), 120);
+}
+
+function serializeError(error: unknown): SerializedError | undefined {
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message, stack: error.stack };
+  }
+  if (error == null) return undefined;
+  return { name: "UnknownError", message: String(error) };
+}
+
+function formatContextText(
+  context: Record<string, unknown>,
+  error: SerializedError | undefined,
+  enableColor: boolean,
+): string {
+  const entries = Object.entries(context).map(([key, value]) => `${key}=${formatValue(value)}`);
+  if (error) entries.push(`err=${formatErrorText(error)}`);
+  if (entries.length === 0) return "";
+
+  const indent = " ".repeat(PREFIX_WIDTH);
+  return `\n${indent}${colorize(entries.join(" "), ANSI.dim, enableColor)}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// ============================================================================
+// END INLINED FORMATTING UTILITIES
+// ============================================================================
 
 function isTty(): boolean {
   try {
@@ -133,41 +219,6 @@ function shouldUseColor(): boolean {
   return isTty();
 }
 
-function colorize(text: string, color: string | undefined, enable: boolean): string {
-  if (!enable || !color) return text;
-  return `${color}${text}${ANSI.reset}`;
-}
-
-function normalizeText(value: string): string {
-  return value.replace(/\s+/g, " ");
-}
-
-function truncateText(value: string, maxLength = 80): string {
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, maxLength - 1)}…`;
-}
-
-function formatValue(value: unknown): string {
-  if (typeof value === "string") {
-    const trimmed = normalizeText(value);
-    if (/\s/.test(trimmed)) return JSON.stringify(trimmed);
-    return trimmed;
-  }
-
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (value === null) return "null";
-  if (value === undefined) return "undefined";
-
-  let text: string;
-  try {
-    text = JSON.stringify(value) ?? String(value);
-  } catch {
-    text = String(value);
-  }
-
-  return truncateText(normalizeText(text));
-}
-
 interface LogEntry {
   timestamp: string;
   level: LogLevel;
@@ -186,42 +237,14 @@ interface LogEntry {
   domain?: string;
   environment?: string;
   context?: Record<string, unknown>;
-  error?: {
-    name: string;
-    message: string;
-    stack?: string;
-  };
-}
-
-function formatErrorText(error: LogEntry["error"]): string {
-  if (!error) return "";
-  const text = `${error.name}: ${error.message}`;
-  return truncateText(normalizeText(text), 120);
-}
-
-// Prefix width: timestamp(8) + gap(2) + tag(10) + space(1) + glyph(1) + space(1) = 23
-const PREFIX_WIDTH = 23;
-
-function formatContextText(
-  context: Record<string, unknown>,
-  error: LogEntry["error"] | undefined,
-  enableColor: boolean,
-): string {
-  const entries = Object.entries(context).map(([key, value]) => `${key}=${formatValue(value)}`);
-  if (error) entries.push(`err=${formatErrorText(error)}`);
-  if (entries.length === 0) return "";
-
-  const text = entries.join(" ");
-  // Put context on new line, indented to align with message
-  const indent = " ".repeat(PREFIX_WIDTH);
-  return `\n${indent}${colorize(text, ANSI.dim, enableColor)}`;
+  error?: SerializedError;
 }
 
 function formatTextLine(
   level: LogLevel,
   message: string,
   context: Record<string, unknown> | undefined,
-  error: LogEntry["error"] | undefined,
+  error: SerializedError | undefined,
 ): string {
   const enableColor = shouldUseColor();
   const timestamp = colorize(formatTimestamp(), ANSI.dim, enableColor);
@@ -239,20 +262,6 @@ function getLogFormat(): "json" | "text" {
   const format = getEnv("LOG_FORMAT");
   if (format === "json" || format === "text") return format;
   return isProduction() ? "json" : "text";
-}
-
-function serializeError(err: unknown): LogEntry["error"] | undefined {
-  if (err instanceof Error) {
-    return { name: err.name, message: err.message, stack: err.stack };
-  }
-  if (err !== undefined && err !== null) {
-    return { name: "UnknownError", message: String(err) };
-  }
-  return undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 class ProxyLogger {

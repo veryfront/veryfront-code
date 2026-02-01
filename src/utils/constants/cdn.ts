@@ -51,7 +51,9 @@ export function getDenoStdNodeBase(): string {
   return `${DENO_STD_BASE}/std@${DENO_STD_VERSION}/node`;
 }
 
-export const TAILWIND_VERSION = "4.1.8";
+// Re-export from url-builder.ts - the SINGLE SOURCE OF TRUTH for version constants.
+export { TAILWIND_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import { TAILWIND_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 
 export function getTailwindCSSUrl(): string {
   return `${ESM_CDN_BASE}/tailwindcss@${TAILWIND_VERSION}/index.css`;

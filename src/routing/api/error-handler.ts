@@ -1,4 +1,5 @@
-import { isDevelopmentEnvironment, serverLogger as logger } from "#veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
+import { isDevelopment as isDevelopmentEnv } from "#veryfront/build/config/environment.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { HttpStatus, internalServerError, jsonResponse } from "#veryfront/http/responses";
 
@@ -7,7 +8,7 @@ function isDevelopment(adapter: RuntimeAdapter): boolean {
     adapter.env.get("NODE_ENV") ??
     adapter.env.get("DENO_ENV");
 
-  if (!env) return isDevelopmentEnvironment();
+  if (!env) return isDevelopmentEnv();
 
   const normalized = env.toLowerCase();
   return normalized === "development" || normalized === "dev";

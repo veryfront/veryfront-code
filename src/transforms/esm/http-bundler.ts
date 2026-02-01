@@ -8,7 +8,7 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import type { Plugin } from "esbuild";
 import { replaceSpecifiers } from "./lexer.ts";
-import { getReactUrls, REACT_VERSION } from "./package-registry.ts";
+import { DEFAULT_REACT_VERSION, getReactUrls } from "./package-registry.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
@@ -242,7 +242,7 @@ function ensureEsmExternalAndDeps(specifier: string, version: string): string | 
  * @param code - Source code to process
  * @param _cacheDir - Unused (kept for API compatibility)
  * @param hash - Hash for logging
- * @param reactVersion - React version for deps param (defaults to REACT_VERSION)
+ * @param reactVersion - React version for deps param (defaults to DEFAULT_REACT_VERSION)
  */
 export function bundleHttpImports(
   code: string,
@@ -254,7 +254,7 @@ export function bundleHttpImports(
   logger.debug(`${LOG_PREFIX} Check: hasHttp=${has}, hash=${hash.slice(0, 8)}`);
   if (!has) return code;
 
-  const version = reactVersion ?? REACT_VERSION;
+  const version = reactVersion ?? DEFAULT_REACT_VERSION;
 
   return replaceSpecifiers(code, (specifier) => {
     // Skip Veryfront internal module paths - they're served locally, not via esm.sh

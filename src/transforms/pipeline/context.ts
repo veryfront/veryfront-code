@@ -1,5 +1,5 @@
 import { computeShortContentHash } from "../esm/transform-utils.ts";
-import { REACT_VERSION } from "../esm/package-registry.ts";
+import { DEFAULT_REACT_VERSION } from "../esm/package-registry.ts";
 import type {
   TransformContext,
   TransformOptions,
@@ -46,7 +46,7 @@ export async function createTransformContext(
 ): Promise<TransformContext> {
   const [contentHash, reactVersion] = await Promise.all([
     computeShortContentHash(source),
-    Promise.resolve(options.reactVersion ?? REACT_VERSION),
+    Promise.resolve(options.reactVersion ?? DEFAULT_REACT_VERSION),
   ]);
 
   return buildContext(source, filePath, projectDir, contentHash, options, reactVersion);
@@ -65,7 +65,7 @@ export function createTransformContextSync(
     projectDir,
     contentHash,
     options,
-    options.reactVersion ?? REACT_VERSION,
+    options.reactVersion ?? DEFAULT_REACT_VERSION,
   );
 }
 

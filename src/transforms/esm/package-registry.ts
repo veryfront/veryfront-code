@@ -6,7 +6,6 @@
  */
 
 import { rendererLogger } from "#veryfront/utils";
-import { VERSION } from "#veryfront/utils/version.ts";
 import {
   buildReactUrl,
   CSSTYPE_VERSION,
@@ -17,9 +16,6 @@ import {
 
 // Re-export constants from unified source
 export { CSSTYPE_VERSION, DEFAULT_REACT_VERSION, TAILWIND_VERSION };
-
-/** @deprecated Use DEFAULT_REACT_VERSION instead */
-export const REACT_VERSION = DEFAULT_REACT_VERSION;
 
 /**
  * Validate React version format (semver: X.Y.Z).
@@ -40,21 +36,6 @@ export function normalizeReactVersion(version: string | undefined): string {
   );
   return DEFAULT_REACT_VERSION;
 }
-
-/**
- * @deprecated Use DEFAULT_REACT_VERSION directly
- */
-export function getReactVersion(): string {
-  return DEFAULT_REACT_VERSION;
-}
-
-/**
- * Transform cache version - now uses the application VERSION for consistent
- * cache invalidation on deployments.
- *
- * @deprecated Use VERSION from #veryfront/utils/version.ts directly
- */
-export const TRANSFORM_CACHE_VERSION = VERSION;
 
 /**
  * Build esm.sh URL with deps=csstype for React packages.

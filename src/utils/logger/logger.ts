@@ -1,6 +1,18 @@
-import { getEnvironmentVariable } from "./env.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { hasDenoRuntime, hasNodeProcess } from "../runtime-guards.ts";
 import { VERSION } from "../version.ts";
+import {
+  ANSI,
+  colorize,
+  formatContextText,
+  formatTimestamp,
+  LEVEL_COLORS,
+  LEVEL_GLYPHS,
+  type LogLevelName,
+  padTag,
+  serializeError,
+  type SerializedError,
+} from "./core.ts";
 
 export enum LogLevel {
   DEBUG = 0,
@@ -17,18 +29,14 @@ export type LogFormat = "text" | "json";
  */
 export interface LogEntry {
   timestamp: string;
-  level: "debug" | "info" | "warn" | "error";
+  level: LogLevelName;
   service: string;
   veryfrontVersion: string;
   message: string;
   // Optional structured context
   context?: Record<string, unknown>;
   // Error details if applicable
-  error?: {
-    name: string;
-    message: string;
-    stack?: string;
-  };
+  error?: SerializedError;
   // Request context (when available)
   requestId?: string;
   traceId?: string;
@@ -82,10 +90,10 @@ export function __resetLoggerConfigForTesting(): void {
 }
 
 function resolveLoggerConfig(): LoggerConfig {
-  const envLevel = getEnvironmentVariable("LOG_LEVEL");
-  const debugFlag = getEnvironmentVariable("VERYFRONT_DEBUG");
-  const envFormat = getEnvironmentVariable("LOG_FORMAT");
-  const envMode = getEnvironmentVariable("NODE_ENV");
+  const envLevel = getEnv("LOG_LEVEL");
+  const debugFlag = getEnv("VERYFRONT_DEBUG");
+  const envFormat = getEnv("LOG_FORMAT");
+  const envMode = getEnv("NODE_ENV");
 
   if (
     cachedConfig &&
@@ -115,22 +123,11 @@ function resolveLoggerConfig(): LoggerConfig {
  * Defaults to JSON in production for Grafana compatibility.
  */
 function getDefaultFormat(
-  envFormat: string | undefined = getEnvironmentVariable("LOG_FORMAT"),
-  envMode: string | undefined = getEnvironmentVariable("NODE_ENV"),
+  envFormat: string | undefined = getEnv("LOG_FORMAT"),
+  envMode: string | undefined = getEnv("NODE_ENV"),
 ): LogFormat {
   if (envFormat === "json" || envFormat === "text") return envFormat;
   return envMode === "production" ? "json" : "text";
-}
-
-/**
- * Serialize error object for structured logging.
- */
-function serializeError(error: unknown): LogEntry["error"] | undefined {
-  if (error instanceof Error) {
-    return { name: error.name, message: error.message, stack: error.stack };
-  }
-  if (error == null) return undefined;
-  return { name: "UnknownError", message: String(error) };
 }
 
 /**
@@ -156,27 +153,6 @@ function extractContext(
   return { context, error };
 }
 
-const TAG_WIDTH = 10;
-
-const LEVEL_GLYPHS: Record<LogEntry["level"], string> = {
-  debug: "·",
-  info: "●",
-  warn: "▲",
-  error: "✖",
-};
-
-const ANSI = {
-  reset: "\u001b[0m",
-  dim: "\u001b[2m",
-  gray: "\u001b[90m",
-  red: "\u001b[31m",
-  green: "\u001b[32m",
-  yellow: "\u001b[33m",
-  blue: "\u001b[34m",
-  magenta: "\u001b[35m",
-  cyan: "\u001b[36m",
-};
-
 const TAG_COLORS: Record<string, string> = {
   CLI: ANSI.green,
   SERVER: ANSI.blue,
@@ -186,23 +162,6 @@ const TAG_COLORS: Record<string, string> = {
   PROXY: ANSI.cyan,
   VERYFRONT: ANSI.cyan,
 };
-
-const LEVEL_COLORS: Record<LogEntry["level"], string> = {
-  debug: ANSI.gray,
-  info: ANSI.green,
-  warn: ANSI.yellow,
-  error: ANSI.red,
-};
-
-function padTag(tag: string): string {
-  if (tag.length >= TAG_WIDTH) return tag.slice(0, TAG_WIDTH);
-  return tag.padEnd(TAG_WIDTH, " ");
-}
-
-function formatTimestamp(date: Date = new Date()): string {
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
 
 function isTty(): boolean {
   try {
@@ -219,73 +178,16 @@ function isTty(): boolean {
 }
 
 function shouldUseColor(): boolean {
-  const noColor = getEnvironmentVariable("NO_COLOR");
-  const forceColor = getEnvironmentVariable("FORCE_COLOR");
-  const logColor = getEnvironmentVariable("LOG_COLOR");
+  const noColor = getEnv("NO_COLOR");
+  const forceColor = getEnv("FORCE_COLOR");
+  const logColor = getEnv("LOG_COLOR");
 
   if (forceColor === "0" || logColor === "0") return false;
   if (noColor !== undefined) return false;
-  if (getEnvironmentVariable("CI") !== undefined) return false;
+  if (getEnv("CI") !== undefined) return false;
   if (forceColor || logColor === "1" || logColor === "true") return true;
 
   return isTty();
-}
-
-function colorize(text: string, color: string | undefined, enable: boolean): string {
-  if (!enable || !color) return text;
-  return `${color}${text}${ANSI.reset}`;
-}
-
-function normalizeText(value: string): string {
-  return value.replace(/\s+/g, " ");
-}
-
-function truncateText(value: string, maxLength = 80): string {
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, maxLength - 1)}…`;
-}
-
-function formatValue(value: unknown): string {
-  if (typeof value === "string") {
-    const trimmed = normalizeText(value);
-    return /\s/.test(trimmed) ? JSON.stringify(trimmed) : trimmed;
-  }
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (value === null) return "null";
-  if (value === undefined) return "undefined";
-
-  let text: string | undefined;
-  try {
-    text = JSON.stringify(value);
-  } catch {
-    text = String(value);
-  }
-
-  // JSON.stringify can return undefined for certain values (e.g., functions, symbols)
-  if (text === undefined) return "undefined";
-  return truncateText(normalizeText(text));
-}
-
-type SerializedError = NonNullable<LogEntry["error"]>;
-
-function formatErrorText(error: SerializedError): string {
-  return truncateText(normalizeText(`${error.name}: ${error.message}`), 120);
-}
-
-// Prefix width: timestamp(8) + gap(2) + tag(10) + space(1) + glyph(1) + space(1) = 23
-const PREFIX_WIDTH = 23;
-
-function formatContextText(
-  context: Record<string, unknown>,
-  error: LogEntry["error"] | undefined,
-  enableColor: boolean,
-): string {
-  const entries = Object.entries(context).map(([key, value]) => `${key}=${formatValue(value)}`);
-  if (error) entries.push(`err=${formatErrorText(error)}`);
-  if (entries.length === 0) return "";
-
-  const indent = " ".repeat(PREFIX_WIDTH);
-  return `\n${indent}${colorize(entries.join(" "), ANSI.dim, enableColor)}`;
 }
 
 function extractToEntryField(
@@ -425,8 +327,8 @@ function parseLogLevel(levelString: string | undefined): LogLevel | undefined {
  * @internal
  */
 export function getDefaultLevel(
-  envLevel: string | undefined = getEnvironmentVariable("LOG_LEVEL"),
-  debugFlag: string | undefined = getEnvironmentVariable("VERYFRONT_DEBUG"),
+  envLevel: string | undefined = getEnv("LOG_LEVEL"),
+  debugFlag: string | undefined = getEnv("VERYFRONT_DEBUG"),
 ): LogLevel {
   const parsedLevel = parseLogLevel(envLevel);
   if (parsedLevel !== undefined) return parsedLevel;
