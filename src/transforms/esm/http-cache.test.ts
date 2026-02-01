@@ -4,7 +4,7 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
-import { ensureHttpBundlesExist } from "./http-cache.ts";
+import { __test_extractBundleDeps, ensureHttpBundlesExist } from "./http-cache.ts";
 
 /** Duplicated from http-cache.ts for isolated unit testing of the pattern. */
 const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
@@ -277,6 +277,118 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         assert(failed.includes("ccc333"));
         assert(failed.includes("ddd444"));
       });
+    });
+  });
+
+  describe("extractBundleDeps (production bug fixes)", () => {
+    it("extracts absolute file:// paths (legacy format)", () => {
+      const code = [
+        `import a from "file:///app/.cache/veryfront-http-bundle/http-111111.mjs";`,
+        `import b from "file:///app/.cache/veryfront-http-bundle/http-222222.mjs";`,
+      ].join("\n");
+
+      const deps = __test_extractBundleDeps(code);
+
+      assertEquals(deps.length, 2);
+      assertEquals(deps[0]?.hash, "111111");
+      assertEquals(deps[1]?.hash, "222222");
+    });
+
+    it("extracts relative ./http-*.mjs paths (new portable format)", () => {
+      // This was the root cause of the production bug - relative paths weren't being detected
+      const code = [
+        `import a from "./http-333333.mjs";`,
+        `import b from "./http-444444.mjs";`,
+      ].join("\n");
+
+      const deps = __test_extractBundleDeps(code);
+
+      assertEquals(deps.length, 2, "Should detect relative path deps");
+      assertEquals(deps[0]?.hash, "333333");
+      assertEquals(deps[1]?.hash, "444444");
+    });
+
+    it("extracts mix of absolute and relative paths", () => {
+      // Real-world scenario: older deps use absolute, newer use relative
+      const code = [
+        `import a from "file:///app/.cache/veryfront-http-bundle/http-111111.mjs";`,
+        `import b from "./http-222222.mjs";`,
+        `import c from "file:///app/.cache/veryfront-http-bundle/http-333333.mjs";`,
+        `import d from './http-444444.mjs';`, // single quotes
+      ].join("\n");
+
+      const deps = __test_extractBundleDeps(code);
+
+      assertEquals(deps.length, 4, "Should detect all deps regardless of path format");
+      const hashes = deps.map((d) => d.hash).sort();
+      assertEquals(hashes, ["111111", "222222", "333333", "444444"]);
+    });
+
+    it("deduplicates same hash appearing in both formats", () => {
+      // Edge case: same bundle referenced both ways
+      const code = [
+        `import a from "file:///app/.cache/veryfront-http-bundle/http-555555.mjs";`,
+        `import b from "./http-555555.mjs";`,
+      ].join("\n");
+
+      const deps = __test_extractBundleDeps(code);
+
+      assertEquals(deps.length, 1, "Should deduplicate same hash");
+      assertEquals(deps[0]?.hash, "555555");
+    });
+
+    it("handles real-world esm.sh bundle code with nested deps", () => {
+      // Simulates actual react-dom bundle structure
+      const code = `
+        import { jsx as _jsx } from "./http-100000.mjs";
+        import { createContext, useState } from "./http-200000.mjs";
+        export { _jsx as jsx };
+        export function Component() {
+          const [state, setState] = useState(null);
+          return _jsx("div", { children: state });
+        }
+      `;
+
+      const deps = __test_extractBundleDeps(code);
+
+      assertEquals(deps.length, 2);
+      assert(deps.some((d) => d.hash === "100000"), "Should find jsx-runtime dep");
+      assert(deps.some((d) => d.hash === "200000"), "Should find react dep");
+    });
+
+    it("handles dynamic imports with relative paths", () => {
+      const code = `
+        const mod = await import("./http-666666.mjs");
+        const other = await import('./http-777777.mjs');
+      `;
+
+      const deps = __test_extractBundleDeps(code);
+
+      assertEquals(deps.length, 2);
+      assert(deps.some((d) => d.hash === "666666"));
+      assert(deps.some((d) => d.hash === "777777"));
+    });
+
+    it("returns empty array for code without bundle deps", () => {
+      const code = `
+        import React from "react";
+        import { useState } from "react";
+        export default function App() { return null; }
+      `;
+
+      const deps = __test_extractBundleDeps(code);
+
+      assertEquals(deps.length, 0);
+    });
+
+    it("handles numeric-only hashes (production case: 978582506)", () => {
+      // The actual hash from production error logs
+      const code = `import server from "./http-978582506.mjs";`;
+
+      const deps = __test_extractBundleDeps(code);
+
+      assertEquals(deps.length, 1);
+      assertEquals(deps[0]?.hash, "978582506");
     });
   });
 });

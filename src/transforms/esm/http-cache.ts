@@ -724,6 +724,14 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
           );
           await fs.mkdir(cacheDir, { recursive: true });
           await fs.writeTextFile(cachePath, cachedCode);
+
+          // Verify file exists after write - fail fast if write silently failed
+          if (!(await exists(cachePath))) {
+            throw new Error(
+              `[HTTP-CACHE] INVARIANT VIOLATION: Redis recovery write succeeded but file does not exist: ${cachePath}`,
+            );
+          }
+
           getCachedPaths().set(cacheKey, cachePath);
           return cachePath;
         }
@@ -736,6 +744,14 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         );
         await fs.mkdir(cacheDir, { recursive: true });
         await fs.writeTextFile(cachePath, cachedCode);
+
+        // Verify file exists after write - fail fast if write silently failed
+        if (!(await exists(cachePath))) {
+          throw new Error(
+            `[HTTP-CACHE] INVARIANT VIOLATION: Redis recovery write succeeded but file does not exist: ${cachePath}`,
+          );
+        }
+
         getCachedPaths().set(cacheKey, cachePath);
         return cachePath;
       }
@@ -802,6 +818,13 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 
     await fs.mkdir(cacheDir, { recursive: true });
     await fs.writeTextFile(cachePath, code);
+
+    // Verify file exists after write - fail fast if write silently failed
+    if (!(await exists(cachePath))) {
+      throw new Error(
+        `[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist: ${cachePath}`,
+      );
+    }
 
     // Use type-safe wrapper to store in distributed cache
     // The wrapper ALWAYS tokenizes before storing, enforcing cross-environment portability
@@ -1271,3 +1294,6 @@ export async function ensureHttpBundlesExist(
 
   return Array.from(failed);
 }
+
+// Test-only export for extractBundleDeps
+export const __test_extractBundleDeps = extractBundleDeps;
