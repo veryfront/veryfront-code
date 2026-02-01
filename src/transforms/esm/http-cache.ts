@@ -329,11 +329,14 @@ async function validateBundleDepsExist(
         return false;
       }
 
-      const [code, wasGzipped] = maybeDecodeGzip(rawCode);
-      if (code.startsWith("gz:") || code.startsWith("gzip:")) {
+      const [decodedCode, wasGzipped] = maybeDecodeGzip(rawCode);
+      if (decodedCode.startsWith("gz:") || decodedCode.startsWith("gzip:")) {
         logger.debug("[HTTP-CACHE] Failed to decode gzip dep, rejecting cache", { hash });
         return false;
       }
+
+      // Detokenize cache paths for local environment
+      const code = detokenizeAllCachePaths(decodedCode);
 
       if (hasIncompatibleFilePaths(code, absoluteCacheDir)) {
         logger.debug("[HTTP-CACHE] Dep has incompatible paths, rejecting cache", { hash });
@@ -1079,19 +1082,23 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
   try {
     const rawCachedCode = await distributed.get(distributedKey("code", hash));
     if (rawCachedCode) {
-      const [cachedCode, wasGzipped] = maybeDecodeGzip(rawCachedCode);
+      const [decodedCode, wasGzipped] = maybeDecodeGzip(rawCachedCode);
 
-      if (cachedCode.startsWith("gz:") || cachedCode.startsWith("gzip:")) {
+      if (decodedCode.startsWith("gz:") || decodedCode.startsWith("gzip:")) {
         logger.warn("[HTTP-CACHE] Failed to decode gzip content, will re-fetch", {
           hash,
-          preview: cachedCode.substring(0, 50),
-        });
-      } else if (hasIncompatibleFilePaths(cachedCode, absoluteCacheDir)) {
-        logger.warn("[HTTP-CACHE] Cached code has incompatible file paths, will re-fetch", {
-          hash,
-          localCacheDir: absoluteCacheDir,
+          preview: decodedCode.substring(0, 50),
         });
       } else {
+        // Detokenize cache paths for local environment
+        const cachedCode = detokenizeAllCachePaths(decodedCode);
+
+        if (hasIncompatibleFilePaths(cachedCode, absoluteCacheDir)) {
+          logger.warn("[HTTP-CACHE] Cached code has incompatible file paths, will re-fetch", {
+            hash,
+            localCacheDir: absoluteCacheDir,
+          });
+        } else {
         logger.info(
           wasGzipped
             ? "[HTTP-CACHE] Recovering bundle via direct code lookup (gzip decoded)"
@@ -1132,6 +1139,7 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
         }
 
         return true;
+        }
       }
     }
 
@@ -1291,17 +1299,20 @@ export async function ensureHttpBundlesExist(
           return;
         }
 
-        const [code, wasGzipped] = maybeDecodeGzip(rawCode);
+        const [decodedCode, wasGzipped] = maybeDecodeGzip(rawCode);
 
-        if (code.startsWith("gz:") || code.startsWith("gzip:")) {
+        if (decodedCode.startsWith("gz:") || decodedCode.startsWith("gzip:")) {
           logger.warn("[HTTP-CACHE] Failed to decode gzip content, trying single recovery", {
             hash,
-            preview: code.substring(0, 50),
+            preview: decodedCode.substring(0, 50),
           });
           const recovered = await recoverHttpBundleByHash(hash, absoluteCacheDir);
           if (!recovered) failed.add(hash);
           return;
         }
+
+        // Detokenize cache paths for local environment
+        const code = detokenizeAllCachePaths(decodedCode);
 
         if (hasIncompatibleFilePaths(code, absoluteCacheDir)) {
           logger.warn(
