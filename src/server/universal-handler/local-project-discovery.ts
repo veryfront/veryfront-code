@@ -10,17 +10,29 @@
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { registerLRUCache } from "#veryfront/cache";
 
 const logger = getBaseLogger("SERVER");
 
 /** Cache of local adapters by project directory */
-export const localAdapterCache = new Map<string, RuntimeAdapter>();
+export const localAdapterCache = new LRUCache<string, RuntimeAdapter>({
+  maxEntries: 50,
+});
+
+// Register cache for monitoring
+registerLRUCache("local-adapter-cache", localAdapterCache);
 
 /** Standard directories to search for local projects */
 export const standardProjectDirs = ["data/projects", "projects", "examples"];
 
 /** Cache of discovered local project paths by slug */
-export const localProjectCache = new Map<string, string>();
+export const localProjectCache = new LRUCache<string, string>({
+  maxEntries: 100,
+});
+
+// Register cache for monitoring
+registerLRUCache("local-project-cache", localProjectCache);
 
 /**
  * Find the local filesystem path for a project by slug.

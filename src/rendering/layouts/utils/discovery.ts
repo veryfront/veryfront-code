@@ -3,6 +3,8 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem } from "#veryfront/types";
 import { dirname, extname, join } from "#veryfront/platform/compat/path-helper.ts";
 import { LAYOUT_EXTENSIONS } from "../types.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { registerLRUCache } from "#veryfront/cache";
 
 interface CacheEntry {
   layouts: LayoutItem[];
@@ -11,7 +13,12 @@ interface CacheEntry {
 }
 
 const MAX_CACHE_SIZE = 500;
-const layoutDiscoveryCache = new Map<string, CacheEntry>();
+const layoutDiscoveryCache = new LRUCache<string, CacheEntry>({
+  maxEntries: MAX_CACHE_SIZE,
+});
+
+// Register cache for monitoring and bulk clearing
+registerLRUCache("layout-discovery-cache", layoutDiscoveryCache);
 
 export function clearLayoutDiscoveryCache(projectDir?: string): void {
   if (!projectDir) {
@@ -23,10 +30,12 @@ export function clearLayoutDiscoveryCache(projectDir?: string): void {
   }
 
   let cleared = 0;
-  for (const [key, entry] of layoutDiscoveryCache.entries()) {
-    if (entry.projectDir !== projectDir) continue;
-    layoutDiscoveryCache.delete(key);
-    cleared++;
+  for (const key of [...layoutDiscoveryCache.keys()]) {
+    const entry = layoutDiscoveryCache.get(key);
+    if (entry && entry.projectDir === projectDir) {
+      layoutDiscoveryCache.delete(key);
+      cleared++;
+    }
   }
 
   logger.debug("[discovery] Cleared layout discovery cache for project", {
@@ -38,25 +47,6 @@ export function clearLayoutDiscoveryCache(projectDir?: string): void {
 
 export function getLayoutDiscoveryCacheStats(): { size: number; maxSize: number } {
   return { size: layoutDiscoveryCache.size, maxSize: MAX_CACHE_SIZE };
-}
-
-function evictOldestEntries(): void {
-  if (layoutDiscoveryCache.size <= MAX_CACHE_SIZE) return;
-
-  const entries = [...layoutDiscoveryCache.entries()].sort(
-    (a, b) => a[1].accessedAt - b[1].accessedAt,
-  );
-  const toRemove = Math.ceil(layoutDiscoveryCache.size * 0.1);
-
-  for (let i = 0; i < toRemove && i < entries.length; i++) {
-    const key = entries[i]?.[0];
-    if (key) layoutDiscoveryCache.delete(key);
-  }
-
-  logger.debug("[discovery] Evicted old cache entries", {
-    removed: toRemove,
-    remaining: layoutDiscoveryCache.size,
-  });
 }
 
 export async function discoverNestedLayouts(
@@ -92,7 +82,6 @@ export async function discoverNestedLayouts(
     layoutPaths: layouts.map((l) => l.path),
   });
 
-  evictOldestEntries();
   layoutDiscoveryCache.set(key, { layouts, accessedAt: Date.now(), projectDir });
 
   return layouts;

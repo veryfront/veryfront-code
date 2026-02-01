@@ -20,12 +20,8 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import {
-  cacheHttpImportsToLocal,
-  detokenizeAllCachePaths,
-  ensureHttpBundlesExist,
-  tokenizeAllCachePaths,
-} from "../../../esm/http-cache.ts";
+import { detokenizeAllCachePaths, tokenizeAllCachePaths } from "#veryfront/cache";
+import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import {

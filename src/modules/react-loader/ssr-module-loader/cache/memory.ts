@@ -206,6 +206,7 @@ export function clearSSRModuleCache(): void {
 
 export function clearSSRModuleCacheForProject(projectId: string): void {
   let cleared = 0;
+  const encodedProjectId = encodeURIComponent(projectId);
 
   for (const key of globalModuleCache.keys()) {
     if (!isKeyForProject(key, projectId)) continue;
@@ -229,8 +230,16 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
   }
 
   for (const key of globalTmpDirs.keys()) {
-    if (!key.includes(`:${projectId}`)) continue;
-    globalTmpDirs.delete(key);
+    const parts = key.split("|");
+    if (parts.length >= 3 && parts[1] === encodedProjectId) {
+      globalTmpDirs.delete(key);
+      continue;
+    }
+
+    // Legacy cache key format fallback (base:projectId)
+    if (key.includes(`:${projectId}`)) {
+      globalTmpDirs.delete(key);
+    }
   }
 
   projectTransformCounts.delete(projectId);

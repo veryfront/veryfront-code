@@ -196,6 +196,14 @@ export class LRUCacheAdapter implements CacheAdapter {
     return this.store.keys();
   }
 
+  *entries<T>(): IterableIterator<[string, T]> {
+    for (const [key, node] of this.store) {
+      if (!this.evictionManager.isExpired(node.entry)) {
+        yield [key, node.entry.value as T];
+      }
+    }
+  }
+
   has(key: string): boolean {
     return this.get(key) !== undefined;
   }

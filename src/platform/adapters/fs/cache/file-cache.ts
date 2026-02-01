@@ -37,9 +37,6 @@ registerCache("file-cache", () => ({
 /** Default TTL for cache entries (1 minute) */
 const DEFAULT_CACHE_TTL_MS = 60_000;
 
-/** TTL for backend cache (5 minutes) */
-const BACKEND_TTL_SECONDS = 300;
-
 /** Fallback cache max entries (small, for local dev) */
 const FALLBACK_MAX_ENTRIES = 200;
 
@@ -104,6 +101,7 @@ export class FileCache {
   private fallbackCache = new Map<string, CacheEntry<unknown>>();
   private fallbackMemoryUsed = 0;
   private options: Required<FileCacheOptions>;
+  private backendTtlSeconds: number;
   private hits = 0;
   private misses = 0;
 
@@ -115,6 +113,7 @@ export class FileCache {
       maxMemory: FALLBACK_MAX_MEMORY_BYTES,
       ...options,
     };
+    this.backendTtlSeconds = Math.max(1, Math.ceil(this.options.ttl / 1000));
 
     const mode = cacheBackend?.type ?? "memory";
     logger.debug("[FileCache] Initialized", { ...this.options, mode });
@@ -181,9 +180,7 @@ export class FileCache {
           if (raw) {
             const entry = JSON.parse(raw) as CacheEntry<T>;
             // When using backend (Redis/API), trust the backend's TTL for expiry.
-            // The backend has its own TTL (BACKEND_TTL_SECONDS) which handles expiry.
-            // Previously we checked against this.options.ttl (60s) which was shorter
-            // than the backend TTL (300s), causing premature cache misses.
+            // The backend TTL is derived from this.options.ttl and handles expiry.
             this.hits++;
             return entry.value;
           }
@@ -215,7 +212,7 @@ export class FileCache {
       const serialized = JSON.stringify(entry);
       // Update request-scoped cache so subsequent reads in same request see the new value
       setInRequestCache(key, serialized);
-      backend.set(key, serialized, BACKEND_TTL_SECONDS).catch((error) => {
+      backend.set(key, serialized, this.backendTtlSeconds).catch((error) => {
         logger.debug("[FileCache] Backend set failed", { key, error });
       });
       return;
@@ -248,7 +245,7 @@ export class FileCache {
           const serialized = JSON.stringify(entry);
           // Update request-scoped cache so subsequent reads in same request see the new value
           setInRequestCache(key, serialized);
-          await backend.set(key, serialized, BACKEND_TTL_SECONDS);
+          await backend.set(key, serialized, this.backendTtlSeconds);
         } catch (error) {
           logger.debug("[FileCache] Backend set failed, skipping fallback", { key, error });
         }

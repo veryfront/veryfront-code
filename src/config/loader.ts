@@ -14,6 +14,9 @@ import { getErrorMessage } from "../errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { registerLRUCache } from "#veryfront/cache";
+
 export type { VeryfrontConfig } from "./types.ts";
 
 /**
@@ -120,7 +123,13 @@ function createFreshDefaults(): Partial<VeryfrontConfig> {
   };
 }
 
-const configCacheByProject = new Map<string, { revision: number; config: VeryfrontConfig }>();
+const configCacheByProject = new LRUCache<string, { revision: number; config: VeryfrontConfig }>({
+  maxEntries: 100,
+});
+
+// Register cache for monitoring
+registerLRUCache("config-cache", configCacheByProject);
+
 let cacheRevision = 0;
 
 class ConfigValidationError extends Error {

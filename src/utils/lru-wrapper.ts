@@ -98,6 +98,10 @@ export class LRUCache<K, V> {
   keys(): IterableIterator<K> {
     return this.adapter.keys() as IterableIterator<K>;
   }
+
+  entries(): IterableIterator<[K, V]> {
+    return this.adapter.entries<V>() as IterableIterator<[K, V]>;
+  }
 }
 
 function shouldDisableInterval(): boolean {

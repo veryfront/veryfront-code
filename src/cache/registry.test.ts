@@ -124,8 +124,26 @@ describe("isKeyForProject", () => {
     assertEquals(isKeyForProject("prefix:other:project123:rest", "project123"), true);
   });
 
-  it("should match projectId anywhere in parts", () => {
-    assertEquals(isKeyForProject("a:b:c:project123", "project123"), true);
+  it("should match projectId in versioned keys", () => {
+    assertEquals(isKeyForProject("v1:project123:path", "project123"), true);
+  });
+
+  it("should match projectId in redis-prefixed keys", () => {
+    assertEquals(
+      isKeyForProject("veryfront:ssr-module:v1:project123:path", "project123"),
+      true,
+    );
+  });
+
+  it("should match projectId in render cache keys", () => {
+    assertEquals(
+      isKeyForProject("project123:production:release-1:v1", "project123"),
+      true,
+    );
+  });
+
+  it("should not match projectId deep in unrelated parts", () => {
+    assertEquals(isKeyForProject("a:b:c:project123", "project123"), false);
   });
 
   it("should return false for non-matching key", () => {

@@ -9,44 +9,28 @@
 
 import { rendererLogger as logger } from "#veryfront/utils";
 import type { BundleHash, LocalModuleCode, PortableModuleCode } from "./http-cache-types.ts";
+import {
+  CACHE_DIR_TOKEN,
+  CacheInvariantError as BaseCacheInvariantError,
+  hasHardcodedCachePaths as baseHasHardcodedCachePaths,
+} from "#veryfront/cache";
 
 /**
  * Portable cache directory token for cross-environment compatibility.
  * Absolute file:// paths are replaced with this token before storing in Redis.
  */
-export const CACHE_DIR_TOKEN = "__VF_CACHE_DIR__";
+export { CACHE_DIR_TOKEN };
 
 /**
  * Error thrown when a cache invariant is violated.
  * These errors indicate programming bugs, not user errors.
  */
-export class CacheInvariantError extends Error {
+export class CacheInvariantError extends BaseCacheInvariantError {
   constructor(message: string) {
-    super(`[HTTP-CACHE INVARIANT VIOLATION] ${message}`);
+    super(message);
     this.name = "CacheInvariantError";
   }
 }
-
-/**
- * Common patterns for hardcoded cache paths that should be tokenized.
- * These patterns match absolute paths from various environments.
- */
-const HARDCODED_PATH_PATTERNS = [
-  // Production container paths
-  /file:\/\/\/app\/.cache\//,
-  /file:\/\/\/app\/\.cache\//,
-  // macOS local development
-  /file:\/\/\/Users\/[^/]+\/\.cache\//,
-  /file:\/\/\/Users\/[^/]+\/.cache\//,
-  // Linux local development
-  /file:\/\/\/home\/[^/]+\/\.cache\//,
-  /file:\/\/\/home\/[^/]+\/.cache\//,
-  // Temp directories (various patterns)
-  /file:\/\/\/tmp\/[^/]*\.cache\//,
-  /file:\/\/\/var\/tmp\/[^/]*\.cache\//,
-  // Windows paths (WSL or native)
-  /file:\/\/\/[A-Za-z]:\/.*\.cache\//,
-];
 
 /**
  * Check if code contains hardcoded cache paths that should be tokenized.
@@ -55,9 +39,7 @@ const HARDCODED_PATH_PATTERNS = [
  * @param code - The code string to check
  * @returns true if code contains paths that should have been tokenized
  */
-export function hasHardcodedCachePaths(code: string): boolean {
-  return HARDCODED_PATH_PATTERNS.some((pattern) => pattern.test(code));
-}
+export const hasHardcodedCachePaths = baseHasHardcodedCachePaths;
 
 /**
  * Check if code contains the portable cache directory token.
@@ -80,18 +62,12 @@ export function assertPortable(code: PortableModuleCode): void {
   const codeStr = code as unknown as string;
 
   if (hasHardcodedCachePaths(codeStr)) {
-    const matchedPatterns = HARDCODED_PATH_PATTERNS.filter((p) => p.test(codeStr)).map((p) =>
-      p.source
-    );
-
     logger.error("[HTTP-CACHE] Invariant violation: hardcoded paths in portable code", {
-      patterns: matchedPatterns,
       preview: codeStr.substring(0, 200),
     });
 
     throw new CacheInvariantError(
       `Code contains hardcoded cache paths that should be tokenized.\n` +
-        `Matched patterns: ${matchedPatterns.join(", ")}\n` +
         `This indicates tokenization was not applied correctly.`,
     );
   }

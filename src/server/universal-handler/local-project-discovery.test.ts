@@ -22,12 +22,16 @@ describe("local-project-discovery", () => {
   });
 
   describe("cache exports", () => {
-    it("exports localAdapterCache as Map", () => {
-      assertEquals(localAdapterCache instanceof Map, true);
+    it("exports localAdapterCache with Map-like interface", () => {
+      assertEquals(typeof localAdapterCache.get, "function");
+      assertEquals(typeof localAdapterCache.set, "function");
+      assertEquals(typeof localAdapterCache.clear, "function");
     });
 
-    it("exports localProjectCache as Map", () => {
-      assertEquals(localProjectCache instanceof Map, true);
+    it("exports localProjectCache with Map-like interface", () => {
+      assertEquals(typeof localProjectCache.get, "function");
+      assertEquals(typeof localProjectCache.set, "function");
+      assertEquals(typeof localProjectCache.clear, "function");
     });
   });
 

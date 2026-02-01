@@ -6,6 +6,7 @@ import type { Span } from "@opentelemetry/api";
 
 export interface CacheStore {
   readonly name: string;
+  get(key: string): unknown;
   keys(): Iterable<string>;
   size(): number;
   deleteWhere?(predicate: (key: string) => boolean): number;
@@ -31,6 +32,10 @@ export class MapCacheStore implements CacheStore {
     private readonly map: Map<string, unknown>,
   ) {}
 
+  get(key: string): unknown {
+    return this.map.get(key);
+  }
+
   keys(): Iterable<string> {
     return this.map.keys();
   }
@@ -45,6 +50,7 @@ export class MapCacheStore implements CacheStore {
 }
 
 interface LRULike {
+  get(key: string): unknown;
   keys(): Iterable<string>;
   size: number;
   delete(key: string): boolean;
@@ -55,6 +61,10 @@ export class LRUCacheStore implements CacheStore {
     public readonly name: string,
     private readonly cache: LRULike,
   ) {}
+
+  get(key: string): unknown {
+    return this.cache.get(key);
+  }
 
   keys(): Iterable<string> {
     return this.cache.keys();
@@ -381,11 +391,26 @@ class CacheRegistry {
 }
 
 export function isKeyForProject(key: string, projectId: string): boolean {
-  const parts = key.split(":");
+  const normalizedKey = stripRedisPrefix(key);
+  const parts = normalizedKey.split(":");
   if (parts.length < 2) return false;
+
+  // Versioned cache keys: v{version}:{projectId}:...
+  if (parts[0]?.startsWith("v") && parts[1] === projectId) return true;
+
+  // Render/module cache keys where projectId is first segment and next is env/content source
+  if (parts[0] === projectId) {
+    if (parts[1] === "production" || parts[1] === "preview") return true;
+    if (getEnvironmentFromContentSourceId(parts[1])) return true;
+  }
+
+  // Common prefixes where projectId is second segment (layout/component/proxy/etc.)
   if (parts[1] === projectId) return true;
-  if (parts[2] === projectId) return true;
-  return parts.includes(projectId);
+
+  // File/dir/stat/list cache keys: {prefix}:{sourceType}:{projectSlug}:...
+  if (parts.length > 2 && parts[2] === projectId) return true;
+
+  return false;
 }
 
 type CacheEnvironment = "production" | "preview";

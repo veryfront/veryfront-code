@@ -10,6 +10,8 @@
 import { logger } from "#veryfront/utils";
 import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { registerLRUCache } from "#veryfront/cache";
 
 export interface DomainLookupResult {
   project_id: string;
@@ -26,7 +28,6 @@ export interface DomainLookupConfig {
 
 interface CacheEntry {
   result: DomainLookupResult | null;
-  expiresAt: number;
 }
 
 const DOMAIN_CACHE_TTL_MS = 60_000;
@@ -36,7 +37,14 @@ const DOMAIN_LOOKUP_TIMEOUT_MS = 10_000;
 /** TTL in seconds for external cache repository */
 const DOMAIN_CACHE_TTL_SECONDS = 60;
 
-const domainCache = new Map<string, CacheEntry>();
+const domainCache = new LRUCache<string, CacheEntry>({
+  maxEntries: DOMAIN_CACHE_MAX_ENTRIES,
+  ttlMs: DOMAIN_CACHE_TTL_MS,
+});
+
+// Register cache for monitoring
+registerLRUCache("domain-lookup-cache", domainCache);
+
 const inFlightRequests = new Map<string, Promise<DomainLookupResult | null>>();
 
 /** Injected cache repository for testing or distributed caching */
@@ -46,31 +54,10 @@ function normalizeDomain(domain: string): string {
   return domain.replace(/:\d+$/, "").toLowerCase();
 }
 
-function cleanupExpiredEntries(): void {
-  const now = Date.now();
-  for (const [key, entry] of domainCache) {
-    if (entry.expiresAt < now) domainCache.delete(key);
-  }
-}
-
-function evictOldestEntries(): void {
-  if (domainCache.size < DOMAIN_CACHE_MAX_ENTRIES) return;
-
-  const entries = [...domainCache.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt);
-  const toRemove = Math.ceil(entries.length * 0.1);
-
-  for (let i = 0; i < toRemove; i++) {
-    const [key] = entries[i] ?? [];
-    if (key) domainCache.delete(key);
-  }
-}
-
 async function getCachedResult(
   cacheKey: string,
   domain: string,
 ): Promise<DomainLookupResult | null | undefined> {
-  const now = Date.now();
-
   if (injectedCacheRepo) {
     const cached = await injectedCacheRepo.get(cacheKey);
     if (!cached) return undefined;
@@ -84,12 +71,11 @@ async function getCachedResult(
   }
 
   const cached = domainCache.get(cacheKey);
-  if (!cached || cached.expiresAt <= now) return undefined;
+  if (!cached) return undefined;
 
   logger.debug("[DomainLookup] Cache hit", {
     domain,
     projectSlug: cached.result?.project_slug,
-    ttlRemaining: cached.expiresAt - now,
   });
   return cached.result;
 }
@@ -102,13 +88,7 @@ function setCachedResult(
     return injectedCacheRepo.set(cacheKey, JSON.stringify(result), DOMAIN_CACHE_TTL_SECONDS);
   }
 
-  const now = Date.now();
-  domainCache.set(cacheKey, { result, expiresAt: now + DOMAIN_CACHE_TTL_MS });
-
-  if (domainCache.size > DOMAIN_CACHE_MAX_ENTRIES / 2) {
-    cleanupExpiredEntries();
-    evictOldestEntries();
-  }
+  domainCache.set(cacheKey, { result });
 }
 
 export function lookupProjectByDomain(

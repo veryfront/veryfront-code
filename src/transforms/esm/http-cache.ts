@@ -35,60 +35,31 @@ import {
   HTTP_MODULE_DISTRIBUTED_TTL_SEC,
 } from "#veryfront/utils/constants/cache.ts";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
-import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 
 // Type-safe cache wrapper (new architecture)
 import { httpBundleCache } from "./http-cache-wrapper.ts";
-import {
-  asLocalModuleCode,
-  CACHE_DIR_TOKEN,
-  CacheInvariantError,
-} from "./http-cache-invariants.ts";
+import { asLocalModuleCode, CacheInvariantError } from "./http-cache-invariants.ts";
 
 /** Maximum number of keys per batch request to distributed cache API */
 // Note: Now handled by httpBundleCache wrapper, kept for reference during migration
 const _BATCH_FETCH_CHUNK_SIZE = 100;
 
-// Re-export CACHE_DIR_TOKEN from invariants for backwards compatibility
-export { CACHE_DIR_TOKEN } from "./http-cache-invariants.ts";
+import {
+  CACHE_DIR_TOKEN,
+  detokenizeAllCachePaths,
+  detokenizeCachePaths,
+  tokenizeAllCachePaths,
+  tokenizeCachePaths,
+} from "#veryfront/cache";
 
-/**
- * Replace local cache directory with portable token for distributed cache storage.
- * This makes cached code portable across different environments.
- */
-export function tokenizeCachePaths(code: string, localCacheDir: string): string {
-  // Normalize the cache dir (remove trailing slash if present)
-  const normalizedDir = localCacheDir.endsWith("/") ? localCacheDir.slice(0, -1) : localCacheDir;
-  return code.replaceAll(`file://${normalizedDir}`, `file://${CACHE_DIR_TOKEN}`);
-}
-
-/**
- * Replace portable token with local cache directory when loading from distributed cache.
- * This resolves the portable paths to actual local file paths.
- */
-export function detokenizeCachePaths(code: string, localCacheDir: string): string {
-  // Normalize the cache dir (remove trailing slash if present)
-  const normalizedDir = localCacheDir.endsWith("/") ? localCacheDir.slice(0, -1) : localCacheDir;
-  return code.replaceAll(`file://${CACHE_DIR_TOKEN}`, `file://${normalizedDir}`);
-}
-
-/**
- * Tokenize all cache paths in code using the base cache directory.
- * This is the preferred function for tokenizing paths before storing in distributed cache.
- * Handles both veryfront-http-bundle/ and veryfront-mdx-esm/ paths.
- */
-export function tokenizeAllCachePaths(code: string): string {
-  return tokenizeCachePaths(code, getCacheBaseDir());
-}
-
-/**
- * Detokenize all cache paths in code using the base cache directory.
- * This is the preferred function for detokenizing paths after loading from distributed cache.
- * Handles both veryfront-http-bundle/ and veryfront-mdx-esm/ paths.
- */
-export function detokenizeAllCachePaths(code: string): string {
-  return detokenizeCachePaths(code, getCacheBaseDir());
-}
+// Re-export for backwards compatibility
+export {
+  CACHE_DIR_TOKEN,
+  detokenizeAllCachePaths,
+  detokenizeCachePaths,
+  tokenizeAllCachePaths,
+  tokenizeCachePaths,
+};
 
 /**
  * Decode gzip-compressed cache content.

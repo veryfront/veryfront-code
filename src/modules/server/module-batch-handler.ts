@@ -31,8 +31,11 @@ import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
 import { buildModuleTransformCacheKey } from "../../cache/keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { registerLRUCache } from "#veryfront/cache";
 
 /** Slow request threshold in milliseconds */
+
 const SLOW_REQUEST_THRESHOLD_MS = 500;
 /** Slow module transform threshold in milliseconds */
 const SLOW_TRANSFORM_THRESHOLD_MS = 100;
@@ -41,7 +44,12 @@ const SLOW_TRANSFORM_THRESHOLD_MS = 100;
 const MAX_BATCH_SIZE = 100;
 
 /** Cache for transformed modules (path -> code) */
-const transformCache = new Map<string, string>();
+const transformCache = new LRUCache<string, string>({
+  maxEntries: 1000,
+});
+
+// Register cache for monitoring
+registerLRUCache("module-batch-transform-cache", transformCache);
 
 const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
 
@@ -396,7 +404,7 @@ export function clearBatchCache(projectSlug?: string): void {
   }
 
   const prefix = `${projectSlug}:`;
-  for (const key of transformCache.keys()) {
+  for (const key of [...transformCache.keys()]) {
     if (key.startsWith(prefix)) transformCache.delete(key);
   }
   logger.debug("[ModuleBatch] Cleared cache for project", { projectSlug });

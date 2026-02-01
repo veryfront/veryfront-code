@@ -11,6 +11,8 @@ import { createError, getErrorMessage, toError } from "../errors/veryfront-error
 import { getProjectReact } from "#veryfront/react";
 import { injectNodePositions } from "../transforms/plugins/babel-node-positions.ts";
 import { buildComponentCacheKey } from "../cache/keys.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { registerLRUCache } from "#veryfront/cache";
 
 export interface ComponentPageResult {
   pageElement: BundledReact.ReactElement;
@@ -24,7 +26,12 @@ export interface ComponentPageResult {
  * Evicted when exceeding MAX_COMPONENT_CACHE_SIZE to prevent unbounded memory growth.
  */
 const MAX_COMPONENT_CACHE_SIZE = 5000;
-const componentHydrationCache = new Map<string, string>();
+const componentHydrationCache = new LRUCache<string, string>({
+  maxEntries: MAX_COMPONENT_CACHE_SIZE,
+});
+
+// Register cache for monitoring
+registerLRUCache("component-hydration-cache", componentHydrationCache);
 
 /**
  * Load and render a TSX/JSX component page
@@ -159,14 +166,6 @@ async function bundleComponentForClient(
       moduleServerUrl,
       reactVersion,
     });
-
-    if (componentHydrationCache.size >= MAX_COMPONENT_CACHE_SIZE) {
-      logger.debug("[ComponentHandling] Cache size limit reached, clearing", {
-        size: componentHydrationCache.size,
-        limit: MAX_COMPONENT_CACHE_SIZE,
-      });
-      componentHydrationCache.clear();
-    }
 
     componentHydrationCache.set(cacheKey, transformed);
     return transformed;

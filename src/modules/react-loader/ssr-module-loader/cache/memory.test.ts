@@ -14,6 +14,7 @@ import {
 } from "./memory.ts";
 import { verifiedHttpBundlePaths } from "../http-bundle-helpers.ts";
 import { getTransformPerProjectLimit } from "../constants.ts";
+import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 
 describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
   function resetState(): void {
@@ -212,13 +213,17 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
     it("should clear tmp dirs for a specific project", () => {
       resetState();
 
-      globalTmpDirs.set("base:project-1", "/tmp/proj1");
-      globalTmpDirs.set("base:project-2", "/tmp/proj2");
+      const baseCacheDir = getMdxEsmCacheDir();
+      const key1 = `${baseCacheDir}|${encodeURIComponent("project-1")}|preview-main`;
+      const key2 = `${baseCacheDir}|${encodeURIComponent("project-2")}|preview-main`;
+
+      globalTmpDirs.set(key1, "/tmp/proj1");
+      globalTmpDirs.set(key2, "/tmp/proj2");
 
       clearSSRModuleCacheForProject("project-1");
 
-      assertEquals(globalTmpDirs.has("base:project-1"), false);
-      assertEquals(globalTmpDirs.has("base:project-2"), true);
+      assertEquals(globalTmpDirs.has(key1), false);
+      assertEquals(globalTmpDirs.has(key2), true);
 
       globalTmpDirs.clear();
     });
