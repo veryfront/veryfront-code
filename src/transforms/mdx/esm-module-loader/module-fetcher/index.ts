@@ -46,6 +46,7 @@ import { recordSSRModules } from "../../../../modules/manifest/route-module-mani
 import { getDistributedTransformBackend } from "#veryfront/transforms/esm/transform-cache.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
+import { resolveVeryfrontModuleUrl } from "#veryfront/utils/veryfront-module-urls.ts";
 
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
@@ -88,32 +89,14 @@ function getTransformCacheKey(
 }
 
 /**
- * Map veryfront/* bare specifiers to /_vf_modules/_veryfront/ paths for MDX module loading.
- * These need to be resolved to file paths because the cached .mjs files are
- * dynamically imported and don't have access to deno.json import maps.
- *
- * Uses /_vf_modules/_veryfront/ prefix so framework code goes through the module server
- * transform pipeline, ensuring React imports get rewritten to the same esm.sh URLs as
- * user code - preventing dual React instances.
- *
- * IMPORTANT: If you change these paths, also update the contract tests in:
- * - resolution/file-finder.test.ts ("resolves all production import map paths")
- * These tests ensure paths are resolvable by the file-finder in production.
- */
-const VERYFRONT_IMPORT_MAP: Record<string, string> = {
-  "veryfront/head": "/_vf_modules/_veryfront/react/components/Head.js?ssr=true",
-  "veryfront/router": "/_vf_modules/_veryfront/react/router/index.js?ssr=true",
-  "veryfront/context": "/_vf_modules/_veryfront/react/context/index.js?ssr=true",
-  "veryfront/fonts": "/_vf_modules/_veryfront/react/fonts/index.js?ssr=true",
-};
-
-/**
- * Rewrite veryfront/* imports to /_vf_modules/ paths for MDX module loading.
+ * Rewrite veryfront/* imports to /_vf_modules/_veryfront/ paths for MDX module loading.
+ * Uses deno.json exports/imports as the source of truth and appends ?ssr=true.
  */
 function rewriteVeryfrontImports(code: string): string {
   return code.replace(/from\s*["'](veryfront\/[^"']+)["']/g, (_match, specifier: string) => {
-    const mapped = VERYFRONT_IMPORT_MAP[specifier];
-    return `from "${mapped ?? specifier}"`;
+    const mapped = resolveVeryfrontModuleUrl(specifier);
+    if (!mapped) return `from "${specifier}"`;
+    return `from "${mapped}?ssr=true"`;
   });
 }
 

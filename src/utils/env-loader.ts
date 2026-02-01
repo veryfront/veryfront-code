@@ -1,8 +1,10 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger as logger } from "./logger/index.ts";
 import { cwd as getCwd, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
 
 let _fs: FileSystem | null = null;
+const envSources = new Map<string, string>();
+let envLoaded = false;
 
 function getFs(): FileSystem {
   _fs ??= createFileSystem();
@@ -23,6 +25,7 @@ export async function loadEnv(
     debug?: boolean;
   } = {},
 ): Promise<void> {
+  if (envLoaded) return;
   const { cwd = getCwd(), override = false, debug = false } = options;
 
   const env = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
@@ -42,12 +45,16 @@ export async function loadEnv(
         if (existing && !override) continue;
 
         setEnv(key, value);
+        envSources.set(key, file);
         totalVars++;
 
         if (debug) {
           logger.debug(
             `[env] ${key}=${value.substring(0, 20)}${value.length > 20 ? "..." : ""}`,
           );
+        }
+        if (key === "VERYFRONT_API_BASE_URL") {
+          logger.info(`[env] VERYFRONT_API_BASE_URL loaded: ${value}`);
         }
       }
 
@@ -59,6 +66,7 @@ export async function loadEnv(
     }
   }
 
+  envLoaded = true;
   if (loadedCount === 0) return;
 
   logger.debug(
@@ -142,4 +150,29 @@ function expandVariables(value: string, vars: Record<string, string>): string {
 export function supportsEnvFiles(): boolean {
   const fs = getFs();
   return typeof fs.readTextFile === "function";
+}
+
+export function markEnvLoaded(): void {
+  envLoaded = true;
+}
+
+export function hasEnvLoaded(): boolean {
+  return envLoaded;
+}
+
+export function getEnvSource(
+  key: string,
+): { source: "env-file"; file: string } | { source: "process" } | { source: "unset" } {
+  const file = envSources.get(key);
+  if (file) return { source: "env-file", file };
+
+  const value = getEnv(key);
+  if (value !== undefined) return { source: "process" };
+
+  return { source: "unset" };
+}
+
+export function __resetEnvLoaderForTests(): void {
+  envLoaded = false;
+  envSources.clear();
 }

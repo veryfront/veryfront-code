@@ -318,13 +318,10 @@ describe("StatOperations", () => {
         isPersistentCacheInvalidated: () => false,
       });
 
-      await statOps.resolveFile("exports/something");
+      await statOps.resolveFile("_veryfront/react/component");
       assertEquals(searchCalled, false);
 
-      await statOps.resolveFile("react/component");
-      assertEquals(searchCalled, false);
-
-      await statOps.resolveFile("veryfront/utils");
+      await statOps.resolveFile("_veryfront/platform/polyfills/node-noop");
       assertEquals(searchCalled, false);
     });
 

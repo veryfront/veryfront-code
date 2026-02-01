@@ -24,6 +24,7 @@ export interface ParsedArgs {
   _: (string | number)[];
   port?: number;
   p?: number;
+  __explicit?: Record<string, true>;
   help?: boolean;
   h?: boolean;
   version?: boolean;

@@ -52,21 +52,19 @@ const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 const FRAMEWORK_LOOKUPS: Array<[prefix: string, frameworkDir: string]> = [
   // Embedded sources for compiled binaries (these are .src files)
   ["_veryfront/", EMBEDDED_SRC_DIR],
-  ["react/", EMBEDDED_SRC_DIR],
-  ["lib/", EMBEDDED_SRC_DIR],
   // Regular sources for dev mode
   ["_veryfront/", join(FRAMEWORK_ROOT, "src")],
-  ["react/", join(FRAMEWORK_ROOT, "src")],
-  ["lib/", join(FRAMEWORK_ROOT, "src")],
 ];
 
 /**
- * Find all /_vf_modules/ imports in the code.
+ * Find all /_vf_modules/_veryfront/ imports in the code.
+ * Only matches framework modules, not user project files.
  */
 function findVfModuleImports(code: string): string[] {
   const imports: string[] = [];
   // Note: \s* allows zero whitespace (minified code: from"..." has no space)
-  const pattern = /from\s*["'](\/\_vf\_modules\/[^"']+)["']/g;
+  // Only match _veryfront/ framework modules, not user project files
+  const pattern = /from\s*["'](\/\_vf\_modules\/_veryfront\/[^"']+)["']/g;
 
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(code)) !== null) {

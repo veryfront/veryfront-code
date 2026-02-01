@@ -14,10 +14,15 @@ import {
   isRuntimeEnvInitialized,
   type RuntimeEnv,
 } from "./runtime-env.ts";
+import { __resetEnvLoaderForTests, markEnvLoaded } from "#veryfront/utils/env-loader.ts";
 
 describe("RuntimeEnv", () => {
   beforeEach(_resetRuntimeEnv);
-  afterEach(_resetRuntimeEnv);
+  beforeEach(markEnvLoaded);
+  afterEach(() => {
+    __resetEnvLoaderForTests();
+    _resetRuntimeEnv();
+  });
 
   describe("initRuntimeEnv", () => {
     it("initializes RuntimeEnv from environment", () => {

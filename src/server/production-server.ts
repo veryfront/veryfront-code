@@ -38,6 +38,12 @@ interface ServerOptions {
   defaultProjectId?: string;
   /** Default environment for standalone mode (preview or production). Defaults to preview for safety. */
   defaultEnvironment?: "preview" | "production";
+  /**
+   * Optional request interceptor for combined mode.
+   * Transforms requests before they're processed by the universal handler.
+   * Used by proxy middleware to inject context headers in combined mode.
+   */
+  requestInterceptor?: (req: Request) => Request | Promise<Request>;
 }
 
 export interface ServerHandle {
@@ -64,6 +70,7 @@ export function startUniversalServer(
         defaultProjectSlug,
         defaultProjectId,
         defaultEnvironment,
+        requestInterceptor,
       } = options;
 
       const baseAdapter = options.adapter ?? (await runtime.get());
@@ -88,7 +95,7 @@ export function startUniversalServer(
 
       logger.info("Starting universal production server", { projectDir, port, bindAddress });
 
-      const handler = createVeryfrontHandler(projectDir, adapter, {
+      const baseHandler = createVeryfrontHandler(projectDir, adapter, {
         projectDir,
         debug,
         config: bootstrap.config,
@@ -99,6 +106,20 @@ export function startUniversalServer(
         defaultProjectId,
         defaultEnvironment,
       });
+
+      // Wrap handler with interceptor if provided (for combined mode)
+      // WebSocket upgrade requests MUST NOT be intercepted because the interceptor
+      // creates a new Request object, which breaks Deno.upgradeWebSocket()
+      const handler = requestInterceptor
+        ? Object.assign(
+          async (req: Request) => {
+            const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
+            if (isWebSocketUpgrade) return baseHandler(req);
+            return baseHandler(await requestInterceptor(req));
+          },
+          { ready: baseHandler.ready },
+        )
+        : baseHandler;
 
       let resolveListenReady: (() => void) | undefined;
       const listenReady = new Promise<void>((resolve) => {

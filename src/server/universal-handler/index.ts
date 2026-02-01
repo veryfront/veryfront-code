@@ -760,9 +760,13 @@ export function createVeryfrontHandler(
             ? proxyEnv
             : reqCtx.mode;
 
+          // Skip releaseId validation for WebSocket/HMR endpoints - they're for development
+          // features and shouldn't require release context
+          const isWebSocketOrHMR = url.pathname === "/_ws" || url.pathname.startsWith("/_veryfront/");
+
           if (
             isProxyMode && resolvedEnvironment === "production" && projectSlug && !releaseId &&
-            !isLocalProject
+            !isLocalProject && !isWebSocketOrHMR
           ) {
             logger.error("[universal] Missing releaseId in proxy mode (production)", {
               projectSlug,

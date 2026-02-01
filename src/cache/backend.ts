@@ -9,10 +9,16 @@ import { getRuntimeEnv, isRuntimeEnvInitialized, type RuntimeEnv } from "../conf
 import { CircuitBreakerOpen, getCircuitBreaker } from "../utils/circuit-breaker.ts";
 import { MEMORY_CACHE_MAX_ENTRIES } from "../utils/constants/cache.ts";
 
-function getCurrentRequestContext(): { token?: string } | null {
+type CacheRequestContext = {
+  token?: string;
+  projectId?: string;
+  projectSlug?: string;
+};
+
+function getCurrentRequestContext(): CacheRequestContext | null {
   // deno-lint-ignore no-explicit-any
   const mod = (globalThis as any).__vf_multi_project_adapter;
-  return mod?.getCurrentRequestContext?.() ?? null;
+  return (mod?.getCurrentRequestContext?.() as CacheRequestContext | undefined) ?? null;
 }
 
 const ENV_KEY_MAP: Record<string, keyof RuntimeEnv | undefined> = {
@@ -311,31 +317,30 @@ export class ApiCacheBackend implements CacheBackend {
     return this.keyPrefix ? `${this.keyPrefix}:${key}` : key;
   }
 
-  private getAuthToken(): string | null {
-    return getEnvValue("VERYFRONT_API_TOKEN", this.env) ?? getCurrentRequestContext()?.token ??
-      null;
-  }
-
-  private getProjectSlug(): string | null {
-    return tryGetCacheKeyContext()?.projectId ?? null;
-  }
-
   private async request<T>(
     method: string,
     path: string,
     body?: Record<string, unknown>,
   ): Promise<T | null> {
-    const token = this.getAuthToken();
-    const projectSlug = this.getProjectSlug();
+    const reqCtx = getCurrentRequestContext();
+    const envToken = getEnvValue("VERYFRONT_API_TOKEN", this.env);
+    // Prefer request context token (from proxy) - this is how production works
+    const token = reqCtx?.token || envToken || null;
+    const tokenSource = reqCtx?.token ? "request" : envToken ? "env" : "none";
+    const projectRef = reqCtx?.projectId || reqCtx?.projectSlug ||
+      tryGetCacheKeyContext()?.projectId || null;
 
-    if (!token || !projectSlug) {
-      logger.debug("[ApiCacheBackend] Missing auth or project context");
+    if (!token || !projectRef) {
+      logger.debug("[ApiCacheBackend] Missing auth or project context", {
+        tokenSource,
+        hasProjectRef: !!projectRef,
+      });
       return null;
     }
 
     try {
       return await this.circuitBreaker.execute(async () => {
-        const url = `${this.apiBaseUrl}/projects/${projectSlug}/cache${path}`;
+        const url = `${this.apiBaseUrl}/projects/${projectRef}/cache${path}`;
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -357,7 +362,7 @@ export class ApiCacheBackend implements CacheBackend {
               "http.url": url,
               "http.host": new URL(this.apiBaseUrl).host,
               "cache.operation": path,
-              "cache.project_slug": projectSlug,
+              "cache.project_slug": projectRef,
             },
           );
 
@@ -391,6 +396,8 @@ export class ApiCacheBackend implements CacheBackend {
         path,
         error: errorMsg,
         isTimeout,
+        tokenSource,
+        projectRef,
       });
       return null;
     }

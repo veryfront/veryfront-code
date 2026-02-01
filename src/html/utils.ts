@@ -63,10 +63,10 @@ type CdnProvider = "esm.sh" | "unpkg" | "jsdelivr";
 // CRITICAL: veryfront/context must use local module to share React context with SSR.
 // Using esm.sh creates a separate context instance causing usePageContext to return undefined.
 const PLATFORM_UTILITY_PATHS = {
-  head: "/_vf_modules/react/components/Head.js",
-  router: "/_vf_modules/react/router/index.js",
-  context: "/_vf_modules/react/context/index.js",
-  fonts: "/_vf_modules/react/fonts/index.js",
+  head: "/_vf_modules/_veryfront/react/components/Head.js",
+  router: "/_vf_modules/_veryfront/react/router/index.js",
+  context: "/_vf_modules/_veryfront/react/context/index.js",
+  fonts: "/_vf_modules/_veryfront/react/fonts/index.js",
 } as const;
 
 const PLATFORM_UTILITIES: Record<string, string> = {

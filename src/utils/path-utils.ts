@@ -92,3 +92,48 @@ export function fromBase64Url(encoded: string): string {
     return "";
   }
 }
+
+/**
+ * Framework source directories that should never be fetched from the API.
+ * These are framework-internal modules that must be resolved from local filesystem.
+ */
+const FRAMEWORK_SOURCE_DIRS = [
+  "react",
+  "platform",
+  "client",
+  "lib",
+  "html",
+  "utils",
+  "transforms",
+  "modules",
+  "server",
+  "config",
+  "errors",
+  "observability",
+  "rendering",
+  "security",
+  "data",
+  "cache",
+  "build",
+  "repositories",
+  "cli",
+] as const;
+
+const FRAMEWORK_SOURCE_PATH_RE = new RegExp(
+  `^src/(${FRAMEWORK_SOURCE_DIRS.join("|")})/`,
+);
+
+/**
+ * Check if a normalized path is a framework path that should not be fetched from API.
+ *
+ * Framework paths can appear in two forms:
+ * 1. "_veryfront/..." - original framework module path prefix
+ * 2. "src/react/...", "src/platform/...", etc. - framework source paths
+ *    (after FSAdapter normalizes absolute paths like /Users/.../veryfront-renderer/src/...)
+ */
+export function isFrameworkSourcePath(normalizedPath: string): boolean {
+  if (normalizedPath.startsWith("_veryfront/")) {
+    return true;
+  }
+  return FRAMEWORK_SOURCE_PATH_RE.test(normalizedPath);
+}

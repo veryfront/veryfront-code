@@ -11,6 +11,6 @@ await import("#veryfront/platform/compat/esbuild-init.ts");
 if (!import.meta.main) {
   // Trigger release test 20260130122243
 } else {
-  const { main } = await import("./index.ts");
+  const { main } = await import("./index/cli-main.ts");
   await main();
 }

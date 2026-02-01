@@ -312,6 +312,10 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       }
 
       let modulePath = url.pathname.replace(DEV_MODULE_PREFIX, "");
+      modulePath = modulePath.replace(/^\/+/, "");
+      if (modulePath.startsWith("_vf_modules/")) {
+        modulePath = modulePath.slice("_vf_modules/".length);
+      }
       if (modulePath.startsWith("@/")) modulePath = modulePath.slice(2);
 
       const filePathWithoutExt = modulePath.replace(/\.(?:mjs|js)$/i, "");
@@ -439,6 +443,80 @@ async function findSourceFile(
   logger.debug("[ModuleServer] findSourceFile called", { projectDir, basePath });
 
   const hasKnownExt = extensions.some((ext) => basePath.endsWith(ext));
+  const rawBasePathWithoutExt = hasKnownExt
+    ? basePath.replace(/\.(tsx|ts|jsx|js|mdx|md)$/, "")
+    : basePath;
+  let basePathWithoutExt = rawBasePathWithoutExt.replace(/^\/+/, "");
+  if (basePathWithoutExt.startsWith("_vf_modules/")) {
+    basePathWithoutExt = basePathWithoutExt.slice("_vf_modules/".length);
+  }
+
+  const frameworkLookups: [string, string, string, boolean][] = [
+    ["_veryfront/", join(FRAMEWORK_ROOT, "src"), "_veryfront", true],
+    // Fallback to projectDir for local dev/proxy setups where FRAMEWORK_ROOT may differ.
+    ["_veryfront/", join(projectDir, "src"), "_veryfront-project", true],
+  ];
+  const isFrameworkPath = basePathWithoutExt.startsWith("_veryfront/");
+
+  async function resolveFrameworkFile(
+    lookups: [string, string, string, boolean][],
+  ): Promise<FindSourceFileResult | null> {
+    // In compiled binaries, check for embedded polyfills first (no filesystem access)
+    if (isDenoCompiled) {
+      const embeddedContent = EMBEDDED_POLYFILLS[basePathWithoutExt];
+      if (embeddedContent) {
+        logger.debug("[ModuleServer] Using embedded polyfill for compiled binary", {
+          basePath: basePathWithoutExt,
+        });
+        return {
+          path: `embedded:${basePathWithoutExt}`,
+          isFrameworkFile: true,
+          embeddedContent,
+        };
+      }
+    }
+
+    // Look for framework files using native filesystem (not secureFs which goes to API)
+    const platformFs = createFileSystem();
+    for (const [prefix, frameworkDir, label, stripPrefix] of lookups) {
+      if (!basePathWithoutExt.startsWith(prefix)) continue;
+
+      const pathWithinFramework = stripPrefix
+        ? basePathWithoutExt.slice(prefix.length)
+        : basePathWithoutExt;
+
+      for (const ext of extensions) {
+        const frameworkPath = join(frameworkDir, pathWithinFramework + ext);
+        try {
+          const stat = await platformFs.stat(frameworkPath);
+          if (stat.isFile) {
+            logger.debug(`[ModuleServer] Found framework ${label} file`, {
+              basePath: basePathWithoutExt,
+              resolvedPath: frameworkPath,
+            });
+            return { path: frameworkPath, isFrameworkFile: true };
+          }
+        } catch {
+          // continue
+        }
+      }
+    }
+
+    return null;
+  }
+
+  if (isFrameworkPath) {
+    const frameworkResult = await resolveFrameworkFile(frameworkLookups);
+    if (frameworkResult) {
+      return frameworkResult;
+    }
+
+    // Framework path not found locally - log warning and fall back to project lookups
+    logger.warn("[ModuleServer] Framework file not found locally", {
+      basePath: basePathWithoutExt,
+      frameworkRoot: FRAMEWORK_ROOT,
+    });
+  }
 
   if (hasKnownExt) {
     const fullPath = join(projectDir, basePath);
@@ -456,10 +534,7 @@ async function findSourceFile(
     }
   }
 
-  const basePathWithoutExt = hasKnownExt
-    ? basePath.replace(/\.(tsx|ts|jsx|js|mdx|md)$/, "")
-    : basePath;
-
+  // Project file lookups (using secureFs which may go through FSAdapter in proxy mode)
   for (const ext of extensions) {
     const fullPath = join(projectDir, basePathWithoutExt + ext);
     try {
@@ -512,6 +587,7 @@ async function findSourceFile(
     }
   }
 
+  // Try looking in common project directories
   const commonDirs = ["components", "app", "pages", "lib", "src"];
   for (const dir of commonDirs) {
     for (const ext of extensions) {
@@ -524,55 +600,6 @@ async function findSourceFile(
             resolvedPath: fullPath,
           });
           return { path: fullPath, isFrameworkFile: false };
-        }
-      } catch {
-        // continue
-      }
-    }
-  }
-
-  // In compiled binaries, check for embedded polyfills first (no filesystem access)
-  if (isDenoCompiled) {
-    const embeddedContent = EMBEDDED_POLYFILLS[basePathWithoutExt];
-    if (embeddedContent) {
-      logger.debug("[ModuleServer] Using embedded polyfill for compiled binary", {
-        basePath: basePathWithoutExt,
-      });
-      return {
-        path: `embedded:${basePathWithoutExt}`,
-        isFrameworkFile: true,
-        embeddedContent,
-      };
-    }
-  }
-
-  const frameworkLookups: [string, string, string, boolean][] = [
-    ["_veryfront/", join(FRAMEWORK_ROOT, "src"), "_veryfront", true],
-    ["lib/", join(FRAMEWORK_ROOT, "src"), "lib", false],
-    ["src/exports/", FRAMEWORK_ROOT, "src/exports", false],
-    ["exports/", join(FRAMEWORK_ROOT, "src"), "exports", false],
-    ["react/", join(FRAMEWORK_ROOT, "src"), "react", false],
-    ["platform/", join(FRAMEWORK_ROOT, "src"), "platform", false],
-  ];
-
-  const platformFs = createFileSystem();
-  for (const [prefix, frameworkDir, label, stripPrefix] of frameworkLookups) {
-    if (!basePathWithoutExt.startsWith(prefix)) continue;
-
-    const pathWithinFramework = stripPrefix
-      ? basePathWithoutExt.slice(prefix.length)
-      : basePathWithoutExt;
-
-    for (const ext of extensions) {
-      const frameworkPath = join(frameworkDir, pathWithinFramework + ext);
-      try {
-        const stat = await platformFs.stat(frameworkPath);
-        if (stat.isFile) {
-          logger.debug(`[ModuleServer] Found framework ${label} file`, {
-            basePath: basePathWithoutExt,
-            resolvedPath: frameworkPath,
-          });
-          return { path: frameworkPath, isFrameworkFile: true };
         }
       } catch {
         // continue

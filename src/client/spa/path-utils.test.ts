@@ -2,7 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { pathToModuleUrl } from "./path-utils.ts";
 
-describe("lib/spa/path-utils", () => {
+describe("client/spa/path-utils", () => {
   describe("pathToModuleUrl", () => {
     const cases: Array<[string, string, string]> = [
       ["pages/index.tsx", "/_vf_modules", "/_vf_modules/pages/index.js"],

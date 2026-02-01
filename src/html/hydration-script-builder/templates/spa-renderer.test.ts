@@ -52,7 +52,7 @@ describe("hydration-script-builder/templates/spa-renderer", () => {
     });
 
     it("should import ClientApp", () => {
-      assertIncludes(getSpaRendererScript(), "lib/spa/ClientApp.js");
+      assertIncludes(getSpaRendererScript(), "_veryfront/client/spa/ClientApp.js");
     });
 
     it("should look for veryfront-content container", () => {

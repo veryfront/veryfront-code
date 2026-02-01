@@ -1,15 +1,17 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { loadEnv, supportsEnvFiles } from "./env-loader.ts";
+import { __resetEnvLoaderForTests, loadEnv, supportsEnvFiles } from "./env-loader.ts";
 
 describe("env-loader", () => {
   let tempDir: string;
 
   beforeEach(async () => {
     tempDir = await Deno.makeTempDir({ prefix: "env-loader-test-" });
+    __resetEnvLoaderForTests();
   });
 
   afterEach(async () => {
+    __resetEnvLoaderForTests();
     await Deno.remove(tempDir, { recursive: true });
   });
 

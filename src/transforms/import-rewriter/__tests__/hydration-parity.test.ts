@@ -183,16 +183,16 @@ describe("Strategy Unit Tests", () => {
     it("should map veryfront/* to module server URLs for browser", async () => {
       const code = `import { Head } from "veryfront/head";`;
       const result = await rewriteImports(code, createContext({ target: "browser" }));
-      expect(result).toContain("/_vf_modules/react/components/Head.js");
+      expect(result).toContain("/_vf_modules/_veryfront/react/components/Head.js");
       expect(result).not.toContain('"veryfront/head"');
     });
 
     it("should map all known veryfront subpaths for browser", async () => {
       const testCases = [
-        { input: "veryfront/head", expected: "/_vf_modules/react/components/Head.js" },
-        { input: "veryfront/router", expected: "/_vf_modules/react/router/index.js" },
-        { input: "veryfront/context", expected: "/_vf_modules/react/context/index.js" },
-        { input: "veryfront/fonts", expected: "/_vf_modules/react/fonts/index.js" },
+        { input: "veryfront/head", expected: "/_vf_modules/_veryfront/react/components/Head.js" },
+        { input: "veryfront/router", expected: "/_vf_modules/_veryfront/react/router/index.js" },
+        { input: "veryfront/context", expected: "/_vf_modules/_veryfront/react/context/index.js" },
+        { input: "veryfront/fonts", expected: "/_vf_modules/_veryfront/react/fonts/index.js" },
       ];
 
       for (const { input, expected } of testCases) {
@@ -205,7 +205,7 @@ describe("Strategy Unit Tests", () => {
     it("should map @veryfront/* to module server URLs for browser", async () => {
       const code = `import { Head } from "@veryfront/head";`;
       const result = await rewriteImports(code, createContext({ target: "browser" }));
-      expect(result).toContain("/_vf_modules/react/components/Head.js");
+      expect(result).toContain("/_vf_modules/_veryfront/react/components/Head.js");
     });
   });
 
@@ -265,7 +265,7 @@ describe("Strategy Unit Tests", () => {
       expect(result).not.toContain("esm.sh/node:");
       expect(result).toContain("/_vf_modules/_veryfront/platform/polyfills/node-async-hooks.js");
       expect(result).toContain(`esm.sh/react@${DEFAULT_REACT_VERSION}`);
-      expect(result).toContain("/_vf_modules/react/components/Head.js");
+      expect(result).toContain("/_vf_modules/_veryfront/react/components/Head.js");
     });
   });
 
@@ -318,7 +318,7 @@ describe("Regression: Full Import Chain", () => {
     `;
     const blogResult = await rewriteImports(blogCode, createContext({ target: "browser" }));
 
-    expect(blogResult).toContain("/_vf_modules/react/components/Head.js");
+    expect(blogResult).toContain("/_vf_modules/_veryfront/react/components/Head.js");
     expect(blogResult).toContain("./components/blog/BlogList");
     expect(blogResult).toContain(`esm.sh/react@${DEFAULT_REACT_VERSION}`);
 

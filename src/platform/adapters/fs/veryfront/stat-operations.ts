@@ -1,4 +1,5 @@
 import { logger } from "#veryfront/utils";
+import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
 import type { FileInfo } from "../../base.ts";
 import type { ProjectFile, VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
@@ -14,7 +15,6 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const EXTENSION_PRIORITY = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"] as const;
 const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
-const FRAMEWORK_PREFIXES = ["exports/", "react/", "veryfront/", "node_modules/veryfront/"];
 
 export class StatOperations {
   private fileIndex: Map<string, ProjectFile> | null = null;
@@ -364,10 +364,7 @@ export class StatOperations {
       return indexPath;
     }
 
-    if (
-      FRAMEWORK_PREFIXES.some((prefix) => normalizedPath.startsWith(prefix)) ||
-      normalizedPath.includes("node_modules/veryfront/")
-    ) {
+    if (isFrameworkSourcePath(normalizedPath)) {
       logger.debug("[StatOperations] Skipping API search for framework path", { normalizedPath });
       return null;
     }

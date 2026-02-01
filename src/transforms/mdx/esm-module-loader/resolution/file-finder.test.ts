@@ -1,9 +1,8 @@
 /**
  * Tests for framework file resolution in the MDX module loader.
  *
- * These tests ensure that framework files (react/*, lib/*, exports/*) are
- * properly resolved from the framework source directory, consistent with
- * the module server's findSourceFile behavior.
+ * These tests ensure that framework files under _veryfront/ are
+ * properly resolved from the framework source directory.
  */
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -22,7 +21,7 @@ function createResolveFileTrackingAdapter(): {
     ...mockAdapter,
     fs: {
       ...mockAdapter.fs,
-      resolveFile: (_path: string) => {
+      resolveFile: async (_path: string): Promise<string | null> => {
         resolveFileCalled = true;
         return null;
       },
@@ -62,7 +61,7 @@ describe("resolveModuleFile", () => {
 
     // Framework paths should skip the API adapter entirely
     const result = await resolveModuleFile(
-      "_vf_modules/react/router/index.js",
+      "_vf_modules/_veryfront/react/router/index.js",
       adapter as any,
       "/project",
     );
@@ -84,7 +83,7 @@ describe("resolveModuleFile", () => {
 
   it("resolves framework react/* files", async () => {
     await assertResolvedModuleFile(
-      "_vf_modules/react/router/index.js",
+      "_vf_modules/_veryfront/react/router/index.js",
       "src/react/router/index.tsx",
       "useRouter",
     );
@@ -92,7 +91,7 @@ describe("resolveModuleFile", () => {
 
   it("resolves framework react/context files", async () => {
     await assertResolvedModuleFile(
-      "_vf_modules/react/context/index.js",
+      "_vf_modules/_veryfront/react/context/index.js",
       "src/react/context/index.tsx",
       "usePageContext",
     );
@@ -100,18 +99,17 @@ describe("resolveModuleFile", () => {
 
   it("resolves framework react/components/Head files", async () => {
     await assertResolvedModuleFile(
-      "_vf_modules/react/components/Head.js",
+      "_vf_modules/_veryfront/react/components/Head.js",
       "src/react/components/Head.tsx",
       "Head",
     );
   });
 
-  it("resolves framework lib/* files", async () => {
-    await assertResolvedModuleFile("_vf_modules/lib/Router.js", "src/lib/Router.tsx");
-  });
-
   it("resolves framework react/fonts files", async () => {
-    await assertResolvedModuleFile("_vf_modules/react/fonts/index.js", "src/react/fonts/index.ts");
+    await assertResolvedModuleFile(
+      "_vf_modules/_veryfront/react/fonts/index.js",
+      "src/react/fonts/index.ts",
+    );
   });
 
   // === Production path format tests ===
@@ -122,7 +120,7 @@ describe("resolveModuleFile", () => {
   it("resolves paths with ?ssr=true query parameter", async () => {
     // SSR import rewriter appends ?ssr=true to framework imports
     await assertResolvedModuleFile(
-      "_vf_modules/react/components/Head.js?ssr=true",
+      "_vf_modules/_veryfront/react/components/Head.js?ssr=true",
       "src/react/components/Head.tsx",
       "Head",
     );
@@ -132,10 +130,10 @@ describe("resolveModuleFile", () => {
     // Contract test: verify all paths in default-import-map.ts are resolvable
     // This catches mismatches between import map output and file-finder expectations
     const productionPaths = [
-      "/_vf_modules/react/components/Head.js",
-      "/_vf_modules/react/router/index.js",
-      "/_vf_modules/react/context/index.js",
-      "/_vf_modules/react/fonts/index.js",
+      "/_vf_modules/_veryfront/react/components/Head.js",
+      "/_vf_modules/_veryfront/react/router/index.js",
+      "/_vf_modules/_veryfront/react/context/index.js",
+      "/_vf_modules/_veryfront/react/fonts/index.js",
     ];
 
     for (const path of productionPaths) {
@@ -149,10 +147,10 @@ describe("resolveModuleFile", () => {
   it("resolves all production import map paths with ?ssr=true", async () => {
     // Same as above but with SSR query parameter
     const productionPathsWithSSR = [
-      "_vf_modules/react/components/Head.js?ssr=true",
-      "_vf_modules/react/router/index.js?ssr=true",
-      "_vf_modules/react/context/index.js?ssr=true",
-      "_vf_modules/react/fonts/index.js?ssr=true",
+      "_vf_modules/_veryfront/react/components/Head.js?ssr=true",
+      "_vf_modules/_veryfront/react/router/index.js?ssr=true",
+      "_vf_modules/_veryfront/react/context/index.js?ssr=true",
+      "_vf_modules/_veryfront/react/fonts/index.js?ssr=true",
     ];
 
     for (const path of productionPathsWithSSR) {
@@ -164,9 +162,9 @@ describe("resolveModuleFile", () => {
   it("handles various query parameter formats", async () => {
     // Edge cases for query parameter stripping
     const pathsWithQueryParams = [
-      "_vf_modules/react/router/index.js?ssr=true",
-      "_vf_modules/react/router/index.js?ssr=true&cache=false",
-      "_vf_modules/react/router/index.js?",
+      "_vf_modules/_veryfront/react/router/index.js?ssr=true",
+      "_vf_modules/_veryfront/react/router/index.js?ssr=true&cache=false",
+      "_vf_modules/_veryfront/react/router/index.js?",
     ];
 
     for (const path of pathsWithQueryParams) {
@@ -175,15 +173,5 @@ describe("resolveModuleFile", () => {
     }
   });
 
-  // === Legacy backward compatibility tests ===
-  // The file-finder still supports old _veryfront/ prefix for backward compatibility
-  // with any cached transforms that may have the old path format.
-
-  it("resolves legacy _veryfront/ prefixed paths (backward compatibility)", async () => {
-    await assertResolvedModuleFile(
-      "_vf_modules/_veryfront/react/components/Head.js",
-      "src/react/components/Head.tsx",
-      "Head",
-    );
-  });
+  // No legacy prefixes supported.
 });

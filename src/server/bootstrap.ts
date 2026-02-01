@@ -1,13 +1,20 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { clearConfigCache, getConfig } from "#veryfront/config";
+import { getRuntimeEnv, refreshRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { initializeEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { logger } from "#veryfront/utils";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
-import { loadEnv, supportsEnvFiles } from "#veryfront/utils/env-loader.ts";
+import {
+  getEnvSource,
+  hasEnvLoaded,
+  loadEnv,
+  markEnvLoaded,
+  supportsEnvFiles,
+} from "#veryfront/utils/env-loader.ts";
 
 export interface BootstrapResult {
   /** Enhanced runtime adapter (with FSAdapter if configured) */
@@ -23,6 +30,54 @@ export interface BootstrapResult {
   fsAdapterType?: string;
 }
 
+let envLogged = false;
+
+async function ensureEnvLoaded(projectDir: string, adapter: RuntimeAdapter): Promise<void> {
+  if (hasEnvLoaded()) {
+    logEnvConfig();
+    return;
+  }
+
+  if (supportsEnvFiles()) {
+    try {
+      await loadEnv({
+        cwd: projectDir,
+        debug: isDebugEnabled(adapter.env),
+      });
+      refreshRuntimeEnv();
+    } catch (error) {
+      logger.warn("[Bootstrap] Failed to load .env files", {
+        error: getErrorMessage(error),
+      });
+    }
+  }
+  markEnvLoaded();
+  logEnvConfig();
+}
+
+function logEnvConfig(): void {
+  if (envLogged) return;
+  envLogged = true;
+
+  const runtimeEnv = getRuntimeEnv();
+  const apiBaseUrlSource = getEnvSource("VERYFRONT_API_BASE_URL");
+  const apiTokenSource = getEnvSource("VERYFRONT_API_TOKEN");
+
+  if (apiBaseUrlSource.source === "env-file") {
+    logger.info(`[Bootstrap] VERYFRONT_API_BASE_URL loaded from ${apiBaseUrlSource.file}`);
+  }
+  if (apiTokenSource.source === "env-file") {
+    logger.info(`[Bootstrap] VERYFRONT_API_TOKEN loaded from ${apiTokenSource.file}`);
+  }
+
+  logger.info("[Bootstrap] API base URL", {
+    apiBaseUrl: runtimeEnv.apiBaseUrl,
+    apiBaseUrlSource,
+    apiTokenPresent: Boolean(runtimeEnv.apiToken),
+    apiTokenSource,
+  });
+}
+
 export async function bootstrap(
   projectDir: string,
   adapter: RuntimeAdapter,
@@ -35,20 +90,7 @@ export async function bootstrap(
   // Initialize esbuild early - extracts binary from VFS if running as deno compile
   // This must happen before any module imports esbuild
   await initializeEsbuild();
-
-  if (supportsEnvFiles()) {
-    try {
-      await loadEnv({
-        cwd: projectDir,
-        override: false,
-        debug: isDebugEnabled(adapter.env),
-      });
-    } catch (error) {
-      logger.warn("[Bootstrap] Failed to load .env files", {
-        error: getErrorMessage(error),
-      });
-    }
-  }
+  await ensureEnvLoaded(projectDir, adapter);
 
   logger.debug("[Bootstrap] Loading config with base adapter");
   let config = await getConfig(projectDir, adapter);
@@ -137,6 +179,8 @@ export async function bootstrapProd(
   adapter: RuntimeAdapter,
 ): Promise<BootstrapResult> {
   logger.debug("[Bootstrap:Prod] Starting production mode initialization");
+
+  await ensureEnvLoaded(projectDir, adapter);
 
   // Validate NODE_ENV in proxy mode to prevent dev behavior in production
   // @see plans/architecture-audit/014.1-node-env-missing.md

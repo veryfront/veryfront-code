@@ -34,33 +34,24 @@ function stripTrailingSlashes(path: string): string {
   return path.replace(/\/+$/, "");
 }
 
-/** Prefixes that indicate a framework-internal module (resolved locally, not via API).
- * Note: "lib/" is intentionally excluded — user projects commonly have lib/ files
- * (e.g. lib/utils.ts from shadcn). Project files are resolved first via the API adapter,
- * with framework lib/ files (Head, Router, etc.) as a fallback in the framework lookup below. */
-const FRAMEWORK_PREFIXES = ["src/exports/", "exports/", "react/"];
-
-function isFrameworkPath(filePathWithoutJs: string): boolean {
-  return FRAMEWORK_PREFIXES.some((prefix) => filePathWithoutJs.startsWith(prefix));
-}
+/** Framework modules are only resolved via the internal _veryfront/ prefix. */
+const FRAMEWORK_PREFIX = "_veryfront/";
 
 export async function resolveModuleFile(
   normalizedPath: string,
   adapter: RuntimeAdapter,
   projectDir?: string,
 ): Promise<FileResolutionResult | null> {
-  const filePathWithoutJs = normalizedPath
-    .replace(/^_vf_modules\//, "")
-    .replace(/^_veryfront\//, "")
-    .replace(/\?.*$/, "")
-    .replace(/\.js$/, "");
+  const normalized = normalizedPath.replace(/^\/+/, "");
+  const withoutVfModules = normalized.replace(/^_vf_modules\//, "");
+  const isFramework = withoutVfModules.startsWith(FRAMEWORK_PREFIX);
+  const rawPath = isFramework ? withoutVfModules.slice(FRAMEWORK_PREFIX.length) : withoutVfModules;
+  const filePathWithoutJs = rawPath.replace(/\?.*$/, "").replace(/\.js$/, "");
 
   const hasKnownExt = MODULE_EXTENSIONS.some((ext) => filePathWithoutJs.endsWith(ext));
   const filePathWithoutExt = hasKnownExt
     ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
     : filePathWithoutJs;
-
-  const isFramework = isFrameworkPath(filePathWithoutJs);
 
   if (!isFramework && adapter.fs.resolveFile) {
     for (const prefix of DIRECTORY_PREFIXES) {
@@ -121,34 +112,24 @@ export async function resolveModuleFile(
     });
   }
 
-  const frameworkLookups: Array<[prefix: string, frameworkDir: string]> = [
-    ["lib/", join(FRAMEWORK_ROOT, "src")],
-    ["src/exports/", FRAMEWORK_ROOT],
-    ["exports/", join(FRAMEWORK_ROOT, "src")],
-    ["react/", join(FRAMEWORK_ROOT, "src")],
-  ];
+  if (!isFramework) return null;
 
   const localFs = getLocalFs();
-  for (const [prefix, frameworkDir] of frameworkLookups) {
-    if (!filePathWithoutJs.startsWith(prefix)) continue;
+  for (const ext of MODULE_EXTENSIONS) {
+    const frameworkPath = join(FRAMEWORK_ROOT, "src", filePathWithoutJs + ext);
 
-    for (const ext of MODULE_EXTENSIONS) {
-      const frameworkPath = join(frameworkDir, filePathWithoutJs + ext);
+    try {
+      const stat = await localFs.stat(frameworkPath);
+      if (!stat?.isFile) continue;
 
-      try {
-        const stat = await localFs.stat(frameworkPath);
-        if (!stat?.isFile) continue;
-
-        const content = await localFs.readTextFile(frameworkPath);
-        logger.debug(`${LOG_PREFIX_MDX_LOADER} Found framework file`, {
-          prefix,
-          basePath: filePathWithoutJs,
-          resolvedPath: frameworkPath,
-        });
-        return { sourceCode: content, actualFilePath: frameworkPath };
-      } catch {
-        // Continue trying other extensions
-      }
+      const content = await localFs.readTextFile(frameworkPath);
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Found framework file`, {
+        basePath: filePathWithoutJs,
+        resolvedPath: frameworkPath,
+      });
+      return { sourceCode: content, actualFilePath: frameworkPath };
+    } catch {
+      // Continue trying other extensions
     }
   }
 

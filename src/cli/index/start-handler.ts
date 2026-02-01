@@ -5,7 +5,7 @@
  * Provides a TUI experience with project navigation and dev server.
  */
 
-import { cwd, getEnv } from "#veryfront/platform/compat/process.ts";
+import { cwd, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { isAbsolute, join, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { cliLogger } from "#veryfront/utils";
@@ -123,7 +123,8 @@ async function trySetupProxy(localProjects: Map<string, string>): Promise<ProxyS
 }
 
 export async function handleStartCommand(args: ParsedArgs): Promise<void> {
-  const port = typeof args.port === "number" ? args.port : DEFAULT_START_PORT;
+  const hasExplicitPort = args.__explicit?.port === true;
+  const port = hasExplicitPort && typeof args.port === "number" ? args.port : DEFAULT_START_PORT;
   const mcpPort = typeof args["mcp-port"] === "number" ? args["mcp-port"] : DEFAULT_MCP_PORT;
   const projectPath = args.project ? String(args.project) : null;
   const headless = Boolean(args.headless || args["no-tui"]);
@@ -151,20 +152,43 @@ export async function handleStartCommand(args: ParsedArgs): Promise<void> {
 
   const allProjects = new Map([...discovered.projects, ...discovered.examples]);
   const proxy = await trySetupProxy(allProjects);
-
-  const { createDevServer } = await import("#veryfront/server/dev-server.ts");
   const shutdownController = new AbortController();
+  const useProxy = typeof proxy.interceptor === "function";
 
-  const devServer = await createDevServer({
-    port,
-    projectDir: cwd(),
-    hmrPort: port + 1,
-    enableHMR: true,
-    enableFastRefresh: true,
-    signal: shutdownController.signal,
-    requestInterceptor: proxy.interceptor,
-  });
-  await devServer.ready;
+  let server: { ready: Promise<void>; stop: () => Promise<void> };
+
+  if (useProxy) {
+    // Enable proxy mode so the FSAdapter fetches files from the API
+    // This must be set before importing production-server which loads config
+    // NODE_ENV=development allows dev features while proxy mode fetches from API
+    setEnv("PROXY_MODE", "1");
+    setEnv("NODE_ENV", "development");
+
+    const { startUniversalServer } = await import("#veryfront/server/production-server.ts");
+    const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+    const adapter = await runtime.get();
+
+    server = await startUniversalServer({
+      port,
+      projectDir: cwd(),
+      mode: "development",
+      adapter,
+      signal: shutdownController.signal,
+      requestInterceptor: proxy.interceptor,
+    });
+  } else {
+    const { createDevServer } = await import("#veryfront/server/dev-server.ts");
+    server = await createDevServer({
+      port,
+      projectDir: cwd(),
+      hmrPort: port + 1,
+      enableHMR: true,
+      enableFastRefresh: true,
+      signal: shutdownController.signal,
+    });
+  }
+
+  await server.ready;
 
   const { createMCPServer } = await import("../mcp/index.ts");
   const mcpServer = await createMCPServer({ httpPort: mcpPort });
@@ -182,7 +206,7 @@ export async function handleStartCommand(args: ParsedArgs): Promise<void> {
     app.stop();
     await mcpServer.stop();
     shutdownController.abort();
-    await devServer.stop();
+    await server.stop();
     await proxy.close();
     exitProcess(0);
   }

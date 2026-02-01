@@ -6,8 +6,6 @@ import { isCrossProjectImport, parseCrossProjectImport } from "./path-resolver.t
 import { parseImports } from "./lexer.ts";
 import { getLoaderFromPath } from "./transform-utils.ts";
 
-const FRAMEWORK_ROOT = new URL("../../../..", import.meta.url).pathname;
-
 export interface LocalImport {
   specifier: string;
   absolutePath: string;
@@ -168,20 +166,7 @@ async function resolveAliasImportPath(
   const fs = createFileSystem();
   const projectNormalizedDir = projectDir.replace(/\/+$/, "");
 
-  if (normalizedPath.startsWith("lib/")) {
-    const found = await findFirstExistingFile(
-      EXTENSIONS.map((ext) => join(FRAMEWORK_ROOT, "src", normalizedPath + ext)),
-      fs,
-    );
-    if (found) return found;
-  }
-
-  // Skip the API adapter for paths that are clearly framework-internal
-  // (e.g. "usr/local/lib/node_modules/veryfront/..." after leading-slash stripping).
-  const isFrameworkPath = normalizedPath.includes("node_modules/veryfront/") ||
-    (FRAMEWORK_ROOT && normalizedPath.startsWith(FRAMEWORK_ROOT.replace(/^\/+/, "")));
-
-  if (adapter?.fs.resolveFile && !isFrameworkPath) {
+  if (adapter?.fs.resolveFile) {
     try {
       const resolved = await adapter.fs.resolveFile(normalizedPath);
       if (resolved) return resolved;
@@ -203,9 +188,6 @@ async function resolveAliasImportPath(
   const candidates = [
     ...EXTENSIONS.map((ext) => join(projectNormalizedDir, normalizedPath + ext)),
     ...EXTENSIONS.map((ext) => join(projectNormalizedDir, normalizedPath, "index" + ext)),
-    ...(normalizedPath.startsWith("lib/")
-      ? EXTENSIONS.map((ext) => join(FRAMEWORK_ROOT, "src", normalizedPath + ext))
-      : []),
   ];
 
   return await findFirstExistingFile(candidates, fs);

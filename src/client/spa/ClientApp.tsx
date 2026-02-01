@@ -1,6 +1,6 @@
 import { type ComponentType, Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { type Router, RouterProvider } from "../Router.tsx";
-import { type PageContext, PageContextProvider } from "../usePageContext.tsx";
+import { type Router, RouterProvider } from "veryfront/router";
+import { type PageContext, PageContextProvider } from "veryfront/context";
 import { type LayoutInfo, LayoutShell } from "./LayoutShell.tsx";
 import { getCachedComponent, loadComponent, preloadComponent } from "./component-loader.ts";
 

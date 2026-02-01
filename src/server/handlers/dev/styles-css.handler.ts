@@ -145,16 +145,16 @@ body::before {
 
   private async extractProjectCandidates(ctx: HandlerContext): Promise<Set<string>> {
     const wrappedFs = ctx.adapter.fs as { getUnderlyingAdapter?: () => unknown };
-    const getUnderlyingAdapter = wrappedFs.getUnderlyingAdapter;
 
-    if (typeof getUnderlyingAdapter !== "function") {
+    if (typeof wrappedFs.getUnderlyingAdapter !== "function") {
       logger.debug(
         "[StylesCSSHandler] No FS adapter wrapper, falling back to local file scanning",
       );
       return this.scanLocalFiles(ctx.projectDir, ctx);
     }
 
-    const fsAdapter = getUnderlyingAdapter() as {
+    // Call method directly on wrappedFs to preserve 'this' context
+    const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
       getAllSourceFiles?: () =>
         | Array<{ path: string; content?: string }>
         | Promise<Array<{ path: string; content?: string }>>;

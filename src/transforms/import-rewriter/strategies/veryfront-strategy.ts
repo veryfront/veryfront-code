@@ -12,17 +12,7 @@ import type {
   RewriteResult,
 } from "../types.ts";
 import { buildVeryfrontModuleUrl } from "../url-builder.ts";
-
-/**
- * Map veryfront/* bare specifiers to /_vf_modules/ paths for browser.
- * These modules are served by the module server from the framework's React components.
- */
-const VERYFRONT_BROWSER_MAP: Record<string, string> = {
-  "veryfront/head": "/_vf_modules/react/components/Head.js",
-  "veryfront/router": "/_vf_modules/react/router/index.js",
-  "veryfront/context": "/_vf_modules/react/context/index.js",
-  "veryfront/fonts": "/_vf_modules/react/fonts/index.js",
-};
+import { resolveVeryfrontModuleUrl } from "#veryfront/utils/veryfront-module-urls.ts";
 
 function normalizeVeryfrontSpecifier(specifier: string): string {
   if (specifier === "@veryfront") return "veryfront";
@@ -64,16 +54,11 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
 
     const normalized = normalizeVeryfrontSpecifier(specifier);
 
-    if (normalized === "veryfront") {
-      return { specifier: "/_vf_modules/react/index.js" };
-    }
-
-    if (normalized.startsWith("veryfront/")) {
-      const mapped = VERYFRONT_BROWSER_MAP[normalized];
+    if (normalized === "veryfront" || normalized.startsWith("veryfront/")) {
+      const mapped = resolveVeryfrontModuleUrl(normalized);
       if (mapped) return { specifier: mapped };
-
-      const path = normalized.slice("veryfront/".length);
-      return { specifier: `/_vf_modules/react/${path}/index.js` };
+      if (normalized !== specifier) return { specifier: normalized };
+      return { specifier: null };
     }
 
     return { specifier: null };

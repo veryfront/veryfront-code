@@ -18,8 +18,10 @@ function parse(
 ): Record<string, unknown> {
   const result: Record<string, unknown> = { _: [] as string[], ...options.default };
   const aliasMap = new Map(Object.entries(options.alias ?? {}));
+  const explicit: Record<string, true> = {};
 
   function setValue(key: string, value: unknown): void {
+    explicit[key] = true;
     const converted = maybeNumber(value);
 
     if (!ARRAY_FLAGS.has(key)) {
@@ -74,6 +76,7 @@ function parse(
     (result._ as string[]).push(arg);
   }
 
+  result.__explicit = explicit;
   return result;
 }
 

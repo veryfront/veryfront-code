@@ -1,5 +1,7 @@
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
+import { logger } from "#veryfront/utils/logger/logger.ts";
+import { hasEnvLoaded } from "#veryfront/utils/env-loader.ts";
 
 export interface RuntimeEnv {
   nodeEnv: "development" | "production" | "test" | string;
@@ -78,6 +80,8 @@ const DEFAULTS = {
 } as const;
 
 let _runtimeEnv: RuntimeEnv | null = null;
+let runtimeEnvInitializedBeforeEnvLoad = false;
+let warnedEarlyRuntimeEnv = false;
 
 function parseNumber(value: string | undefined, defaultVal: number): number {
   if (!value) return defaultVal;
@@ -178,12 +182,53 @@ function readEnvSnapshot(): RuntimeEnv {
 export function initRuntimeEnv(): RuntimeEnv {
   if (_runtimeEnv) return _runtimeEnv;
 
+  if (!hasEnvLoaded()) {
+    runtimeEnvInitializedBeforeEnvLoad = true;
+    return readEnvSnapshot();
+  }
+
   _runtimeEnv = Object.freeze(readEnvSnapshot());
+  runtimeEnvInitializedBeforeEnvLoad = false;
   return _runtimeEnv;
 }
 
+export function refreshRuntimeEnv(): RuntimeEnv {
+  _runtimeEnv = Object.freeze(readEnvSnapshot());
+  runtimeEnvInitializedBeforeEnvLoad = false;
+  return _runtimeEnv;
+}
+
+function warnEarlyAccess(): void {
+  if (warnedEarlyRuntimeEnv) return;
+  warnedEarlyRuntimeEnv = true;
+
+  const message =
+    "[RuntimeEnv] getRuntimeEnv called before .env load. " +
+    "Returning uncached snapshot; ensure loadEnv runs before runtime env access.";
+  const debugStack = getEnv("VERYFRONT_DEBUG_RUNTIME_ENV");
+  if (debugStack === "1" || debugStack === "true") {
+    logger.warn(message, { stack: new Error().stack });
+  } else {
+    logger.warn(message);
+  }
+}
+
 export function getRuntimeEnv(): RuntimeEnv {
-  return _runtimeEnv ?? initRuntimeEnv();
+  // If cached and env has loaded since init, refresh to pick up .env values
+  if (_runtimeEnv && runtimeEnvInitializedBeforeEnvLoad && hasEnvLoaded()) {
+    return refreshRuntimeEnv();
+  }
+  if (_runtimeEnv) {
+    return _runtimeEnv;
+  }
+
+  // Env not loaded yet - return uncached snapshot with warning
+  if (!hasEnvLoaded()) {
+    warnEarlyAccess();
+    return readEnvSnapshot();
+  }
+
+  return initRuntimeEnv();
 }
 
 export function isRuntimeEnvInitialized(): boolean {
@@ -210,4 +255,6 @@ export function _setRuntimeEnvForTesting(env: Partial<RuntimeEnv>): void {
 
 export function _resetRuntimeEnv(): void {
   _runtimeEnv = null;
+  runtimeEnvInitializedBeforeEnvLoad = false;
+  warnedEarlyRuntimeEnv = false;
 }

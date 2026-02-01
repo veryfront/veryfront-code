@@ -1,4 +1,5 @@
 import { logger } from "#veryfront/utils";
+import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
@@ -225,6 +226,15 @@ export class ReadOperations {
   }
 
   private async fetchContent(normalizedPath: string): Promise<string> {
+    // Framework paths should NEVER be fetched from API - they must be read from local filesystem.
+    // If we reach here for a framework path, the module server's local resolution failed.
+    if (isFrameworkSourcePath(normalizedPath)) {
+      throw new Error(
+        `[ReadOperations] Framework path "${normalizedPath}" cannot be fetched from API. ` +
+          `Framework modules must be served from local filesystem.`,
+      );
+    }
+
     const ctx = this.contextProvider?.getContentContext();
     const apiPath = this.getOriginalApiPath?.(normalizedPath) ?? normalizedPath;
     const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);

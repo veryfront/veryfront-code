@@ -282,12 +282,12 @@ describe("esm-module-loader/loader", { sanitizeResources: false, sanitizeOps: fa
     });
 
     it("preserves full original match for replacement", () => {
-      const code = `import { useState } from "/_vf_modules/react/hooks.js";`;
+      const code = `import { useState } from "/_vf_modules/_veryfront/react/hooks.js";`;
       const imports = findVfModuleImports(code);
       assertEquals(imports.length, 1);
       const first = imports[0];
       assertExists(first);
-      assertEquals(first.original.includes("_vf_modules/react/hooks.js"), true);
+      assertEquals(first.original.includes("_vf_modules/_veryfront/react/hooks.js"), true);
     });
   });
 

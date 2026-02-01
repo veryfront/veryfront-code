@@ -31,7 +31,7 @@ export const getSpaRendererScript = (): string => `
           await loadComponent(layout.path);
         }
 
-        const { ClientApp } = await import(MODULE_SERVER_URL + '/lib/spa/ClientApp.js');
+        const { ClientApp } = await import(MODULE_SERVER_URL + '/_veryfront/client/spa/ClientApp.js');
 
         const container = document.getElementById('veryfront-content');
         if (!container) {
