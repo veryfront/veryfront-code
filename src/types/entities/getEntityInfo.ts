@@ -27,10 +27,14 @@ export async function getEntityInfo(
       if (adapter) {
         const adapterFs = adapter.fs;
         if (isExtendedFSAdapter(adapterFs) && adapterFs.isVeryfrontAdapter()) {
-          // API adapter needs relative paths, not absolute paths
-          // Use a single replace to avoid chaining issues (e.g., components/layouts/ becoming layouts/)
+          // API adapter needs relative paths, not absolute paths.
+          // Match the first known entity directory to find where the project-relative path starts.
+          // NOTE: "app" is intentionally excluded from the capture group because the container
+          // project dir ("/app/") would be incorrectly matched as the "app" entity directory,
+          // producing paths like "app/components/..." instead of "components/...".
+          // The adapter's PathNormalizer handles stripping the absolute prefix correctly.
           normalizedPath = filePath.replace(
-            /^.*?\/(pages|components|app|layouts)\//,
+            /^.*?\/(pages|components|layouts)\//,
             "$1/",
           );
         }
