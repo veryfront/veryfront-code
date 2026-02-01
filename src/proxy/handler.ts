@@ -258,7 +258,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
   async function processRequest(req: Request): Promise<ProxyContext> {
     const host = req.headers.get("host") ?? "";
     const parsedDomain = parseProjectDomain(host);
-    let scope = getScope(parsedDomain.environment);
+    const scope = getScope(parsedDomain.environment);
 
     let projectSlug = parsedDomain.slug ?? undefined;
     let projectId: string | undefined;
@@ -414,13 +414,18 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     }
 
     if (scope === "production" && projectSlug && !releaseId && !isLocalProject) {
-      logger?.warn("Missing releaseId in production, falling back to preview", {
+      logger?.error("Missing releaseId in production", undefined, {
         projectSlug,
         projectId,
         host,
         environment: scope,
       });
-      scope = "preview";
+      return makeErrorContext(
+        { scope, host, parsedDomain },
+        502,
+        `Missing releaseId for production project: ${projectSlug}`,
+        token,
+      );
     }
 
     const contentSourceId = computeContentSourceId(
