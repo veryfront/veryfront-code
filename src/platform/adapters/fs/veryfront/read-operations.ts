@@ -240,6 +240,7 @@ export class ReadOperations {
     const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
     const cacheKey = `${cacheKeyPrefix}:${normalizedPath}`;
     const isProduction = this.contextProvider?.isProductionMode() ?? false;
+    const hasKnownExt = EXTENSION_PRIORITY.some((ext) => apiPath.endsWith(ext));
 
     logger.debug("[ReadOperations] fetchContent context", {
       path: normalizedPath,
@@ -318,6 +319,43 @@ export class ReadOperations {
         path: normalizedPath,
         cacheKeyPrefix,
       });
+    }
+
+    if (!hasKnownExt) {
+      try {
+        const resolved = await this.client.resolveFileWithExtension(
+          apiPath,
+          [...EXTENSION_PRIORITY],
+        );
+        if (resolved) {
+          const resolvedPath = this.normalizer.normalize(resolved.path);
+          const resolvedCacheKey = `${cacheKeyPrefix}:${resolvedPath}`;
+
+          logger.debug("[ReadOperations] Resolved extension for base path", {
+            basePath: apiPath,
+            resolvedPath,
+            cacheKey,
+            resolvedCacheKey: resolvedCacheKey === cacheKey ? undefined : resolvedCacheKey,
+          });
+
+          if (isProduction) {
+            this.cache.set(cacheKey, resolved.content);
+            if (resolvedCacheKey !== cacheKey) this.cache.set(resolvedCacheKey, resolved.content);
+          }
+
+          setRequestScopedFile(cacheKey, resolved.content);
+          if (resolvedCacheKey !== cacheKey) {
+            setRequestScopedFile(resolvedCacheKey, resolved.content);
+          }
+
+          return resolved.content;
+        }
+      } catch (error) {
+        logger.debug("[ReadOperations] resolveFileWithExtension failed", {
+          basePath: apiPath,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
     this.cleanupStaleInFlightRequests();

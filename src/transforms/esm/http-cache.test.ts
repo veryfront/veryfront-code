@@ -92,6 +92,26 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       const hashes = extractBundleHashes(bundleCode);
       assertEquals(hashes, ["100000", "200000"]);
     });
+
+    it("matches relative path imports (new portable format)", () => {
+      // New format uses relative paths for intra-bundle imports
+      const code = `import foo from "./http-123456.mjs"`;
+      // The original BUNDLE_RE only matches absolute paths, so this is expected to return empty
+      // Relative paths are handled separately by extractBundleDeps in http-cache.ts
+      const hashes = extractBundleHashes(code);
+      assertEquals(hashes.length, 0);
+    });
+
+    it("handles mix of absolute and relative imports", () => {
+      const code = [
+        `import a from "file:///app/.cache/veryfront-http-bundle/http-111111.mjs";`,
+        `import b from "./http-222222.mjs";`, // Relative - not matched by absolute pattern
+        `import c from "file:///app/.cache/veryfront-http-bundle/http-333333.mjs";`,
+      ].join("\n");
+      // Only absolute paths are extracted by the test helper
+      const hashes = extractBundleHashes(code);
+      assertEquals(hashes, ["111111", "333333"]);
+    });
   });
 
   describe("ensureHttpBundlesExist", () => {

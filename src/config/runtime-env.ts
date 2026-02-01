@@ -202,8 +202,7 @@ function warnEarlyAccess(): void {
   if (warnedEarlyRuntimeEnv) return;
   warnedEarlyRuntimeEnv = true;
 
-  const message =
-    "[RuntimeEnv] getRuntimeEnv called before .env load. " +
+  const message = "[RuntimeEnv] getRuntimeEnv called before .env load. " +
     "Returning uncached snapshot; ensure loadEnv runs before runtime env access.";
   const debugStack = getEnv("VERYFRONT_DEBUG_RUNTIME_ENV");
   if (debugStack === "1" || debugStack === "true") {

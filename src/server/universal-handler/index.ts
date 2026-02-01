@@ -762,7 +762,8 @@ export function createVeryfrontHandler(
 
           // Skip releaseId validation for WebSocket/HMR endpoints - they're for development
           // features and shouldn't require release context
-          const isWebSocketOrHMR = url.pathname === "/_ws" || url.pathname.startsWith("/_veryfront/");
+          const isWebSocketOrHMR = url.pathname === "/_ws" ||
+            url.pathname.startsWith("/_veryfront/");
 
           if (
             isProxyMode && resolvedEnvironment === "production" && projectSlug && !releaseId &&

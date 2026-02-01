@@ -188,12 +188,25 @@ if (import.meta.main) {
   });
 
   try {
-    // Initialize OpenTelemetry tracing before starting server
-    await initializeOTLPWithApis();
-
-    // Initialize distributed caches for cross-pod cache sharing
+    // Initialize OpenTelemetry tracing and distributed caches in parallel
+    // Both can fail independently without blocking the other
     // Backend: API (production) > Redis (local dev) > Memory (fallback)
-    await initializeDistributedCaches();
+    const [otlpResult, cacheResult] = await Promise.allSettled([
+      initializeOTLPWithApis(),
+      initializeDistributedCaches(),
+    ]);
+
+    if (otlpResult.status === "rejected") {
+      logger.warn("OTLP initialization failed, continuing without tracing", {
+        error: otlpResult.reason,
+      });
+    }
+
+    if (cacheResult.status === "rejected") {
+      logger.warn("Distributed cache initialization failed, using memory fallback", {
+        error: cacheResult.reason,
+      });
+    }
 
     const adapter = await runtime.get();
 

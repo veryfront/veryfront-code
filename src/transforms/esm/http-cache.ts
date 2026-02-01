@@ -10,7 +10,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { gunzipSync } from "node:zlib";
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
-import { isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
+import { basename, isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { isDeno, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
@@ -150,19 +150,33 @@ function hasIncompatibleFilePaths(code: string, localCacheDir: string): boolean 
 }
 
 /**
- * Extract bundle deps (file:// paths to http-{hash}.mjs) from code.
+ * Extract bundle deps (file:// paths or relative paths to http-{hash}.mjs) from code.
+ * Handles both legacy absolute paths and new portable relative paths:
+ * - Legacy: file:///app/.cache/veryfront-http-bundle/http-123.mjs
+ * - New: ./http-123.mjs
  */
 function extractBundleDeps(code: string): Array<{ path: string; hash: string }> {
-  const depPattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-(\d+)\.mjs)/gi;
   const deps: Array<{ path: string; hash: string }> = [];
   const seen = new Set<string>();
 
+  // Match absolute file:// paths (legacy format)
+  const absolutePattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-(\d+)\.mjs)/gi;
   let match: RegExpExecArray | null;
-  while ((match = depPattern.exec(code)) !== null) {
+  while ((match = absolutePattern.exec(code)) !== null) {
     const hash = match[2]!;
     if (seen.has(hash)) continue;
     seen.add(hash);
     deps.push({ path: match[1]!, hash });
+  }
+
+  // Match relative paths (new portable format): ./http-{hash}.mjs
+  const relativePattern = /["']\.\/http-(\d+)\.mjs["']/gi;
+  while ((match = relativePattern.exec(code)) !== null) {
+    const hash = match[1]!;
+    if (seen.has(hash)) continue;
+    seen.add(hash);
+    // For relative paths, the "path" is just the filename since it's in the same directory
+    deps.push({ path: `http-${hash}.mjs`, hash });
   }
 
   return deps;
@@ -232,13 +246,31 @@ async function validateBundleDepsExist(
       return false;
     }
 
-    logger.debug("[HTTP-CACHE] Recovering missing deps from Redis", {
+    logger.debug("[HTTP-CACHE] Recovering missing deps from Redis (batch)", {
       count: missingDeps.length,
       hashes: missingDeps.map((d) => d.hash),
     });
 
+    // Batch fetch all missing deps at once instead of one-by-one
+    const codeKeys = missingDeps.map((d) => distributedKey("code", d.hash));
+    const codes = new Map<string, string | null>();
+
+    try {
+      for (let i = 0; i < codeKeys.length; i += BATCH_FETCH_CHUNK_SIZE) {
+        const chunk = codeKeys.slice(i, i + BATCH_FETCH_CHUNK_SIZE);
+        const chunkResults = distributed.getBatch ? await distributed.getBatch(chunk) : new Map(
+          await Promise.all(chunk.map(async (key) => [key, await distributed.get(key)] as const)),
+        );
+        for (const [key, value] of chunkResults) codes.set(key, value);
+      }
+    } catch (error) {
+      logger.debug("[HTTP-CACHE] Batch fetch failed", { error });
+      return false;
+    }
+
+    // Process fetched codes
     for (const { hash } of missingDeps) {
-      const rawCode = await distributed.get(distributedKey("code", hash));
+      const rawCode = codes.get(distributedKey("code", hash));
       if (!rawCode) {
         logger.debug("[HTTP-CACHE] Dep cannot be recovered from Redis", { hash });
         return false;
@@ -266,13 +298,6 @@ async function validateBundleDepsExist(
           { hash },
         );
 
-        const originalUrl = await distributed.get(distributedKey("hash", hash));
-        if (originalUrl) {
-          const normalizedUrl = normalizeHttpUrl(originalUrl);
-          const cacheKey = `${absoluteCacheDir}:${normalizedUrl}`;
-          getCachedPaths().set(cacheKey, canonicalPath);
-        }
-
         for (const dep of extractBundleDeps(code)) {
           if (!seen.has(dep.hash)) pending.push(dep);
         }
@@ -281,6 +306,9 @@ async function validateBundleDepsExist(
         return false;
       }
     }
+
+    // URL mapping is populated lazily when modules are loaded, not during validation
+    // This reduces API load during cold start recovery
   }
 
   logger.debug("[HTTP-CACHE] All deps recovered successfully", { count: seen.size });
@@ -411,6 +439,18 @@ function isExternalScheme(specifier: string): boolean {
 
 function isRelative(specifier: string): boolean {
   return specifier.startsWith("./") || specifier.startsWith("../") || specifier.startsWith("/");
+}
+
+/**
+ * Check if a base URL is an HTTP URL being processed (i.e., the parent module is also from esm.sh).
+ * Used to determine when relative paths can be safely used instead of absolute file:// URLs.
+ *
+ * When both parent and child modules are HTTP URLs (both from esm.sh), they will be cached
+ * in the same directory (.cache/veryfront-http-bundle/), so relative paths work reliably.
+ * This makes the cached code portable across environments without path rewriting.
+ */
+function isParentHttpModule(baseUrl: string | undefined): boolean {
+  return !!baseUrl && isHttpUrl(baseUrl);
 }
 
 function isInternalBare(specifier: string): boolean {
@@ -766,12 +806,25 @@ async function resolveSpecifier(
 
     const bareSpecifier = specifier.slice(4);
     const cached = await cacheHttpModule(`https://esm.sh/${bareSpecifier}`, options);
-    return cached ? `file://${cached}` : bareSpecifier;
+    if (!cached) return bareSpecifier;
+
+    // Use relative path if parent is also an HTTP module (same cache directory)
+    // This makes cached code portable across environments without path rewriting
+    if (isParentHttpModule(baseUrl)) {
+      return `./${basename(cached)}`;
+    }
+    return `file://${cached}`;
   }
 
   if (isHttpUrl(specifier)) {
     const cached = await cacheHttpModule(specifier, options);
-    return cached ? `file://${cached}` : null;
+    if (!cached) return null;
+
+    // Use relative path if parent is also an HTTP module (same cache directory)
+    if (isParentHttpModule(baseUrl)) {
+      return `./${basename(cached)}`;
+    }
+    return `file://${cached}`;
   }
 
   if (isRelative(specifier)) {
@@ -786,7 +839,10 @@ async function resolveSpecifier(
     }
 
     const cached = await cacheHttpModule(resolved, options);
-    return cached ? `file://${cached}` : null;
+    if (!cached) return null;
+
+    // Relative imports within HTTP modules always use relative paths (same cache dir)
+    return `./${basename(cached)}`;
   }
 
   const mapped = resolveBareSpecifier(specifier, options.importMap, options.reactVersion);
@@ -1015,13 +1071,23 @@ export async function ensureHttpBundlesExist(
   const absoluteCacheDir = ensureAbsoluteDir(cacheDir);
 
   const extractBundleRefs = (code: string): Array<{ hash: string }> => {
-    const bundleRe = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
     const refs: Array<{ hash: string }> = [];
     const dedup = new Set<string>();
 
+    // Match absolute file:// paths (legacy format)
+    const absoluteRe = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-(\d+)\.mjs)/gi;
     let match: RegExpExecArray | null;
-    while ((match = bundleRe.exec(code)) !== null) {
+    while ((match = absoluteRe.exec(code)) !== null) {
       const hash = match[2]!;
+      if (dedup.has(hash)) continue;
+      dedup.add(hash);
+      refs.push({ hash });
+    }
+
+    // Match relative paths (new portable format): ./http-{hash}.mjs
+    const relativeRe = /["']\.\/http-(\d+)\.mjs["']/gi;
+    while ((match = relativeRe.exec(code)) !== null) {
+      const hash = match[1]!;
       if (dedup.has(hash)) continue;
       dedup.add(hash);
       refs.push({ hash });
