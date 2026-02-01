@@ -392,6 +392,24 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           releaseId,
           targetEnvName: parsedDomain.environment,
         });
+      } else if (projectSlug && scope === "preview" && token) {
+        // For preview mode, we need projectId to fetch project metadata (e.g., layout config)
+        // but we don't need releaseId since preview uses branch-based content
+        const lookupResult = await lookupProjectByDomain(
+          projectSlug,
+          config.apiBaseUrl,
+          token,
+          logger,
+        );
+
+        if (lookupResult) {
+          projectId = lookupResult.id;
+
+          logger?.info("Resolved preview project", {
+            projectSlug,
+            projectId,
+          });
+        }
       }
     }
 

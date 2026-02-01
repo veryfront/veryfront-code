@@ -31,6 +31,7 @@ describe("Proxy-Renderer Mode Parity", () => {
       const ctx: ProxyContext = {
         token: "preview-token-abc",
         projectSlug: "my-project",
+        projectId: "proj-uuid-456",
         environment: "preview",
         contentSourceId: "preview-main",
         host: "my-project.preview.veryfront.com",
@@ -57,7 +58,7 @@ describe("Proxy-Renderer Mode Parity", () => {
       assertEquals(headers["x-content-source-id"], "preview-main");
       assertEquals(headers["x-forwarded-host"], "my-project.preview.veryfront.com");
       assertEquals(headers["x-project-path"], null);
-      assertEquals(headers["x-project-id"], null);
+      assertEquals(headers["x-project-id"], "proj-uuid-456");
       assertEquals(headers["x-release-id"], null);
     });
 
