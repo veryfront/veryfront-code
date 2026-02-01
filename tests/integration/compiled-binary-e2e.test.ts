@@ -166,7 +166,11 @@ async function waitForServer(port: number, deadlineMs = 60_000): Promise<void> {
   throw new Error(`Server failed to start on port ${port}`);
 }
 
-async function startBinaryServer(projectDir: string, nodeEnv = "development"): Promise<TestServer> {
+async function startBinaryServer(
+  projectDir: string,
+  nodeEnv = "development",
+  extraEnv?: Record<string, string>,
+): Promise<TestServer> {
   const maxRetries = 3;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -184,6 +188,7 @@ async function startBinaryServer(projectDir: string, nodeEnv = "development"): P
         NODE_ENV: nodeEnv,
         LOG_FORMAT: "text",
         VERYFRONT_CACHE_DIR: cacheDir,
+        ...extraEnv,
       },
       stdout: "piped",
       stderr: "piped",
@@ -287,8 +292,9 @@ async function withServer(
   projectDir: string,
   fn: (server: TestServer) => Promise<void>,
   nodeEnv?: string,
+  extraEnv?: Record<string, string>,
 ): Promise<void> {
-  const server = await startBinaryServer(projectDir, nodeEnv);
+  const server = await startBinaryServer(projectDir, nodeEnv, extraEnv);
   try {
     await fn(server);
   } finally {
@@ -2245,5 +2251,508 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       );
       assertEquals(hookErrors.length, 0, "Should have no React hook errors");
     });
+  });
+
+  // Test: Layout at components/layouts/ path via config (mimics codersociety production setup)
+  // Regression test: layout at components/layouts/DefaultLayout.tsx was not found due to
+  // path normalization double-stripping in getEntityInfo (components/ prefix matched, then
+  // layouts/ prefix matched again, corrupting the path).
+  it("should render layout from components/layouts/ via config", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-components-layouts-test-" });
+
+    await Deno.writeTextFile(
+      join(projectDir, "package.json"),
+      JSON.stringify(
+        {
+          name: "test-components-layouts",
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2,
+      ),
+    );
+
+    await Deno.writeTextFile(
+      join(projectDir, "veryfront.config.ts"),
+      `export default {
+  fs: { type: "local" },
+  layout: "components/layouts/DefaultLayout.tsx"
+};`,
+    );
+
+    await Deno.mkdir(join(projectDir, "components/layouts"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "components/layouts/DefaultLayout.tsx"),
+      `
+import { Head } from "veryfront/head";
+
+export default function DefaultLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <Head><title>Components Layout Test</title></Head>
+      <div id="components-layout-wrapper">
+        <header id="components-layout-header">Components Layout Header</header>
+        <main id="components-layout-main">{children}</main>
+        <footer id="components-layout-footer">Components Layout Footer</footer>
+      </div>
+    </>
+  );
+}
+`,
+    );
+
+    await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "pages/index.tsx"),
+      `
+export default function Home() {
+  return <div id="page-content">Page with components/layouts layout</div>;
+}
+`,
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+      assertStringIncludes(
+        html,
+        "components-layout-wrapper",
+        "Should have layout wrapper from components/layouts/",
+      );
+      assertStringIncludes(
+        html,
+        "Components Layout Header",
+        "Should render layout header",
+      );
+      assertStringIncludes(
+        html,
+        "Components Layout Footer",
+        "Should render layout footer",
+      );
+      assertStringIncludes(
+        html,
+        "Page with components/layouts layout",
+        "Should render page content inside layout",
+      );
+
+      const errors = server.logs.filter((l) =>
+        l.includes("not found") ||
+        l.includes("Module not found") ||
+        l.includes("Cannot find") ||
+        (l.includes("layout") && l.includes("failed"))
+      );
+      assertEquals(errors.length, 0, `Should have no layout errors: ${errors.join("\n")}`);
+    });
+  });
+
+  // Test: Layout rendering in production mode
+  // Regression test: split mode uses NODE_ENV=production and layout must still render
+  it("should render layout correctly in production mode", async () => {
+    const projectDir = await createTestProject(
+      "layout-production-test",
+      `
+export default function Home() {
+  return <div id="page-content">Production page content</div>;
+}
+`,
+      {
+        "pages/layout.tsx": `
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <div id="prod-layout-wrapper">
+      <header id="prod-layout-header">Production Layout Header</header>
+      <main>{children}</main>
+      <footer id="prod-layout-footer">Production Layout Footer</footer>
+    </div>
+  );
+}
+`,
+      },
+    );
+
+    await withServer(
+      projectDir,
+      async (server) => {
+        const response = await fetch(`http://127.0.0.1:${server.port}/`);
+        const html = await response.text();
+
+        assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+        assertStringIncludes(html, "prod-layout-wrapper", "Should have layout wrapper in production");
+        assertStringIncludes(html, "Production Layout Header", "Should render layout header");
+        assertStringIncludes(html, "Production Layout Footer", "Should render layout footer");
+        assertStringIncludes(html, "Production page content", "Should render page content");
+
+        const criticalErrors = server.logs.filter((l) =>
+          l.includes("FATAL") || l.includes("Unhandled") || l.includes("Invalid hook call")
+        );
+        assertEquals(
+          criticalErrors.length,
+          0,
+          `Should have no critical errors: ${criticalErrors.join("\n")}`,
+        );
+      },
+      "production",
+    );
+  });
+
+  // Test: Config-based layout in production mode (closest to split:binary setup)
+  // Regression test: In split:binary mode (production + config layout), the layout was not
+  // rendered because config loading or layout resolution failed silently.
+  it("should render config layout in production mode", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-config-layout-prod-test-" });
+
+    await Deno.writeTextFile(
+      join(projectDir, "package.json"),
+      JSON.stringify(
+        {
+          name: "test-config-layout-prod",
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2,
+      ),
+    );
+
+    await Deno.writeTextFile(
+      join(projectDir, "veryfront.config.ts"),
+      `export default {
+  fs: { type: "local" },
+  layout: "components/layouts/MainLayout.tsx"
+};`,
+    );
+
+    await Deno.mkdir(join(projectDir, "components/layouts"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "components/layouts/MainLayout.tsx"),
+      `
+import { Head } from "veryfront/head";
+
+export default function MainLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <Head><title>Config Layout Production</title></Head>
+      <div id="config-prod-layout">
+        <nav id="config-prod-nav">Navigation Bar</nav>
+        <main id="config-prod-main">{children}</main>
+        <footer id="config-prod-footer">Footer Content</footer>
+      </div>
+    </>
+  );
+}
+`,
+    );
+
+    await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "pages/index.tsx"),
+      `
+export default function Home() {
+  return <div id="page-content">Config layout in production</div>;
+}
+`,
+    );
+
+    await withServer(
+      projectDir,
+      async (server) => {
+        const response = await fetch(`http://127.0.0.1:${server.port}/`);
+        const html = await response.text();
+
+        assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+        assertStringIncludes(html, "config-prod-layout", "Should have config layout in production");
+        assertStringIncludes(html, "Navigation Bar", "Should render nav from config layout");
+        assertStringIncludes(html, "Footer Content", "Should render footer from config layout");
+        assertStringIncludes(
+          html,
+          "Config layout in production",
+          "Should render page content inside config layout",
+        );
+
+        const errors = server.logs.filter((l) =>
+          l.includes("not found") ||
+          l.includes("Module not found") ||
+          l.includes("FATAL") ||
+          (l.includes("layout") && l.includes("failed"))
+        );
+        assertEquals(errors.length, 0, `Should have no errors: ${errors.join("\n")}`);
+      },
+      "production",
+    );
+  });
+
+  // Test: MDX layout at components/layouts/ path via config
+  // Tests the exact codersociety pattern: config layout using .mdx file in components/layouts/
+  it("should render MDX layout from components/layouts/ via config", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-mdx-components-layout-test-" });
+
+    await Deno.writeTextFile(
+      join(projectDir, "package.json"),
+      JSON.stringify(
+        {
+          name: "test-mdx-components-layout",
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2,
+      ),
+    );
+
+    await Deno.writeTextFile(
+      join(projectDir, "veryfront.config.ts"),
+      `export default {
+  fs: { type: "local" },
+  layout: "components/layouts/DefaultLayout.mdx"
+};`,
+    );
+
+    await Deno.mkdir(join(projectDir, "components/layouts"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "components/layouts/DefaultLayout.mdx"),
+      `---
+isLayout: true
+---
+
+<div id="mdx-layout-wrapper">
+  <header id="mdx-layout-header">MDX Layout Header</header>
+  <main>{props.children}</main>
+  <footer id="mdx-layout-footer">MDX Layout Footer</footer>
+</div>
+`,
+    );
+
+    await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "pages/index.tsx"),
+      `
+export default function Home() {
+  return <div id="page-content">Page inside MDX layout</div>;
+}
+`,
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+      assertStringIncludes(
+        html,
+        "mdx-layout-wrapper",
+        "Should have MDX layout wrapper",
+      );
+      assertStringIncludes(html, "MDX Layout Header", "Should render MDX layout header");
+      assertStringIncludes(html, "MDX Layout Footer", "Should render MDX layout footer");
+      assertStringIncludes(
+        html,
+        "Page inside MDX layout",
+        "Should render page content inside MDX layout",
+      );
+    });
+  });
+
+  // Test: Layout with nested page routes in production mode
+  // Ensures layout wraps all pages, not just index, in production
+  it("should render layout for nested routes in production mode", async () => {
+    const projectDir = await createTestProject(
+      "layout-nested-routes-prod-test",
+      `
+export default function Home() {
+  return <div id="home-content">Home Page</div>;
+}
+`,
+      {
+        "pages/layout.tsx": `
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <div id="nested-prod-layout">
+      <header id="nested-prod-header">Nested Production Header</header>
+      <main>{children}</main>
+    </div>
+  );
+}
+`,
+        "pages/about.tsx": `
+export default function About() {
+  return <div id="about-content">About Page Content</div>;
+}
+`,
+        "pages/blog/index.tsx": `
+export default function Blog() {
+  return <div id="blog-content">Blog Page Content</div>;
+}
+`,
+      },
+    );
+
+    await withServer(
+      projectDir,
+      async (server) => {
+        // Test index page
+        const homeRes = await fetch(`http://127.0.0.1:${server.port}/`);
+        const homeHtml = await homeRes.text();
+        assertEquals(homeRes.status, 200);
+        assertStringIncludes(homeHtml, "nested-prod-layout", "Home should have layout");
+        assertStringIncludes(homeHtml, "Nested Production Header", "Home should have layout header");
+        assertStringIncludes(homeHtml, "Home Page", "Home should render content");
+
+        // Test about page
+        const aboutRes = await fetch(`http://127.0.0.1:${server.port}/about`);
+        const aboutHtml = await aboutRes.text();
+        assertEquals(aboutRes.status, 200);
+        assertStringIncludes(aboutHtml, "nested-prod-layout", "About should have layout");
+        assertStringIncludes(aboutHtml, "About Page Content", "About should render content");
+
+        // Test blog page
+        const blogRes = await fetch(`http://127.0.0.1:${server.port}/blog`);
+        const blogHtml = await blogRes.text();
+        assertEquals(blogRes.status, 200);
+        assertStringIncludes(blogHtml, "nested-prod-layout", "Blog should have layout");
+        assertStringIncludes(blogHtml, "Blog Page Content", "Blog should render content");
+      },
+      "production",
+    );
+  });
+
+  // Test: Layout rendering with PROXY_MODE=1 (simulates split mode renderer)
+  // Regression test: In split:binary mode, the renderer runs with PROXY_MODE=1.
+  // Without proxy headers, it should fall back to local config and still render layouts.
+  it("should render layout when PROXY_MODE=1 without proxy headers", async () => {
+    const projectDir = await createTestProject(
+      "proxy-mode-layout-test",
+      `
+export default function Home() {
+  return <div id="page-content">Proxy mode page content</div>;
+}
+`,
+      {
+        "pages/layout.tsx": `
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <div id="proxy-layout-wrapper">
+      <header id="proxy-layout-header">Proxy Mode Layout Header</header>
+      <main>{children}</main>
+      <footer id="proxy-layout-footer">Proxy Mode Layout Footer</footer>
+    </div>
+  );
+}
+`,
+      },
+    );
+
+    await withServer(
+      projectDir,
+      async (server) => {
+        const response = await fetch(`http://127.0.0.1:${server.port}/`);
+        const html = await response.text();
+
+        assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+        assertStringIncludes(
+          html,
+          "proxy-layout-wrapper",
+          "Should have layout wrapper in proxy mode",
+        );
+        assertStringIncludes(
+          html,
+          "Proxy Mode Layout Header",
+          "Should render layout header in proxy mode",
+        );
+        assertStringIncludes(
+          html,
+          "Proxy Mode Layout Footer",
+          "Should render layout footer in proxy mode",
+        );
+        assertStringIncludes(
+          html,
+          "Proxy mode page content",
+          "Should render page content in proxy mode",
+        );
+      },
+      "production",
+      { PROXY_MODE: "1", PRODUCTION_MODE: "1" },
+    );
+  });
+
+  // Test: Config layout with PROXY_MODE=1 and components/layouts/ path
+  // Regression test: In split:binary mode, the renderer gets PROXY_MODE=1 and must resolve
+  // config-based layout paths through the API adapter. Without proxy headers, it should
+  // fall back to local filesystem and still render the config layout.
+  it("should render config layout in PROXY_MODE=1 with components/layouts/ path", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-proxy-config-layout-test-" });
+
+    await Deno.writeTextFile(
+      join(projectDir, "package.json"),
+      JSON.stringify(
+        {
+          name: "test-proxy-config-layout",
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2,
+      ),
+    );
+
+    await Deno.writeTextFile(
+      join(projectDir, "veryfront.config.ts"),
+      `export default {
+  fs: { type: "local" },
+  layout: "components/layouts/DefaultLayout.tsx"
+};`,
+    );
+
+    await Deno.mkdir(join(projectDir, "components/layouts"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "components/layouts/DefaultLayout.tsx"),
+      `
+export default function DefaultLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <div id="proxy-config-layout">
+      <nav id="proxy-config-nav">Proxy Config Nav</nav>
+      <main>{children}</main>
+      <footer id="proxy-config-footer">Proxy Config Footer</footer>
+    </div>
+  );
+}
+`,
+    );
+
+    await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "pages/index.tsx"),
+      `
+export default function Home() {
+  return <div id="page-content">Proxy config layout page</div>;
+}
+`,
+    );
+
+    await withServer(
+      projectDir,
+      async (server) => {
+        const response = await fetch(`http://127.0.0.1:${server.port}/`);
+        const html = await response.text();
+
+        assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+        assertStringIncludes(
+          html,
+          "proxy-config-layout",
+          "Should have config layout in PROXY_MODE=1",
+        );
+        assertStringIncludes(html, "Proxy Config Nav", "Should render nav from config layout");
+        assertStringIncludes(html, "Proxy Config Footer", "Should render footer from config layout");
+        assertStringIncludes(
+          html,
+          "Proxy config layout page",
+          "Should render page content",
+        );
+      },
+      "production",
+      { PROXY_MODE: "1", PRODUCTION_MODE: "1" },
+    );
   });
 });
