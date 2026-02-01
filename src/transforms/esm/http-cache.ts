@@ -1099,46 +1099,49 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
             localCacheDir: absoluteCacheDir,
           });
         } else {
-        logger.info(
-          wasGzipped
-            ? "[HTTP-CACHE] Recovering bundle via direct code lookup (gzip decoded)"
-            : "[HTTP-CACHE] Recovering bundle via direct code lookup",
-          { hash },
-        );
+          logger.info(
+            wasGzipped
+              ? "[HTTP-CACHE] Recovering bundle via direct code lookup (gzip decoded)"
+              : "[HTTP-CACHE] Recovering bundle via direct code lookup",
+            { hash },
+          );
 
-        await fs.mkdir(absoluteCacheDir, { recursive: true });
-        await fs.writeTextFile(cachePath, cachedCode);
+          await fs.mkdir(absoluteCacheDir, { recursive: true });
+          await fs.writeTextFile(cachePath, cachedCode);
 
-        const originalUrl = await distributed.get(distributedKey("hash", hash));
-        if (originalUrl) {
-          const normalizedUrl = normalizeHttpUrl(originalUrl);
-          const cacheKey = `${absoluteCacheDir}:${normalizedUrl}`;
-          getCachedPaths().set(cacheKey, cachePath);
-          logger.debug("[HTTP-CACHE] Updated LRU cache after recovery", { hash, cacheKey });
-        }
+          const originalUrl = await distributed.get(distributedKey("hash", hash));
+          if (originalUrl) {
+            const normalizedUrl = normalizeHttpUrl(originalUrl);
+            const cacheKey = `${absoluteCacheDir}:${normalizedUrl}`;
+            getCachedPaths().set(cacheKey, cachePath);
+            logger.debug("[HTTP-CACHE] Updated LRU cache after recovery", { hash, cacheKey });
+          }
 
-        logger.info("[HTTP-CACHE] Bundle recovery successful (direct)", { hash, path: cachePath });
-
-        const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
-        const transitiveDeps: Array<{ path: string; hash: string }> = [];
-        let m: RegExpExecArray | null;
-        while ((m = BUNDLE_RE.exec(cachedCode)) !== null) {
-          const tHash = m[2]!;
-          if (tHash === hash) continue;
-          transitiveDeps.push({
-            path: join(absoluteCacheDir, `http-${tHash}.mjs`),
-            hash: tHash,
+          logger.info("[HTTP-CACHE] Bundle recovery successful (direct)", {
+            hash,
+            path: cachePath,
           });
-        }
 
-        if (transitiveDeps.length > 0) {
-          logger.info("[HTTP-CACHE] Recovering transitive deps from last-resort recovery", {
-            count: transitiveDeps.length,
-          });
-          await ensureHttpBundlesExist(transitiveDeps, cacheDir);
-        }
+          const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+          const transitiveDeps: Array<{ path: string; hash: string }> = [];
+          let m: RegExpExecArray | null;
+          while ((m = BUNDLE_RE.exec(cachedCode)) !== null) {
+            const tHash = m[2]!;
+            if (tHash === hash) continue;
+            transitiveDeps.push({
+              path: join(absoluteCacheDir, `http-${tHash}.mjs`),
+              hash: tHash,
+            });
+          }
 
-        return true;
+          if (transitiveDeps.length > 0) {
+            logger.info("[HTTP-CACHE] Recovering transitive deps from last-resort recovery", {
+              count: transitiveDeps.length,
+            });
+            await ensureHttpBundlesExist(transitiveDeps, cacheDir);
+          }
+
+          return true;
         }
       }
     }
