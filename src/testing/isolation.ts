@@ -551,6 +551,12 @@ export async function resetAllTestState(): Promise<void> {
       const { ReloadNotifier } = await import("../server/reload-notifier.ts");
       ReloadNotifier.reset();
     },
+
+    // HTTP module in-flight fetches - prevents test interference from shared promises
+    async () => {
+      const { __clearInFlightHttpFetches } = await import("../transforms/esm/http-cache.ts");
+      __clearInFlightHttpFetches();
+    },
   ];
 
   for (const cleanup of cleanups) {
