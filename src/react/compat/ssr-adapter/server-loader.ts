@@ -1,6 +1,5 @@
 import { getReactVersionInfo } from "../version-detector/index.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
-import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { cacheModuleToLocal } from "#veryfront/transforms/esm/http-cache.ts";
 import { getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
@@ -37,21 +36,18 @@ export function getProjectReact(): Promise<typeof import("react")> {
   return reactLoadFlight.do("react", async () => {
     if (projectReactCache) return projectReactCache;
 
-    if (isDenoCompiled) {
-      const reactUrl = getReactUrls().react;
-      if (!reactUrl) {
-        throw new Error("[server-loader] React URL not found in getReactUrls()");
-      }
-
-      const reactModule = await loadFromCachedHttpModule<{ default?: typeof import("react") }>(
-        reactUrl,
-        "React",
-      );
-      projectReactCache = (reactModule.default ?? reactModule) as typeof import("react");
-      return projectReactCache;
+    // Always load React from cached HTTP modules to ensure the same React
+    // instance is used by both react-dom/server and MDX components.
+    // This prevents "multiple React instances" errors in SSR.
+    const reactUrl = getReactUrls().react;
+    if (!reactUrl) {
+      throw new Error("[server-loader] React URL not found in getReactUrls()");
     }
 
-    const reactModule = await import("react");
+    const reactModule = await loadFromCachedHttpModule<{ default?: typeof import("react") }>(
+      reactUrl,
+      "React",
+    );
     projectReactCache = (reactModule.default ?? reactModule) as typeof import("react");
     return projectReactCache;
   });
@@ -66,19 +62,18 @@ export function getReactDOMServer(): Promise<ReactDOMServer> {
     const versionInfo = getReactVersionInfo();
     const react18Plus = versionInfo.isReact18 || versionInfo.isReact19;
 
-    let serverModule: typeof import("react-dom/server");
-    if (isDenoCompiled) {
-      const serverUrl = getReactUrls()["react-dom/server"];
-      if (!serverUrl) {
-        throw new Error("[server-loader] react-dom/server URL not found in getReactUrls()");
-      }
-      serverModule = await loadFromCachedHttpModule<typeof import("react-dom/server")>(
-        serverUrl,
-        "react-dom/server",
-      );
-    } else {
-      serverModule = await import("react-dom/server");
+    // Always load react-dom/server from cached HTTP modules to ensure
+    // it uses the same React instance as MDX components (which also use
+    // cached HTTP bundles). This prevents "multiple React instances" errors
+    // where components use React from one source and react-dom/server from another.
+    const serverUrl = getReactUrls()["react-dom/server"];
+    if (!serverUrl) {
+      throw new Error("[server-loader] react-dom/server URL not found in getReactUrls()");
     }
+    const serverModule = await loadFromCachedHttpModule<typeof import("react-dom/server")>(
+      serverUrl,
+      "react-dom/server",
+    );
 
     reactDOMServerCache = {
       renderToString: serverModule.renderToString,
