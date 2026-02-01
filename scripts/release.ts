@@ -287,8 +287,6 @@ async function runRelease() {
 	// 3. Build npm package (for local verification only, CI will rebuild)
 	if (!args["no-build"]) {
 		console.log("\n📦 Building npm package...");
-		// @ts-ignore - Deno global
-		if (isDenoRuntime) Deno.env.set("VERYFRONT_VERSION", newVersion);
 		await runCommand(["deno", "task", "build:npm"]);
 	}
 

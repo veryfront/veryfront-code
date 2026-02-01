@@ -88,10 +88,6 @@ jobs:
   # ============================================
   # CI: Split Mode Test (PR + main, skip tags)
   # ============================================
-  # Split Mode Test (Optional)
-  # Enable by setting RUN_SPLIT_MODE_TEST=true in repository secrets
-  # Tests proxy+renderer architecture without external project dependencies
-  # ============================================
 
   tests-split-mode:
     if: startsWith(github.ref, 'refs/tags/') == false && vars.RUN_SPLIT_MODE_TEST == 'true'
@@ -148,37 +144,12 @@ jobs:
           echo "Split mode startup test passed"
 
   # ============================================
-  # CD: Calculate Version (single source of truth)
-  # Runs early to enable parallel binary builds
-  # ============================================
-
-  version:
-    if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Calculate version
-        id: version
-        run: |
-          BASE_VERSION=$(jq -r '.version' deno.json)
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            VERSION="${{ github.ref_name }}"
-            VERSION="${VERSION#v}"
-          else
-            VERSION="${BASE_VERSION}-rc.${{ github.run_number }}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
-
-  # ============================================
   # CD: Build Binaries (main + tags)
-  # Runs in parallel with tests for faster CI
+  # Version comes directly from deno.json
   # ============================================
 
   build-binaries:
-    needs: [version]
+    if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -204,13 +175,6 @@ jobs:
         with:
           deno-version: lts
 
-      - name: Bake version into binary
-        shell: bash
-        run: |
-          VERSION="${{ needs.version.outputs.version }}"
-          echo "Building version: $VERSION"
-          jq ".version = \"$VERSION\"" deno.json > deno.json.tmp && mv deno.json.tmp deno.json
-
       - run: deno run -A scripts/generate-templates-manifest.ts
 
       - name: Compile binary
@@ -234,11 +198,12 @@ jobs:
 
   # ============================================
   # CD: Pre-release (main only)
+  # Publishes whatever version is in deno.json with --tag rc
   # ============================================
 
   prerelease:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [ci, tests, tests-binary-e2e, version, build-binaries]
+    needs: [ci, tests, tests-binary-e2e, build-binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -279,14 +244,17 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
+      - name: Read version
+        id: version
+        run: echo "version=$(jq -r '.version' deno.json)" >> $GITHUB_OUTPUT
+
       - name: Build and publish
         env:
-          VERSION: ${{ needs.version.outputs.version }}
+          VERSION: ${{ steps.version.outputs.version }}
           NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
         run: |
-          VERYFRONT_VERSION=$VERSION deno task build:npm
-          cd npm && jq ".version = \"$VERSION\"" package.json > package.json.tmp && mv package.json.tmp package.json
-          npm publish --access public --tag rc
+          deno task build:npm
+          cd npm && npm publish --access public --tag rc
 
       - uses: actions/download-artifact@v4
         with:
@@ -294,7 +262,7 @@ jobs:
 
       - name: Create GitHub releases
         env:
-          VERSION: ${{ needs.version.outputs.version }}
+          VERSION: ${{ steps.version.outputs.version }}
           GH_TOKEN: ${{ env.GITHUB_PAT }}
         run: |
           # Public repo release
@@ -312,9 +280,9 @@ jobs:
 
       - name: Create source repo release
         run: |
-          gh release create "v${{ needs.version.outputs.version }}" \
-            --title "v${{ needs.version.outputs.version }}" \
-            --notes 'Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${{ needs.version.outputs.version }}'
+          gh release create "v${{ steps.version.outputs.version }}" \
+            --title "v${{ steps.version.outputs.version }}" \
+            --notes 'Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${{ steps.version.outputs.version }}'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -324,7 +292,7 @@ jobs:
           token: ${{ env.GITHUB_PAT }}
           repository: veryfront/veryfront-cloud-renderer
           event-type: veryfront-code-released
-          client-payload: '{"version": "${{ needs.version.outputs.version }}"}'
+          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
 
   # ============================================
   # CD: Stable Release (tags only)
@@ -332,7 +300,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [version, build-binaries]
+    needs: [build-binaries]
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -365,15 +333,18 @@ jobs:
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
 
-      - name: Validate version
+      - name: Validate tag matches deno.json
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
           DENO_VERSION=$(jq -r '.version' deno.json)
-          if [ "$VERSION" != "$DENO_VERSION" ]; then
-            echo "Error: Tag ($VERSION) doesn't match deno.json ($DENO_VERSION)"
+          if [ "$TAG_VERSION" != "$DENO_VERSION" ]; then
+            echo "Error: Tag ($TAG_VERSION) doesn't match deno.json ($DENO_VERSION)"
             exit 1
           fi
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Read version
+        id: version
+        run: echo "version=$(jq -r '.version' deno.json)" >> $GITHUB_OUTPUT
 
       - uses: denoland/setup-deno@v2
         with:
@@ -398,6 +369,9 @@ jobs:
           path: binaries
 
       - name: Create GitHub releases
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ env.GITHUB_PAT }}
         run: |
           # Public repo release with binaries and install scripts
           gh release create "v${VERSION}" \
@@ -419,15 +393,13 @@ jobs:
             binaries/veryfront-windows-x64.exe/veryfront-windows-x64.exe \
             scripts/install.sh \
             scripts/install.ps1
-        env:
-          GH_TOKEN: ${{ env.GITHUB_PAT }}
 
       - name: Create source repo release
         run: |
-          gh release create "v${VERSION}" \
-            --title "v${VERSION}" \
+          gh release create "v${{ steps.version.outputs.version }}" \
+            --title "v${{ steps.version.outputs.version }}" \
             --generate-notes \
-            --notes 'Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v'"${VERSION}"
+            --notes 'Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${{ steps.version.outputs.version }}'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -437,7 +409,7 @@ jobs:
           token: ${{ env.GITHUB_PAT }}
           repository: veryfront/veryfront-cloud-renderer
           event-type: veryfront-code-released
-          client-payload: '{"version": "${{ env.VERSION }}"}'
+          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
 
   # ============================================
   # CD: Update Homebrew (tags only)

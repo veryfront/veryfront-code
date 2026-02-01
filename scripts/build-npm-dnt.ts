@@ -14,7 +14,7 @@
 import { build, emptyDir } from "jsr:@deno/dnt";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
-const version = Deno.env.get("VERYFRONT_VERSION") || denoJson.version || "0.0.75";
+const version = denoJson.version;
 
 console.log(`\n📦 Building Veryfront v${version} for npm using dnt...\n`);
 
