@@ -50,7 +50,7 @@ import { recordSSRModules } from "../../../../modules/manifest/route-module-mani
 import { getDistributedTransformBackend } from "#veryfront/transforms/esm/transform-cache.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
-import { resolveVeryfrontModuleUrl } from "#veryfront/utils/veryfront-module-urls.ts";
+import { resolveVeryfrontModuleUrl } from "../../../veryfront-module-urls.ts";
 
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;

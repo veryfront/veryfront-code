@@ -13,7 +13,7 @@ import {
 } from "./index.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { FRAMEWORK_ROOT, HASH_SEED_FNV1A } from "../constants.ts";
-import { resolveVeryfrontModuleUrl } from "#veryfront/utils/veryfront-module-urls.ts";
+import { resolveVeryfrontModuleUrl } from "../../../veryfront-module-urls.ts";
 
 function getTransformCacheKey(
   projectId: string,

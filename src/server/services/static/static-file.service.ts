@@ -21,7 +21,7 @@ import {
   joinPath,
   normalizePath,
 } from "#veryfront/utils/path-utils.ts";
-import { normalizeChunkPath } from "#veryfront/utils/chunk-utils.ts";
+import { normalizeChunkPath } from "../../utils/chunk-utils.ts";
 import { computeEtag } from "../../handlers/utils/etag.ts";
 import { getContentType as getContentTypeFromExt } from "../../handlers/utils/content-types.ts";
 

@@ -12,7 +12,7 @@ import type {
   RewriteResult,
 } from "../types.ts";
 import { buildVeryfrontModuleUrl } from "../url-builder.ts";
-import { resolveVeryfrontModuleUrl } from "#veryfront/utils/veryfront-module-urls.ts";
+import { resolveVeryfrontModuleUrl } from "../../veryfront-module-urls.ts";
 
 function normalizeVeryfrontSpecifier(specifier: string): string {
   if (specifier === "@veryfront") return "veryfront";

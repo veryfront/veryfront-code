@@ -28,7 +28,6 @@ import {
   withSpan,
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import { getTimeoutFromEnv } from "../../middleware/builtin/timeout.ts";
 import type { HandlerContext } from "../handlers/types.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";
@@ -73,70 +72,26 @@ import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
 import { requestTracker } from "./request-tracker.ts";
 import { projectIsolation } from "./project-isolation.ts";
 
+// Extracted modules
+import {
+  getRequestTimeout,
+  HTTP_GATEWAY_TIMEOUT,
+  isInternalHost,
+  isLightweightPath,
+  isMonitoringPath,
+  TIMEOUT_SENTINEL,
+} from "./request-utils.ts";
+import {
+  findLocalProjectPath,
+  localAdapterCache,
+  localProjectCache,
+  standardProjectDirs,
+} from "./local-project-discovery.ts";
+
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
 
 const logger = getBaseLogger("SERVER");
-
-/** Check if host is a private/internal IP address */
-function isInternalHost(host: string): boolean {
-  const hostname = host.split(":")[0] ?? "";
-
-  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") {
-    return true;
-  }
-
-  const ipv4Match = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-  if (!ipv4Match) return false;
-
-  const a = Number(ipv4Match[1]);
-  const b = Number(ipv4Match[2]);
-
-  if (a === 10) return true; // 10.0.0.0/8
-  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
-  if (a === 192 && b === 168) return true; // 192.168.0.0/16
-
-  return false;
-}
-
-/** Monitoring paths that should skip domain lookup */
-const MONITORING_PATHS = new Set(["/healthz", "/readyz", "/_health", "/_metrics"]);
-
-/** Cached request timeout value (lazy-loaded to avoid module-level env access) */
-let _requestTimeoutMs: number | null = null;
-
-/** Get request timeout in milliseconds (configurable via getRequestTimeout() env var) */
-function getRequestTimeout(): number {
-  if (_requestTimeoutMs === null) {
-    _requestTimeoutMs = getTimeoutFromEnv();
-  }
-  return _requestTimeoutMs;
-}
-
-/** HTTP 504 Gateway Timeout status code */
-const HTTP_GATEWAY_TIMEOUT = 504;
-
-/** Sentinel value for timeout detection (avoids string comparison) */
-const TIMEOUT_SENTINEL = Symbol("request_timeout");
-
-/** Check if request path is a monitoring endpoint that should skip domain lookup */
-function isMonitoringPath(pathname: string): boolean {
-  return MONITORING_PATHS.has(pathname);
-}
-
-/** Lightweight paths that should skip concurrency limiting (modules, static assets) */
-const LIGHTWEIGHT_PATH_PREFIXES = [
-  "/_vf_modules/",
-  "/_veryfront/modules/",
-  "/_veryfront/preview-hmr.js",
-  "/_veryfront/studio-bridge.js",
-  "/_vf/css/",
-  "/_lib_modules/",
-];
-
-function isLightweightPath(pathname: string): boolean {
-  return LIGHTWEIGHT_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
-}
 
 export interface UniversalHandlerOptions {
   projectDir: string;
@@ -229,51 +184,6 @@ export function createVeryfrontHandler(
   ]);
 
   const isProxyMode = opts.config?.fs?.veryfront?.proxyMode === true;
-
-  const localAdapterCache = new Map<string, RuntimeAdapter>();
-  const standardProjectDirs = ["data/projects", "projects", "examples"];
-  const localProjectCache = new Map<string, string>();
-
-  async function findLocalProjectPath(
-    slug: string,
-    headerPath?: string,
-  ): Promise<string | undefined> {
-    if (headerPath) {
-      localProjectCache.set(slug, headerPath);
-      return headerPath;
-    }
-
-    const cached = localProjectCache.get(slug);
-    if (cached) return cached;
-
-    for (const dir of standardProjectDirs) {
-      const projectPath = `${dir}/${slug}`;
-
-      try {
-        const stat = await adapter.fs.stat(projectPath);
-        if (!stat?.isDirectory) continue;
-
-        const [hasApp, hasPages, hasComponents] = await Promise.all([
-          adapter.fs.stat(`${projectPath}/app`).then((s) => s?.isDirectory).catch(() => false),
-          adapter.fs.stat(`${projectPath}/pages`).then((s) => s?.isDirectory).catch(() => false),
-          adapter.fs.stat(`${projectPath}/components`).then((s) => s?.isDirectory).catch(() =>
-            false
-          ),
-        ]);
-
-        if (!hasApp && !hasPages && !hasComponents) continue;
-
-        const absolutePath = projectPath.startsWith("/") ? projectPath : `${cwd()}/${projectPath}`;
-        localProjectCache.set(slug, absolutePath);
-        logger.debug("[universal] Discovered local project", { slug, path: absolutePath });
-        return absolutePath;
-      } catch {
-        // Directory doesn't exist, continue
-      }
-    }
-
-    return undefined;
-  }
 
   const readyPromise = isProxyMode ? Promise.resolve() : apiHandler.initialize().catch((error) => {
     logger.error("[universal] API handler initialization failed", {
@@ -676,7 +586,7 @@ export function createVeryfrontHandler(
           let effectiveAdapter = adapter;
 
           const localProjectPath = projectSlug
-            ? await findLocalProjectPath(projectSlug, proxyProjectPath)
+            ? await findLocalProjectPath(projectSlug, adapter, proxyProjectPath)
             : undefined;
 
           const isLocalProject = !!localProjectPath;

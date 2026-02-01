@@ -11,13 +11,10 @@
  * - Two-phase data fetching: load all modules first, then fetch all data in parallel
  * - Supports both /pages/ and /app/ router directories
  *
- * Supports optional CacheRepository injection for CSS cache testing.
- *
  * @module rendering/orchestrator/pipeline
  */
 
 import { rendererLogger as logger } from "#veryfront/utils";
-import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import { createBuildVersion } from "#veryfront/utils/version.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -48,112 +45,27 @@ import { generateTailwind4CSS } from "#veryfront/html/styles-builder/index.ts";
 import { createEsmCache, createModuleCache, loadModule } from "./module-loader/index.ts";
 import type { ModuleLoaderConfig } from "./module-loader/index.ts";
 
-/** Timeout for CSS generation SSR (shorter than full SSR since it's optional) */
-const CSS_SSR_TIMEOUT_MS = 5000;
+// Extracted modules
+import { EMPTY_LAYOUT_RESULT, isDotPath } from "./path-helpers.ts";
+import {
+  __injectCssCacheForTests,
+  cachePageCss,
+  CSS_SSR_TIMEOUT_MS,
+  getCachedPageCss,
+  getPageCssCacheKey,
+} from "./css-cache.ts";
+import {
+  collectModulesToLoad,
+  DATA_FETCH_TIMEOUT_MS,
+  hasDataFetchingFunction,
+  type LoadedModule,
+  MODULE_LOAD_TIMEOUT_MS,
+  type ModuleToLoad,
+  SSR_RENDER_TIMEOUT_MS,
+} from "./module-collection.ts";
 
-/**
- * Per-page CSS cache to avoid redundant SSR for CSS generation.
- * Key: projectId:environment:slug:contentVersion
- * Value: Generated CSS string
- */
-const pageCssCache = new Map<string, string>();
-const PAGE_CSS_CACHE_MAX_SIZE = 200;
-
-/** Injected cache repository for testing */
-let injectedCssCacheRepo: CacheRepository<string> | null = null;
-
-/**
- * Inject a CacheRepository for CSS cache testing.
- * Call with null to restore default Map-based caching.
- */
-export function __injectCssCacheForTests(cacheRepo: CacheRepository<string> | null): void {
-  injectedCssCacheRepo = cacheRepo;
-}
-
-/** Create a cache key for page CSS */
-function getPageCssCacheKey(
-  projectId: string | undefined,
-  environment: string | undefined,
-  slug: string,
-  projectUpdatedAt: string | undefined,
-): string {
-  return `${projectId || "default"}:${environment || "preview"}:${slug}:${
-    projectUpdatedAt || "draft"
-  }`;
-}
-
-/** Cache CSS for a page - internal implementation */
-function cachePageCssInternal(cacheKey: string, css: string): void {
-  if (pageCssCache.size >= PAGE_CSS_CACHE_MAX_SIZE && !pageCssCache.has(cacheKey)) {
-    const firstKey = pageCssCache.keys().next().value as string | undefined;
-    if (firstKey) pageCssCache.delete(firstKey);
-  }
-  pageCssCache.set(cacheKey, css);
-}
-
-/** Get cached CSS for a page (if available) - sync for backward compatibility */
-function getCachedPageCss(cacheKey: string): string | undefined {
-  // Note: Can't use injected repo synchronously, falls back to internal cache
-  if (injectedCssCacheRepo) return undefined;
-  return pageCssCache.get(cacheKey);
-}
-
-/** Cache CSS for a page - async to support injected repo */
-async function cachePageCssAsync(cacheKey: string, css: string): Promise<void> {
-  if (injectedCssCacheRepo) {
-    await injectedCssCacheRepo.set(cacheKey, css);
-    return;
-  }
-  cachePageCssInternal(cacheKey, css);
-}
-
-/** Cache CSS for a page - sync for backward compatibility */
-function cachePageCss(cacheKey: string, css: string): void {
-  // Fire-and-forget if using injected repo
-  if (injectedCssCacheRepo) {
-    void cachePageCssAsync(cacheKey, css);
-    return;
-  }
-  cachePageCssInternal(cacheKey, css);
-}
-
-/** Timeout for module loading in resolvePageData (prevents hanging on slow transforms) */
-const MODULE_LOAD_TIMEOUT_MS = 10000;
-
-/** Timeout for data fetching (getStaticData, getServerData) */
-const DATA_FETCH_TIMEOUT_MS = 15_000;
-
-/** Timeout for SSR rendering stage */
-const SSR_RENDER_TIMEOUT_MS = 20_000;
-
-/** Check if a path segment is a hidden dot-directory (not . or ..) */
-function isHiddenSegment(segment: string): boolean {
-  return segment.startsWith(".") && segment !== "." && segment !== "..";
-}
-
-/** Check if a path contains dot-prefixed segments (e.g., .veryfront, .hidden) */
-function isDotPath(slug: string, filePath?: string): boolean {
-  const hasDotSegment = (path: string) => path.split("/").some(isHiddenSegment);
-  return hasDotSegment(slug) || (filePath ? hasDotSegment(filePath) : false);
-}
-
-/** Module to load for data fetching */
-interface ModuleToLoad {
-  type: "page" | "layout";
-  id: string;
-  path: string;
-}
-
-/** Result of loading a module */
-interface LoadedModule {
-  type: "page" | "layout";
-  id: string;
-  // deno-lint-ignore no-explicit-any
-  mod: any;
-}
-
-/** Empty layout result for dot-prefixed paths */
-const EMPTY_LAYOUT_RESULT = { layoutBundle: undefined, nestedLayouts: [] };
+// Re-export test helper for backward compatibility
+export { __injectCssCacheForTests } from "./css-cache.ts";
 
 export interface RenderPipelineConfig {
   pageResolver: PageResolver;
@@ -195,27 +107,6 @@ export class RenderPipeline {
 
   private loadModule(filePath: string): Promise<unknown> {
     return loadModule(filePath, this.moduleLoaderConfig);
-  }
-
-  private collectModulesToLoad(
-    pagePath: string,
-    isComponentPage: boolean,
-    isInPagesOrAppDir: boolean,
-    nestedLayouts: Array<{ kind: string; componentPath?: string }>,
-  ): ModuleToLoad[] {
-    const modules: ModuleToLoad[] = [];
-
-    if (isComponentPage && isInPagesOrAppDir) {
-      modules.push({ type: "page", id: pagePath, path: pagePath });
-    }
-
-    for (const layout of nestedLayouts) {
-      if (layout.kind === "tsx" && layout.componentPath) {
-        modules.push({ type: "layout", id: layout.componentPath, path: layout.componentPath });
-      }
-    }
-
-    return modules;
   }
 
   /**
@@ -279,12 +170,6 @@ export class RenderPipeline {
     }
 
     return loaded;
-  }
-
-  private hasDataFetchingFunction(mod: unknown): boolean {
-    if (!mod || typeof mod !== "object") return false;
-    const m = mod as Record<string, unknown>;
-    return typeof m.getServerData === "function" || typeof m.getStaticData === "function";
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
@@ -378,7 +263,7 @@ export class RenderPipeline {
                   url: options.url!,
                 };
 
-                const modulesToLoad = this.collectModulesToLoad(
+                const modulesToLoad = collectModulesToLoad(
                   pageInfo.entity.path,
                   isComponentPage,
                   isInPagesDir || isInAppDir,
@@ -398,7 +283,7 @@ export class RenderPipeline {
                   { "render.module_count": modulesToLoad.length },
                 );
 
-                const dataJobs = loadedModules.filter((m) => this.hasDataFetchingFunction(m.mod));
+                const dataJobs = loadedModules.filter((m) => hasDataFetchingFunction(m.mod));
                 if (dataJobs.length === 0) return;
 
                 const dataResults = await withSpan(
@@ -623,7 +508,7 @@ export class RenderPipeline {
         url: options.url,
       };
 
-      const modulesToLoad = this.collectModulesToLoad(
+      const modulesToLoad = collectModulesToLoad(
         pageInfo.entity.path,
         isComponentPage,
         isInPagesDir || isInAppDir,
@@ -644,7 +529,7 @@ export class RenderPipeline {
         );
 
         const dataJobs = loadedModules
-          .filter((r) => r.mod && this.hasDataFetchingFunction(r.mod))
+          .filter((r) => r.mod && hasDataFetchingFunction(r.mod))
           .map((r) => ({
             type: r.type,
             id: r.id,
