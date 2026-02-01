@@ -242,20 +242,35 @@ describe("Logger", () => {
     });
 
     it("enables debug logging when VERYFRONT_DEBUG=1", async () => {
-      const mod = await importFresh();
-      const { getDefaultLevel, LogLevel } = mod;
+      // Save and clear LOG_LEVEL to ensure test isolation from parallel tests
+      const prevLogLevel = getEnv("LOG_LEVEL");
+      const prevDebug = getEnv("VERYFRONT_DEBUG");
+      deleteEnv("LOG_LEVEL");
+      deleteEnv("VERYFRONT_DEBUG");
 
-      const defaultLevel = getDefaultLevel(undefined, undefined);
-      assertEquals(defaultLevel, LogLevel.INFO, "Default level without env vars should be INFO");
+      try {
+        const mod = await importFresh();
+        const { getDefaultLevel, LogLevel } = mod;
 
-      const debugLevel = getDefaultLevel(undefined, "1");
-      assertEquals(debugLevel, LogLevel.DEBUG, "Level with VERYFRONT_DEBUG=1 should be DEBUG");
+        const defaultLevel = getDefaultLevel(undefined, undefined);
+        assertEquals(defaultLevel, LogLevel.INFO, "Default level without env vars should be INFO");
 
-      const debugLevelTrue = getDefaultLevel(undefined, "true");
-      assertEquals(debugLevelTrue, LogLevel.DEBUG, "Level with VERYFRONT_DEBUG=true should be DEBUG");
+        const debugLevel = getDefaultLevel(undefined, "1");
+        assertEquals(debugLevel, LogLevel.DEBUG, "Level with VERYFRONT_DEBUG=1 should be DEBUG");
 
-      const explicitLevel = getDefaultLevel("ERROR", "1");
-      assertEquals(explicitLevel, LogLevel.ERROR, "LOG_LEVEL should take precedence");
+        const debugLevelTrue = getDefaultLevel(undefined, "true");
+        assertEquals(
+          debugLevelTrue,
+          LogLevel.DEBUG,
+          "Level with VERYFRONT_DEBUG=true should be DEBUG",
+        );
+
+        const explicitLevel = getDefaultLevel("ERROR", "1");
+        assertEquals(explicitLevel, LogLevel.ERROR, "LOG_LEVEL should take precedence");
+      } finally {
+        restoreEnv("LOG_LEVEL", prevLogLevel);
+        restoreEnv("VERYFRONT_DEBUG", prevDebug);
+      }
     });
   });
 

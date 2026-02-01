@@ -34,6 +34,57 @@ async function captureConsoleLog(run: () => Promise<void>): Promise<string> {
   return output.join("\n");
 }
 
+/**
+ * Extract JSON object from captured output that may contain log messages.
+ * Looks for valid JSON containing "pages" and "apis" keys.
+ */
+function extractJson(text: string): string {
+  // Look for JSON that starts with { and contains "pages"
+  const lines = text.split("\n");
+  let jsonStart = -1;
+  let braceCount = 0;
+  let jsonContent = "";
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (jsonStart === -1) {
+      // Look for the start of the JSON object
+      if (line.trim() === "{") {
+        jsonStart = i;
+        jsonContent = line;
+        braceCount = 1;
+        continue;
+      }
+    } else {
+      jsonContent += "\n" + line;
+      // Count braces
+      for (const char of line) {
+        if (char === "{") braceCount++;
+        if (char === "}") braceCount--;
+      }
+      if (braceCount === 0) {
+        // Found complete JSON object
+        try {
+          const parsed = JSON.parse(jsonContent);
+          // Verify it's the routes output
+          if ("pages" in parsed && "apis" in parsed) {
+            return jsonContent;
+          }
+        } catch {
+          // Not valid JSON, continue searching
+        }
+        // Reset and continue looking
+        jsonStart = -1;
+        braceCount = 0;
+        jsonContent = "";
+      }
+    }
+  }
+
+  throw new Error("No routes JSON found in output: " + text.slice(0, 500));
+}
+
 describe("CLI routes command", () => {
   it("prints pages and api routes", async () => {
     await withTestContext("routes-print", async (context: TestContext) => {
@@ -59,7 +110,9 @@ describe("CLI routes command", () => {
         await routesCommand(context.projectDir, { json: true });
       });
 
-      const parsed = JSON.parse(text) as {
+      // Extract JSON from output (may contain log messages before the JSON)
+      const jsonText = extractJson(text);
+      const parsed = JSON.parse(jsonText) as {
         pages: Array<{ pattern: string; file: string }>;
         apis: string[];
       };

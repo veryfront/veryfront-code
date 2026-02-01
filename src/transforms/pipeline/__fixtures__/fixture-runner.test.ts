@@ -56,12 +56,8 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
 
       assertStringIncludes(result.code, "jsx");
 
-      if (isDeno) {
-        // SSR uses esm.sh URLs consistently (no npm: specifiers)
-        assertStringIncludes(result.code, "esm.sh/react@");
-      } else {
-        assertStringIncludes(result.code, "file://");
-      }
+      // SSR on all platforms uses cached file:// paths for HTTP bundles
+      assertStringIncludes(result.code, "file://");
 
       assertEquals(result.code.includes('from "react"'), false);
     });
@@ -81,18 +77,21 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
     });
 
     // Skip this test on Node.js - SSR module resolution differs by runtime
-    (isDeno ? it : it.skip)("resolves React to esm.sh URLs for SSR (Deno only)", async () => {
-      const input = await readFixture("react-query", "input.tsx");
+    (isDeno ? it : it.skip)(
+      "resolves React to cached file:// URLs for SSR (Deno only)",
+      async () => {
+        const input = await readFixture("react-query", "input.tsx");
 
-      const result = await runPipeline(input, "/project/components/UserProfile.tsx", "/project", {
-        ...TEST_OPTIONS,
-        ssr: true,
-      });
+        const result = await runPipeline(input, "/project/components/UserProfile.tsx", "/project", {
+          ...TEST_OPTIONS,
+          ssr: true,
+        });
 
-      // SSR uses esm.sh URLs consistently
-      assertStringIncludes(result.code, "esm.sh/react@");
-      assertStringIncludes(result.code, "jsx");
-    });
+        // SSR uses cached file:// paths for HTTP bundles
+        assertStringIncludes(result.code, "file://");
+        assertStringIncludes(result.code, "jsx");
+      },
+    );
   });
 
   describe("relative imports", () => {
