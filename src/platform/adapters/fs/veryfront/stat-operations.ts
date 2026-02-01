@@ -84,6 +84,58 @@ export class StatOperations {
           };
         }
 
+        // File not in index - try API pattern search as fallback for project files
+        // Skip for framework paths (node_modules, _veryfront, etc.)
+        if (!isFrameworkSourcePath(normalizedPath) && Date.now() >= this.apiSearchDisabledUntil) {
+          const hasKnownExt = EXTENSION_PRIORITY.some((ext) => normalizedPath.endsWith(ext));
+          if (hasKnownExt) {
+            logger.debug("[StatOperations] stat file not in index, trying API search", {
+              normalizedPath,
+              indexSize: fileIdx.size,
+            });
+
+            try {
+              // Search for the exact file path
+              const matches = await this.client.searchFiles(normalizedPath);
+              this.apiSearchFailures = 0;
+
+              const exactMatch = matches.find((m) => m.path === normalizedPath);
+              if (exactMatch) {
+                logger.debug("[StatOperations] stat found via API search", { normalizedPath });
+                // Add to index for future lookups
+                fileIdx.set(normalizedPath, {
+                  id: exactMatch.id,
+                  path: normalizedPath,
+                  content: undefined,
+                  type: "file",
+                  size: 0,
+                  updated_at: new Date().toISOString(),
+                });
+                return {
+                  size: 0,
+                  mtime: new Date(),
+                  isDirectory: false,
+                  isFile: true,
+                  isSymlink: false,
+                };
+              }
+            } catch (error) {
+              this.apiSearchFailures++;
+              if (this.apiSearchFailures >= 5) {
+                this.apiSearchDisabledUntil = Date.now() + 30000;
+                this.apiSearchFailures = 0;
+                logger.warn("[StatOperations] stat API search circuit breaker tripped", {
+                  failures: 5,
+                });
+              }
+              logger.debug("[StatOperations] stat API search failed", {
+                normalizedPath,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+        }
+
         logger.debug("[StatOperations] stat file not found (not in index)", {
           normalizedPath,
           indexSize: fileIdx.size,
@@ -369,17 +421,10 @@ export class StatOperations {
       return null;
     }
 
-    if (hasExtension && this.contextProvider?.getFileList) {
-      const totalMs = Math.round(performance.now() - resolveStart);
-      logger.debug("[StatOperations] resolveFile not found (complete index, specific extension)", {
-        normalizedPath,
-        pathWithoutExt,
-        indexSize: fileIdx.size,
-        indexMs,
-        totalMs,
-      });
-      return null;
-    }
+    // NOTE: Removed optimization that skipped API search for paths with extensions.
+    // This was causing layout files and other project files to not be found when
+    // they were missing from the file index (due to cache issues, incomplete fetch, etc.).
+    // The API pattern search is the fallback to ensure files can still be found.
 
     if (Date.now() < this.apiSearchDisabledUntil) {
       logger.warn("[StatOperations] API search circuit breaker open, skipping", { normalizedPath });
