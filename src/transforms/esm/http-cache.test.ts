@@ -14,7 +14,7 @@ function extractBundleHashes(code: string): string[] {
   let match: RegExpExecArray | null;
 
   while ((match = BUNDLE_RE.exec(code)) !== null) {
-    hashes.push(match[2]);
+    if (match[2]) hashes.push(match[2]);
   }
 
   BUNDLE_RE.lastIndex = 0;

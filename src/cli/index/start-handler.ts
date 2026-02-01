@@ -101,10 +101,10 @@ async function trySetupProxy(localProjects: Map<string, string>): Promise<ProxyS
 
     const proxyConfig = {
       apiBaseUrl: getEnv("VERYFRONT_API_BASE_URL") ?? "http://api.lvh.me:4000",
-      clientId: getEnv("OAUTH_CLIENT_ID") ?? "",
-      clientSecret: getEnv("OAUTH_CLIENT_SECRET") ?? "",
-      previewClientId: getEnv("OAUTH_PREVIEW_CLIENT_ID") ?? "",
-      previewClientSecret: getEnv("OAUTH_PREVIEW_CLIENT_SECRET") ?? "",
+      clientId: getEnv("API_CLIENT_ID") ?? "",
+      clientSecret: getEnv("API_CLIENT_SECRET") ?? "",
+      previewClientId: getEnv("API_CLIENT_ID") ?? "",
+      previewClientSecret: getEnv("API_CLIENT_SECRET") ?? "",
       apiToken: getEnv("VERYFRONT_API_TOKEN") ?? "",
       localProjects: Object.fromEntries(localProjects),
     };

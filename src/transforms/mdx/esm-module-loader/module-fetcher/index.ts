@@ -20,7 +20,12 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
+import {
+  cacheHttpImportsToLocal,
+  detokenizeCachePaths,
+  ensureHttpBundlesExist,
+  tokenizeCachePaths,
+} from "../../../esm/http-cache.ts";
 import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
@@ -749,7 +754,9 @@ async function doFetchAndCacheModule(
       try {
         const cached = await distributedCache.get(transformCacheKey);
         if (cached) {
-          moduleCode = cached;
+          // Detokenize HTTP bundle paths for local environment
+          const httpBundleCacheDir = getHttpBundleCacheDir();
+          moduleCode = detokenizeCachePaths(cached, httpBundleCacheDir);
           log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed transform cache HIT`, {
             projectSlug,
             normalizedPath,
@@ -771,7 +778,8 @@ async function doFetchAndCacheModule(
               moduleCode = null;
             }
           } else {
-            const bundlePaths = extractHttpBundlePaths(cached);
+            // Use detokenized code for bundle path extraction
+            const bundlePaths = extractHttpBundlePaths(moduleCode);
             if (bundlePaths.length > 0) {
               const cacheDir = getHttpBundleCacheDir();
               const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
@@ -785,7 +793,8 @@ async function doFetchAndCacheModule(
             }
           }
 
-          if (moduleCode && await hasIncompatibleFrameworkPaths(cached, log)) {
+          // Use detokenized code for framework path checks
+          if (moduleCode && await hasIncompatibleFrameworkPaths(moduleCode, log)) {
             log.warn(`${LOG_PREFIX_MDX_LOADER} Cached code has incompatible framework paths`, {
               normalizedPath,
               frameworkRoot: FRAMEWORK_ROOT,
@@ -796,7 +805,7 @@ async function doFetchAndCacheModule(
           // CRITICAL: Check for unresolved /_vf_modules/ imports.
           // Stale cache entries may have unresolved paths from before this fix.
           if (moduleCode) {
-            const unresolved = hasUnresolvedImports(cached);
+            const unresolved = hasUnresolvedImports(moduleCode);
             if (unresolved.count > 0) {
               log.warn(
                 `${LOG_PREFIX_MDX_LOADER} Cached code has ${unresolved.count} unresolved imports, invalidating`,
@@ -810,7 +819,7 @@ async function doFetchAndCacheModule(
           // Distributed cache may return code with file:// paths from other pods/runs
           // that don't exist on this machine.
           if (moduleCode) {
-            const missingDeps = await findMissingFileDependenciesInCode(cached, log);
+            const missingDeps = await findMissingFileDependenciesInCode(moduleCode, log);
             if (missingDeps.length > 0) {
               log.warn(
                 `${LOG_PREFIX_MDX_LOADER} Cached code has ${missingDeps.length} missing file dependencies, invalidating`,
@@ -958,9 +967,13 @@ async function doFetchAndCacheModule(
     // Write to distributed cache AFTER nested imports are resolved.
     // This ensures other pods get fully-resolved code without /_vf_modules/ paths.
     if (needsDistributedCacheWrite && distributedCache) {
+      // Tokenize HTTP bundle paths for cross-environment portability
+      const httpBundleCacheDir = getHttpBundleCacheDir();
+      const portableCode = tokenizeCachePaths(moduleCode, httpBundleCacheDir);
+
       // Store transformed code in distributed cache
       distributedCache
-        .set(transformCacheKey, moduleCode, TRANSFORM_CACHE_TTL_SECONDS)
+        .set(transformCacheKey, portableCode, TRANSFORM_CACHE_TTL_SECONDS)
         .catch((error) => {
           log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache set failed`, {
             normalizedPath,

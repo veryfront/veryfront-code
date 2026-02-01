@@ -41,6 +41,36 @@ import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 const BATCH_FETCH_CHUNK_SIZE = 100;
 
 /**
+ * Portable cache directory token for cross-environment compatibility.
+ *
+ * When code is stored in the distributed cache, absolute file:// paths to HTTP bundles
+ * are replaced with this token. When code is loaded from cache, the token is replaced
+ * with the local cache directory. This allows cached transforms to work across different
+ * developer machines and environments (e.g., /Users/alice/.cache vs /Users/bob/.cache).
+ */
+export const CACHE_DIR_TOKEN = "__VF_CACHE_DIR__";
+
+/**
+ * Replace local cache directory with portable token for distributed cache storage.
+ * This makes cached code portable across different environments.
+ */
+export function tokenizeCachePaths(code: string, localCacheDir: string): string {
+  // Normalize the cache dir (remove trailing slash if present)
+  const normalizedDir = localCacheDir.endsWith("/") ? localCacheDir.slice(0, -1) : localCacheDir;
+  return code.replaceAll(`file://${normalizedDir}`, `file://${CACHE_DIR_TOKEN}`);
+}
+
+/**
+ * Replace portable token with local cache directory when loading from distributed cache.
+ * This resolves the portable paths to actual local file paths.
+ */
+export function detokenizeCachePaths(code: string, localCacheDir: string): string {
+  // Normalize the cache dir (remove trailing slash if present)
+  const normalizedDir = localCacheDir.endsWith("/") ? localCacheDir.slice(0, -1) : localCacheDir;
+  return code.replaceAll(`file://${CACHE_DIR_TOKEN}`, `file://${normalizedDir}`);
+}
+
+/**
  * Decode gzip-compressed cache content.
  * The cache may store content with a "gz:" or "gzip:" prefix followed by base64-encoded gzip data.
  * Returns the decompressed string, or null if decompression fails.
@@ -566,9 +596,19 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       if (needsRefresh) {
         try {
           const code = await fs.readTextFile(cachePath);
+          // Tokenize cache paths for cross-environment portability
+          const portableCode = tokenizeCachePaths(code, cacheDir);
           await Promise.all([
-            distributed.set(distributedKey("url", hash), code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
-            distributed.set(distributedKey("code", hash), code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+            distributed.set(
+              distributedKey("url", hash),
+              portableCode,
+              HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+            ),
+            distributed.set(
+              distributedKey("code", hash),
+              portableCode,
+              HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+            ),
             distributed.set(
               distributedKey("hash", hash),
               normalizedUrl,
@@ -623,28 +663,25 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       try {
         const rawCachedCode = await distributed.get(distributedKey("url", hash));
         if (rawCachedCode) {
-          const [cachedCode, wasGzipped] = maybeDecodeGzip(rawCachedCode);
+          const [decodedCode, wasGzipped] = maybeDecodeGzip(rawCachedCode);
 
-          if (cachedCode.startsWith("gz:") || cachedCode.startsWith("gzip:")) {
+          if (decodedCode.startsWith("gz:") || decodedCode.startsWith("gzip:")) {
             logger.warn("[HTTP-CACHE] Failed to decode gzip content, will re-fetch", {
               url: normalizedUrl,
               hash,
-              preview: cachedCode.substring(0, 50),
+              preview: decodedCode.substring(0, 50),
             });
-          } else if (hasIncompatibleFilePaths(cachedCode, cacheDir)) {
-            logger.warn("[HTTP-CACHE] Cached code has incompatible file paths, will re-fetch", {
-              url: normalizedUrl,
-              hash,
-              localCacheDir: cacheDir,
-            });
-          } else if (looksLikeHtmlNotJs(cachedCode)) {
+          } else if (looksLikeHtmlNotJs(decodedCode)) {
             logger.warn("[HTTP-CACHE] Cached content is HTML not JavaScript, will re-fetch", {
               url: normalizedUrl,
               hash,
-              preview: cachedCode.slice(0, 100),
+              preview: decodedCode.slice(0, 100),
             });
           } else {
-            const depPattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+            // Detokenize cache paths for local environment
+            const cachedCode = detokenizeCachePaths(decodedCode, cacheDir);
+
+            const depPattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-(\d+)\.mjs)/gi;
             const deps: Array<{ path: string; hash: string }> = [];
             let depMatch: RegExpExecArray | null;
             while ((depMatch = depPattern.exec(cachedCode)) !== null) {
@@ -749,9 +786,19 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 
     if (distributed) {
       try {
+        // Tokenize cache paths for cross-environment portability
+        const portableCode = tokenizeCachePaths(code, cacheDir);
         await Promise.all([
-          distributed.set(distributedKey("url", hash), code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
-          distributed.set(distributedKey("code", hash), code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+          distributed.set(
+            distributedKey("url", hash),
+            portableCode,
+            HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+          ),
+          distributed.set(
+            distributedKey("code", hash),
+            portableCode,
+            HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+          ),
           distributed.set(
             distributedKey("hash", hash),
             normalizedUrl,
