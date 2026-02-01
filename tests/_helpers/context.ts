@@ -34,6 +34,7 @@ import { createDevServer } from "../../src/server/dev-server.ts";
 import { startProductionServer } from "../../src/server/production-server.ts";
 import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";
 import { runWithCacheDir } from "../../src/utils/cache-dir.ts";
+import { resetAllTestState } from "../../src/testing/isolation.ts";
 import type { TestServer } from "./server.ts";
 import { getFreePort } from "./utils.ts";
 
@@ -514,6 +515,9 @@ export async function withTestContext<T>(
 
   try {
     return await runWithCacheDir(context.testCacheDir, async () => {
+      // Reset ALL state before test to ensure clean isolation
+      await resetAllTestState();
+
       // Clear MDX renderer cache at the START of each test to ensure
       // the singleton picks up this test's cache dir (via AsyncLocalStorage),
       // not a stale cache dir from a previous test
@@ -524,27 +528,54 @@ export async function withTestContext<T>(
         // May fail if module not loaded yet, which is fine
       }
 
-      // Reset React cache to prevent cross-test React instance conflicts
-      try {
-        const { resetReactCache } = await import(
-          "../../src/react/compat/ssr-adapter/server-loader.ts"
-        );
-        resetReactCache();
-      } catch {
-        // May fail if module not loaded yet, which is fine
-      }
-
-      // Reset compat hooks context to prevent React instance conflicts
-      try {
-        const { resetCompatHooksContext } = await import("../../src/react/compat/hooks-adapter.ts");
-        resetCompatHooksContext();
-      } catch {
-        // May fail if module not loaded yet, which is fine
-      }
-
       return await fn(context);
     });
   } finally {
+    // Full cleanup after test
+    await resetAllTestState();
     await context.cleanup();
+  }
+}
+
+/**
+ * Run a function with isolated environment variables.
+ * Useful for simple tests that only need env isolation without full TestContext.
+ *
+ * @param envOverrides - Environment variables to set (undefined to delete)
+ * @param fn - Function to execute with isolated env
+ */
+export async function withIsolatedEnv<T>(
+  envOverrides: Record<string, string | undefined>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const saved = new Map<string, string | undefined>();
+
+  // Save and apply overrides
+  for (const key of Object.keys(envOverrides)) {
+    saved.set(key, getEnv(key));
+    const value = envOverrides[key];
+    if (value === undefined) {
+      deleteEnv(key);
+    } else {
+      setEnv(key, value);
+    }
+  }
+
+  // Reset all test state to pick up new env values
+  await resetAllTestState();
+
+  try {
+    return await fn();
+  } finally {
+    // Restore original env values
+    for (const [key, value] of saved) {
+      if (value === undefined) {
+        deleteEnv(key);
+      } else {
+        setEnv(key, value);
+      }
+    }
+    // Reset state again to clear any cached values from test
+    await resetAllTestState();
   }
 }

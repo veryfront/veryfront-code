@@ -20,7 +20,7 @@
  */
 
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { load as loadEnv } from "#veryfront/platform/compat/std/dotenv.ts";
@@ -32,7 +32,9 @@ try {
   // .env file doesn't exist - that's fine
 }
 
-const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? "/tmp/veryfront-e2e-bin";
+// Use a unique binary path per test run to prevent race conditions when multiple
+// test suites run concurrently (e.g., deno task test picking up this file)
+const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? `/tmp/veryfront-e2e-bin-${Deno.pid}`;
 const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
 /** Get an available port using OS-assigned port 0. */
 async function getAvailablePort(): Promise<number> {
@@ -306,6 +308,16 @@ async function withServer(
 describe("Compiled Binary E2E", { sanitizeOps: false, sanitizeResources: false }, () => {
   beforeAll(async () => {
     await ensureBinaryCompiled();
+  });
+
+  afterAll(async () => {
+    // Clean up the test binary after all tests complete
+    try {
+      await Deno.remove(BINARY_PATH);
+      await Deno.remove(BINARY_HASH_PATH);
+    } catch {
+      // Ignore errors - binary may not exist or may already be cleaned up
+    }
   });
 
   it("should render page with veryfront/head import correctly", async () => {

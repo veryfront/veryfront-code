@@ -34,7 +34,7 @@ export {
 } from "#veryfront/testing/bdd.ts";
 export type { BddTestContext, TestOptions } from "#veryfront/testing/bdd.ts";
 
-export { registerTestCleanup } from "./isolation.ts";
+export { registerTestCleanup, resetAllTestState } from "./isolation.ts";
 
 export {
   chmod,

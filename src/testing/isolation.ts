@@ -478,37 +478,53 @@ export function registerTestCleanup(task: CleanupTask): void {
   cleanupTasks.add(task);
 }
 
-async function runCleanupTasks(): Promise<void> {
-  const tasks = Array.from(cleanupTasks);
-  cleanupTasks.clear();
-
-  for (const task of tasks) {
-    try {
-      await task();
-    } catch {
-      // Best-effort cleanup; ignore individual failures.
-    }
-  }
-}
-
-async function runDefaultCleanup(): Promise<void> {
+/**
+ * Comprehensive reset of ALL test state across the application.
+ *
+ * This function clears all known caches and singletons that can cause
+ * test isolation issues when running tests in parallel. It should be
+ * called at the start and end of each test to ensure clean state.
+ *
+ * Includes:
+ * - Config state (_runtimeEnv, runtimeConfig, configCache)
+ * - Layout discovery cache
+ * - SSR module caches
+ * - React cache and compat hooks
+ * - Snippet cache
+ * - API handler state
+ * - Reload notifier
+ */
+export async function resetAllTestState(): Promise<void> {
   const cleanups: Array<() => Promise<void> | void> = [
+    // Config state - CRITICAL for test isolation
     async () => {
       const { clearConfigCache } = await import("../config/loader.ts");
       clearConfigCache();
     },
     async () => {
-      const { resetApiHandler } = await import("../server/handlers/request/api/index.ts");
-      await resetApiHandler();
+      const { _resetRuntimeEnv } = await import("../config/runtime-env.ts");
+      _resetRuntimeEnv();
     },
+    async () => {
+      const { _resetRuntimeConfig } = await import("../config/runtime-config.ts");
+      _resetRuntimeConfig();
+    },
+
+    // Layout discovery cache - prevents stale layouts across tests
+    async () => {
+      const { clearLayoutDiscoveryCache } = await import(
+        "../rendering/layouts/utils/discovery.ts"
+      );
+      clearLayoutDiscoveryCache();
+    },
+
+    // SSR module caches
     async () => {
       const { clearSSRModuleCache } = await import("../modules/react-loader/index.ts");
       clearSSRModuleCache();
     },
-    async () => {
-      const { clearSnippetCache } = await import("../rendering/snippet-renderer.ts");
-      clearSnippetCache();
-    },
+
+    // React cache and compat hooks
     async () => {
       const { resetReactCache } = await import("../react/compat/ssr-adapter/server-loader.ts");
       resetReactCache();
@@ -517,6 +533,20 @@ async function runDefaultCleanup(): Promise<void> {
       const { resetCompatHooksContext } = await import("../react/compat/hooks-adapter.ts");
       resetCompatHooksContext();
     },
+
+    // Snippet cache
+    async () => {
+      const { clearSnippetCache } = await import("../rendering/snippet-renderer.ts");
+      clearSnippetCache();
+    },
+
+    // API handler state
+    async () => {
+      const { resetApiHandler } = await import("../server/handlers/request/api/index.ts");
+      await resetApiHandler();
+    },
+
+    // Reload notifier
     async () => {
       const { ReloadNotifier } = await import("../server/reload-notifier.ts");
       ReloadNotifier.reset();
@@ -531,14 +561,33 @@ async function runDefaultCleanup(): Promise<void> {
     }
   }
 
-  if (!isBun) return;
-
-  try {
-    const { cleanupBundler } = await import("../rendering/cleanup.ts");
-    await cleanupBundler();
-  } catch {
-    // Best-effort cleanup; ignore individual failures.
+  // Bun-specific cleanup
+  if (isBun) {
+    try {
+      const { cleanupBundler } = await import("../rendering/cleanup.ts");
+      await cleanupBundler();
+    } catch {
+      // Best-effort cleanup; ignore individual failures.
+    }
   }
+}
+
+async function runCleanupTasks(): Promise<void> {
+  const tasks = Array.from(cleanupTasks);
+  cleanupTasks.clear();
+
+  for (const task of tasks) {
+    try {
+      await task();
+    } catch {
+      // Best-effort cleanup; ignore individual failures.
+    }
+  }
+}
+
+async function runDefaultCleanup(): Promise<void> {
+  // Delegate to resetAllTestState for comprehensive cleanup
+  await resetAllTestState();
 }
 
 async function runSSRTestCleanup(): Promise<void> {
