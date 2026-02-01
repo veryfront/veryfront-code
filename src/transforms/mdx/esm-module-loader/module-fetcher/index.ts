@@ -83,13 +83,16 @@ function getLog(context?: { logger?: Logger }): Logger {
 /**
  * Build cache key for transformed module.
  * Includes content hash so cache invalidates when source changes.
+ * Always uses SSR mode suffix since this module loader is for server-side MDX rendering.
+ * CRITICAL: The :ssr suffix is required to avoid cache collisions with browser-mode transforms
+ * that use relative paths (../lib/utils.js) instead of absolute paths (/_vf_modules/lib/utils.js).
  */
 function getTransformCacheKey(
   projectId: string,
   normalizedPath: string,
   contentHash: string,
 ): string {
-  return `v${VERSION}:${projectId}:${normalizedPath}:${contentHash}`;
+  return `v${VERSION}:${projectId}:${normalizedPath}:${contentHash}:ssr`;
 }
 
 /**
