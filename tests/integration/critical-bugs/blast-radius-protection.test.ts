@@ -13,6 +13,10 @@
  *
  * The test intentionally creates failing projects and verifies that healthy
  * projects continue to function normally.
+ *
+ * Note: All tests use a single test context with multiple project directories to
+ * simulate production behavior where projects share the same HTTP bundle cache.
+ * This prevents race conditions from nested AsyncLocalStorage contexts.
  */
 
 import { assert, assertStringIncludes } from "#veryfront/testing/assert";
@@ -50,171 +54,191 @@ describe(
        * the shared esbuild instance or bundler cache, causing other projects to fail.
        */
       it("syntax error in Project A does not affect Project B rendering", async () => {
-        await withTestContext("blast-syntax-healthy", async (healthyContext) => {
-          await withTestContext("blast-syntax-broken", async (brokenContext) => {
-            await mkdir(join(healthyContext.projectDir, "app"), { recursive: true });
-            await writeTextFile(
-              join(healthyContext.projectDir, "app", "layout.tsx"),
-              `export default function Layout({ children }) {
+        await withTestContext("blast-syntax-multi", async (context) => {
+          const healthyDir = join(context.projectDir, "projects", "healthy");
+          const brokenDir = join(context.projectDir, "projects", "broken");
+
+          // Create healthy project files
+          await mkdir(join(healthyDir, "app"), { recursive: true });
+          await writeTextFile(
+            join(healthyDir, "veryfront.config.js"),
+            `export default { title: "Healthy" };`,
+          );
+          await writeTextFile(
+            join(healthyDir, "app", "layout.tsx"),
+            `export default function Layout({ children }) {
               return <html><body className="healthy">{children}</body></html>;
             }`,
-            );
-            await writeTextFile(
-              join(healthyContext.projectDir, "app", "page.tsx"),
-              `export default function Page() { return <div>Healthy Project</div>; }`,
-            );
+          );
+          await writeTextFile(
+            join(healthyDir, "app", "page.tsx"),
+            `export default function Page() { return <div>Healthy Project</div>; }`,
+          );
 
-            await mkdir(join(brokenContext.projectDir, "app"), { recursive: true });
-            await writeTextFile(
-              join(brokenContext.projectDir, "app", "layout.tsx"),
-              `export default function Layout({ children }) {
+          // Create broken project files
+          await mkdir(join(brokenDir, "app"), { recursive: true });
+          await writeTextFile(
+            join(brokenDir, "veryfront.config.js"),
+            `export default { title: "Broken" };`,
+          );
+          await writeTextFile(
+            join(brokenDir, "app", "layout.tsx"),
+            `export default function Layout({ children }) {
               return <html><body className="broken">{children}</body></html>;
             }`,
-            );
-            await writeTextFile(
-              join(brokenContext.projectDir, "app", "page.tsx"),
-              // INTENTIONAL SYNTAX ERROR: Missing closing parenthesis and brace
-              `export default function Page() {
+          );
+          await writeTextFile(
+            join(brokenDir, "app", "page.tsx"),
+            // INTENTIONAL SYNTAX ERROR: Missing closing parenthesis and brace
+            `export default function Page() {
               const broken = {
                 unclosed: "object"
               // Missing closing brace and return
             `,
+          );
+
+          const { createRenderer } = await import("../../../src/rendering/index.ts");
+          const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
+
+          let healthyRenderer: unknown;
+          let brokenRenderer: unknown;
+
+          try {
+            healthyRenderer = await createRenderer({
+              projectDir: healthyDir,
+              mode: "development",
+            });
+
+            const resultBefore = await (healthyRenderer as any).renderPage("/");
+            assertStringIncludes(
+              resultBefore.html,
+              "Healthy Project",
+              "Healthy project should render before broken project is loaded",
             );
 
-            const { createRenderer } = await import("../../../src/rendering/index.ts");
-            const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
-
-            let healthyRenderer: unknown;
-            let brokenRenderer: unknown;
-
             try {
-              healthyRenderer = await createRenderer({
-                projectDir: healthyContext.projectDir,
+              brokenRenderer = await createRenderer({
+                projectDir: brokenDir,
                 mode: "development",
               });
+              await (brokenRenderer as any).renderPage("/");
+            } catch {
+              // Expected - the broken project should fail
+            }
 
-              const resultBefore = await (healthyRenderer as any).renderPage("/");
-              assertStringIncludes(
-                resultBefore.html,
-                "Healthy Project",
-                "Healthy project should render before broken project is loaded",
-              );
+            const resultAfter = await (healthyRenderer as any).renderPage("/");
+            assertStringIncludes(
+              resultAfter.html,
+              "Healthy Project",
+              "Healthy project must still render after broken project fails",
+            );
+            assertStringIncludes(
+              resultAfter.html,
+              'class="healthy"',
+              "Healthy project layout must be intact",
+            );
 
+            if (brokenRenderer) {
               try {
-                brokenRenderer = await createRenderer({
-                  projectDir: brokenContext.projectDir,
-                  mode: "development",
-                });
                 await (brokenRenderer as any).renderPage("/");
               } catch {
-                // Expected - the broken project should fail
+                // Expected - broken project should fail
               }
-
-              const resultAfter = await (healthyRenderer as any).renderPage("/");
-              assertStringIncludes(
-                resultAfter.html,
-                "Healthy Project",
-                "Healthy project must still render after broken project fails",
-              );
-              assertStringIncludes(
-                resultAfter.html,
-                'class="healthy"',
-                "Healthy project layout must be intact",
-              );
-
-              if (brokenRenderer) {
-                try {
-                  await (brokenRenderer as any).renderPage("/");
-                } catch {
-                  // Expected - broken project should fail
-                }
-              }
-
-              await clearRendererState(healthyRenderer);
-              await clearRendererState(brokenRenderer);
-            } finally {
-              await cleanupBundler();
             }
-          });
+
+            await clearRendererState(healthyRenderer);
+            await clearRendererState(brokenRenderer);
+          } finally {
+            await cleanupBundler();
+          }
         });
       });
 
       it("runtime error in Project A does not crash Project B", async () => {
-        await withTestContext("blast-runtime-healthy", async (healthyContext) => {
-          await withTestContext("blast-runtime-broken", async (brokenContext) => {
-            await mkdir(join(healthyContext.projectDir, "app"), { recursive: true });
-            await writeTextFile(
-              join(healthyContext.projectDir, "app", "layout.tsx"),
-              `export default function Layout({ children }) {
-              return <html><body>{children}</body></html>;
-            }`,
-            );
-            await writeTextFile(
-              join(healthyContext.projectDir, "app", "page.tsx"),
-              `export default function Page() { return <div id="healthy-marker">Healthy</div>; }`,
-            );
+        await withTestContext("blast-runtime-multi", async (context) => {
+          const healthyDir = join(context.projectDir, "projects", "healthy");
+          const brokenDir = join(context.projectDir, "projects", "broken");
 
-            await mkdir(join(brokenContext.projectDir, "app"), { recursive: true });
-            await writeTextFile(
-              join(brokenContext.projectDir, "app", "layout.tsx"),
-              `export default function Layout({ children }) {
+          await mkdir(join(healthyDir, "app"), { recursive: true });
+          await writeTextFile(
+            join(healthyDir, "veryfront.config.js"),
+            `export default { title: "Healthy" };`,
+          );
+          await writeTextFile(
+            join(healthyDir, "app", "layout.tsx"),
+            `export default function Layout({ children }) {
               return <html><body>{children}</body></html>;
             }`,
-            );
-            await writeTextFile(
-              join(brokenContext.projectDir, "app", "page.tsx"),
-              // INTENTIONAL RUNTIME ERROR: Calling undefined
-              `export default function Page() {
+          );
+          await writeTextFile(
+            join(healthyDir, "app", "page.tsx"),
+            `export default function Page() { return <div id="healthy-marker">Healthy</div>; }`,
+          );
+
+          await mkdir(join(brokenDir, "app"), { recursive: true });
+          await writeTextFile(
+            join(brokenDir, "veryfront.config.js"),
+            `export default { title: "Broken" };`,
+          );
+          await writeTextFile(
+            join(brokenDir, "app", "layout.tsx"),
+            `export default function Layout({ children }) {
+              return <html><body>{children}</body></html>;
+            }`,
+          );
+          await writeTextFile(
+            join(brokenDir, "app", "page.tsx"),
+            // INTENTIONAL RUNTIME ERROR: Calling undefined
+            `export default function Page() {
               const obj = { nested: { value: null } };
               // This will throw "Cannot read property 'call' of undefined" at render time
               return <div>{obj.nested.value.nonExistent.call()}</div>;
             }`,
-            );
+          );
 
-            const { createRenderer } = await import("../../../src/rendering/index.ts");
-            const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
+          const { createRenderer } = await import("../../../src/rendering/index.ts");
+          const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
 
-            let healthyRenderer: unknown;
-            let brokenRenderer: unknown;
+          let healthyRenderer: unknown;
+          let brokenRenderer: unknown;
+
+          try {
+            healthyRenderer = await createRenderer({
+              projectDir: healthyDir,
+              mode: "development",
+            });
+
+            brokenRenderer = await createRenderer({
+              projectDir: brokenDir,
+              mode: "development",
+            });
+
+            const result1 = await (healthyRenderer as any).renderPage("/");
+            assertStringIncludes(result1.html, "healthy-marker", "Initial healthy render should work");
 
             try {
-              healthyRenderer = await createRenderer({
-                projectDir: healthyContext.projectDir,
-                mode: "development",
-              });
-
-              brokenRenderer = await createRenderer({
-                projectDir: brokenContext.projectDir,
-                mode: "development",
-              });
-
-              const result1 = await (healthyRenderer as any).renderPage("/");
-              assertStringIncludes(result1.html, "healthy-marker", "Initial healthy render should work");
-
-              try {
-                await (brokenRenderer as any).renderPage("/");
-              } catch {
-                // Expected
-              }
-
-              const result2 = await (healthyRenderer as any).renderPage("/");
-              assertStringIncludes(
-                result2.html,
-                "healthy-marker",
-                "Healthy render must work after broken project's runtime error",
-              );
-
-              for (let i = 0; i < 5; i++) {
-                const result = await (healthyRenderer as any).renderPage("/");
-                assertStringIncludes(result.html, "healthy-marker", `Healthy render ${i + 1} must work`);
-              }
-
-              await clearRendererState(healthyRenderer);
-              await clearRendererState(brokenRenderer);
-            } finally {
-              await cleanupBundler();
+              await (brokenRenderer as any).renderPage("/");
+            } catch {
+              // Expected
             }
-          });
+
+            const result2 = await (healthyRenderer as any).renderPage("/");
+            assertStringIncludes(
+              result2.html,
+              "healthy-marker",
+              "Healthy render must work after broken project's runtime error",
+            );
+
+            for (let i = 0; i < 5; i++) {
+              const result = await (healthyRenderer as any).renderPage("/");
+              assertStringIncludes(result.html, "healthy-marker", `Healthy render ${i + 1} must work`);
+            }
+
+            await clearRendererState(healthyRenderer);
+            await clearRendererState(brokenRenderer);
+          } finally {
+            await cleanupBundler();
+          }
         });
       });
     });
@@ -225,75 +249,84 @@ describe(
        * doing many concurrent renders can starve other projects.
        */
       it("slow renders in Project A do not block Project B", async () => {
-        await withTestContext("blast-slow-project", async (slowContext) => {
-          await withTestContext("blast-fast-project", async (fastContext) => {
-            await mkdir(join(slowContext.projectDir, "app"), { recursive: true });
-            await writeTextFile(
-              join(slowContext.projectDir, "app", "layout.tsx"),
-              `export default function Layout({ children }) {
+        await withTestContext("blast-slow-multi", async (context) => {
+          const slowDir = join(context.projectDir, "projects", "slow");
+          const fastDir = join(context.projectDir, "projects", "fast");
+
+          await mkdir(join(slowDir, "app"), { recursive: true });
+          await writeTextFile(
+            join(slowDir, "veryfront.config.js"),
+            `export default { title: "Slow" };`,
+          );
+          await writeTextFile(
+            join(slowDir, "app", "layout.tsx"),
+            `export default function Layout({ children }) {
               return <html><body>{children}</body></html>;
             }`,
-            );
-            await writeTextFile(
-              join(slowContext.projectDir, "app", "page.tsx"),
-              `export default function Page() {
+          );
+          await writeTextFile(
+            join(slowDir, "app", "page.tsx"),
+            `export default function Page() {
               // Note: In a real scenario, this would be async data fetching
               // Here we just create a large component to slow things down
               const items = Array.from({ length: 10000 }, (_, i) => i);
               return <div>{items.map(i => <span key={i}>{i}</span>)}</div>;
             }`,
-            );
+          );
 
-            await mkdir(join(fastContext.projectDir, "app"), { recursive: true });
-            await writeTextFile(
-              join(fastContext.projectDir, "app", "layout.tsx"),
-              `export default function Layout({ children }) {
+          await mkdir(join(fastDir, "app"), { recursive: true });
+          await writeTextFile(
+            join(fastDir, "veryfront.config.js"),
+            `export default { title: "Fast" };`,
+          );
+          await writeTextFile(
+            join(fastDir, "app", "layout.tsx"),
+            `export default function Layout({ children }) {
               return <html><body>{children}</body></html>;
             }`,
+          );
+          await writeTextFile(
+            join(fastDir, "app", "page.tsx"),
+            `export default function Page() { return <div>Fast</div>; }`,
+          );
+
+          const { createRenderer } = await import("../../../src/rendering/index.ts");
+          const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
+
+          let slowRenderer: unknown;
+          let fastRenderer: unknown;
+
+          try {
+            slowRenderer = await createRenderer({
+              projectDir: slowDir,
+              mode: "development",
+            });
+
+            fastRenderer = await createRenderer({
+              projectDir: fastDir,
+              mode: "development",
+            });
+
+            const slowPromises = Array.from({ length: 5 }, () => (slowRenderer as any).renderPage("/"));
+
+            const fastStart = Date.now();
+            const fastResult = await (fastRenderer as any).renderPage("/");
+            const fastDuration = Date.now() - fastStart;
+
+            assertStringIncludes(fastResult.html, "Fast", "Fast project should render correctly");
+
+            assert(
+              fastDuration < 5000,
+              `Fast render took ${fastDuration}ms - should not be blocked by slow renders`,
             );
-            await writeTextFile(
-              join(fastContext.projectDir, "app", "page.tsx"),
-              `export default function Page() { return <div>Fast</div>; }`,
-            );
 
-            const { createRenderer } = await import("../../../src/rendering/index.ts");
-            const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
+            await Promise.allSettled(slowPromises);
 
-            let slowRenderer: unknown;
-            let fastRenderer: unknown;
-
-            try {
-              slowRenderer = await createRenderer({
-                projectDir: slowContext.projectDir,
-                mode: "development",
-              });
-
-              fastRenderer = await createRenderer({
-                projectDir: fastContext.projectDir,
-                mode: "development",
-              });
-
-              const slowPromises = Array.from({ length: 5 }, () => (slowRenderer as any).renderPage("/"));
-
-              const fastStart = Date.now();
-              const fastResult = await (fastRenderer as any).renderPage("/");
-              const fastDuration = Date.now() - fastStart;
-
-              assertStringIncludes(fastResult.html, "Fast", "Fast project should render correctly");
-
-              assert(
-                fastDuration < 5000,
-                `Fast render took ${fastDuration}ms - should not be blocked by slow renders`,
-              );
-
-              await Promise.allSettled(slowPromises);
-
-              await clearRendererState(slowRenderer);
-              await clearRendererState(fastRenderer);
-            } finally {
-              await cleanupBundler();
-            }
-          });
+            await clearRendererState(slowRenderer);
+            await clearRendererState(fastRenderer);
+          } finally {
+            await cleanupBundler();
+          }
         });
       });
     });
@@ -304,85 +337,94 @@ describe(
        * between projects if stored in global state.
        */
       it("error state from Project A does not appear in Project B", async () => {
-        await withTestContext("blast-error-state-a", async (contextA) => {
-          await withTestContext("blast-error-state-b", async (contextB) => {
-            await mkdir(join(contextA.projectDir, "app"), { recursive: true });
-            await writeTextFile(
-              join(contextA.projectDir, "app", "layout.tsx"),
-              `export default function Layout({ children }) {
+        await withTestContext("blast-error-multi", async (context) => {
+          const projectADir = join(context.projectDir, "projects", "projectA");
+          const projectBDir = join(context.projectDir, "projects", "projectB");
+
+          await mkdir(join(projectADir, "app"), { recursive: true });
+          await writeTextFile(
+            join(projectADir, "veryfront.config.js"),
+            `export default { title: "Project A" };`,
+          );
+          await writeTextFile(
+            join(projectADir, "app", "layout.tsx"),
+            `export default function Layout({ children }) {
               return <html><body data-project="A">{children}</body></html>;
             }`,
-            );
-            await writeTextFile(
-              join(contextA.projectDir, "app", "page.tsx"),
-              `export default function Page() {
+          );
+          await writeTextFile(
+            join(projectADir, "app", "page.tsx"),
+            `export default function Page() {
               throw new Error("Project A intentional error: ERROR_MARKER_A_12345");
             }`,
-            );
+          );
 
-            await mkdir(join(contextB.projectDir, "app"), { recursive: true });
-            await writeTextFile(
-              join(contextB.projectDir, "app", "layout.tsx"),
-              `export default function Layout({ children }) {
+          await mkdir(join(projectBDir, "app"), { recursive: true });
+          await writeTextFile(
+            join(projectBDir, "veryfront.config.js"),
+            `export default { title: "Project B" };`,
+          );
+          await writeTextFile(
+            join(projectBDir, "app", "layout.tsx"),
+            `export default function Layout({ children }) {
               return <html><body data-project="B">{children}</body></html>;
             }`,
-            );
-            await writeTextFile(
-              join(contextB.projectDir, "app", "page.tsx"),
-              `export default function Page() {
+          );
+          await writeTextFile(
+            join(projectBDir, "app", "page.tsx"),
+            `export default function Page() {
               return <div id="project-b-success">Project B Success</div>;
             }`,
+          );
+
+          const { createRenderer } = await import("../../../src/rendering/index.ts");
+          const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
+
+          let rendererA: unknown;
+          let rendererB: unknown;
+
+          try {
+            rendererA = await createRenderer({
+              projectDir: projectADir,
+              mode: "development",
+            });
+
+            rendererB = await createRenderer({
+              projectDir: projectBDir,
+              mode: "development",
+            });
+
+            for (let i = 0; i < 3; i++) {
+              try {
+                await (rendererA as any).renderPage("/");
+              } catch {
+                // Expected
+              }
+            }
+
+            const resultB = await (rendererB as any).renderPage("/");
+
+            assertStringIncludes(resultB.html, "project-b-success", "Project B should render its content");
+            assertStringIncludes(resultB.html, 'data-project="B"', "Project B should have its layout");
+
+            assert(
+              !resultB.html.includes("ERROR_MARKER_A_12345"),
+              "Project B must NOT contain Project A's error marker",
+            );
+            assert(
+              !resultB.html.includes("Project A intentional error"),
+              "Project B must NOT contain Project A's error message",
+            );
+            assert(
+              !resultB.html.includes('data-project="A"'),
+              "Project B must NOT contain Project A's layout",
             );
 
-            const { createRenderer } = await import("../../../src/rendering/index.ts");
-            const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
-
-            let rendererA: unknown;
-            let rendererB: unknown;
-
-            try {
-              rendererA = await createRenderer({
-                projectDir: contextA.projectDir,
-                mode: "development",
-              });
-
-              rendererB = await createRenderer({
-                projectDir: contextB.projectDir,
-                mode: "development",
-              });
-
-              for (let i = 0; i < 3; i++) {
-                try {
-                  await (rendererA as any).renderPage("/");
-                } catch {
-                  // Expected
-                }
-              }
-
-              const resultB = await (rendererB as any).renderPage("/");
-
-              assertStringIncludes(resultB.html, "project-b-success", "Project B should render its content");
-              assertStringIncludes(resultB.html, 'data-project="B"', "Project B should have its layout");
-
-              assert(
-                !resultB.html.includes("ERROR_MARKER_A_12345"),
-                "Project B must NOT contain Project A's error marker",
-              );
-              assert(
-                !resultB.html.includes("Project A intentional error"),
-                "Project B must NOT contain Project A's error message",
-              );
-              assert(
-                !resultB.html.includes('data-project="A"'),
-                "Project B must NOT contain Project A's layout",
-              );
-
-              await clearRendererState(rendererA);
-              await clearRendererState(rendererB);
-            } finally {
-              await cleanupBundler();
-            }
-          });
+            await clearRendererState(rendererA);
+            await clearRendererState(rendererB);
+          } finally {
+            await cleanupBundler();
+          }
         });
       });
     });
@@ -393,86 +435,95 @@ describe(
        * causing subsequent renders (even for other projects) to fail.
        */
       it("corrupted cache entry does not affect other projects", async () => {
-        await withTestContext("blast-cache-corrupt", async (corruptContext) => {
-          await withTestContext("blast-cache-clean", async (cleanContext) => {
-            await mkdir(join(corruptContext.projectDir, "app"), { recursive: true });
-            await writeTextFile(
-              join(corruptContext.projectDir, "app", "layout.tsx"),
-              `export default function Layout({ children }) {
+        await withTestContext("blast-cache-multi", async (context) => {
+          const corruptDir = join(context.projectDir, "projects", "corrupt");
+          const cleanDir = join(context.projectDir, "projects", "clean");
+
+          await mkdir(join(corruptDir, "app"), { recursive: true });
+          await writeTextFile(
+            join(corruptDir, "veryfront.config.js"),
+            `export default { title: "Corrupt" };`,
+          );
+          await writeTextFile(
+            join(corruptDir, "app", "layout.tsx"),
+            `export default function Layout({ children }) {
               return <html><body>{children}</body></html>;
             }`,
-            );
+          );
 
-            await mkdir(join(cleanContext.projectDir, "app"), { recursive: true });
-            await writeTextFile(
-              join(cleanContext.projectDir, "app", "layout.tsx"),
-              `export default function Layout({ children }) {
+          await mkdir(join(cleanDir, "app"), { recursive: true });
+          await writeTextFile(
+            join(cleanDir, "veryfront.config.js"),
+            `export default { title: "Clean" };`,
+          );
+          await writeTextFile(
+            join(cleanDir, "app", "layout.tsx"),
+            `export default function Layout({ children }) {
               return <html><body className="clean-layout">{children}</body></html>;
             }`,
-            );
-            await writeTextFile(
-              join(cleanContext.projectDir, "app", "page.tsx"),
-              `export default function Page() {
+          );
+          await writeTextFile(
+            join(cleanDir, "app", "page.tsx"),
+            `export default function Page() {
               return <div className="clean-page">Clean Content</div>;
             }`,
-            );
+          );
 
-            const { createRenderer } = await import("../../../src/rendering/index.ts");
-            const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
+          const { createRenderer } = await import("../../../src/rendering/index.ts");
+          const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
 
-            let cleanRenderer: unknown;
-            let corruptRenderer: unknown;
+          let cleanRenderer: unknown;
+          let corruptRenderer: unknown;
 
-            try {
-              cleanRenderer = await createRenderer({
-                projectDir: cleanContext.projectDir,
-                mode: "development",
-              });
+          try {
+            cleanRenderer = await createRenderer({
+              projectDir: cleanDir,
+              mode: "development",
+            });
 
-              const result1 = await (cleanRenderer as any).renderPage("/");
-              assertStringIncludes(result1.html, "Clean Content", "Clean project should work initially");
+            const result1 = await (cleanRenderer as any).renderPage("/");
+            assertStringIncludes(result1.html, "Clean Content", "Clean project should work initially");
 
-              await writeTextFile(
-                join(corruptContext.projectDir, "app", "page.tsx"),
-                // Invalid JSX that might corrupt transform cache
-                `export default function Page() {
+            await writeTextFile(
+              join(corruptDir, "app", "page.tsx"),
+              // Invalid JSX that might corrupt transform cache
+              `export default function Page() {
                 return <div>
                   <script>alert("xss")</script>
                   ${/* Unclosed tags */ ""}
                   <span>
                   <invalid-tag>
               }`,
-              );
+            );
 
-              try {
-                corruptRenderer = await createRenderer({
-                  projectDir: corruptContext.projectDir,
-                  mode: "development",
-                });
-                await (corruptRenderer as any).renderPage("/");
-              } catch {
-                // Expected
-              }
-
-              const result2 = await (cleanRenderer as any).renderPage("/");
-              assertStringIncludes(
-                result2.html,
-                "Clean Content",
-                "Clean project must work after corrupt project attempt",
-              );
-              assertStringIncludes(result2.html, "clean-layout", "Clean project layout must be intact");
-
-              for (let i = 0; i < 3; i++) {
-                const result = await (cleanRenderer as any).renderPage("/");
-                assertStringIncludes(result.html, "Clean Content", `Clean render ${i + 1} must work`);
-              }
-
-              await clearRendererState(cleanRenderer);
-              await clearRendererState(corruptRenderer);
-            } finally {
-              await cleanupBundler();
+            try {
+              corruptRenderer = await createRenderer({
+                projectDir: corruptDir,
+                mode: "development",
+              });
+              await (corruptRenderer as any).renderPage("/");
+            } catch {
+              // Expected
             }
-          });
+
+            const result2 = await (cleanRenderer as any).renderPage("/");
+            assertStringIncludes(
+              result2.html,
+              "Clean Content",
+              "Clean project must work after corrupt project attempt",
+            );
+            assertStringIncludes(result2.html, "clean-layout", "Clean project layout must be intact");
+
+            for (let i = 0; i < 3; i++) {
+              const result = await (cleanRenderer as any).renderPage("/");
+              assertStringIncludes(result.html, "Clean Content", `Clean render ${i + 1} must work`);
+            }
+
+            await clearRendererState(cleanRenderer);
+            await clearRendererState(corruptRenderer);
+          } finally {
+            await cleanupBundler();
+          }
         });
       });
     });
@@ -483,69 +534,78 @@ describe(
        * the error handling might corrupt global state.
        */
       it("missing file in Project A does not crash Project B", async () => {
-        await withTestContext("blast-missing-a", async (contextA) => {
-          await withTestContext("blast-missing-b", async (contextB) => {
-            await mkdir(join(contextA.projectDir, "app"), { recursive: true });
-            await writeTextFile(
-              join(contextA.projectDir, "app", "layout.tsx"),
-              `export default function Layout({ children }) {
+        await withTestContext("blast-missing-multi", async (context) => {
+          const projectADir = join(context.projectDir, "projects", "projectA");
+          const projectBDir = join(context.projectDir, "projects", "projectB");
+
+          await mkdir(join(projectADir, "app"), { recursive: true });
+          await writeTextFile(
+            join(projectADir, "veryfront.config.js"),
+            `export default { title: "Project A" };`,
+          );
+          await writeTextFile(
+            join(projectADir, "app", "layout.tsx"),
+            `export default function Layout({ children }) {
               return <html><body>{children}</body></html>;
             }`,
-            );
-            await writeTextFile(
-              join(contextA.projectDir, "app", "page.tsx"),
-              `import NonExistent from './components/DoesNotExist';
+          );
+          await writeTextFile(
+            join(projectADir, "app", "page.tsx"),
+            `import NonExistent from './components/DoesNotExist';
              export default function Page() { return <NonExistent />; }`,
-            );
+          );
 
-            await mkdir(join(contextB.projectDir, "app"), { recursive: true });
-            await writeTextFile(
-              join(contextB.projectDir, "app", "layout.tsx"),
-              `export default function Layout({ children }) {
+          await mkdir(join(projectBDir, "app"), { recursive: true });
+          await writeTextFile(
+            join(projectBDir, "veryfront.config.js"),
+            `export default { title: "Project B" };`,
+          );
+          await writeTextFile(
+            join(projectBDir, "app", "layout.tsx"),
+            `export default function Layout({ children }) {
               return <html><body>{children}</body></html>;
             }`,
-            );
-            await writeTextFile(
-              join(contextB.projectDir, "app", "page.tsx"),
-              `export default function Page() { return <div>Project B Works</div>; }`,
-            );
+          );
+          await writeTextFile(
+            join(projectBDir, "app", "page.tsx"),
+            `export default function Page() { return <div>Project B Works</div>; }`,
+          );
 
-            const { createRenderer } = await import("../../../src/rendering/index.ts");
-            const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
+          const { createRenderer } = await import("../../../src/rendering/index.ts");
+          const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
 
-            let rendererB: unknown;
+          let rendererB: unknown;
+
+          try {
+            rendererB = await createRenderer({
+              projectDir: projectBDir,
+              mode: "development",
+            });
+
+            const result1 = await (rendererB as any).renderPage("/");
+            assertStringIncludes(result1.html, "Project B Works", "B should work initially");
 
             try {
-              rendererB = await createRenderer({
-                projectDir: contextB.projectDir,
+              const rendererA = await createRenderer({
+                projectDir: projectADir,
                 mode: "development",
               });
-
-              const result1 = await (rendererB as any).renderPage("/");
-              assertStringIncludes(result1.html, "Project B Works", "B should work initially");
-
-              try {
-                const rendererA = await createRenderer({
-                  projectDir: contextA.projectDir,
-                  mode: "development",
-                });
-                await (rendererA as any).renderPage("/");
-              } catch {
-                // Expected - missing import
-              }
-
-              const result2 = await (rendererB as any).renderPage("/");
-              assertStringIncludes(
-                result2.html,
-                "Project B Works",
-                "B must work after A's missing import error",
-              );
-
-              await clearRendererState(rendererB);
-            } finally {
-              await cleanupBundler();
+              await (rendererA as any).renderPage("/");
+            } catch {
+              // Expected - missing import
             }
-          });
+
+            const result2 = await (rendererB as any).renderPage("/");
+            assertStringIncludes(
+              result2.html,
+              "Project B Works",
+              "B must work after A's missing import error",
+            );
+
+            await clearRendererState(rendererB);
+          } finally {
+            await cleanupBundler();
+          }
         });
       });
     });

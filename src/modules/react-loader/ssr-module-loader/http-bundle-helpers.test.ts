@@ -7,33 +7,34 @@ import {
 } from "./http-bundle-helpers.ts";
 
 describe("extractHttpBundlePaths", () => {
+  // Note: simpleHash() produces decimal numbers (djb2 algorithm), not hex
   it("extracts single HTTP bundle path", () => {
-    const code = `import foo from "file:///tmp/.cache/veryfront-http-bundle/http-abcd1234.mjs";`;
+    const code = `import foo from "file:///tmp/.cache/veryfront-http-bundle/http-12345678.mjs";`;
     const [first] = extractHttpBundlePaths(code);
 
-    assertEquals(first?.hash, "abcd1234");
+    assertEquals(first?.hash, "12345678");
     assertEquals(
       first?.path,
-      "/tmp/.cache/veryfront-http-bundle/http-abcd1234.mjs",
+      "/tmp/.cache/veryfront-http-bundle/http-12345678.mjs",
     );
   });
 
   it("extracts multiple distinct bundles", () => {
     const code = [
-      `import a from "file:///cache/veryfront-http-bundle/http-aaaa1111.mjs";`,
-      `import b from "file:///cache/veryfront-http-bundle/http-bbbb2222.mjs";`,
-      `import c from "file:///cache/veryfront-http-bundle/http-cccc3333.mjs";`,
+      `import a from "file:///cache/veryfront-http-bundle/http-11111111.mjs";`,
+      `import b from "file:///cache/veryfront-http-bundle/http-22222222.mjs";`,
+      `import c from "file:///cache/veryfront-http-bundle/http-33333333.mjs";`,
     ].join("\n");
 
     const result = extractHttpBundlePaths(code);
 
-    assertEquals(result.map((r) => r.hash), ["aaaa1111", "bbbb2222", "cccc3333"]);
+    assertEquals(result.map((r) => r.hash), ["11111111", "22222222", "33333333"]);
   });
 
   it("deduplicates by hash", () => {
     const code = [
-      `import a from "file:///cache/veryfront-http-bundle/http-abcd1234.mjs";`,
-      `import b from "file:///cache/veryfront-http-bundle/http-abcd1234.mjs";`,
+      `import a from "file:///cache/veryfront-http-bundle/http-12345678.mjs";`,
+      `import b from "file:///cache/veryfront-http-bundle/http-12345678.mjs";`,
     ].join("\n");
 
     assertEquals(extractHttpBundlePaths(code).length, 1);
@@ -50,7 +51,7 @@ describe("extractHttpBundlePaths", () => {
   });
 
   it("handles consecutive calls correctly (lastIndex reset)", () => {
-    const code = `import x from "file:///cache/veryfront-http-bundle/http-deadbeef.mjs";`;
+    const code = `import x from "file:///cache/veryfront-http-bundle/http-57259823.mjs";`;
 
     const [r1] = extractHttpBundlePaths(code);
     const [r2] = extractHttpBundlePaths(code);

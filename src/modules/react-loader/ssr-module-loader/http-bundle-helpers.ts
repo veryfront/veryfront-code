@@ -94,7 +94,8 @@ export async function extractAllHttpBundlePathsRecursive(
 /** Extract HTTP bundle paths from transformed code for proactive recovery */
 export function extractHttpBundlePaths(code: string): Array<{ path: string; hash: string }> {
   // Create regex per call to avoid shared lastIndex state across concurrent calls.
-  const httpBundlePattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+  // Note: The hash is a decimal number from simpleHash(), not hex, so we match \d+ not [a-f0-9]+
+  const httpBundlePattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-(\d+)\.mjs)/gi;
 
   const bundles: Array<{ path: string; hash: string }> = [];
   const seen = new Set<string>();
