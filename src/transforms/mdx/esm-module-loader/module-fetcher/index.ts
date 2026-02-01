@@ -565,6 +565,22 @@ async function validateCachedModule(
 ): Promise<boolean> {
   const bundlePaths = extractHttpBundlePaths(cachedCode);
   if (bundlePaths.length > 0) {
+    // Native Deno uses https:// URLs for HTTP imports, not file:// paths.
+    // Reject cached code with file:// HTTP bundle paths to force re-transform.
+    if (!isDenoCompiled) {
+      log.info(
+        `${LOG_PREFIX_MDX_LOADER} Rejecting cached module with file:// HTTP bundle paths (native Deno)`,
+        { normalizedPath, cachedPath },
+      );
+      pathCache.delete(versionedKey);
+      try {
+        await getLocalFs().remove(cachedPath);
+      } catch {
+        /* ignore removal errors */
+      }
+      return false;
+    }
+
     const cacheDir = getHttpBundleCacheDir();
     const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
     if (failed.length > 0) {
@@ -756,31 +772,45 @@ async function doFetchAndCacheModule(
             cacheKey: transformCacheKey,
           });
 
-          const bundleManifestKey = `${transformCacheKey}:bm`;
-          const manifestId = await distributedCache.get(bundleManifestKey).catch(() => null);
+          // Native Deno can handle HTTP imports directly via https:// URLs.
+          // Reject cached code that has file:// HTTP bundle paths — it was
+          // produced by a compiled binary and is incompatible with native Deno.
+          const hasBundleFileRefs = !isDenoCompiled && extractHttpBundlePaths(cached).length > 0;
+          if (hasBundleFileRefs) {
+            log.info(
+              `${LOG_PREFIX_MDX_LOADER} Rejecting cached code with file:// HTTP bundle paths (native Deno uses https://)`,
+              { normalizedPath },
+            );
+            moduleCode = null;
+          }
 
-          if (manifestId) {
-            const cacheDir = getHttpBundleCacheDir();
-            const validation = await validateBundleGroup(manifestId, cacheDir);
-            if (!validation.valid) {
-              log.warn(`${LOG_PREFIX_MDX_LOADER} Bundle manifest validation failed`, {
-                normalizedPath,
-                manifestId: manifestId.slice(0, 12),
-                failedHashes: validation.failedHashes,
-              });
-              moduleCode = null;
-            }
-          } else {
-            const bundlePaths = extractHttpBundlePaths(cached);
-            if (bundlePaths.length > 0) {
+          if (moduleCode) {
+            const bundleManifestKey = `${transformCacheKey}:bm`;
+            const manifestId = await distributedCache.get(bundleManifestKey).catch(() => null);
+
+            if (manifestId) {
               const cacheDir = getHttpBundleCacheDir();
-              const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-              if (failed.length > 0) {
-                log.warn(`${LOG_PREFIX_MDX_LOADER} Some HTTP bundles could not be recovered`, {
+              const validation = await validateBundleGroup(manifestId, cacheDir);
+              if (!validation.valid) {
+                log.warn(`${LOG_PREFIX_MDX_LOADER} Bundle manifest validation failed`, {
                   normalizedPath,
-                  failed,
+                  manifestId: manifestId.slice(0, 12),
+                  failedHashes: validation.failedHashes,
                 });
                 moduleCode = null;
+              }
+            } else {
+              const bundlePaths = extractHttpBundlePaths(cached);
+              if (bundlePaths.length > 0) {
+                const cacheDir = getHttpBundleCacheDir();
+                const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+                if (failed.length > 0) {
+                  log.warn(`${LOG_PREFIX_MDX_LOADER} Some HTTP bundles could not be recovered`, {
+                    normalizedPath,
+                    failed,
+                  });
+                  moduleCode = null;
+                }
               }
             }
           }

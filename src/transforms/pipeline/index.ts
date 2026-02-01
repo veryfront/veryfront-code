@@ -28,6 +28,7 @@ import { ensureHttpBundlesExist } from "../esm/http-cache.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { validateBundleGroup } from "../esm/bundle-manifest.ts";
+import { isDeno, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 
 const SSR_PIPELINE: TransformPlugin[] = [
   parsePlugin,
@@ -170,7 +171,21 @@ export function runPipeline(
       if (cached) {
         // For SSR transforms, validate bundles exist before returning cached code
         if (options.ssr) {
-          const httpBundlesValid = await validateCachedBundles(
+          // Native Deno uses https:// URLs for HTTP imports directly.
+          // Reject cached transforms with file:// HTTP bundle paths — they were
+          // produced by a compiled binary and are incompatible with native Deno.
+          const isNativeDeno = isDeno && !isDenoCompiled;
+          const hasStaleHttpBundles = isNativeDeno &&
+            extractHttpBundlePaths(cached.code).length > 0;
+
+          if (hasStaleHttpBundles) {
+            logger.debug("[PIPELINE] Cache invalidated: file:// HTTP bundles incompatible with native Deno", {
+              file: filePath.slice(-60),
+            });
+            // Fall through to re-run the pipeline
+          }
+
+          const httpBundlesValid = hasStaleHttpBundles ? false : await validateCachedBundles(
             cached.code,
             cached.bundleManifestId,
             cacheKey,

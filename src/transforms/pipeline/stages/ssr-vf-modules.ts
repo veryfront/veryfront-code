@@ -20,6 +20,7 @@ import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache
 import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
 import { cacheHttpImportsToLocal } from "../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
+import { isDeno, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { buildReactUrl, getReactImportMap } from "../../import-rewriter/url-builder.ts";
@@ -253,7 +254,12 @@ async function transformFrameworkCode(
     return null;
   });
 
-  // Cache HTTP imports to local filesystem
+  // Cache HTTP imports to local filesystem for compiled binaries.
+  // Native Deno handles HTTP imports directly via https:// URLs.
+  if (isDeno && !isDenoCompiled) {
+    return transformed;
+  }
+
   const importMap = await loadImportMap(ctx.projectDir);
   const cacheResult = await cacheHttpImportsToLocal(transformed, {
     cacheDir: getHttpBundleCacheDir(),
