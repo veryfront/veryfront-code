@@ -177,13 +177,16 @@ export class RenderPipeline {
     const timing: Record<string, number> = {};
     const projectSlug = options?.projectSlug || options?.projectId || "unknown";
     const projectId = options?.projectId ?? this.config.projectDir;
+    const cacheKey = this.buildCacheKey(slug, options);
 
     let cacheResult: Awaited<ReturnType<typeof this.config.cacheCoordinator.checkCache>> | null =
       null;
 
-    if (!options?.skipCacheCheck) {
+    const shouldCache = !!cacheKey && options?.delivery !== "stream";
+
+    if (shouldCache && !options?.skipCacheCheck) {
       const cacheCheckStart = performance.now();
-      cacheResult = await this.config.cacheCoordinator.checkCache(slug);
+      cacheResult = await this.config.cacheCoordinator.checkCache(slug, cacheKey);
       timing.cacheCheck = Math.round(performance.now() - cacheCheckStart);
 
       if (cacheResult?.cachedResult) {
@@ -448,9 +451,11 @@ export class RenderPipeline {
           ...(pageModule ? { pageModule } : {}),
         };
 
-        this.config.cacheCoordinator.persistResult(result, slug).catch((error) => {
-          logger.warn("[RenderPipeline] Cache persist failed", { slug, error: String(error) });
-        });
+        if (shouldCache && !options?.skipCachePersist) {
+          this.config.cacheCoordinator.persistResult(result, slug, cacheKey).catch((error) => {
+            logger.warn("[RenderPipeline] Cache persist failed", { slug, error: String(error) });
+          });
+        }
 
         timing.total = Math.round(performance.now() - pipelineStartTime);
         logger.debug("[RenderPipeline] Complete", { slug, timing });
@@ -630,6 +635,7 @@ export class RenderPipeline {
             ...options,
             delivery: "string",
             skipCacheCheck: true,
+            skipCachePersist: true,
           }),
           CSS_SSR_TIMEOUT_MS,
           `CSS SSR for ${slug}`,
@@ -685,5 +691,29 @@ export class RenderPipeline {
       css,
       cssError,
     };
+  }
+
+  /**
+   * Build a cache key that is safe for multi-tenant + query-param aware caching.
+   * Returns null when request contains sensitive headers (Authorization/Cookie) and
+   * no explicit cacheKey override was provided, to avoid leaking personalized HTML.
+   */
+  private buildCacheKey(slug: string, options?: RenderOptions): string | null {
+    if (options?.cacheKey) return options.cacheKey;
+    const req = options?.request;
+    if (req) {
+      const hasAuth = req.headers.has("authorization") ||
+        req.headers.has("cookie") ||
+        req.headers.has("x-api-key");
+      if (hasAuth) return null;
+    }
+
+    const url = options?.url;
+    if (!url) return slug;
+
+    const params = new URLSearchParams(url.searchParams);
+    const sorted = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
+    const queryString = sorted.map(([k, v]) => `${k}=${v}`).join("&");
+    return queryString ? `${slug}?${queryString}` : slug;
   }
 }
