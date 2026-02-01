@@ -20,7 +20,7 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import { detokenizeAllCachePaths, tokenizeAllCachePaths } from "#veryfront/cache";
+import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "#veryfront/cache";
 import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
@@ -1013,7 +1013,8 @@ async function doFetchAndCacheModule(
     // This ensures other pods get fully-resolved code without /_vf_modules/ paths.
     if (needsDistributedCacheWrite && distributedCache) {
       // Tokenize all cache paths for cross-environment portability
-      const portableCode = tokenizeAllCachePaths(moduleCode);
+      // Uses aggressive tokenization to catch paths from ANY environment (build server, other pods)
+      const portableCode = tokenizeAllVeryFrontPaths(moduleCode);
 
       // Store transformed code in distributed cache
       distributedCache

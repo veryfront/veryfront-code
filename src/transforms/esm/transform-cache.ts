@@ -3,6 +3,7 @@ import { logger } from "#veryfront/utils/logger/logger.ts";
 import { buildTransformCacheKey } from "../../cache/keys.ts";
 import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "../../cache/backend.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "../../cache/paths.ts";
 
 const DEFAULT_TTL_SECONDS = 300; // 5 minutes
 const FALLBACK_MAX_ENTRIES = 500;
@@ -136,6 +137,11 @@ export async function getCachedTransformAsync(
           logger.warn("[TransformCache] Cache entry has empty code, discarding", { key });
           return undefined;
         }
+        // CRITICAL: Always detokenize code from distributed cache
+        // This replaces __VF_CACHE_DIR__ tokens with local cache paths
+        if (backend.type !== "memory") {
+          entry.code = detokenizeAllCachePaths(entry.code);
+        }
         return entry;
       }
     } catch (error) {
@@ -164,7 +170,12 @@ export async function setCachedTransformAsync(
 
   if (backend) {
     try {
-      await backend.set(key, JSON.stringify(entry), normalizeTtl(ttlSeconds));
+      // CRITICAL: Always tokenize code before storing in distributed cache
+      // This replaces absolute file:// paths with __VF_CACHE_DIR__ tokens for cross-pod portability
+      const entryToStore = backend.type !== "memory"
+        ? { ...entry, code: tokenizeAllVeryFrontPaths(code) }
+        : entry;
+      await backend.set(key, JSON.stringify(entryToStore), normalizeTtl(ttlSeconds));
       return;
     } catch (error) {
       logger.debug("[TransformCache] Backend set failed", { key, error });
@@ -188,7 +199,12 @@ export function setCachedTransform(
     return;
   }
 
-  backend.set(key, JSON.stringify(entry), normalizeTtl(ttlSeconds)).catch((error) => {
+  // CRITICAL: Always tokenize code before storing in distributed cache
+  // This replaces absolute file:// paths with __VF_CACHE_DIR__ tokens for cross-pod portability
+  const entryToStore = backend.type !== "memory"
+    ? { ...entry, code: tokenizeAllVeryFrontPaths(code) }
+    : entry;
+  backend.set(key, JSON.stringify(entryToStore), normalizeTtl(ttlSeconds)).catch((error) => {
     logger.debug("[TransformCache] Backend set failed", { key, error });
   });
 

@@ -2,7 +2,11 @@
 
 import { rendererLogger as logger } from "#veryfront/utils";
 import { type RedisClient } from "#veryfront/utils/redis-client.ts";
-import { buildRedisSSRModuleKey } from "#veryfront/cache";
+import {
+  buildRedisSSRModuleKey,
+  detokenizeAllCachePaths,
+  tokenizeAllVeryFrontPaths,
+} from "#veryfront/cache";
 import { getSSRModuleRedisTTL } from "../constants.ts";
 import { CacheBackends, createDistributedCacheAccessor } from "#veryfront/cache/backend.ts";
 
@@ -54,7 +58,12 @@ export async function getFromRedis(cacheKey: string): Promise<string | null> {
   if (!backend) return null;
 
   try {
-    return await backend.get(cacheKey);
+    const cachedCode = await backend.get(cacheKey);
+    if (!cachedCode) return null;
+
+    // CRITICAL: Always detokenize after reading from distributed cache
+    // This replaces __VF_CACHE_DIR__ tokens with local cache paths
+    return detokenizeAllCachePaths(cachedCode);
   } catch (error) {
     logger.debug("[SSR-MODULE-LOADER] Distributed cache get failed", { key: cacheKey, error });
     return null;
@@ -73,7 +82,10 @@ export async function setInRedis(
   const ttl = options?.ttlSeconds ?? getSSRModuleRedisTTL(options?.isProduction ?? true);
 
   try {
-    await backend.set(cacheKey, code, ttl);
+    // CRITICAL: Always tokenize before storing in distributed cache
+    // This replaces absolute file:// paths with __VF_CACHE_DIR__ tokens for cross-pod portability
+    const portableCode = tokenizeAllVeryFrontPaths(code);
+    await backend.set(cacheKey, portableCode, ttl);
   } catch (error) {
     logger.debug("[SSR-MODULE-LOADER] Distributed cache set failed", { key: cacheKey, error });
   }

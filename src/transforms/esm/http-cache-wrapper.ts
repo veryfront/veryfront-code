@@ -53,13 +53,30 @@ function distributedKey(prefix: string, hash: string | BundleHash): string {
 /**
  * Tokenize local code paths to portable format.
  * Replaces absolute cache directory paths with __VF_CACHE_DIR__ tokens.
+ *
+ * Uses aggressive tokenization to handle paths from ANY environment,
+ * not just the current machine. This is critical for cross-pod cache sharing.
  */
 function tokenize(code: LocalModuleCode): PortableModuleCode {
   const cacheDir = getCacheBaseDir();
   const normalized = cacheDir.endsWith("/") ? cacheDir.slice(0, -1) : cacheDir;
-  const codeStr = code as unknown as string;
-  const result = codeStr.replaceAll(`file://${normalized}`, `file://${CACHE_DIR_TOKEN}`);
-  return result as unknown as PortableModuleCode;
+  let codeStr = code as unknown as string;
+
+  // First, tokenize current environment's paths (fast path)
+  codeStr = codeStr.replaceAll(`file://${normalized}`, `file://${CACHE_DIR_TOKEN}`);
+
+  // Then, aggressively tokenize ANY veryfront cache paths from other environments
+  // This handles code that may contain paths from different machines (e.g., build server)
+  codeStr = codeStr.replace(
+    /file:\/\/([^"'\s]*?)\/veryfront-http-bundle\//g,
+    `file://${CACHE_DIR_TOKEN}/veryfront-http-bundle/`,
+  );
+  codeStr = codeStr.replace(
+    /file:\/\/([^"'\s]*?)\/veryfront-mdx-esm\//g,
+    `file://${CACHE_DIR_TOKEN}/veryfront-mdx-esm/`,
+  );
+
+  return codeStr as unknown as PortableModuleCode;
 }
 
 /**

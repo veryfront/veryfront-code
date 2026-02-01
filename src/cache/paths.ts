@@ -18,17 +18,29 @@ export const CACHE_DIR_TOKEN = "__VF_CACHE_DIR__";
 /**
  * Common patterns for hardcoded cache paths that should be tokenized.
  * Used for invariant checks.
+ *
+ * These patterns match absolute file:// paths containing cache directories.
+ * The patterns are intentionally broad to catch any absolute path that contains
+ * veryfront cache markers (veryfront-http-bundle, veryfront-mdx-esm, .cache).
  */
 const HARDCODED_PATH_PATTERNS = [
+  // Direct .cache in common root paths
   /file:\/\/\/app\/.cache\//,
   /file:\/\/\/app\/\.cache\//,
-  /file:\/\/\/Users\/[^/]+\/\.cache\//,
-  /file:\/\/\/Users\/[^/]+\/.cache\//,
-  /file:\/\/\/home\/[^/]+\/\.cache\//,
-  /file:\/\/\/home\/[^/]+\/.cache\//,
-  /file:\/\/\/tmp\/[^/]*\.cache\//,
-  /file:\/\/\/var\/tmp\/[^/]*\.cache\//,
-  /file:\/\/\/[A-Za-z]:\/.*\.cache\//,
+  // .cache anywhere under /Users/ (catches /Users/*/any/path/.cache/)
+  /file:\/\/\/Users\/[^"'\s]*\.cache\//,
+  /file:\/\/\/Users\/[^"'\s]*\/\.cache\//,
+  // .cache anywhere under /home/
+  /file:\/\/\/home\/[^"'\s]*\.cache\//,
+  /file:\/\/\/home\/[^"'\s]*\/\.cache\//,
+  // Temp directories
+  /file:\/\/\/tmp\/[^"'\s]*\.cache\//,
+  /file:\/\/\/var\/tmp\/[^"'\s]*\.cache\//,
+  // Windows paths
+  /file:\/\/\/[A-Za-z]:\/[^"'\s]*\.cache\//,
+  // Veryfront-specific cache directories (match anywhere in path)
+  /file:\/\/[^"'\s]*veryfront-http-bundle\//,
+  /file:\/\/[^"'\s]*veryfront-mdx-esm\//,
 ];
 
 /**
@@ -46,6 +58,39 @@ export function tokenizeCachePaths(code: string, localCacheDir: string): string 
   // Normalize the cache dir (remove trailing slash if present)
   const normalizedDir = localCacheDir.endsWith("/") ? localCacheDir.slice(0, -1) : localCacheDir;
   return code.replaceAll(`file://${normalizedDir}`, `file://${CACHE_DIR_TOKEN}`);
+}
+
+/**
+ * Aggressively tokenize ALL veryfront cache paths from ANY environment.
+ * This handles code that may contain paths from different machines (e.g., build server vs prod).
+ *
+ * Strategy:
+ * 1. First tokenize the current machine's cache dir (fast path)
+ * 2. Then use regex to replace any remaining veryfront cache paths
+ *
+ * This is more expensive than tokenizeCachePaths but guarantees portability.
+ */
+export function tokenizeAllVeryFrontPaths(code: string): string {
+  if (!code) return code;
+
+  // First, do the fast tokenization for current environment
+  let result = tokenizeAllCachePaths(code);
+
+  // Pattern to match any absolute path to veryfront-http-bundle directory
+  // Captures everything up to and including veryfront-http-bundle/
+  // Example: file:///Users/foo/bar/.cache/veryfront-http-bundle/ -> file://__VF_CACHE_DIR__/veryfront-http-bundle/
+  result = result.replace(
+    /file:\/\/([^"'\s]*?)\/veryfront-http-bundle\//g,
+    `file://${CACHE_DIR_TOKEN}/veryfront-http-bundle/`,
+  );
+
+  // Pattern to match any absolute path to veryfront-mdx-esm directory
+  result = result.replace(
+    /file:\/\/([^"'\s]*?)\/veryfront-mdx-esm\//g,
+    `file://${CACHE_DIR_TOKEN}/veryfront-mdx-esm/`,
+  );
+
+  return result;
 }
 
 /**

@@ -4,6 +4,19 @@ export * from "./module-cache.ts";
 export * from "./multi-tier.ts";
 export * from "./paths.ts";
 
+// Re-export key path functions for easy access
+export {
+  assertPortableCode,
+  CACHE_DIR_TOKEN,
+  CacheInvariantError,
+  detokenizeAllCachePaths,
+  detokenizeCachePaths,
+  hasHardcodedCachePaths,
+  tokenizeAllCachePaths,
+  tokenizeAllVeryFrontPaths,
+  tokenizeCachePaths,
+} from "./paths.ts";
+
 export {
   type CacheKeyContext,
   extractCacheKeyContext,
