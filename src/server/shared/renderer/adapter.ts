@@ -61,9 +61,11 @@ async function getOrInitRenderer(): Promise<Renderer> {
   if (rendererInitPromise) return rendererInitPromise;
 
   const isProxyMode = getEnv("PROXY_MODE") === "1";
+  const apiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
   const options: RendererOptions = {};
 
-  if (isProxyMode) {
+  // Only use API-backed cache when both PROXY_MODE=1 and API URL is configured
+  if (isProxyMode && apiBaseUrl) {
     const renderCacheTtlSeconds = 3600;
     logger.debug("[RendererAdapter] Using API-backed distributed render cache");
     options.cache = {
@@ -77,9 +79,11 @@ async function getOrInitRenderer(): Promise<Renderer> {
     };
   }
 
+  const useApiCache = isProxyMode && !!apiBaseUrl;
   logger.debug("[RendererAdapter] Initializing renderer", {
     proxyMode: isProxyMode,
-    cacheType: isProxyMode ? "api-distributed" : "memory",
+    hasApiUrl: !!apiBaseUrl,
+    cacheType: useApiCache ? "api-distributed" : "memory",
   });
 
   rendererInitPromise = initializeRenderer(options);

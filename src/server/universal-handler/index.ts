@@ -102,8 +102,16 @@ function isInternalHost(host: string): boolean {
 /** Monitoring paths that should skip domain lookup */
 const MONITORING_PATHS = new Set(["/healthz", "/readyz", "/_health", "/_metrics"]);
 
-/** Request timeout in milliseconds (configurable via REQUEST_TIMEOUT_MS env var) */
-const REQUEST_TIMEOUT_MS = getTimeoutFromEnv();
+/** Cached request timeout value (lazy-loaded to avoid module-level env access) */
+let _requestTimeoutMs: number | null = null;
+
+/** Get request timeout in milliseconds (configurable via getRequestTimeout() env var) */
+function getRequestTimeout(): number {
+  if (_requestTimeoutMs === null) {
+    _requestTimeoutMs = getTimeoutFromEnv();
+  }
+  return _requestTimeoutMs;
+}
 
 /** HTTP 504 Gateway Timeout status code */
 const HTTP_GATEWAY_TIMEOUT = 504;
@@ -894,7 +902,7 @@ export function createVeryfrontHandler(
           response = await Promise.race([
             executeWithContext(),
             new Promise<never>((_, reject) => {
-              timeoutId = setTimeout(() => reject(TIMEOUT_SENTINEL), REQUEST_TIMEOUT_MS);
+              timeoutId = setTimeout(() => reject(TIMEOUT_SENTINEL), getRequestTimeout());
             }),
           ]);
         } catch (e) {
@@ -902,13 +910,13 @@ export function createVeryfrontHandler(
             logger.warn("[universal] Request timed out", {
               path: url.pathname,
               method: req.method,
-              timeoutMs: REQUEST_TIMEOUT_MS,
+              timeoutMs: getRequestTimeout(),
             });
 
             response = new Response(
               JSON.stringify({
                 error: "Request timeout",
-                timeoutMs: REQUEST_TIMEOUT_MS,
+                timeoutMs: getRequestTimeout(),
                 path: url.pathname,
               }),
               {

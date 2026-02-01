@@ -2673,7 +2673,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         );
       },
       "production",
-      { PROXY_MODE: "1", PRODUCTION_MODE: "1" },
+      // Clear API env vars to test pure local filesystem fallback
+      { PROXY_MODE: "1", PRODUCTION_MODE: "1", VERYFRONT_API_BASE_URL: "", VERYFRONT_API_TOKEN: "" },
     );
   });
 
@@ -2752,7 +2753,8 @@ export default function Home() {
         );
       },
       "production",
-      { PROXY_MODE: "1", PRODUCTION_MODE: "1" },
+      // Clear API env vars to test pure local filesystem fallback
+      { PROXY_MODE: "1", PRODUCTION_MODE: "1", VERYFRONT_API_BASE_URL: "", VERYFRONT_API_TOKEN: "" },
     );
   });
 });
