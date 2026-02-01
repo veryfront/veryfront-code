@@ -11,7 +11,6 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { readTextFile } from "#veryfront/testing/deno-compat.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import * as esbuild from "esbuild";
 import { runPipeline } from "../index.ts";
 
@@ -46,7 +45,7 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       assertEquals(result.code.includes('from "react"'), false);
     });
 
-    it("resolves React for SSR (npm: on Deno, file:// on Node/Bun)", async () => {
+    it("resolves React for SSR to local file:// cache paths", async () => {
       const input = await readFixture("react-only", "input.tsx");
 
       const result = await runPipeline(input, "/project/components/Counter.tsx", "/project", {
@@ -55,14 +54,9 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       });
 
       assertStringIncludes(result.code, "jsx");
-
-      if (isDeno) {
-        // SSR uses esm.sh URLs consistently (no npm: specifiers)
-        assertStringIncludes(result.code, "esm.sh/react@");
-      } else {
-        assertStringIncludes(result.code, "file://");
-      }
-
+      // All runtimes now cache HTTP modules to local file:// paths for consistency
+      // between compiled and non-compiled modes
+      assertStringIncludes(result.code, "file://");
       assertEquals(result.code.includes('from "react"'), false);
     });
   });
@@ -80,8 +74,7 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       assertStringIncludes(result.code, "external=react");
     });
 
-    // Skip this test on Node.js - SSR module resolution differs by runtime
-    (isDeno ? it : it.skip)("resolves React to esm.sh URLs for SSR (Deno only)", async () => {
+    it("resolves packages to local file:// cache paths for SSR", async () => {
       const input = await readFixture("react-query", "input.tsx");
 
       const result = await runPipeline(input, "/project/components/UserProfile.tsx", "/project", {
@@ -89,8 +82,8 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
         ssr: true,
       });
 
-      // SSR uses esm.sh URLs consistently
-      assertStringIncludes(result.code, "esm.sh/react@");
+      // All runtimes now cache HTTP modules to local file:// paths for consistency
+      assertStringIncludes(result.code, "file://");
       assertStringIncludes(result.code, "jsx");
     });
   });
