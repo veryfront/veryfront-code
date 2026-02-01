@@ -745,11 +745,37 @@ export function createVeryfrontHandler(
                           if (underlying && typeof underlying.getProjectData === "function") {
                             const projectData = await underlying.getProjectData();
                             if (projectData?.layout) {
-                              logger.debug("[universal] Applied project-level layout from API", {
-                                projectSlug,
-                                layout: projectData.layout,
+                              // The API layout field is an entity UUID — resolve it to a file path.
+                              let layoutPath: string | undefined;
+                              const resolveId = (underlying as {
+                                getFilePathByEntityId?: (id: string) => string | undefined;
+                                getFilePathByEntityIdAsync?: (
+                                  id: string,
+                                ) => Promise<{ path: string; body?: string } | undefined>;
                               });
-                              return { ...loaded, layout: projectData.layout };
+
+                              if (typeof resolveId.getFilePathByEntityIdAsync === "function") {
+                                const result = await resolveId.getFilePathByEntityIdAsync(
+                                  projectData.layout,
+                                );
+                                layoutPath = result?.path;
+                              } else if (typeof resolveId.getFilePathByEntityId === "function") {
+                                layoutPath = resolveId.getFilePathByEntityId(projectData.layout);
+                              }
+
+                              if (layoutPath) {
+                                logger.debug("[universal] Applied project-level layout from API", {
+                                  projectSlug,
+                                  entityId: projectData.layout,
+                                  layoutPath,
+                                });
+                                return { ...loaded, layout: layoutPath };
+                              } else {
+                                logger.debug(
+                                  "[universal] Could not resolve layout entity ID to path",
+                                  { projectSlug, entityId: projectData.layout },
+                                );
+                              }
                             }
                           }
                         } catch (err) {
@@ -796,43 +822,24 @@ export function createVeryfrontHandler(
             ? proxyEnv
             : reqCtx.mode;
 
-          if (
-            isProxyMode && resolvedEnvironment === "production" && projectSlug && !releaseId &&
-            !isLocalProject
-          ) {
-            logger.error("[universal] Missing releaseId in proxy mode (production)", {
-              projectSlug,
-              projectId,
-              environmentName,
-              host,
-              proxyEnv,
-              resolvedEnvironment,
-            });
-
-            return new Response(
-              JSON.stringify({
-                error: "Missing releaseId for production request in proxy mode",
-                projectSlug,
-                environment: resolvedEnvironment,
-              }),
-              { status: 502, headers: { "Content-Type": "application/json" } },
-            );
-          }
-
-          const isStandaloneWithoutRelease = !isProxyMode &&
-            resolvedEnvironment === "production" &&
+          const isMissingRelease = resolvedEnvironment === "production" &&
+            projectSlug &&
             !releaseId &&
-            !reqCtx.isLocalDev &&
             !isLocalProject;
 
-          if (isStandaloneWithoutRelease) {
+          if (isMissingRelease) {
             const fallbackEnv = opts.defaultEnvironment ?? "preview";
-            logger.debug(
-              "[universal] Standalone mode without releaseId, using fallback environment",
+            logger.warn(
+              "[universal] Missing releaseId for production request, falling back",
               {
                 projectSlug,
+                projectId,
+                environmentName,
+                host,
+                proxyEnv,
                 resolvedEnvironment,
                 fallbackEnv,
+                isProxyMode,
               },
             );
 
@@ -840,7 +847,7 @@ export function createVeryfrontHandler(
 
             if (fallbackEnv === "production" && !releaseId) {
               releaseId = "standalone-dev";
-              logger.debug("[universal] Using synthetic releaseId for standalone production mode", {
+              logger.debug("[universal] Using synthetic releaseId", {
                 projectSlug,
                 releaseId,
               });
