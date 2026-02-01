@@ -22,9 +22,9 @@ import { transformToESM } from "../../../esm-transform.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import {
   cacheHttpImportsToLocal,
-  detokenizeCachePaths,
+  detokenizeAllCachePaths,
   ensureHttpBundlesExist,
-  tokenizeCachePaths,
+  tokenizeAllCachePaths,
 } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
@@ -782,9 +782,8 @@ async function doFetchAndCacheModule(
       try {
         const cached = await distributedCache.get(transformCacheKey);
         if (cached) {
-          // Detokenize HTTP bundle paths for local environment
-          const httpBundleCacheDir = getHttpBundleCacheDir();
-          moduleCode = detokenizeCachePaths(cached, httpBundleCacheDir);
+          // Detokenize all cache paths for local environment
+          moduleCode = detokenizeAllCachePaths(cached);
           log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed transform cache HIT`, {
             projectSlug,
             normalizedPath,
@@ -1014,9 +1013,8 @@ async function doFetchAndCacheModule(
     // Write to distributed cache AFTER nested imports are resolved.
     // This ensures other pods get fully-resolved code without /_vf_modules/ paths.
     if (needsDistributedCacheWrite && distributedCache) {
-      // Tokenize HTTP bundle paths for cross-environment portability
-      const httpBundleCacheDir = getHttpBundleCacheDir();
-      const portableCode = tokenizeCachePaths(moduleCode, httpBundleCacheDir);
+      // Tokenize all cache paths for cross-environment portability
+      const portableCode = tokenizeAllCachePaths(moduleCode);
 
       // Store transformed code in distributed cache
       distributedCache

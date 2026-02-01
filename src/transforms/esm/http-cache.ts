@@ -35,6 +35,7 @@ import {
   HTTP_MODULE_DISTRIBUTED_TTL_SEC,
 } from "#veryfront/utils/constants/cache.ts";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
+import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 
 /** Maximum number of keys per batch request to distributed cache API */
 const BATCH_FETCH_CHUNK_SIZE = 100;
@@ -42,10 +43,15 @@ const BATCH_FETCH_CHUNK_SIZE = 100;
 /**
  * Portable cache directory token for cross-environment compatibility.
  *
- * When code is stored in the distributed cache, absolute file:// paths to HTTP bundles
- * are replaced with this token. When code is loaded from cache, the token is replaced
- * with the local cache directory. This allows cached transforms to work across different
- * developer machines and environments (e.g., /Users/alice/.cache vs /Users/bob/.cache).
+ * When code is stored in the distributed cache, absolute file:// paths to cached files
+ * (HTTP bundles, MDX ESM modules, etc.) are replaced with this token. When code is
+ * loaded from cache, the token is replaced with the local cache directory. This allows
+ * cached transforms to work across different developer machines and environments
+ * (e.g., /Users/alice/.cache vs /Users/bob/.cache).
+ *
+ * IMPORTANT: Always use getCacheBaseDir() as the localCacheDir parameter when calling
+ * tokenizeCachePaths/detokenizeCachePaths to ensure ALL cache paths are tokenized,
+ * including veryfront-http-bundle/ and veryfront-mdx-esm/ subdirectories.
  */
 export const CACHE_DIR_TOKEN = "__VF_CACHE_DIR__";
 
@@ -67,6 +73,24 @@ export function detokenizeCachePaths(code: string, localCacheDir: string): strin
   // Normalize the cache dir (remove trailing slash if present)
   const normalizedDir = localCacheDir.endsWith("/") ? localCacheDir.slice(0, -1) : localCacheDir;
   return code.replaceAll(`file://${CACHE_DIR_TOKEN}`, `file://${normalizedDir}`);
+}
+
+/**
+ * Tokenize all cache paths in code using the base cache directory.
+ * This is the preferred function for tokenizing paths before storing in distributed cache.
+ * Handles both veryfront-http-bundle/ and veryfront-mdx-esm/ paths.
+ */
+export function tokenizeAllCachePaths(code: string): string {
+  return tokenizeCachePaths(code, getCacheBaseDir());
+}
+
+/**
+ * Detokenize all cache paths in code using the base cache directory.
+ * This is the preferred function for detokenizing paths after loading from distributed cache.
+ * Handles both veryfront-http-bundle/ and veryfront-mdx-esm/ paths.
+ */
+export function detokenizeAllCachePaths(code: string): string {
+  return detokenizeCachePaths(code, getCacheBaseDir());
 }
 
 /**
@@ -564,7 +588,7 @@ function resolveBareSpecifier(
 function refreshDistributedCacheAsync(
   hash: number,
   code: string,
-  cacheDir: string,
+  _cacheDir: string, // Unused: tokenizeAllCachePaths uses getCacheBaseDir() internally
   normalizedUrl: string,
 ): void {
   getDistributedCache().then(async (distributed) => {
@@ -577,7 +601,7 @@ function refreshDistributedCacheAsync(
 
     if (needsRefresh) {
       try {
-        const portableCode = tokenizeCachePaths(code, cacheDir);
+        const portableCode = tokenizeAllCachePaths(code);
         await Promise.all([
           distributed.set(
             distributedKey("url", hash),
@@ -718,7 +742,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
             });
           } else {
             // Detokenize cache paths for local environment
-            const cachedCode = detokenizeCachePaths(decodedCode, cacheDir);
+            const cachedCode = detokenizeAllCachePaths(decodedCode);
 
             const depPattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-(\d+)\.mjs)/gi;
             const deps: Array<{ path: string; hash: string }> = [];
@@ -826,7 +850,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     if (distributed) {
       try {
         // Tokenize cache paths for cross-environment portability
-        const portableCode = tokenizeCachePaths(code, cacheDir);
+        const portableCode = tokenizeAllCachePaths(code);
         await Promise.all([
           distributed.set(
             distributedKey("url", hash),

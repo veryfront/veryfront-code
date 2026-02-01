@@ -8,7 +8,11 @@
 
 import { join } from "#std/path.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
-import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import {
+  getCacheBaseDir,
+  getHttpBundleCacheDir,
+  getMdxEsmCacheDir,
+} from "#veryfront/utils/cache-dir.ts";
 import {
   createFileSystem,
   type FileSystem,
@@ -27,17 +31,44 @@ export const verifiedModuleDeps = new LRUCache<string, true>({ maxEntries: 2000 
 
 const FILE_PATH_PATTERN = /file:\/\/([^"'\s]+)/gi;
 
-function hasIncompatibleHttpPaths(code: string): boolean {
+/**
+ * Check if cached code has file:// paths from a different environment.
+ * Checks both HTTP bundle paths and MDX ESM cache paths.
+ */
+function hasIncompatibleCachePaths(code: string): boolean {
+  const localCacheBaseDir = getCacheBaseDir();
   const localHttpCacheDir = getHttpBundleCacheDir();
+  const localMdxCacheDir = getMdxEsmCacheDir();
   const pattern = new RegExp(FILE_PATH_PATTERN.source, "gi");
 
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(code)) !== null) {
     const path = match[1];
-    if (path && path.includes("veryfront-http-bundle") && !path.startsWith(localHttpCacheDir)) {
+    if (!path) continue;
+
+    // Check HTTP bundle paths
+    if (path.includes("veryfront-http-bundle") && !path.startsWith(localHttpCacheDir)) {
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible HTTP bundle path`, {
         path,
         expectedDir: localHttpCacheDir,
+      });
+      return true;
+    }
+
+    // Check MDX ESM cache paths
+    if (path.includes("veryfront-mdx-esm") && !path.startsWith(localMdxCacheDir)) {
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible MDX ESM path`, {
+        path,
+        expectedDir: localMdxCacheDir,
+      });
+      return true;
+    }
+
+    // Check any other cache paths (future-proofing)
+    if (path.includes(".cache/") && !path.startsWith(localCacheBaseDir)) {
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible cache path`, {
+        path,
+        expectedDir: localCacheBaseDir,
       });
       return true;
     }
@@ -273,9 +304,9 @@ export async function lookupMdxEsmCache(
     }
 
     const cachedCode = await getLocalFs().readTextFile(cachedPath);
-    if (hasIncompatibleHttpPaths(cachedCode)) {
+    if (hasIncompatibleCachePaths(cachedCode)) {
       logger.warn(
-        `${LOG_PREFIX_MDX_LOADER} Cached module has incompatible HTTP bundle paths, invalidating`,
+        `${LOG_PREFIX_MDX_LOADER} Cached module has incompatible cache paths, invalidating`,
         { filePath, cachedPath },
       );
       cache.delete(cacheKey);
@@ -288,7 +319,7 @@ export async function lookupMdxEsmCache(
 
       return {
         status: "corrupted",
-        reason: "Incompatible HTTP bundle paths from different environment",
+        reason: "Incompatible cache paths from different environment",
         filePath,
       };
     }
