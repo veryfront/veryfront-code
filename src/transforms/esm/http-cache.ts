@@ -446,7 +446,7 @@ function isHttpUrl(specifier: string): boolean {
  * Instead, all packages use external=react and import from the same esm.sh URL.
  * This prevents multiple React instances which causes "useContext is null" errors.
  */
-function isReactCoreUrl(url: string): boolean {
+function _isReactCoreUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     if (!parsed.hostname.includes("esm.sh")) return false;
