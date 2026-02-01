@@ -1,5 +1,5 @@
-import { describe, it } from "@veryfront/testing/bdd";
-import { assertEquals, assertRejects, assertThrows } from "@veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
 import {
   handleError,
   handleErrorWithFallback,

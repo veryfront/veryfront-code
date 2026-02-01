@@ -5,9 +5,9 @@
  * concurrent preview and production requests.
  */
 
-import { assert, assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { ProxyFSAdapterManager } from "@veryfront/platform/adapters/fs/veryfront/proxy-manager.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { ProxyFSAdapterManager } from "#veryfront/platform/adapters/fs/veryfront/proxy-manager.ts";
 
 function createLocalManager(): ProxyFSAdapterManager {
   return new ProxyFSAdapterManager({

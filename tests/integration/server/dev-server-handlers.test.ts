@@ -9,9 +9,9 @@
  * - handleServerError()
  */
 
-import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
-import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
+import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 import { DevServer } from "../../../src/server/dev-server.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { drainEventLoop } from "../../_helpers/utils.ts";

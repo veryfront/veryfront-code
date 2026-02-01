@@ -1,10 +1,10 @@
 import * as React from "react";
-import { assert, assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { clearMDXRendererCache, mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
-import { runWithCacheDir } from "@veryfront/utils/cache-dir.ts";
-import { makeTempDir, remove } from "@veryfront/testing/deno-compat";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { clearMDXRendererCache, mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { makeTempDir, remove } from "#veryfront/testing/deno-compat";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 // These tests use AsyncLocalStorage + dynamic import patterns that work in Deno
 // but have timing issues in Bun's test runner. The core functionality is verified

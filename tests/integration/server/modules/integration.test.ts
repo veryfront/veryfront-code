@@ -19,10 +19,10 @@ import {
   assertEquals,
   assertExists,
   assertStringIncludes,
-} from "@veryfront/testing/assert";
-import { delay } from "@std/async";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+} from "#veryfront/testing/assert";
+import { delay } from "#std/async";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { HMRServer as ModuleHMRServer } from "../../../../src/server/dev-server/hmr-server.ts";
 import { ErrorOverlay } from "../../../../src/server/dev-server/error-overlay/index.ts";
 import { APIServer } from "../../../../src/modules/server/index.ts";

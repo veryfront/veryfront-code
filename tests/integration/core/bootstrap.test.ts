@@ -12,16 +12,16 @@
 // Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-import { assert, assertEquals, assertExists, assertRejects } from "@veryfront/testing/assert";
-import { afterEach, describe, it } from "@veryfront/testing/bdd";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
+import { afterEach, describe, it } from "#veryfront/testing/bdd";
 import { bootstrap, bootstrapDev, bootstrapProd } from "../../../src/server/bootstrap.ts";
-import { clearConfigCache } from "@veryfront/config";
-import { join } from "@veryfront/compat/path";
-import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import { makeTempDir } from "@veryfront/testing/deno-compat";
+import { clearConfigCache } from "#veryfront/config";
+import { join } from "#veryfront/compat/path";
+import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat";
 import { isBun, isDeno, isNode } from "../../../src/platform/compat/runtime.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async";
 
 async function createTempDir(prefix: string): Promise<string> {
   return await makeTempDir({ prefix: `bootstrap_test_${prefix}_` });

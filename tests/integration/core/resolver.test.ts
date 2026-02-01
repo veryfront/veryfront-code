@@ -1,9 +1,9 @@
-import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { describe, it } from "@veryfront/testing/bdd";
-import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import { ModuleResolver } from "@veryfront/modules";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { describe, it } from "#veryfront/testing/bdd";
+import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { ModuleResolver } from "#veryfront/modules";
 import { withTestContext } from "../../_helpers/context.ts";
 
 describe("ModuleResolver", () => {

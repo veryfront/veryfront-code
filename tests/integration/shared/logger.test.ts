@@ -1,10 +1,10 @@
-import { assertEquals, assertRejects } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { deleteEnv, getEnv, setEnv } from "@veryfront/compat/process.ts";
-import { LogLevel } from "@veryfront/utils/logger/index.ts";
-import { delay } from "@std/async";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { LogLevel } from "#veryfront/utils/logger/index.ts";
+import { delay } from "#std/async";
 
-function importFresh(): Promise<typeof import("@veryfront/utils/logger/index.ts")> {
+function importFresh(): Promise<typeof import("#veryfront/utils/logger/index.ts")> {
   return import(
     `@veryfront/utils/logger/index.ts?ts=${Date.now()}&r=${Math.random()}`
   );
@@ -12,7 +12,7 @@ function importFresh(): Promise<typeof import("@veryfront/utils/logger/index.ts"
 
 function importSharedLogger(
   query: string,
-): Promise<typeof import("@veryfront/utils/logger/index.ts")> {
+): Promise<typeof import("#veryfront/utils/logger/index.ts")> {
   return import(`@veryfront/utils/logger/index.ts?${query}`);
 }
 

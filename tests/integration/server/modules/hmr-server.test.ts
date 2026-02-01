@@ -1,12 +1,12 @@
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { delay } from "@std/async";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { delay } from "#std/async";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import {
   HMRServer,
   type HMRServerOptions,
   type HMRUpdate,
 } from "../../../../src/server/dev-server/hmr-server.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { drainEventLoop } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";

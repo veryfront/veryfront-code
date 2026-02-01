@@ -10,10 +10,10 @@
  * - Performance and concurrency
  */
 
-import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
-import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
+import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 
 import { restoreLogs } from "../../_helpers/log-guard.ts";
 import { buildProduction } from "../../../src/build/production-build/index.ts";

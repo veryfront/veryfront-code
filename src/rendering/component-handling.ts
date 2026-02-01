@@ -68,7 +68,7 @@ export async function handleComponentPage(
         options?.reactVersion,
       ));
 
-    const { loadComponentFromSource } = await import("@veryfront/modules/react-loader/index.ts");
+    const { loadComponentFromSource } = await import("#veryfront/modules/react-loader/index.ts");
     const PageComponent = await loadComponentFromSource(
       fileContent,
       pageInfo.entity.path,

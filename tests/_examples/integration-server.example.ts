@@ -5,8 +5,8 @@
  * Use this as a template for tests that require server setup.
  *******************************************************/
 
-import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "#std/assert";
+import { describe, it } from "#std/testing/bdd";
 import { TEST_TIMEOUTS } from "../_helpers/constants.ts";
 import { withTestContext } from "../_helpers/context.ts";
 

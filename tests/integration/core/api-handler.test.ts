@@ -2,13 +2,13 @@
  * Tests for API Route Handler
  */
 
-import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { afterEach, describe, it } from "@veryfront/testing/bdd";
-import { mkdir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { APIRouteHandler } from "@veryfront/routing/api/index.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { afterEach, describe, it } from "#veryfront/testing/bdd";
+import { mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { APIRouteHandler } from "#veryfront/routing/api/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
 // Track all handlers to clean up after tests

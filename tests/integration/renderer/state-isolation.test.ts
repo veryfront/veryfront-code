@@ -3,10 +3,10 @@
  * Ensures that state from one test doesn't leak into another
  */
 
-import { assert, assertStringIncludes } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assert, assertStringIncludes } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { describe, it } from "#veryfront/testing/bdd";
 
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";

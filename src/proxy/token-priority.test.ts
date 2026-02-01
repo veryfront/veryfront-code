@@ -4,8 +4,8 @@
  * Spec: specs/platform/proxy-renderer-contract.spec.md
  * Verifies: Token priority order: user cookie → OAuth → static API token → error
  */
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import { createProxyHandler } from "./handler.ts";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 

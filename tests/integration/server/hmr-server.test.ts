@@ -11,11 +11,11 @@
  * - Cross-runtime compatibility
  */
 
-import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
-import { delay, makeTempDir, mkdir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
+import { delay, makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { HMRServer, type HMRServerOptions } from "../../../src/server/dev-server/hmr-server.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { drainEventLoop } from "../../_helpers/utils.ts";

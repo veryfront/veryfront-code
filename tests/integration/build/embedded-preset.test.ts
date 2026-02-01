@@ -1,14 +1,14 @@
-import { assert, assertEquals } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assert, assertEquals } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { describe, it } from "#veryfront/testing/bdd";
 import {
   mkdir,
   readTextFile,
   writeTextFile,
-} from "@veryfront/testing/deno-compat";
+} from "#veryfront/testing/deno-compat";
 import { buildEmbeddedPreset } from "../../../src/build/embedded/preset.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 // Dynamic imports of built JSX code require react/jsx-runtime resolution
 // which only works reliably in Deno (can resolve npm packages from anywhere)

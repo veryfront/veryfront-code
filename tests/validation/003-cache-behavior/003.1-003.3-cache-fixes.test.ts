@@ -15,8 +15,8 @@
  * @see plans/architecture-audit/003.3-multitenancy-cache-isolation.md
  */
 
-import { assert, assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assert, assertEquals } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 
 describe("003.1 & 003.3 Cache Behavior Fixes", () => {
   describe("003.1 - File Path Extraction", () => {

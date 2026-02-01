@@ -5,8 +5,8 @@
  * and renderer integration for client-side navigation.
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import {
   APIServer,
   type APIServerOptions,

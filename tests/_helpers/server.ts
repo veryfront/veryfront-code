@@ -1,10 +1,10 @@
-import { join } from "@veryfront/compat/path";
+import { join } from "#veryfront/compat/path";
 import { isNotFoundError, makeTempDir, mkdir, remove } from "../../src/platform/compat/fs.ts";
 import { createDevServer } from "../../src/server/dev-server.ts";
 import { startProductionServer } from "../../src/server/production-server.ts";
 import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";
 import { getFreePort } from "./utils.ts";
-import { testDelay } from "@veryfront/testing";
+import { testDelay } from "#veryfront/testing";
 
 async function sleep(ms: number): Promise<void> {
   await testDelay(ms);

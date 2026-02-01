@@ -3,12 +3,12 @@
  * Tests queue management, concurrent prefetching, and resource callback handling
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { PrefetchQueue } from "@veryfront/rendering/client/prefetch/prefetch-queue.ts";
-import type { PrefetchQueueOptions } from "@veryfront/rendering/client/prefetch/prefetch-queue.ts";
-import { delay as sleep } from "@std/async";
-import { scaleMs } from "@veryfront/testing";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { PrefetchQueue } from "#veryfront/rendering/client/prefetch/prefetch-queue.ts";
+import type { PrefetchQueueOptions } from "#veryfront/rendering/client/prefetch/prefetch-queue.ts";
+import { delay as sleep } from "#std/async";
+import { scaleMs } from "#veryfront/testing";
 
 interface MockFetchOptions {
   status?: number;

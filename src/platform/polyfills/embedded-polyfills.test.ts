@@ -6,8 +6,8 @@
  * (files exist on disk) but fails in production (compiled binary
  * doesn't have the file in VFS).
  */
-import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals } from "#std/assert";
+import { describe, it } from "#std/testing/bdd";
 import { getRequiredPolyfillPaths } from "#veryfront/transforms/import-rewriter/strategies/node-builtin-strategy.ts";
 import { EMBEDDED_POLYFILLS } from "#veryfront/modules/server/module-server.ts";
 

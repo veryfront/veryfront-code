@@ -1,8 +1,8 @@
 // Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterAll, afterEach, describe, it } from "@veryfront/testing/bdd";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
+import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd";
 import { HMRHandler } from "../../../../src/server/handlers/preview/hmr.handler.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 

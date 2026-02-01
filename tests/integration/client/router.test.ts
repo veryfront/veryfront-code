@@ -3,13 +3,13 @@
  * Tests client-side routing, navigation, history management, and DOM interactions
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
-import type { RouterOptions } from "@veryfront/rendering/client/router.ts";
-import { VeryfrontRouter } from "@veryfront/rendering/client/router.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
+import type { RouterOptions } from "#veryfront/rendering/client/router.ts";
+import { VeryfrontRouter } from "#veryfront/rendering/client/router.ts";
 import type { DOMEnvironment } from "./test-helpers.ts";
 import { mockRoots, setupDOMEnvironment } from "./test-helpers.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async";
 
 describe("Veryfront Router", () => {
   let env: DOMEnvironment;

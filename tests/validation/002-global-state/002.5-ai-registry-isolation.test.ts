@@ -9,8 +9,8 @@
  * @see plans/architecture-audit/002.5-ai-registry-leakage.md
  */
 
-import { assertEquals, assertNotEquals } from "@veryfront/testing/assert";
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { z } from "zod";
 import { agentRegistry } from "../../../src/agent/composition/composition.ts";
 import { runWithCacheKeyContext } from "../../../src/cache/cache-key-builder.ts";

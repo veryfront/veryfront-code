@@ -4,10 +4,10 @@
  * Tests getStaticPaths generation, dynamic route handling, and build output
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterAll, beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { DataFetcher, type PageWithData } from "@veryfront/data";
-import { delay } from "@std/async";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { afterAll, beforeEach, describe, it } from "#veryfront/testing/bdd";
+import { DataFetcher, type PageWithData } from "#veryfront/data";
+import { delay } from "#std/async";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
 describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false }, () => {

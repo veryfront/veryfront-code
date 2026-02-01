@@ -9,8 +9,8 @@
  * @see plans/architecture-audit/002.8-tailwind-compiler-state.md
  */
 
-import { assert, assertEquals } from "@veryfront/testing/assert";
-import { beforeEach, describe, it } from "@veryfront/testing/bdd";
+import { assert, assertEquals } from "#veryfront/testing/assert";
+import { beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {
   clearPluginCache,
   generateTailwindCSS,

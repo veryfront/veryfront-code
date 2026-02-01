@@ -1,9 +1,9 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { writeTextFile } from "@veryfront/compat/fs.ts";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { writeTextFile } from "#veryfront/compat/fs.ts";
+import { describe, it } from "#veryfront/testing/bdd";
 import { withTestContext } from "../../_helpers/context.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async";
 
 describe(
   "Dev HMR",

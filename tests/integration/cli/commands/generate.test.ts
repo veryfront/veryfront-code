@@ -1,7 +1,7 @@
-import { assert } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { describe, it } from "@veryfront/testing/bdd";
-import { exists, remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { assert } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { describe, it } from "#veryfront/testing/bdd";
+import { exists, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { generateCommand } from "../../../../src/cli/commands/generate.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 

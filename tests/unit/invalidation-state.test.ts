@@ -7,8 +7,8 @@
  * The key invariant: pending invalidations are shared across ALL adapter instances.
  */
 
-import { beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { assertEquals } from "@veryfront/testing/assert";
+import { beforeEach, describe, it } from "#veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert";
 import {
   addPendingInvalidation,
   clearAllPendingInvalidations,

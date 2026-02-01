@@ -2,8 +2,8 @@
  * Tests for useChat v5 stream protocol handling
  * Following AI SDK v5 UI Message types and patterns
  */
-import { describe, it } from "@veryfront/testing/bdd";
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
 
 import type {
   ToolState,

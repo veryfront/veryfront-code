@@ -7,7 +7,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { DependencyList, Dispatch, EffectCallback, SetStateAction } from "react";
 import {
-  __resetBridgeForTesting,
+  __resetBridgeForTests,
   getStateBridge,
   SharedState,
   useBridgedState,
@@ -109,7 +109,7 @@ describe("State Bridge", () => {
   let mockReact: MockReactHooks;
 
   beforeEach(() => {
-    __resetBridgeForTesting();
+    __resetBridgeForTests();
 
     mockSessionStorage = new MockSessionStorage();
     originalSessionStorage = (globalThis as any).sessionStorage;
@@ -134,7 +134,7 @@ describe("State Bridge", () => {
     });
 
     mockReact.reset();
-    __resetBridgeForTesting();
+    __resetBridgeForTests();
   });
 
   describe("StateBridge Core", () => {

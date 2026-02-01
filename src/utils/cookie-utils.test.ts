@@ -1,5 +1,5 @@
-import { describe, it } from "@veryfront/testing/bdd";
-import { assertEquals } from "@veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert";
 import { parseCookies, parseCookiesFromHeaders } from "./cookie-utils.ts";
 
 describe("cookie-utils", () => {

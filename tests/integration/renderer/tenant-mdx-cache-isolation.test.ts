@@ -1,7 +1,7 @@
-import { assert, assertStringIncludes } from "@veryfront/testing/assert";
-import { writeTextFile } from "@veryfront/compat/fs.ts";
-import { join } from "@veryfront/compat/path";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assert, assertStringIncludes } from "#veryfront/testing/assert";
+import { writeTextFile } from "#veryfront/compat/fs.ts";
+import { join } from "#veryfront/compat/path";
+import { describe, it } from "#veryfront/testing/bdd";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";

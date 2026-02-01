@@ -1,5 +1,5 @@
-import { describe, it } from "@veryfront/testing/bdd";
-import { deleteEnv, getEnv, setEnv } from "@veryfront/testing/deno-compat";
+import { describe, it } from "#veryfront/testing/bdd";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat";
 import {
   type AgentConfig,
   getToolArguments,

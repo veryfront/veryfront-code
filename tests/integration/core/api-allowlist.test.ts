@@ -1,8 +1,8 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { describe, it } from "@veryfront/testing/bdd";
-import { mkdir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
-import { APIRouteHandler } from "@veryfront/routing/api/index.ts";
+import { assertEquals } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { describe, it } from "#veryfront/testing/bdd";
+import { mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
+import { APIRouteHandler } from "#veryfront/routing/api/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
 describe("API Allow-list", () => {

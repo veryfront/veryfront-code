@@ -14,8 +14,8 @@
  * @see plans/architecture-audit/009.2-fetch-calls-without-timeout.md
  */
 
-import { assert, assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assert, assertEquals } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import {
   MAX_CONCURRENT_REVALIDATIONS,
   REVALIDATION_PER_PROJECT_LIMIT,

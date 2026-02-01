@@ -5,13 +5,13 @@
 // Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
-import { join } from "@veryfront/compat/path";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
+import { join } from "#veryfront/compat/path";
 import { LayoutCompiler } from "../../../../src/rendering/layouts/layout-compiler.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import type { LayoutItem, MdxBundle } from "@veryfront/types";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import type { LayoutItem, MdxBundle } from "#veryfront/types";
 import { cleanupTestDir, createTestProjectDir } from "../../../_helpers/server.ts";
 
 describe("LayoutCompiler", () => {

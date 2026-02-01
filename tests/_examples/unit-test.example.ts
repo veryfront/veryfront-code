@@ -5,8 +5,8 @@
  * Copy this structure for new unit tests.
  */
 
-import { assertEquals, assertExists, assertRejects } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists, assertRejects } from "#std/assert";
+import { describe, it } from "#std/testing/bdd";
 import { TEST_TIMEOUTS } from "../_helpers/constants.ts";
 
 describe("Example Unit Test - Pure Functions", () => {

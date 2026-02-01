@@ -1,10 +1,10 @@
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import { ComponentRegistry } from "@veryfront/modules/component-registry/index.ts";
-import { transformImportsWithMap } from "@veryfront/modules/import-map/index.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { ComponentRegistry } from "#veryfront/modules/component-registry/index.ts";
+import { transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
+import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 
 describe("React Import Tests", () => {
   describe("ComponentRegistry", () => {

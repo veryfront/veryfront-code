@@ -10,16 +10,16 @@
  * 3. Selective invalidation clears specific paths and their stat/dir caches
  */
 
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import {
   buildDirCacheKeyPrefix,
   buildFileCacheKeyPrefix,
   buildFileListCacheKey,
   buildStatCacheKeyPrefix,
-} from "@veryfront/platform/adapters/fs/veryfront/cache-keys.ts";
-import type { ResolvedContentContext } from "@veryfront/platform/adapters/fs/veryfront/types.ts";
-import { FileCache } from "@veryfront/platform/adapters/fs/cache/file-cache.ts";
+} from "#veryfront/platform/adapters/fs/veryfront/cache-keys.ts";
+import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
+import { FileCache } from "#veryfront/platform/adapters/fs/cache/file-cache.ts";
 
 function assertMatchesPrefix(key: string, prefixes: string[], label: string): void {
   const matches = prefixes.some((prefix) => key.startsWith(prefix));

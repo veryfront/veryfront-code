@@ -1,16 +1,16 @@
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { join } from "#veryfront/compat/path";
 import {
   getDefaultImportMap,
   loadImportMap,
   mergeImportMaps,
   resolveImport,
   transformImportsWithMap,
-} from "@veryfront/modules/import-map/index.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+} from "#veryfront/modules/import-map/index.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { type TestContext, withTestContext } from "../../_helpers/context.ts";
-import { mkdir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
+import { mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
 
 describe("import-map-loader", () => {
   describe("loadImportMap", () => {

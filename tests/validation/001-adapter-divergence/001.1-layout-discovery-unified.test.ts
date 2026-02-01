@@ -9,8 +9,8 @@
  * @see plans/architecture-audit/001.1-layout-bug-critical.md
  */
 
-import { assertEquals, assert } from "@veryfront/testing/assert";
-import { describe, it, beforeEach } from "@veryfront/testing/bdd";
+import { assertEquals, assert } from "#veryfront/testing/assert";
+import { describe, it, beforeEach } from "#veryfront/testing/bdd";
 import {
   discoverNestedLayouts,
   clearLayoutDiscoveryCache,

@@ -4,11 +4,11 @@
  * Focused test to verify debouncing functionality is working
  */
 
-import { assertExists } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
-import { delay, writeTextFile } from "@veryfront/testing/deno-compat";
-import { scaleMs } from "@veryfront/testing";
+import { assertExists } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
+import { delay, writeTextFile } from "#veryfront/testing/deno-compat";
+import { scaleMs } from "#veryfront/testing";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 

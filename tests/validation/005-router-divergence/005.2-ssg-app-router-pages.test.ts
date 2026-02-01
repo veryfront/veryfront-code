@@ -9,8 +9,8 @@
  * @see plans/architecture-audit/005.2-ssg-getallpages-missing-app-router.md
  */
 
-import { assert } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assert } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 
 async function readPageResolver(): Promise<string> {
   return await Deno.readTextFile("./src/rendering/page-resolution/page-resolver.ts");

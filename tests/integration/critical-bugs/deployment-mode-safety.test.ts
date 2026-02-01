@@ -14,10 +14,10 @@
  * The test runs with various environment configurations and verifies safe behavior.
  */
 
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@veryfront/testing/assert";
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
-import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
+import { join } from "#veryfront/compat/path";
+import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { withEnv } from "../../_helpers/utils.ts";
 import { clearLayoutDiscoveryCache } from "../../../src/rendering/layouts/utils/discovery.ts";

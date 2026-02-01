@@ -1,6 +1,6 @@
-import { assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { getAdapter } from "@veryfront/platform";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { getAdapter } from "#veryfront/platform";
 import { VirtualModuleSystem } from "../../../src/rendering/virtual-module-system.ts";
 
 describe(

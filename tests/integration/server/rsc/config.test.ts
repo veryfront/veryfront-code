@@ -7,10 +7,10 @@
  * - All RSC endpoints work correctly when enabled
  */
 
-import { assert, assertEquals } from "@veryfront/testing/assert";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
-import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
+import { join } from "#veryfront/compat/path";
+import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 

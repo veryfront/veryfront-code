@@ -1,7 +1,7 @@
-import { assert } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { describe, it } from "@veryfront/testing/bdd";
-import { remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { assert } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { describe, it } from "#veryfront/testing/bdd";
+import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { doctorCommand } from "../../../../src/cli/commands/doctor/index.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 

@@ -9,8 +9,8 @@
  * @see plans/architecture-audit/014.1-node-env-missing.md
  */
 
-import { assert } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assert } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 
 describe("014.1 NODE_ENV Validation", () => {
   describe("Bootstrap Validation Pattern", () => {

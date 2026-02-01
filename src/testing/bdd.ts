@@ -38,10 +38,10 @@ type HookFn = (ctx?: BddTestContext) => void | Promise<void>;
 
 // For Deno, we directly use @std/testing/bdd - no wrapper needed
 // This avoids creating a "global" test suite from top-level await
-let denoBdd: typeof import("@std/testing/bdd") | null = null;
+let denoBdd: typeof import("#std/testing/bdd") | null = null;
 
 if (isDeno) {
-  denoBdd = await import("@std/testing/bdd");
+  denoBdd = await import("#std/testing/bdd");
 }
 
 interface BddImpl {

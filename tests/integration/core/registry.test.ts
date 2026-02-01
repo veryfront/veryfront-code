@@ -1,9 +1,9 @@
-import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { describe, it } from "@veryfront/testing/bdd";
-import { mkdir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import { ComponentRegistry } from "@veryfront/modules/component-registry/index.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { describe, it } from "#veryfront/testing/bdd";
+import { mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { ComponentRegistry } from "#veryfront/modules/component-registry/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
 async function createRegistry(projectDir: string): Promise<ComponentRegistry> {

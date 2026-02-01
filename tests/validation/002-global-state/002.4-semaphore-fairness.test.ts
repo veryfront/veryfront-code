@@ -9,8 +9,8 @@
  * @see plans/architecture-audit/002.4-semaphore-starvation.md
  */
 
-import { assert, assertEquals } from "@veryfront/testing/assert";
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
+import { assert, assertEquals } from "#veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {
   acquireTransformSlot,
   getTransformStats,

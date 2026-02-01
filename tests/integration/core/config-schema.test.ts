@@ -1,9 +1,9 @@
-import { assertRejects } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { describe, it } from "@veryfront/testing/bdd";
-import { remove, writeTextFile } from "@veryfront/testing/deno-compat";
-import { getAdapter } from "@veryfront/platform";
-import { clearConfigCache, getConfig } from "@veryfront/config";
+import { assertRejects } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { describe, it } from "#veryfront/testing/bdd";
+import { remove, writeTextFile } from "#veryfront/testing/deno-compat";
+import { getAdapter } from "#veryfront/platform";
+import { clearConfigCache, getConfig } from "#veryfront/config";
 import { withTestContext } from "../../_helpers/context.ts";
 
 async function setupConfig(

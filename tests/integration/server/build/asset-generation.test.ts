@@ -1,12 +1,12 @@
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
-import { expect } from "@std/expect";
-import { assertRejects } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
+import { expect } from "#std/expect";
+import { assertRejects } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
 import {
   copyStaticAssets,
   loadClientStyles,
 } from "../../../../src/build/production-build/index.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 import {
@@ -17,7 +17,7 @@ import {
   symlink,
   writeFile as writeFileBinary,
   writeTextFile,
-} from "@veryfront/compat/fs.ts";
+} from "#veryfront/compat/fs.ts";
 
 async function writeFile(
   path: string,

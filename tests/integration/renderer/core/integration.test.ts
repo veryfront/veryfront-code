@@ -6,13 +6,13 @@
 // Disable LRU intervals during testing to prevent resource leaks
 globalThis.__vfDisableLruInterval = true;
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { writeTextFile } from "@veryfront/compat/fs.ts";
-import { join } from "@veryfront/compat/path";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { writeTextFile } from "#veryfront/compat/fs.ts";
+import { join } from "#veryfront/compat/path";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import { VeryfrontRenderer } from "../../../../src/rendering/orchestrator/ssr.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
 describe("Core Integration Tests", { sanitizeOps: false, sanitizeResources: false }, () => {

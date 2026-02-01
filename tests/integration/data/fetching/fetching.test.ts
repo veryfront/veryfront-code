@@ -5,8 +5,8 @@
 // Disable LRU interval to prevent resource leaks in tests
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-import { assertEquals, assertExists, assertRejects } from "@veryfront/testing/assert";
-import { beforeEach, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
+import { beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {
   type DataContext,
   DataFetcher,
@@ -14,10 +14,10 @@ import {
   notFound,
   type PageWithData,
   redirect,
-} from "@veryfront/data/index.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { runWithCacheKeyContext } from "@veryfront/cache/cache-key-builder.ts";
-import { delay } from "@std/async";
+} from "#veryfront/data/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import { delay } from "#std/async";
 
 type StaticDataContext = Omit<DataContext, "request" | "query">;
 

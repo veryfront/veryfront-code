@@ -1,12 +1,12 @@
-import { assertEquals, assertExists, assertRejects } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import {
   bunAdapter,
   denoAdapter,
   detectRuntime,
   getAdapter,
   nodeAdapter,
-} from "@veryfront/platform/adapters/detect.ts";
+} from "#veryfront/platform/adapters/detect.ts";
 import { isBun, isDeno, isNode } from "../../../src/platform/compat/runtime.ts";
 
 function assertRuntime(runtime: string): void {
@@ -59,15 +59,15 @@ function mockDetectRuntime(mockGlobals: any): string {
 async function mockGetAdapter(runtime: string): Promise<unknown> {
   switch (runtime) {
     case "deno": {
-      const { denoAdapter } = await import("@veryfront/platform/adapters/deno.ts");
+      const { denoAdapter } = await import("#veryfront/platform/adapters/deno.ts");
       return denoAdapter;
     }
     case "bun": {
-      const { bunAdapter } = await import("@veryfront/platform/adapters/bun.ts");
+      const { bunAdapter } = await import("#veryfront/platform/adapters/bun.ts");
       return bunAdapter;
     }
     case "node": {
-      const { nodeAdapter } = await import("@veryfront/platform/adapters/node.ts");
+      const { nodeAdapter } = await import("#veryfront/platform/adapters/node.ts");
       return nodeAdapter;
     }
     case "cloudflare":
@@ -180,7 +180,7 @@ describe("Runtime detection", () => {
     },
     () => {
       it("should import detect module successfully", async () => {
-        const mod = await import("@veryfront/platform/adapters/detect.ts");
+        const mod = await import("#veryfront/platform/adapters/detect.ts");
 
         assertExists(mod.detectRuntime);
         assertExists(mod.getAdapter);

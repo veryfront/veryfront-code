@@ -9,8 +9,8 @@
  * @see plans/architecture-audit/013.2-agent-cache-project-isolation.md
  */
 
-import { assertEquals, assertNotEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import { createCache } from "../../../src/agent/middleware/cache/cache.ts";
 
 function makeResponse(text: string): {

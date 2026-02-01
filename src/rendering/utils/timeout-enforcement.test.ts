@@ -5,8 +5,8 @@
  * Verifies: withTimeout (soft) and withTimeoutThrow (hard) behavior
  * at the three pipeline timeout stages.
  */
-import { assertEquals, assertRejects } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import { TimeoutError, withTimeout, withTimeoutThrow } from "./stream-utils.ts";
 
 function delay<T>(ms: number, value: T): Promise<T> {

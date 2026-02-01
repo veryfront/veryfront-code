@@ -1,5 +1,5 @@
-import { describe, it } from "@veryfront/testing/bdd";
-import { assert, assertEquals } from "@veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { assert, assertEquals } from "#veryfront/testing/assert";
 import { ProjectScopedRegistryManager } from "./registry-manager.ts";
 
 describe("ProjectScopedRegistryManager", () => {

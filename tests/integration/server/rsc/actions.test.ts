@@ -1,8 +1,8 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
-import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
-import { deleteEnv, getEnv, setEnv } from "@veryfront/compat/process.ts";
+import { assertEquals } from "#veryfront/testing/assert";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
+import { join } from "#veryfront/compat/path";
+import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 

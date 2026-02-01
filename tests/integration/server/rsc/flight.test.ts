@@ -1,7 +1,7 @@
-import { delay } from "@std/async";
-import { assertEquals } from "@veryfront/testing/assert";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
-import { remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { delay } from "#std/async";
+import { assertEquals } from "#veryfront/testing/assert";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
+import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import "../../../_helpers/log-guard.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { assertDrained, drainEventLoop } from "../../../_helpers/utils.ts";

@@ -1,5 +1,5 @@
-import { assert, assertEquals, assertThrows } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import {
   createReactVersionSwitcher,
   detectReactVersionFromConfig,
@@ -8,8 +8,8 @@ import {
   getReactImports,
   REACT_CONFIGS,
   type ReactVersion,
-} from "@veryfront/react/compat/config-generator.ts";
-import { readTextFile, stat, writeTextFile } from "@veryfront/testing/deno-compat";
+} from "#veryfront/react/compat/config-generator.ts";
+import { readTextFile, stat, writeTextFile } from "#veryfront/testing/deno-compat";
 import { withTestContext, type TestContext } from "../../../_helpers/context.ts";
 
 function writeDenoJson(projectDir: string, value: unknown): Promise<void> {

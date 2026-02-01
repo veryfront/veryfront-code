@@ -1,5 +1,5 @@
-import { describe, it } from "@veryfront/testing/bdd";
-import { assertEquals, assertInstanceOf } from "@veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert";
 import { BuildError, CompilationError } from "./build-errors.ts";
 import { ErrorCode, VeryfrontError } from "./types.ts";
 

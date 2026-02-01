@@ -1,7 +1,7 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { createTestRuntimeEnv } from "@veryfront/config/runtime-env.ts";
-import { isRSCEnabled } from "@veryfront/utils/feature-flags.ts";
+import { assertEquals } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { createTestRuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
 
 describe("flags", () => {
   describe("isRSCEnabled", () => {

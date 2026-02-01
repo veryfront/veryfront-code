@@ -1,9 +1,9 @@
-import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import { VirtualModuleSystem } from "../../../src/rendering/virtual-module-system.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { cwd, env, getEnv, setEnv } from "@veryfront/compat/process.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { cwd, env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import {
   exists,
   makeTempDir,
@@ -13,7 +13,7 @@ import {
   remove,
   stat,
   writeTextFile,
-} from "@veryfront/compat/fs.ts";
+} from "#veryfront/compat/fs.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   return {

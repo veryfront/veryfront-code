@@ -2,13 +2,13 @@
  * @file Integration tests for Veryfront API FSAdapter
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterEach, describe, it } from "@veryfront/testing/bdd";
-import { bootstrap } from "@veryfront/server/bootstrap.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
-import { cleanupBundler } from "@veryfront/rendering/cleanup.ts";
-import { cwd } from "@veryfront/compat/process.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { afterEach, describe, it } from "#veryfront/testing/bdd";
+import { bootstrap } from "#veryfront/server/bootstrap.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { cleanupBundler } from "#veryfront/rendering/cleanup.ts";
+import { cwd } from "#veryfront/compat/process.ts";
 
 describe("Veryfront API Integration", { sanitizeResources: false, sanitizeOps: false }, () => {
   afterEach(async () => {
@@ -54,7 +54,7 @@ describe("Veryfront API Integration", { sanitizeResources: false, sanitizeOps: f
 
   describe("FSAdapterWrapper", () => {
     it("should wrap FSAdapter methods correctly", async () => {
-      const { wrapFSAdapter } = await import("@veryfront/platform/adapters/fs/wrapper.ts");
+      const { wrapFSAdapter } = await import("#veryfront/platform/adapters/fs/wrapper.ts");
 
       const mockFSAdapter = {
         readTextFile: (path: string) => `content of ${path}`,

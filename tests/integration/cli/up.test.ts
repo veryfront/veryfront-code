@@ -1,6 +1,6 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/platform/compat/path/index.ts";
+import { assertEquals } from "#veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
+import { join } from "#veryfront/platform/compat/path/index.ts";
 import {
   exists,
   makeTempDir,
@@ -9,7 +9,7 @@ import {
   readTextFile,
   remove,
   writeTextFile,
-} from "@veryfront/compat/fs.ts";
+} from "#veryfront/compat/fs.ts";
 
 function getSlug(dirName: string): string {
   return dirName.replace(/[^a-z0-9-]/gi, "-").toLowerCase();

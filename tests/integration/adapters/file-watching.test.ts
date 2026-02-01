@@ -8,15 +8,15 @@
  * - Cloudflare: Not supported (should throw NotSupportedError)
  */
 
-import { assert, assertEquals } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { describe, it } from "@veryfront/testing/bdd";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { describe, it } from "#veryfront/testing/bdd";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
+import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 import { isDeno } from "../../../src/platform/compat/runtime.ts";
-import { scaleMs } from "@veryfront/testing";
-import { delay } from "@std/async";
+import { scaleMs } from "#veryfront/testing";
+import { delay } from "#std/async";
 
 const denoOnlyDescribe = isDeno ? describe : describe.skip;
 

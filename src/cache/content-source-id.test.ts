@@ -5,8 +5,8 @@
  * Verifies: All 6 content source ID formats and uniqueness across environments.
  * Extends existing keys.test.ts with comprehensive isolation testing.
  */
-import { assertEquals, assertThrows } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import { computeContentSourceId } from "./keys.ts";
 
 describe("cache/content-source-id isolation", () => {

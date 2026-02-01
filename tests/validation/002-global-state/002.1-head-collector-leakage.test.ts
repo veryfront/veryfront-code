@@ -8,8 +8,8 @@
  * @see plans/architecture-audit/002.1-head-collector-leakage.md
  */
 
-import { assertEquals, assertNotEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import {
   collectHead,
   runWithHeadCollector,

@@ -5,8 +5,8 @@
  * and runtime overlay functionality in development mode.
  */
 
-import { assertEquals, assertExists, assertStringIncludes } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import {
   type ErrorInfo,
   ErrorOverlay,

@@ -1,12 +1,12 @@
-import { join } from "@veryfront/compat/path";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { join } from "#veryfront/compat/path";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
-import { assert } from "@veryfront/testing/assert";
-import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { assert } from "#veryfront/testing/assert";
+import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { assertDrained, drainEventLoop } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async";
 
 describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   afterAll(async () => {

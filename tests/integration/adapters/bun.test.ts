@@ -1,10 +1,10 @@
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { describe, it } from "@veryfront/testing/bdd";
-import { BunAdapter } from "@veryfront/platform/adapters/runtime/bun/index.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { describe, it } from "#veryfront/testing/bdd";
+import { BunAdapter } from "#veryfront/platform/adapters/runtime/bun/index.ts";
 import { startUniversalServer } from "../../../src/server/production-server.ts";
 import { getFreePort } from "../../_helpers/utils.ts";
-import { makeTempDir, mkdir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
+import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
 
 const isBunRuntime = typeof (globalThis as any).Bun !== "undefined";
 

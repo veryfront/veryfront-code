@@ -8,10 +8,10 @@
  * @see https://github.com/veryfront/veryfront-renderer/issues/XXX
  */
 
-import { assertEquals, assertNotEquals, assertStringIncludes } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertNotEquals, assertStringIncludes } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";

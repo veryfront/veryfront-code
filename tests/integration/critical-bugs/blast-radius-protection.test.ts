@@ -15,10 +15,10 @@
  * projects continue to function normally.
  */
 
-import { assert, assertStringIncludes } from "@veryfront/testing/assert";
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
-import { join } from "@veryfront/compat/path";
+import { assert, assertStringIncludes } from "#veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
+import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
+import { join } from "#veryfront/compat/path";
 import { withTestContext } from "../../_helpers/context.ts";
 import { clearLayoutDiscoveryCache } from "../../../src/rendering/layouts/utils/discovery.ts";
 

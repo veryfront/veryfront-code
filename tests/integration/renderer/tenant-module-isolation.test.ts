@@ -1,8 +1,8 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { writeTextFile } from "@veryfront/compat/fs.ts";
-import { describe, it } from "@veryfront/testing/bdd";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+import { assertEquals } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { writeTextFile } from "#veryfront/compat/fs.ts";
+import { describe, it } from "#veryfront/testing/bdd";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { loadComponentFromSource } from "../../../src/modules/react-loader/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 

@@ -12,11 +12,11 @@
  * - Caching and ETags
  */
 
-import { assert, assertEquals, assertExists, assertMatch } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
-import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
-import { delay } from "@std/async";
+import { assert, assertEquals, assertExists, assertMatch } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
+import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
+import { delay } from "#std/async";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { TestDataFactory } from "../../fixtures/test-data-factory.ts";
 import { withTestContext } from "../../_helpers/context.ts";

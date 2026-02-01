@@ -1,5 +1,5 @@
-import { assertEquals, assertRejects } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import { Singleflight } from "../../src/utils/singleflight.ts";
 
 describe("Singleflight", () => {

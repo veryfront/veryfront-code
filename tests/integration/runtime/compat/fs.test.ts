@@ -1,10 +1,10 @@
-import { assert, assertEquals, assertExists, assertRejects } from "@veryfront/testing/assert";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { isBun } from "@veryfront/platform/compat/runtime.ts";
-import { delay } from "@std/async";
-import { makeTempDir, remove } from "@veryfront/testing/deno-compat";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
+import { join } from "#veryfront/compat/path";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { isBun } from "#veryfront/platform/compat/runtime.ts";
+import { delay } from "#std/async";
+import { makeTempDir, remove } from "#veryfront/testing/deno-compat";
 
 const removeIt = isBun ? it.skip : it;
 

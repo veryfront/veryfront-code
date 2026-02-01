@@ -1,6 +1,6 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
-import { writeTextFile } from "@veryfront/compat/fs.ts";
+import { assertEquals } from "#veryfront/testing/assert";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
+import { writeTextFile } from "#veryfront/compat/fs.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import "../../../_helpers/log-guard.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";

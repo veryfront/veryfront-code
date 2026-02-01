@@ -16,15 +16,15 @@
  * - Route priority and ordering
  */
 
-import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
-import { mkdir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
+import { mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
 import "../../_helpers/log-guard.ts";
 import { collectAppRoutes, collectPagesRoutes } from "../../../src/server/build-routes.ts";
 import type { AppRouteInfo, RouteInfo } from "../../../src/server/build-types.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 
 describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false }, () => {

@@ -1,10 +1,10 @@
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { describe, it } from "@veryfront/testing/bdd";
-import { NodeAdapter, nodeAdapter } from "@veryfront/platform/adapters/runtime/node/index.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { describe, it } from "#veryfront/testing/bdd";
+import { NodeAdapter, nodeAdapter } from "#veryfront/platform/adapters/runtime/node/index.ts";
 import { startUniversalServer } from "../../../src/server/production-server.ts";
 import { getFreePort } from "../../_helpers/utils.ts";
-import { makeTempDir, mkdir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
+import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
 
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
 // See: https://github.com/facebook/react/issues/24669

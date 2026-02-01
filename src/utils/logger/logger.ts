@@ -81,7 +81,7 @@ let cachedEnvMode: string | undefined;
  * This is only intended for testing purposes to ensure fresh config evaluation.
  * @internal
  */
-export function __resetLoggerConfigForTesting(): void {
+export function __resetLoggerConfigForTests(): void {
   cachedConfig = null;
   cachedEnvLevel = undefined;
   cachedDebugFlag = undefined;

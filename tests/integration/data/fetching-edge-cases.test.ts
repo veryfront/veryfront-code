@@ -3,10 +3,10 @@
  * Tests network failures, timeout scenarios, invalid responses, and error handling
  **************************/
 
-import { assertEquals, assertExists, assertRejects } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { type DataContext, DataFetcher, type PageWithData } from "@veryfront/data/index.ts";
-import { delay } from "@std/async";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { type DataContext, DataFetcher, type PageWithData } from "#veryfront/data/index.ts";
+import { delay } from "#std/async";
 
 type StaticDataContext = Omit<DataContext, "request" | "query">;
 

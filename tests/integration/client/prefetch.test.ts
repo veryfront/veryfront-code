@@ -3,14 +3,14 @@
  * Tests link prefetching, cache management, and intersection observer
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
-import type { PrefetchOptions } from "@veryfront/rendering/client/prefetch.ts";
-import { PrefetchManager } from "@veryfront/rendering/client/prefetch.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
+import type { PrefetchOptions } from "#veryfront/rendering/client/prefetch.ts";
+import { PrefetchManager } from "#veryfront/rendering/client/prefetch.ts";
 import type { DOMEnvironment } from "./test-helpers.ts";
 import { setupDOMEnvironment } from "./test-helpers.ts";
-import { delay } from "@std/async";
-import { scaleMs } from "@veryfront/testing";
+import { delay } from "#std/async";
+import { scaleMs } from "#veryfront/testing";
 
 describe("Prefetch Manager", () => {
   let env: DOMEnvironment;

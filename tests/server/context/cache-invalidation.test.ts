@@ -1,4 +1,4 @@
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "#std/testing/bdd";
 import { invalidateProjectCaches } from "../../../src/server/context/cache-invalidation.ts";
 
 describe("cache-invalidation", () => {

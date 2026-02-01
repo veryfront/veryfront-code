@@ -2,10 +2,10 @@
  * Simplified production server test to debug resource leaks
  */
 
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
-import { writeTextFile } from "@veryfront/compat/fs.ts";
+import { assertEquals } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { join } from "#veryfront/compat/path";
+import { writeTextFile } from "#veryfront/compat/fs.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
 describe("Simple Production Server", () => {

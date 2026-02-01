@@ -70,22 +70,24 @@ async function main() {
   let modifiedFiles = 0;
   let totalChanges = 0;
 
-  // Walk through src/ directory
-  for await (const entry of walk("src/", {
-    exts: [".ts", ".tsx"],
-    skip: [/node_modules/, /\.cache/, /dist/],
-  })) {
-    if (!entry.isFile) continue;
-    totalFiles++;
+  // Walk through src/ and tests/ directories
+  for (const dir of ["src/", "tests/"]) {
+    for await (const entry of walk(dir, {
+      exts: [".ts", ".tsx"],
+      skip: [/node_modules/, /\.cache/, /dist/],
+    })) {
+      if (!entry.isFile) continue;
+      totalFiles++;
 
-    const result = await migrateFile(entry.path);
-    if (result) {
-      results.push(result);
-      modifiedFiles++;
-      totalChanges += result.changes;
+      const result = await migrateFile(entry.path);
+      if (result) {
+        results.push(result);
+        modifiedFiles++;
+        totalChanges += result.changes;
 
-      if (VERBOSE) {
-        console.log(`  ${result.file}: ${result.changes} changes`);
+        if (VERBOSE) {
+          console.log(`  ${result.file}: ${result.changes} changes`);
+        }
       }
     }
   }

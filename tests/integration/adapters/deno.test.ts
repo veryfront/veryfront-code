@@ -1,6 +1,6 @@
-import { assert, assertEquals } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assert, assertEquals } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { describe, it } from "#veryfront/testing/bdd";
 import { isDeno } from "../../../src/platform/compat/runtime.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
@@ -10,7 +10,7 @@ if (!isDeno) {
   });
 } else {
   async function getDenoAdapter() {
-    const { denoAdapter } = await import("@veryfront/platform/adapters/runtime/deno/index.ts");
+    const { denoAdapter } = await import("#veryfront/platform/adapters/runtime/deno/index.ts");
     return denoAdapter;
   }
 

@@ -1,11 +1,11 @@
 // Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-import { assertEquals, assertRejects } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { getAdapter } from "@veryfront/platform";
-import { clearConfigCache, getConfig, type VeryfrontConfig } from "@veryfront/config";
-import { remove, writeTextFile } from "@veryfront/testing/deno-compat";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { getAdapter } from "#veryfront/platform";
+import { clearConfigCache, getConfig, type VeryfrontConfig } from "#veryfront/config";
+import { remove, writeTextFile } from "#veryfront/testing/deno-compat";
 import { withTestContext } from "../../_helpers/context.ts";
 
 function projectFile(projectDir: string, file: string): string {

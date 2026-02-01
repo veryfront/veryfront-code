@@ -3,14 +3,14 @@
  * Verifies that caches are properly cleared between renderer instances
  */
 
-import { assert, assertStringIncludes } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { assert, assertStringIncludes } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async";
 
 async function clearAllStateIfSupported(
   renderer: unknown,

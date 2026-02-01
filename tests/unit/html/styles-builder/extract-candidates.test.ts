@@ -1,5 +1,5 @@
-import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals } from "#std/assert";
+import { describe, it } from "#std/testing/bdd";
 import { extractCandidates } from "../../../../src/html/styles-builder/tailwind-compiler.ts";
 
 function assertExtractsClasses(content: string, expectedClasses: string[]): void {

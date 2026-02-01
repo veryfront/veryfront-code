@@ -4,19 +4,19 @@
  * Tests bundle manifest integration with the renderer and build process
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import {
   type BundleMetadata,
   getBundleManifestStore,
   InMemoryBundleManifestStore,
   setBundleManifestStore,
-} from "@veryfront/utils/bundle-manifest.ts";
+} from "#veryfront/utils/bundle-manifest.ts";
 import {
   getBundleManifestTTL,
   initializeBundleManifest,
-} from "@veryfront/utils/bundle-manifest-init.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
+} from "#veryfront/utils/bundle-manifest-init.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 describe("Bundle Manifest Integration", () => {
   describe("initializeBundleManifest", () => {

@@ -25,7 +25,7 @@ export async function cleanupBundler(): Promise<void> {
 
 export async function configureRendererNamespace(namespace: string): Promise<void> {
   try {
-    const { setCacheNamespace } = await import("@veryfront/utils/cache/keys/namespace.ts");
+    const { setCacheNamespace } = await import("#veryfront/utils/cache/keys/namespace.ts");
     setCacheNamespace(namespace);
   } catch {
     // Cache namespace configuration is optional

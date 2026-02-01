@@ -1,5 +1,5 @@
-import { describe, it } from "@veryfront/testing/bdd";
-import { assertEquals, assertMatch } from "@veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { assertEquals, assertMatch } from "#veryfront/testing/assert";
 import { createIdGenerator, generateId } from "./id.ts";
 
 describe("id", () => {

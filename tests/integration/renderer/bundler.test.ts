@@ -3,11 +3,11 @@
  * Tests MDX compilation, import resolution, and cross-module imports
  */
 
-import { assert, assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
-import { describe, it } from "@veryfront/testing/bdd";
-import { compileMDXRuntime } from "@veryfront/transforms/mdx/compiler/mdx-compiler.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
+import { describe, it } from "#veryfront/testing/bdd";
+import { compileMDXRuntime } from "#veryfront/transforms/mdx/compiler/mdx-compiler.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
 describe("MDX Compilation System", () => {

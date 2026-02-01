@@ -1,5 +1,5 @@
-import { assertEquals, assertStrictEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertStrictEquals } from "#std/assert";
+import { describe, it } from "#std/testing/bdd";
 import {
   createEnvConfig,
   createRequestContext,

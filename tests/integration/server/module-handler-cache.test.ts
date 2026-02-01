@@ -1,12 +1,12 @@
-import { assertEquals, assertMatch } from "@veryfront/testing/assert";
-import { join } from "@veryfront/compat/path";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
-import { makeTempDir, mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
+import { assertEquals, assertMatch } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
+import { makeTempDir, mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 import type { HandlerContext } from "../../../src/server/handlers/types.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import { ResponseBuilder } from "@veryfront/security/index.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
-import { getConfig } from "@veryfront/config";
+import { getConfig } from "#veryfront/config";
 
 async function setupProject(): Promise<string> {
   const dir = await makeTempDir({ prefix: "vf_module_cache_" });

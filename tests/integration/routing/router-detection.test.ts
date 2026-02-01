@@ -10,17 +10,17 @@
  * - Edge cases and error handling
  */
 
-import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { symlink } from "@veryfront/compat/fs.ts";
-import { join } from "@veryfront/compat/path";
-import { ensureDir } from "@std/fs";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { symlink } from "#veryfront/compat/fs.ts";
+import { join } from "#veryfront/compat/path";
+import { ensureDir } from "#std/fs";
 import { detectAppRouter, getAppRouteEntity } from "../../../src/rendering/router-detection.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
-import { remove, writeTextFile } from "@veryfront/testing/deno-compat";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { remove, writeTextFile } from "#veryfront/testing/deno-compat";
 
 function getTestAdapter(): Promise<RuntimeAdapter> {
   return getLocalAdapter();

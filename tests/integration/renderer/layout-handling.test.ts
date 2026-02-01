@@ -1,17 +1,17 @@
-import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import * as React from "react";
-import { assert, assertEquals, assertExists, assertRejects } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import type { LayoutItem, MdxBundle, MDXComponents } from "@veryfront/types";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import type { LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
 import {
   applyLayoutsESM,
   applyLayoutsFunctionBody,
   compileMDXLayouts,
   computeDepsHash,
   discoverNestedLayouts,
-} from "@veryfront/rendering/layouts/index.ts";
+} from "#veryfront/rendering/layouts/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
 function createMockCompileMDX(): (

@@ -8,7 +8,7 @@
  * @module cache/backend.test
  */
 
-import { assertEquals, assertExists } from "@std/assert";
+import { assertEquals, assertExists } from "#std/assert";
 
 async function importBackend(): Promise<typeof import("./backend.ts")> {
   return await import("./backend.ts");

@@ -6,7 +6,7 @@ export {
   describe,
   it,
   it as test,
-} from "@std/testing/bdd";
+} from "#std/testing/bdd";
 
 export type TestFn = () => void | Promise<void>;
 

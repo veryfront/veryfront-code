@@ -21,7 +21,7 @@
  * ```
  */
 
-import { join } from "@veryfront/compat/path";
+import { join } from "#veryfront/compat/path";
 import {
   isNotFoundError,
   makeTempDir,

@@ -9,8 +9,8 @@
  * - Development mode skip
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import * as esbuild from "esbuild";
 import { optimizeBundle } from "../../../../../src/build/renderer/services/optimizer.ts";
 import type {

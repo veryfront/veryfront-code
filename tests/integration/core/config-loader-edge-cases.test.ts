@@ -3,13 +3,13 @@
  * Tests invalid configs, missing files, malformed input, and error scenarios
  */
 
-import { assertEquals, assertExists, assertRejects } from "@veryfront/testing/assert";
-import { assertStringIncludes } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { clearConfigCache, getConfig } from "@veryfront/config";
-import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
-import { join } from "@veryfront/compat/path";
-import { makeTempDir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
+import { assertStringIncludes } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { clearConfigCache, getConfig } from "#veryfront/config";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { join } from "#veryfront/compat/path";
+import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
 
 type SetupResult = {
   projectDir: string;

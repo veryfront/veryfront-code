@@ -2,12 +2,12 @@
  * Auto-Discovery Integration Tests
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { toolRegistry } from "@veryfront/tool";
-import { promptRegistry, resourceRegistry } from "@veryfront/mcp";
-import { join, resolve } from "@veryfront/compat/path";
-import { cwd } from "@veryfront/compat/process.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { beforeEach, describe, it } from "#veryfront/testing/bdd";
+import { toolRegistry } from "#veryfront/tool";
+import { promptRegistry, resourceRegistry } from "#veryfront/mcp";
+import { join, resolve } from "#veryfront/compat/path";
+import { cwd } from "#veryfront/compat/process.ts";
 import { discoverAll } from "../../../src/cli/discovery/index.ts";
 
 function getExamplesPath(): string {

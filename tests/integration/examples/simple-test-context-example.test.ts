@@ -2,10 +2,10 @@
  * Simple example to verify TestContext works correctly
  */
 
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { stat } from "@veryfront/compat/fs.ts";
-import { getEnv } from "@veryfront/compat/process.ts";
+import { assertEquals } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { stat } from "#veryfront/compat/fs.ts";
+import { getEnv } from "#veryfront/compat/process.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
 describe("TestContext", () => {

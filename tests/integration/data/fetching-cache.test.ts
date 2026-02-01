@@ -1,6 +1,6 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { DataFetcher } from "@veryfront/data/index.ts";
+import { assertEquals } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { DataFetcher } from "#veryfront/data/index.ts";
 
 describe("DataFetcher LRU/TTL basic behavior", () => {
   it("caches and clears data correctly", async () => {

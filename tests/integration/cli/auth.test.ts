@@ -5,17 +5,17 @@
  * callback server, and login commands.
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { makeTempDir, remove } from "@veryfront/compat/fs.ts";
-import { deleteEnv, getEnv, setEnv } from "@veryfront/compat/process.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, it } from "#veryfront/testing/bdd";
+import { makeTempDir, remove } from "#veryfront/compat/fs.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { deleteToken, readToken, saveToken } from "../../../src/cli/auth/token-store.ts";
 import {
   type CallbackServer,
   getCallbackUrl,
   startCallbackServer,
 } from "../../../src/cli/auth/callback-server.ts";
-import { scaleMs } from "@veryfront/testing";
+import { scaleMs } from "#veryfront/testing";
 
 describe("CLI Auth Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
   let server: CallbackServer | null = null;

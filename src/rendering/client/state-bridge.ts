@@ -148,7 +148,7 @@ export function getStateBridge(): StateBridge {
   return bridgeInstance;
 }
 
-export function __resetBridgeForTesting(): void {
+export function __resetBridgeForTests(): void {
   bridgeInstance?.destroy();
   bridgeInstance = null;
 }

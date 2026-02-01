@@ -1,5 +1,5 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { MemoryCache } from "./memory-cache.ts";
 import type { TokenCacheEntry } from "./types.ts";
 

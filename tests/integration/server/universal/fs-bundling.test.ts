@@ -1,8 +1,8 @@
-import { delay } from "@std/async";
-import { writeTextFile } from "@veryfront/compat/fs.ts";
-import { join } from "@veryfront/compat/path";
-import { assert, assertEquals, assertMatch } from "@veryfront/testing/assert";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { delay } from "#std/async";
+import { writeTextFile } from "#veryfront/compat/fs.ts";
+import { join } from "#veryfront/compat/path";
+import { assert, assertEquals, assertMatch } from "#veryfront/testing/assert";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 

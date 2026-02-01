@@ -9,9 +9,9 @@
  * - Edge cases and error handling
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { join } from "#veryfront/compat/path";
 import {
   extractImports,
   findComponent,

@@ -1,12 +1,12 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
 
-import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
-import { join } from "@veryfront/compat/path";
+import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
+import { join } from "#veryfront/compat/path";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async";
 
 function baseUrl(port: number): string {
   return `http://127.0.0.1:${port}`;

@@ -2,13 +2,13 @@
 
 /**
  * Codemod script to migrate test imports from Deno-specific modules
- * to the portable @veryfront/testing modules.
+ * to the portable #veryfront/testing modules.
  *
  * Transformations:
- * - `@std/assert` → `@veryfront/testing/assert`
- * - `@std/testing/bdd` → `@veryfront/testing/bdd`
- * - `Deno.makeTempDir()` → `makeTempDir()` from `@veryfront/testing/deno-compat`
- * - `Deno.makeTempFile()` → `makeTempFile()` from `@veryfront/testing/deno-compat`
+ * - `@std/assert` → `#veryfront/testing/assert`
+ * - `@std/testing/bdd` → `#veryfront/testing/bdd`
+ * - `Deno.makeTempDir()` → `makeTempDir()` from `#veryfront/testing/deno-compat`
+ * - `Deno.makeTempFile()` → `makeTempFile()` from `#veryfront/testing/deno-compat`
  *
  * Usage:
  *   deno run --allow-read --allow-write scripts/migrate-test-imports.ts
@@ -29,25 +29,25 @@ interface Migration {
 
 // Define migrations
 const migrations: Migration[] = [
-  // @std/assert → @veryfront/testing/assert
+  // @std/assert → #veryfront/testing/assert
   {
     pattern: /from\s+["']@std\/assert["']/g,
-    replacement: 'from "@veryfront/testing/assert"',
+    replacement: 'from "#veryfront/testing/assert"',
   },
-  // @std/testing/bdd → @veryfront/testing/bdd
+  // @std/testing/bdd → #veryfront/testing/bdd
   {
     pattern: /from\s+["']@std\/testing\/bdd["']/g,
-    replacement: 'from "@veryfront/testing/bdd"',
+    replacement: 'from "#veryfront/testing/bdd"',
   },
-  // @std/testing → @veryfront/testing/bdd (when used for BDD)
+  // @std/testing → #veryfront/testing/bdd (when used for BDD)
   {
     pattern: /from\s+["']@std\/testing["']/g,
-    replacement: 'from "@veryfront/testing/bdd"',
+    replacement: 'from "#veryfront/testing/bdd"',
   },
   // @std/path → portable path compat
   {
     pattern: /from\s+["']@std\/path["']/g,
-    replacement: 'from "@veryfront/compat/path"',
+    replacement: 'from "#veryfront/compat/path"',
   },
 ];
 
@@ -60,13 +60,13 @@ const additionalImports: Array<{
   // Deno.makeTempDir() needs import from deno-compat
   {
     pattern: /Deno\.makeTempDir\s*\(/,
-    importStatement: 'import { makeTempDir } from "@veryfront/testing/deno-compat";',
+    importStatement: 'import { makeTempDir } from "#veryfront/testing/deno-compat";',
     checkPattern: /makeTempDir/,
   },
   // Deno.makeTempFile() needs import from deno-compat
   {
     pattern: /Deno\.makeTempFile\s*\(/,
-    importStatement: 'import { makeTempFile } from "@veryfront/testing/deno-compat";',
+    importStatement: 'import { makeTempFile } from "#veryfront/testing/deno-compat";',
     checkPattern: /makeTempFile/,
   },
 ];
@@ -164,7 +164,7 @@ async function processFile(filePath: string): Promise<{
 }
 
 async function main() {
-  console.log(`\n🔄 Migrating test imports to portable @veryfront/testing modules...\n`);
+  console.log(`\n🔄 Migrating test imports to portable #veryfront/testing modules...\n`);
 
   if (DRY_RUN) {
     console.log("📋 DRY RUN - No files will be modified\n");

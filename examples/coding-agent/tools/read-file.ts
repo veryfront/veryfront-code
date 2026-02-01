@@ -5,7 +5,7 @@
 
 import { tool } from "veryfront/tool";
 import { z } from "zod";
-import { getAdapter } from "@veryfront/platform";
+import { getAdapter } from "#veryfront/platform";
 import { resolvePath } from "../utils/path-helpers.ts";
 
 const adapter = await getAdapter();

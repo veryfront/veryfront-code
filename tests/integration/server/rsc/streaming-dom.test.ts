@@ -1,12 +1,12 @@
-import { assert } from "@veryfront/testing/assert";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { assert } from "#veryfront/testing/assert";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
-import { join } from "@veryfront/compat/path";
-import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { join } from "#veryfront/compat/path";
+import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { consumeNdjsonStream, getContainer } from "../../../../src/rendering/rsc/client-dom.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async";
 
 function createDocument(): Document {
   const ids = new Map<string, any>();

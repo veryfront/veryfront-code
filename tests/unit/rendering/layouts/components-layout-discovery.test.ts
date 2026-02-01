@@ -5,8 +5,8 @@
  * which can be tested without mocking the full adapter.
  */
 
-import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals } from "#std/assert";
+import { describe, it } from "#std/testing/bdd";
 import {
   discoverComponentsLayoutPath,
   type FileExistenceChecker,

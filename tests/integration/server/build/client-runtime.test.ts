@@ -1,5 +1,5 @@
-import { assert, assertStringIncludes } from "@veryfront/testing/assert";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { assert, assertStringIncludes } from "#veryfront/testing/assert";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import {
   generateAppModule,
   generateImportMap,

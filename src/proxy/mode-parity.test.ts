@@ -5,8 +5,8 @@
  * Verifies: Combined mode and split mode produce identical header values
  * for the same input request.
  */
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import { createProxyHandler, injectContextHeaders, type ProxyContext } from "./handler.ts";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 

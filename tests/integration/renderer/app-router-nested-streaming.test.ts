@@ -1,9 +1,9 @@
-import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
-import { join } from "@veryfront/compat/path";
-import { delay } from "@std/async";
-import { assert } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { scaleMs } from "@veryfront/testing";
+import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { join } from "#veryfront/compat/path";
+import { delay } from "#std/async";
+import { assert } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { scaleMs } from "#veryfront/testing";
 import { withTestContext } from "../../_helpers/context.ts";
 
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue

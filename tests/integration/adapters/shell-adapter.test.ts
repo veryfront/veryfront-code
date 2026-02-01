@@ -6,15 +6,15 @@
  * - readFileSync()
  */
 
-import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
-import { symlink } from "@veryfront/compat/fs.ts";
-import { join } from "@veryfront/compat/path";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
+import { symlink } from "#veryfront/compat/fs.ts";
+import { join } from "#veryfront/compat/path";
+import { describe, it } from "#veryfront/testing/bdd";
 import { withTestContext } from "../../_helpers/context.ts";
-import { chdir, cwd } from "@veryfront/compat/process.ts";
-import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
-import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { chdir, cwd } from "#veryfront/compat/process.ts";
+import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
+import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 type ShellRuntimeAdapter = RuntimeAdapter & {
   shell: NonNullable<RuntimeAdapter["shell"]>;

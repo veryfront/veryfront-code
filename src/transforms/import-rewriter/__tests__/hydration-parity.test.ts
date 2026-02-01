@@ -174,7 +174,7 @@ describe("Strategy Unit Tests", () => {
 
   describe("VeryfrontStrategy", () => {
     it("should normalize @veryfront/ to veryfront/ for SSR", async () => {
-      const code = `import { something } from "@veryfront/utils";`;
+      const code = `import { something } from "#veryfront/utils";`;
       const result = await rewriteImports(code, createContext({ target: "ssr" }));
       expect(result).toContain("veryfront/utils");
       expect(result).not.toContain("@veryfront/utils");
@@ -203,7 +203,7 @@ describe("Strategy Unit Tests", () => {
     });
 
     it("should map @veryfront/* to module server URLs for browser", async () => {
-      const code = `import { Head } from "@veryfront/head";`;
+      const code = `import { Head } from "#veryfront/head";`;
       const result = await rewriteImports(code, createContext({ target: "browser" }));
       expect(result).toContain("/_vf_modules/_veryfront/react/components/Head.js");
     });

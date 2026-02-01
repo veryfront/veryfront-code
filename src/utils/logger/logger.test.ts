@@ -1,7 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  __resetLoggerConfigForTesting,
+  __resetLoggerConfigForTests,
   getBaseLogger,
   getDefaultLevel,
   type LogEntry,
@@ -28,14 +28,14 @@ function captureConsoleLog(): { getOutput: () => string; restore: () => void } {
 }
 
 function withJsonLogFormat<T>(fn: () => T): T {
-  __resetLoggerConfigForTesting();
+  __resetLoggerConfigForTests();
   Deno.env.set("LOG_FORMAT", "json");
 
   try {
     return fn();
   } finally {
     Deno.env.delete("LOG_FORMAT");
-    __resetLoggerConfigForTesting();
+    __resetLoggerConfigForTests();
   }
 }
 

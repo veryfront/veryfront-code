@@ -1,11 +1,11 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
-import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { assertEquals } from "#veryfront/testing/assert";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
+import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import "../../../_helpers/log-guard.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { assertDrained, drainEventLoop } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async";
 
 describe("RSC Flight ESM.sh Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   afterAll(async () => {

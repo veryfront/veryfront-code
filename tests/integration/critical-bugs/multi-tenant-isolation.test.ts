@@ -4,10 +4,10 @@ import {
   assertExists,
   assertNotEquals,
   assertStringIncludes,
-} from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
-import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
+} from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { join } from "#veryfront/compat/path";
+import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
 import { type TestContext, withTestContext } from "../../_helpers/context.ts";
 import {
   collectHead,

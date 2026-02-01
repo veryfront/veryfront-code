@@ -4,13 +4,13 @@
  * Total: 6 tests
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import {
   collectAncestorDirs,
   createErrorBoundary,
   RESERVED_COMPONENTS,
-} from "@veryfront/rendering/app-reserved.ts";
+} from "#veryfront/rendering/app-reserved.ts";
 
 describe("App Reserved Components", () => {
   describe("collectAncestorDirs", () => {

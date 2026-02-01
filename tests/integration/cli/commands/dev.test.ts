@@ -1,12 +1,12 @@
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { ensureDir } from "@std/fs";
-import { describe, it } from "@veryfront/testing/bdd";
-import { writeTextFile } from "@veryfront/compat/fs.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { ensureDir } from "#std/fs";
+import { describe, it } from "#veryfront/testing/bdd";
+import { writeTextFile } from "#veryfront/compat/fs.ts";
 import type { DevCommandOptions } from "../../../../src/cli/commands/dev.ts";
-import { clearConfigCache } from "@veryfront/config";
+import { clearConfigCache } from "#veryfront/config";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
-import { delay } from "@std/async";
-import { scaleMs } from "@veryfront/testing";
+import { delay } from "#std/async";
+import { scaleMs } from "#veryfront/testing";
 
 function createMockDevCommand(): (options: { signal?: AbortSignal } & any) => Promise<void> {
   return async (options: { signal?: AbortSignal } & any): Promise<void> => {
@@ -14,8 +14,8 @@ function createMockDevCommand(): (options: { signal?: AbortSignal } & any) => Pr
 
     console.log("Starting development server...");
 
-    const adapter = await (await import("@veryfront/platform/adapters/detect.ts")).getAdapter();
-    const config = await (await import("@veryfront/config/loader.ts")).getConfig(projectDir, adapter);
+    const adapter = await (await import("#veryfront/platform/adapters/detect.ts")).getAdapter();
+    const config = await (await import("#veryfront/config/loader.ts")).getConfig(projectDir, adapter);
 
     const finalPort = config?.dev?.port || port;
 
