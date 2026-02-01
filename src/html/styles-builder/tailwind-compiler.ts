@@ -70,6 +70,17 @@ export interface CSSErrorInfo {
   suggestion: string;
 }
 
+/**
+ * Unified CSS cache entry - stores CSS and inputs together.
+ * This ensures CSS and its regeneration inputs always expire together,
+ * enabling reliable JIT regeneration across pods.
+ */
+interface CSSCacheEntry {
+  css: string;
+  candidates: string[];
+  stylesheet: string;
+}
+
 let tailwindBaseCSS: string | null = null;
 
 /**
@@ -94,7 +105,7 @@ let cssCacheInitPromise: Promise<CacheBackend> | null = null;
 // Limited to 86400 seconds due to API cache validation constraint.
 const CSS_CACHE_TTL_SECONDS = 24 * 3600; // 24 hours (86400 seconds - API max)
 
-const localCssCache = new Map<string, string>();
+const localCssCache = new Map<string, CSSCacheEntry>();
 const LOCAL_CACHE_MAX_SIZE = 100;
 
 /**
@@ -202,7 +213,11 @@ export async function getProjectCSS(
         projectSlug,
         hash: localCached.hash,
       });
-      await cacheCSSAsync(localCached.css, localCached.hash);
+      // Store in per-hash cache with inputs for JIT regeneration
+      await cacheCSSAsync(localCached.css, localCached.hash, {
+        candidates,
+        stylesheet: stylesheet ?? DEFAULT_STYLESHEET,
+      });
       return { css: localCached.css, hash: localCached.hash, fromCache: true };
     } else {
       // Candidates changed; drop local entry
@@ -227,7 +242,11 @@ export async function getProjectCSS(
             hash: entry.hash,
           });
           setProjectCSSLocalFallback(cacheKey, entry);
-          await cacheCSSAsync(entry.css, entry.hash);
+          // Store in per-hash cache with inputs for JIT regeneration
+          await cacheCSSAsync(entry.css, entry.hash, {
+            candidates,
+            stylesheet: stylesheet ?? DEFAULT_STYLESHEET,
+          });
           return { css: entry.css, hash: entry.hash, fromCache: true };
         }
         logger.debug("[tailwind] Project CSS cache miss (candidates changed)", {
@@ -269,11 +288,12 @@ export async function getProjectCSS(
   }
 
   // Also store in per-hash cache for getCSSByHash lookups
+  // CSS and inputs are stored together for reliable JIT regeneration
   setProjectCSSLocalFallback(cacheKey, entry);
-  await cacheCSSAsync(result.css, hash);
-
-  // Store CSS inputs for JIT regeneration (allows any pod to regenerate)
-  await storeCSSInputsAsync(hash, candidates, stylesheet ?? DEFAULT_STYLESHEET);
+  await cacheCSSAsync(result.css, hash, {
+    candidates,
+    stylesheet: stylesheet ?? DEFAULT_STYLESHEET,
+  });
 
   logger.debug("[tailwind] Project CSS generated", {
     projectSlug,
@@ -359,7 +379,7 @@ export function hashCSS(css: string): string {
   return hashString(css).slice(0, 8);
 }
 
-function storeInLocalCache(hash: string, css: string): void {
+function storeInLocalCache(hash: string, entry: CSSCacheEntry): void {
   if (localCssCache.has(hash)) return;
 
   if (localCssCache.size >= LOCAL_CACHE_MAX_SIZE) {
@@ -367,12 +387,12 @@ function storeInLocalCache(hash: string, css: string): void {
     if (firstKey) localCssCache.delete(firstKey);
   }
 
-  localCssCache.set(hash, css);
+  localCssCache.set(hash, entry);
 }
 
-function touchLocalCache(hash: string, css: string): void {
+function touchLocalCache(hash: string, entry: CSSCacheEntry): void {
   localCssCache.delete(hash);
-  localCssCache.set(hash, css);
+  localCssCache.set(hash, entry);
 }
 
 function getCssCache(): Promise<CacheBackend> {
@@ -394,13 +414,28 @@ function getCssCache(): Promise<CacheBackend> {
   return cssCacheInitPromise;
 }
 
-export async function cacheCSSAsync(css: string, hash?: string): Promise<string> {
+/**
+ * Cache CSS with its generation inputs for JIT regeneration.
+ * Stores CSS and inputs together so they expire at the same time,
+ * ensuring any pod can regenerate the CSS if needed.
+ */
+export async function cacheCSSAsync(
+  css: string,
+  hash?: string,
+  inputs?: { candidates: string[] | Set<string>; stylesheet: string },
+): Promise<string> {
   const resolvedHash = hash ?? hashCSS(css);
-  storeInLocalCache(resolvedHash, css);
+  const entry: CSSCacheEntry = {
+    css,
+    candidates: inputs ? (Array.isArray(inputs.candidates) ? inputs.candidates : [...inputs.candidates]) : [],
+    stylesheet: inputs?.stylesheet ?? DEFAULT_STYLESHEET,
+  };
+
+  storeInLocalCache(resolvedHash, entry);
 
   try {
     const cache = await getCssCache();
-    await cache.set(resolvedHash, css, CSS_CACHE_TTL_SECONDS);
+    await cache.set(resolvedHash, JSON.stringify(entry), CSS_CACHE_TTL_SECONDS);
   } catch (error) {
     logger.debug("[tailwind] Failed to store CSS in distributed cache", {
       hash: resolvedHash,
@@ -412,9 +447,12 @@ export async function cacheCSSAsync(css: string, hash?: string): Promise<string>
 }
 
 export function getCSSByHash(hash: string): string | undefined {
-  const css = localCssCache.get(hash);
-  if (css) touchLocalCache(hash, css);
-  return css;
+  const entry = localCssCache.get(hash);
+  if (entry) {
+    touchLocalCache(hash, entry);
+    return entry.css;
+  }
+  return undefined;
 }
 
 export async function getCSSByHashAsync(hash: string): Promise<string | undefined> {
@@ -424,17 +462,21 @@ export async function getCSSByHashAsync(hash: string): Promise<string | undefine
       const local = localCssCache.get(hash);
       if (local) {
         touchLocalCache(hash, local);
-        return local;
+        return local.css;
       }
 
       try {
         const cache = await getCssCache();
-        const css = await cache.get(hash);
-        if (!css) return undefined;
+        const raw = await cache.get(hash);
+        if (!raw) return undefined;
 
-        storeInLocalCache(hash, css);
+        // Parse the unified cache entry (CSS + inputs)
+        const entry = parseCSSCacheEntry(raw);
+        if (!entry) return undefined;
+
+        storeInLocalCache(hash, entry);
         logger.debug("[tailwind] CSS cache hit from distributed cache", { hash });
-        return css;
+        return entry.css;
       } catch (error) {
         logger.debug("[tailwind] Failed to read from distributed CSS cache", { hash, error });
         return undefined;
@@ -444,9 +486,68 @@ export async function getCSSByHashAsync(hash: string): Promise<string | undefine
   );
 }
 
+/**
+ * Parse CSS cache entry, handling both old format (plain CSS string)
+ * and new format (JSON with CSS + inputs).
+ */
+function parseCSSCacheEntry(raw: string): CSSCacheEntry | undefined {
+  // Try parsing as JSON first (new format)
+  if (raw.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(raw) as Partial<CSSCacheEntry>;
+      if (parsed.css) {
+        return {
+          css: parsed.css,
+          candidates: parsed.candidates ?? [],
+          stylesheet: parsed.stylesheet ?? DEFAULT_STYLESHEET,
+        };
+      }
+    } catch {
+      // Fall through to legacy handling
+    }
+  }
+
+  // Legacy format: plain CSS string (no inputs available)
+  return {
+    css: raw,
+    candidates: [],
+    stylesheet: DEFAULT_STYLESHEET,
+  };
+}
+
 export function clearCSSCache(): void {
   localCssCache.clear();
   localCssInputsCache.clear();
+}
+
+/**
+ * Get CSS cache entry with inputs for JIT regeneration.
+ * Returns the full entry (CSS + inputs) if available.
+ */
+async function getCSSCacheEntry(hash: string): Promise<CSSCacheEntry | undefined> {
+  // Try local cache first
+  const local = localCssCache.get(hash);
+  if (local && local.candidates.length > 0) {
+    touchLocalCache(hash, local);
+    return local;
+  }
+
+  // Try distributed cache
+  try {
+    const cache = await getCssCache();
+    const raw = await cache.get(hash);
+    if (!raw) return undefined;
+
+    const entry = parseCSSCacheEntry(raw);
+    if (entry) {
+      storeInLocalCache(hash, entry);
+      return entry;
+    }
+  } catch (error) {
+    logger.debug("[tailwind] Failed to read CSS cache entry", { hash, error });
+  }
+
+  return undefined;
 }
 
 // ============================================================================
@@ -533,6 +634,9 @@ async function getCSSInputsByHash(hash: string): Promise<CSSInputsCacheEntry | u
  * Regenerate CSS by hash using cached inputs.
  * This is the JIT regeneration path - any pod can regenerate without fetching files.
  *
+ * Tries unified cache (CSS + inputs together) first, then falls back to legacy
+ * separate inputs cache for backward compatibility with existing cached data.
+ *
  * @param expectedHash - The CSS hash to regenerate
  * @returns The regenerated CSS if inputs are cached and hash matches, undefined otherwise
  */
@@ -540,8 +644,22 @@ export async function regenerateCSSByHash(expectedHash: string): Promise<string 
   return await withSpan(
     SpanNames.HTML_REGENERATE_CSS_BY_HASH,
     async () => {
-      const inputs = await getCSSInputsByHash(expectedHash);
-      if (!inputs) {
+      // Try unified cache first (CSS + inputs stored together)
+      const cacheEntry = await getCSSCacheEntry(expectedHash);
+      let inputs: CSSInputsCacheEntry | undefined;
+
+      if (cacheEntry && cacheEntry.candidates.length > 0) {
+        inputs = {
+          candidates: cacheEntry.candidates,
+          stylesheet: cacheEntry.stylesheet,
+        };
+        logger.debug("[tailwind] Found inputs in unified CSS cache", { hash: expectedHash });
+      } else {
+        // Fallback to legacy separate inputs cache
+        inputs = await getCSSInputsByHash(expectedHash);
+      }
+
+      if (!inputs || inputs.candidates.length === 0) {
         logger.debug("[tailwind] Cannot regenerate CSS - no cached inputs", { hash: expectedHash });
         return undefined;
       }
@@ -567,10 +685,16 @@ export async function regenerateCSSByHash(expectedHash: string): Promise<string 
         return undefined;
       }
 
-      storeInLocalCache(regeneratedHash, result.css);
+      // Store regenerated CSS with its inputs for future JIT
+      const regeneratedEntry: CSSCacheEntry = {
+        css: result.css,
+        candidates: inputs.candidates,
+        stylesheet: inputs.stylesheet,
+      };
+      storeInLocalCache(regeneratedHash, regeneratedEntry);
       try {
         const cache = await getCssCache();
-        await cache.set(regeneratedHash, result.css, CSS_CACHE_TTL_SECONDS);
+        await cache.set(regeneratedHash, JSON.stringify(regeneratedEntry), CSS_CACHE_TTL_SECONDS);
       } catch {
         // Ignore cache write failure - we have the CSS
       }
