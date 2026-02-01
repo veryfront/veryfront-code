@@ -427,7 +427,9 @@ export async function cacheCSSAsync(
   const resolvedHash = hash ?? hashCSS(css);
   const entry: CSSCacheEntry = {
     css,
-    candidates: inputs ? (Array.isArray(inputs.candidates) ? inputs.candidates : [...inputs.candidates]) : [],
+    candidates: inputs
+      ? (Array.isArray(inputs.candidates) ? inputs.candidates : [...inputs.candidates])
+      : [],
     stylesheet: inputs?.stylesheet ?? DEFAULT_STYLESHEET,
   };
 
@@ -582,30 +584,6 @@ function storeInLocalCssInputsCache(hash: string, entry: CSSInputsCacheEntry): v
   }
 
   localCssInputsCache.set(hash, entry);
-}
-
-/**
- * Store CSS generation inputs alongside the CSS for JIT regeneration.
- * This allows any pod to regenerate CSS without fetching all project files.
- */
-async function storeCSSInputsAsync(
-  hash: string,
-  candidates: string[] | Set<string>,
-  stylesheet: string,
-): Promise<void> {
-  const entry: CSSInputsCacheEntry = {
-    candidates: Array.isArray(candidates) ? candidates : [...candidates],
-    stylesheet,
-  };
-
-  storeInLocalCssInputsCache(hash, entry);
-
-  try {
-    const cache = await getCssInputsCache();
-    await cache.set(hash, JSON.stringify(entry), CSS_CACHE_TTL_SECONDS);
-  } catch (error) {
-    logger.debug("[tailwind] Failed to store CSS inputs in distributed cache", { hash, error });
-  }
 }
 
 /**

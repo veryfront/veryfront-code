@@ -1,6 +1,9 @@
 import { parseImports, replaceSpecifiers, rewriteImports } from "./lexer.ts";
 import { getReactImportMap } from "./package-registry.ts";
-import { DEFAULT_REACT_VERSION as REACT_DEFAULT_VERSION, TAILWIND_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import {
+  DEFAULT_REACT_VERSION as REACT_DEFAULT_VERSION,
+  TAILWIND_VERSION,
+} from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 

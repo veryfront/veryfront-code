@@ -1,4 +1,7 @@
-import { DEFAULT_REACT_VERSION, getReactImportMap } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  DEFAULT_REACT_VERSION,
+  getReactImportMap,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 

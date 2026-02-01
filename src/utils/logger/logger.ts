@@ -10,8 +10,8 @@ import {
   LEVEL_GLYPHS,
   type LogLevelName,
   padTag,
-  serializeError,
   type SerializedError,
+  serializeError,
 } from "./core.ts";
 
 export enum LogLevel {
