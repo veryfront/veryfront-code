@@ -102,5 +102,58 @@ describe("AliasStrategy", () => {
       );
       assertEquals(result.specifier, "/_vf_modules/lib/data.js");
     });
+
+    describe("moduleServerUrl path", () => {
+      it("should use absolute path when moduleServerUrl is configured", () => {
+        const result = aliasStrategy.rewrite(
+          makeInfo("@/lib/utils"),
+          makeCtx({
+            filePath: "/project/components/elements/Textarea.tsx",
+            moduleServerUrl: "/_vf_modules",
+          }),
+        );
+        assertEquals(result.specifier, "/_vf_modules/lib/utils.js");
+      });
+
+      it("should handle file index path mismatch with moduleServerUrl", () => {
+        // When file index returns "elements/Textarea.tsx" instead of "components/elements/Textarea.tsx"
+        // Using moduleServerUrl avoids the relative path calculation issue entirely
+        const result = aliasStrategy.rewrite(
+          makeInfo("@/lib/utils"),
+          makeCtx({
+            filePath: "elements/Textarea.tsx",
+            projectDir: "/project",
+            moduleServerUrl: "/_vf_modules",
+          }),
+        );
+        // With moduleServerUrl, we always use absolute paths - no relative path calculation needed
+        assertEquals(result.specifier, "/_vf_modules/lib/utils.js");
+      });
+    });
+
+    describe("relative path fallback (no moduleServerUrl)", () => {
+      it("should handle file at components/elements depth correctly", () => {
+        // File is at components/elements/Textarea.tsx
+        // @/lib/utils should become ../../lib/utils.js (go up 2 levels to root)
+        const result = aliasStrategy.rewrite(
+          makeInfo("@/lib/utils"),
+          makeCtx({ filePath: "/project/components/elements/Textarea.tsx" }),
+        );
+        assertEquals(result.specifier, "../../lib/utils.js");
+      });
+
+      it("relative path when file index has different structure (known limitation)", () => {
+        // When file index returns "elements/Textarea.tsx" without components/ prefix
+        // and no moduleServerUrl is configured, relative path calculation uses the file path as-is.
+        // This is a known limitation - use moduleServerUrl for production deployments.
+        const result = aliasStrategy.rewrite(
+          makeInfo("@/lib/utils"),
+          makeCtx({ filePath: "elements/Textarea.tsx", projectDir: "/project" }),
+        );
+        // depth=1 (only "elements"), so we get ../lib/utils.js
+        // This is "correct" given the input, but may not match the expected module structure
+        assertEquals(result.specifier, "../lib/utils.js");
+      });
+    });
   });
 });

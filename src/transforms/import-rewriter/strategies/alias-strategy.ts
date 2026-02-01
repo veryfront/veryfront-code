@@ -27,7 +27,20 @@ export class AliasStrategy implements ImportRewriteStrategy {
       return { specifier: `/_vf_modules/${normalizedPath}` };
     }
 
-    // Browser uses relative paths
+    // Browser: Use /_vf_modules/ absolute paths when moduleServerUrl is configured.
+    // This avoids relative path calculation issues when the file index path structure
+    // doesn't match the module path structure (e.g., index returns "elements/Textarea.tsx"
+    // but module path is "_vf_modules/components/elements/Textarea.js").
+    if (ctx.moduleServerUrl) {
+      let normalizedPath = normalizeExtension(path);
+      if (!/\.(tsx?|jsx?|mjs|cjs|mdx|js)$/.test(normalizedPath)) {
+        normalizedPath = `${normalizedPath}.js`;
+      }
+      return { specifier: `${ctx.moduleServerUrl}/${normalizedPath}` };
+    }
+
+    // Fallback: Use relative paths when no module server is configured.
+    // This is used for local development without a module server.
     const relativeFilePath = this.getRelativeFilePath(ctx.filePath, ctx.projectDir);
     const fileDir = relativeFilePath.substring(0, relativeFilePath.lastIndexOf("/"));
     const depth = fileDir.split("/").filter(Boolean).length;
