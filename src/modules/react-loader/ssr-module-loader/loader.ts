@@ -754,6 +754,25 @@ export class SSRModuleLoader {
         }
       }
 
+      // Acquire per-project slot BEFORE processing imports to prevent unbounded parallelism.
+      // Without this, recursive transforms can exhaust the slot limit (e.g., 10 batch × 10 depth = 100 transforms
+      // trying to run simultaneously, but per-project limit is only 17).
+      const useSemaphore = getMaxConcurrentTransforms() > 0;
+      const projectId = this.options.projectId;
+      let projectSlotAcquired = false;
+
+      if (!await tryAcquireTransformSlot(projectId, TRANSFORM_ACQUIRE_TIMEOUT_MS)) {
+        throw toError(
+          createError({
+            type: "build",
+            message:
+              `Project ${projectId} at transform capacity. Consider reducing page complexity or request rate.`,
+            context: { file: filePath, phase: "transform" },
+          }),
+        );
+      }
+      projectSlotAcquired = true;
+
       const crossProjectPaths = new Map<string, string>();
       const localFs = createFileSystem();
 
@@ -783,22 +802,6 @@ export class SSRModuleLoader {
           }),
         );
       }
-
-      const useSemaphore = getMaxConcurrentTransforms() > 0;
-      const projectId = this.options.projectId;
-      let projectSlotAcquired = false;
-
-      if (!await tryAcquireTransformSlot(projectId, TRANSFORM_ACQUIRE_TIMEOUT_MS)) {
-        throw toError(
-          createError({
-            type: "build",
-            message:
-              `Project ${projectId} at transform capacity. Consider reducing page complexity or request rate.`,
-            context: { file: filePath, phase: "transform" },
-          }),
-        );
-      }
-      projectSlotAcquired = true;
 
       if (useSemaphore) {
         const acquired = await getTransformSemaphore().tryAcquire(TRANSFORM_ACQUIRE_TIMEOUT_MS);

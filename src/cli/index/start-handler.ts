@@ -5,7 +5,7 @@
  * Provides a TUI experience with project navigation and dev server.
  */
 
-import { cwd, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { cwd, getEnv, onGlobalError, setEnv } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { isAbsolute, join, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { cliLogger } from "#veryfront/utils";
@@ -123,6 +123,26 @@ async function trySetupProxy(localProjects: Map<string, string>): Promise<ProxyS
 }
 
 export async function handleStartCommand(args: ParsedArgs): Promise<void> {
+  // Register global error handlers FIRST to prevent process crashes from application errors
+  onGlobalError((error, type) => {
+    const isFatal = (error.name === "RangeError" && error.message.includes("Maximum call stack")) ||
+      error.message.includes("out of memory") ||
+      error.message.includes("allocation failed");
+
+    cliLogger.error(`[GLOBAL] ${type}: Application error caught`, {
+      message: error.message,
+      stack: error.stack,
+      type,
+      fatal: isFatal,
+    });
+
+    if (isFatal) {
+      cliLogger.error("[GLOBAL] Fatal error detected, allowing process exit");
+      return false;
+    }
+    return true;
+  });
+
   const hasExplicitPort = args.__explicit?.port === true;
   const port = hasExplicitPort && typeof args.port === "number" ? args.port : DEFAULT_START_PORT;
   const mcpPort = typeof args["mcp-port"] === "number" ? args["mcp-port"] : DEFAULT_MCP_PORT;
