@@ -1,0 +1,20 @@
+---
+title: Frontmatter Test Page
+description: Testing frontmatter extraction
+author: Test Author
+date: 2024-01-15
+tags:
+  - test
+  - mdx
+  - frontmatter
+---
+
+# {frontmatter.title}
+
+By {frontmatter.author} on {frontmatter.date}
+
+{frontmatter.description}
+
+## Tags
+
+{frontmatter.tags.join(", ")}

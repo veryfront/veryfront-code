@@ -162,9 +162,9 @@ export function isPreviewBundlerInitialized(): boolean {
 /**
  * Initialize renderers based on render mode
  *
- * Currently uses the legacy Renderer for full SSR capabilities.
- * JIT bundler infrastructure is available but rendering delegates to legacy.
- * Preview bundler is initialized for watch mode to provide HMR and incremental builds.
+ * - JIT renderer is used for production (jit-bundle mode)
+ * - Legacy renderer is used for on-demand and watch modes
+ * - Preview bundler is initialized for watch mode to provide HMR and incremental builds
  */
 export async function initializeRenderers(options?: RenderModeRouterOptions): Promise<void> {
   const env = getRuntimeEnv();
@@ -175,11 +175,11 @@ export async function initializeRenderers(options?: RenderModeRouterOptions): Pr
     bundlerEnabled: env.bundlerEnabled,
   });
 
-  // Initialize legacy renderer for full SSR capabilities
+  // Initialize legacy renderer for on-demand and watch modes
   await initializeRenderer();
   legacyRendererInitialized = true;
 
-  // Initialize JIT renderer for bundling infrastructure (future use)
+  // Initialize JIT renderer for production (jit-bundle mode)
   getJitRenderer(options?.jit);
 
   // Initialize preview bundler for watch mode (provides HMR and incremental builds)
@@ -200,12 +200,21 @@ export async function initializeRenderers(options?: RenderModeRouterOptions): Pr
 /**
  * Get the appropriate renderer for a render context
  *
- * Currently uses the legacy Renderer for full SSR capabilities.
- * The legacy renderer handles all rendering modes with complete
- * support for layouts, data fetching, MDX, and React SSR.
+ * Routes to JIT renderer for production (jit-bundle mode) or falls back
+ * to legacy renderer for on-demand and watch modes.
  */
 export function getRendererForMode(ctx: RenderContext): CommonRenderer {
   const mode = getEffectiveRenderMode(ctx);
+
+  // Use JIT renderer for jit-bundle mode (production)
+  if (mode === "jit-bundle" && isJitRendererInitialized()) {
+    logger.debug("[RenderModeRouter] Using JIT renderer", {
+      projectId: ctx.projectId,
+      environment: ctx.environment,
+      mode,
+    });
+    return getJitRenderer();
+  }
 
   // Check if legacy renderer is initialized
   if (!isRendererInitialized()) {
@@ -220,7 +229,7 @@ export function getRendererForMode(ctx: RenderContext): CommonRenderer {
     previewBundlerActive: mode === "watch" ? previewBundlerInitialized : undefined,
   });
 
-  // Use legacy renderer for full SSR capabilities
+  // Use legacy renderer for on-demand and watch modes
   return getRenderer();
 }
 
