@@ -14,16 +14,12 @@ set -e
 
 # Colors (if terminal supports it)
 if [ -t 1 ]; then
-  RED='\033[0;31m'
-  GREEN='\033[0;32m'
-  YELLOW='\033[0;33m'
-  BLUE='\033[0;34m'
-  NC='\033[0m' # No Color
+  ORANGE='\033[38;2;252;143;93m'
+  DIM='\033[2m'
+  NC='\033[0m'
 else
-  RED=''
-  GREEN=''
-  YELLOW=''
-  BLUE=''
+  ORANGE=''
+  DIM=''
   NC=''
 fi
 
@@ -143,7 +139,7 @@ main() {
   if [ "$VERSION" = "latest" ]; then
     VERSION=$(get_latest_version)
     if [ -z "$VERSION" ]; then
-      echo "${RED}error: failed to fetch latest version${NC}" >&2
+      echo "error: failed to fetch latest version" >&2
       exit 1
     fi
   fi
@@ -158,7 +154,7 @@ main() {
   # Download binary with spinner
   BINARY_PATH="${INSTALL_DIR}/veryfront"
 
-  printf "Downloading veryfront v%s " "$VERSION"
+  printf "${DIM}Downloading${NC} veryfront v%s " "$VERSION"
 
   # Start download in background
   download "$DOWNLOAD_URL" "$BINARY_PATH" &
@@ -169,27 +165,27 @@ main() {
   i=0
   while kill -0 $PID 2>/dev/null; do
     i=$(( (i + 1) % 10 ))
-    printf "\r%s %s" "Downloading veryfront v${VERSION}" "$(echo "$SPINNER" | cut -c$((i+1)))"
+    printf "\r${DIM}Downloading${NC} veryfront v%s ${ORANGE}%s${NC}" "$VERSION" "$(echo "$SPINNER" | cut -c$((i+1)))"
     sleep 0.1
   done
 
   # Check if download succeeded
   wait $PID
   if [ $? -ne 0 ]; then
-    printf "\r${RED}Download failed${NC}                              \n"
+    printf "\rDownload failed                              \n"
     exit 1
   fi
 
   # Make executable
   chmod +x "$BINARY_PATH"
 
-  printf "\r${GREEN}Installed${NC} veryfront v%s                    \n" "$VERSION"
+  printf "\r${ORANGE}Installed${NC} veryfront v%s                    \n" "$VERSION"
   echo ""
 
   # Check if install dir is in PATH
   case ":$PATH:" in
     *":$INSTALL_DIR:"*)
-      echo "Run ${BLUE}veryfront${NC} to get started."
+      echo "Run ${ORANGE}veryfront${NC} to get started."
       ;;
     *)
       # Detect shell and show PATH instruction
@@ -206,7 +202,7 @@ main() {
           fi
           ;;
         fish)
-          echo "Run ${BLUE}fish_add_path ~/.veryfront/bin${NC} to add to PATH."
+          echo "Run ${ORANGE}fish_add_path ~/.veryfront/bin${NC} to add to PATH."
           echo ""
           return
           ;;
@@ -214,7 +210,7 @@ main() {
           PROFILE="your shell profile"
           ;;
       esac
-      echo "Add to PATH: ${BLUE}echo 'export PATH=\"\$HOME/.veryfront/bin:\$PATH\"' >> ${PROFILE}${NC}"
+      echo "Run ${ORANGE}echo 'export PATH=\"\$HOME/.veryfront/bin:\$PATH\"' >> ${PROFILE}${NC}"
       echo ""
       ;;
   esac
