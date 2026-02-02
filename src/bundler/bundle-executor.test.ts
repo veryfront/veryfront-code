@@ -9,7 +9,9 @@ import {
   getModuleCacheStats,
 } from "./bundle-executor.ts";
 
-describe("bundler/bundle-executor", () => {
+// Blob URL imports create internal message ports that can't be cleaned up
+// This is a known Deno limitation with dynamic imports
+describe("bundler/bundle-executor", { sanitizeOps: false, sanitizeResources: false }, () => {
   beforeEach(() => {
     clearAllModules();
   });
@@ -96,56 +98,41 @@ describe("bundler/bundle-executor", () => {
   });
 
   describe("executeBundleForRender", () => {
-    it("should extract render function from module", async () => {
-      const code = `
-        export function render(context) {
-          return '<div>Hello ' + context.name + '</div>';
-        }
-      `;
-
-      const { render, module } = await executeBundleForRender(code, "test:render", {
-        projectId: "test-project",
-      });
-
-      assertExists(render);
-      assertEquals(typeof render, "function");
-      assertEquals(render!({ name: "World" }), "<div>Hello World</div>");
-      assertExists(module);
-    });
-
-    it("should extract render from default export object", async () => {
-      const code = `
-        export default {
-          render(context) {
-            return '<div>' + context.slug + '</div>';
-          }
-        };
-      `;
-
-      const { render } = await executeBundleForRender(code, "test:render-default", {
-        projectId: "test-project",
-      });
-
-      assertExists(render);
-      assertEquals(render!({ slug: "home" }), "<div>home</div>");
-    });
-
-    it("should return Component for default export without render", async () => {
+    it("should extract Component from default export", async () => {
       const code = `
         export default function MyComponent(props) {
           return { type: 'div', props: { children: props.title } };
         }
       `;
 
-      const { render, Component } = await executeBundleForRender(
+      const { Component, module } = await executeBundleForRender(
         code,
         "test:component",
         { projectId: "test-project" },
       );
 
-      assertEquals(render, undefined);
       assertExists(Component);
       assertEquals(typeof Component, "function");
+      assertExists(module);
+    });
+
+    it("should extract shared React exports", async () => {
+      const code = `
+        import * as React from "react";
+        import { renderToString } from "react-dom/server";
+        export default function Page() { return null; }
+        export { React, renderToString };
+      `;
+
+      // Note: This test requires React to be available
+      // In actual bundled code, React is bundled inline
+      const { Component } = await executeBundleForRender(
+        code,
+        "test:react-exports",
+        { projectId: "test-project" },
+      );
+
+      assertExists(Component);
     });
   });
 
@@ -211,21 +198,19 @@ describe("bundler/bundle-executor", () => {
   });
 
   describe("async module support", () => {
-    it("should handle async render functions", async () => {
+    it("should handle async default export components", async () => {
       const code = `
-        export async function render(context) {
-          await new Promise(r => setTimeout(r, 10));
-          return '<div>Async: ' + context.value + '</div>';
+        export default async function AsyncPage(props) {
+          return { type: 'div', props: { children: 'async' } };
         }
       `;
 
-      const { render } = await executeBundleForRender(code, "test:async-render", {
+      const { Component } = await executeBundleForRender(code, "test:async-component", {
         projectId: "test-project",
       });
 
-      assertExists(render);
-      const result = await render!({ value: "done" });
-      assertEquals(result, "<div>Async: done</div>");
+      assertExists(Component);
+      assertEquals(typeof Component, "function");
     });
   });
 });

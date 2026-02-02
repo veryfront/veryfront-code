@@ -283,7 +283,16 @@ export async function transformModuleWithDeps(
 
   const contentHash = hashCodeHex(fileContent);
   const reactVersionKey = config.reactVersion ?? "default";
-  const transformCacheKey = `${projectDir}:${filePath}:${contentHash}:${mode}:${reactVersionKey}`;
+  const reactImportMapKey = config.reactImportMap
+    ? hashCodeHex(
+      Object.entries(config.reactImportMap)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, value]) => `${key}:${value}`)
+        .join("|"),
+    ).slice(0, 8)
+    : "default";
+  const transformCacheKey =
+    `${projectDir}:${filePath}:${contentHash}:${mode}:${reactVersionKey}:${reactImportMapKey}`;
   const effectiveProjectId = projectId ?? projectDir;
 
   // Check in-memory cache first
@@ -295,6 +304,7 @@ export async function transformModuleWithDeps(
       dev: mode === "development",
       ssr: true,
       reactVersion: config.reactVersion,
+      reactImportMap: config.reactImportMap,
     });
     transformCache.set(transformCacheKey, transformedCode);
   }
@@ -352,6 +362,8 @@ export interface ModuleLoaderConfig {
   esmCache: Map<string, string>;
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /** Optional React import map override */
+  reactImportMap?: Record<string, string>;
 }
 
 /**

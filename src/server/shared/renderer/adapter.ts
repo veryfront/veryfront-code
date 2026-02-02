@@ -13,7 +13,6 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getConfig } from "#veryfront/config";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
-import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import type { HandlerContext } from "../../handlers/types.ts";
 import { buildEnrichedContext } from "../../context/enriched-context.ts";
 import {
@@ -70,8 +69,6 @@ async function ensureRenderersInitialized(): Promise<void> {
 
   const isProxyMode = getEnv("PROXY_MODE") === "1";
   const apiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
-  const env = getRuntimeEnv();
-
   // Only use API-backed cache when both PROXY_MODE=1 and API URL is configured
   let cacheOptions;
   if (isProxyMode && apiBaseUrl) {
@@ -93,8 +90,6 @@ async function ensureRenderersInitialized(): Promise<void> {
     proxyMode: isProxyMode,
     hasApiUrl: !!apiBaseUrl,
     cacheType: useApiCache ? "api-distributed" : "memory",
-    renderMode: env.renderMode,
-    bundlerEnabled: env.bundlerEnabled,
   });
 
   // Initialize both JIT and legacy renderers

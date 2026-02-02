@@ -263,6 +263,8 @@ export interface BareImportPluginOptions {
   reactVersion?: string;
   /** Whether to mark React as external (default: true) */
   externalizeReact?: boolean;
+  /** Whether to mark non-React bare imports as external (default: true) */
+  externalizeBareImports?: boolean;
   /** Pre-cached React file:// paths to use instead of CDN URLs */
   reactFilePaths?: Record<string, string>;
 }
@@ -285,6 +287,7 @@ export function createBareImportPlugin(
 
   const reactVersion = options.reactVersion ?? REACT_DEFAULT_VERSION;
   const shouldExternalize = options.externalizeReact ?? true;
+  const shouldExternalizeBare = options.externalizeBareImports ?? true;
   const reactFilePaths = options.reactFilePaths;
 
   // Use file:// paths if provided, otherwise fall back to CDN mapping
@@ -325,15 +328,17 @@ export function createBareImportPlugin(
           return { path: resolvedPath, namespace: "https" };
         }
 
-        // Map other bare imports to esm.sh with external React to prevent bundling
-        return {
-          path: `https://esm.sh/${args.path}?external=react,react-dom&target=es2022`,
-          external: true,
-        };
+        // Map other bare imports to esm.sh with external React to prevent duplicate React copies
+        const url = `https://esm.sh/${args.path}?external=react,react-dom&target=es2022`;
+        if (shouldExternalizeBare) {
+          return { path: url, external: true };
+        }
+        return { path: url, namespace: "https" };
       });
 
-      // If not externalizing React, load from HTTPS and handle nested imports
-      if (!shouldExternalize) {
+      const shouldLoadHttps = !shouldExternalize || !shouldExternalizeBare;
+      // If bundling any HTTPS modules, load from HTTPS and handle nested imports
+      if (shouldLoadHttps) {
         // Resolve imports within HTTPS modules (e.g., esm.sh internal paths)
         build.onResolve({ filter: /^\//, namespace: "https" }, (args) => {
           // Resolve absolute paths relative to the esm.sh base URL

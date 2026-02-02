@@ -22,6 +22,24 @@ export class ReactStrategy implements ImportRewriteStrategy {
   }
 
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
+    const overrideMap = ctx.reactImportMap;
+    if (overrideMap) {
+      const override = overrideMap[info.specifier];
+      if (override) return { specifier: override };
+
+      if (info.specifier.startsWith("react/")) {
+        const prefix = overrideMap["react/"];
+        if (prefix) return { specifier: prefix + info.specifier.slice("react/".length) };
+      }
+
+      if (info.specifier.startsWith("react-dom/")) {
+        const prefix = overrideMap["react-dom/"];
+        if (prefix) {
+          return { specifier: prefix + info.specifier.slice("react-dom/".length) };
+        }
+      }
+    }
+
     const importMap = this.getImportMap(ctx.reactVersion);
     const mapped = importMap[info.specifier];
 

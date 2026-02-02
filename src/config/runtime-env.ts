@@ -33,25 +33,6 @@ export interface RuntimeEnv {
   experimentalRsc: boolean;
 
   /**
-   * Render mode determines how modules are bundled and cached:
-   * - "jit-bundle": Full project bundling on first request (production)
-   * - "on-demand": Per-file transform with distributed cache (legacy)
-   * - "watch": esbuild watch mode with HMR (preview/development)
-   *
-   * Auto-detection when not set:
-   * - Production environment → "jit-bundle"
-   * - Preview environment → "on-demand" (for now, will migrate to "watch")
-   * - Local development → "watch"
-   */
-  renderMode: "jit-bundle" | "on-demand" | "watch";
-
-  /**
-   * Enable the new bundler architecture (Phase 1 rollout).
-   * When false, falls back to legacy on-demand transform pipeline.
-   */
-  bundlerEnabled: boolean;
-
-  /**
    * HMR WebSocket port for preview mode
    */
   hmrPort: number;
@@ -115,38 +96,6 @@ function parseNumber(value: string | undefined, defaultVal: number): number {
   return Number.isFinite(parsed) ? parsed : defaultVal;
 }
 
-type RenderMode = "jit-bundle" | "on-demand" | "watch";
-
-function parseRenderMode(value: string | undefined, nodeEnv: string): RenderMode {
-  // If explicitly set, validate and return
-  if (value) {
-    const lower = value.toLowerCase();
-    if (lower === "jit-bundle" || lower === "jit" || lower === "bundle") {
-      return "jit-bundle";
-    }
-    if (lower === "on-demand" || lower === "legacy" || lower === "transform") {
-      return "on-demand";
-    }
-    if (lower === "watch" || lower === "hmr" || lower === "dev") {
-      return "watch";
-    }
-    // Invalid value, fall through to auto-detection
-    logger.warn(`[RuntimeEnv] Invalid VERYFRONT_RENDER_MODE: ${value}, using auto-detection`);
-  }
-
-  // Auto-detection based on environment
-  const _isProduction = nodeEnv === "production";
-  const isLocalDev = nodeEnv === "development" || !nodeEnv;
-
-  if (isLocalDev) {
-    return "watch";
-  }
-
-  // Production and preview environments use on-demand for now (will migrate to jit-bundle)
-  // This provides a safe rollout path
-  return "on-demand";
-}
-
 function readEnvSnapshot(): RuntimeEnv {
   const nodeEnv = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
   const veryfrontEnv = getEnv("VERYFRONT_ENV") ?? nodeEnv;
@@ -188,9 +137,6 @@ function readEnvSnapshot(): RuntimeEnv {
 
     experimentalRsc: getEnv("VERYFRONT_EXPERIMENTAL_RSC") === "1",
 
-    renderMode: parseRenderMode(getEnv("VERYFRONT_RENDER_MODE"), nodeEnv),
-    // Legacy renderer removed - bundler is always enabled. VERYFRONT_BUNDLER_ENABLED is ignored.
-    bundlerEnabled: true,
     hmrPort: parseNumber(getEnv("VERYFRONT_HMR_PORT"), DEFAULTS.hmrPort),
 
     redisUrl: getEnv("REDIS_URL") || undefined,

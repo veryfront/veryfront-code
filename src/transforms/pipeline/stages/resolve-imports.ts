@@ -20,6 +20,7 @@ async function buildRewriteContext(ctx: TransformContext): Promise<RewriteContex
     vendorBundleHash: ctx.vendorBundleHash,
     apiBaseUrl: ctx.apiBaseUrl,
     reactVersion: ctx.reactVersion,
+    reactImportMap: ctx.reactImportMap,
   };
 
   if (ctx.target !== "ssr") return rewriteCtx;

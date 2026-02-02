@@ -175,31 +175,14 @@ async function buildProjectBundle(options: {
         "react.version": reactVersion,
       });
 
-      // NOTE: We bundle React directly into the output so blob URL execution works.
-      // This makes bundles self-contained - no external import resolution needed.
-      // To avoid "two Reacts" problem, we also bundle react-dom/server and export
-      // a render function that uses the bundled React for SSR.
+      // NOTE: React remains external (esm.sh) so the JIT bundle shares
+      // the same React instance as SSR transforms.
 
-      // Determine if entry is MDX (has headings export) or script (tsx/ts/jsx/js)
-      const isMdx = entryPath.endsWith(".mdx") || entryPath.endsWith(".md");
-
-      // Create a virtual entry wrapper that imports the page and exports bundled React
+      // Create a virtual entry wrapper that imports the page and exports shared React
       // This ensures the same React instance is used for both the Component and rendering
+      // Re-exports all named exports from page (including generateMetadata, headings, etc.)
       const virtualEntryPath = `${projectDir}/__jit_entry__.tsx`;
-      const virtualEntryCode = isMdx
-        ? `
-import Page, { headings } from "${entryPath}";
-import { renderToString } from "react-dom/server";
-import * as React from "react";
-
-// Re-export page component and headings
-export default Page;
-export { headings };
-
-// Export bundled React for use in rendering (avoids "two Reacts" problem)
-export { React, renderToString };
-`
-        : `
+      const virtualEntryCode = `
 import Page from "${entryPath}";
 import { renderToString } from "react-dom/server";
 import * as React from "react";
@@ -207,7 +190,10 @@ import * as React from "react";
 // Re-export page component
 export default Page;
 
-// Export bundled React for use in rendering (avoids "two Reacts" problem)
+// Re-export all named exports from the page (generateMetadata, headings, etc.)
+export * from "${entryPath}";
+
+// Export shared React for use in rendering (avoids "two Reacts" problem)
 export { React, renderToString };
 `;
 
@@ -230,17 +216,14 @@ export { React, renderToString };
 
       // Add virtual filesystem plugin with project files and MDX support
       // MDX plugin must come BEFORE virtualFsPlugin to intercept MDX files
-      // React is bundled (not external) so blob URL execution works without bare import issues
       buildOptions.plugins = [
         createMdxPlugin(projectDir, adapter, "ssr", projectFiles), // Full MDX compilation support
         createVirtualFsPlugin(projectDir, adapter, projectFiles),
-        createBareImportPlugin({ reactVersion, externalizeReact: false }), // Bundle React into output
+        createBareImportPlugin({
+          reactVersion,
+          externalizeBareImports: false,
+        }), // Bundle deps, keep React external via esm.sh
       ];
-
-      // Remove React from externals since we're bundling it
-      buildOptions.external = buildOptions.external?.filter(
-        (ext) => !ext.startsWith("react"),
-      ) ?? [];
 
       // Build with esbuild
       const result = await esbuild.build(buildOptions);

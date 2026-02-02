@@ -34,6 +34,8 @@ export interface RewriteContext {
   apiBaseUrl?: string;
   /** React version to use for esm.sh URLs */
   reactVersion: string;
+  /** Optional React import map override */
+  reactImportMap?: Record<string, string>;
   /** Import map configuration (loaded lazily) */
   importMap?: ImportMapConfig;
 }

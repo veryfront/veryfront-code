@@ -43,7 +43,8 @@ export interface BundleCacheConfig {
 }
 
 // Current bundle format version - increment when format changes
-const BUNDLE_VERSION = "1";
+// v3: React externalized via esm.sh; bare imports bundled for single React instance
+const BUNDLE_VERSION = "3";
 
 /**
  * Bundle cache for storing and retrieving production bundles.

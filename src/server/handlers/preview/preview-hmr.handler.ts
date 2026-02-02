@@ -38,8 +38,8 @@ export class PreviewHMRHandler extends BaseHandler {
     ],
     enabled: () => {
       const env = getRuntimeEnv();
-      // Only enable when using watch mode or bundler is enabled
-      return env.bundlerEnabled || env.renderMode === "watch";
+      // Only enable in non-production environments
+      return env.nodeEnv !== "production";
     },
   };
 

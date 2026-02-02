@@ -5,10 +5,14 @@
  * This module provides the runtime environment for executing bundled
  * project code with proper React integration and error handling.
  *
+ * ## Implementation Strategy
+ *
+ * Uses file-based dynamic imports instead of blob URLs for compiled binary
+ * compatibility. Bundles are written to temp files and imported via file:// URLs.
+ *
  * ## React Instance Consistency
  *
- * JIT bundles include React directly (not external), making them self-contained.
- * This ensures blob URL execution works without bare import resolution issues.
+ * JIT bundles keep React external (esm.sh URLs) to ensure a single instance.
  *
  * @module bundler/bundle-executor
  */
@@ -16,6 +20,9 @@
 import { logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { Span } from "@opentelemetry/api";
+import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { joinPath } from "#veryfront/utils/path-utils.ts";
+import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 
 export interface BundleModule {
   /** Default export - typically the app component */
@@ -40,10 +47,50 @@ const moduleCache = new Map<string, BundleModule>();
 const MAX_CACHE_SIZE = 100;
 
 /**
+ * Generate a unique filename for a bundle based on its cache key.
+ */
+function getBundleFilename(cacheKey: string): string {
+  // Create a safe filename from the cache key
+  const safeKey = cacheKey.replace(/[^a-zA-Z0-9-_]/g, "_").slice(0, 50);
+  const hash = simpleHash(cacheKey);
+  return `bundle-${safeKey}-${hash}.mjs`;
+}
+
+function getBundleDir(): string {
+  return joinPath(getHttpBundleCacheDir(), "jit-bundles");
+}
+
+function getBundlePath(cacheKey: string): string {
+  return joinPath(getBundleDir(), getBundleFilename(cacheKey));
+}
+
+async function removeBundleFile(cacheKey: string): Promise<void> {
+  const bundlePath = getBundlePath(cacheKey);
+  try {
+    await remove(bundlePath);
+  } catch {
+    // Ignore missing or locked files
+  }
+}
+
+/**
+ * Simple string hash for cache key uniqueness.
+ */
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash).toString(16).padStart(8, "0");
+}
+
+/**
  * Execute a bundled JavaScript module and return its exports.
  *
- * The bundle is expected to be a self-contained ES module with all
- * dependencies (including React) bundled directly.
+ * Uses file-based dynamic imports for compiled binary compatibility.
+ * Bundles are written to temp files and imported via file:// URLs.
  */
 export async function executeBundle(
   code: string,
@@ -70,14 +117,24 @@ export async function executeBundle(
 
       span?.setAttribute("cache.hit", false);
 
-      // JIT bundles include React directly (externalizeReact: false),
-      // so no import rewriting is needed - bundles are self-contained.
-      const blob = new Blob([code], { type: "application/javascript" });
-      const blobUrl = URL.createObjectURL(blob);
+      // Write bundle to a temp file for import
+      // This works in both regular Deno and compiled binaries (unlike blob URLs)
+      const bundleDir = getBundleDir();
+      const bundleFilename = getBundleFilename(cacheKey);
+      const bundlePath = joinPath(bundleDir, bundleFilename);
+      const bundleUrl = `file://${bundlePath}`;
 
       try {
+        // Ensure directory exists
+        await mkdir(bundleDir, { recursive: true });
+
+        // Write bundle to file
+        await writeTextFile(bundlePath, code);
+
+        span?.setAttribute("bundle.path", bundlePath);
+
         // Dynamic import with timeout
-        const importPromise = import(blobUrl);
+        const importPromise = import(bundleUrl);
         let timeoutId: number | undefined;
         const timeoutPromise = new Promise<never>((_, reject) => {
           timeoutId = setTimeout(
@@ -94,6 +151,7 @@ export async function executeBundle(
           if (moduleCache.size >= MAX_CACHE_SIZE) {
             const firstKey = moduleCache.keys().next().value as string;
             moduleCache.delete(firstKey);
+            void removeBundleFile(firstKey);
           }
 
           moduleCache.set(cacheKey, module);
@@ -103,6 +161,7 @@ export async function executeBundle(
             cacheKey,
             hasDefault: "default" in module,
             exports: Object.keys(module).length,
+            usedFileImport: true,
           });
 
           return module;
@@ -121,12 +180,22 @@ export async function executeBundle(
         });
 
         throw error;
-      } finally {
-        URL.revokeObjectURL(blobUrl);
       }
+      // Note: We keep the file for caching while the module stays in memory.
+      // Files are removed when the module cache evicts or is cleared.
     },
     { "bundler.operation": "execute" },
   );
+}
+
+/**
+ * Metadata returned by generateMetadata function
+ */
+export interface GeneratedMetadata {
+  title?: string;
+  description?: string;
+  meta?: Array<{ name: string; content: string }>;
+  [key: string]: unknown;
 }
 
 /**
@@ -134,8 +203,10 @@ export async function executeBundle(
  *
  * JIT bundles export:
  * - `default`: The page component
- * - `React`: The bundled React library (to avoid "two Reacts" problem)
- * - `renderToString`: The bundled renderToString function
+ * - `React`: The shared React library (to avoid "two Reacts" problem)
+ * - `renderToString`: The renderToString function (same React instance)
+ * - `generateMetadata`: Optional function for dynamic metadata
+ * - `headings`: Optional array of headings (MDX)
  */
 export interface BundleRenderExports {
   /** The page component (default export) */
@@ -144,15 +215,21 @@ export interface BundleRenderExports {
   React?: typeof import("react");
   /** Bundled renderToString - use this for SSR */
   renderToString?: (element: unknown) => string;
+  /** Optional generateMetadata function for App Router dynamic metadata */
+  generateMetadata?: (
+    params?: Record<string, unknown>,
+  ) => Promise<GeneratedMetadata> | GeneratedMetadata;
+  /** Optional headings array from MDX */
+  headings?: Array<{ id: string; text: string; level: number }>;
   /** Raw module for accessing other exports */
   module: BundleModule;
 }
 
 /**
- * Execute a bundle and extract the component and bundled React.
+ * Execute a bundle and extract the component and shared React.
  *
- * JIT bundles include React directly to avoid the "two Reacts" problem.
- * The bundled React is exported so callers can use the same instance
+ * JIT bundles export React from esm.sh to avoid the "two Reacts" problem.
+ * The React export is used so callers can use the same instance
  * for createElement and renderToString.
  */
 export async function executeBundleForRender(
@@ -169,7 +246,7 @@ export async function executeBundleForRender(
     result.Component = module.default;
   }
 
-  // Extract bundled React (avoids "two Reacts" problem)
+  // Extract shared React (avoids "two Reacts" problem)
   if (module.React && typeof module.React === "object") {
     result.React = module.React as typeof import("react");
   }
@@ -179,6 +256,16 @@ export async function executeBundleForRender(
     result.renderToString = module.renderToString as (element: unknown) => string;
   }
 
+  // Extract generateMetadata for App Router dynamic metadata
+  if (typeof module.generateMetadata === "function") {
+    result.generateMetadata = module.generateMetadata as BundleRenderExports["generateMetadata"];
+  }
+
+  // Extract headings from MDX
+  if (Array.isArray(module.headings)) {
+    result.headings = module.headings as BundleRenderExports["headings"];
+  }
+
   return result;
 }
 
@@ -186,7 +273,11 @@ export async function executeBundleForRender(
  * Clear a specific cached module
  */
 export function clearModuleCache(cacheKey: string): boolean {
-  return moduleCache.delete(cacheKey);
+  const deleted = moduleCache.delete(cacheKey);
+  if (deleted) {
+    void removeBundleFile(cacheKey);
+  }
+  return deleted;
 }
 
 /**
@@ -197,6 +288,7 @@ export function clearProjectModules(projectId: string): number {
   for (const key of moduleCache.keys()) {
     if (key.startsWith(`${projectId}:`)) {
       moduleCache.delete(key);
+      void removeBundleFile(key);
       count++;
     }
   }
@@ -207,6 +299,9 @@ export function clearProjectModules(projectId: string): number {
  * Clear all cached modules
  */
 export function clearAllModules(): void {
+  for (const key of moduleCache.keys()) {
+    void removeBundleFile(key);
+  }
   moduleCache.clear();
 }
 

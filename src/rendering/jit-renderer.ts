@@ -61,8 +61,7 @@ import {
 } from "./orchestrator/module-collection.ts";
 import { withTimeoutThrow } from "./utils/stream-utils.ts";
 import { createBuildVersion } from "#veryfront/utils/version.ts";
-import type { LayoutItem, MdxBundle } from "#veryfront/types";
-import { SSRRenderer } from "./ssr-renderer.ts";
+import type { LayoutItem, MdxBundle, MDXFrontmatter } from "#veryfront/types";
 import { setupSSRGlobals } from "./ssr-globals.ts";
 import {
   type HTMLGenerationContext,
@@ -80,6 +79,8 @@ import { injectElementSelectors } from "#veryfront/studio/element-selector-injec
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
 import { detectAppRouter } from "./router-detection.ts";
+import { collectAncestorDirs, createErrorBoundary, tryLoadReservedInDirs } from "./app-reserved.ts";
+import { dirname, join } from "#veryfront/platform/compat/path-helper.ts";
 
 /**
  * Get environment variable (cross-platform: Deno, Node, Bun).
@@ -350,14 +351,16 @@ export class JitRenderer {
     const projectDir = ctx.projectDir;
 
     // Define candidate entry points in priority order
+    // For App Router, prefer page files over layout files - layouts are loaded separately
+    // via layoutCollector and wrapped around the page component
     const priorityCandidates = router === "app"
       ? [
-        "app/layout.tsx",
-        "app/layout.ts",
         "app/page.tsx",
         "app/page.ts",
         "app/page.mdx",
         "app/page.md",
+        "app/layout.tsx",
+        "app/layout.ts",
       ]
       : [
         "pages/_app.tsx",
@@ -395,13 +398,16 @@ export class JitRenderer {
       return foundPage;
     }
 
-    // Fall back to default (will likely fail, but provides clear error)
-    const fallback = router === "app" ? "app/layout.tsx" : "pages/_app.tsx";
-    logger.warn("[JitRenderer] No entry point found, using fallback", {
+    // No entry point found - throw FILE_NOT_FOUND for proper 404 handling
+    logger.debug("[JitRenderer] No entry point found, returning 404", {
       projectId: ctx.projectId,
-      fallback,
+      router,
     });
-    return fallback;
+    throw new VeryfrontError(
+      "No page files found in project",
+      ErrorCode.FILE_NOT_FOUND,
+      { projectId: ctx.projectId, router },
+    );
   }
 
   /**
@@ -494,7 +500,13 @@ export class JitRenderer {
         const cacheKey = `${ctx.projectId}:${sourceKey}:bundle:${bundleHash}`;
 
         try {
-          const { Component, React: BundledReact } = await executeBundleForRender(
+          const {
+            Component,
+            React: BundledReact,
+            renderToString,
+            generateMetadata,
+            headings: bundleHeadings,
+          } = await executeBundleForRender(
             bundleCode,
             cacheKey,
             { projectId: ctx.projectId },
@@ -516,8 +528,28 @@ export class JitRenderer {
             );
           }
 
+          if (!renderToString) {
+            throw new VeryfrontError(
+              "Bundle does not export renderToString (required for SSR)",
+              ErrorCode.RENDER_ERROR,
+              { slug, projectId: ctx.projectId },
+            );
+          }
+
           span?.setAttribute("render.type", "component");
-          return this.renderComponent(Component, BundledReact, slug, ctx, options);
+          span?.setAttribute("has.generateMetadata", !!generateMetadata);
+          span?.setAttribute("has.headings", !!bundleHeadings);
+
+          return this.renderComponent(
+            Component,
+            BundledReact,
+            renderToString,
+            slug,
+            ctx,
+            options,
+            generateMetadata,
+            bundleHeadings,
+          );
         } catch (error) {
           span?.setAttribute("error", true);
           span?.setAttribute("error.message", String(error));
@@ -535,20 +567,29 @@ export class JitRenderer {
    * 1. Page resolution - get actual page info
    * 2. Layout collection - discover nested layouts
    * 3. Data fetching - call getServerData/getStaticData
-   * 4. Layout application - wrap component with layouts
-   * 5. SSR rendering - render to HTML with head collection
-   * 6. CSS generation - JIT Tailwind CSS
-   * 7. Studio support - element selector injection
+   * 4. Metadata generation - call generateMetadata if present
+   * 5. Layout application - wrap component with layouts
+   * 6. SSR rendering - render to HTML with head collection
+   * 7. CSS generation - JIT Tailwind CSS
+   * 8. Studio support - element selector injection
    *
    * @param Component - The page component from the bundle
-   * @param BundledReact - The React library from the bundle (avoids "two Reacts" problem)
+   * @param BundledReact - Shared React instance from the bundle (avoids "two Reacts" problem)
+   * @param bundledRenderToString - The renderToString from the bundle (must match React instance)
+   * @param generateMetadata - Optional function for dynamic metadata (App Router)
+   * @param bundleHeadings - Optional headings from MDX
    */
   private async renderComponent(
     Component: unknown,
     BundledReact: typeof import("react"),
+    bundledRenderToString: (element: unknown) => string,
     slug: string,
     ctx: RenderContext,
     options?: RenderOptions,
+    generateMetadata?: (
+      params?: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>> | Record<string, unknown>,
+    bundleHeadings?: Array<{ id: string; text: string; level: number }>,
   ): Promise<RenderResult> {
     return withSpan(
       "jit-renderer.renderComponent",
@@ -583,6 +624,45 @@ export class JitRenderer {
           ? EMPTY_LAYOUT_RESULT
           : await layoutCollector.collectLayouts(pageInfo);
         span?.setAttribute("layout.count", layoutResult.nestedLayouts.length);
+
+        // 2b. Load the actual page component from the resolved path
+        // The Component parameter from the bundle might be the wrong page for this route
+        // (e.g., bundle entry is app/page.tsx but we're rendering /nested which needs app/nested/page.tsx)
+        let ActualComponent: unknown = Component;
+        const moduleLoaderConfigForPage: ModuleLoaderConfig = {
+          projectDir: ctx.projectDir,
+          projectId: ctx.projectId,
+          contentSourceId: ctx.contentSourceId,
+          adapter: ctx.adapter,
+          mode: ctx.mode,
+          moduleCache: createModuleCache(),
+          esmCache: createEsmCache(),
+          reactVersion: ctx.config.react?.version,
+        };
+
+        if (isComponentPage) {
+          try {
+            const pageModule = await loadModule(pageInfo.entity.path, moduleLoaderConfigForPage);
+            if (pageModule && typeof pageModule === "object" && "default" in pageModule) {
+              ActualComponent = (pageModule as { default: unknown }).default;
+              logger.debug("[JitRenderer] Loaded page component from resolved path", {
+                slug,
+                pagePath: pageInfo.entity.path,
+                hasComponent: !!ActualComponent,
+              });
+            }
+          } catch (error) {
+            logger.warn(
+              "[JitRenderer] Failed to load page component, falling back to bundle default",
+              {
+                slug,
+                pagePath: pageInfo.entity.path,
+                error: String(error),
+              },
+            );
+            // Fall back to bundle's Component if loading fails
+          }
+        }
 
         // 3. Extract route params and fetch data
         let params: Record<string, string | string[]> = options?.params || {};
@@ -655,6 +735,14 @@ export class JitRenderer {
             );
 
             for (const { type, id, result } of dataResults) {
+              // Handle notFound from getServerData/getStaticData
+              if (result?.notFound) {
+                throw new VeryfrontError(
+                  `Page data not found: ${slug}`,
+                  ErrorCode.FILE_NOT_FOUND,
+                  { slug, type, id },
+                );
+              }
               if (!result?.props) continue;
               if (type === "page") {
                 dataFetchingProps = result.props as Record<string, unknown>;
@@ -665,8 +753,8 @@ export class JitRenderer {
           }
         }
 
-        // 4. Create element with fetched data using bundled React
-        // Using bundled React avoids the "two Reacts" problem where the Component
+        // 4. Create element with fetched data using shared React
+        // Using shared React avoids the "two Reacts" problem where the Component
         // uses one React instance and createElement uses another
         const ReactLib = BundledReact;
 
@@ -683,7 +771,7 @@ export class JitRenderer {
         let pageElement: React.ReactElement;
         try {
           pageElement = ReactLib.createElement(
-            Component as React.ComponentType<typeof componentProps>,
+            ActualComponent as React.ComponentType<typeof componentProps>,
             componentProps,
           );
         } catch (error) {
@@ -759,25 +847,77 @@ export class JitRenderer {
           }
         }
 
-        // 6. Create SSR renderer and render with head collection
-        const ssrRenderer = new SSRRenderer(
-          ctx.mode,
-          ctx.adapter,
-          ctx.projectDir,
-        );
+        // 5b. Wrap with reserved components (loading/error) for App Router
+        const useAppRouter = await detectAppRouter(ctx.projectDir, ctx.config, ctx.adapter);
+        if (useAppRouter) {
+          try {
+            const pageFilePath = pageInfo.entity.path;
+            const segmentDir = dirname(pageFilePath);
+            const appRootDir = join(ctx.projectDir, "app");
+            const searchDirs = await collectAncestorDirs(segmentDir, appRootDir);
 
+            const [loadingComp, errorComp] = await Promise.all([
+              tryLoadReservedInDirs(
+                searchDirs,
+                "loading",
+                ctx.projectDir,
+                ctx.mode,
+                ctx.adapter,
+                ctx.projectId,
+                ctx.contentSourceId,
+              ),
+              tryLoadReservedInDirs(
+                searchDirs,
+                "error",
+                ctx.projectDir,
+                ctx.mode,
+                ctx.adapter,
+                ctx.projectId,
+                ctx.contentSourceId,
+              ),
+            ]);
+
+            if (loadingComp) {
+              const fallbackEl = ReactLib.createElement(loadingComp, {});
+              wrappedElement = ReactLib.createElement(
+                ReactLib.Suspense,
+                { fallback: fallbackEl },
+                wrappedElement,
+              ) as React.ReactElement;
+              logger.debug("[JitRenderer] Wrapped with Suspense/loading", { slug });
+            }
+
+            if (errorComp) {
+              const Boundary = createErrorBoundary(errorComp, ReactLib);
+              wrappedElement = ReactLib.createElement(
+                Boundary,
+                {},
+                wrappedElement,
+              ) as React.ReactElement;
+              logger.debug("[JitRenderer] Wrapped with ErrorBoundary", { slug });
+            }
+          } catch (error) {
+            logger.warn("[JitRenderer] Failed to apply reserved components", {
+              slug,
+              error: String(error),
+            });
+          }
+        }
+
+        // 6. Render to HTML using the shared renderToString
+        // IMPORTANT: We must use the shared renderToString (not SSRRenderer) because
+        // the element was created with the shared React. Using a different React instance
+        // for renderToString causes the "two Reacts" problem where rendering fails.
         const wantsStream = options?.delivery === "stream";
 
         // Use head collector for metadata
-        const { result: renderResult, head: collectedHead } = await runWithHeadCollector(() =>
-          ssrRenderer.renderToHTML(wrappedElement, {
-            mode: ctx.mode,
-            wantsStream,
-            debugMode: ctx.mode === "development",
-          })
-        );
+        const { result: ssrHtml, head: collectedHead } = await runWithHeadCollector(() => {
+          // Use bundled renderToString - this matches the React instance used for createElement
+          return bundledRenderToString(wrappedElement);
+        });
 
-        const { html: ssrHtml, stream } = renderResult;
+        // Streaming not supported with bundled renderToString
+        const stream = wantsStream ? null : null;
         span?.setAttribute("ssr.html.length", ssrHtml.length);
 
         // Compute SSR hash for hydration
@@ -798,7 +938,35 @@ export class JitRenderer {
 
         // Extract frontmatter and headings
         const frontmatter = pageInfo.entity.frontmatter || {};
-        const headings: Array<{ id: string; text: string; level: number }> = [];
+        const headings = bundleHeadings ?? [];
+
+        // Call generateMetadata if available (App Router dynamic metadata)
+        let dynamicMetadata: Record<string, unknown> = {};
+        if (generateMetadata) {
+          try {
+            const metadataParams = {
+              params,
+              searchParams: options?.url?.searchParams
+                ? Object.fromEntries(options.url.searchParams.entries())
+                : {},
+            };
+            const result = await generateMetadata(metadataParams);
+            dynamicMetadata = result || {};
+            logger.debug("[JitRenderer] generateMetadata called", {
+              slug,
+              title: dynamicMetadata.title,
+              hasDescription: !!dynamicMetadata.description,
+            });
+          } catch (error) {
+            logger.warn("[JitRenderer] generateMetadata failed", {
+              slug,
+              error: String(error),
+            });
+          }
+        }
+
+        // Merge static frontmatter with dynamic metadata (dynamic takes precedence)
+        const mergedFrontmatter = { ...frontmatter, ...dynamicMetadata } as MDXFrontmatter;
 
         // 8. Create HTML generator for full page wrapping
         const htmlGeneratorConfig: HTMLGeneratorConfig = {
@@ -815,12 +983,12 @@ export class JitRenderer {
           pageInfo,
           pageBundle: {
             compiledCode: "",
-            frontmatter,
+            frontmatter: mergedFrontmatter,
             headings,
           },
           layoutBundle: layoutResult.layoutBundle,
           nestedLayouts: layoutResult.nestedLayouts,
-          collectedMetadata: {},
+          collectedMetadata: dynamicMetadata,
           slug,
           ssrHash,
           options,
@@ -1006,6 +1174,14 @@ export class JitRenderer {
             );
 
             for (const { type, id, result } of dataResults) {
+              // Handle notFound from getServerData/getStaticData
+              if (result?.notFound) {
+                throw new VeryfrontError(
+                  `Page data not found: ${slug}`,
+                  ErrorCode.FILE_NOT_FOUND,
+                  { slug, type, id },
+                );
+              }
               if (!result?.props) continue;
               if (type === "page") {
                 pageProps = result.props as Record<string, unknown>;

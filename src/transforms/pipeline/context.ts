@@ -35,6 +35,7 @@ function buildContext(
     metadata: new Map(),
     studioEmbed: options.studioEmbed,
     reactVersion,
+    reactImportMap: options.reactImportMap,
   };
 }
 

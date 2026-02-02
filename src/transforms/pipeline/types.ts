@@ -55,6 +55,8 @@ export interface TransformOptions {
   studioEmbed?: boolean;
   /** React version to use (detected from project package.json if not provided) */
   reactVersion?: string;
+  /** Optional React import map override (e.g., file:// paths for SSR) */
+  reactImportMap?: Record<string, string>;
   /** File reader for dependency hash computation. When provided, enables dependency-aware cache invalidation. */
   readFile?: (path: string) => Promise<string>;
 }
@@ -98,6 +100,8 @@ export interface TransformContext {
   studioEmbed?: boolean;
   /** React version to use for esm.sh URLs */
   reactVersion: string;
+  /** Optional React import map override */
+  reactImportMap?: Record<string, string>;
 }
 
 /**
