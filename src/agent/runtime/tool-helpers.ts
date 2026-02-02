@@ -26,6 +26,14 @@ export function parseToolArgs(
   rawArgs: string | Record<string, unknown>,
 ): ParsedToolArgs {
   try {
+    // Handle empty string or whitespace-only string as empty object
+    if (typeof rawArgs === "string") {
+      const trimmed = rawArgs.trim();
+      if (trimmed === "" || trimmed === "{}") {
+        return { args: {} };
+      }
+    }
+
     const parsed = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
 
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
