@@ -180,9 +180,13 @@ async function buildProjectBundle(options: {
       // To avoid "two Reacts" problem, we also bundle react-dom/server and export
       // a render function that uses the bundled React for SSR.
 
+      // Determine if entry is MDX (has headings export) or script (tsx/ts/jsx/js)
+      const isMdx = entryPath.endsWith(".mdx") || entryPath.endsWith(".md");
+
       // Create a virtual entry wrapper that imports the page and exports a render function
       const virtualEntryPath = `${projectDir}/__jit_entry__.tsx`;
-      const virtualEntryCode = `
+      const virtualEntryCode = isMdx
+        ? `
 import Page, { headings } from "${entryPath}";
 import { renderToString } from "react-dom/server";
 import { createElement } from "react";
@@ -190,6 +194,20 @@ import { createElement } from "react";
 // Re-export page component and headings
 export default Page;
 export { headings };
+
+// Export render function that uses bundled React for SSR
+export async function render(props = {}) {
+  const element = createElement(Page, props);
+  return renderToString(element);
+}
+`
+        : `
+import Page from "${entryPath}";
+import { renderToString } from "react-dom/server";
+import { createElement } from "react";
+
+// Re-export page component
+export default Page;
 
 // Export render function that uses bundled React for SSR
 export async function render(props = {}) {
