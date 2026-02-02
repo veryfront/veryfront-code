@@ -95,7 +95,7 @@ export class WebSocketManager {
 
       this.ws.onmessage = (event) => {
         this.wsLastPong = Date.now();
-        logger.debug("[WebSocketManager] WebSocket message received:", { data: event.data });
+        logger.info("[WebSocketManager] WebSocket message received:", { data: event.data });
         this.handlePokeMessage(event);
       };
 

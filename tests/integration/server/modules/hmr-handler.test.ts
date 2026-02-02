@@ -156,4 +156,182 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(result.response.status, 501);
     });
   });
+
+  describe("HMR Handler - Adapter Initialization for Poke Reception", () => {
+    it("triggers adapter initialization in proxy mode for preview requests", async () => {
+      const handler = new HMRHandler();
+
+      let runWithContextCalled = false;
+      let runWithContextArgs: unknown[] = [];
+
+      const mockFs = {
+        exists: async () => true,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => true,
+        isContextualMode: () => true,
+        runWithContext: async (
+          projectSlug: string,
+          token: string,
+          fn: () => Promise<void>,
+          projectId?: string,
+          options?: Record<string, unknown>,
+        ) => {
+          runWithContextCalled = true;
+          runWithContextArgs = [projectSlug, token, projectId, options];
+          await fn();
+        },
+      };
+
+      const req = new Request("http://localhost:3000/_ws");
+      const ctx = {
+        requestContext: { mode: "preview", branch: "main" },
+        resolvedEnvironment: "preview",
+        projectSlug: "test-project",
+        projectId: "proj-123",
+        proxyToken: "test-token",
+        projectDir: "/tmp/test",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: { fs: mockFs, server: null },
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      const result = await handler.handle(req, ctx);
+
+      // Should return info response (not WebSocket upgrade)
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+
+      // Wait for the async adapter initialization
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Verify runWithContext was called with correct arguments
+      assertEquals(runWithContextCalled, true);
+      assertEquals(runWithContextArgs[0], "test-project");
+      assertEquals(runWithContextArgs[1], "test-token");
+      assertEquals(runWithContextArgs[2], "proj-123");
+      assertEquals((runWithContextArgs[3] as Record<string, unknown>).productionMode, false);
+      assertEquals((runWithContextArgs[3] as Record<string, unknown>).branch, "main");
+    });
+
+    it("does not trigger adapter initialization for production requests", async () => {
+      const handler = new HMRHandler();
+
+      let runWithContextCalled = false;
+
+      const mockFs = {
+        exists: async () => true,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => true,
+        isContextualMode: () => true,
+        runWithContext: async () => {
+          runWithContextCalled = true;
+        },
+      };
+
+      const req = new Request("http://localhost:3000/_ws?x-environment=preview");
+      const ctx = {
+        requestContext: { mode: "production", isLocalDev: false },
+        resolvedEnvironment: "production", // Production mode
+        projectSlug: "test-project",
+        projectId: "proj-123",
+        proxyToken: "test-token",
+        projectDir: "/tmp/test",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: { fs: mockFs, server: null },
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      await handler.handle(req, ctx);
+
+      // Wait for any async operations
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // runWithContext should NOT be called for production mode
+      assertEquals(runWithContextCalled, false);
+    });
+
+    it("does not trigger adapter initialization without proxyToken", async () => {
+      const handler = new HMRHandler();
+
+      let runWithContextCalled = false;
+
+      const mockFs = {
+        exists: async () => true,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => true,
+        isContextualMode: () => true,
+        runWithContext: async () => {
+          runWithContextCalled = true;
+        },
+      };
+
+      const req = new Request("http://localhost:3000/_ws");
+      const ctx = {
+        requestContext: { mode: "preview" },
+        resolvedEnvironment: "preview",
+        projectSlug: "test-project",
+        projectId: "proj-123",
+        proxyToken: undefined, // No proxy token
+        projectDir: "/tmp/test",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: { fs: mockFs, server: null },
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      await handler.handle(req, ctx);
+
+      // Wait for any async operations
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // runWithContext should NOT be called without proxyToken
+      assertEquals(runWithContextCalled, false);
+    });
+
+    it("handles adapter initialization errors gracefully", async () => {
+      const handler = new HMRHandler();
+
+      const mockFs = {
+        exists: async () => {
+          throw new Error("Adapter initialization failed");
+        },
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => true,
+        isContextualMode: () => true,
+        runWithContext: async (
+          _projectSlug: string,
+          _token: string,
+          fn: () => Promise<void>,
+        ) => {
+          await fn(); // This will throw
+        },
+      };
+
+      const req = new Request("http://localhost:3000/_ws");
+      const ctx = {
+        requestContext: { mode: "preview", branch: "main" },
+        resolvedEnvironment: "preview",
+        projectSlug: "test-project",
+        projectId: "proj-123",
+        proxyToken: "test-token",
+        projectDir: "/tmp/test",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: { fs: mockFs, server: null },
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      // Should not throw - error is caught and logged
+      const result = await handler.handle(req, ctx);
+
+      // Wait for the async adapter initialization to complete/fail
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Handler should still return a valid response
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+    });
+  });
 });

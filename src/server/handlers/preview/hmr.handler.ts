@@ -13,6 +13,7 @@ import {
 } from "../types.ts";
 import { ReloadNotifier } from "../../reload-notifier.ts";
 import { invalidateProjectCaches } from "../../context/cache-invalidation.ts";
+import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 
 // Priority between auth (0) and high (100)
 const PRIORITY_HMR: HandlerPriority = HandlerPriority.EARLY;
@@ -53,7 +54,18 @@ export class HMRHandler extends BaseHandler {
     if (HMRHandler.initialized) return;
     HMRHandler.initialized = true;
 
+    logger.info("[HMRHandler] Subscribing to ReloadNotifier");
+
     HMRHandler.reloadUnsubscribe = ReloadNotifier.subscribe((changedPaths, project) => {
+      logger.info("[HMRHandler] ReloadNotifier callback triggered", {
+        changedPaths,
+        projectSlug: project?.projectSlug,
+        projectId: project?.projectId,
+        environment: project?.environment,
+        branch: project?.branch,
+        clientCount: HMRHandler.clients.size,
+      });
+
       const projectSlug = project?.projectSlug ?? "preview";
       invalidateProjectCaches(projectSlug, changedPaths, {
         projectId: project?.projectId,
@@ -105,9 +117,10 @@ export class HMRHandler extends BaseHandler {
     HMRHandler.metrics.broadcastsSent++;
     HMRHandler.metrics.lastBroadcastTime = timestamp;
 
-    logger.debug("[HMRHandler] broadcastUpdate called", {
+    logger.info("[HMRHandler] broadcastUpdate called", {
       changedPaths,
       totalClients: HMRHandler.clientsMap.size,
+      clientsSetSize: HMRHandler.clients.size,
     });
 
     const needsFullReload = !changedPaths?.length ||
@@ -140,6 +153,11 @@ export class HMRHandler extends BaseHandler {
     let sentCount = 0;
     let skippedCount = 0;
 
+    logger.info("[HMRHandler] broadcastMessage starting", {
+      message: message.substring(0, 100),
+      totalClients: HMRHandler.clients.size,
+    });
+
     for (const client of HMRHandler.clients) {
       if (client.readyState !== WebSocket.OPEN) {
         skippedCount++;
@@ -157,7 +175,7 @@ export class HMRHandler extends BaseHandler {
       }
     }
 
-    logger.debug("[HMRHandler] broadcastMessage complete", {
+    logger.info("[HMRHandler] broadcastMessage complete", {
       sentCount,
       skippedCount,
       totalClients: HMRHandler.clients.size,
@@ -182,6 +200,18 @@ export class HMRHandler extends BaseHandler {
     }
 
     HMRHandler.initialize();
+
+    // In proxy mode, ensure the adapter is initialized so WebSocketManager connects
+    // to receive poke notifications. Without this, pokes from API are never received
+    // because adapters are lazily created only when page requests come in.
+    if (ctx.projectSlug && ctx.proxyToken && ctx.adapter?.fs) {
+      this.ensureAdapterInitialized(ctx).catch((error) => {
+        logger.warn("[HMRHandler] Failed to ensure adapter initialization", {
+          projectSlug: ctx.projectSlug,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
 
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       const now = Date.now();
@@ -271,6 +301,58 @@ export class HMRHandler extends BaseHandler {
       return Promise.resolve(
         this.respond(new Response("WebSocket upgrade failed", { status: 500 })),
       );
+    }
+  }
+
+  /**
+   * Ensure the adapter is initialized so WebSocketManager connects to receive pokes.
+   * In proxy mode, adapters are lazily created per-project. If no page request has been
+   * made for the project yet, the WebSocketManager won't be connected and pokes from
+   * the API will never be received.
+   */
+  private async ensureAdapterInitialized(ctx: HandlerContext): Promise<void> {
+    const { projectSlug, proxyToken, adapter, resolvedEnvironment } = ctx;
+    if (!projectSlug || !proxyToken || !adapter?.fs) return;
+
+    const fs = adapter.fs;
+    if (!isExtendedFSAdapter(fs) || !fs.runWithContext) return;
+
+    const isPreview = resolvedEnvironment === "preview";
+    if (!isPreview) return;
+
+    logger.debug("[HMRHandler] Ensuring adapter initialized for preview HMR", {
+      projectSlug,
+      resolvedEnvironment,
+    });
+
+    // Run a file operation within context to trigger adapter initialization.
+    // This will cause ProxyFSAdapterManager.getAdapter() to create the adapter
+    // and call WebSocketManager.connect(), enabling poke reception.
+    try {
+      await fs.runWithContext(
+        projectSlug,
+        proxyToken,
+        async () => {
+          // Perform a minimal file operation to trigger adapter initialization.
+          // The exists() call will invoke MultiProjectFSAdapter.getAdapter() which
+          // initializes the VeryfrontFSAdapter and connects its WebSocketManager.
+          await fs.exists("veryfront.config.ts");
+          logger.info("[HMRHandler] Adapter initialized for poke reception", {
+            projectSlug,
+          });
+        },
+        ctx.projectId,
+        {
+          productionMode: false,
+          branch: ctx.requestContext?.branch ?? "main",
+        },
+      );
+    } catch (error) {
+      // Log but don't throw - HMR connection should still work, just without poke reception
+      logger.warn("[HMRHandler] Adapter initialization failed (pokes may not be received)", {
+        projectSlug,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
