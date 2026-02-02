@@ -6,6 +6,12 @@ The simplest way to build AI-powered apps. One command. Zero config. Just build.
 npx veryfront
 ```
 
+Or install the CLI globally:
+
+```bash
+curl -fsSL https://veryfront.com/install.sh | sh
+```
+
 ```
 ╭──────────────────────────────────────────────────────────╮
 │                                                          │
