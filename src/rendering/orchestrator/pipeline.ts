@@ -20,6 +20,7 @@ import { createBuildVersion } from "#veryfront/utils/version.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
+import { buildQueryAwareCacheKey } from "#veryfront/cache/keys.ts";
 import {
   extractRelativePath as extractRelativePathShared,
   extractRouteParams as extractRouteParamsShared,
@@ -76,6 +77,8 @@ export interface RenderPipelineConfig {
   adapter: RuntimeAdapter;
   mode: "development" | "production";
   projectDir: string;
+  /** Query parameter handling for cache keys (from config.cache.queryParams) */
+  queryParamOptions?: import("#veryfront/cache/keys.ts").QueryParamCacheOptions;
 }
 
 export class RenderPipeline {
@@ -697,6 +700,8 @@ export class RenderPipeline {
    * Build a cache key that is safe for multi-tenant + query-param aware caching.
    * Returns null when request contains sensitive headers (Authorization/Cookie) and
    * no explicit cacheKey override was provided, to avoid leaking personalized HTML.
+   *
+   * Query param handling uses config.queryParamOptions for filtering (utm_*, gclid, etc.).
    */
   private buildCacheKey(slug: string, options?: RenderOptions): string | null {
     if (options?.cacheKey) return options.cacheKey;
@@ -711,9 +716,6 @@ export class RenderPipeline {
     const url = options?.url;
     if (!url) return slug;
 
-    const params = new URLSearchParams(url.searchParams);
-    const sorted = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
-    const queryString = sorted.map(([k, v]) => `${k}=${v}`).join("&");
-    return queryString ? `${slug}?${queryString}` : slug;
+    return buildQueryAwareCacheKey(slug, url, this.config.queryParamOptions);
   }
 }

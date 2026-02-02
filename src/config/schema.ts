@@ -73,6 +73,31 @@ export const veryfrontConfigSchema = z
           })
           .partial()
           .optional(),
+        /**
+         * Query parameter handling for page cache keys.
+         * Controls which URL query params affect cache key generation.
+         *
+         * Policies:
+         * - "ignore-all": Ignore all query params (pages with ?utm_campaign=x share cache with /)
+         * - "include-all": Include all query params (default, each unique query = separate cache)
+         * - "include-list": Only include specified params in cache key
+         * - "exclude-list": Exclude specified params (+ common tracking params like utm_*)
+         *
+         * @example
+         * // Ignore all marketing/tracking params (recommended for most sites)
+         * cache: { queryParams: { policy: "exclude-list" } }
+         *
+         * @example
+         * // Only vary cache by specific params
+         * cache: { queryParams: { policy: "include-list", params: ["page", "sort"] } }
+         */
+        queryParams: z
+          .object({
+            policy: z.enum(["ignore-all", "include-all", "include-list", "exclude-list"]).optional(),
+            params: z.array(z.string()).optional(),
+          })
+          .partial()
+          .optional(),
       })
       .partial()
       .optional(),

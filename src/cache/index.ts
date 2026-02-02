@@ -50,6 +50,7 @@ export {
   buildModuleResolveCacheKey,
   buildModuleTransformCacheKey,
   buildProxyManagerCacheKey,
+  buildQueryAwareCacheKey,
   buildRedisFileCacheKey,
   buildRedisSSRModuleKey,
   buildRedisTransformKey,
@@ -62,14 +63,19 @@ export {
   CacheKeyPrefix,
   cacheRegistry,
   createCacheKeyFilter,
+  DEFAULT_EXCLUDED_QUERY_PARAMS,
   deleteAllKeysForProject,
   deleteAllKeysForProjectAsync,
   type FileOperationContext,
   type FileSourceType,
+  filterQueryParams,
   getAllKeysForProject,
   getAllKeysForProjectAsync,
   getCacheKeyVersion,
   parseRenderCacheKey,
+  type QueryParamCacheOptions,
+  type QueryParamPolicy,
+  sanitizeQueryParamsForCacheKey,
 } from "./keys.ts";
 
 export {

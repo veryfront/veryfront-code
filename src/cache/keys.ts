@@ -496,3 +496,149 @@ export function deleteAllKeysForProjectAsync(
 export function buildBundleManifestCacheKey(manifestId: string): string {
   return `bm:${manifestId}`;
 }
+
+/**
+ * Query parameter handling policy for cache keys.
+ *
+ * - "ignore-all": Ignore all query params (best for marketing UTM params)
+ * - "include-all": Include all query params in cache key (default behavior)
+ * - "include-list": Only include specified params
+ * - "exclude-list": Include all except specified params
+ */
+export type QueryParamPolicy = "ignore-all" | "include-all" | "include-list" | "exclude-list";
+
+export interface QueryParamCacheOptions {
+  /** How to handle query params. Default: "include-all" */
+  policy?: QueryParamPolicy;
+  /** List of param names for include-list or exclude-list policies */
+  params?: string[];
+}
+
+/** Default marketing params to exclude (common tracking params that don't affect content) */
+export const DEFAULT_EXCLUDED_QUERY_PARAMS = [
+  // UTM tracking
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_term",
+  "utm_content",
+  // HubSpot
+  "_hsenc",
+  "_hsmi",
+  "hsCtaTracking",
+  // Google Analytics / Ads
+  "gclid",
+  "gclsrc",
+  "dclid",
+  "_ga",
+  "_gl",
+  // Facebook
+  "fbclid",
+  "fb_action_ids",
+  "fb_action_types",
+  // Microsoft / Bing
+  "msclkid",
+  // Mailchimp
+  "mc_cid",
+  "mc_eid",
+  // Other tracking
+  "ref",
+  "referrer",
+  "source",
+  "_openstat",
+  "yclid",
+  "zanpid",
+];
+
+/**
+ * Filter query params based on the specified policy.
+ *
+ * @param params - URLSearchParams to filter
+ * @param options - Query param handling options
+ * @returns Filtered entries array
+ */
+export function filterQueryParams(
+  params: URLSearchParams,
+  options?: QueryParamCacheOptions,
+): Array<[string, string]> {
+  const policy = options?.policy ?? "include-all";
+  const paramList = options?.params ?? [];
+
+  const entries = [...params.entries()];
+
+  switch (policy) {
+    case "ignore-all":
+      return [];
+
+    case "include-list":
+      return entries.filter(([key]) => paramList.includes(key));
+
+    case "exclude-list": {
+      // Merge user-provided list with defaults
+      const excludeSet = new Set([...DEFAULT_EXCLUDED_QUERY_PARAMS, ...paramList]);
+      return entries.filter(([key]) => !excludeSet.has(key));
+    }
+
+    case "include-all":
+    default:
+      return entries;
+  }
+}
+
+/**
+ * Sanitize query params for use in cache keys.
+ * Converts query params to a format safe for API cache key validation.
+ *
+ * API cache key validation only allows: a-z A-Z 0-9 _ : . * - /
+ *
+ * @param url - URL or URLSearchParams to extract query params from
+ * @param options - Query param handling options
+ * @returns Sanitized query string safe for cache keys, or empty string
+ */
+export function sanitizeQueryParamsForCacheKey(
+  url: URL | URLSearchParams,
+  options?: QueryParamCacheOptions,
+): string {
+  const params = url instanceof URL ? url.searchParams : url;
+
+  // Filter params based on policy
+  const filtered = filterQueryParams(params, options);
+  if (filtered.length === 0) return "";
+
+  // Sort for consistent ordering
+  const sorted = filtered.sort(([a], [b]) => a.localeCompare(b));
+
+  // Build sanitized string using allowed characters:
+  // - Use hyphen (-) instead of equals (=)
+  // - Use underscore (_) instead of ampersand (&)
+  // - URL-encode values that contain special characters
+  const sanitized = sorted
+    .map(([key, value]) => {
+      // Sanitize key and value to only contain allowed chars
+      const safeKey = key.replace(/[^a-zA-Z0-9_.-]/g, "_");
+      const safeValue = value.replace(/[^a-zA-Z0-9_.-]/g, "_");
+      return `${safeKey}-${safeValue}`;
+    })
+    .join("_");
+
+  return sanitized;
+}
+
+/**
+ * Build a query-aware cache key that is safe for multi-tenant caching.
+ *
+ * @param slug - Base page slug
+ * @param url - Optional URL with query params
+ * @param options - Query param handling options
+ * @returns Cache key string
+ */
+export function buildQueryAwareCacheKey(
+  slug: string,
+  url?: URL,
+  options?: QueryParamCacheOptions,
+): string {
+  if (!url) return slug;
+
+  const queryPart = sanitizeQueryParamsForCacheKey(url, options);
+  return queryPart ? `${slug}:q:${queryPart}` : slug;
+}

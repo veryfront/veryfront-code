@@ -2,11 +2,15 @@ import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertMatch, assertThrows } from "#veryfront/testing/assert";
 import {
   buildConfigCacheKey,
+  buildQueryAwareCacheKey,
   buildRenderCacheKey,
   buildRenderCachePrefix,
   CacheKeyPrefix,
   computeContentSourceId,
+  DEFAULT_EXCLUDED_QUERY_PARAMS,
+  filterQueryParams,
   parseRenderCacheKey,
+  sanitizeQueryParamsForCacheKey,
 } from "./keys.ts";
 
 describe("cache/keys", () => {
@@ -125,6 +129,119 @@ describe("cache/keys", () => {
         Error,
         "Missing releaseId for production contentSourceId",
       );
+    });
+  });
+
+  describe("filterQueryParams", () => {
+    it("should return all params for include-all policy (default)", () => {
+      const params = new URLSearchParams("a=1&b=2");
+      const result = filterQueryParams(params);
+      assertEquals(result, [["a", "1"], ["b", "2"]]);
+    });
+
+    it("should return empty array for ignore-all policy", () => {
+      const params = new URLSearchParams("a=1&b=2");
+      const result = filterQueryParams(params, { policy: "ignore-all" });
+      assertEquals(result, []);
+    });
+
+    it("should filter to only included params for include-list policy", () => {
+      const params = new URLSearchParams("a=1&b=2&c=3");
+      const result = filterQueryParams(params, { policy: "include-list", params: ["a", "c"] });
+      assertEquals(result, [["a", "1"], ["c", "3"]]);
+    });
+
+    it("should exclude specified params plus defaults for exclude-list policy", () => {
+      const params = new URLSearchParams("page=1&utm_source=google&custom=val");
+      const result = filterQueryParams(params, { policy: "exclude-list", params: ["custom"] });
+      assertEquals(result, [["page", "1"]]);
+    });
+
+    it("should exclude default tracking params when using exclude-list", () => {
+      const params = new URLSearchParams("page=1&utm_campaign=test&gclid=abc&fbclid=xyz");
+      const result = filterQueryParams(params, { policy: "exclude-list" });
+      assertEquals(result, [["page", "1"]]);
+    });
+  });
+
+  describe("sanitizeQueryParamsForCacheKey", () => {
+    it("should return empty string when no query params", () => {
+      const url = new URL("https://example.com/page");
+      assertEquals(sanitizeQueryParamsForCacheKey(url), "");
+    });
+
+    it("should sanitize special characters in params", () => {
+      const url = new URL("https://example.com/page?foo=bar&baz=qux");
+      const result = sanitizeQueryParamsForCacheKey(url);
+      // Should use hyphens instead of equals, underscores instead of ampersands
+      assertEquals(result, "baz-qux_foo-bar");
+    });
+
+    it("should sanitize values with special characters", () => {
+      const url = new URL("https://example.com/page?url=https://example.com");
+      const result = sanitizeQueryParamsForCacheKey(url);
+      // Special chars in values should be replaced with underscores
+      assertEquals(result, "url-https___example_com");
+    });
+
+    it("should respect ignore-all policy", () => {
+      const url = new URL("https://example.com/page?a=1&b=2");
+      const result = sanitizeQueryParamsForCacheKey(url, { policy: "ignore-all" });
+      assertEquals(result, "");
+    });
+
+    it("should respect exclude-list policy", () => {
+      const url = new URL("https://example.com/page?page=1&utm_source=google");
+      const result = sanitizeQueryParamsForCacheKey(url, { policy: "exclude-list" });
+      assertEquals(result, "page-1");
+    });
+  });
+
+  describe("buildQueryAwareCacheKey", () => {
+    it("should return slug when no URL provided", () => {
+      assertEquals(buildQueryAwareCacheKey("/blog"), "/blog");
+    });
+
+    it("should return slug when URL has no query params", () => {
+      const url = new URL("https://example.com/blog");
+      assertEquals(buildQueryAwareCacheKey("/blog", url), "/blog");
+    });
+
+    it("should append sanitized query params with :q: prefix", () => {
+      const url = new URL("https://example.com/blog?page=2&sort=desc");
+      const result = buildQueryAwareCacheKey("/blog", url);
+      assertEquals(result, "/blog:q:page-2_sort-desc");
+    });
+
+    it("should ignore tracking params by default when using exclude-list", () => {
+      const url = new URL("https://example.com/blog?page=1&utm_campaign=test");
+      const result = buildQueryAwareCacheKey("/blog", url, { policy: "exclude-list" });
+      assertEquals(result, "/blog:q:page-1");
+    });
+
+    it("should return just slug when all params are excluded", () => {
+      const url = new URL("https://example.com/blog?utm_source=google&utm_campaign=test");
+      const result = buildQueryAwareCacheKey("/blog", url, { policy: "exclude-list" });
+      assertEquals(result, "/blog");
+    });
+  });
+
+  describe("DEFAULT_EXCLUDED_QUERY_PARAMS", () => {
+    it("should include common UTM parameters", () => {
+      assertEquals(DEFAULT_EXCLUDED_QUERY_PARAMS.includes("utm_source"), true);
+      assertEquals(DEFAULT_EXCLUDED_QUERY_PARAMS.includes("utm_campaign"), true);
+      assertEquals(DEFAULT_EXCLUDED_QUERY_PARAMS.includes("utm_medium"), true);
+    });
+
+    it("should include common tracking IDs", () => {
+      assertEquals(DEFAULT_EXCLUDED_QUERY_PARAMS.includes("gclid"), true);
+      assertEquals(DEFAULT_EXCLUDED_QUERY_PARAMS.includes("fbclid"), true);
+      assertEquals(DEFAULT_EXCLUDED_QUERY_PARAMS.includes("msclkid"), true);
+    });
+
+    it("should include HubSpot tracking params", () => {
+      assertEquals(DEFAULT_EXCLUDED_QUERY_PARAMS.includes("_hsenc"), true);
+      assertEquals(DEFAULT_EXCLUDED_QUERY_PARAMS.includes("_hsmi"), true);
     });
   });
 });

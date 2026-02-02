@@ -35,6 +35,7 @@ import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { buildQueryAwareCacheKey, type QueryParamCacheOptions } from "#veryfront/cache/keys.ts";
 import {
   createRenderContext,
   createRenderContextFromEnriched,
@@ -307,7 +308,7 @@ export class Renderer {
           environment: ctx.environment,
         });
 
-        const cacheKey = this.buildCacheKey(slug, options);
+        const cacheKey = this.buildCacheKey(slug, ctx, options);
         const cacheResult = cacheKey
           ? await this.cache.checkCache(slug, ctx, options?.colorScheme, cacheKey)
           : { hit: false, cacheKey: "" };
@@ -389,8 +390,18 @@ export class Renderer {
   /**
    * Compute a cache key that is query-aware and avoids caching personalized responses
    * (Authorization / Cookie / x-api-key) unless the caller explicitly provides one.
+   *
+   * Query param handling is configurable via `config.cache.queryParams`:
+   * - "ignore-all": Ignore all query params (pages share cache regardless of URL params)
+   * - "include-all": Include all query params (default, each unique query = separate cache)
+   * - "include-list": Only include specified params
+   * - "exclude-list": Exclude common tracking params (utm_*, gclid, fbclid, etc.)
    */
-  private buildCacheKey(slug: string, options?: RenderOptions): string | null {
+  private buildCacheKey(
+    slug: string,
+    ctx: RenderContext,
+    options?: RenderOptions,
+  ): string | null {
     if (options?.cacheKey) return options.cacheKey;
 
     const req = options?.request;
@@ -404,10 +415,10 @@ export class Renderer {
     const url = options?.url;
     if (!url) return slug;
 
-    const params = new URLSearchParams(url.searchParams);
-    const sorted = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
-    const queryString = sorted.map(([k, v]) => `${k}=${v}`).join("&");
-    return queryString ? `${slug}?${queryString}` : slug;
+    // Get query param handling options from config
+    const queryParamOptions: QueryParamCacheOptions | undefined = ctx.config?.cache?.queryParams;
+
+    return buildQueryAwareCacheKey(slug, url, queryParamOptions);
   }
 
   private async doRenderPage(
@@ -636,6 +647,7 @@ export class Renderer {
       adapter: ctx.adapter,
       mode: ctx.mode,
       projectDir: ctx.projectDir,
+      queryParamOptions: ctx.config?.cache?.queryParams,
     });
 
     return { pipeline };
