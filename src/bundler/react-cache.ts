@@ -65,14 +65,15 @@ export async function getReactModulePaths(
     });
 
     // Cache all React modules in parallel (including react-dom/server for SSR)
+    // Non-null assertions are safe here because getReactCDNMapping always returns these keys
     const [react, reactDom, reactDomClient, reactDomServer, jsxRuntime, jsxDevRuntime] =
       await Promise.all([
-        cacheModuleToLocal(cdnMapping.react, cacheDir),
-        cacheModuleToLocal(cdnMapping["react-dom"], cacheDir),
-        cacheModuleToLocal(cdnMapping["react-dom/client"], cacheDir),
-        cacheModuleToLocal(reactUrls["react-dom/server"], cacheDir),
-        cacheModuleToLocal(cdnMapping["react/jsx-runtime"], cacheDir),
-        cacheModuleToLocal(cdnMapping["react/jsx-dev-runtime"], cacheDir),
+        cacheModuleToLocal(cdnMapping.react!, cacheDir),
+        cacheModuleToLocal(cdnMapping["react-dom"]!, cacheDir),
+        cacheModuleToLocal(cdnMapping["react-dom/client"]!, cacheDir),
+        cacheModuleToLocal(reactUrls["react-dom/server"]!, cacheDir),
+        cacheModuleToLocal(cdnMapping["react/jsx-runtime"]!, cacheDir),
+        cacheModuleToLocal(cdnMapping["react/jsx-dev-runtime"]!, cacheDir),
       ]);
 
     const paths: ReactModulePaths = {

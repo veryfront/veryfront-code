@@ -311,9 +311,8 @@ export function createBareImportPlugin(
         }
 
         // Map React packages
-        if (reactMapping[args.path]) {
-          const resolvedPath = reactMapping[args.path];
-
+        const resolvedPath = reactMapping[args.path];
+        if (resolvedPath) {
           // File paths are always external (already cached locally)
           if (resolvedPath.startsWith("file://")) {
             return { path: resolvedPath, external: true };
