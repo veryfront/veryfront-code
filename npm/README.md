@@ -119,6 +119,28 @@ Add to `~/.gemini/settings.json`:
 
 </details>
 
+### Cursor
+
+<details>
+<summary>Configuration</summary>
+
+Add to `.cursor/mcp.json` in your project directory (or `~/.cursor/mcp.json` for global config):
+
+```json
+{
+  "mcpServers": {
+    "veryfront": {
+      "command": "veryfront",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Then restart Cursor or reload the window.
+
+</details>
+
 ### Available Tools
 
 Once connected, your agent gets access to:
