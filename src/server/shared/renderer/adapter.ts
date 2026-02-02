@@ -19,7 +19,7 @@ import { buildEnrichedContext } from "../../context/enriched-context.ts";
 import {
   createRenderContextFromEnriched,
   type RenderContext,
-} from "../../../rendering/renderer.ts";
+} from "../../../rendering/context/render-context.ts";
 import {
   clearCacheWithRouter,
   type CommonRenderer,

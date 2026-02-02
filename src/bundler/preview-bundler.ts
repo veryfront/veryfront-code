@@ -29,6 +29,7 @@ import {
   createPreviewBuildOptions,
   createVirtualFsPlugin,
 } from "./build-config.ts";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 
 export interface ProjectContext {
   /** esbuild build context */
@@ -106,7 +107,7 @@ export class PreviewBundler {
       reactVersion?: string;
     } = {},
   ): Promise<ProjectContext> {
-    const { entryPoint = "app.tsx", reactVersion = "18.3.1" } = options;
+    const { entryPoint = "app.tsx", reactVersion = REACT_DEFAULT_VERSION } = options;
 
     // Update last activity for existing context
     const existing = this.contexts.get(projectId);

@@ -1,7 +1,7 @@
 /**
  * Render Mode Router Tests
  *
- * Tests for the render mode router that dispatches between JIT and legacy renderers.
+ * Tests for the render mode router that uses the JIT renderer.
  */
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
@@ -37,14 +37,14 @@ describe("rendering/render-mode-router", () => {
   });
 
   describe("getEffectiveRenderMode", () => {
-    it("should return on-demand when bundler is disabled", () => {
+    it("should always return jit-bundle (deprecated function)", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: false,
         renderMode: "jit-bundle",
       });
 
       const mode = getEffectiveRenderMode();
-      assertEquals(mode, "on-demand");
+      assertEquals(mode, "jit-bundle");
     });
 
     it("should return jit-bundle for production context", () => {
@@ -62,10 +62,10 @@ describe("rendering/render-mode-router", () => {
       assertEquals(mode, "jit-bundle");
     });
 
-    it("should return jit-bundle for preview development context (JIT now used for all modes)", () => {
+    it("should return jit-bundle for preview development context", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: true,
-        renderMode: "on-demand", // Config is ignored - JIT used for all modes
+        renderMode: "on-demand",
       });
 
       const ctx = createMockContext({
@@ -74,11 +74,10 @@ describe("rendering/render-mode-router", () => {
       });
 
       const mode = getEffectiveRenderMode(ctx);
-      // JIT is now used for all modes (React instance and dynamic file issues resolved)
       assertEquals(mode, "jit-bundle");
     });
 
-    it("should return env renderMode when no context provided", () => {
+    it("should return jit-bundle when no context provided", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: true,
         renderMode: "jit-bundle",
@@ -105,20 +104,20 @@ describe("rendering/render-mode-router", () => {
       assertEquals(result, true);
     });
 
-    it("should return false when bundler is disabled", () => {
+    it("should return true regardless of bundlerEnabled flag (JIT is the only renderer)", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: false,
         renderMode: "jit-bundle",
       });
 
       const result = shouldUseJitRenderer();
-      assertEquals(result, false);
+      assertEquals(result, true);
     });
 
-    it("should return true for preview development mode (JIT now used for all modes)", () => {
+    it("should return true for preview development mode", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: true,
-        renderMode: "on-demand", // Config is ignored - JIT used for all modes
+        renderMode: "on-demand",
       });
 
       const ctx = createMockContext({
@@ -127,7 +126,6 @@ describe("rendering/render-mode-router", () => {
       });
 
       const result = shouldUseJitRenderer(ctx);
-      // JIT is now used for all modes (React instance and dynamic file issues resolved)
       assertEquals(result, true);
     });
   });

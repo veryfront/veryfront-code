@@ -189,7 +189,8 @@ function readEnvSnapshot(): RuntimeEnv {
     experimentalRsc: getEnv("VERYFRONT_EXPERIMENTAL_RSC") === "1",
 
     renderMode: parseRenderMode(getEnv("VERYFRONT_RENDER_MODE"), nodeEnv),
-    bundlerEnabled: isTruthyEnvValue(getEnv("VERYFRONT_BUNDLER_ENABLED")),
+    // Legacy renderer removed - bundler is always enabled. VERYFRONT_BUNDLER_ENABLED is ignored.
+    bundlerEnabled: true,
     hmrPort: parseNumber(getEnv("VERYFRONT_HMR_PORT"), DEFAULTS.hmrPort),
 
     redisUrl: getEnv("REDIS_URL") || undefined,

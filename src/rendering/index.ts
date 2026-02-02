@@ -9,17 +9,17 @@ export {
   type SnippetRenderResult,
 } from "./snippet-renderer.ts";
 
-// Render mode router exports (JIT vs legacy renderer selection)
+// Render mode router exports (JIT renderer)
 export {
   clearCacheForProjectWithRouter,
   type CommonRenderer,
   destroyRenderers,
   getCurrentWatchBundle,
+  // Deprecated exports (kept for API compatibility)
   getEffectiveRenderMode,
   getHmrRuntimeForProject,
   getRendererForMode,
   initializeRenderers,
-  // Watch mode helpers
   isPreviewBundlerInitialized,
   type RenderModeRouterOptions,
   renderPageWithRouter,

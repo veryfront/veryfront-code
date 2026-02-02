@@ -1,8 +1,8 @@
 /**
- * JIT Renderer vs Legacy Renderer Parity Tests
+ * JIT Renderer Feature Tests
  *
- * Ensures that the JIT renderer produces identical output to the legacy renderer
- * across all feature categories (App Router, Pages Router, MDX, Components, etc.)
+ * Tests that the JIT renderer correctly handles all feature categories
+ * (App Router, Pages Router, MDX, Components, etc.)
  */
 
 // Disable LRU intervals during testing to prevent resource leaks
@@ -13,8 +13,11 @@ import { afterAll, afterEach, beforeAll, describe, it } from "#veryfront/testing
 import { join } from "#veryfront/compat/path";
 
 import { TestContext } from "../../_helpers/context.ts";
-import { getJitRenderer, isJitRendererInitialized } from "../../../src/rendering/jit-renderer.ts";
-import { getRenderer, initializeRenderer, isRendererInitialized } from "../../../src/rendering/renderer.ts";
+import {
+  getJitRenderer,
+  isJitRendererInitialized,
+} from "../../../src/rendering/jit-renderer.ts";
+import { initializeRenderers } from "../../../src/rendering/render-mode-router.ts";
 import type { RenderContext } from "../../../src/rendering/context/render-context.ts";
 import { DenoAdapter } from "../../../src/platform/adapters/deno.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
@@ -62,16 +65,15 @@ function createRenderContext(
   } as RenderContext;
 }
 
-describe("JIT-Legacy Parity", () => {
+describe("JIT Renderer", () => {
   let testContext: TestContext;
 
   beforeAll(async () => {
-    testContext = new TestContext("jit-legacy-parity");
+    testContext = new TestContext("jit-renderer-tests");
     await testContext.setup();
 
-    // Initialize both renderers
-    await initializeRenderer();
-    getJitRenderer();
+    // Initialize JIT renderer
+    await initializeRenderers();
   });
 
   afterAll(async () => {
@@ -81,21 +83,17 @@ describe("JIT-Legacy Parity", () => {
 
   afterEach(async () => {
     // Clear caches between tests
-    if (isRendererInitialized()) {
-      await getRenderer().clearCacheForProject("test-project");
-    }
     if (isJitRendererInitialized()) {
       await getJitRenderer().clearCacheForProject("test-project");
     }
   });
 
-  describe("Render Mode Selection", () => {
-    it("should initialize both JIT and legacy renderers", () => {
-      assertEquals(isRendererInitialized(), true);
+  describe("Initialization", () => {
+    it("should initialize JIT renderer", () => {
       assertEquals(isJitRendererInitialized(), true);
     });
 
-    it("should have JIT renderer available for production mode", () => {
+    it("should have JIT renderer available", () => {
       const jitRenderer = getJitRenderer();
       assertExists(jitRenderer);
       assertExists(jitRenderer.renderPage);
@@ -114,16 +112,6 @@ describe("JIT-Legacy Parity", () => {
       assertExists(jitRenderer.clearCacheForProject, "clearCacheForProject method should exist");
       assertExists(jitRenderer.destroy, "destroy method should exist");
     });
-
-    it("Legacy renderer should implement CommonRenderer interface", () => {
-      const legacyRenderer = getRenderer();
-      assertExists(legacyRenderer.renderPage, "renderPage method should exist");
-      assertExists(legacyRenderer.resolvePageData, "resolvePageData method should exist");
-      assertExists(legacyRenderer.getAllPages, "getAllPages method should exist");
-      assertExists(legacyRenderer.clearCache, "clearCache method should exist");
-      assertExists(legacyRenderer.clearCacheForProject, "clearCacheForProject method should exist");
-      assertExists(legacyRenderer.destroy, "destroy method should exist");
-    });
   });
 
   describe("Cache Operations", () => {
@@ -139,14 +127,13 @@ describe("JIT-Legacy Parity", () => {
   });
 });
 
-describe("App Router Parity", () => {
+describe("App Router Features", () => {
   let testContext: TestContext;
 
   beforeAll(async () => {
-    testContext = new TestContext("app-router-parity");
+    testContext = new TestContext("app-router-features");
     await testContext.setup();
-    await initializeRenderer();
-    getJitRenderer();
+    await initializeRenderers();
   });
 
   afterAll(async () => {
@@ -206,14 +193,13 @@ describe("App Router Parity", () => {
   });
 });
 
-describe("Pages Router Parity", () => {
+describe("Pages Router Features", () => {
   let testContext: TestContext;
 
   beforeAll(async () => {
-    testContext = new TestContext("pages-router-parity");
+    testContext = new TestContext("pages-router-features");
     await testContext.setup();
-    await initializeRenderer();
-    getJitRenderer();
+    await initializeRenderers();
   });
 
   afterAll(async () => {
@@ -258,14 +244,13 @@ describe("Pages Router Parity", () => {
   });
 });
 
-describe("MDX Parity", () => {
+describe("MDX Features", () => {
   let testContext: TestContext;
 
   beforeAll(async () => {
-    testContext = new TestContext("mdx-parity");
+    testContext = new TestContext("mdx-features");
     await testContext.setup();
-    await initializeRenderer();
-    getJitRenderer();
+    await initializeRenderers();
   });
 
   afterAll(async () => {
@@ -300,14 +285,13 @@ describe("MDX Parity", () => {
   });
 });
 
-describe("Component Rendering Parity", () => {
+describe("Component Rendering Features", () => {
   let testContext: TestContext;
 
   beforeAll(async () => {
-    testContext = new TestContext("component-parity");
+    testContext = new TestContext("component-features");
     await testContext.setup();
-    await initializeRenderer();
-    getJitRenderer();
+    await initializeRenderers();
   });
 
   afterAll(async () => {
@@ -345,10 +329,9 @@ describe("Edge Cases", () => {
   let testContext: TestContext;
 
   beforeAll(async () => {
-    testContext = new TestContext("edge-cases-parity");
+    testContext = new TestContext("edge-cases");
     await testContext.setup();
-    await initializeRenderer();
-    getJitRenderer();
+    await initializeRenderers();
   });
 
   afterAll(async () => {

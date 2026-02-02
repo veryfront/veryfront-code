@@ -15,6 +15,7 @@ import {
   getReactCDNUrl,
   getReactDOMCDNUrl,
   getReactDOMClientCDNUrl,
+  getReactDOMServerCDNUrl,
   getReactJSXDevRuntimeCDNUrl,
   getReactJSXRuntimeCDNUrl,
   REACT_DEFAULT_VERSION,
@@ -65,7 +66,14 @@ export interface SharedBuildConfig {
  * Get React CDN URLs for a given version
  */
 export function getReactExternals(_reactVersion: string = REACT_DEFAULT_VERSION): string[] {
-  return ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime"];
+  return [
+    "react",
+    "react-dom",
+    "react-dom/client",
+    "react-dom/server",
+    "react/jsx-runtime",
+    "react/jsx-dev-runtime",
+  ];
 }
 
 /**
@@ -78,6 +86,7 @@ export function getReactCDNMapping(
     react: getReactCDNUrl(reactVersion),
     "react-dom": getReactDOMCDNUrl(reactVersion),
     "react-dom/client": getReactDOMClientCDNUrl(reactVersion),
+    "react-dom/server": getReactDOMServerCDNUrl(reactVersion),
     "react/jsx-runtime": getReactJSXRuntimeCDNUrl(reactVersion),
     "react/jsx-dev-runtime": getReactJSXDevRuntimeCDNUrl(reactVersion),
   };
@@ -225,8 +234,8 @@ export function createVirtualFsPlugin(
 
       // Load files through adapter
       build.onLoad({ filter: /\.(tsx?|jsx?|mjs)$/ }, async (args) => {
-        // Skip virtual namespace (handled above)
-        if (args.namespace === "virtual") return undefined;
+        // Skip virtual namespace (handled above) and https namespace (handled by bare-import plugin)
+        if (args.namespace === "virtual" || args.namespace === "https") return undefined;
 
         try {
           const contents = await adapter.fs.readFile(args.path);
@@ -324,8 +333,33 @@ export function createBareImportPlugin(
         };
       });
 
-      // If not externalizing React, load from HTTPS
-      if (!externalizeReact) {
+      // If not externalizing React, load from HTTPS and handle nested imports
+      if (!shouldExternalize) {
+        // Resolve imports within HTTPS modules (e.g., esm.sh internal paths)
+        build.onResolve({ filter: /^\//, namespace: "https" }, (args) => {
+          // Resolve absolute paths relative to the esm.sh base URL
+          try {
+            const baseUrl = new URL(args.importer).origin;
+            const resolvedUrl = `${baseUrl}${args.path}`;
+            return { path: resolvedUrl, namespace: "https" };
+          } catch {
+            // If importer URL parsing fails, fall back to esm.sh origin
+            const resolvedUrl = `https://esm.sh${args.path}`;
+            return { path: resolvedUrl, namespace: "https" };
+          }
+        });
+
+        // Also handle relative paths in HTTPS modules
+        build.onResolve({ filter: /^\./, namespace: "https" }, (args) => {
+          try {
+            const base = new URL(args.importer);
+            const resolved = new URL(args.path, base).href;
+            return { path: resolved, namespace: "https" };
+          } catch {
+            return undefined;
+          }
+        });
+
         build.onLoad({ filter: /.*/, namespace: "https" }, async (args) => {
           try {
             const response = await fetch(args.path, { redirect: "follow" });
@@ -635,7 +669,11 @@ export function createBuildOptions(config: BundleConfig): BuildOptions {
       target: "es2022",
       minify: !dev,
       sourcemap: dev ? "inline" : false,
-      external: [...getReactExternals(reactVersion), ...external],
+      // NOTE: For JIT bundles, we do NOT externalize React because:
+      // 1. Blob URL execution cannot resolve external React imports
+      // 2. React needs to be bundled into the code for proper execution
+      // Only externalize non-React packages
+      external: external.filter((pkg) => !pkg.startsWith("react")),
       conditions: ["node", "import"],
     };
   }

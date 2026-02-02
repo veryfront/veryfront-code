@@ -28,8 +28,8 @@ import {
   createMdxPlugin,
   createVirtualFsPlugin,
 } from "./build-config.ts";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { computeProjectContentHash, getBundleCache } from "./bundle-cache.ts";
-import { getReactModulePaths } from "./react-cache.ts";
 
 export interface JitBundleResult {
   /** Bundled code ready for execution */
@@ -75,7 +75,7 @@ export async function getOrBuildBundle(options: JitBundleOptions): Promise<JitBu
     projectId,
     projectDir,
     adapter,
-    reactVersion = "18.3.1",
+    reactVersion = REACT_DEFAULT_VERSION,
     entryPoint = "app.tsx",
     forceRebuild = false,
     skipCache = false,
@@ -175,12 +175,33 @@ async function buildProjectBundle(options: {
         "react.version": reactVersion,
       });
 
-      // Pre-cache React modules to file:// paths
-      // This ensures the bundle uses the same React instance as SSR
-      const reactFilePaths = await getReactModulePaths(reactVersion);
-      span?.setAttribute("react.cached", Object.keys(reactFilePaths).length > 0);
+      // NOTE: We bundle React directly into the output so blob URL execution works.
+      // This makes bundles self-contained - no external import resolution needed.
+      // To avoid "two Reacts" problem, we also bundle react-dom/server and export
+      // a render function that uses the bundled React for SSR.
 
-      // Create build configuration with pre-cached React paths
+      // Create a virtual entry wrapper that imports the page and exports a render function
+      const virtualEntryPath = `${projectDir}/__jit_entry__.tsx`;
+      const virtualEntryCode = `
+import Page, { headings } from "${entryPath}";
+import { renderToString } from "react-dom/server";
+import { createElement } from "react";
+
+// Re-export page component and headings
+export default Page;
+export { headings };
+
+// Export render function that uses bundled React for SSR
+export async function render(props = {}) {
+  const element = createElement(Page, props);
+  return renderToString(element);
+}
+`;
+
+      // Add virtual entry to project files
+      projectFiles.set(virtualEntryPath, virtualEntryCode);
+
+      // Create build configuration with virtual entry
       const buildConfig: BundleConfig = {
         projectId,
         projectDir,
@@ -188,8 +209,7 @@ async function buildProjectBundle(options: {
         reactVersion,
         dev: false,
         target: "ssr",
-        entryPoints: [entryPath],
-        reactFilePaths, // Pass file:// paths to avoid React instance mismatch
+        entryPoints: [virtualEntryPath],
       };
 
       // Get optimized build options for JIT bundling
@@ -197,11 +217,17 @@ async function buildProjectBundle(options: {
 
       // Add virtual filesystem plugin with project files and MDX support
       // MDX plugin must come BEFORE virtualFsPlugin to intercept MDX files
+      // React is bundled (not external) so blob URL execution works without bare import issues
       buildOptions.plugins = [
         createMdxPlugin(projectDir, adapter, "ssr", projectFiles), // Full MDX compilation support
         createVirtualFsPlugin(projectDir, adapter, projectFiles),
-        createBareImportPlugin({ reactVersion, externalizeReact: true, reactFilePaths }),
+        createBareImportPlugin({ reactVersion, externalizeReact: false }), // Bundle React into output
       ];
+
+      // Remove React from externals since we're bundling it
+      buildOptions.external = buildOptions.external?.filter(
+        (ext) => !ext.startsWith("react"),
+      ) ?? [];
 
       // Build with esbuild
       const result = await esbuild.build(buildOptions);
@@ -313,7 +339,7 @@ export async function buildBundleFromFiles(
     target?: "ssr" | "browser";
   } = {},
 ): Promise<string> {
-  const { reactVersion = "18.3.1", target = "ssr" } = options;
+  const { reactVersion = REACT_DEFAULT_VERSION, target = "ssr" } = options;
 
   const esbuild = await getEsbuild();
 
@@ -358,7 +384,11 @@ export async function transformModule(
     ssr?: boolean;
   } = { projectDir: "/" },
 ): Promise<string> {
-  const { projectDir: _projectDir, reactVersion: _reactVersion = "18.3.1", ssr = true } = options;
+  const {
+    projectDir: _projectDir,
+    reactVersion: _reactVersion = REACT_DEFAULT_VERSION,
+    ssr = true,
+  } = options;
   const esbuild = await getEsbuild();
 
   // Determine loader from file extension
