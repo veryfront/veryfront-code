@@ -692,20 +692,26 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 
   const processingStack = getProcessingStack();
   if (processingStack.has(normalizedUrl)) {
-    // Only return early if the file actually exists on disk.
-    // This prevents "Module not found" errors when circular dependency detection
-    // triggers but the file hasn't been written yet (e.g., after pod restart).
+    // Circular dependency detected - this URL is already being processed in our request chain.
+    // We MUST return the cache path immediately to avoid deadlock:
+    // - If we fall through to check inFlightHttpFetches, we'll find our own promise
+    // - Waiting on our own promise causes a 30s timeout then retry storm
+    //
+    // Returning the path is safe because:
+    // - JS modules are evaluated AFTER all deps are loaded (post-order)
+    // - The file will be written by the time the circular import is evaluated
+    // - The parent module finishes writing before runtime evaluates the import
     if (await exists(cachePath)) {
       logger.debug("[HTTP-CACHE] Circular dependency detected, file exists", {
         url: normalizedUrl,
       });
-      return cachePath;
+    } else {
+      logger.debug("[HTTP-CACHE] Circular dependency detected, file pending write", {
+        url: normalizedUrl,
+        cachePath,
+      });
     }
-    logger.warn("[HTTP-CACHE] Circular dependency detected but file missing, will fetch", {
-      url: normalizedUrl,
-      cachePath,
-    });
-    // Don't return - fall through to fetch
+    return cachePath;
   }
 
   // Wait for in-flight fetch with compare-and-swap retry to prevent thundering herd
