@@ -7,6 +7,7 @@ export function prompt(config: PromptConfig): Prompt {
   return {
     id,
     description: config.description,
+    suggestion: config.suggestion,
     async getContent(variables?: Record<string, unknown>): Promise<string> {
       const vars = variables ?? {};
 

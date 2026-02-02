@@ -162,7 +162,11 @@ function handleListResources(): Response {
 
 function handleListPrompts(): Response {
   const { prompts } = getMCPRegistry();
-  const list = Array.from(prompts.entries()).map(([id, p]) => ({ id, description: p.description }));
+  const list = Array.from(prompts.entries()).map(([id, p]) => ({
+    id,
+    description: p.description,
+    suggestion: p.suggestion,
+  }));
   return jsonResponse({ prompts: list, count: list.length });
 }
 
