@@ -183,47 +183,48 @@ main() {
   chmod +x "$BINARY_PATH"
   printf "\rInstalled v%s ✓        \n" "$VERSION"
 
-  # Check if install dir is in PATH
+  # Add to PATH if not already there
   case ":$PATH:" in
     *":$INSTALL_DIR:"*)
-      echo ""
-      echo "Get started:"
-      echo "  ${ORANGE}veryfront${NC}"
-      echo ""
+      # Already in PATH
       ;;
     *)
+      # Add to shell profile
       SHELL_NAME=$(basename "$SHELL")
       case "$SHELL_NAME" in
         zsh)
-          PROFILE=".zshrc"
+          PROFILE="$HOME/.zshrc"
           ;;
         bash)
           if [ -f "$HOME/.bash_profile" ]; then
-            PROFILE=".bash_profile"
+            PROFILE="$HOME/.bash_profile"
           else
-            PROFILE=".bashrc"
+            PROFILE="$HOME/.bashrc"
           fi
           ;;
         fish)
+          # Fish uses a different mechanism
+          fish -c "fish_add_path ~/.veryfront/bin" 2>/dev/null || true
           echo ""
-          echo "Next steps:"
-          echo "1. fish_add_path ~/.veryfront/bin"
-          echo "2. ${ORANGE}veryfront${NC}"
+          echo "Run ${ORANGE}veryfront${NC} to get started"
           echo ""
           return
           ;;
         *)
-          PROFILE=".profile"
+          PROFILE="$HOME/.profile"
           ;;
       esac
-      echo ""
-      echo "Next steps:"
-      echo "1. echo 'export PATH=\"\$HOME/.veryfront/bin:\$PATH\"' >> ~/${PROFILE}"
-      echo "2. source ~/${PROFILE}"
-      echo "3. ${ORANGE}veryfront${NC}"
-      echo ""
+
+      # Add PATH export if not already in profile
+      if ! grep -q "/.veryfront/bin" "$PROFILE" 2>/dev/null; then
+        echo 'export PATH="$HOME/.veryfront/bin:$PATH"' >> "$PROFILE"
+      fi
       ;;
   esac
+
+  echo ""
+  echo "Restart your terminal, then run ${ORANGE}veryfront${NC}"
+  echo ""
 }
 
 main
