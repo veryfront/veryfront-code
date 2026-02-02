@@ -561,7 +561,7 @@ export function filterQueryParams(
   params: URLSearchParams,
   options?: QueryParamCacheOptions,
 ): Array<[string, string]> {
-  const policy = options?.policy ?? "include-all";
+  const policy = options?.policy ?? "exclude-list";
   const paramList = options?.params ?? [];
 
   const entries = [...params.entries()];

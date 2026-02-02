@@ -133,9 +133,15 @@ describe("cache/keys", () => {
   });
 
   describe("filterQueryParams", () => {
-    it("should return all params for include-all policy (default)", () => {
-      const params = new URLSearchParams("a=1&b=2");
+    it("should exclude tracking params by default (exclude-list policy)", () => {
+      const params = new URLSearchParams("page=1&utm_source=google&_hsenc=test");
       const result = filterQueryParams(params);
+      assertEquals(result, [["page", "1"]]);
+    });
+
+    it("should return all params for explicit include-all policy", () => {
+      const params = new URLSearchParams("a=1&b=2");
+      const result = filterQueryParams(params, { policy: "include-all" });
       assertEquals(result, [["a", "1"], ["b", "2"]]);
     });
 
@@ -214,15 +220,15 @@ describe("cache/keys", () => {
       assertEquals(result, "/blog:q:page-2_sort-desc");
     });
 
-    it("should ignore tracking params by default when using exclude-list", () => {
+    it("should ignore tracking params by default (exclude-list is default)", () => {
       const url = new URL("https://example.com/blog?page=1&utm_campaign=test");
-      const result = buildQueryAwareCacheKey("/blog", url, { policy: "exclude-list" });
+      const result = buildQueryAwareCacheKey("/blog", url);
       assertEquals(result, "/blog:q:page-1");
     });
 
-    it("should return just slug when all params are excluded", () => {
+    it("should return just slug when all params are tracking params", () => {
       const url = new URL("https://example.com/blog?utm_source=google&utm_campaign=test");
-      const result = buildQueryAwareCacheKey("/blog", url, { policy: "exclude-list" });
+      const result = buildQueryAwareCacheKey("/blog", url);
       assertEquals(result, "/blog");
     });
   });
