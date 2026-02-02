@@ -2,6 +2,7 @@ import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { logger } from "#veryfront/utils";
+import devUiManifest from "#veryfront/server/dev-ui/manifest.json" with { type: "json" };
 
 const moduleCache = new Map<string, { code: string; timestamp: number }>();
 const CACHE_TTL = 5000;
@@ -58,23 +59,45 @@ function transformModule(filePath: string, source: string, relativePath: string)
   );
 }
 
+/**
+ * Read UI module from filesystem (for dev) or embedded manifest (for compiled binary)
+ */
 async function readUiModule(
   uiDir: string,
   relativePath: string,
 ): Promise<{ filePath: string; source: string } | null> {
+  // Try filesystem first (works in development, allows hot reload)
   const tsxPath = `${uiDir}/${relativePath}.tsx`;
   try {
     return { filePath: tsxPath, source: await readTextFile(tsxPath) };
   } catch {
-    // try .ts
+    // try .ts from filesystem
   }
 
   const tsPath = `${uiDir}/${relativePath}.ts`;
   try {
     return { filePath: tsPath, source: await readTextFile(tsPath) };
   } catch {
-    return null;
+    // Filesystem failed, try embedded manifest (for compiled binary)
   }
+
+  // Try embedded manifest - paths are relative to dev-ui directory
+  // The manifest uses "dashboard/..." paths, so we need to match that
+  const manifest = devUiManifest as { files: Record<string, string> };
+
+  // Try .tsx from manifest
+  const manifestTsxPath = `dashboard/${relativePath}.tsx`;
+  if (manifest.files[manifestTsxPath]) {
+    return { filePath: manifestTsxPath, source: manifest.files[manifestTsxPath] };
+  }
+
+  // Try .ts from manifest
+  const manifestTsPath = `dashboard/${relativePath}.ts`;
+  if (manifest.files[manifestTsPath]) {
+    return { filePath: manifestTsPath, source: manifest.files[manifestTsPath] };
+  }
+
+  return null;
 }
 
 export function handleDashboardUI(req: Request): Promise<Response | null> {
