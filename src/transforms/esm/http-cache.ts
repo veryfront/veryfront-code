@@ -416,30 +416,35 @@ export function __clearInFlightHttpFetches(): void {
   inFlightHttpFetches.clear();
 }
 
+/** Jitter to spread out timeout retries and prevent thundering herd (0-5s) */
+const IN_FLIGHT_JITTER_MS = 5_000;
+
 /**
- * Wait for an in-flight fetch with timeout protection.
- * If the wait times out, returns undefined so caller can retry the fetch.
+ * Wait for an in-flight fetch with timeout + jitter.
+ * Returns undefined on timeout so caller can retry.
  */
 async function waitForInFlightFetch(
   promise: Promise<string | null>,
   cacheKey: string,
 ): Promise<string | null | undefined> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const jitter = Math.floor(Math.random() * IN_FLIGHT_JITTER_MS);
+  const timeoutMs = IN_FLIGHT_WAIT_TIMEOUT_MS + jitter;
 
+  let timeoutId: ReturnType<typeof setTimeout>;
   const timeoutPromise = new Promise<undefined>((resolve) => {
     timeoutId = setTimeout(() => {
       logger.warn("[HTTP-CACHE] In-flight fetch wait timed out, will retry", {
         cacheKey,
-        timeoutMs: IN_FLIGHT_WAIT_TIMEOUT_MS,
+        timeoutMs,
       });
       resolve(undefined);
-    }, IN_FLIGHT_WAIT_TIMEOUT_MS);
+    }, timeoutMs);
   });
 
   try {
     return await Promise.race([promise, timeoutPromise]);
   } finally {
-    if (timeoutId) clearTimeout(timeoutId);
+    clearTimeout(timeoutId!);
   }
 }
 
@@ -703,14 +708,19 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     // Don't return - fall through to fetch
   }
 
-  const inFlight = inFlightHttpFetches.get(cacheKey);
-  if (inFlight) {
-    // Wait with timeout - if another request is stuck, don't wait forever
+  // Wait for in-flight fetch with compare-and-swap retry to prevent thundering herd
+  let inFlight = inFlightHttpFetches.get(cacheKey);
+  while (inFlight) {
     const result = await waitForInFlightFetch(inFlight, cacheKey);
-    // If wait timed out (result is undefined), fall through to retry the fetch
     if (result !== undefined) return result;
-    // Remove the stuck promise so we can retry
-    inFlightHttpFetches.delete(cacheKey);
+
+    // Timeout: only retry if we're first to notice (compare-and-swap)
+    if (inFlightHttpFetches.get(cacheKey) === inFlight) {
+      inFlightHttpFetches.delete(cacheKey);
+      break;
+    }
+    // Another request already started a new fetch, wait on it
+    inFlight = inFlightHttpFetches.get(cacheKey);
   }
 
   const fetchPromise = (async () => {
