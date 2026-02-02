@@ -28,6 +28,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { Span } from "@opentelemetry/api";
 import { getOrBuildBundle, type JitBundleResult } from "#veryfront/bundler/jit-bundler.ts";
 import { clearProjectModules, executeBundleForRender } from "#veryfront/bundler/bundle-executor.ts";
+import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import type { RenderContext } from "./context/render-context.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./orchestrator/types.ts";
 import {
@@ -295,19 +296,29 @@ export class JitRenderer {
 
   /**
    * Get or build the project bundle
+   *
+   * In development/test mode, skips the in-memory bundle cache to support
+   * dynamic file changes (e.g., tests creating files after server starts).
+   * The content hash in getOrBuildBundle ensures rebuilds only when needed.
    */
   private async getBundle(ctx: RenderContext): Promise<JitBundleResult> {
-    // Check in-memory cache first
-    const memoryCacheKey = `${ctx.projectId}:${ctx.contentSourceId}`;
-    const cached = this.bundleCache.get(memoryCacheKey);
-    if (cached) {
-      return cached;
+    // Skip memory cache in dev/test mode to support dynamic file changes
+    // This allows tests to create files after bundle time and have them picked up
+    const isDevOrTest = ctx.mode === "development" || getRuntimeEnv().denoTesting;
+
+    if (!isDevOrTest) {
+      // Check in-memory cache in production mode
+      const memoryCacheKey = `${ctx.projectId}:${ctx.contentSourceId}`;
+      const cached = this.bundleCache.get(memoryCacheKey);
+      if (cached) {
+        return cached;
+      }
     }
 
     // Detect actual entry point
     const entryPoint = await this.detectEntryPoint(ctx);
 
-    // Build/fetch bundle
+    // Build/fetch bundle (content hash ensures rebuilds only when files change)
     const result = await getOrBuildBundle({
       projectId: ctx.projectId,
       projectDir: ctx.projectDir,
@@ -316,8 +327,11 @@ export class JitRenderer {
       entryPoint,
     });
 
-    // Cache in memory
-    this.bundleCache.set(memoryCacheKey, result);
+    // Cache in memory (only in production mode)
+    if (!isDevOrTest) {
+      const memoryCacheKey = `${ctx.projectId}:${ctx.contentSourceId}`;
+      this.bundleCache.set(memoryCacheKey, result);
+    }
 
     return result;
   }

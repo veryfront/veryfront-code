@@ -29,6 +29,7 @@ import {
   createVirtualFsPlugin,
 } from "./build-config.ts";
 import { computeProjectContentHash, getBundleCache } from "./bundle-cache.ts";
+import { getReactModulePaths } from "./react-cache.ts";
 
 export interface JitBundleResult {
   /** Bundled code ready for execution */
@@ -174,7 +175,12 @@ async function buildProjectBundle(options: {
         "react.version": reactVersion,
       });
 
-      // Create build configuration
+      // Pre-cache React modules to file:// paths
+      // This ensures the bundle uses the same React instance as SSR
+      const reactFilePaths = await getReactModulePaths(reactVersion);
+      span?.setAttribute("react.cached", Object.keys(reactFilePaths).length > 0);
+
+      // Create build configuration with pre-cached React paths
       const buildConfig: BundleConfig = {
         projectId,
         projectDir,
@@ -183,16 +189,18 @@ async function buildProjectBundle(options: {
         dev: false,
         target: "ssr",
         entryPoints: [entryPath],
+        reactFilePaths, // Pass file:// paths to avoid React instance mismatch
       };
 
       // Get optimized build options for JIT bundling
       const buildOptions = createJitBuildOptions(buildConfig);
 
       // Add virtual filesystem plugin with project files and MDX support
+      // MDX plugin must come BEFORE virtualFsPlugin to intercept MDX files
       buildOptions.plugins = [
+        createMdxPlugin(projectDir, adapter, "ssr", projectFiles), // Full MDX compilation support
         createVirtualFsPlugin(projectDir, adapter, projectFiles),
-        createMdxPlugin(projectDir, adapter, "ssr"), // Full MDX compilation support
-        createBareImportPlugin(reactVersion, true),
+        createBareImportPlugin({ reactVersion, externalizeReact: true, reactFilePaths }),
       ];
 
       // Build with esbuild

@@ -37,6 +37,12 @@ export interface BundleConfig {
   entryPoints: string[];
   /** External packages (not bundled) */
   external?: string[];
+  /**
+   * Pre-cached React file:// paths for SSR.
+   * When provided, React imports resolve to these paths instead of CDN URLs.
+   * This ensures JIT bundled code uses the same React instance as SSR.
+   */
+  reactFilePaths?: Record<string, string>;
 }
 
 export interface SharedBuildConfig {
@@ -109,8 +115,13 @@ export function createVirtualFsPlugin(
     setup(build) {
       // Handle virtual files
       if (virtualFiles?.size) {
-        // Resolve handler for virtual files
+        // Resolve handler for virtual files (skip MDX - handled by MDX plugin)
         build.onResolve({ filter: /.*/ }, (args) => {
+          // Skip MDX files - they should be handled by createMdxPlugin
+          if (args.path.endsWith(".mdx") || args.path.endsWith(".md")) {
+            return undefined;
+          }
+
           // For entry points and absolute paths
           if (args.path.startsWith("/")) {
             if (virtualFiles.has(args.path)) {
@@ -162,8 +173,13 @@ export function createVirtualFsPlugin(
           return undefined;
         });
 
-        // Load handler for virtual files
+        // Load handler for virtual files (skip MDX - handled by MDX plugin)
         build.onLoad({ filter: /.*/, namespace: "virtual" }, (args) => {
+          // Skip MDX files - they should be handled by createMdxPlugin
+          if (args.path.endsWith(".mdx") || args.path.endsWith(".md")) {
+            return undefined;
+          }
+
           const contents = virtualFiles.get(args.path);
           if (contents !== undefined) {
             return {
@@ -178,8 +194,15 @@ export function createVirtualFsPlugin(
       }
 
       // Resolve relative and absolute imports through adapter
+      // Skip MDX files - they are handled by createMdxPlugin
       build.onResolve({ filter: /^(\.?\.?\/|\/)\/*/ }, async (args) => {
-        const basedir = args.importer ? getDirectory(args.importer) : projectDir;
+        // Skip MDX files - let MDX plugin handle them
+        if (args.path.endsWith(".mdx") || args.path.endsWith(".md")) {
+          return undefined;
+        }
+
+        const basedir = args.resolveDir ||
+          (args.importer ? getDirectory(args.importer) : projectDir);
         const candidate = args.path.startsWith("/")
           ? joinPath(projectDir, args.path)
           : joinPath(basedir, args.path);
@@ -224,13 +247,39 @@ export function createVirtualFsPlugin(
 }
 
 /**
+ * Options for the bare import plugin
+ */
+export interface BareImportPluginOptions {
+  /** React version for CDN mapping */
+  reactVersion?: string;
+  /** Whether to mark React as external (default: true) */
+  externalizeReact?: boolean;
+  /** Pre-cached React file:// paths to use instead of CDN URLs */
+  reactFilePaths?: Record<string, string>;
+}
+
+/**
  * Create a plugin that resolves bare imports to esm.sh URLs
+ *
+ * When reactFilePaths is provided, React imports are resolved to those file://
+ * paths instead of CDN URLs. This enables sharing the same React instance
+ * between JIT bundled code and SSR execution.
  */
 export function createBareImportPlugin(
-  reactVersion: string = REACT_DEFAULT_VERSION,
+  reactVersionOrOptions: string | BareImportPluginOptions = REACT_DEFAULT_VERSION,
   externalizeReact: boolean = true,
 ): Plugin {
-  const reactMapping = getReactCDNMapping(reactVersion);
+  // Support both old signature (string, boolean) and new options object
+  const options: BareImportPluginOptions = typeof reactVersionOrOptions === "string"
+    ? { reactVersion: reactVersionOrOptions, externalizeReact }
+    : reactVersionOrOptions;
+
+  const reactVersion = options.reactVersion ?? REACT_DEFAULT_VERSION;
+  const shouldExternalize = options.externalizeReact ?? true;
+  const reactFilePaths = options.reactFilePaths;
+
+  // Use file:// paths if provided, otherwise fall back to CDN mapping
+  const reactMapping = reactFilePaths ?? getReactCDNMapping(reactVersion);
 
   return {
     name: "veryfront-bare-imports",
@@ -241,7 +290,8 @@ export function createBareImportPlugin(
           args.path.startsWith(".") ||
           args.path.startsWith("/") ||
           args.path.startsWith("http://") ||
-          args.path.startsWith("https://")
+          args.path.startsWith("https://") ||
+          args.path.startsWith("file://")
         ) {
           return undefined;
         }
@@ -251,12 +301,20 @@ export function createBareImportPlugin(
           return undefined;
         }
 
-        // Map React packages to CDN
+        // Map React packages
         if (reactMapping[args.path]) {
-          if (externalizeReact) {
-            return { path: reactMapping[args.path], external: true };
+          const resolvedPath = reactMapping[args.path];
+
+          // File paths are always external (already cached locally)
+          if (resolvedPath.startsWith("file://")) {
+            return { path: resolvedPath, external: true };
           }
-          return { path: reactMapping[args.path], namespace: "https" };
+
+          // CDN URLs: externalize or load from HTTPS
+          if (shouldExternalize) {
+            return { path: resolvedPath, external: true };
+          }
+          return { path: resolvedPath, namespace: "https" };
         }
 
         // Map other bare imports to esm.sh with external React to prevent bundling
@@ -305,6 +363,7 @@ export function createMdxPlugin(
   projectDir: string,
   adapter: RuntimeAdapter,
   target: "ssr" | "browser" = "ssr",
+  virtualFiles?: Map<string, string>,
 ): Plugin {
   return {
     name: "veryfront-mdx",
@@ -312,14 +371,73 @@ export function createMdxPlugin(
       // Resolve MDX file imports
       build.onResolve({ filter: /\.mdx?$/ }, (args) => {
         if (args.path.startsWith("/")) {
+          // Check if this is a virtual file
+          if (virtualFiles?.has(args.path)) {
+            return { path: args.path, namespace: "mdx-virtual" };
+          }
           return { path: args.path };
         }
-        const basedir = args.importer ? getDirectory(args.importer) : projectDir;
-        return { path: joinPath(basedir, args.path) };
+
+        // For relative imports, use resolveDir from esbuild (set by onLoad handlers)
+        // This avoids issues with namespace prefixes in args.importer
+        const basedir = args.resolveDir ||
+          (args.importer ? getDirectory(args.importer) : projectDir);
+        const resolved = joinPath(basedir, args.path);
+
+        // Check if resolved path is a virtual file
+        if (virtualFiles?.has(resolved)) {
+          return { path: resolved, namespace: "mdx-virtual" };
+        }
+        return { path: resolved };
       });
 
-      // Compile MDX files
+      // Compile MDX files from virtual filesystem
+      build.onLoad({ filter: /\.mdx?$/, namespace: "mdx-virtual" }, async (args) => {
+        try {
+          const content = virtualFiles?.get(args.path);
+          if (!content) {
+            return {
+              errors: [{ text: `Virtual MDX file not found: ${args.path}`, location: null }],
+            };
+          }
+
+          const { compileMDXRuntime } = await import(
+            "#veryfront/transforms/mdx/compiler/mdx-compiler.ts"
+          );
+
+          const compilationTarget = target === "ssr" ? "server" : "browser";
+          const result = await compileMDXRuntime(
+            "production",
+            projectDir,
+            content,
+            undefined,
+            args.path,
+            compilationTarget,
+            undefined,
+          );
+
+          return {
+            contents: result.compiledCode,
+            loader: "jsx",
+            resolveDir: getDirectory(args.path),
+          };
+        } catch (error) {
+          return {
+            errors: [
+              {
+                text: `MDX compilation failed for ${args.path}: ${String(error)}`,
+                location: null,
+              },
+            ],
+          };
+        }
+      });
+
+      // Compile MDX files from real filesystem
       build.onLoad({ filter: /\.mdx?$/ }, async (args) => {
+        // Skip if in a different namespace (like mdx-virtual, which is handled above)
+        if (args.namespace && args.namespace !== "file") return undefined;
+
         try {
           // Read MDX content
           const content = await adapter.fs.readFile(args.path);
@@ -483,12 +601,18 @@ export function createBuildOptions(config: BundleConfig): BuildOptions {
     target,
     entryPoints,
     external = [],
+    reactFilePaths,
   } = config;
+
+  // Use pre-cached file:// paths for SSR if available
+  const bareImportPlugin = reactFilePaths
+    ? createBareImportPlugin({ reactVersion, externalizeReact: true, reactFilePaths })
+    : createBareImportPlugin(reactVersion, true);
 
   const plugins: Plugin[] = [
     createVirtualFsPlugin(projectDir, adapter),
     createMdxPlugin(projectDir, adapter, target), // MDX support
-    createBareImportPlugin(reactVersion, true),
+    bareImportPlugin,
   ];
 
   // Base options shared between SSR and browser targets

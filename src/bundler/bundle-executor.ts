@@ -5,11 +5,16 @@
  * This module provides the runtime environment for executing bundled
  * project code with proper React integration and error handling.
  *
- * React Instance Consistency:
- * The bundle is built with React marked as external, so it contains import
- * statements pointing to esm.sh URLs. Before execution, we rewrite these
- * imports to use local file:// paths from the HTTP module cache. This ensures
- * the bundled code uses the same React instance as SSR (via getProjectReact()).
+ * ## React Instance Consistency
+ *
+ * New bundles are built with React imports resolved to file:// paths
+ * at bundle time (via react-cache.ts). This ensures the bundled code
+ * uses the same React instance as SSR without runtime URL rewriting.
+ *
+ * For backward compatibility with cached bundles that contain esm.sh URLs,
+ * we still perform URL rewriting at execution time. This fallback handles:
+ * - Bundles cached before the file:// path change
+ * - Bundles built without pre-cached React paths
  *
  * @module bundler/bundle-executor
  */

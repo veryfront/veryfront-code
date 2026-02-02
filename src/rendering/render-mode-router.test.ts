@@ -62,10 +62,10 @@ describe("rendering/render-mode-router", () => {
       assertEquals(mode, "jit-bundle");
     });
 
-    it("should return configured mode for preview development context", () => {
+    it("should return jit-bundle for preview development context (JIT now used for all modes)", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: true,
-        renderMode: "on-demand",
+        renderMode: "on-demand", // Config is ignored - JIT used for all modes
       });
 
       const ctx = createMockContext({
@@ -74,7 +74,8 @@ describe("rendering/render-mode-router", () => {
       });
 
       const mode = getEffectiveRenderMode(ctx);
-      assertEquals(mode, "on-demand");
+      // JIT is now used for all modes (React instance and dynamic file issues resolved)
+      assertEquals(mode, "jit-bundle");
     });
 
     it("should return env renderMode when no context provided", () => {
@@ -114,10 +115,10 @@ describe("rendering/render-mode-router", () => {
       assertEquals(result, false);
     });
 
-    it("should return false for preview development mode with on-demand config", () => {
+    it("should return true for preview development mode (JIT now used for all modes)", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: true,
-        renderMode: "on-demand",
+        renderMode: "on-demand", // Config is ignored - JIT used for all modes
       });
 
       const ctx = createMockContext({
@@ -126,7 +127,8 @@ describe("rendering/render-mode-router", () => {
       });
 
       const result = shouldUseJitRenderer(ctx);
-      assertEquals(result, false);
+      // JIT is now used for all modes (React instance and dynamic file issues resolved)
+      assertEquals(result, true);
     });
   });
 });

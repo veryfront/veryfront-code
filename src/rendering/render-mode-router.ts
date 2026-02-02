@@ -89,25 +89,23 @@ export interface RenderModeRouterOptions {
 /**
  * Get the effective render mode, considering environment config and context
  *
- * NOTE: JIT bundler is preferred for production. Legacy renderer is used for
- * development/test modes due to React instance conflicts in non-compiled binary.
- * bundlerEnabled=false forces legacy mode for emergency rollback.
+ * JIT bundler is now used for ALL modes (production, development, test):
+ * - React instance conflicts solved via shared react-cache module
+ * - Dynamic file resolution solved by skipping memory cache in dev/test
+ * - bundlerEnabled=false forces legacy mode for emergency rollback only
  */
-export function getEffectiveRenderMode(ctx?: RenderContext): RenderMode {
+export function getEffectiveRenderMode(_ctx?: RenderContext): RenderMode {
   const env = getRuntimeEnv();
 
-  // If bundler is explicitly disabled, use on-demand (legacy)
+  // If bundler is explicitly disabled, use on-demand (legacy) for emergency rollback
   if (!env.bundlerEnabled) {
     return "on-demand";
   }
 
-  // Production environments use JIT bundler (proven in compiled binary)
-  if (ctx?.environment === "production" || ctx?.mode === "production") {
-    return "jit-bundle";
-  }
-
-  // Development/test modes use legacy renderer (avoids React instance conflicts)
-  return env.renderMode;
+  // JIT bundler for all modes - blockers have been resolved:
+  // 1. React instance mismatch: SSR now uses shared react-cache module
+  // 2. Dynamic files: Memory bundle cache skipped in dev/test mode
+  return "jit-bundle";
 }
 
 /**
