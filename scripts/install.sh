@@ -136,23 +136,19 @@ download() {
 }
 
 main() {
-  echo "${BLUE}Veryfront CLI Installer${NC}"
-  echo ""
-
   # Detect platform
   PLATFORM=$(detect_platform)
-  echo "  Platform: ${PLATFORM}"
 
   # Get version
   if [ "$VERSION" = "latest" ]; then
-    echo "  Fetching latest version..."
     VERSION=$(get_latest_version)
     if [ -z "$VERSION" ]; then
-      echo "${RED}Error: Failed to fetch latest version${NC}" >&2
+      echo "${RED}error: failed to fetch latest version${NC}" >&2
       exit 1
     fi
   fi
-  echo "  Version: ${VERSION}"
+
+  printf "Installing veryfront v%s..." "$VERSION"
 
   # Build download URL
   BINARY_NAME="veryfront-${PLATFORM}"
@@ -163,52 +159,44 @@ main() {
 
   # Download binary
   BINARY_PATH="${INSTALL_DIR}/veryfront"
-  echo ""
-  echo "  Downloading ${DOWNLOAD_URL}..."
   download "$DOWNLOAD_URL" "$BINARY_PATH"
 
   # Make executable
   chmod +x "$BINARY_PATH"
 
-  echo ""
-  echo "${GREEN}Veryfront CLI installed successfully!${NC}"
-  echo ""
-  echo "  Binary: ${BINARY_PATH}"
+  echo " ${GREEN}done${NC}"
   echo ""
 
   # Check if install dir is in PATH
   case ":$PATH:" in
     *":$INSTALL_DIR:"*)
-      echo "Run ${BLUE}veryfront --help${NC} to get started."
+      echo "Run ${BLUE}veryfront${NC} to get started."
       ;;
     *)
-      echo "${YELLOW}Add Veryfront to your PATH:${NC}"
-      echo ""
-      # Detect shell
+      # Detect shell and show PATH instruction
       SHELL_NAME=$(basename "$SHELL")
       case "$SHELL_NAME" in
         zsh)
-          echo "  echo 'export PATH=\"\$HOME/.veryfront/bin:\$PATH\"' >> ~/.zshrc"
-          echo "  source ~/.zshrc"
+          PROFILE="~/.zshrc"
           ;;
         bash)
           if [ -f "$HOME/.bash_profile" ]; then
-            echo "  echo 'export PATH=\"\$HOME/.veryfront/bin:\$PATH\"' >> ~/.bash_profile"
-            echo "  source ~/.bash_profile"
+            PROFILE="~/.bash_profile"
           else
-            echo "  echo 'export PATH=\"\$HOME/.veryfront/bin:\$PATH\"' >> ~/.bashrc"
-            echo "  source ~/.bashrc"
+            PROFILE="~/.bashrc"
           fi
           ;;
         fish)
-          echo "  fish_add_path ~/.veryfront/bin"
+          echo "Run ${BLUE}fish_add_path ~/.veryfront/bin${NC} to add to PATH."
+          echo ""
+          return
           ;;
         *)
-          echo "  export PATH=\"\$HOME/.veryfront/bin:\$PATH\""
+          PROFILE="your shell profile"
           ;;
       esac
+      echo "Add to PATH: ${BLUE}echo 'export PATH=\"\$HOME/.veryfront/bin:\$PATH\"' >> ${PROFILE}${NC}"
       echo ""
-      echo "Or run directly: ${BLUE}${BINARY_PATH} --help${NC}"
       ;;
   esac
 }
