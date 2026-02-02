@@ -180,38 +180,44 @@ main() {
   chmod +x "$BINARY_PATH"
 
   printf "\rInstalled ${ORANGE}veryfront${NC} v%s                    \n" "$VERSION"
-  echo ""
 
   # Check if install dir is in PATH
   case ":$PATH:" in
     *":$INSTALL_DIR:"*)
-      echo "Run ${ORANGE}veryfront${NC} to get started."
+      # Already in PATH
+      echo ""
+      echo "Run ${ORANGE}veryfront${NC} to get started"
       ;;
     *)
-      # Detect shell and show PATH instruction
+      # Show next steps
       SHELL_NAME=$(basename "$SHELL")
       case "$SHELL_NAME" in
         zsh)
-          PROFILE="~/.zshrc"
+          PROFILE=".zshrc"
           ;;
         bash)
           if [ -f "$HOME/.bash_profile" ]; then
-            PROFILE="~/.bash_profile"
+            PROFILE=".bash_profile"
           else
-            PROFILE="~/.bashrc"
+            PROFILE=".bashrc"
           fi
           ;;
         fish)
-          echo "Run fish_add_path ~/.veryfront/bin"
           echo ""
+          echo "Next:"
+          echo "  fish_add_path ~/.veryfront/bin"
+          echo "  veryfront"
           return
           ;;
         *)
-          PROFILE="your shell profile"
+          PROFILE=".profile"
           ;;
       esac
-      echo "Run echo 'export PATH=\"\$HOME/.veryfront/bin:\$PATH\"' >> ${PROFILE}"
       echo ""
+      echo "Next:"
+      echo "  echo 'export PATH=\"\$HOME/.veryfront/bin:\$PATH\"' >> ~/${PROFILE}"
+      echo "  source ~/${PROFILE}"
+      echo "  ${ORANGE}veryfront${NC}"
       ;;
   esac
 }
