@@ -133,6 +133,12 @@ download() {
 }
 
 main() {
+  # Header
+  echo ""
+  echo "${ORANGE}Veryfront${NC}"
+  echo "The simplest way to build AI-powered apps."
+  echo ""
+
   # Detect platform
   PLATFORM=$(detect_platform)
 
@@ -155,7 +161,7 @@ main() {
   # Download binary
   BINARY_PATH="${INSTALL_DIR}/veryfront"
 
-  printf "Downloading ${ORANGE}veryfront${NC} v%s " "$VERSION"
+  printf "Installing v%s " "$VERSION"
 
   # Download with spinner
   download "$DOWNLOAD_URL" "$BINARY_PATH" &
@@ -164,18 +170,18 @@ main() {
   i=0
   while kill -0 $PID 2>/dev/null; do
     i=$(( (i + 1) % 10 ))
-    printf "\rDownloading ${ORANGE}veryfront${NC} v%s ${ORANGE}%s${NC}" "$VERSION" "$(echo "$SPINNER" | cut -c$((i+1)))"
+    printf "\rInstalling v%s ${ORANGE}%s${NC}" "$VERSION" "$(echo "$SPINNER" | cut -c$((i+1)))"
     sleep 0.1
   done
 
   wait $PID
   if [ $? -ne 0 ]; then
-    printf "\rDownload failed                              \n"
+    printf "\rInstall failed        \n"
     exit 1
   fi
 
   chmod +x "$BINARY_PATH"
-  printf "\rInstalled ${ORANGE}veryfront${NC} v%s                      \n" "$VERSION"
+  printf "\rInstalled v%s ✓        \n" "$VERSION"
 
   # Check if install dir is in PATH
   case ":$PATH:" in
