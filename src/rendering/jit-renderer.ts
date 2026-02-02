@@ -23,7 +23,7 @@
  * @module rendering/jit-renderer
  */
 
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger as logger, simpleHash } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { Span } from "@opentelemetry/api";
 import { getOrBuildBundle, type JitBundleResult } from "#veryfront/bundler/jit-bundler.ts";
@@ -259,7 +259,13 @@ export class JitRenderer {
           });
 
           // Execute bundle and render
-          result = await this.executeRender(slug, bundleResult.code, ctx, options);
+          result = await this.executeRender(
+            slug,
+            bundleResult.code,
+            bundleResult.contentHash,
+            ctx,
+            options,
+          );
 
           // Cache the rendered HTML
           if (cacheKey && !options?.skipCachePersist) {
@@ -387,7 +393,7 @@ export class JitRenderer {
 
   /**
    * Recursively find the first page file in a directory.
-   * For App Router: looks for page.*, layout.*, etc.
+   * For App Router: looks for page.*, layout.*, etc. - falls back to any source file
    * For Pages Router: accepts any file with route extension (except special files)
    */
   private async findFirstPageFile(
@@ -400,6 +406,9 @@ export class JitRenderer {
     const pageExtensions = new Set([".tsx", ".ts", ".mdx", ".md", ".jsx", ".js"]);
     const appRouterPatterns = ["page", "layout", "error", "loading", "not-found"];
     const pagesRouterIgnored = new Set(["_app", "_document", "_error", "api"]);
+
+    // Track any valid source file as fallback (for test projects with non-standard files)
+    let fallbackFile: string | null = null;
 
     const scanDir = async (dir: string, relativePath: string): Promise<string | null> => {
       try {
@@ -425,6 +434,10 @@ export class JitRenderer {
               if (appRouterPatterns.some((pattern) => name.startsWith(pattern))) {
                 return `${baseDir}/${entryRelPath}`;
               }
+              // Track as fallback for test projects with non-standard file names
+              if (!fallbackFile && !baseName.startsWith("_")) {
+                fallbackFile = `${baseDir}/${entryRelPath}`;
+              }
             } else {
               // Pages Router: any file with route extension counts (except special files)
               if (!pagesRouterIgnored.has(baseName) && !baseName.startsWith("_")) {
@@ -439,7 +452,9 @@ export class JitRenderer {
       return null;
     };
 
-    return scanDir(basePath, "");
+    const standardResult = await scanDir(basePath, "");
+    // Return standard pattern match, or fallback to any source file found
+    return standardResult ?? fallbackFile;
   }
 
   /**
@@ -448,13 +463,15 @@ export class JitRenderer {
   private async executeRender(
     slug: string,
     bundleCode: string,
+    bundleHash: string,
     ctx: RenderContext,
     options?: RenderOptions,
   ): Promise<RenderResult> {
     return withSpan(
       "jit-renderer.executeRender",
       async (span?: Span) => {
-        const cacheKey = `${ctx.projectId}:${ctx.contentSourceId}:bundle`;
+        const sourceKey = ctx.contentSourceId ?? "default";
+        const cacheKey = `${ctx.projectId}:${sourceKey}:bundle:${bundleHash}`;
 
         try {
           const { render, Component } = await executeBundleForRender(
@@ -850,7 +867,8 @@ export class JitRenderer {
     const params = new URLSearchParams(url.searchParams);
     const sorted = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
     const queryString = sorted.map(([k, v]) => `${k}=${v}`).join("&");
-    return queryString ? `${slug}?${queryString}` : slug;
+    // Hash query string to create cache-safe key (API cache only allows alphanumeric, _ : . - /)
+    return queryString ? `${slug}:q${simpleHash(queryString).toString(16)}` : slug;
   }
 
   /**

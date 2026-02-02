@@ -37,17 +37,18 @@ describe("rendering/render-mode-router", () => {
   });
 
   describe("getEffectiveRenderMode", () => {
-    it("should return on-demand when bundler is disabled", () => {
+    // After JIT unification, all modes return jit-bundle
+    it("should return jit-bundle even when bundler is disabled", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: false,
         renderMode: "jit-bundle",
       });
 
       const mode = getEffectiveRenderMode();
-      assertEquals(mode, "on-demand");
+      assertEquals(mode, "jit-bundle");
     });
 
-    it("should return configured render mode when bundler is enabled", () => {
+    it("should return jit-bundle when bundler is enabled", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: true,
         renderMode: "jit-bundle",
@@ -57,7 +58,7 @@ describe("rendering/render-mode-router", () => {
       assertEquals(mode, "jit-bundle");
     });
 
-    it("should return watch for preview development context", () => {
+    it("should return jit-bundle for preview development context", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: true,
         renderMode: "on-demand",
@@ -69,10 +70,10 @@ describe("rendering/render-mode-router", () => {
       });
 
       const mode = getEffectiveRenderMode(ctx);
-      assertEquals(mode, "watch");
+      assertEquals(mode, "jit-bundle");
     });
 
-    it("should respect jit-bundle for production context", () => {
+    it("should return jit-bundle for production context", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: true,
         renderMode: "jit-bundle",
@@ -87,7 +88,7 @@ describe("rendering/render-mode-router", () => {
       assertEquals(mode, "jit-bundle");
     });
 
-    it("should fallback to on-demand for production when configured", () => {
+    it("should return jit-bundle even when on-demand is configured", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: true,
         renderMode: "on-demand",
@@ -99,11 +100,12 @@ describe("rendering/render-mode-router", () => {
       });
 
       const mode = getEffectiveRenderMode(ctx);
-      assertEquals(mode, "on-demand");
+      assertEquals(mode, "jit-bundle");
     });
   });
 
   describe("shouldUseJitRenderer", () => {
+    // After JIT unification, shouldUseJitRenderer always returns true
     it("should return true when mode is jit-bundle", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: true,
@@ -119,7 +121,7 @@ describe("rendering/render-mode-router", () => {
       assertEquals(result, true);
     });
 
-    it("should return false when mode is on-demand", () => {
+    it("should return true even when mode is on-demand", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: true,
         renderMode: "on-demand",
@@ -131,20 +133,20 @@ describe("rendering/render-mode-router", () => {
       });
 
       const result = shouldUseJitRenderer(ctx);
-      assertEquals(result, false);
+      assertEquals(result, true);
     });
 
-    it("should return false when bundler is disabled", () => {
+    it("should return true even when bundler is disabled", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: false,
         renderMode: "jit-bundle",
       });
 
       const result = shouldUseJitRenderer();
-      assertEquals(result, false);
+      assertEquals(result, true);
     });
 
-    it("should return false for preview development mode (uses watch)", () => {
+    it("should return true for preview development mode (JIT handles all modes)", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: true,
         renderMode: "jit-bundle",
@@ -156,7 +158,7 @@ describe("rendering/render-mode-router", () => {
       });
 
       const result = shouldUseJitRenderer(ctx);
-      assertEquals(result, false);
+      assertEquals(result, true);
     });
   });
 });

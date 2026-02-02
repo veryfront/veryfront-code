@@ -16,6 +16,7 @@ import type * as React from "react";
 import { dirname, join, normalize } from "#veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
+import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import type { LoadComponentOptions } from "./types.ts";
 import { transformModule } from "#veryfront/bundler/jit-bundler.ts";
 import { addDepsToEsmShUrls } from "#veryfront/transforms/esm/react-imports.ts";
@@ -33,6 +34,7 @@ import { resolveVeryfrontModuleUrl } from "#veryfront/transforms/veryfront-modul
 import { replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 
 const { findVfModuleImports, resolveFrameworkFile } = ssrVfModulesExports;
 
@@ -45,11 +47,10 @@ async function transformFrameworkSource(
   reactVersion: string,
   projectDir: string,
 ): Promise<string> {
-  const { transform } = await import("esbuild");
+  const esbuild = await getEsbuild();
   const { getReactImportMap } = await import(
     "#veryfront/transforms/import-rewriter/url-builder.ts"
   );
-  const { loadImportMap } = await import("#veryfront/modules/import-map/index.ts");
 
   const ext = sourcePath.match(/\.(tsx?|jsx?)$/)?.[1] ?? "tsx";
   let loader: "tsx" | "ts" | "jsx" | "js" = "js";
@@ -57,7 +58,7 @@ async function transformFrameworkSource(
   else if (ext === "ts") loader = "ts";
   else if (ext === "jsx") loader = "jsx";
 
-  const result = await transform(content, {
+  const result = await esbuild.transform(content, {
     loader,
     jsx: "automatic",
     jsxImportSource: "react",
@@ -172,8 +173,10 @@ function getTransformCacheKey(
   filePath: string,
   contentHash: string,
   projectId: string,
+  reactVersion?: string,
 ): string {
-  return `${projectId}:${filePath}:${contentHash}`;
+  const versionKey = reactVersion ?? "default";
+  return `${projectId}:${versionKey}:${filePath}:${contentHash}`;
 }
 
 type AliasImport = { full: string; path: string };
@@ -254,7 +257,7 @@ async function transformComponentWithDeps(
   }
 
   const contentHash = hashCodeHex(source);
-  const cacheKey = getTransformCacheKey(filePath, contentHash, projectId);
+  const cacheKey = getTransformCacheKey(filePath, contentHash, projectId, reactVersion);
 
   // Check path cache
   const cachedPath = transformPathCache.get(cacheKey);
@@ -268,17 +271,19 @@ async function transformComponentWithDeps(
   let fileContent = source;
   const fileDir = dirname(filePath);
 
-  // Match @/ alias imports
-  const aliasImports: AliasImport[] = [...fileContent.matchAll(/from\s+["'](@\/[^"']+)["']/g)].map(
-    (m) => ({ full: m[0], path: m[1]! }),
-  );
+  // Match @/ alias imports (including side-effect imports)
+  const aliasImports: AliasImport[] = [
+    ...fileContent.matchAll(/from\s+["'](@\/[^"']+)["']/g),
+    ...fileContent.matchAll(/import\s+["'](@\/[^"']+)["']/g),
+  ].map((m) => ({ full: m[0], path: m[1]! }));
 
-  // Match relative imports
+  // Match relative imports (including side-effect imports)
   const relativeImports: RelativeImport[] = [
     ...fileContent.matchAll(/from\s+["'](\.\.?\/[^"']+)["']/g),
+    ...fileContent.matchAll(/import\s+["'](\.\.?\/[^"']+)["']/g),
   ]
     .map((m) => ({ full: m[0], path: m[1]!, fromDir: fileDir }))
-    .filter((imp) => !imp.path.includes("file://"));
+    .filter((imp) => !imp.path.startsWith("file://"));
 
   // Resolve dependencies
   const resolvedAliasDeps = await Promise.all(
@@ -312,11 +317,13 @@ async function transformComponentWithDeps(
 
   // Rewrite imports to file:// paths
   for (const dep of transformedDeps) {
-    fileContent = fileContent.replace(dep.full, `from "file://${dep.depTempPath}"`);
+    const replacement = dep.full.replace(dep.path, `file://${dep.depTempPath}`);
+    fileContent = fileContent.replaceAll(dep.full, replacement);
   }
 
   // Check transform code cache
-  const transformCodeKey = `${projectDir}:${filePath}:${hashCodeHex(fileContent)}`;
+  const versionKey = reactVersion ?? "default";
+  const transformCodeKey = `${projectDir}:${filePath}:${hashCodeHex(fileContent)}:${versionKey}`;
   let transformedCode = transformCodeCache.get(transformCodeKey);
 
   if (!transformedCode) {
@@ -346,9 +353,10 @@ async function transformComponentWithDeps(
     // Normalize esm.sh URLs to include external=react,react-dom to prevent multiple React instances
     transformedCode = await addDepsToEsmShUrls(transformedCode, true, reactVersion);
     // Cache HTTP imports to local file:// paths to ensure consistent React instances
+    const importMap = await loadImportMap(projectDir);
     const cacheResult = await cacheHttpImportsToLocal(transformedCode, {
       cacheDir: getHttpBundleCacheDir(),
-      importMap: { imports: {}, scopes: {} },
+      importMap,
       reactVersion,
     });
     transformedCode = cacheResult.code;

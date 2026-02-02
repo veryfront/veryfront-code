@@ -5,12 +5,21 @@
  * This module provides the runtime environment for executing bundled
  * project code with proper React integration and error handling.
  *
+ * React Instance Consistency:
+ * The bundle is built with React marked as external, so it contains import
+ * statements pointing to esm.sh URLs. Before execution, we rewrite these
+ * imports to use local file:// paths from the HTTP module cache. This ensures
+ * the bundled code uses the same React instance as SSR (via getProjectReact()).
+ *
  * @module bundler/bundle-executor
  */
 
 import { logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { Span } from "@opentelemetry/api";
+import { cacheModuleToLocal } from "#veryfront/transforms/esm/http-cache.ts";
+import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { getReactCDNMapping } from "./build-config.ts";
 
 export interface BundleModule {
   /** Default export - typically the app component */
@@ -26,6 +35,8 @@ export interface ExecuteOptions {
   globals?: Record<string, unknown>;
   /** Timeout for execution in milliseconds */
   timeoutMs?: number;
+  /** React version for import rewriting (default: 18.3.1) */
+  reactVersion?: string;
 }
 
 /**
@@ -33,6 +44,77 @@ export interface ExecuteOptions {
  */
 const moduleCache = new Map<string, BundleModule>();
 const MAX_CACHE_SIZE = 100;
+
+/**
+ * Cache for React URL to local file path mappings.
+ * Once we cache React modules, we reuse the paths across executions.
+ */
+const reactPathCache = new Map<string, string>();
+
+/**
+ * Rewrite React imports in bundle code to use local file:// paths.
+ *
+ * This ensures the bundle uses the same React instance as SSR by:
+ * 1. Caching all React esm.sh modules to local files
+ * 2. Replacing esm.sh URLs in the bundle with file:// paths
+ *
+ * @param code - The bundle code with external React imports
+ * @param reactVersion - React version to use
+ * @returns The bundle code with file:// React imports
+ */
+async function rewriteReactImports(code: string, reactVersion: string): Promise<string> {
+  const cacheDir = getHttpBundleCacheDir();
+  const reactUrls = getReactCDNMapping(reactVersion);
+
+  // Cache all React modules and collect URL -> file:// mappings
+  const urlToPath: Record<string, string> = {};
+
+  await Promise.all(
+    Object.entries(reactUrls).map(async ([_pkg, url]) => {
+      // Check if we already cached this URL
+      if (reactPathCache.has(url)) {
+        urlToPath[url] = reactPathCache.get(url)!;
+        return;
+      }
+
+      try {
+        const localPath = await cacheModuleToLocal(url, cacheDir);
+        urlToPath[url] = localPath;
+        reactPathCache.set(url, localPath);
+
+        logger.debug("[BundleExecutor] Cached React module", {
+          url: url.slice(0, 60) + "...",
+          localPath: localPath.slice(0, 60) + "...",
+        });
+      } catch (error) {
+        logger.warn("[BundleExecutor] Failed to cache React module, keeping original URL", {
+          url,
+          error: String(error),
+        });
+        // Keep original URL if caching fails
+        urlToPath[url] = url;
+      }
+    }),
+  );
+
+  // Replace all esm.sh React URLs with file:// paths in the bundle
+  let rewrittenCode = code;
+  for (const [url, localPath] of Object.entries(urlToPath)) {
+    if (localPath !== url) {
+      // Escape special regex characters in URL
+      const escapedUrl = url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      rewrittenCode = rewrittenCode.replace(new RegExp(escapedUrl, "g"), localPath);
+    }
+  }
+
+  logger.debug("[BundleExecutor] Rewrote React imports", {
+    originalSize: code.length,
+    rewrittenSize: rewrittenCode.length,
+    urlsReplaced: Object.keys(urlToPath).length,
+  });
+
+  return rewrittenCode;
+}
 
 /**
  * Execute a bundled JavaScript module and return its exports.
@@ -45,7 +127,7 @@ export async function executeBundle(
   cacheKey: string,
   options: ExecuteOptions,
 ): Promise<BundleModule> {
-  const { projectId, globals: _globals = {}, timeoutMs = 10000 } = options;
+  const { projectId, globals: _globals = {}, timeoutMs = 10000, reactVersion = "18.3.1" } = options;
 
   return withSpan(
     "bundler.execute",
@@ -65,8 +147,13 @@ export async function executeBundle(
 
       span?.setAttribute("cache.hit", false);
 
+      // Rewrite React imports to use local file:// paths
+      // This ensures the bundle uses the same React instance as SSR
+      const rewrittenCode = await rewriteReactImports(code, reactVersion);
+      span?.setAttribute("bundle.rewritten.size", rewrittenCode.length);
+
       // Create a blob URL for the module
-      const blob = new Blob([code], { type: "application/javascript" });
+      const blob = new Blob([rewrittenCode], { type: "application/javascript" });
       const blobUrl = URL.createObjectURL(blob);
 
       try {

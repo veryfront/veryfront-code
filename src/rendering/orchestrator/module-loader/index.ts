@@ -11,7 +11,7 @@ import { parallelMap, rendererLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { findSourceFile } from "../file-resolver/index.ts";
-import { transformModule } from "#veryfront/bundler/jit-bundler.ts";
+import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { getProjectTmpDir } from "#veryfront/modules/react-loader/index.ts";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
@@ -176,7 +176,7 @@ export async function transformModuleWithDeps(
   config: ModuleLoaderConfig,
   useLocalAdapter = false,
 ): Promise<string> {
-  const { moduleCache, projectDir, projectId, contentSourceId, adapter, mode: _mode } = config;
+  const { moduleCache, projectDir, projectId, contentSourceId, adapter, mode } = config;
   const cacheKey = getModuleCacheKey(filePath, projectId, projectDir, contentSourceId);
 
   const cachedPath = moduleCache.get(cacheKey);
@@ -282,16 +282,19 @@ export async function transformModuleWithDeps(
   }
 
   const contentHash = hashCodeHex(fileContent);
-  const transformCacheKey = `${projectDir}:${filePath}:${contentHash}`;
+  const reactVersionKey = config.reactVersion ?? "default";
+  const transformCacheKey = `${projectDir}:${filePath}:${contentHash}:${mode}:${reactVersionKey}`;
+  const effectiveProjectId = projectId ?? projectDir;
 
   // Check in-memory cache first
   let transformedCode = transformCache.get(transformCacheKey);
   if (!transformedCode) {
     logger.debug("[ModuleLoader] Transform cache miss, transforming", { filePath });
-    transformedCode = await transformModule(fileContent, filePath, {
-      projectDir,
-      reactVersion: config.reactVersion,
+    transformedCode = await transformToESM(fileContent, filePath, projectDir, adapter, {
+      projectId: effectiveProjectId,
+      dev: mode === "development",
       ssr: true,
+      reactVersion: config.reactVersion,
     });
     transformCache.set(transformCacheKey, transformedCode);
   }

@@ -73,12 +73,7 @@ import {
   type PreviewBundlerConfig,
   resetPreviewBundler,
 } from "../bundler/preview-bundler.ts";
-import {
-  destroyRenderer,
-  getRenderer,
-  initializeRenderer,
-  isRendererInitialized,
-} from "./renderer.ts";
+import { initializeRenderer } from "./renderer.ts";
 
 /**
  * Common renderer interface shared by all renderers (JIT, legacy, watch)
@@ -113,44 +108,28 @@ export interface RenderModeRouterOptions {
 
 /**
  * Get the effective render mode, considering environment config and context
+ *
+ * NOTE: JIT bundler is now used for ALL modes (production, preview, development).
+ * This unification eliminates the need for maintaining two separate renderers and
+ * ensures consistent behavior across all environments. The JIT bundler handles
+ * arbitrary file structures through fallback entry point detection.
  */
-export function getEffectiveRenderMode(ctx?: RenderContext): RenderMode {
-  const env = getRuntimeEnv();
-
-  // If bundler is explicitly disabled, force on-demand mode
-  if (!env.bundlerEnabled) {
-    return "on-demand";
-  }
-
-  // Check context for environment-specific overrides
-  if (ctx) {
-    // Preview mode uses watch mode for HMR support
-    if (ctx.environment === "preview" && ctx.mode === "development") {
-      return "watch";
-    }
-
-    // Production environments use JIT bundler
-    if (ctx.environment === "production") {
-      return env.renderMode === "jit-bundle" ? "jit-bundle" : "on-demand";
-    }
-  }
-
-  return env.renderMode;
+export function getEffectiveRenderMode(_ctx?: RenderContext): RenderMode {
+  // Always use JIT bundler - it now handles all modes including development
+  return "jit-bundle";
 }
 
 /**
  * Check if JIT rendering should be used for a context
+ *
+ * NOTE: Always returns true since JIT bundler now handles all modes.
  */
-export function shouldUseJitRenderer(ctx?: RenderContext): boolean {
-  const mode = getEffectiveRenderMode(ctx);
-  return mode === "jit-bundle";
+export function shouldUseJitRenderer(_ctx?: RenderContext): boolean {
+  return true;
 }
 
 // Track if preview bundler has been initialized
 let previewBundlerInitialized = false;
-
-// Track legacy renderer initialization
-let legacyRendererInitialized = false;
 
 /**
  * Check if preview bundler is initialized
@@ -162,75 +141,46 @@ export function isPreviewBundlerInitialized(): boolean {
 /**
  * Initialize renderers based on render mode
  *
- * - JIT renderer is used for production (jit-bundle mode)
- * - Legacy renderer is used for on-demand and watch modes
- * - Preview bundler is initialized for watch mode to provide HMR and incremental builds
+ * NOTE: Only initializes JIT renderer. Legacy renderer initialization is kept
+ * for backward compatibility but JIT is used for all modes.
  */
 export async function initializeRenderers(options?: RenderModeRouterOptions): Promise<void> {
   const env = getRuntimeEnv();
-  const mode = options?.forceMode ?? env.renderMode;
 
-  logger.debug("[RenderModeRouter] Initializing renderers", {
-    renderMode: mode,
+  logger.debug("[RenderModeRouter] Initializing JIT renderer (unified mode)", {
+    renderMode: "jit-bundle",
     bundlerEnabled: env.bundlerEnabled,
   });
 
-  // Initialize legacy renderer for on-demand and watch modes
+  // Initialize legacy renderer for backward compatibility (may be removed in future)
   await initializeRenderer();
-  legacyRendererInitialized = true;
 
-  // Initialize JIT renderer for production (jit-bundle mode)
+  // Initialize JIT renderer - used for ALL modes
   getJitRenderer(options?.jit);
 
-  // Initialize preview bundler for watch mode (provides HMR and incremental builds)
-  if (mode === "watch") {
-    getPreviewBundler(options?.preview);
-    previewBundlerInitialized = true;
-    logger.debug("[RenderModeRouter] Preview bundler initialized for watch mode");
-  }
+  // Preview bundler is no longer needed since JIT handles all modes
+  // Keeping the flag for interface compatibility
+  previewBundlerInitialized = false;
 
-  logger.debug("[RenderModeRouter] Renderers initialized", {
-    legacyRendererInitialized,
+  logger.debug("[RenderModeRouter] JIT renderer initialized (unified mode)", {
     jitInitialized: isJitRendererInitialized(),
-    previewBundlerInitialized,
-    mode,
   });
 }
 
 /**
  * Get the appropriate renderer for a render context
  *
- * Routes to JIT renderer for production (jit-bundle mode) or falls back
- * to legacy renderer for on-demand and watch modes.
+ * NOTE: Always returns JIT renderer. The JIT bundler now handles all modes
+ * including development and testing, with fallback entry point detection
+ * for arbitrary file structures.
  */
 export function getRendererForMode(ctx: RenderContext): CommonRenderer {
-  const mode = getEffectiveRenderMode(ctx);
-
-  // Use JIT renderer for jit-bundle mode (production)
-  if (mode === "jit-bundle" && isJitRendererInitialized()) {
-    logger.debug("[RenderModeRouter] Using JIT renderer", {
-      projectId: ctx.projectId,
-      environment: ctx.environment,
-      mode,
-    });
-    return getJitRenderer();
-  }
-
-  // Check if legacy renderer is initialized
-  if (!isRendererInitialized()) {
-    logger.warn("[RenderModeRouter] Legacy renderer not initialized, will initialize on demand");
-  }
-
-  logger.debug("[RenderModeRouter] Using legacy renderer", {
+  // Always use JIT renderer - it now handles all modes
+  logger.debug("[RenderModeRouter] Using JIT renderer", {
     projectId: ctx.projectId,
     environment: ctx.environment,
-    mode,
-    legacyRendererInitialized,
-    previewBundlerActive: mode === "watch" ? previewBundlerInitialized : undefined,
   });
-
-  // Use legacy renderer for on-demand and watch modes
-  return getRenderer();
+  return getJitRenderer();
 }
 
 /**
@@ -269,12 +219,7 @@ export async function getAllPagesWithRouter(ctx: RenderContext): Promise<string[
  * Clear caches for a context
  */
 export async function clearCacheWithRouter(ctx: RenderContext, slug?: string): Promise<void> {
-  // Clear legacy renderer cache
-  if (legacyRendererInitialized) {
-    await getRenderer().clearCache(ctx, slug);
-  }
-
-  // Also clear JIT renderer cache for consistency
+  // Only clear JIT renderer cache - legacy renderer is deprecated
   if (isJitRendererInitialized()) {
     await getJitRenderer().clearCache(ctx, slug);
   }
@@ -286,12 +231,7 @@ export async function clearCacheWithRouter(ctx: RenderContext, slug?: string): P
 export async function clearCacheForProjectWithRouter(projectId: string): Promise<void> {
   logger.debug("[RenderModeRouter] Clearing cache for project", { projectId });
 
-  // Clear legacy renderer cache
-  if (legacyRendererInitialized) {
-    await getRenderer().clearCacheForProject(projectId);
-  }
-
-  // Also clear JIT renderer cache for consistency
+  // Only clear JIT renderer cache - legacy renderer is deprecated
   if (isJitRendererInitialized()) {
     await getJitRenderer().clearCacheForProject(projectId);
   }
@@ -303,26 +243,19 @@ export async function clearCacheForProjectWithRouter(projectId: string): Promise
 export async function destroyRenderers(): Promise<void> {
   logger.debug("[RenderModeRouter] Destroying renderers");
 
-  // Destroy legacy renderer
-  if (legacyRendererInitialized) {
-    await destroyRenderer();
-    legacyRendererInitialized = false;
-    logger.debug("[RenderModeRouter] Legacy renderer shutdown");
-  }
-
   // Destroy JIT renderer
   if (isJitRendererInitialized()) {
     await destroyJitRenderer();
   }
 
-  // Shutdown preview bundler
+  // Shutdown preview bundler if initialized
   if (previewBundlerInitialized) {
     await resetPreviewBundler();
     previewBundlerInitialized = false;
     logger.debug("[RenderModeRouter] Preview bundler shutdown");
   }
 
-  logger.debug("[RenderModeRouter] Renderers destroyed");
+  logger.debug("[RenderModeRouter] JIT renderer destroyed");
 }
 
 // Watch Mode Helpers

@@ -225,6 +225,7 @@ async function buildProjectBundle(options: {
  *
  * This includes:
  * - TypeScript/JavaScript files (.ts, .tsx, .js, .jsx)
+ * - MDX/Markdown files (.mdx, .md)
  * - JSON files (.json)
  *
  * Excludes:
@@ -237,7 +238,7 @@ async function collectProjectFiles(
   adapter: RuntimeAdapter,
 ): Promise<Map<string, string>> {
   const files = new Map<string, string>();
-  const extensions = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".json"]);
+  const extensions = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".json", ".mdx", ".md"]);
   const excludeDirs = new Set(["node_modules", ".git", "dist", "build", ".cache", ".veryfront"]);
 
   async function walkDir(dir: string): Promise<void> {

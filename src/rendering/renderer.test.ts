@@ -191,7 +191,9 @@ describe("Renderer helpers", () => {
     });
 
     it("should hash query params to create safe cache key", () => {
-      const url = new URL("https://example.com/blog/articles/hello-world?utm_campaign=test&ref=google");
+      const url = new URL(
+        "https://example.com/blog/articles/hello-world?utm_campaign=test&ref=google",
+      );
       const key = buildCacheKey("blog/articles/hello-world", url);
 
       // Key should NOT contain invalid characters (? = &)
@@ -220,7 +222,7 @@ describe("Renderer helpers", () => {
     it("should handle complex tracking params safely", () => {
       // Real-world example from the production bug
       const url = new URL(
-        "https://example.com/blog/articles/twelve-factor-app-methodology?_hsenc=p2ANqtz-8hLy7cANpDPJCpSFuf6jEoLhCH&utm_campaign=KubeWeekly&utm_medium=email&utm_source=hs_email"
+        "https://example.com/blog/articles/twelve-factor-app-methodology?_hsenc=p2ANqtz-8hLy7cANpDPJCpSFuf6jEoLhCH&utm_campaign=KubeWeekly&utm_medium=email&utm_source=hs_email",
       );
       const key = buildCacheKey("blog/articles/twelve-factor-app-methodology", url);
 
