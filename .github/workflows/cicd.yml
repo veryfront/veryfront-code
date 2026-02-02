@@ -276,7 +276,8 @@ jobs:
             binaries/veryfront-macos-x64/veryfront-macos-x64 \
             binaries/veryfront-linux-x64/veryfront-linux-x64 \
             binaries/veryfront-linux-arm64/veryfront-linux-arm64 \
-            binaries/veryfront-windows-x64.exe/veryfront-windows-x64.exe
+            binaries/veryfront-windows-x64.exe/veryfront-windows-x64.exe \
+            scripts/install.sh
 
       - name: Create source repo release
         run: |
