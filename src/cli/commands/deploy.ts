@@ -9,7 +9,7 @@
 
 import { z } from "zod";
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { type ApiClient, createApiClient, resolveConfig } from "../shared/config.ts";
+import { type ApiClient, createApiClient, resolveConfigWithAuth } from "../shared/config.ts";
 import { confirmPrompt, createSpinner, logInfo, logSuccess } from "../utils/index.ts";
 import type { ParsedArgs } from "../index/types.ts";
 import { muted } from "../ui/colors.ts";
@@ -162,7 +162,8 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   const spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
   spinner.start();
 
-  const config = await resolveConfig(cwd());
+  // Use interactive auth - prompts for login if not authenticated
+  const config = await resolveConfigWithAuth(cwd());
   const client = createApiClient(config);
 
   spinner.update(`Looking up environment "${env}"...`);

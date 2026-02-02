@@ -10,6 +10,7 @@ import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { readToken } from "../auth/token-store.ts";
+import { ensureAuthenticated } from "../auth/login.ts";
 
 export interface VeryfrontConfig {
   projectSlug?: string;
@@ -93,6 +94,47 @@ export async function resolveConfig(
     throw new Error(
       "Missing API token. Run 'veryfront login' or set VERYFRONT_API_TOKEN environment variable",
     );
+  }
+
+  const projectSlug = env.projectSlug ?? configFile?.projectSlug ?? (await inferProjectSlug(dir));
+  if (!projectSlug) {
+    throw new Error(
+      "Could not determine project slug. Set VERYFRONT_PROJECT_SLUG environment variable or add projectSlug to veryfront.config.ts",
+    );
+  }
+
+  return { apiUrl, apiToken, projectSlug };
+}
+
+/**
+ * Resolve config with interactive authentication.
+ *
+ * If no token is available, prompts the user to login interactively.
+ * Use this for commands that require authentication (push, pull, deploy).
+ */
+export async function resolveConfigWithAuth(
+  projectDir?: string,
+  env: RuntimeEnv = getRuntimeEnv(),
+): Promise<ResolvedConfig> {
+  const dir = projectDir ?? cwd();
+  const configFile = await readConfigFile(dir);
+
+  const apiUrl = env.apiUrl ?? configFile?.apiUrl ?? DEFAULT_API_URL;
+
+  // Try to get token from environment or stored token
+  let apiToken = env.apiToken ?? configFile?.apiToken ?? (await readToken());
+
+  // No token? Prompt login interactively
+  if (!apiToken) {
+    const userInfo = await ensureAuthenticated(env);
+    if (!userInfo) {
+      throw new Error("Authentication required for this operation.");
+    }
+    // Re-read token after successful login
+    apiToken = (await readToken()) ?? null;
+    if (!apiToken) {
+      throw new Error("Authentication failed. Please try again.");
+    }
   }
 
   const projectSlug = env.projectSlug ?? configFile?.projectSlug ?? (await inferProjectSlug(dir));

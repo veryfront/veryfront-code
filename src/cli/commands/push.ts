@@ -14,9 +14,10 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
   type ApiClient,
   createApiClient,
-  resolveConfig,
+  resolveConfigWithAuth,
   type ResolvedConfig,
 } from "../shared/config.ts";
+import { reserveProjectSlug } from "./new/reserve-slug.ts";
 import {
   confirmPrompt,
   createNoopSpinner,
@@ -211,7 +212,8 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       let config: ResolvedConfig;
       try {
-        config = await resolveConfig(projectDir);
+        // Use interactive auth - prompts for login if not authenticated
+        config = await resolveConfigWithAuth(projectDir);
       } catch (error) {
         spinner.stop();
         throw error;
@@ -229,7 +231,28 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       spinner.update("Fetching remote files...");
       const client = createApiClient(config);
-      const remoteFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
+
+      // First-push: If project doesn't exist on server yet, create it
+      let remoteFiles: { path: string }[] = [];
+      try {
+        remoteFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // Project doesn't exist yet - create it on first push
+        if (message.includes("404") || message.includes("not found")) {
+          spinner.update("Creating project...");
+          await reserveProjectSlug(config.projectSlug, config.apiToken);
+          // Now try to get files again (should be empty for new project)
+          try {
+            remoteFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
+          } catch {
+            // Project just created, no files yet
+            remoteFiles = [];
+          }
+        } else {
+          throw error;
+        }
+      }
       const toDelete = remoteFiles.map((f) => f.path).filter((p) => !localPaths.has(p));
 
       if (ops.length === 0 && toDelete.length === 0) {

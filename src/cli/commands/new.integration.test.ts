@@ -64,9 +64,10 @@ describe("new command integration", () => {
     });
   });
 
-  describe("--skip-deploy mode", () => {
-    it("should scaffold a project without API calls", async () => {
-      const result = await runNewCommand(projectName, ["--skip-deploy"]);
+  describe("local-first mode (default)", () => {
+    it("should scaffold a project locally without auth", async () => {
+      // In non-TTY mode, project is created locally without TUI
+      const result = await runNewCommand(projectName, []);
       const output = (result.stdout ?? "") + (result.stderr ?? "");
 
       assertExists(output.includes("Veryfront") || output.includes("Created"));
@@ -84,7 +85,7 @@ describe("new command integration", () => {
     });
 
     it("should use AI template by default", async () => {
-      await runNewCommand(projectName, ["--skip-deploy"]);
+      await runNewCommand(projectName, []);
 
       assertEquals(await pathIsDirectory(join(projectDir, "agents")), true);
 
@@ -93,7 +94,7 @@ describe("new command integration", () => {
     });
 
     it("should support different templates", async () => {
-      await runNewCommand(projectName, ["--skip-deploy", "-t", "minimal"]);
+      await runNewCommand(projectName, ["-t", "minimal"]);
 
       const statResult = await stat(projectDir);
       assertEquals(statResult.isDirectory, true);
@@ -102,6 +103,26 @@ describe("new command integration", () => {
         join(projectDir, "veryfront.config.ts"),
       );
       assertExists(configContent.includes(`projectSlug: "${projectName}-`));
+    });
+  });
+
+  describe("--skip-deploy mode (deprecated but still supported)", () => {
+    it("should scaffold a project without API calls", async () => {
+      const result = await runNewCommand(projectName, ["--skip-deploy"]);
+      const output = (result.stdout ?? "") + (result.stderr ?? "");
+
+      assertExists(output.includes("Veryfront") || output.includes("Created"));
+
+      const statResult = await stat(projectDir);
+      assertEquals(statResult.isDirectory, true);
+
+      const configContent = await readTextFile(
+        join(projectDir, "veryfront.config.ts"),
+      );
+      assertExists(configContent.includes(`projectSlug: "${projectName}-`));
+
+      assertEquals(await exists(join(projectDir, ".env")), true);
+      assertEquals(await exists(join(projectDir, "veryfront.config.ts")), true);
     });
   });
 

@@ -14,7 +14,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
   createApiClient,
   readConfigFile,
-  resolveConfig,
+  resolveConfigWithAuth,
   type ResolvedConfig,
 } from "../shared/config.ts";
 import {
@@ -378,7 +378,8 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
 
       let config: ResolvedConfig;
       try {
-        config = await resolveConfig(projectDir);
+        // Use interactive auth - prompts for login if not authenticated
+        config = await resolveConfigWithAuth(projectDir);
         if (slugOverride) config = { ...config, projectSlug: slugOverride };
       } catch (error) {
         spinner.stop();
