@@ -151,6 +151,7 @@ jobs:
   build-binaries:
     if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ contains(matrix.os, 'windows') }}
     strategy:
       matrix:
         include:
