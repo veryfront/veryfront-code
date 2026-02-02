@@ -47,7 +47,6 @@ import {
   isJitRendererInitialized,
   type JitRendererOptions,
 } from "./jit-renderer.ts";
-import type { PreviewBundlerConfig } from "../bundler/preview-bundler.ts";
 import { getRenderer, initializeRenderer } from "./renderer.ts";
 
 // Track legacy renderer initialization
@@ -85,10 +84,6 @@ type RenderMode = "jit-bundle" | "on-demand" | "watch";
 export interface RenderModeRouterOptions {
   /** JIT renderer options */
   jit?: JitRendererOptions;
-  /** Preview bundler options (for watch mode) */
-  preview?: PreviewBundlerConfig;
-  /** Force a specific render mode (overrides env config) */
-  forceMode?: RenderMode;
 }
 
 /**
