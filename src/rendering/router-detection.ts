@@ -86,8 +86,8 @@ async function detectAppRouterImpl(
   const hasAppDir = Boolean(appStat?.isDirectory);
   const hasPagesDir = Boolean(pagesStat?.isDirectory);
 
-  if (hasAppDir && (await hasRouteFiles(appDir, adapter))) return true;
-  if (hasPagesDir && (await hasRouteFiles(pagesDir, adapter))) return false;
+  if (hasAppDir && (await hasRouteFiles(appDir, adapter, true))) return true;
+  if (hasPagesDir && (await hasRouteFiles(pagesDir, adapter, false))) return false;
 
   if (hasPagesDir && !hasAppDir) return false;
   return true;
@@ -95,25 +95,51 @@ async function detectAppRouterImpl(
 
 const ROUTE_EXTENSIONS = new Set([".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"]);
 const ROUTE_PATTERNS = ["page", "layout", "error", "loading", "not-found", "index"];
+// Files to ignore in Pages Router (special files that aren't routes)
+const PAGES_IGNORED_FILES = new Set(["_app", "_document", "_error", "api"]);
 
-async function hasRouteFiles(dir: string, adapter: RuntimeAdapter): Promise<boolean> {
+/**
+ * Check if a directory contains route files.
+ * @param dir - Directory to check
+ * @param adapter - Runtime adapter
+ * @param strictPatterns - If true, require App Router patterns (page.*, layout.*, etc.).
+ *                         If false, accept any file with route extension (for Pages Router).
+ */
+async function hasRouteFiles(
+  dir: string,
+  adapter: RuntimeAdapter,
+  strictPatterns = true,
+): Promise<boolean> {
   const entries = await readDirWithFallback(dir, adapter);
 
   for (const entry of entries) {
     if (entry.isFile) {
       const name = entry.name.toLowerCase();
       const dotIndex = name.lastIndexOf(".");
+      const baseName = dotIndex === -1 ? name : name.slice(0, dotIndex);
       const ext = dotIndex === -1 ? "" : name.slice(dotIndex);
 
-      if (ROUTE_EXTENSIONS.has(ext) && ROUTE_PATTERNS.some((pattern) => name.startsWith(pattern))) {
-        return true;
+      if (!ROUTE_EXTENSIONS.has(ext)) continue;
+
+      if (strictPatterns) {
+        // App Router: require specific patterns (page.tsx, layout.tsx, etc.)
+        if (ROUTE_PATTERNS.some((pattern) => name.startsWith(pattern))) {
+          return true;
+        }
+      } else {
+        // Pages Router: any file with route extension counts (except special files)
+        if (!PAGES_IGNORED_FILES.has(baseName) && !baseName.startsWith("_")) {
+          return true;
+        }
       }
 
       continue;
     }
 
-    if (entry.isDirectory && (await hasRouteFiles(join(dir, entry.name), adapter))) {
-      return true;
+    if (entry.isDirectory && entry.name !== "api") {
+      if (await hasRouteFiles(join(dir, entry.name), adapter, strictPatterns)) {
+        return true;
+      }
     }
   }
 

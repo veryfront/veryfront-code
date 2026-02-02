@@ -64,7 +64,11 @@ import type { LayoutItem, MdxBundle } from "#veryfront/types";
 import { SSRRenderer } from "./ssr-renderer.ts";
 import { setupSSRGlobals } from "./ssr-globals.ts";
 import { getProjectReact } from "#veryfront/react";
-import { HTMLGenerator, type HTMLGeneratorConfig, type HTMLGenerationContext } from "./orchestrator/html.ts";
+import {
+  type HTMLGenerationContext,
+  HTMLGenerator,
+  type HTMLGeneratorConfig,
+} from "./orchestrator/html.ts";
 import { ElementValidator } from "./element-validator/index.ts";
 import { computeHash } from "./utils/index.ts";
 import type * as React from "react";
@@ -75,6 +79,7 @@ import { generateTailwind4CSS } from "#veryfront/html/styles-builder/index.ts";
 import { injectElementSelectors } from "#veryfront/studio/element-selector-injector.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
+import { detectAppRouter } from "./router-detection.ts";
 
 /**
  * Get environment variable (cross-platform: Deno, Node, Bun).
@@ -320,7 +325,8 @@ export class JitRenderer {
    * 3. Any page file found recursively
    */
   private async detectEntryPoint(ctx: RenderContext): Promise<string> {
-    const router = ctx.config.router ?? "app";
+    const isAppRouter = await detectAppRouter(ctx.projectDir, ctx.config, ctx.adapter);
+    const router = isAppRouter ? "app" : "pages";
     const fs = ctx.adapter.fs;
     const projectDir = ctx.projectDir;
 
@@ -361,7 +367,7 @@ export class JitRenderer {
 
     // No priority candidate found - scan for any page file
     const baseDir = router === "app" ? "app" : "pages";
-    const foundPage = await this.findFirstPageFile(fs, projectDir, baseDir);
+    const foundPage = await this.findFirstPageFile(fs, projectDir, baseDir, router);
     if (foundPage) {
       logger.debug("[JitRenderer] Found page file as entry point", {
         projectId: ctx.projectId,
@@ -380,37 +386,50 @@ export class JitRenderer {
   }
 
   /**
-   * Recursively find the first page file in a directory
+   * Recursively find the first page file in a directory.
+   * For App Router: looks for page.*, layout.*, etc.
+   * For Pages Router: accepts any file with route extension (except special files)
    */
   private async findFirstPageFile(
     fs: RenderContext["adapter"]["fs"],
     projectDir: string,
     baseDir: string,
+    router: "app" | "pages",
   ): Promise<string | null> {
     const basePath = `${projectDir}/${baseDir}`;
-    const pageExtensions = [".tsx", ".ts", ".mdx", ".md", ".jsx", ".js"];
+    const pageExtensions = new Set([".tsx", ".ts", ".mdx", ".md", ".jsx", ".js"]);
+    const appRouterPatterns = ["page", "layout", "error", "loading", "not-found"];
+    const pagesRouterIgnored = new Set(["_app", "_document", "_error", "api"]);
 
-    async function scanDir(dir: string, relativePath: string): Promise<string | null> {
+    const scanDir = async (dir: string, relativePath: string): Promise<string | null> => {
       try {
         for await (const entry of fs.readDir(dir)) {
           const entryRelPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
 
           if (entry.isDirectory) {
+            // Skip api directories in Pages Router
+            if (router === "pages" && entry.name === "api") continue;
             // Recursively scan subdirectories
             const found = await scanDir(`${dir}/${entry.name}`, entryRelPath);
             if (found) return found;
           } else if (entry.isFile) {
-            // Check if it's a page file
-            const isPageFile = entry.name.startsWith("page.") &&
-              pageExtensions.some((ext) => entry.name.endsWith(ext));
-            if (isPageFile) {
-              return `${baseDir}/${entryRelPath}`;
-            }
-            // Also check for index files in pages router
-            const isIndexFile = entry.name.startsWith("index.") &&
-              pageExtensions.some((ext) => entry.name.endsWith(ext));
-            if (isIndexFile) {
-              return `${baseDir}/${entryRelPath}`;
+            const name = entry.name.toLowerCase();
+            const dotIndex = name.lastIndexOf(".");
+            const baseName = dotIndex === -1 ? name : name.slice(0, dotIndex);
+            const ext = dotIndex === -1 ? "" : name.slice(dotIndex);
+
+            if (!pageExtensions.has(ext)) continue;
+
+            if (router === "app") {
+              // App Router: require specific patterns (page.tsx, layout.tsx, etc.)
+              if (appRouterPatterns.some((pattern) => name.startsWith(pattern))) {
+                return `${baseDir}/${entryRelPath}`;
+              }
+            } else {
+              // Pages Router: any file with route extension counts (except special files)
+              if (!pagesRouterIgnored.has(baseName) && !baseName.startsWith("_")) {
+                return `${baseDir}/${entryRelPath}`;
+              }
             }
           }
         }
@@ -418,7 +437,7 @@ export class JitRenderer {
         // Directory doesn't exist or can't be read
       }
       return null;
-    }
+    };
 
     return scanDir(basePath, "");
   }
@@ -637,7 +656,9 @@ export class JitRenderer {
           );
         } catch (error) {
           throw new VeryfrontError(
-            `Failed to create React element: ${error instanceof Error ? error.message : String(error)}`,
+            `Failed to create React element: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
             ErrorCode.RENDER_ERROR,
             { slug, projectId: ctx.projectId },
           );

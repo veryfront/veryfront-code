@@ -46,7 +46,9 @@ async function transformFrameworkSource(
   projectDir: string,
 ): Promise<string> {
   const { transform } = await import("esbuild");
-  const { getReactImportMap } = await import("#veryfront/transforms/import-rewriter/url-builder.ts");
+  const { getReactImportMap } = await import(
+    "#veryfront/transforms/import-rewriter/url-builder.ts"
+  );
   const { loadImportMap } = await import("#veryfront/modules/import-map/index.ts");
 
   const ext = sourcePath.match(/\.(tsx?|jsx?)$/)?.[1] ?? "tsx";
