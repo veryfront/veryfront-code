@@ -58,6 +58,44 @@ describe("extractHttpBundlePaths", () => {
 
     assertEquals(r1?.hash, r2?.hash);
   });
+
+  it("extracts relative path imports (portable format)", () => {
+    const code = `export * from "./http-691361154.mjs";`;
+    const [first] = extractHttpBundlePaths(code);
+
+    assertEquals(first?.hash, "691361154");
+    assertEquals(first?.path, "http-691361154.mjs");
+  });
+
+  it("extracts mixed absolute and relative paths", () => {
+    const code = [
+      `import a from "file:///cache/veryfront-http-bundle/http-11111111.mjs";`,
+      `export * from "./http-22222222.mjs";`,
+      `import b from './http-33333333.mjs';`,
+    ].join("\n");
+
+    const result = extractHttpBundlePaths(code);
+
+    assertEquals(result.map((r) => r.hash).sort(), ["11111111", "22222222", "33333333"]);
+  });
+
+  it("deduplicates relative paths by hash", () => {
+    const code = [
+      `export * from "./http-12345678.mjs";`,
+      `import x from "./http-12345678.mjs";`,
+    ].join("\n");
+
+    assertEquals(extractHttpBundlePaths(code).length, 1);
+  });
+
+  it("deduplicates across absolute and relative paths with same hash", () => {
+    const code = [
+      `import a from "file:///cache/veryfront-http-bundle/http-12345678.mjs";`,
+      `export * from "./http-12345678.mjs";`,
+    ].join("\n");
+
+    assertEquals(extractHttpBundlePaths(code).length, 1);
+  });
 });
 
 describe("extractAllFilePaths", () => {

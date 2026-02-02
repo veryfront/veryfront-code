@@ -95,20 +95,29 @@ export async function extractAllHttpBundlePathsRecursive(
 export function extractHttpBundlePaths(code: string): Array<{ path: string; hash: string }> {
   // Create regex per call to avoid shared lastIndex state across concurrent calls.
   // Note: The hash is a decimal number from simpleHash(), not hex, so we match \d+ not [a-f0-9]+
-  const httpBundlePattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-(\d+)\.mjs)/gi;
-
   const bundles: Array<{ path: string; hash: string }> = [];
   const seen = new Set<string>();
 
+  // Match absolute file:// paths (legacy format)
+  const absolutePattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-(\d+)\.mjs)/gi;
   let match: RegExpExecArray | null;
-  while ((match = httpBundlePattern.exec(code)) !== null) {
+  while ((match = absolutePattern.exec(code)) !== null) {
     const path = match[1];
     const hash = match[2];
-
     if (!path || !hash || seen.has(hash)) continue;
-
     seen.add(hash);
     bundles.push({ path, hash });
+  }
+
+  // Match relative paths (new portable format): ./http-{hash}.mjs
+  // These are used when HTTP bundles import other HTTP bundles for cross-environment portability
+  const relativePattern = /["']\.\/http-(\d+)\.mjs["']/gi;
+  while ((match = relativePattern.exec(code)) !== null) {
+    const hash = match[1];
+    if (!hash || seen.has(hash)) continue;
+    seen.add(hash);
+    // For relative paths, just store the filename since it's in the same directory
+    bundles.push({ path: `http-${hash}.mjs`, hash });
   }
 
   return bundles;
