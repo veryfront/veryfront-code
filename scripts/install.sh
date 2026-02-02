@@ -186,7 +186,10 @@ main() {
     *":$INSTALL_DIR:"*)
       # Already in PATH
       echo ""
-      echo "Run ${ORANGE}veryfront${NC} to get started"
+      echo "Start:"
+      echo ""
+      echo "  ${ORANGE}veryfront${NC}"
+      echo ""
       ;;
     *)
       # Show next steps
@@ -204,9 +207,14 @@ main() {
           ;;
         fish)
           echo ""
-          echo "Next:"
+          echo "Set PATH:"
+          echo ""
           echo "  fish_add_path ~/.veryfront/bin"
-          echo "  veryfront"
+          echo ""
+          echo "Start:"
+          echo ""
+          echo "  ${ORANGE}veryfront${NC}"
+          echo ""
           return
           ;;
         *)
@@ -214,10 +222,15 @@ main() {
           ;;
       esac
       echo ""
-      echo "Next:"
+      echo "Set PATH:"
+      echo ""
       echo "  echo 'export PATH=\"\$HOME/.veryfront/bin:\$PATH\"' >> ~/${PROFILE}"
       echo "  source ~/${PROFILE}"
+      echo ""
+      echo "Start:"
+      echo ""
       echo "  ${ORANGE}veryfront${NC}"
+      echo ""
       ;;
   esac
 }
