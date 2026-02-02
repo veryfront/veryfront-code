@@ -875,7 +875,7 @@ export class SSRModuleLoader {
             {
               reactVersion: this.options.reactVersion,
               projectSlug: this.options.projectId,
-              strictMissingModules: true,
+              strictMissingModules: false,
             },
           );
 

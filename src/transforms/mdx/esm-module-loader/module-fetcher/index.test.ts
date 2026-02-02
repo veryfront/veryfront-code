@@ -356,6 +356,33 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
         await remove(projectDir, { recursive: true });
       }
     });
+
+    it("returns null when strictMissingModules is false", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-nonstrict-cache-" });
+      const projectDir = await makeTempDir({ prefix: "vf-mdx-nonstrict-proj-" });
+
+      const adapter = {
+        env: { get: (_key: string) => undefined },
+        fs: {
+          resolveFile: (_path: string) => Promise.resolve(null),
+          readFile: (_path: string) => {
+            throw new Error("readFile should not be called for missing module");
+          },
+        },
+      } as any;
+
+      try {
+        const ctx = createModuleFetcherContext(esmCacheDir, adapter, projectDir, "proj-123", {
+          strictMissingModules: false,
+        });
+
+        const result = await fetchAndCacheModule("/_vf_modules/lib/utils.js", ctx);
+        assertEquals(result, null, "Should return null for missing module when strict mode is off");
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+        await remove(projectDir, { recursive: true });
+      }
+    });
   });
 
   describe("rewriteDntImports", () => {
