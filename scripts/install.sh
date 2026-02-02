@@ -117,15 +117,15 @@ get_latest_version() {
 }
 
 # Download file silently
-# Download file with progress bar
+# Download file silently
 download() {
   URL="$1"
   DEST="$2"
 
   if command -v curl >/dev/null 2>&1; then
-    curl -fL --progress-bar "$URL" -o "$DEST"
+    curl -fsSL "$URL" -o "$DEST"
   elif command -v wget >/dev/null 2>&1; then
-    wget -q --show-progress "$URL" -O "$DEST"
+    wget -q "$URL" -O "$DEST"
   else
     echo "Error: curl or wget is required" >&2
     exit 1
@@ -152,36 +152,40 @@ main() {
   # Create install directory
   mkdir -p "$INSTALL_DIR"
 
-  # Download binary with progress bar
+  # Download binary
   BINARY_PATH="${INSTALL_DIR}/veryfront"
 
-  echo "Downloading ${ORANGE}veryfront${NC} v${VERSION}"
-  echo ""
+  printf "Downloading ${ORANGE}veryfront${NC} v%s " "$VERSION"
 
-  if ! download "$DOWNLOAD_URL" "$BINARY_PATH"; then
-    echo ""
-    echo "Download failed"
+  # Download with spinner
+  download "$DOWNLOAD_URL" "$BINARY_PATH" &
+  PID=$!
+  SPINNER="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+  i=0
+  while kill -0 $PID 2>/dev/null; do
+    i=$(( (i + 1) % 10 ))
+    printf "\rDownloading ${ORANGE}veryfront${NC} v%s ${ORANGE}%s${NC}" "$VERSION" "$(echo "$SPINNER" | cut -c$((i+1)))"
+    sleep 0.1
+  done
+
+  wait $PID
+  if [ $? -ne 0 ]; then
+    printf "\rDownload failed                              \n"
     exit 1
   fi
 
-  # Make executable
   chmod +x "$BINARY_PATH"
-
-  echo ""
-  echo "Installed ${ORANGE}veryfront${NC} v${VERSION}"
+  printf "\rInstalled ${ORANGE}veryfront${NC} v%s                      \n" "$VERSION"
 
   # Check if install dir is in PATH
   case ":$PATH:" in
     *":$INSTALL_DIR:"*)
-      # Already in PATH
       echo ""
       echo "Get started:"
-      echo ""
       echo "  ${ORANGE}veryfront${NC}"
       echo ""
       ;;
     *)
-      # Show next steps
       SHELL_NAME=$(basename "$SHELL")
       case "$SHELL_NAME" in
         zsh)
@@ -197,12 +201,8 @@ main() {
         fish)
           echo ""
           echo "Next steps:"
-          echo ""
-          echo "  ${DIM}1.${NC} Add to PATH"
-          echo "     fish_add_path ~/.veryfront/bin"
-          echo ""
-          echo "  ${DIM}2.${NC} Start building"
-          echo "     ${ORANGE}veryfront${NC}"
+          echo "1. fish_add_path ~/.veryfront/bin"
+          echo "2. ${ORANGE}veryfront${NC}"
           echo ""
           return
           ;;
@@ -212,15 +212,9 @@ main() {
       esac
       echo ""
       echo "Next steps:"
-      echo ""
-      echo "  ${DIM}1.${NC} Add to PATH"
-      echo "     echo 'export PATH=\"\$HOME/.veryfront/bin:\$PATH\"' >> ~/${PROFILE}"
-      echo ""
-      echo "  ${DIM}2.${NC} Reload shell"
-      echo "     source ~/${PROFILE}"
-      echo ""
-      echo "  ${DIM}3.${NC} Start building"
-      echo "     ${ORANGE}veryfront${NC}"
+      echo "1. echo 'export PATH=\"\$HOME/.veryfront/bin:\$PATH\"' >> ~/${PROFILE}"
+      echo "2. source ~/${PROFILE}"
+      echo "3. ${ORANGE}veryfront${NC}"
       echo ""
       ;;
   esac
