@@ -61,6 +61,13 @@ import {
 import { withTimeoutThrow } from "./utils/stream-utils.ts";
 import { createBuildVersion } from "#veryfront/utils/version.ts";
 import type { LayoutItem, MdxBundle } from "#veryfront/types";
+import { SSRRenderer } from "./ssr-renderer.ts";
+import { setupSSRGlobals } from "./ssr-globals.ts";
+import { getProjectReact } from "#veryfront/react";
+import { HTMLGenerator, type HTMLGeneratorConfig, type HTMLGenerationContext } from "./orchestrator/html.ts";
+import { ElementValidator } from "./element-validator/index.ts";
+import { computeHash } from "./utils/index.ts";
+import type * as React from "react";
 
 /**
  * Options for JIT renderer
@@ -354,18 +361,10 @@ export class JitRenderer {
             };
           }
 
-          // If bundle exports a Component, we need to render it with React
+          // If bundle exports a Component, render it with SSR
           if (Component) {
-            // For now, return a placeholder - full React SSR integration would go here
             span?.setAttribute("render.type", "component");
-
-            // This is where we'd integrate with ReactDOMServer
-            // For MVP, we delegate to the existing SSR infrastructure
-            throw new VeryfrontError(
-              "Component-based bundles require SSR orchestrator integration",
-              ErrorCode.RENDER_ERROR,
-              { slug, projectId: ctx.projectId },
-            );
+            return this.renderComponent(Component, slug, ctx, options);
           }
 
           throw new VeryfrontError(
@@ -380,6 +379,133 @@ export class JitRenderer {
         }
       },
       { "render.slug": slug },
+    );
+  }
+
+  /**
+   * Render a React component to HTML using SSR
+   */
+  private async renderComponent(
+    Component: unknown,
+    slug: string,
+    ctx: RenderContext,
+    options?: RenderOptions,
+  ): Promise<RenderResult> {
+    return withSpan(
+      "jit-renderer.renderComponent",
+      async (span?: Span) => {
+        // Setup SSR globals
+        setupSSRGlobals();
+
+        // Get React for this project
+        const React = await getProjectReact();
+
+        // Create React element from the Component
+        const componentProps = {
+          slug,
+          params: options?.params || {},
+          searchParams: options?.url?.searchParams
+            ? Object.fromEntries(options.url.searchParams.entries())
+            : {},
+        };
+
+        let pageElement: React.ReactElement;
+        try {
+          pageElement = React.createElement(
+            Component as React.ComponentType<typeof componentProps>,
+            componentProps,
+          );
+        } catch (error) {
+          throw new VeryfrontError(
+            `Failed to create React element: ${error instanceof Error ? error.message : String(error)}`,
+            ErrorCode.RENDER_ERROR,
+            { slug, projectId: ctx.projectId },
+          );
+        }
+
+        // Validate element
+        const elementValidator = new ElementValidator({
+          debugMode: ctx.mode === "development",
+        });
+        const validatedElement = elementValidator.ensureValidReactElement(
+          pageElement,
+          ctx.mode === "development",
+        );
+
+        // Create SSR renderer
+        const ssrRenderer = new SSRRenderer(
+          ctx.mode,
+          ctx.adapter,
+          ctx.projectDir,
+        );
+
+        // Render to HTML
+        const wantsStream = options?.delivery === "stream";
+        const { html: ssrHtml, stream } = await ssrRenderer.renderToHTML(validatedElement, {
+          mode: ctx.mode,
+          wantsStream,
+          debugMode: ctx.mode === "development",
+        });
+
+        span?.setAttribute("ssr.html.length", ssrHtml.length);
+
+        // Compute SSR hash for hydration
+        const ssrHash = await computeHash(ssrHtml);
+
+        // Create HTML generator for full page wrapping
+        const htmlGeneratorConfig: HTMLGeneratorConfig = {
+          projectDir: ctx.projectDir,
+          adapter: ctx.adapter,
+          config: ctx.config,
+          mode: ctx.mode === "development" ? "development" : "production",
+        };
+        const htmlGenerator = new HTMLGenerator(htmlGeneratorConfig);
+
+        // Build generation context
+        const generationContext: HTMLGenerationContext = {
+          html: ssrHtml,
+          pageInfo: {
+            entity: {
+              id: `jit:${ctx.projectId}:${slug}`,
+              slug,
+              path: `${ctx.projectDir}/app/page.tsx`, // Placeholder path
+              type: "page",
+              content: "",
+              frontmatter: {},
+            },
+          },
+          pageBundle: {
+            compiledCode: "",
+            frontmatter: {},
+          },
+          layoutBundle: undefined,
+          nestedLayouts: [],
+          collectedMetadata: {},
+          slug,
+          ssrHash,
+          options,
+        };
+
+        // Generate full HTML document
+        const fullHtml = await htmlGenerator.generateFullHTML(generationContext);
+
+        span?.setAttribute("html.length", fullHtml.length);
+
+        logger.debug("[JitRenderer] Component rendered", {
+          slug,
+          projectId: ctx.projectId,
+          ssrHtmlLength: ssrHtml.length,
+          fullHtmlLength: fullHtml.length,
+        });
+
+        return {
+          html: fullHtml,
+          frontmatter: {},
+          stream: wantsStream ? stream : null,
+          ssrHash,
+        };
+      },
+      { "render.component": true },
     );
   }
 

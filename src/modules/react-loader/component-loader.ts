@@ -28,6 +28,110 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { extractComponent } from "./extract-component.ts";
 import { findSourceFile } from "#veryfront/rendering/orchestrator/file-resolver/index.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { _testExports as ssrVfModulesExports } from "#veryfront/transforms/pipeline/stages/ssr-vf-modules.ts";
+import { resolveVeryfrontModuleUrl } from "#veryfront/transforms/veryfront-module-urls.ts";
+import { replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+
+const { findVfModuleImports, resolveFrameworkFile } = ssrVfModulesExports;
+
+/**
+ * Transform framework source code with esbuild and React import rewriting.
+ */
+async function transformFrameworkSource(
+  content: string,
+  sourcePath: string,
+  reactVersion: string,
+  projectDir: string,
+): Promise<string> {
+  const { transform } = await import("esbuild");
+  const { getReactImportMap } = await import("#veryfront/transforms/import-rewriter/url-builder.ts");
+  const { loadImportMap } = await import("#veryfront/modules/import-map/index.ts");
+
+  const ext = sourcePath.match(/\.(tsx?|jsx?)$/)?.[1] ?? "tsx";
+  let loader: "tsx" | "ts" | "jsx" | "js" = "js";
+  if (ext === "tsx") loader = "tsx";
+  else if (ext === "ts") loader = "ts";
+  else if (ext === "jsx") loader = "jsx";
+
+  const result = await transform(content, {
+    loader,
+    jsx: "automatic",
+    jsxImportSource: "react",
+    format: "esm",
+    target: "es2022",
+  });
+
+  let transformed = result.code;
+
+  // Rewrite React imports to CDN URLs
+  const reactImportMap = getReactImportMap(reactVersion);
+  transformed = await replaceSpecifiers(transformed, (specifier) => {
+    return reactImportMap[specifier] ?? null;
+  });
+
+  // Cache HTTP imports
+  const importMap = await loadImportMap(projectDir);
+  const cacheResult = await cacheHttpImportsToLocal(transformed, {
+    cacheDir: getHttpBundleCacheDir(),
+    importMap,
+    reactVersion,
+  });
+
+  return cacheResult.code;
+}
+
+/**
+ * Resolve and transform /_vf_modules/_veryfront/ imports to file:// paths.
+ */
+async function resolveVfModuleImports(
+  code: string,
+  projectDir: string,
+  reactVersion: string,
+): Promise<string> {
+  const vfModuleImports = findVfModuleImports(code);
+  if (vfModuleImports.length === 0) return code;
+
+  const fs = createFileSystem();
+  const replacements = new Map<string, string>();
+
+  for (const vfModulePath of vfModuleImports) {
+    try {
+      const resolved = await resolveFrameworkFile(vfModulePath, fs);
+      if (!resolved) continue;
+
+      const transformed = await transformFrameworkSource(
+        resolved.content,
+        resolved.sourcePath,
+        reactVersion,
+        projectDir,
+      );
+
+      // Cache the transformed code
+      const cacheDir = getHttpBundleCacheDir();
+      const contentHash = hashCodeHex(transformed).slice(0, 12);
+      const pathHash = hashCodeHex(vfModulePath).slice(0, 8);
+      const fileName = `vfmod-${pathHash}-${contentHash}.mjs`;
+      const cachePath = join(cacheDir, "framework", fileName);
+
+      const localAdapter = await getLocalAdapter();
+      await ensureDir(localAdapter, join(cacheDir, "framework"));
+      await localAdapter.fs.writeFile(cachePath, transformed);
+
+      replacements.set(vfModulePath, `file://${cachePath}`);
+    } catch (error) {
+      logger.warn("[ComponentLoader] Failed to transform vf module", {
+        vfModulePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (replacements.size === 0) return code;
+
+  return replaceSpecifiers(code, (specifier) => replacements.get(specifier) ?? null);
+}
 
 /** In-memory LRU cache for transformed component paths */
 const transformPathCache = new LRUCache<string, string>({ maxEntries: 2000 });
@@ -220,6 +324,23 @@ async function transformComponentWithDeps(
       reactVersion,
       ssr: true,
     });
+
+    // Rewrite veryfront/* bare imports to /_vf_modules/_veryfront/...?ssr=true URLs
+    transformedCode = await replaceSpecifiers(transformedCode, (specifier) => {
+      if (specifier.startsWith("veryfront/") || specifier === "veryfront") {
+        const url = resolveVeryfrontModuleUrl(specifier);
+        if (url) return `${url}?ssr=true`;
+      }
+      return null;
+    });
+
+    // Resolve /_vf_modules/_veryfront/ imports to file:// paths
+    transformedCode = await resolveVfModuleImports(
+      transformedCode,
+      projectDir,
+      reactVersion ?? REACT_DEFAULT_VERSION,
+    );
+
     // Normalize esm.sh URLs to include external=react,react-dom to prevent multiple React instances
     transformedCode = await addDepsToEsmShUrls(transformedCode, true, reactVersion);
     // Cache HTTP imports to local file:// paths to ensure consistent React instances
