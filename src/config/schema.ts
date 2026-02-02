@@ -93,7 +93,8 @@ export const veryfrontConfigSchema = z
          */
         queryParams: z
           .object({
-            policy: z.enum(["ignore-all", "include-all", "include-list", "exclude-list"]).optional(),
+            policy: z.enum(["ignore-all", "include-all", "include-list", "exclude-list"])
+              .optional(),
             params: z.array(z.string()).optional(),
           })
           .partial()

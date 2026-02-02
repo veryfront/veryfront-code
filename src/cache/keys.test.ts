@@ -181,7 +181,8 @@ describe("cache/keys", () => {
       const url = new URL("https://example.com/page?url=https://example.com");
       const result = sanitizeQueryParamsForCacheKey(url);
       // Special chars in values should be replaced with underscores
-      assertEquals(result, "url-https___example_com");
+      // Note: dots (.) are allowed, so example.com stays as-is
+      assertEquals(result, "url-https___example.com");
     });
 
     it("should respect ignore-all policy", () => {

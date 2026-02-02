@@ -60,6 +60,10 @@ export interface VeryfrontConfig {
       redisUrl?: string;
       redisKeyPrefix?: string;
     };
+    queryParams?: {
+      policy?: "ignore-all" | "include-all" | "include-list" | "exclude-list";
+      params?: string[];
+    };
   };
 
   dev?: {
