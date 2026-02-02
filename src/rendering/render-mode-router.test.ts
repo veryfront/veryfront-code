@@ -37,28 +37,32 @@ describe("rendering/render-mode-router", () => {
   });
 
   describe("getEffectiveRenderMode", () => {
-    // After JIT unification, all modes return jit-bundle
-    it("should return jit-bundle even when bundler is disabled", () => {
+    it("should return on-demand when bundler is disabled", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: false,
         renderMode: "jit-bundle",
       });
 
       const mode = getEffectiveRenderMode();
-      assertEquals(mode, "jit-bundle");
+      assertEquals(mode, "on-demand");
     });
 
-    it("should return jit-bundle when bundler is enabled", () => {
+    it("should return jit-bundle for production context", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: true,
-        renderMode: "jit-bundle",
+        renderMode: "on-demand",
       });
 
-      const mode = getEffectiveRenderMode();
+      const ctx = createMockContext({
+        environment: "production",
+        mode: "production",
+      });
+
+      const mode = getEffectiveRenderMode(ctx);
       assertEquals(mode, "jit-bundle");
     });
 
-    it("should return jit-bundle for preview development context", () => {
+    it("should return configured mode for preview development context", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: true,
         renderMode: "on-demand",
@@ -70,43 +74,22 @@ describe("rendering/render-mode-router", () => {
       });
 
       const mode = getEffectiveRenderMode(ctx);
-      assertEquals(mode, "jit-bundle");
+      assertEquals(mode, "on-demand");
     });
 
-    it("should return jit-bundle for production context", () => {
+    it("should return env renderMode when no context provided", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: true,
         renderMode: "jit-bundle",
       });
 
-      const ctx = createMockContext({
-        environment: "production",
-        mode: "production",
-      });
-
-      const mode = getEffectiveRenderMode(ctx);
-      assertEquals(mode, "jit-bundle");
-    });
-
-    it("should return jit-bundle even when on-demand is configured", () => {
-      _setRuntimeEnvForTesting({
-        bundlerEnabled: true,
-        renderMode: "on-demand",
-      });
-
-      const ctx = createMockContext({
-        environment: "production",
-        mode: "production",
-      });
-
-      const mode = getEffectiveRenderMode(ctx);
+      const mode = getEffectiveRenderMode();
       assertEquals(mode, "jit-bundle");
     });
   });
 
   describe("shouldUseJitRenderer", () => {
-    // After JIT unification, shouldUseJitRenderer always returns true
-    it("should return true when mode is jit-bundle", () => {
+    it("should return true for production context", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: true,
         renderMode: "jit-bundle",
@@ -121,35 +104,20 @@ describe("rendering/render-mode-router", () => {
       assertEquals(result, true);
     });
 
-    it("should return true even when mode is on-demand", () => {
-      _setRuntimeEnvForTesting({
-        bundlerEnabled: true,
-        renderMode: "on-demand",
-      });
-
-      const ctx = createMockContext({
-        environment: "production",
-        mode: "production",
-      });
-
-      const result = shouldUseJitRenderer(ctx);
-      assertEquals(result, true);
-    });
-
-    it("should return true even when bundler is disabled", () => {
+    it("should return false when bundler is disabled", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: false,
         renderMode: "jit-bundle",
       });
 
       const result = shouldUseJitRenderer();
-      assertEquals(result, true);
+      assertEquals(result, false);
     });
 
-    it("should return true for preview development mode (JIT handles all modes)", () => {
+    it("should return false for preview development mode with on-demand config", () => {
       _setRuntimeEnvForTesting({
         bundlerEnabled: true,
-        renderMode: "jit-bundle",
+        renderMode: "on-demand",
       });
 
       const ctx = createMockContext({
@@ -158,7 +126,7 @@ describe("rendering/render-mode-router", () => {
       });
 
       const result = shouldUseJitRenderer(ctx);
-      assertEquals(result, true);
+      assertEquals(result, false);
     });
   });
 });

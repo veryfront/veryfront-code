@@ -412,7 +412,14 @@ export class JitRenderer {
 
     const scanDir = async (dir: string, relativePath: string): Promise<string | null> => {
       try {
+        // Collect and sort entries for deterministic ordering
+        const entries: Array<{ name: string; isFile: boolean; isDirectory: boolean }> = [];
         for await (const entry of fs.readDir(dir)) {
+          entries.push(entry);
+        }
+        entries.sort((a, b) => a.name.localeCompare(b.name));
+
+        for (const entry of entries) {
           const entryRelPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
 
           if (entry.isDirectory) {

@@ -24,9 +24,9 @@ import {
   clearCacheWithRouter,
   type CommonRenderer,
   destroyRenderers,
+  getRendererForMode,
   initializeRenderers,
 } from "../../../rendering/render-mode-router.ts";
-import { getRenderer, isRendererInitialized } from "../../../rendering/renderer.ts";
 import type {
   PageDataResponse,
   RenderOptions,
@@ -58,11 +58,15 @@ export interface RendererAdapter {
   destroy(): Promise<void>;
 }
 
-let rendererInitPromise: Promise<CommonRenderer> | null = null;
+let rendererInitPromise: Promise<void> | null = null;
+let renderersInitialized = false;
 
-async function getOrInitRenderer(): Promise<CommonRenderer> {
-  if (isRendererInitialized()) return getRenderer();
-  if (rendererInitPromise) return rendererInitPromise;
+async function ensureRenderersInitialized(): Promise<void> {
+  if (renderersInitialized) return;
+  if (rendererInitPromise) {
+    await rendererInitPromise;
+    return;
+  }
 
   const isProxyMode = getEnv("PROXY_MODE") === "1";
   const apiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
@@ -93,16 +97,16 @@ async function getOrInitRenderer(): Promise<CommonRenderer> {
     bundlerEnabled: env.bundlerEnabled,
   });
 
-  // Initialize renderers (legacy and JIT)
+  // Initialize both JIT and legacy renderers
   rendererInitPromise = (async () => {
     await initializeRenderers({
       jit: cacheOptions ? { cache: cacheOptions } : undefined,
     });
-    return getRenderer();
+    renderersInitialized = true;
   })();
 
   try {
-    return await rendererInitPromise;
+    await rendererInitPromise;
   } finally {
     rendererInitPromise = null;
   }
@@ -191,21 +195,22 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
 }
 
 class RendererAdapterImpl implements RendererAdapter {
-  constructor(
-    private renderer: CommonRenderer,
-    private ctx: RenderContext,
-  ) {}
+  constructor(private ctx: RenderContext) {}
+
+  private getRenderer(): CommonRenderer {
+    return getRendererForMode(this.ctx);
+  }
 
   renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
-    return this.renderer.renderPage(slug, this.ctx, options);
+    return this.getRenderer().renderPage(slug, this.ctx, options);
   }
 
   resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
-    return this.renderer.resolvePageData(slug, this.ctx, options);
+    return this.getRenderer().resolvePageData(slug, this.ctx, options);
   }
 
   getAllPages(): Promise<string[]> {
-    return this.renderer.getAllPages(this.ctx);
+    return this.getRenderer().getAllPages(this.ctx);
   }
 
   clearCache(slug?: string): void {
@@ -274,9 +279,9 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
   });
 
   const rendererStartTime = performance.now();
-  logger.debug("[RendererAdapter] getOrInitRenderer START", { projectSlug });
-  const renderer = await getOrInitRenderer();
-  logger.debug("[RendererAdapter] getOrInitRenderer DONE", {
+  logger.debug("[RendererAdapter] ensureRenderersInitialized START", { projectSlug });
+  await ensureRenderersInitialized();
+  logger.debug("[RendererAdapter] ensureRenderersInitialized DONE", {
     projectSlug,
     duration: `${(performance.now() - rendererStartTime).toFixed(2)}ms`,
   });
@@ -295,11 +300,12 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
     duration: `${(performance.now() - startTime).toFixed(2)}ms`,
   });
 
-  return new RendererAdapterImpl(renderer, renderCtx);
+  return new RendererAdapterImpl(renderCtx);
 }
 
 export async function destroyRendererAdapter(): Promise<void> {
   // Destroy all renderers via the router (JIT + legacy)
   await destroyRenderers();
   rendererInitPromise = null;
+  renderersInitialized = false;
 }
