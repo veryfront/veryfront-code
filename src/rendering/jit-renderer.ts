@@ -29,7 +29,6 @@ import type { Span } from "@opentelemetry/api";
 import { getOrBuildBundle, type JitBundleResult } from "#veryfront/bundler/jit-bundler.ts";
 import { clearProjectModules, executeBundleForRender } from "#veryfront/bundler/bundle-executor.ts";
 import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
-import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import type { RenderContext } from "./context/render-context.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./orchestrator/types.ts";
 import {
