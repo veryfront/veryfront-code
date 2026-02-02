@@ -11,18 +11,10 @@ import { parallelMap, rendererLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { findSourceFile } from "../file-resolver/index.ts";
-import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
+import { transformModule } from "#veryfront/bundler/jit-bundler.ts";
 import { getProjectTmpDir } from "#veryfront/modules/react-loader/index.ts";
-import {
-  generateCacheKey as generateTransformCacheKey,
-  getOrComputeTransform,
-  initializeTransformCache,
-  setCachedTransformAsync,
-} from "#veryfront/transforms/esm/transform-cache.ts";
-import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
-import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
-import { validateBundleGroup } from "#veryfront/transforms/esm/bundle-manifest.ts";
-import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { dirname, join, normalize } from "#veryfront/platform/compat/path/index.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
@@ -31,7 +23,6 @@ import {
   lookupMdxEsmCache,
   saveModulePathCache,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
-import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 
 // Re-export utilities
 export { createEsmCache, createModuleCache, generateHash } from "./cache.ts";
@@ -43,8 +34,8 @@ const MAX_CREATED_DIRS = 5000;
 /** Cache for created directories to avoid repeated mkdir calls (LRU-style) */
 const createdDirs = new Set<string>();
 
-/** TTL for cached transforms (uses centralized config) */
-const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
+/** In-memory LRU cache for transformed code */
+const transformCache = new LRUCache<string, string>({ maxEntries: 1000 });
 
 /** Prune oldest entries when cache exceeds limit */
 function pruneCreatedDirs(): void {
@@ -185,7 +176,7 @@ export async function transformModuleWithDeps(
   config: ModuleLoaderConfig,
   useLocalAdapter = false,
 ): Promise<string> {
-  const { moduleCache, projectDir, projectId, contentSourceId, adapter, mode } = config;
+  const { moduleCache, projectDir, projectId, contentSourceId, adapter, mode: _mode } = config;
   const cacheKey = getModuleCacheKey(filePath, projectId, projectDir, contentSourceId);
 
   const cachedPath = moduleCache.get(cacheKey);
@@ -291,76 +282,19 @@ export async function transformModuleWithDeps(
   }
 
   const contentHash = hashCodeHex(fileContent);
-  const effectiveProjectId = projectId ?? projectDir;
-  const scopedPath = `${effectiveProjectId}:${filePath}`;
-  const transformCacheKey = generateTransformCacheKey(scopedPath, contentHash, true);
+  const transformCacheKey = `${projectDir}:${filePath}:${contentHash}`;
 
-  await initializeTransformCache();
-
-  const transformResult = await getOrComputeTransform(
-    transformCacheKey,
-    () => {
-      logger.debug("[ModuleLoader] Transform cache miss, transforming", { filePath });
-      return transformToESM(fileContent, filePath, projectDir, adapter, {
-        projectId: effectiveProjectId,
-        dev: mode === "development",
-        ssr: true,
-        reactVersion: config.reactVersion,
-      });
-    },
-    TRANSFORM_CACHE_TTL_SECONDS,
-  );
-
-  let transformedCode = transformResult.code;
-
-  const cacheDir = getHttpBundleCacheDir();
-  let bundlesValid = true;
-
-  if (transformResult.cacheHit && transformResult.bundleManifestId) {
-    const validation = await validateBundleGroup(transformResult.bundleManifestId, cacheDir);
-    if (!validation.valid) {
-      logger.warn("[ModuleLoader] Bundle manifest validation failed, re-transforming", {
-        filePath,
-        manifestId: transformResult.bundleManifestId.slice(0, 12),
-        failedHashes: validation.failedHashes,
-      });
-      bundlesValid = false;
-    }
-  } else {
-    const bundlePaths = extractHttpBundlePaths(transformedCode);
-    if (bundlePaths.length > 0) {
-      const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-      if (failed.length > 0) {
-        logger.warn("[ModuleLoader] HTTP bundle recovery failed, re-transforming", {
-          filePath,
-          failed,
-        });
-        bundlesValid = false;
-      }
-    }
-  }
-
-  if (!bundlesValid) {
-    transformedCode = await transformToESM(fileContent, filePath, projectDir, adapter, {
-      projectId: effectiveProjectId,
-      dev: mode === "development",
-      ssr: true,
+  // Check in-memory cache first
+  let transformedCode = transformCache.get(transformCacheKey);
+  if (!transformedCode) {
+    logger.debug("[ModuleLoader] Transform cache miss, transforming", { filePath });
+    transformedCode = await transformModule(fileContent, filePath, {
+      projectDir,
       reactVersion: config.reactVersion,
+      ssr: true,
     });
-
-    setCachedTransformAsync(
-      transformCacheKey,
-      transformedCode,
-      contentHash,
-      TRANSFORM_CACHE_TTL_SECONDS,
-    ).catch((error) => {
-      logger.debug("[ModuleLoader] Failed to update transform cache after re-transform", {
-        filePath,
-        error,
-      });
-    });
+    transformCache.set(transformCacheKey, transformedCode);
   }
-
   const transformedHash = hashCodeHex(transformedCode).slice(0, 8);
 
   const relativePath = filePath.startsWith(projectDir)
@@ -457,26 +391,6 @@ export async function loadModule(filePath: string, config: ModuleLoaderConfig): 
   try {
     return await import(moduleUrl);
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    const bundleMatch = errorMsg.match(/veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/);
-
-    if (bundleMatch) {
-      const hash = bundleMatch[1]!;
-      logger.warn("[ModuleLoader] Import failed due to missing HTTP bundle, attempting recovery", {
-        filePath,
-        hash,
-      });
-
-      const { recoverHttpBundleByHash } = await import("#veryfront/transforms/esm/http-cache.ts");
-      const cacheDir = getHttpBundleCacheDir();
-      const recovered = await recoverHttpBundleByHash(hash, cacheDir);
-
-      if (recovered) {
-        logger.info("[ModuleLoader] HTTP bundle recovered, retrying import", { hash });
-        return await import(`file://${tempFilePath}?t=${Date.now()}&retry=1`);
-      }
-    }
-
     logger.error("[ModuleLoader] Failed to import module:", {
       filePath,
       tempFilePath,

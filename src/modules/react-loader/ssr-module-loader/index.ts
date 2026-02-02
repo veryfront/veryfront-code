@@ -24,15 +24,13 @@ export {
   clearSSRModuleCacheForProject,
   globalModuleCache,
   initializeSSRDistributedCache,
-  initializeSSRRedisCache,
   isSSRDistributedCacheEnabled,
-  isSSRRedisCacheEnabled,
 } from "./cache/index.ts";
 
 export { Semaphore } from "./concurrency/index.ts";
 
 import { SSR_MODULE_CACHE_MAX_ENTRIES } from "./constants.ts";
-import { getRedisEnabled, globalModuleCache, globalTmpDirs } from "./cache/index.ts";
+import { globalModuleCache, globalTmpDirs } from "./cache/index.ts";
 import type { SSRModuleCacheStats } from "./types.ts";
 
 export function getSSRModuleCacheStats(): SSRModuleCacheStats {
@@ -40,6 +38,6 @@ export function getSSRModuleCacheStats(): SSRModuleCacheStats {
     memoryEntries: globalModuleCache.size,
     maxEntries: SSR_MODULE_CACHE_MAX_ENTRIES,
     tmpDirs: globalTmpDirs.size,
-    redisEnabled: getRedisEnabled(),
+    redisEnabled: false, // Local-only cache mode
   };
 }

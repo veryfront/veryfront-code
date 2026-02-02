@@ -29,7 +29,7 @@ import { join } from "#veryfront/platform/compat/path-helper.ts";
 import type { MdxBundle, PageBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import type { CacheCoordinator } from "../cache/cache-coordinator.ts";
+import type { SimpleCacheCoordinator } from "../cache/cache-coordinator.ts";
 import type { PageRenderer } from "../page-renderer.ts";
 import type { PageResolver } from "../page-resolution/index.ts";
 import type { LayoutOrchestrator } from "./layout.ts";
@@ -70,7 +70,7 @@ export { __injectCssCacheForTests } from "./css-cache.ts";
 
 export interface RenderPipelineConfig {
   pageResolver: PageResolver;
-  cacheCoordinator: CacheCoordinator;
+  cacheCoordinator: SimpleCacheCoordinator;
   pageRenderer: PageRenderer;
   layoutOrchestrator: LayoutOrchestrator;
   ssrOrchestrator: SSROrchestrator;

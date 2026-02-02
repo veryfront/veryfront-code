@@ -4,15 +4,17 @@ import { ContextAwareCacheCoordinator } from "./context-aware-cache.ts";
 import type { CacheStore } from "../cache/types.ts";
 import type { RenderContext } from "../context/render-context.ts";
 
-function createInMemoryStore(): CacheStore & { data: Map<string, unknown> } {
-  const data = new Map<string, unknown>();
+import type { CachePayload } from "../cache/types.ts";
+
+function createInMemoryStore(): CacheStore & { data: Map<string, CachePayload> } {
+  const data = new Map<string, CachePayload>();
 
   return {
     data,
     get(key: string) {
       return Promise.resolve(data.get(key));
     },
-    set(key: string, value: unknown) {
+    set(key: string, value: CachePayload) {
       data.set(key, value);
       return Promise.resolve();
     },

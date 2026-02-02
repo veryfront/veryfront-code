@@ -100,6 +100,8 @@ export const SpanNames = {
   CACHE_KEYS_DELETE_ALL_ASYNC: "cache.keys.delete_all_async",
   CACHE_MULTI_TIER_GET: "cache.multi_tier.get",
   CACHE_MULTI_TIER_SET: "cache.multi_tier.set",
+  CACHE_BUNDLE_GET: "cache.bundle.get",
+  CACHE_BUNDLE_SET: "cache.bundle.set",
 
   HTML_GENERATE_SHELL_PARTS: "html.generate_shell_parts",
   HTML_WRAP_IN_SHELL: "html.wrap_in_shell",

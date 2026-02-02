@@ -100,7 +100,8 @@ function isBareImport(path: string): boolean {
 }
 
 function toEsmUrl(path: string): string {
-  return ESM_PACKAGE_MAP[path] ?? `https://esm.sh/${path}`;
+  // Always include external=react,react-dom to prevent multiple React instances
+  return ESM_PACKAGE_MAP[path] ?? `https://esm.sh/${path}?external=react,react-dom&target=es2022`;
 }
 
 function resolveAsExternalOrHttps(

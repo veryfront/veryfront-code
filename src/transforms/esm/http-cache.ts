@@ -8,13 +8,11 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { gunzipSync } from "node:zlib";
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { basename, isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
-import { VERSION } from "#veryfront/utils/version.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -22,14 +20,12 @@ import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "./package-registry.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
-import { CacheBackends, createDistributedCacheAccessor } from "#veryfront/cache/backend.ts";
-import {
-  type BundleEntry,
-  createBundleManifest,
-  getManifestIdForHash,
-  refreshManifestTTL,
-  storeBundleManifest,
-} from "./bundle-manifest.ts";
+// Bundle manifest types (simplified - manifest tracking removed with JIT bundling)
+interface BundleEntry {
+  hash: string;
+  url: string;
+  sizeBytes: number;
+}
 import {
   HTTP_MODULE_CACHE_MAX_ENTRIES,
   HTTP_MODULE_DISTRIBUTED_TTL_SEC,
@@ -39,10 +35,6 @@ import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 // Type-safe cache wrapper (new architecture)
 import { httpBundleCache } from "./http-cache-wrapper.ts";
 import { asLocalModuleCode, CacheInvariantError } from "./http-cache-invariants.ts";
-
-/** Maximum number of keys per batch request to distributed cache API */
-// Note: Now handled by httpBundleCache wrapper, kept for reference during migration
-const _BATCH_FETCH_CHUNK_SIZE = 100;
 
 import {
   CACHE_DIR_TOKEN,
@@ -62,35 +54,6 @@ export {
 };
 
 /**
- * Decode gzip-compressed cache content.
- * The cache may store content with a "gz:" or "gzip:" prefix followed by base64-encoded gzip data.
- * Returns the decompressed string, or null if decompression fails.
- */
-function decodeGzipContent(content: string): string | null {
-  const base64Data = content.startsWith("gz:")
-    ? content.slice(3)
-    : content.startsWith("gzip:")
-    ? content.slice(5)
-    : null;
-
-  if (!base64Data) return null;
-
-  try {
-    const binaryString = atob(base64Data);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-
-    const decompressed = gunzipSync(bytes);
-    return new TextDecoder().decode(decompressed);
-  } catch (error) {
-    logger.debug("[HTTP-CACHE] Failed to decode gzip content", { error });
-    return null;
-  }
-}
-
-/**
  * Check if content appears to be HTML instead of JavaScript.
  * esm.sh can return HTTP 200 with HTML error pages when packages fail to build.
  */
@@ -103,41 +66,6 @@ function looksLikeHtmlNotJs(content: string): boolean {
     /<title>ESM[^<]*<\/title>/i.test(content.slice(0, 500))
   );
 }
-
-/**
- * Try to decode content if it's gzip-encoded, otherwise return as-is.
- * Returns [decodedContent, wasGzipped] tuple.
- * Note: Now handled by httpBundleCache wrapper, kept for reference during migration.
- */
-function _maybeDecodeGzip(content: string): [string, boolean] {
-  if (!content.startsWith("gz:") && !content.startsWith("gzip:")) return [content, false];
-
-  const decoded = decodeGzipContent(content);
-  if (decoded) return [decoded, true];
-
-  // Decoding failed, return original (will be handled as invalid)
-  return [content, false];
-}
-
-/**
- * Lazy-loaded distributed cache backend for cross-pod sharing.
- * Note: Now handled by httpBundleCache wrapper, kept for reference during migration.
- */
-const _getDistributedCache = createDistributedCacheAccessor(
-  () => CacheBackends.httpModule(),
-  "HTTP-CACHE",
-);
-
-/**
- * Generate cache key for HTTP bundles.
- * Uses versioned prefix:hash format to enable global cache invalidation.
- *
- * Cache key format: {VERSION}:{prefix}:{hash}
- *
- * Note: Now handled by httpBundleCache wrapper, kept for reference during migration.
- */
-const _distributedKey = (prefix: string, hash: string | number): string =>
-  `${VERSION}:${prefix}:${hash}`;
 
 /**
  * Check if cached HTTP bundle code has file:// paths from a different environment.
@@ -456,26 +384,6 @@ function isHttpUrl(specifier: string): boolean {
   return specifier.startsWith("https://") || specifier.startsWith("http://");
 }
 
-/**
- * Check if a URL is for React core packages.
- *
- * React core modules (react, react-dom) must NOT be cached/bundled.
- * Instead, all packages use external=react and import from the same esm.sh URL.
- * This prevents multiple React instances which causes "useContext is null" errors.
- */
-function _isReactCoreUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    if (!parsed.hostname.includes("esm.sh")) return false;
-
-    const pathname = parsed.pathname.replace(/^\/(v\d+|stable)\//, "/");
-    const match = pathname.match(/^\/(react|react-dom)(@[\d.]+)?(?:\/|$|\?)/);
-    return match !== null;
-  } catch {
-    return false;
-  }
-}
-
 function isExternalScheme(specifier: string): boolean {
   return specifier.startsWith("node:") ||
     specifier.startsWith("data:") ||
@@ -522,18 +430,25 @@ function normalizeEsmShUrl(url: URL): void {
   }
 
   const pathname = url.pathname.replace(/^\/+/, "");
-  // Only skip external for BASE React package (react@version), not subpaths.
-  // React subpaths (jsx-runtime, etc.) and react-dom need external=react.
+  // Skip external for base React and ReactDOM packages - they shouldn't externalize themselves
   const isBaseReact = /^react@[\d.]+(?:\?|$)/.test(pathname);
-  if (isBaseReact) return;
+  const isBaseReactDom = /^react-dom@[\d.]+(?:\?|$)/.test(pathname);
+  if (isBaseReact || isBaseReactDom) return;
 
-  // Add external=react to ensure all packages use the same React instance.
-  // Note: We use external=react only, NOT external=react,react-dom because
-  // externalizing react-dom breaks its internal imports.
+  // Add external=react,react-dom to ensure all packages use the same React instance.
+  // This prevents esm.sh from bundling its own React/ReactDOM inline.
   const existing = url.searchParams.get("external");
   const externals = existing ? existing.split(",") : [];
+  let modified = false;
   if (!externals.includes("react")) {
     externals.push("react");
+    modified = true;
+  }
+  if (!externals.includes("react-dom")) {
+    externals.push("react-dom");
+    modified = true;
+  }
+  if (modified) {
     url.searchParams.set("external", externals.join(","));
   }
 }
@@ -571,7 +486,9 @@ function resolveBareSpecifier(
   const mapped = resolveImport(specifier, importMap);
   if (mapped !== specifier) return mapped;
 
-  return `https://esm.sh/${specifier}?target=es2022`;
+  // Add external=react,react-dom to prevent esm.sh from bundling its own React
+  // This ensures all packages use the same React instance as the renderer
+  return `https://esm.sh/${specifier}?external=react,react-dom&target=es2022`;
 }
 
 /**
@@ -603,15 +520,7 @@ function refreshDistributedCacheAsync(
         getLastDistributedRefresh().set(hashStr, now);
         logger.debug("[HTTP-CACHE] Refreshed distributed cache TTL", { hash });
 
-        const manifestId = getManifestIdForHash(hashStr);
-        if (manifestId) {
-          refreshManifestTTL(manifestId).catch((err) => {
-            logger.debug("[HTTP-CACHE] Manifest TTL refresh failed", {
-              manifestId: manifestId.slice(0, 12),
-              err,
-            });
-          });
-        }
+        // Bundle manifest TTL refresh removed - JIT bundling handles dependencies
       } catch (error) {
         logger.debug("[HTTP-CACHE] Distributed cache refresh failed", { hash, error });
       }
@@ -641,12 +550,6 @@ function trackBundleAccumulator(hash: number, normalizedUrl: string, cachePath: 
 
 async function cacheHttpModuleInternal(url: string, options: CacheOptions): Promise<string | null> {
   const normalizedUrl = normalizeHttpUrl(url);
-
-  // Note: We always cache HTTP modules to local file:// paths, including React core.
-  // This ensures the same cache works for both compiled and non-compiled Deno.
-  // Multiple React instances are prevented because all modules use the same
-  // normalized URL -> same hash -> same local file path.
-
   const cacheDir = ensureAbsoluteDir(options.cacheDir);
   const cacheKey = `${cacheDir}:${normalizedUrl}`;
 
@@ -918,7 +821,11 @@ async function resolveSpecifier(
     // Always cache npm: imports to local files for consistency between
     // compiled and non-compiled modes.
     const bareSpecifier = specifier.slice(4);
-    const cached = await cacheHttpModule(`https://esm.sh/${bareSpecifier}`, options);
+    // Always include external=react,react-dom to prevent multiple React instances
+    const cached = await cacheHttpModule(
+      `https://esm.sh/${bareSpecifier}?external=react,react-dom&target=es2022`,
+      options,
+    );
     if (!cached) return bareSpecifier;
 
     // Use relative path if parent is also an HTTP module (same cache directory)
@@ -1020,21 +927,8 @@ export function cacheHttpImportsToLocal(
       (specifier) => replacements.get(specifier) ?? null,
     );
 
-    const bundles = bundleAccumulatorStorage.getStore();
-    if (!bundles?.length) return { code: rewrittenCode };
-
-    try {
-      const manifest = await createBundleManifest(bundles);
-      await storeBundleManifest(manifest);
-      logger.debug("[HTTP-CACHE] Created bundle manifest", {
-        manifestId: manifest.manifestId.slice(0, 12),
-        bundleCount: bundles.length,
-      });
-      return { code: rewrittenCode, bundleManifestId: manifest.manifestId };
-    } catch (error) {
-      logger.debug("[HTTP-CACHE] Failed to create bundle manifest", { error });
-      return { code: rewrittenCode };
-    }
+    // Bundle manifest creation removed - JIT bundling handles dependency tracking
+    return { code: rewrittenCode };
   });
 }
 

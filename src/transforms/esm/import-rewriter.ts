@@ -102,7 +102,7 @@ export function rewriteBareImports(
           warnUnversionedImport(specifier, projectId);
         }
 
-        return `https://esm.sh/${finalSpecifier}?external=react&target=es2022`;
+        return `https://esm.sh/${finalSpecifier}?external=react,react-dom&target=es2022`;
       }),
     {
       "transforms.code_length": code.length,

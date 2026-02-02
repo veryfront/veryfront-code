@@ -78,7 +78,7 @@ function rewriteBareImports(code: string, version?: string): string {
 
     if (shouldKeepBareSpecifier(specifier)) return `from "${specifier}"`;
 
-    return `from "https://esm.sh/${bareSpecifier}?external=react&target=es2022"`;
+    return `from "https://esm.sh/${bareSpecifier}?external=react,react-dom&target=es2022"`;
   });
 }
 

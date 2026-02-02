@@ -18,7 +18,6 @@ export { MemoCache, memoize, memoizeAsync, simpleHash as memoizeHash } from "./m
 
 export * from "./path-utils.ts";
 export * from "./format-utils.ts";
-export * from "./bundle-manifest.ts";
 export * from "./feature-flags.ts";
 export { isCompiledBinary } from "./platform.ts";
 export * from "./import-lockfile.ts";

@@ -105,12 +105,6 @@ function createImportMapPlugin(
           return { path: args.path, external: true };
         }
 
-        if (
-          args.path.includes("bundle-manifest-kv") || args.path.includes("bundle-manifest-redis")
-        ) {
-          return { path: args.path, external: true };
-        }
-
         if (args.namespace === "import-map" && args.path.startsWith(".")) {
           const importerDir = pathHelper.dirname(args.importer);
           const absolutePath = pathHelper.resolve(importerDir, args.path);

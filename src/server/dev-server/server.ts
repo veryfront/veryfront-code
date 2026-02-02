@@ -20,11 +20,13 @@ import {
   setSSRServerPort,
 } from "#veryfront/rendering/ssr-globals.ts";
 import { setEnv } from "#veryfront/platform/compat/process.ts";
+import { createPreviewHmrHandler, type PreviewHmrHandler } from "./preview-hmr-handler.ts";
 
 export class DevServer {
   private router: DynamicRouter;
   private componentRegistry!: ComponentRegistry;
   private hmrServer?: HMRServer;
+  private previewHmrHandler?: PreviewHmrHandler;
   private fileWatchSetup?: FileWatchSetup;
   private pipeline: MiddlewarePipeline;
   private adapter!: RuntimeAdapter;
@@ -111,6 +113,16 @@ export class DevServer {
         projectDir: this.options.projectDir,
         reactRefresh: this.options.enableFastRefresh,
         adapter: this.adapter,
+      });
+
+      // Create PreviewHmrHandler for fast incremental rebuilds via esbuild
+      // Uses project directory name as projectId for cache isolation
+      const projectId = this.options.projectDir.split("/").pop() || "project";
+      this.previewHmrHandler = createPreviewHmrHandler({
+        projectId,
+        projectDir: this.options.projectDir,
+        adapter: this.adapter,
+        hmrPort: this.options.hmrPort || this.options.port + 1,
       });
 
       await this.hmrServer.start();
@@ -234,6 +246,7 @@ export class DevServer {
       routeDiscovery,
       debounceMs,
       () => this.requestHandler?.invalidateUniversalHandler(),
+      this.previewHmrHandler,
     );
 
     await this.fileWatchSetup.setup();
@@ -259,6 +272,10 @@ export class DevServer {
 
     if (this.hmrServer) {
       await this.hmrServer.stop();
+    }
+
+    if (this.previewHmrHandler) {
+      await this.previewHmrHandler.shutdown();
     }
 
     if (this.server) {

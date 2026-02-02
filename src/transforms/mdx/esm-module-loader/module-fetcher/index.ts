@@ -20,15 +20,8 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "#veryfront/cache";
-import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
+import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
-import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
-import {
-  createBundleManifest,
-  storeBundleManifest,
-  validateBundleGroup,
-} from "../../../esm/bundle-manifest.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import {
   FRAMEWORK_ROOT,
@@ -43,13 +36,8 @@ import { hashString } from "../utils/hash.ts";
 import { createStubModule } from "../utils/stub-module.ts";
 import { resolveModuleFile } from "../resolution/file-finder.ts";
 import { recordSSRModules } from "../../../../modules/manifest/route-module-manifest.ts";
-import { getDistributedTransformBackend } from "#veryfront/transforms/esm/transform-cache.ts";
-import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
 import { resolveVeryfrontModuleUrl } from "../../../veryfront-module-urls.ts";
-
-/** TTL for cached transforms (uses centralized config) */
-const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
 
 /**
  * Maximum time allowed for the entire transform tree (recursive module resolution).
@@ -74,21 +62,6 @@ export class TransformTreeTimeoutError extends Error {
 /** Resolve the logger from context, falling back to global logger */
 function getLog(context?: { logger?: Logger }): Logger {
   return context?.logger ?? globalLogger;
-}
-
-/**
- * Build cache key for transformed module.
- * Includes content hash so cache invalidates when source changes.
- * Always uses SSR mode suffix since this module loader is for server-side MDX rendering.
- * CRITICAL: The :ssr suffix is required to avoid cache collisions with browser-mode transforms
- * that use relative paths (../lib/utils.js) instead of absolute paths (/_vf_modules/lib/utils.js).
- */
-function getTransformCacheKey(
-  projectId: string,
-  normalizedPath: string,
-  contentHash: string,
-): string {
-  return `v${VERSION}:${projectId}:${normalizedPath}:${contentHash}:ssr`;
 }
 
 /**
@@ -238,7 +211,7 @@ async function hasIncompatibleFrameworkPaths(code: string, log: Logger): Promise
  * This catches cases where distributed cache returns code with file:// paths
  * to vfmod modules that were created on a different pod/run with different hashes.
  */
-async function findMissingFileDependenciesInCode(code: string, log: Logger): Promise<string[]> {
+async function _findMissingFileDependenciesInCode(code: string, log: Logger): Promise<string[]> {
   const localFs = getLocalFs();
   const pattern = /file:\/\/([^"'\s]+\.mjs)/gi;
   const missing: string[] = [];
@@ -595,21 +568,6 @@ async function validateCachedModule(
     return false;
   }
 
-  const bundlePaths = extractHttpBundlePaths(cachedCode);
-  if (bundlePaths.length > 0) {
-    const cacheDir = getHttpBundleCacheDir();
-    const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-    if (failed.length > 0) {
-      log.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has missing HTTP bundles`, {
-        normalizedPath,
-        cachedPath,
-        failed,
-      });
-      pathCache.delete(versionedKey);
-      return false;
-    }
-  }
-
   if (!(await hasIncompatibleFrameworkPaths(cachedCode, log))) return true;
 
   log.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible framework paths`, {
@@ -770,180 +728,57 @@ async function doFetchAndCacheModule(
 
     const { sourceCode, actualFilePath } = resolved;
 
-    const contentHash = hashString(sourceCode);
-    const transformCacheKey = getTransformCacheKey(projectId, normalizedPath, contentHash);
+    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM START`, {
+      projectSlug,
+      normalizedPath,
+      actualFilePath,
+      sourceLength: sourceCode.length,
+    });
 
-    let moduleCode: string | null = null;
-    let needsDistributedCacheWrite = false;
-    const distributedCache = await getDistributedTransformBackend();
+    // Rewrite veryfront/* imports to /_vf_modules/ paths BEFORE transform
+    const preprocessedSource = rewriteVeryfrontImports(sourceCode);
 
-    if (distributedCache) {
-      try {
-        const cached = await distributedCache.get(transformCacheKey);
-        if (cached) {
-          // Detokenize all cache paths for local environment
-          moduleCode = detokenizeAllCachePaths(cached);
-          log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed transform cache HIT`, {
-            projectSlug,
-            normalizedPath,
-            cacheKey: transformCacheKey,
-          });
-
-          const bundleManifestKey = `${transformCacheKey}:bm`;
-          const manifestId = await distributedCache.get(bundleManifestKey).catch(() => null);
-
-          if (manifestId) {
-            const cacheDir = getHttpBundleCacheDir();
-            const validation = await validateBundleGroup(manifestId, cacheDir);
-            if (!validation.valid) {
-              log.warn(`${LOG_PREFIX_MDX_LOADER} Bundle manifest validation failed`, {
-                normalizedPath,
-                manifestId: manifestId.slice(0, 12),
-                failedHashes: validation.failedHashes,
-              });
-              moduleCode = null;
-            }
-          } else {
-            // Use detokenized code for bundle path extraction
-            const bundlePaths = extractHttpBundlePaths(moduleCode);
-            if (bundlePaths.length > 0) {
-              const cacheDir = getHttpBundleCacheDir();
-              const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-              if (failed.length > 0) {
-                log.warn(`${LOG_PREFIX_MDX_LOADER} Some HTTP bundles could not be recovered`, {
-                  normalizedPath,
-                  failed,
-                });
-                moduleCode = null;
-              }
-            }
-          }
-
-          // Use detokenized code for framework path checks
-          if (moduleCode && await hasIncompatibleFrameworkPaths(moduleCode, log)) {
-            log.warn(`${LOG_PREFIX_MDX_LOADER} Cached code has incompatible framework paths`, {
-              normalizedPath,
-              frameworkRoot: FRAMEWORK_ROOT,
-            });
-            moduleCode = null;
-          }
-
-          // CRITICAL: Check for unresolved /_vf_modules/ imports.
-          // Stale cache entries may have unresolved paths from before this fix.
-          if (moduleCode) {
-            const unresolved = hasUnresolvedImports(moduleCode);
-            if (unresolved.count > 0) {
-              log.warn(
-                `${LOG_PREFIX_MDX_LOADER} Cached code has ${unresolved.count} unresolved imports, invalidating`,
-                { normalizedPath, unresolved: unresolved.paths },
-              );
-              moduleCode = null;
-            }
-          }
-
-          // CRITICAL: Check that all file:// paths (vfmod modules, etc.) exist locally.
-          // Distributed cache may return code with file:// paths from other pods/runs
-          // that don't exist on this machine.
-          if (moduleCode) {
-            const missingDeps = await findMissingFileDependenciesInCode(moduleCode, log);
-            if (missingDeps.length > 0) {
-              log.warn(
-                `${LOG_PREFIX_MDX_LOADER} Cached code has ${missingDeps.length} missing file dependencies, invalidating`,
-                { normalizedPath, missingDeps: missingDeps.slice(0, 5) },
-              );
-              moduleCode = null;
-            }
-          }
-
-          // Safety net: Convert any remaining HTTP imports to local file:// paths.
-          // New cache entries should already have file:// paths, but old entries might have HTTP URLs.
-          // This is a no-op for properly cached entries and fixes legacy cache entries.
-          if (moduleCode) {
-            const importMap = await loadImportMap(projectDir);
-            const cacheResult = await cacheHttpImportsToLocal(moduleCode, {
-              cacheDir: getHttpBundleCacheDir(),
-              importMap,
-              reactVersion: context.reactVersion,
-            });
-            if (cacheResult.code !== moduleCode) {
-              log.debug(`${LOG_PREFIX_MDX_LOADER} Converted HTTP imports from legacy cache entry`, {
-                normalizedPath,
-              });
-              moduleCode = cacheResult.code;
-            }
-          }
-        }
-      } catch (error) {
-        log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache get failed`, {
-          normalizedPath,
-          error,
-        });
-      }
-    }
-
-    if (!moduleCode) {
-      log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM START`, {
-        projectSlug,
+    const transformStart = performance.now();
+    let moduleCode: string;
+    try {
+      moduleCode = await transformToESM(preprocessedSource, actualFilePath, projectDir, adapter, {
+        projectId,
+        dev: true,
+        ssr: true,
+        reactVersion: context.reactVersion,
+      });
+    } catch (transformError) {
+      log.error(`${LOG_PREFIX_MDX_LOADER} Transform failed for module`, {
         normalizedPath,
         actualFilePath,
         sourceLength: sourceCode.length,
+        sourcePreview: sourceCode.slice(0, 200),
+        error: transformError instanceof Error ? transformError.message : String(transformError),
       });
-
-      // Rewrite veryfront/* imports to /_vf_modules/ paths BEFORE transform
-      // so that ssrVfModulesPlugin can resolve them to file:// paths.
-      // Cached files don't have access to import maps, so we need to do this mapping here.
-      const preprocessedSource = rewriteVeryfrontImports(sourceCode);
-
-      const transformStart = performance.now();
-      try {
-        moduleCode = await transformToESM(preprocessedSource, actualFilePath, projectDir, adapter, {
-          projectId,
-          dev: true,
-          ssr: true,
-          reactVersion: context.reactVersion,
-        });
-      } catch (transformError) {
-        log.error(`${LOG_PREFIX_MDX_LOADER} Transform failed for module`, {
-          normalizedPath,
-          actualFilePath,
-          sourceLength: sourceCode.length,
-          sourcePreview: sourceCode.slice(0, 200),
-          error: transformError instanceof Error ? transformError.message : String(transformError),
-        });
-        throw transformError;
-      }
-
-      log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM DONE`, {
-        projectSlug,
-        normalizedPath,
-        transformMs: (performance.now() - transformStart).toFixed(1),
-        outputLength: moduleCode.length,
-      });
-
-      // Rewrite _dnt.polyfills.js / _dnt.shims.js relative imports to absolute file:// paths
-      moduleCode = rewriteDntImports(moduleCode, actualFilePath);
-
-      // Cache HTTP imports (esm.sh URLs) to local file:// paths.
-      // This ensures the same cache works for both compiled and non-compiled Deno.
-      // Compiled binaries cannot do dynamic HTTP imports, but non-compiled Deno
-      // also works fine with file:// paths, so we always cache for consistency.
-      {
-        log.debug(`${LOG_PREFIX_MDX_LOADER} Caching HTTP imports to local files`, {
-          normalizedPath,
-        });
-        const importMap = await loadImportMap(projectDir);
-        const cacheResult = await cacheHttpImportsToLocal(moduleCode, {
-          cacheDir: getHttpBundleCacheDir(),
-          importMap,
-          reactVersion: context.reactVersion,
-        });
-        moduleCode = cacheResult.code;
-      }
-
-      // Mark for distributed cache write AFTER nested imports are resolved.
-      // This ensures we don't cache code with unresolved /_vf_modules/ paths.
-      needsDistributedCacheWrite = true;
+      throw transformError;
     }
+
+    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM DONE`, {
+      projectSlug,
+      normalizedPath,
+      transformMs: (performance.now() - transformStart).toFixed(1),
+      outputLength: moduleCode.length,
+    });
+
+    // Rewrite _dnt.polyfills.js / _dnt.shims.js relative imports to absolute file:// paths
+    moduleCode = rewriteDntImports(moduleCode, actualFilePath);
+
+    // Cache HTTP imports (esm.sh URLs) to local file:// paths
+    log.debug(`${LOG_PREFIX_MDX_LOADER} Caching HTTP imports to local files`, {
+      normalizedPath,
+    });
+    const importMap = await loadImportMap(projectDir);
+    const cacheResult = await cacheHttpImportsToLocal(moduleCode, {
+      cacheDir: getHttpBundleCacheDir(),
+      importMap,
+      reactVersion: context.reactVersion,
+    });
+    moduleCode = cacheResult.code;
 
     const { vfModules, relative } = findNestedImports(moduleCode);
     log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] found nested imports`, {
@@ -1008,44 +843,6 @@ async function doFetchAndCacheModule(
       normalizedPath,
       projectSlug,
     );
-
-    // Write to distributed cache AFTER nested imports are resolved.
-    // This ensures other pods get fully-resolved code without /_vf_modules/ paths.
-    if (needsDistributedCacheWrite && distributedCache) {
-      // Tokenize all cache paths for cross-environment portability
-      // Uses aggressive tokenization to catch paths from ANY environment (build server, other pods)
-      const portableCode = tokenizeAllVeryFrontPaths(moduleCode);
-
-      // Store transformed code in distributed cache
-      distributedCache
-        .set(transformCacheKey, portableCode, TRANSFORM_CACHE_TTL_SECONDS)
-        .catch((error) => {
-          log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache set failed`, {
-            normalizedPath,
-            error,
-          });
-        });
-
-      // Create and store bundle manifest companion key for atomic validation
-      const bundlePaths = extractHttpBundlePaths(moduleCode);
-      if (bundlePaths.length > 0) {
-        const entries = bundlePaths.map((b) => ({ hash: b.hash, url: "", sizeBytes: 0 }));
-        createBundleManifest(entries).then(async (manifest) => {
-          await storeBundleManifest(manifest);
-          const bundleManifestKey = `${transformCacheKey}:bm`;
-          await distributedCache.set(
-            bundleManifestKey,
-            manifest.manifestId,
-            TRANSFORM_CACHE_TTL_SECONDS,
-          );
-        }).catch((error) => {
-          log.debug(`${LOG_PREFIX_MDX_LOADER} Bundle manifest creation failed`, {
-            normalizedPath,
-            error,
-          });
-        });
-      }
-    }
 
     log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule START`, {
       projectSlug,

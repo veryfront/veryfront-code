@@ -4,7 +4,6 @@ export * from "./module-cache.ts";
 export * from "./multi-tier.ts";
 export * from "./paths.ts";
 export * from "./types.ts";
-export * from "./tokenizing-gateway.ts";
 
 // Re-export key path functions for easy access
 export {

@@ -9,16 +9,9 @@ import { getRuntimeEnv, isRuntimeEnvInitialized, type RuntimeEnv } from "../conf
 import { CircuitBreakerOpen, getCircuitBreaker } from "../utils/circuit-breaker.ts";
 import { MEMORY_CACHE_MAX_ENTRIES } from "../utils/constants/cache.ts";
 import type { CacheBackend } from "./types.ts";
-import {
-  type CodeCacheGateway,
-  createTokenizingGateway,
-  type TokenizingCacheGateway,
-} from "./tokenizing-gateway.ts";
 
 // Re-export CacheBackend interface for backward compatibility
 export type { CacheBackend } from "./types.ts";
-// Re-export gateway types
-export type { CodeCacheGateway, TokenizingCacheGateway };
 
 type CacheRequestContext = {
   token?: string;
@@ -616,45 +609,4 @@ export const CacheBackends = {
     createCacheBackend({ keyPrefix: "http-module", circuitBreakerName: "api-cache-http" }),
   ssrModule: () => createCacheBackend({ keyPrefix: "ssr-module" }),
   projectCSS: () => createCacheBackend({ keyPrefix: "project-css" }),
-
-  /**
-   * Create a TokenizingCacheGateway for code storage.
-   * This is the ONLY authorized way to store transformed code in distributed cache.
-   *
-   * The gateway automatically handles:
-   * - Tokenization on write (replaces absolute paths with __VF_CACHE_DIR__)
-   * - Detokenization on read (replaces tokens with local paths)
-   * - Validation to ensure code is portable before storage
-   *
-   * @param name - Name for logging (e.g., "TRANSFORM-CACHE", "SSR-MODULE")
-   * @param config - Cache backend configuration
-   * @returns A gateway that enforces tokenization for code storage
-   */
-  codeStore: async (
-    name: string,
-    config: CacheBackendConfig = {},
-  ): Promise<TokenizingCacheGateway> => {
-    const backend = await createCacheBackend(config);
-    return createTokenizingGateway(backend, name);
-  },
 };
-
-/**
- * Create a distributed cache accessor that returns a TokenizingCacheGateway.
- * This wraps createDistributedCacheAccessor with automatic gateway creation.
- */
-export function createDistributedCodeCacheAccessor(
-  factory: () => Promise<CacheBackend>,
-  name: string,
-): () => Promise<TokenizingCacheGateway | null> {
-  const baseAccessor = createDistributedCacheAccessor(factory, name);
-
-  return async () => {
-    const backend = await baseAccessor();
-    if (!backend) return null;
-    return createTokenizingGateway(backend, name);
-  };
-}
-
-// Re-export createTokenizingGateway for convenience
-export { createTokenizingGateway };

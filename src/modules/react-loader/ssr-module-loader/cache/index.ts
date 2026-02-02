@@ -14,13 +14,9 @@ export {
 } from "./memory.ts";
 
 export {
+  clearSSRModuleCache as clearSSRModuleLRUCache,
   getFromRedis,
-  getRedisClientInstance,
-  getRedisEnabled,
   initializeSSRDistributedCache,
-  initializeSSRRedisCache,
   isSSRDistributedCacheEnabled,
-  isSSRRedisCacheEnabled,
-  redisKey,
   setInRedis,
 } from "./redis.ts";

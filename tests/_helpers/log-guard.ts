@@ -158,9 +158,6 @@ const allowedWarnings: string[] = [
   "Render failed unexpectedly",
   "Test error",
 
-  // Bundle manifest errors (expected when manifest is missing)
-  "[bundle-manifest]",
-
   // Module resolution errors in tests
   "Cannot find module",
   "Module not found",

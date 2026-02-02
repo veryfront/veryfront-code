@@ -8,13 +8,6 @@ export async function cleanupRenderer(renderer: VeryfrontRenderer): Promise<void
 
 export async function cleanupCaches(): Promise<void> {
   try {
-    const { destroyTransformCache } = await import("#veryfront/transforms/esm/transform-cache.ts");
-    destroyTransformCache();
-  } catch {
-    // Ignore if not available
-  }
-
-  try {
     const { destroyVendorCache } = await import("../../../build/vendor-cache.ts");
     destroyVendorCache();
   } catch {

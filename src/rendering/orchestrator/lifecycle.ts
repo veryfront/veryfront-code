@@ -1,10 +1,13 @@
 import { join } from "#veryfront/platform/compat/path-helper.ts";
 import { isCompiledBinary, rendererLogger as logger } from "#veryfront/utils";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
 import { ComponentRegistry } from "../ssr/component-registry.ts";
 import { VirtualModuleSystem } from "../virtual-module-system.ts";
-import { CacheCoordinator } from "../cache/index.ts";
+import type { CacheLookupResult, SimpleCacheCoordinator } from "../cache/index.ts";
+import type { CachePayload, CacheStore } from "../cache/types.ts";
+import type { RenderResult } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import {
   FilesystemCacheStore,
@@ -12,7 +15,6 @@ import {
   MemoryCacheStore,
   RedisCacheStore,
 } from "../cache/stores/index.ts";
-import type { CacheStore } from "../cache/types.ts";
 import { LayoutCollector, LayoutCompiler } from "../layouts/index.ts";
 import { PageRenderer } from "../page-renderer.ts";
 import { PageResolver } from "../page-resolution/index.ts";
@@ -36,7 +38,7 @@ export interface LifecycleOptions {
 export interface RendererServices {
   componentRegistry: ComponentRegistry;
   virtualModules: VirtualModuleSystem;
-  cacheCoordinator: CacheCoordinator;
+  cacheCoordinator: SimpleCacheCoordinator;
   mdxCacheAdapter: MDXCacheAdapter;
   layoutCollector: LayoutCollector;
   layoutCompiler: LayoutCompiler;
@@ -121,10 +123,11 @@ export class RendererLifecycle {
         break;
     }
 
-    const cacheCoordinator = new CacheCoordinator({
-      store: cacheStore,
-      ttlMs: renderCacheConfig.ttl,
-    });
+    const ttlMs = renderCacheConfig.ttl ?? 5 * 60 * 1000;
+    const cacheCoordinator: SimpleCacheCoordinator = createSimpleCacheCoordinator(
+      cacheStore,
+      ttlMs,
+    );
 
     const mdxCacheAdapter = new MDXCacheAdapter({ config, mode });
 
@@ -271,4 +274,87 @@ export class RendererLifecycle {
   async destroy(): Promise<void> {
     await this.services?.cacheCoordinator.destroy();
   }
+}
+
+/**
+ * Creates a simple cache coordinator adapter for single-project rendering.
+ * This implements the SimpleCacheCoordinator interface without requiring RenderContext.
+ */
+function createSimpleCacheCoordinator(store: CacheStore, ttlMs: number): SimpleCacheCoordinator {
+  const isExpired = (entry: CachePayload): boolean =>
+    typeof entry.expiresAt === "number" && Date.now() > entry.expiresAt;
+
+  const hydrateResult = (entry: CachePayload): RenderResult => {
+    let nodeMap: Map<number, unknown> | undefined;
+    if (entry.nodeMapEntries) {
+      nodeMap = new Map<number, unknown>(entry.nodeMapEntries);
+    } else if (entry.result.nodeMap instanceof Map) {
+      nodeMap = entry.result.nodeMap;
+    } else if (entry.result.nodeMap && typeof entry.result.nodeMap === "object") {
+      nodeMap = new Map<number, unknown>(
+        Object.entries(entry.result.nodeMap).map(([k, v]) => [Number(k), v]),
+      );
+    }
+    return { ...entry.result, nodeMap, stream: null };
+  };
+
+  return {
+    checkCache(slug: string, cacheKey?: string): Promise<CacheLookupResult> {
+      return withSpan("cache.checkCache", async () => {
+        const key = cacheKey ?? slug;
+        const cached = await store.get(key);
+        if (!cached) return { depAwareSlug: slug, moduleCacheKey: key };
+        if (isExpired(cached)) {
+          await store.delete(key);
+          return { depAwareSlug: slug, moduleCacheKey: key };
+        }
+        return {
+          cachedResult: hydrateResult(cached),
+          depAwareSlug: slug,
+          moduleCacheKey: key,
+          cachedModule: cached.result.pageModule,
+        };
+      }, { "cache.slug": slug, "cache.key": cacheKey ?? slug });
+    },
+
+    persistResult(result: RenderResult, slug: string, cacheKey?: string): Promise<void> {
+      return withSpan("cache.persistResult", async () => {
+        if (result.stream) return;
+        const key = cacheKey ?? slug;
+        const now = Date.now();
+        const payload: CachePayload = {
+          result: {
+            html: result.html,
+            css: result.css,
+            frontmatter: result.frontmatter,
+            headings: result.headings,
+            nodeMap: result.nodeMap ? new Map(result.nodeMap) : undefined,
+            stream: null,
+            ssrHash: result.ssrHash,
+            pageModule: result.pageModule,
+          },
+          nodeMapEntries: result.nodeMap ? Array.from(result.nodeMap.entries()) : undefined,
+          storedAt: now,
+          expiresAt: now + ttlMs,
+        };
+        await store.set(key, payload);
+      }, { "cache.slug": slug, "cache.key": cacheKey ?? slug });
+    },
+
+    async clearAll(): Promise<void> {
+      await store.clear();
+    },
+
+    async clearSlug(slug: string): Promise<void> {
+      if (store.deleteByPrefix) {
+        await store.deleteByPrefix(slug);
+        return;
+      }
+      await store.delete(slug);
+    },
+
+    async destroy(): Promise<void> {
+      await store.destroy();
+    },
+  };
 }

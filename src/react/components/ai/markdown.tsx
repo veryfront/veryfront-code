@@ -19,7 +19,7 @@ export interface CodeBlockProps {
   inline?: boolean;
 }
 
-const ESM_REACT_MARKDOWN = "https://esm.sh/react-markdown@9?external=react&target=es2022";
+const ESM_REACT_MARKDOWN = "https://esm.sh/react-markdown@9?external=react,react-dom&target=es2022";
 const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4?target=es2022";
 const ESM_REHYPE_HIGHLIGHT = "https://esm.sh/rehype-highlight@7?target=es2022";
 const ESM_MERMAID = "https://esm.sh/mermaid@11";

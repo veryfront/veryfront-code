@@ -95,7 +95,11 @@ export function createHTTPPlugin(): Plugin {
         try {
           return { path: new URL(path, args.importer).toString(), namespace: "http-url" };
         } catch {
-          return { path: `https://esm.sh/${path}`, namespace: "http-url" };
+          // Always include external=react,react-dom to prevent multiple React instances
+          return {
+            path: `https://esm.sh/${path}?external=react,react-dom&target=es2022`,
+            namespace: "http-url",
+          };
         }
       });
 

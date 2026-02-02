@@ -1,5 +1,4 @@
 export { loadComponentFromSource } from "./component-loader.ts";
-export { loadComponentsUnified } from "./unified-loader.ts";
 export { clearSSRModuleCache, clearSSRModuleCacheForProject } from "./ssr-module-loader/index.ts";
 
 export { getGlobalTmpDir, getProjectTmpDir, resetGlobalTmpDir } from "./temp-directory.ts";

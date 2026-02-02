@@ -4,7 +4,6 @@ import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { handleErrorWithFallback } from "#veryfront/errors/index.ts";
 import { computeHash } from "../utils/index.ts";
 import { getConfig } from "#veryfront/config";
-import { initializeBundleManifest } from "#veryfront/utils/bundle-manifest-init.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
@@ -42,8 +41,6 @@ export class ConfigurationManager {
     });
 
     this.config = this.preloadedConfig ?? (await getConfig(this.projectDir, this.adapter));
-
-    await initializeBundleManifest(this.config, this.mode, this.adapter);
 
     this.projectCacheKey = await handleErrorWithFallback(
       () => computeHash(this.projectDir),

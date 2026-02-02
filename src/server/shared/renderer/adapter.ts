@@ -1,9 +1,11 @@
 /**************************
  * Renderer Adapter
  *
- * Adapts the shared Renderer to work with handler contexts.
- * Creates lightweight adapters that bind the shared renderer
+ * Adapts the JIT Renderer to work with handler contexts.
+ * Creates lightweight adapters that bind the renderer
  * to a specific project context.
+ *
+ * All modes now use the JIT renderer for rendering.
  *
  * @module server/shared/renderer/adapter
  **************************/
@@ -11,18 +13,20 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getConfig } from "#veryfront/config";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import type { HandlerContext } from "../../handlers/types.ts";
 import { buildEnrichedContext } from "../../context/enriched-context.ts";
 import {
   createRenderContextFromEnriched,
-  destroyRenderer as destroySharedRenderer,
-  getRenderer,
-  initializeRenderer,
-  isRendererInitialized,
   type RenderContext,
-  type Renderer,
-  type RendererOptions,
 } from "../../../rendering/renderer.ts";
+import {
+  clearCacheWithRouter,
+  type CommonRenderer,
+  destroyRenderers,
+  initializeRenderers,
+} from "../../../rendering/render-mode-router.ts";
+import { getRenderer, isRendererInitialized } from "../../../rendering/renderer.ts";
 import type {
   PageDataResponse,
   RenderOptions,
@@ -54,21 +58,22 @@ export interface RendererAdapter {
   destroy(): Promise<void>;
 }
 
-let rendererInitPromise: Promise<Renderer> | null = null;
+let rendererInitPromise: Promise<CommonRenderer> | null = null;
 
-async function getOrInitRenderer(): Promise<Renderer> {
+async function getOrInitRenderer(): Promise<CommonRenderer> {
   if (isRendererInitialized()) return getRenderer();
   if (rendererInitPromise) return rendererInitPromise;
 
   const isProxyMode = getEnv("PROXY_MODE") === "1";
   const apiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
-  const options: RendererOptions = {};
+  const env = getRuntimeEnv();
 
   // Only use API-backed cache when both PROXY_MODE=1 and API URL is configured
+  let cacheOptions;
   if (isProxyMode && apiBaseUrl) {
     const renderCacheTtlSeconds = 3600;
     logger.debug("[RendererAdapter] Using API-backed distributed render cache");
-    options.cache = {
+    cacheOptions = {
       store: new APICacheStore({
         keyPrefix: "render",
         ttlSeconds: renderCacheTtlSeconds,
@@ -80,13 +85,21 @@ async function getOrInitRenderer(): Promise<Renderer> {
   }
 
   const useApiCache = isProxyMode && !!apiBaseUrl;
-  logger.debug("[RendererAdapter] Initializing renderer", {
+  logger.debug("[RendererAdapter] Initializing renderers", {
     proxyMode: isProxyMode,
     hasApiUrl: !!apiBaseUrl,
     cacheType: useApiCache ? "api-distributed" : "memory",
+    renderMode: env.renderMode,
+    bundlerEnabled: env.bundlerEnabled,
   });
 
-  rendererInitPromise = initializeRenderer(options);
+  // Initialize renderers (legacy and JIT)
+  rendererInitPromise = (async () => {
+    await initializeRenderers({
+      jit: cacheOptions ? { cache: cacheOptions } : undefined,
+    });
+    return getRenderer();
+  })();
 
   try {
     return await rendererInitPromise;
@@ -179,7 +192,7 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
 
 class RendererAdapterImpl implements RendererAdapter {
   constructor(
-    private renderer: Renderer,
+    private renderer: CommonRenderer,
     private ctx: RenderContext,
   ) {}
 
@@ -196,7 +209,8 @@ class RendererAdapterImpl implements RendererAdapter {
   }
 
   clearCache(slug?: string): void {
-    this.renderer.clearCache(this.ctx, slug).catch((error) => {
+    // Clear cache across all renderers via router
+    clearCacheWithRouter(this.ctx, slug).catch((error) => {
       logger.warn("[RendererAdapter] Failed to clear cache", { error: String(error), slug });
     });
   }
@@ -285,6 +299,7 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
 }
 
 export async function destroyRendererAdapter(): Promise<void> {
-  await destroySharedRenderer();
+  // Destroy all renderers via the router (JIT + legacy)
+  await destroyRenderers();
   rendererInitPromise = null;
 }

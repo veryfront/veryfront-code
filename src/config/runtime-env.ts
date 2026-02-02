@@ -32,6 +32,30 @@ export interface RuntimeEnv {
 
   experimentalRsc: boolean;
 
+  /**
+   * Render mode determines how modules are bundled and cached:
+   * - "jit-bundle": Full project bundling on first request (production)
+   * - "on-demand": Per-file transform with distributed cache (legacy)
+   * - "watch": esbuild watch mode with HMR (preview/development)
+   *
+   * Auto-detection when not set:
+   * - Production environment → "jit-bundle"
+   * - Preview environment → "on-demand" (for now, will migrate to "watch")
+   * - Local development → "watch"
+   */
+  renderMode: "jit-bundle" | "on-demand" | "watch";
+
+  /**
+   * Enable the new bundler architecture (Phase 1 rollout).
+   * When false, falls back to legacy on-demand transform pipeline.
+   */
+  bundlerEnabled: boolean;
+
+  /**
+   * HMR WebSocket port for preview mode
+   */
+  hmrPort: number;
+
   redisUrl: string | undefined;
   cacheDir: string | undefined;
   disableLruInterval: boolean;
@@ -77,6 +101,7 @@ const DEFAULTS = {
   apiBaseUrl: "http://api.lvh.me:4000",
   port: 3001,
   ssrMaxConcurrentTransforms: 3,
+  hmrPort: 3001,
 } as const;
 
 let _runtimeEnv: RuntimeEnv | null = null;
@@ -88,6 +113,38 @@ function parseNumber(value: string | undefined, defaultVal: number): number {
 
   const parsed = parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : defaultVal;
+}
+
+type RenderMode = "jit-bundle" | "on-demand" | "watch";
+
+function parseRenderMode(value: string | undefined, nodeEnv: string): RenderMode {
+  // If explicitly set, validate and return
+  if (value) {
+    const lower = value.toLowerCase();
+    if (lower === "jit-bundle" || lower === "jit" || lower === "bundle") {
+      return "jit-bundle";
+    }
+    if (lower === "on-demand" || lower === "legacy" || lower === "transform") {
+      return "on-demand";
+    }
+    if (lower === "watch" || lower === "hmr" || lower === "dev") {
+      return "watch";
+    }
+    // Invalid value, fall through to auto-detection
+    logger.warn(`[RuntimeEnv] Invalid VERYFRONT_RENDER_MODE: ${value}, using auto-detection`);
+  }
+
+  // Auto-detection based on environment
+  const _isProduction = nodeEnv === "production";
+  const isLocalDev = nodeEnv === "development" || !nodeEnv;
+
+  if (isLocalDev) {
+    return "watch";
+  }
+
+  // Production and preview environments use on-demand for now (will migrate to jit-bundle)
+  // This provides a safe rollout path
+  return "on-demand";
 }
 
 function readEnvSnapshot(): RuntimeEnv {
@@ -130,6 +187,10 @@ function readEnvSnapshot(): RuntimeEnv {
     vcr: getEnv("VCR") || undefined,
 
     experimentalRsc: getEnv("VERYFRONT_EXPERIMENTAL_RSC") === "1",
+
+    renderMode: parseRenderMode(getEnv("VERYFRONT_RENDER_MODE"), nodeEnv),
+    bundlerEnabled: isTruthyEnvValue(getEnv("VERYFRONT_BUNDLER_ENABLED")),
+    hmrPort: parseNumber(getEnv("VERYFRONT_HMR_PORT"), DEFAULTS.hmrPort),
 
     redisUrl: getEnv("REDIS_URL") || undefined,
     cacheDir: getEnv("VERYFRONT_CACHE_DIR") || getEnv("VF_CACHE_DIR") || undefined,

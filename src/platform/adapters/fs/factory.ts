@@ -18,7 +18,8 @@ import {
   clearSnippetCache,
   clearSnippetCacheForProject,
 } from "../../../rendering/snippet-renderer.ts";
-import { clearRendererCacheForProject } from "../../../rendering/renderer.ts";
+import { clearCacheForProjectWithRouter } from "../../../rendering/render-mode-router.ts";
+import { invalidateProjectBundles } from "../../../bundler/jit-bundler.ts";
 import { invalidateProjectCSS } from "../../../html/styles-builder/tailwind-compiler.ts";
 import { clearDomainCache } from "../../../server/utils/domain-lookup.ts";
 
@@ -53,7 +54,11 @@ export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
             clearSSRModuleCacheForProject,
             clearRouterDetectionCacheForProject,
             clearSnippetCacheForProject,
-            clearRendererCacheForProject,
+            // Use router to clear both JIT and legacy renderer caches, plus invalidate bundles
+            clearRendererCacheForProject: async (projectId: string) => {
+              await clearCacheForProjectWithRouter(projectId);
+              await invalidateProjectBundles(projectId);
+            },
             clearProjectCSSCache: invalidateProjectCSS,
             clearDomainCache,
             triggerReload: (changedPaths, project) =>

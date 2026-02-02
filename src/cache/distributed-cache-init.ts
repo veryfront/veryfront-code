@@ -1,6 +1,5 @@
 import { initializeFileCacheBackend } from "#veryfront/platform/adapters/fs/cache/file-cache.ts";
 import { initializeSSRDistributedCache } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
-import { initializeTransformCache } from "#veryfront/transforms/esm/transform-cache.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { initializeProjectCSSCache } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
@@ -10,7 +9,6 @@ import { isApiCacheAvailable } from "./backend.ts";
 
 export interface DistributedCacheStatus {
   backend: "api" | "redis" | "memory";
-  transformCache: boolean;
   ssrModuleCache: boolean;
   fileCache: boolean;
   projectCSSCache: boolean;
@@ -32,7 +30,6 @@ export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
   if (backend === "memory") {
     return Promise.resolve({
       backend,
-      transformCache: false,
       ssrModuleCache: false,
       fileCache: false,
       projectCSSCache: false,
@@ -45,7 +42,6 @@ export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
       logger.info("[DistributedCache] Initializing caches...", { backend });
 
       const results = await Promise.allSettled([
-        initializeTransformCache(),
         initializeSSRDistributedCache(),
         initializeFileCacheBackend(),
         initializeProjectCSSCache(),
@@ -53,14 +49,12 @@ export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
 
       const status: DistributedCacheStatus = {
         backend,
-        transformCache: wasSuccessful(results[0]),
-        ssrModuleCache: wasSuccessful(results[1]),
-        fileCache: wasSuccessful(results[2]),
-        projectCSSCache: wasSuccessful(results[3]),
+        ssrModuleCache: wasSuccessful(results[0]),
+        fileCache: wasSuccessful(results[1]),
+        projectCSSCache: wasSuccessful(results[2]),
       };
 
-      const enabled = Number(status.transformCache) +
-        Number(status.ssrModuleCache) +
+      const enabled = Number(status.ssrModuleCache) +
         Number(status.fileCache) +
         Number(status.projectCSSCache);
 
@@ -74,7 +68,6 @@ export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
       logger.info("[DistributedCache] Initialization complete", {
         backend,
         enabled,
-        transform: status.transformCache,
         ssrModule: status.ssrModuleCache,
         file: status.fileCache,
         projectCSS: status.projectCSSCache,

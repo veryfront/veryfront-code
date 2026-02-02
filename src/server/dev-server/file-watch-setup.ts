@@ -6,6 +6,7 @@ import type { HMRServer } from "./hmr-server.ts";
 import { OptimizedFileWatcher } from "./file-watcher.ts";
 import type { RouteDiscovery } from "./route-discovery.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
+import type { PreviewHmrHandler } from "./preview-hmr-handler.ts";
 
 const METRICS_LOG_INTERVAL = 10;
 
@@ -45,6 +46,7 @@ export class FileWatchSetup {
     private routeDiscovery: RouteDiscovery,
     private debounceMs: number,
     private invalidateHandler: () => void = () => {},
+    private previewHmrHandler?: PreviewHmrHandler,
   ) {}
 
   async setup(): Promise<void> {
@@ -148,6 +150,12 @@ export class FileWatchSetup {
 
   private async handleBatchedFileChanges(changes: string[]): Promise<void> {
     const startTime = performance.now();
+
+    // If PreviewHmrHandler is available, use it for fast incremental rebuilds
+    // This provides ~10-50ms rebuild times via esbuild's incremental mode
+    if (this.previewHmrHandler) {
+      await this.previewHmrHandler.triggerRebuild(changes);
+    }
 
     await this.refreshAndReload(changes, "");
 

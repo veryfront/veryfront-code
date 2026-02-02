@@ -1,16 +1,267 @@
-import { join } from "#veryfront/platform/compat/path/index.ts";
-import type * as React from "react";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { transformToESM } from "#veryfront/transforms/esm/index.ts";
-import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
-import { getProjectTmpDir } from "./temp-directory.ts";
-import { normalizeModulePath, resolveRelativePath } from "./path-resolver.ts";
-import type { LoadComponentOptions } from "./types.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { SSRModuleLoader } from "./ssr-module-loader/index.ts";
-import { extractComponent } from "./extract-component.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+/**
+ * Component Loader
+ *
+ * Loads React components from source code using the JIT bundler.
+ * Components are transformed with esbuild and cached for efficient SSR.
+ *
+ * Architecture:
+ * - Uses transformModule from jit-bundler for fast esbuild-based transforms
+ * - Handles @/ alias and relative imports by recursively transforming dependencies
+ * - Local-only caching (no distributed cache needed)
+ *
+ * @module modules/react-loader/component-loader
+ */
 
+import type * as React from "react";
+import { dirname, join, normalize } from "#veryfront/platform/compat/path/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
+import type { LoadComponentOptions } from "./types.ts";
+import { transformModule } from "#veryfront/bundler/jit-bundler.ts";
+import { addDepsToEsmShUrls } from "#veryfront/transforms/esm/react-imports.ts";
+import { cacheHttpImportsToLocal } from "#veryfront/transforms/esm/http-cache.ts";
+import { getProjectTmpDir } from "./temp-directory.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { extractComponent } from "./extract-component.ts";
+import { findSourceFile } from "#veryfront/rendering/orchestrator/file-resolver/index.ts";
+import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+
+/** In-memory LRU cache for transformed component paths */
+const transformPathCache = new LRUCache<string, string>({ maxEntries: 2000 });
+
+/** In-memory LRU cache for transformed code */
+const transformCodeCache = new LRUCache<string, string>({ maxEntries: 2000 });
+
+/** Cache for created directories to avoid repeated mkdir calls */
+const createdDirs = new Set<string>();
+const MAX_CREATED_DIRS = 5000;
+
+function pruneCreatedDirs(): void {
+  if (createdDirs.size <= MAX_CREATED_DIRS) return;
+  const toDelete = createdDirs.size - MAX_CREATED_DIRS;
+  let deleted = 0;
+  for (const dir of createdDirs) {
+    if (deleted >= toDelete) break;
+    createdDirs.delete(dir);
+    deleted++;
+  }
+}
+
+async function ensureDir(adapter: RuntimeAdapter, dir: string): Promise<void> {
+  if (createdDirs.has(dir)) return;
+  try {
+    await adapter.fs.mkdir(dir, { recursive: true });
+  } catch {
+    // Directory might already exist
+  } finally {
+    createdDirs.add(dir);
+    pruneCreatedDirs();
+  }
+}
+
+function getTransformCacheKey(
+  filePath: string,
+  contentHash: string,
+  projectId: string,
+): string {
+  return `${projectId}:${filePath}:${contentHash}`;
+}
+
+type AliasImport = { full: string; path: string };
+type RelativeImport = { full: string; path: string; fromDir: string };
+type ResolvedDep = {
+  full: string;
+  path: string;
+  relativePath: string;
+  depFilePath: string | null;
+};
+
+async function resolveAliasImport(
+  imp: AliasImport,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+): Promise<ResolvedDep> {
+  const relativePath = imp.path.substring(2); // Remove @/ prefix
+  const depFilePath = (await findSourceFile(relativePath, projectDir, adapter)) ??
+    (await findSourceFile(`components/${relativePath}`, projectDir, adapter));
+  return { ...imp, relativePath, depFilePath };
+}
+
+async function resolveRelativeImport(
+  imp: RelativeImport,
+  adapter: RuntimeAdapter,
+): Promise<ResolvedDep> {
+  const basePath = normalize(join(imp.fromDir, imp.path));
+  const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
+  let depFilePath: string | null = null;
+
+  // Try exact path
+  if (await adapter.fs.exists(basePath)) {
+    const stat = await adapter.fs.stat(basePath);
+    if (!stat.isDirectory) depFilePath = basePath;
+  }
+
+  // Try with extensions
+  if (!depFilePath) {
+    for (const ext of extensions) {
+      const pathWithExt = basePath + ext;
+      if (await adapter.fs.exists(pathWithExt)) {
+        depFilePath = pathWithExt;
+        break;
+      }
+    }
+  }
+
+  // Try index files
+  if (!depFilePath) {
+    for (const ext of extensions) {
+      const indexPath = join(basePath, `index${ext}`);
+      if (await adapter.fs.exists(indexPath)) {
+        depFilePath = indexPath;
+        break;
+      }
+    }
+  }
+
+  return { full: imp.full, path: imp.path, relativePath: imp.path, depFilePath };
+}
+
+/**
+ * Transform a component and all its local dependencies.
+ */
+async function transformComponentWithDeps(
+  source: string,
+  filePath: string,
+  tmpDir: string,
+  localAdapter: RuntimeAdapter,
+  projectDir: string,
+  projectId: string,
+  adapter: RuntimeAdapter,
+  reactVersion?: string,
+  depth = 0,
+): Promise<string> {
+  if (depth > 20) {
+    throw new Error(`Max transform depth exceeded for ${filePath}`);
+  }
+
+  const contentHash = hashCodeHex(source);
+  const cacheKey = getTransformCacheKey(filePath, contentHash, projectId);
+
+  // Check path cache
+  const cachedPath = transformPathCache.get(cacheKey);
+  if (cachedPath) {
+    if (await localAdapter.fs.exists(cachedPath)) {
+      return cachedPath;
+    }
+    transformPathCache.delete(cacheKey);
+  }
+
+  let fileContent = source;
+  const fileDir = dirname(filePath);
+
+  // Match @/ alias imports
+  const aliasImports: AliasImport[] = [...fileContent.matchAll(/from\s+["'](@\/[^"']+)["']/g)].map(
+    (m) => ({ full: m[0], path: m[1]! }),
+  );
+
+  // Match relative imports
+  const relativeImports: RelativeImport[] = [
+    ...fileContent.matchAll(/from\s+["'](\.\.?\/[^"']+)["']/g),
+  ]
+    .map((m) => ({ full: m[0], path: m[1]!, fromDir: fileDir }))
+    .filter((imp) => !imp.path.includes("file://"));
+
+  // Resolve dependencies
+  const resolvedAliasDeps = await Promise.all(
+    aliasImports.map((imp) => resolveAliasImport(imp, projectDir, adapter)),
+  );
+  const resolvedRelativeDeps = await Promise.all(
+    relativeImports.map((imp) => resolveRelativeImport(imp, adapter)),
+  );
+  const resolvedDeps = [...resolvedAliasDeps, ...resolvedRelativeDeps];
+
+  // Transform dependencies recursively
+  const transformedDeps = await Promise.all(
+    resolvedDeps
+      .filter((d) => d.depFilePath)
+      .map(async (dep) => {
+        const depSource = await adapter.fs.readFile(dep.depFilePath!);
+        const depTempPath = await transformComponentWithDeps(
+          depSource,
+          dep.depFilePath!,
+          tmpDir,
+          localAdapter,
+          projectDir,
+          projectId,
+          adapter,
+          reactVersion,
+          depth + 1,
+        );
+        return { ...dep, depTempPath };
+      }),
+  );
+
+  // Rewrite imports to file:// paths
+  for (const dep of transformedDeps) {
+    fileContent = fileContent.replace(dep.full, `from "file://${dep.depTempPath}"`);
+  }
+
+  // Check transform code cache
+  const transformCodeKey = `${projectDir}:${filePath}:${hashCodeHex(fileContent)}`;
+  let transformedCode = transformCodeCache.get(transformCodeKey);
+
+  if (!transformedCode) {
+    logger.debug("[ComponentLoader] Transform cache miss, transforming", { filePath });
+    transformedCode = await transformModule(fileContent, filePath, {
+      projectDir,
+      reactVersion,
+      ssr: true,
+    });
+    // Normalize esm.sh URLs to include external=react,react-dom to prevent multiple React instances
+    transformedCode = await addDepsToEsmShUrls(transformedCode, true, reactVersion);
+    // Cache HTTP imports to local file:// paths to ensure consistent React instances
+    const cacheResult = await cacheHttpImportsToLocal(transformedCode, {
+      cacheDir: getHttpBundleCacheDir(),
+      importMap: { imports: {}, scopes: {} },
+      reactVersion,
+    });
+    transformedCode = cacheResult.code;
+    transformCodeCache.set(transformCodeKey, transformedCode);
+  }
+
+  const transformedHash = hashCodeHex(transformedCode).slice(0, 8);
+  const relativePath = filePath.startsWith(projectDir)
+    ? filePath.slice(projectDir.length).replace(/^\/+/, "")
+    : filePath.replace(/^\/+/, "");
+
+  const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, `.${transformedHash}.js`);
+  const tempFilePath = join(tmpDir, jsPath);
+
+  const tempDir = tempFilePath.substring(0, tempFilePath.lastIndexOf("/"));
+  await ensureDir(localAdapter, tempDir);
+
+  await localAdapter.fs.writeFile(tempFilePath, transformedCode);
+
+  transformPathCache.set(cacheKey, tempFilePath);
+  return tempFilePath;
+}
+
+/**
+ * Load a React component from source code.
+ *
+ * Uses the JIT bundler's transformModule for fast esbuild-based transforms.
+ * Handles @/ alias and relative imports by recursively transforming dependencies.
+ *
+ * @param source - Component source code
+ * @param filePath - Path to the component file
+ * @param projectDir - Project root directory
+ * @param adapter - Runtime adapter for file system access
+ * @param options - Optional loader configuration
+ * @returns The loaded React component
+ */
 export function loadComponentFromSource(
   source: string,
   filePath: string,
@@ -20,60 +271,52 @@ export function loadComponentFromSource(
 ): Promise<React.ComponentType<Record<string, unknown>>> {
   const fileName = filePath.split("/").pop() ?? filePath;
   const projectId = options?.projectId ?? projectDir;
-  const dev = options?.dev ?? true;
-  const ssr = options?.ssr ?? true;
 
   return withSpan(
     "modules.react.loadComponentFromSource",
     async () => {
-      if (ssr) {
-        const loader = new SSRModuleLoader({
-          projectDir,
-          projectId,
-          projectSlug: options?.projectSlug,
-          adapter,
-          dev,
-          contentSourceId: options?.contentSourceId,
-          reactVersion: options?.reactVersion,
-        });
+      const localAdapter = await getLocalAdapter();
+      const tmpDir = await getProjectTmpDir(projectId);
 
-        return loader.loadModule(filePath, source);
-      }
-
-      const transformOpts: TransformOptions = {
-        projectId,
-        dev,
-        moduleServerUrl: options?.moduleServerUrl ?? "/_vf_modules",
-        vendorBundleHash: options?.vendorBundleHash,
-        ssr: false,
-        reactVersion: options?.reactVersion,
-      };
-
-      const transformedCode = await transformToESM(
+      const tempFilePath = await transformComponentWithDeps(
         source,
         filePath,
+        tmpDir,
+        localAdapter,
         projectDir,
+        projectId,
         adapter,
-        transformOpts,
+        options?.reactVersion,
       );
 
-      const tmpDir = await getProjectTmpDir(projectId);
-      const relativeFilePath = resolveRelativePath(filePath, projectDir);
-      const componentFile = join(tmpDir, normalizeModulePath(relativeFilePath));
+      const moduleUrl = `file://${tempFilePath}?t=${Date.now()}`;
 
-      const componentDir = componentFile.substring(0, componentFile.lastIndexOf("/"));
-      const fs = createFileSystem();
-      await fs.mkdir(componentDir, { recursive: true });
-      await fs.writeTextFile(componentFile, transformedCode);
-
-      const mod = await import(`file://${componentFile}?t=${Date.now()}`);
-      return extractComponent(mod, filePath);
+      try {
+        const mod = await import(moduleUrl);
+        return extractComponent(mod, filePath);
+      } catch (error) {
+        logger.error("[ComponentLoader] Failed to import component:", {
+          filePath,
+          tempFilePath,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
     },
     {
       "react.file": fileName,
       "react.projectDir": projectDir,
-      "react.ssr": ssr,
       "react.sourceLength": source.length,
     },
   );
+}
+
+/**
+ * Clear the component transform caches.
+ * Used for testing and development reloads.
+ */
+export function clearComponentTransformCaches(): void {
+  transformPathCache.clear();
+  transformCodeCache.clear();
+  createdDirs.clear();
 }

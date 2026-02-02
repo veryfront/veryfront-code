@@ -18,7 +18,10 @@ function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConf
     const [base, query] = spec.split("?");
     const url = `https://esm.sh/${base}`;
 
-    return query ? `${url}?${query}` : `${url}?target=es2022`;
+    // Always include external=react,react-dom to prevent multiple React instances
+    return query
+      ? `${url}?${query}&external=react,react-dom`
+      : `${url}?external=react,react-dom&target=es2022`;
   };
 
   let imports = importMap.imports

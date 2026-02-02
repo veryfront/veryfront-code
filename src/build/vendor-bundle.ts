@@ -57,7 +57,7 @@ export async function buildVendorBundle(
   const thirdPartyImports = Object.fromEntries(
     Object.entries(dependencies).map(([pkg, version]) => [
       pkg,
-      `https://esm.sh/${pkg}@${version}?external=react&pin=v135`,
+      `https://esm.sh/${pkg}@${version}?external=react,react-dom&pin=v135`,
     ]),
   );
 

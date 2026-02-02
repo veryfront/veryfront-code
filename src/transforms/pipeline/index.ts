@@ -1,13 +1,10 @@
-import {
-  generateCacheKey,
-  getCachedTransformAsync,
-  setCachedTransformAsync,
-} from "../esm/transform-cache.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { createTransformContext, formatTimingLog, recordStageTiming } from "./context.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { computeConfigHash } from "../../cache/config-hash.ts";
 import { computeDepsHash } from "../../cache/dependency-graph.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 import type {
   PipelineConfig,
   TransformOptions,
@@ -24,10 +21,6 @@ import {
   ssrVfModulesPlugin,
 } from "./stages/index.ts";
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
-import { ensureHttpBundlesExist } from "../esm/http-cache.ts";
-import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
-import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
-import { validateBundleGroup } from "../esm/bundle-manifest.ts";
 
 const SSR_PIPELINE: TransformPlugin[] = [
   parsePlugin,
@@ -45,6 +38,34 @@ const BROWSER_PIPELINE: TransformPlugin[] = [
   resolveImportsPlugin, // Unified import resolution
   finalizePlugin,
 ];
+
+/** In-memory LRU cache for transforms */
+interface TransformCacheEntry {
+  code: string;
+  contentHash: string;
+}
+const transformCache = new LRUCache<string, TransformCacheEntry>({ maxEntries: 2000 });
+
+/** Generate cache key for transform */
+function generateCacheKey(
+  filePath: string,
+  contentHash: string,
+  ssr: boolean,
+  studioEmbed: boolean,
+  options?: { depsHash?: string; configHash?: string; projectId?: string },
+): string {
+  const parts = [
+    `v${VERSION}`,
+    options?.projectId ?? "default",
+    filePath,
+    contentHash.slice(0, 16),
+    ssr ? "ssr" : "browser",
+  ];
+  if (studioEmbed) parts.push("studio");
+  if (options?.configHash) parts.push(`cfg:${options.configHash.slice(0, 8)}`);
+  if (options?.depsHash) parts.push(`deps:${options.depsHash.slice(0, 8)}`);
+  return parts.join(":");
+}
 
 /** Pattern to match framework bundle imports: file://...framework/vfmod-... */
 const FRAMEWORK_BUNDLE_PATTERN = /file:\/\/[^"'\s]+\/framework\/vfmod-[^"'\s]+\.mjs/g;
@@ -92,46 +113,6 @@ async function validateFrameworkBundles(
   return false;
 }
 
-/**
- * Validate that HTTP bundles referenced in cached code exist locally.
- * If bundles are missing, try to recover them from distributed cache.
- * Returns true if all bundles are valid/recovered, false if cache should be invalidated.
- */
-async function validateCachedBundles(
-  code: string,
-  bundleManifestId: string | undefined,
-  cacheKey: string,
-): Promise<boolean> {
-  const cacheDir = getHttpBundleCacheDir();
-
-  // If we have a manifest ID, use the faster manifest-based validation
-  if (bundleManifestId) {
-    const validation = await validateBundleGroup(bundleManifestId, cacheDir);
-    if (validation.valid) return true;
-
-    logger.debug("[PIPELINE] Bundle manifest validation failed", {
-      cacheKey: cacheKey.slice(-40),
-      manifestId: bundleManifestId.slice(0, 12),
-      failedCount: validation.failedHashes.length,
-    });
-    return false;
-  }
-
-  // Fall back to extracting bundle paths from code and validating each
-  const bundlePaths = extractHttpBundlePaths(code);
-  if (bundlePaths.length === 0) return true;
-
-  const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-  if (failed.length === 0) return true;
-
-  logger.debug("[PIPELINE] HTTP bundle validation failed", {
-    cacheKey: cacheKey.slice(-40),
-    failedCount: failed.length,
-    totalBundles: bundlePaths.length,
-  });
-  return false;
-}
-
 export function runPipeline(
   source: string,
   filePath: string,
@@ -166,29 +147,15 @@ export function runPipeline(
         { depsHash, configHash, projectId: options.projectId },
       );
 
-      const cached = await getCachedTransformAsync(cacheKey);
+      const cached = transformCache.get(cacheKey);
       if (cached) {
-        // For SSR transforms, validate bundles exist before returning cached code
+        // For SSR transforms, validate framework bundles exist locally
         if (options.ssr) {
-          const httpBundlesValid = await validateCachedBundles(
-            cached.code,
-            cached.bundleManifestId,
-            cacheKey,
-          );
-
-          // Also validate framework bundles (SSR VF modules) exist locally.
-          // These are pod-local files that won't exist after pod restart/migration.
           const frameworkBundlesValid = await validateFrameworkBundles(
             cached.code,
             cacheKey,
           );
-
-          if (!httpBundlesValid) {
-            logger.debug("[PIPELINE] Cache invalidated due to missing HTTP bundles", {
-              file: filePath.slice(-60),
-            });
-            // Fall through to re-run the pipeline
-          } else if (!frameworkBundlesValid) {
+          if (!frameworkBundlesValid) {
             logger.debug("[PIPELINE] Cache invalidated due to missing framework bundles", {
               file: filePath.slice(-60),
             });
@@ -241,14 +208,8 @@ export function runPipeline(
         recordStageTiming(ctx, plugin.stage, stageStart);
       }
 
-      // Store the bundleManifestId from ssrHttpCachePlugin for future cache validation
-      const bundleManifestId = ctx.metadata.get("bundleManifestId") as string | undefined;
-      setCachedTransformAsync(cacheKey, ctx.code, ctx.contentHash, undefined, bundleManifestId)
-        .catch(
-          (error) => {
-            logger.debug("[PIPELINE] Failed to cache transform", { error });
-          },
-        );
+      // Cache the transform result
+      transformCache.set(cacheKey, { code: ctx.code, contentHash: ctx.contentHash });
 
       const totalMs = performance.now() - transformStart;
 

@@ -9,7 +9,8 @@ import {
   clearSSRModuleCacheForProject,
 } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
 import { cacheRegistry } from "#veryfront/cache";
-import { clearRendererCacheForProject } from "../../rendering/renderer.ts";
+import { clearCacheForProjectWithRouter } from "../../rendering/render-mode-router.ts";
+import { invalidateProjectBundles } from "#veryfront/bundler/jit-bundler.ts";
 import { clearRouterDetectionCache } from "../../rendering/router-detection.ts";
 import { clearSnippetCacheForProject } from "../../rendering/snippet-renderer.ts";
 
@@ -95,7 +96,14 @@ export async function invalidateProjectCaches(
     projectId,
     rendererProjectKey,
   });
-  await clearRendererCacheForProject(rendererProjectKey);
+  // Clear both JIT and legacy renderer caches via the router
+  await clearCacheForProjectWithRouter(rendererProjectKey);
+
+  // Invalidate JIT bundle cache in distributed storage
+  logger.debug("[CacheInvalidation] Invalidating JIT bundle cache", {
+    projectId: rendererProjectKey,
+  });
+  await invalidateProjectBundles(rendererProjectKey);
 
   logger.debug("[CacheInvalidation] Clearing snippet cache (per-project)", { projectSlug });
   clearSnippetCacheForProject(projectSlug);

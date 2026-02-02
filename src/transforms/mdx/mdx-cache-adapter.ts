@@ -1,12 +1,6 @@
 import { rendererLogger as logger } from "#veryfront/utils";
-import {
-  type BundleCode,
-  type BundleMetadata,
-  computeCodeHash,
-  computeContentHash,
-  getBundleManifestStore,
-} from "#veryfront/utils";
-import { getBundleManifestTTL } from "#veryfront/utils/bundle-manifest-init.ts";
+import { computeContentHash } from "#veryfront/utils";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { MdxBundle } from "#veryfront/types";
 
@@ -20,26 +14,18 @@ export interface MDXCacheAdapterOptions {
   mode: "development" | "production";
 }
 
+// Simple in-memory cache for MDX compilations
+const mdxCache = new LRUCache<string, MDXCompilationResult>({ maxEntries: 500 });
+
 export class MDXCacheAdapter {
-  private config: VeryfrontConfig;
   private mode: "development" | "production";
 
-  // Use getter to always get current store (important for tests that swap stores)
-  private get manifestStore() {
-    return getBundleManifestStore();
-  }
-
   constructor(options: MDXCacheAdapterOptions) {
-    this.config = options.config;
     this.mode = options.mode;
   }
 
   private getCacheKey(contentHash: string): string {
     return `mdx:${this.mode}:${contentHash}`;
-  }
-
-  private getTTL(): number | undefined {
-    return getBundleManifestTTL(this.config, this.mode);
   }
 
   computeHash(content: string): Promise<string> {
@@ -55,30 +41,17 @@ export class MDXCacheAdapter {
       const contentHash = await this.computeHash(content);
       const cacheKey = this.getCacheKey(contentHash);
 
-      const metadata = await this.manifestStore.getBundleMetadata(cacheKey);
-      if (!metadata) return undefined;
+      const cached = mdxCache.get(cacheKey);
+      if (!cached) return undefined;
 
-      const bundleCode = await this.manifestStore.getBundleCode(metadata.codeHash);
-      if (!bundleCode) {
-        logger.debug("[mdx-cache] Metadata found but code missing", {
-          filePath,
-          codeHash: metadata.codeHash,
-        });
-        return undefined;
-      }
-
-      logger.debug("[mdx-cache] Cache hit for MDX compilation", {
-        filePath,
-        codeHash: metadata.codeHash,
-        size: metadata.size,
-      });
+      logger.debug("[mdx-cache] Cache hit for MDX compilation", { filePath, cacheKey });
 
       return {
-        compiledCode: bundleCode.code,
-        frontmatter: (frontmatter ?? {}) as Record<string, string | number | boolean | string[]>,
-        headings: (metadata.meta?.headings as Array<{ id: string; text: string; level: number }>) ??
-          [],
-        nodeMap: new Map(),
+        ...cached,
+        frontmatter: (frontmatter ?? cached.frontmatter) as Record<
+          string,
+          string | number | boolean | string[]
+        >,
       };
     } catch (error) {
       logger.debug("[mdx-cache] Failed to retrieve cached bundle", { error, filePath });
@@ -100,38 +73,9 @@ export class MDXCacheAdapter {
       const contentHash = await this.computeHash(content);
       const cacheKey = this.getCacheKey(contentHash);
 
-      const bundleCode: BundleCode = { code: bundle.compiledCode };
-      const codeHash = await computeCodeHash(bundleCode);
-      const size = new TextEncoder().encode(bundle.compiledCode).length;
+      mdxCache.set(cacheKey, bundle);
 
-      const { version: reactVersion } = await import("react");
-
-      const metadata: BundleMetadata = {
-        hash: contentHash,
-        codeHash,
-        size,
-        compiledAt: Date.now(),
-        source: filePath ?? "unknown",
-        mode: this.mode,
-        meta: {
-          type: "mdx",
-          reactVersion,
-          headings: bundle.headings ?? [],
-        },
-      };
-
-      const ttl = this.getTTL();
-
-      await this.manifestStore.setBundleCode(codeHash, bundleCode, ttl);
-      await this.manifestStore.setBundleMetadata(cacheKey, metadata, ttl);
-
-      logger.debug("[mdx-cache] Cached compiled MDX", {
-        filePath,
-        cacheKey,
-        codeHash,
-        size,
-        ttl,
-      });
+      logger.debug("[mdx-cache] Cached compiled MDX", { filePath, cacheKey });
     } catch (error) {
       logger.debug("[mdx-cache] Failed to cache bundle", { error, filePath });
     }
@@ -142,44 +86,25 @@ export class MDXCacheAdapter {
       const contentHash = await this.computeHash(content);
       const cacheKey = this.getCacheKey(contentHash);
 
-      await this.manifestStore.deleteBundle(cacheKey);
+      mdxCache.delete(cacheKey);
       logger.debug("[mdx-cache] Invalidated cached bundle", { cacheKey });
-    } catch (error) {
-      logger.debug("[mdx-cache] Failed to invalidate bundle", { error });
+    } catch {
+      // Ignore errors
     }
   }
 
-  async invalidateSource(source: string): Promise<number> {
-    try {
-      const count = await this.manifestStore.invalidateSource(source);
-      logger.debug("[mdx-cache] Invalidated bundles for source", { source, count });
-      return count;
-    } catch (error) {
-      logger.debug("[mdx-cache] Failed to invalidate source", { error, source });
-      return 0;
-    }
+  invalidateSource(_source: string): number {
+    // Simple cache doesn't track source - clear all instead
+    mdxCache.clear();
+    return 0;
   }
 
-  async clearAll(): Promise<void> {
-    try {
-      await this.manifestStore.clear();
-      logger.debug("[mdx-cache] Cleared all cached bundles");
-    } catch (error) {
-      logger.debug("[mdx-cache] Failed to clear cache", { error });
-    }
+  clearAll(): void {
+    mdxCache.clear();
+    logger.debug("[mdx-cache] Cleared all cached bundles");
   }
 
-  async getStats(): Promise<{
-    totalBundles: number;
-    totalSize: number;
-    oldestBundle?: number;
-    newestBundle?: number;
-  }> {
-    try {
-      return await this.manifestStore.getStats();
-    } catch (error) {
-      logger.debug("[mdx-cache] Failed to get stats", { error });
-      return { totalBundles: 0, totalSize: 0 };
-    }
+  getStats(): { totalBundles: number; totalSize: number } {
+    return { totalBundles: mdxCache.size, totalSize: 0 };
   }
 }

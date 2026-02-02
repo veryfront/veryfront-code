@@ -3,7 +3,7 @@ import { getConfig } from "#veryfront/config";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { cliLogger } from "#veryfront/utils";
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
-import { CacheCoordinator, type CacheStore } from "#veryfront/rendering/cache/index.ts";
+import type { CacheStore } from "#veryfront/rendering/cache/index.ts";
 import {
   FilesystemCacheStore,
   KVCacheStore,
@@ -100,9 +100,8 @@ async function cleanCacheStore(projectDir: string): Promise<void> {
     });
 
     if (store) {
-      const coordinator = new CacheCoordinator({ store, ttlMs: renderConfig.ttl });
-      await coordinator.clearAll();
-      await coordinator.destroy();
+      await store.clear();
+      await store.destroy();
     }
 
     await cleanDirectory(join(projectDir, cacheDir));

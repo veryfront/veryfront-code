@@ -112,7 +112,7 @@ export function resolve(
 
   if (!specifier.startsWith("/") && !specifier.startsWith(".")) {
     return {
-      url: `https://esm.sh/${specifier}`,
+      url: `https://esm.sh/${specifier}?external=react,react-dom&target=es2022`,
       format: "module",
       shortCircuit: true,
     };
