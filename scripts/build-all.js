@@ -23,6 +23,12 @@ if (!existsSync(distDir)) {
 console.log("🔨 Building Veryfront CLI binaries...");
 console.log(`   Version: ${version}\n`);
 
+// Generate manifests before building
+console.log("📝 Generating manifests...");
+execSync("deno run -A scripts/generate-templates-manifest.ts", { stdio: "inherit" });
+execSync("deno run -A scripts/generate-dev-ui-manifest.ts", { stdio: "inherit" });
+console.log("");
+
 const targets = [
   {
     name: "macOS (Intel)",

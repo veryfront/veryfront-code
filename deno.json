@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.7-rc.38",
+  "version": "0.1.7-rc.39",
   "nodeModulesDir": "auto",
   "exclude": [
     "npm/",
@@ -280,7 +280,7 @@
     "proxy": "deno run --allow-all src/cli/main.ts serve --mode=proxy",
     "dev": "deno run --allow-all src/cli/main.ts dev",
     "renderer": "deno run --allow-all src/cli/main.ts serve --mode=renderer",
-    "build": "deno run -A scripts/generate-templates-manifest.ts && deno compile --allow-all --include src/platform/polyfills --include src/proxy/main.ts --output ./bin/veryfront src/cli/main.ts",
+    "build": "deno run -A scripts/generate-templates-manifest.ts && deno run -A scripts/generate-dev-ui-manifest.ts && deno compile --allow-all --include src/platform/polyfills --include src/proxy/main.ts --output ./bin/veryfront src/cli/main.ts",
     "build:npm": "deno run -A scripts/build-npm-dnt.ts",
     "release": "deno run -A scripts/release.ts",
     "test": "VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --allow-all '--ignore=tests/e2e,tests/integration/compiled-binary-e2e.test.ts' --unstable-worker-options --unstable-net",
