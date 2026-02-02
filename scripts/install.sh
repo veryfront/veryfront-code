@@ -136,7 +136,7 @@ main() {
   # Header
   echo ""
   echo "${ORANGE}Veryfront${NC}"
-  echo "The simplest way to build AI-powered apps."
+  echo "One command to build AI-powered apps."
   echo ""
 
   # Detect platform
