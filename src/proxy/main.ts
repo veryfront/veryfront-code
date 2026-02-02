@@ -17,6 +17,7 @@
 
 import { createProxyHandler, type ProxyConfig } from "./handler.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
+import { isRetryableConnectionError } from "./retry.ts";
 import {
   endSpan,
   extractContext,
@@ -57,6 +58,9 @@ const WS_CONNECT_TIMEOUT_MS = 30000;
 const RENDERER_REQUEST_TIMEOUT_MS = parseInt(
   getEnv("RENDERER_REQUEST_TIMEOUT_MS") || "90000",
 );
+// Retry configuration for transient connection errors
+const RENDERER_RETRY_COUNT = parseInt(getEnv("RENDERER_RETRY_COUNT") || "1");
+const RENDERER_RETRY_DELAY_MS = parseInt(getEnv("RENDERER_RETRY_DELAY_MS") || "100");
 
 // Initialize cache and proxy handler
 const cache = await createCacheFromEnv();
@@ -291,67 +295,110 @@ function forwardToRenderer(req: Request): Promise<Response> {
 
           const rendererUrl = new URL(url.pathname + url.search, RENDERER_URL);
 
-          const abortController = new AbortController();
-          const timeoutId = setTimeout(() => {
-            abortController.abort();
-          }, RENDERER_REQUEST_TIMEOUT_MS);
+          // Only retry idempotent methods (GET, HEAD, OPTIONS)
+          const isIdempotent = ["GET", "HEAD", "OPTIONS"].includes(req.method);
+          const maxRetries = isIdempotent ? RENDERER_RETRY_COUNT : 0;
+          let lastError: Error | null = null;
 
-          let response: Response;
-          try {
-            response = await withSpan(
-              ProxySpanNames.HTTP_CLIENT_FETCH,
-              () =>
-                fetch(rendererUrl.toString(), {
+          for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            // Delay before retry (not on first attempt)
+            if (attempt > 0) {
+              proxyLogger.info(
+                `[Retry] Attempt ${attempt + 1}/${
+                  maxRetries + 1
+                } after ${RENDERER_RETRY_DELAY_MS}ms`,
+                {
+                  pathname: url.pathname,
                   method: req.method,
-                  headers: newHeaders,
-                  body: req.body,
-                  redirect: "manual",
-                  signal: abortController.signal,
-                }),
-              {
-                "http.method": req.method,
-                "http.url": rendererUrl.toString(),
-                "http.host": rendererUrl.host,
-                "proxy.target": "renderer",
-                "proxy.project_slug": ctx.projectSlug || "",
-                "proxy.timeout_ms": RENDERER_REQUEST_TIMEOUT_MS,
-              },
-            );
-          } catch (error) {
-            clearTimeout(timeoutId);
-            const ms = Math.round(performance.now() - startTime);
-
-            if (error instanceof Error && error.name === "AbortError") {
-              proxyLogger.error(`504 ${req.method} ${url.pathname}`, {
-                ms,
-                timeoutMs: RENDERER_REQUEST_TIMEOUT_MS,
-              });
-              endSpan(spanInfo?.span, 504, error);
-              return jsonErrorResponse(504, {
-                error: "Gateway Timeout",
-                message: `Renderer request timed out after ${RENDERER_REQUEST_TIMEOUT_MS}ms`,
-              });
+                },
+              );
+              await new Promise((resolve) => setTimeout(resolve, RENDERER_RETRY_DELAY_MS));
             }
 
-            proxyLogger.error(`502 ${req.method} ${url.pathname}`, { ms }, error as Error);
-            endSpan(spanInfo?.span, 502, error as Error);
-            return jsonErrorResponse(502, {
-              error: "Proxy Error",
-              message: error instanceof Error ? error.message : "Unknown error",
-            });
-          } finally {
-            clearTimeout(timeoutId);
+            const abortController = new AbortController();
+            const timeoutId = setTimeout(() => {
+              abortController.abort();
+            }, RENDERER_REQUEST_TIMEOUT_MS);
+
+            try {
+              const response = await withSpan(
+                ProxySpanNames.HTTP_CLIENT_FETCH,
+                () =>
+                  fetch(rendererUrl.toString(), {
+                    method: req.method,
+                    headers: newHeaders,
+                    body: req.body,
+                    redirect: "manual",
+                    signal: abortController.signal,
+                  }),
+                {
+                  "http.method": req.method,
+                  "http.url": rendererUrl.toString(),
+                  "http.host": rendererUrl.host,
+                  "proxy.target": "renderer",
+                  "proxy.project_slug": ctx.projectSlug || "",
+                  "proxy.timeout_ms": RENDERER_REQUEST_TIMEOUT_MS,
+                  "proxy.retry_attempt": attempt,
+                },
+              );
+
+              clearTimeout(timeoutId);
+              const ms = Math.round(performance.now() - startTime);
+
+              if (attempt > 0) {
+                reqLogger.info(
+                  `${response.status} ${req.method} ${url.pathname} (retry succeeded)`,
+                  { ms, attempt },
+                );
+              } else {
+                reqLogger.info(`${response.status} ${req.method} ${url.pathname}`, { ms });
+              }
+
+              endSpan(spanInfo?.span, response.status);
+
+              return new Response(response.body, {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers,
+              });
+            } catch (error) {
+              clearTimeout(timeoutId);
+              lastError = error as Error;
+
+              if (error instanceof Error && error.name === "AbortError") {
+                const ms = Math.round(performance.now() - startTime);
+                proxyLogger.error(`504 ${req.method} ${url.pathname}`, {
+                  ms,
+                  timeoutMs: RENDERER_REQUEST_TIMEOUT_MS,
+                });
+                endSpan(spanInfo?.span, 504, error);
+                return jsonErrorResponse(504, {
+                  error: "Gateway Timeout",
+                  message: `Renderer request timed out after ${RENDERER_REQUEST_TIMEOUT_MS}ms`,
+                });
+              }
+
+              // Check if this is a retryable error and we have retries left
+              if (isRetryableConnectionError(error) && attempt < maxRetries) {
+                proxyLogger.warn(`[Retry] Retryable connection error on attempt ${attempt + 1}`, {
+                  pathname: url.pathname,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+                continue; // Try again
+              }
+
+              // No more retries or non-retryable error
+              break;
+            }
           }
 
+          // All retries exhausted or non-retryable error
           const ms = Math.round(performance.now() - startTime);
-          reqLogger.info(`${response.status} ${req.method} ${url.pathname}`, { ms });
-
-          endSpan(spanInfo?.span, response.status);
-
-          return new Response(response.body, {
-            status: response.status,
-            statusText: response.statusText,
-            headers: response.headers,
+          proxyLogger.error(`502 ${req.method} ${url.pathname}`, { ms }, lastError as Error);
+          endSpan(spanInfo?.span, 502, lastError as Error);
+          return jsonErrorResponse(502, {
+            error: "Proxy Error",
+            message: lastError instanceof Error ? lastError.message : "Unknown error",
           });
         },
       );
