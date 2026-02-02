@@ -154,7 +154,7 @@ main() {
   # Download binary with spinner
   BINARY_PATH="${INSTALL_DIR}/veryfront"
 
-  printf "${DIM}Downloading${NC} veryfront v%s " "$VERSION"
+  printf "Downloading ${ORANGE}veryfront${NC} v%s " "$VERSION"
 
   # Start download in background
   download "$DOWNLOAD_URL" "$BINARY_PATH" &
@@ -165,7 +165,7 @@ main() {
   i=0
   while kill -0 $PID 2>/dev/null; do
     i=$(( (i + 1) % 10 ))
-    printf "\r${DIM}Downloading${NC} veryfront v%s ${ORANGE}%s${NC}" "$VERSION" "$(echo "$SPINNER" | cut -c$((i+1)))"
+    printf "\rDownloading ${ORANGE}veryfront${NC} v%s ${ORANGE}%s${NC}" "$VERSION" "$(echo "$SPINNER" | cut -c$((i+1)))"
     sleep 0.1
   done
 
@@ -179,7 +179,7 @@ main() {
   # Make executable
   chmod +x "$BINARY_PATH"
 
-  printf "\r${ORANGE}Installed${NC} veryfront v%s                    \n" "$VERSION"
+  printf "\rInstalled ${ORANGE}veryfront${NC} v%s                    \n" "$VERSION"
   echo ""
 
   # Check if install dir is in PATH
@@ -202,7 +202,7 @@ main() {
           fi
           ;;
         fish)
-          echo "Run ${ORANGE}fish_add_path ~/.veryfront/bin${NC} to add to PATH."
+          echo "Run fish_add_path ~/.veryfront/bin"
           echo ""
           return
           ;;
@@ -210,7 +210,7 @@ main() {
           PROFILE="your shell profile"
           ;;
       esac
-      echo "Run ${ORANGE}echo 'export PATH=\"\$HOME/.veryfront/bin:\$PATH\"' >> ${PROFILE}${NC}"
+      echo "Run echo 'export PATH=\"\$HOME/.veryfront/bin:\$PATH\"' >> ${PROFILE}"
       echo ""
       ;;
   esac
