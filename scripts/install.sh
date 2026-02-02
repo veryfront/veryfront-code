@@ -15,10 +15,12 @@ set -e
 # Colors (if terminal supports it)
 if [ -t 1 ]; then
   ORANGE='\033[38;2;252;143;93m'
+  GREEN='\033[32m'
   DIM='\033[2m'
   NC='\033[0m'
 else
   ORANGE=''
+  GREEN=''
   DIM=''
   NC=''
 fi
@@ -133,10 +135,8 @@ download() {
 }
 
 main() {
-  # Header
   echo ""
-  echo "${ORANGE}Veryfront${NC}"
-  echo "One command to build AI-powered apps."
+  echo "Setting up Veryfront..."
   echo ""
 
   # Detect platform
@@ -161,69 +161,79 @@ main() {
   # Download binary
   BINARY_PATH="${INSTALL_DIR}/veryfront"
 
-  printf "Installing v%s " "$VERSION"
-
   # Download with spinner
+  printf "${ORANGE}Installing Veryfront v%s...${NC}" "$VERSION"
   download "$DOWNLOAD_URL" "$BINARY_PATH" &
   PID=$!
   SPINNER="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
   i=0
   while kill -0 $PID 2>/dev/null; do
     i=$(( (i + 1) % 10 ))
-    printf "\rInstalling v%s ${ORANGE}%s${NC}" "$VERSION" "$(echo "$SPINNER" | cut -c$((i+1)))"
+    printf "\r${ORANGE}Installing Veryfront v%s...${NC} %s" "$VERSION" "$(echo "$SPINNER" | cut -c$((i+1)))"
     sleep 0.1
   done
 
   wait $PID
   if [ $? -ne 0 ]; then
-    printf "\rInstall failed        \n"
+    printf "\r${ORANGE}Install failed${NC}                              \n"
     exit 1
   fi
 
   chmod +x "$BINARY_PATH"
-  printf "\rInstalled v%s ✓        \n" "$VERSION"
 
   # Add to PATH if not already there
+  NEEDS_SOURCE=""
   case ":$PATH:" in
     *":$INSTALL_DIR:"*)
       # Already in PATH
       ;;
     *)
+      NEEDS_SOURCE="yes"
       # Add to shell profile
       SHELL_NAME=$(basename "$SHELL")
       case "$SHELL_NAME" in
         zsh)
           PROFILE="$HOME/.zshrc"
+          PROFILE_SHORT="~/.zshrc"
           ;;
         bash)
           if [ -f "$HOME/.bash_profile" ]; then
             PROFILE="$HOME/.bash_profile"
+            PROFILE_SHORT="~/.bash_profile"
           else
             PROFILE="$HOME/.bashrc"
+            PROFILE_SHORT="~/.bashrc"
           fi
           ;;
         fish)
           # Fish uses a different mechanism
           fish -c "fish_add_path ~/.veryfront/bin" 2>/dev/null || true
-          echo ""
-          echo "Run ${ORANGE}veryfront${NC} to get started"
-          echo ""
-          return
+          NEEDS_SOURCE=""
           ;;
         *)
           PROFILE="$HOME/.profile"
+          PROFILE_SHORT="~/.profile"
           ;;
       esac
 
       # Add PATH export if not already in profile
-      if ! grep -q "/.veryfront/bin" "$PROFILE" 2>/dev/null; then
+      if [ -n "$PROFILE" ] && ! grep -q "/.veryfront/bin" "$PROFILE" 2>/dev/null; then
         echo 'export PATH="$HOME/.veryfront/bin:$PATH"' >> "$PROFILE"
       fi
       ;;
   esac
 
+  # Success output
+  printf "\rSetting up Veryfront... done!                       \n"
   echo ""
-  echo "Restart your terminal, then run ${ORANGE}veryfront${NC}"
+  echo "Version: ${VERSION}"
+  echo "Location: ~/.veryfront/bin/veryfront"
+  echo ""
+  if [ -n "$NEEDS_SOURCE" ]; then
+    echo "Next: source ${PROFILE_SHORT} && veryfront"
+  else
+    echo "Next: Run ${ORANGE}veryfront${NC} to get started"
+  fi
   echo ""
 }
 
