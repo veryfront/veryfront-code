@@ -501,7 +501,15 @@ export class JitRenderer {
             { projectId: ctx.projectId },
           );
 
-          // If bundle exports a render function, use it directly
+          // Always use the Component path for proper HTML document generation
+          // The render function from the bundle is for direct SSR but doesn't include
+          // the full HTML document wrapper with head, metadata, etc.
+          if (Component) {
+            span?.setAttribute("render.type", "component");
+            return this.renderComponent(Component, slug, ctx, options);
+          }
+
+          // Fallback: if only render function exists (legacy), use it directly
           if (render) {
             const html = await render({
               slug,
@@ -517,12 +525,6 @@ export class JitRenderer {
               frontmatter: {},
               stream: null,
             };
-          }
-
-          // If bundle exports a Component, render it with SSR
-          if (Component) {
-            span?.setAttribute("render.type", "component");
-            return this.renderComponent(Component, slug, ctx, options);
           }
 
           throw new VeryfrontError(
