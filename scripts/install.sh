@@ -120,7 +120,7 @@ get_latest_version() {
   fi
 }
 
-# Download file
+# Download file silently
 download() {
   URL="$1"
   DEST="$2"
@@ -148,8 +148,6 @@ main() {
     fi
   fi
 
-  printf "Installing veryfront v%s..." "$VERSION"
-
   # Build download URL
   BINARY_NAME="veryfront-${PLATFORM}"
   DOWNLOAD_URL="https://github.com/${REPO}/releases/download/v${VERSION}/${BINARY_NAME}"
@@ -157,14 +155,35 @@ main() {
   # Create install directory
   mkdir -p "$INSTALL_DIR"
 
-  # Download binary
+  # Download binary with spinner
   BINARY_PATH="${INSTALL_DIR}/veryfront"
-  download "$DOWNLOAD_URL" "$BINARY_PATH"
+
+  printf "Downloading veryfront v%s " "$VERSION"
+
+  # Start download in background
+  download "$DOWNLOAD_URL" "$BINARY_PATH" &
+  PID=$!
+
+  # Spinner animation
+  SPINNER="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+  i=0
+  while kill -0 $PID 2>/dev/null; do
+    i=$(( (i + 1) % 10 ))
+    printf "\r%s %s" "Downloading veryfront v${VERSION}" "$(echo "$SPINNER" | cut -c$((i+1)))"
+    sleep 0.1
+  done
+
+  # Check if download succeeded
+  wait $PID
+  if [ $? -ne 0 ]; then
+    printf "\r${RED}Download failed${NC}                              \n"
+    exit 1
+  fi
 
   # Make executable
   chmod +x "$BINARY_PATH"
 
-  echo " ${GREEN}done${NC}"
+  printf "\r${GREEN}Installed${NC} veryfront v%s                    \n" "$VERSION"
   echo ""
 
   # Check if install dir is in PATH
