@@ -27,8 +27,8 @@ describe("HTTP response constants", () => {
   });
 
   describe("CACHE_DURATIONS", () => {
-    it("should define SHORT as 60 seconds", () => {
-      assertEquals(CACHE_DURATIONS.SHORT, 60);
+    it("should define SHORT as 0 (no browser caching)", () => {
+      assertEquals(CACHE_DURATIONS.SHORT, 0);
     });
 
     it("should define MEDIUM as 3600 seconds (1 hour)", () => {
