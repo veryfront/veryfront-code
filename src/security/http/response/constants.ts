@@ -8,7 +8,8 @@ export const CONTENT_TYPES = {
 } as const;
 
 export const CACHE_DURATIONS = {
-  SHORT: 60,
+  /** No browser caching - ensures fresh content immediately after publish */
+  SHORT: 0,
   MEDIUM: 3600,
   LONG: 31536000,
 } as const;
