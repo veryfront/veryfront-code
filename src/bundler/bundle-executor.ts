@@ -130,49 +130,56 @@ export async function executeBundle(
 }
 
 /**
- * Execute a bundle and extract the render function.
+ * Result of executing a bundle for rendering.
  *
- * Bundles are expected to export either:
- * 1. A `render` function directly
- * 2. A `default` export with a `render` method
- * 3. A React component as the default export
+ * JIT bundles export:
+ * - `default`: The page component
+ * - `React`: The bundled React library (to avoid "two Reacts" problem)
+ * - `renderToString`: The bundled renderToString function
+ */
+export interface BundleRenderExports {
+  /** The page component (default export) */
+  Component?: unknown;
+  /** Bundled React library - use this for createElement to avoid instance mismatch */
+  React?: typeof import("react");
+  /** Bundled renderToString - use this for SSR */
+  renderToString?: (element: unknown) => string;
+  /** Raw module for accessing other exports */
+  module: BundleModule;
+}
+
+/**
+ * Execute a bundle and extract the component and bundled React.
+ *
+ * JIT bundles include React directly to avoid the "two Reacts" problem.
+ * The bundled React is exported so callers can use the same instance
+ * for createElement and renderToString.
  */
 export async function executeBundleForRender(
   code: string,
   cacheKey: string,
   options: ExecuteOptions,
-): Promise<{
-  render?: (context: Record<string, unknown>) => Promise<string> | string;
-  Component?: unknown;
-  module: BundleModule;
-}> {
+): Promise<BundleRenderExports> {
   const module = await executeBundle(code, cacheKey, options);
 
-  // Check for render function
-  if (typeof module.render === "function") {
-    return {
-      render: module.render as (context: Record<string, unknown>) => Promise<string> | string,
-      module,
-    };
+  const result: BundleRenderExports = { module };
+
+  // Extract the page component (default export)
+  if (module.default !== undefined) {
+    result.Component = module.default;
   }
 
-  // Check for default export with render method
-  const defaultExport = module.default;
-  if (defaultExport && typeof defaultExport === "object" && "render" in defaultExport) {
-    const renderMethod = (defaultExport as Record<string, unknown>).render;
-    if (typeof renderMethod === "function") {
-      return {
-        render: renderMethod as (context: Record<string, unknown>) => Promise<string> | string,
-        module,
-      };
-    }
+  // Extract bundled React (avoids "two Reacts" problem)
+  if (module.React && typeof module.React === "object") {
+    result.React = module.React as typeof import("react");
   }
 
-  // Return the default export as a Component
-  return {
-    Component: defaultExport,
-    module,
-  };
+  // Extract bundled renderToString
+  if (typeof module.renderToString === "function") {
+    result.renderToString = module.renderToString as (element: unknown) => string;
+  }
+
+  return result;
 }
 
 /**

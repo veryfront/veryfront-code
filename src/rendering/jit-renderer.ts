@@ -64,7 +64,6 @@ import { createBuildVersion } from "#veryfront/utils/version.ts";
 import type { LayoutItem, MdxBundle } from "#veryfront/types";
 import { SSRRenderer } from "./ssr-renderer.ts";
 import { setupSSRGlobals } from "./ssr-globals.ts";
-import { getProjectReact } from "#veryfront/react";
 import {
   type HTMLGenerationContext,
   HTMLGenerator,
@@ -495,43 +494,30 @@ export class JitRenderer {
         const cacheKey = `${ctx.projectId}:${sourceKey}:bundle:${bundleHash}`;
 
         try {
-          const { render, Component } = await executeBundleForRender(
+          const { Component, React: BundledReact } = await executeBundleForRender(
             bundleCode,
             cacheKey,
             { projectId: ctx.projectId },
           );
 
-          // Always use the Component path for proper HTML document generation
-          // The render function from the bundle is for direct SSR but doesn't include
-          // the full HTML document wrapper with head, metadata, etc.
-          if (Component) {
-            span?.setAttribute("render.type", "component");
-            return this.renderComponent(Component, slug, ctx, options);
+          if (!Component) {
+            throw new VeryfrontError(
+              "Bundle does not export a Component (default export)",
+              ErrorCode.RENDER_ERROR,
+              { slug, projectId: ctx.projectId },
+            );
           }
 
-          // Fallback: if only render function exists (legacy), use it directly
-          if (render) {
-            const html = await render({
-              slug,
-              projectId: ctx.projectId,
-              projectSlug: ctx.projectSlug,
-              environment: ctx.environment,
-              colorScheme: options?.colorScheme,
-              params: options?.params,
-            });
-
-            return {
-              html: typeof html === "string" ? html : "",
-              frontmatter: {},
-              stream: null,
-            };
+          if (!BundledReact) {
+            throw new VeryfrontError(
+              "Bundle does not export React (required for SSR)",
+              ErrorCode.RENDER_ERROR,
+              { slug, projectId: ctx.projectId },
+            );
           }
 
-          throw new VeryfrontError(
-            "Bundle does not export a render function or Component",
-            ErrorCode.RENDER_ERROR,
-            { slug, projectId: ctx.projectId },
-          );
+          span?.setAttribute("render.type", "component");
+          return this.renderComponent(Component, BundledReact, slug, ctx, options);
         } catch (error) {
           span?.setAttribute("error", true);
           span?.setAttribute("error.message", String(error));
@@ -553,9 +539,13 @@ export class JitRenderer {
    * 5. SSR rendering - render to HTML with head collection
    * 6. CSS generation - JIT Tailwind CSS
    * 7. Studio support - element selector injection
+   *
+   * @param Component - The page component from the bundle
+   * @param BundledReact - The React library from the bundle (avoids "two Reacts" problem)
    */
   private async renderComponent(
     Component: unknown,
+    BundledReact: typeof import("react"),
     slug: string,
     ctx: RenderContext,
     options?: RenderOptions,
@@ -675,10 +665,10 @@ export class JitRenderer {
           }
         }
 
-        // 4. Get React and create element with fetched data
-        // Pass React version from config to ensure same instance as bundle
-        const reactVersion = ctx.config.react?.version;
-        const ReactLib = await getProjectReact(reactVersion);
+        // 4. Create element with fetched data using bundled React
+        // Using bundled React avoids the "two Reacts" problem where the Component
+        // uses one React instance and createElement uses another
+        const ReactLib = BundledReact;
 
         const componentProps = {
           slug,
