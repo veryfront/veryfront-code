@@ -1,5 +1,6 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertMatch } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { simpleHash } from "#veryfront/utils";
 
 function getEnv(name: string): string | undefined {
   // deno-lint-ignore no-explicit-any
@@ -165,6 +166,66 @@ describe("Renderer helpers", () => {
   describe("RENDER_MAX_CONCURRENT defaults", () => {
     it("should parse default max concurrent as 30", () => {
       assertEquals(parseInt("30", 10), 30);
+    });
+  });
+
+  describe("buildCacheKey (cache key sanitization)", () => {
+    // Mirrors the logic from Renderer.buildCacheKey to test cache key generation
+    function buildCacheKey(slug: string, url?: URL): string | null {
+      if (!url) return slug;
+
+      const params = new URLSearchParams(url.searchParams);
+      const sorted = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
+      const queryString = sorted.map(([k, v]) => `${k}=${v}`).join("&");
+      // Hash query string to create cache-safe key (API cache only allows alphanumeric, _ : . - /)
+      return queryString ? `${slug}:q${simpleHash(queryString).toString(16)}` : slug;
+    }
+
+    it("should return slug unchanged when no URL provided", () => {
+      assertEquals(buildCacheKey("blog/articles/hello-world"), "blog/articles/hello-world");
+    });
+
+    it("should return slug unchanged when URL has no query params", () => {
+      const url = new URL("https://example.com/blog/articles/hello-world");
+      assertEquals(buildCacheKey("blog/articles/hello-world", url), "blog/articles/hello-world");
+    });
+
+    it("should hash query params to create safe cache key", () => {
+      const url = new URL("https://example.com/blog/articles/hello-world?utm_campaign=test&ref=google");
+      const key = buildCacheKey("blog/articles/hello-world", url);
+
+      // Key should NOT contain invalid characters (? = &)
+      assertEquals(key?.includes("?"), false);
+      assertEquals(key?.includes("="), false);
+      assertEquals(key?.includes("&"), false);
+
+      // Key should have the format: slug:qHASH
+      assertMatch(key!, /^blog\/articles\/hello-world:q[0-9a-f]+$/);
+    });
+
+    it("should generate same cache key for same query params regardless of order", () => {
+      const url1 = new URL("https://example.com/page?a=1&b=2");
+      const url2 = new URL("https://example.com/page?b=2&a=1");
+      assertEquals(buildCacheKey("page", url1), buildCacheKey("page", url2));
+    });
+
+    it("should generate different cache key for different query params", () => {
+      const url1 = new URL("https://example.com/page?a=1");
+      const url2 = new URL("https://example.com/page?a=2");
+      const key1 = buildCacheKey("page", url1);
+      const key2 = buildCacheKey("page", url2);
+      assertEquals(key1 !== key2, true);
+    });
+
+    it("should handle complex tracking params safely", () => {
+      // Real-world example from the production bug
+      const url = new URL(
+        "https://example.com/blog/articles/twelve-factor-app-methodology?_hsenc=p2ANqtz-8hLy7cANpDPJCpSFuf6jEoLhCH&utm_campaign=KubeWeekly&utm_medium=email&utm_source=hs_email"
+      );
+      const key = buildCacheKey("blog/articles/twelve-factor-app-methodology", url);
+
+      // Must only contain allowed chars: alphanumeric, underscore, colon, dot, hyphen, forward slash
+      assertMatch(key!, /^[a-zA-Z0-9_:.\-\/]+$/);
     });
   });
 });
