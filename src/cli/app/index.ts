@@ -385,6 +385,13 @@ export function createApp(config: AppConfig): App {
     )(state);
   }
 
+  // Set activeList to first section with items
+  if (state.projects.items.length > 0) {
+    state = { ...state, activeList: "projects" };
+  } else if (state.examples.items.length > 0) {
+    state = { ...state, activeList: "examples" };
+  }
+
   state = setTemplates([
     { id: "minimal", name: "Minimal", description: "Bare-bones starter with just the essentials" },
     { id: "app", name: "App", description: "Full-featured app with routing and layouts" },
