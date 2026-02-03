@@ -239,3 +239,106 @@ describe("ssr-vf-modules integration", { sanitizeOps: false, sanitizeResources: 
     );
   });
 });
+
+describe("ssr-vf-modules relative import resolution", {
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, () => {
+  it("resolves relative imports when given explicit paths", async () => {
+    // Test the resolveRelativeFrameworkImport function directly
+    const { resolveRelativeFrameworkImport, FRAMEWORK_ROOT } = _testExports;
+    const fs = createFileSystem();
+
+    // Test resolving ./Head.tsx from index.ts
+    const indexPath = `${FRAMEWORK_ROOT}/src/react/components/index.ts`;
+    const resolved = await resolveRelativeFrameworkImport("./Head.tsx", indexPath, fs);
+
+    assertEquals(resolved !== null, true, "Should resolve ./Head.tsx");
+    assertStringIncludes(resolved!, "Head.tsx");
+  });
+
+  it("finds relative imports in transformed code", () => {
+    // Test the findRelativeImports function
+    const { findRelativeImports } = _testExports;
+
+    const code = `
+      import { Head } from "./Head.js";
+      import { Link } from "../components/Link.js";
+      import React from "react";
+    `;
+
+    const imports = findRelativeImports(code);
+    assertEquals(imports.length, 2);
+    assertEquals(imports.includes("./Head.js"), true);
+    assertEquals(imports.includes("../components/Link.js"), true);
+  });
+
+  it("transforms single framework file Head.tsx without relative imports", async () => {
+    // Test transforming a single file that doesn't have relative imports
+    // Head.tsx imports from #veryfront/ which should work fine
+    const code =
+      `import { Head } from "/_vf_modules/_veryfront/react/components/Head.js?ssr=true";`;
+    const ctx = {
+      code,
+      target: "ssr",
+      projectDir: "/tmp/test-project",
+      reactVersion: REACT_DEFAULT_VERSION,
+    } as TransformContext;
+
+    const result = await ssrVfModulesPlugin.transform(ctx);
+
+    // The transformed code should have the import rewritten to file://
+    assertStringIncludes(result, "file://");
+  });
+
+  it("transforms index.ts with relative imports to absolute paths", async () => {
+    // This test verifies the bug fix for:
+    // "Module not found: file:///app/.cache/veryfront-mdx-esm/components/Head.tsx"
+    //
+    // The bug: When src/react/components/index.ts is transformed, its relative import
+    // `export { Head } from "./Head.tsx"` was converted to `./Head.js` by esbuild
+    // but NOT rewritten to an absolute file:// path.
+
+    const code =
+      `import { Head } from "/_vf_modules/_veryfront/react/components/index.js?ssr=true";`;
+    const ctx = {
+      code,
+      target: "ssr",
+      projectDir: "/tmp/test-project",
+      reactVersion: REACT_DEFAULT_VERSION,
+    } as TransformContext;
+
+    const result = await ssrVfModulesPlugin.transform(ctx);
+
+    // The transformed code should have the import rewritten to file://
+    assertStringIncludes(result, "file://");
+
+    // Extract the file:// path from the result
+    const filePathMatch = result.match(/from\s*["'](file:\/\/[^"']+)["']/);
+    assertEquals(filePathMatch !== null, true, "Should contain file:// import");
+
+    const fs = createFileSystem();
+    const cachedPath = filePathMatch![1]!.replace("file://", "");
+    const cachedContent = await fs.readTextFile(cachedPath);
+
+    // The cached content should NOT have relative imports like "./Head.tsx" or "./Head.js"
+    // It should have file:// paths for all local dependencies
+    const relativeImportMatch = cachedContent.match(/from\s*["'](\.\/[^"']+\.(?:tsx?|jsx?))["']/);
+    assertEquals(
+      relativeImportMatch,
+      null,
+      `Cached framework module should not have relative imports, but found: ${
+        relativeImportMatch?.[1]
+      }. ` +
+        `Content snippet: ${cachedContent.slice(0, 800)}...`,
+    );
+
+    // Verify the imports are now file:// paths
+    const fileImportCount = (cachedContent.match(/from\s*["']file:\/\//g) || []).length;
+    assertEquals(
+      fileImportCount > 0,
+      true,
+      "Cached module should have file:// imports for dependencies",
+    );
+  });
+});

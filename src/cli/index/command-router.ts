@@ -250,6 +250,20 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           const adapter = await runtime.get();
           const { startUniversalServer } = await import("#veryfront/server/production-server.ts");
 
+          // Initialize OTLP tracing and distributed caches before starting server
+          // This was previously only in production-server.ts's import.meta.main block,
+          // which doesn't run when imported as a module via CLI
+          const { initializeOTLPWithApis } = await import(
+            "#veryfront/observability/tracing/otlp-setup.ts"
+          );
+          const { initializeDistributedCaches } = await import(
+            "#veryfront/cache/distributed-cache-init.ts"
+          );
+          await Promise.allSettled([
+            initializeOTLPWithApis(),
+            initializeDistributedCaches(),
+          ]);
+
           const projectDir = cwd();
           const debug = Boolean(args.debug);
           const shutdownController = new AbortController();

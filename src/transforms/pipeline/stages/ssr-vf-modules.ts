@@ -179,15 +179,160 @@ interface TransformContext {
 }
 
 /**
+ * Find all relative imports (./foo, ../bar) in the code.
+ * Returns array of specifiers.
+ */
+function findRelativeImports(code: string): string[] {
+  const imports: string[] = [];
+  const pattern = /from\s*["'](\.\.?\/[^"']+)["']/g;
+
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(code)) !== null) {
+    imports.push(match[1]!);
+  }
+
+  return [...new Set(imports)];
+}
+
+/**
+ * Resolve a relative import path to an absolute framework source path.
+ * Given sourcePath=/foo/bar/index.ts and specifier=./Head.tsx, returns /foo/bar/Head.tsx
+ *
+ * Handles both regular source files (.tsx, .ts) and embedded sources (.tsx.src, .ts.src)
+ * for compiled binaries.
+ */
+async function resolveRelativeFrameworkImport(
+  specifier: string,
+  fromSourcePath: string,
+  _fs: ReturnType<typeof createFileSystem>,
+): Promise<string | null> {
+  const fromDir = fromSourcePath.substring(0, fromSourcePath.lastIndexOf("/"));
+  const parts = fromDir.split("/").filter(Boolean);
+  const importParts = specifier.split("/").filter(Boolean);
+
+  for (const part of importParts) {
+    if (part === "..") {
+      parts.pop();
+    } else if (part !== ".") {
+      parts.push(part);
+    }
+  }
+
+  const basePath = "/" + parts.join("/");
+
+  // If specifier already has extension (e.g., ./Head.tsx), we need to try:
+  // 1. The exact path (basePath)
+  // 2. The path with .src suffix (basePath.src) for embedded sources
+  // 3. Fall back to extension probing
+  if (/\.(tsx?|jsx?|mjs)$/.test(specifier)) {
+    // Try exact path first
+    try {
+      if (await exists(basePath)) return basePath;
+    } catch {
+      // Continue
+    }
+
+    // Try with .src suffix for embedded sources
+    try {
+      const srcPath = basePath + ".src";
+      if (await exists(srcPath)) return srcPath;
+    } catch {
+      // Continue
+    }
+
+    // Not found with explicit extension
+    return null;
+  }
+
+  // No extension provided - try all extensions (including .src for embedded sources)
+  const allExtensions = [
+    ...EXTENSIONS.map((ext) => ext + ".src"),
+    ...EXTENSIONS,
+  ];
+
+  for (const ext of allExtensions) {
+    const pathWithExt = basePath + ext;
+    try {
+      if (await exists(pathWithExt)) return pathWithExt;
+    } catch {
+      // Continue
+    }
+  }
+
+  // Try index file
+  for (const ext of allExtensions) {
+    const indexPath = join(basePath, "index" + ext);
+    try {
+      if (await exists(indexPath)) return indexPath;
+    } catch {
+      // Continue
+    }
+  }
+
+  return null;
+}
+
+// Cache for transformed framework files by absolute path to prevent cycles and redundant work
+const frameworkFileCache = new Map<string, string>();
+
+// Track files currently being transformed to detect cycles
+const transformingFiles = new Set<string>();
+
+// Maximum recursion depth for relative imports
+const MAX_RELATIVE_IMPORT_DEPTH = 10;
+
+/**
  * Core transformation logic for framework TypeScript/TSX files.
- * Compiles to JavaScript and recursively resolves all #veryfront/ imports.
+ * Compiles to JavaScript and recursively resolves all imports:
+ * - #veryfront/ imports (internal framework imports)
+ * - Relative imports (./foo, ../bar) within framework files
  */
 async function transformFrameworkCode(
   content: string,
   sourcePath: string,
   ctx: TransformContext,
   throwOnMissingImport = false,
+  depth = 0,
 ): Promise<string> {
+  // Check depth limit
+  if (depth > MAX_RELATIVE_IMPORT_DEPTH) {
+    logger.warn(`${LOG_PREFIX} Max relative import depth exceeded`, {
+      sourcePath: sourcePath.slice(-60),
+      depth,
+    });
+    // Return minimally transformed code - it will fail at runtime but won't hang
+    const { transform } = await import("esbuild");
+    const ext = sourcePath.match(/\.(tsx?|jsx?)$/)?.[1] ?? "tsx";
+    let loader: "tsx" | "ts" | "jsx" | "js" = "js";
+    if (ext === "tsx") loader = "tsx";
+    else if (ext === "ts") loader = "ts";
+    else if (ext === "jsx") loader = "jsx";
+    const result = await transform(content, {
+      loader,
+      jsx: "automatic",
+      jsxImportSource: "react",
+      format: "esm",
+      target: "es2022",
+    });
+    return result.code;
+  }
+
+  // Check if we're in a cycle
+  if (transformingFiles.has(sourcePath)) {
+    logger.debug(`${LOG_PREFIX} Detected cycle, skipping`, { sourcePath: sourcePath.slice(-60) });
+    // Return a placeholder that will fail at runtime but won't cause infinite loop
+    return `/* Cycle detected: ${sourcePath} */\nexport {};`;
+  }
+
+  // Check if already transformed
+  const cached = frameworkFileCache.get(sourcePath);
+  if (cached) {
+    logger.debug(`${LOG_PREFIX} Framework file cache hit`, { sourcePath: sourcePath.slice(-60) });
+    return cached;
+  }
+
+  // Mark as being transformed
+  transformingFiles.add(sourcePath);
   const { transform } = await import("esbuild");
 
   const ext = sourcePath.match(/\.(tsx?|jsx?)$/)?.[1] ?? "tsx";
@@ -226,12 +371,96 @@ async function transformFrameworkCode(
     }
   }
 
+  // Collect and transform relative imports (./foo, ../bar) at depth 0 only
+  // This fixes the bug where relative imports in framework files like index.ts
+  // weren't being converted to absolute file:// paths, causing "Module not found" errors
+  //
+  // We only process relative imports at the top level (depth=0) to avoid exponential
+  // explosion. Deeper files will have their #veryfront/ imports resolved by the
+  // existing mechanism, and relative imports within them will be handled by their
+  // own transformation when used directly.
+  const relativeReplacements = new Map<string, string>();
+
+  // Only process relative imports at depth 0 (top-level framework file)
+  if (depth === 0) {
+    const relativeImports = findRelativeImports(transformed);
+
+    for (const specifier of relativeImports) {
+      // Skip non-code imports (like deno.json, package.json, etc.)
+      if (/\.(json|css|svg|png|jpg|jpeg|gif|ico|woff2?|ttf|eot)$/.test(specifier)) {
+        continue;
+      }
+
+      const resolvedPath = await resolveRelativeFrameworkImport(specifier, sourcePath, ctx.fs);
+      if (!resolvedPath) {
+        if (throwOnMissingImport) {
+          transformingFiles.delete(sourcePath);
+          throw new Error(
+            `${LOG_PREFIX} Could not resolve relative import "${specifier}" in ${sourcePath}`,
+          );
+        }
+        logger.warn(
+          `${LOG_PREFIX} Could not resolve relative import "${specifier}" in ${sourcePath}`,
+        );
+        continue;
+      }
+
+      // Check if this dependency was already transformed (by absolute path)
+      const existingFileUrl = frameworkFileCache.get(resolvedPath);
+      if (existingFileUrl) {
+        // Use existing cached file URL
+        const cachePath = await cacheTransformedCode(existingFileUrl, resolvedPath, ctx.fs);
+        relativeReplacements.set(specifier, `file://${cachePath}`);
+        continue;
+      }
+
+      try {
+        const depContent = await ctx.fs.readTextFile(resolvedPath);
+
+        // Transform the dependency with depth+1 (so its relative imports won't be processed)
+        const transformedDep = await transformFrameworkCode(
+          depContent,
+          resolvedPath,
+          ctx,
+          false,
+          depth + 1,
+        );
+
+        // Cache the transformed code
+        const cachePath = await cacheTransformedCode(transformedDep, resolvedPath, ctx.fs);
+        const fileUrl = `file://${cachePath}`;
+
+        relativeReplacements.set(specifier, fileUrl);
+        // Cache by resolved path for reuse
+        frameworkFileCache.set(resolvedPath, transformedDep);
+
+        logger.debug(`${LOG_PREFIX} Transformed relative import`, {
+          from: sourcePath.slice(-40),
+          specifier,
+          cachePath: cachePath.slice(-60),
+        });
+      } catch (error) {
+        logger.warn(`${LOG_PREFIX} Failed to transform relative import: ${specifier}`, {
+          from: sourcePath.slice(-40),
+          resolvedPath: resolvedPath.slice(-40),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
   // Rewrite imports to resolved paths
   const reactImportMap = getReactImportMap(ctx.reactVersion);
 
   transformed = await replaceSpecifiers(transformed, (specifier) => {
+    // Handle #veryfront/ imports
     if (specifier.startsWith("#veryfront/")) {
       return veryfrontReplacements.get(specifier) ?? null;
+    }
+
+    // Handle relative imports
+    if (specifier.startsWith("./") || specifier.startsWith("../")) {
+      return relativeReplacements.get(specifier) ?? null;
     }
 
     const mapped = reactImportMap[specifier];
@@ -260,6 +489,10 @@ async function transformFrameworkCode(
     importMap,
     reactVersion: ctx.reactVersion,
   });
+
+  // Cache the final transformed code and cleanup
+  frameworkFileCache.set(sourcePath, cacheResult.code);
+  transformingFiles.delete(sourcePath);
 
   return cacheResult.code;
 }
@@ -370,7 +603,9 @@ async function cacheTransformedCode(
 // Export internal functions for testing
 export const _testExports = {
   findVfModuleImports,
+  findRelativeImports,
   resolveFrameworkFile,
+  resolveRelativeFrameworkImport,
   resolveVeryfrontSourcePath,
   resolveAndTransformVeryfrontImport,
   FRAMEWORK_ROOT,
