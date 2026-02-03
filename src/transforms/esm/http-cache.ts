@@ -145,7 +145,7 @@ function extractSourceUrl(code: string): string | null {
 /**
  * Check if code has an embedded source URL.
  */
-function hasEmbeddedSourceUrl(code: string): boolean {
+function _hasEmbeddedSourceUrl(code: string): boolean {
   return code.startsWith(VF_SOURCE_PREFIX);
 }
 
@@ -1130,8 +1130,7 @@ async function findParentBundleWithEmbeddedUrl(
         const content = await fs.readTextFile(filePath);
 
         // Check if this bundle imports the target hash (via relative or absolute path)
-        const importsTarget =
-          content.includes(`./http-${targetHash}.mjs`) ||
+        const importsTarget = content.includes(`./http-${targetHash}.mjs`) ||
           content.includes(`http-${targetHash}.mjs"`);
 
         if (importsTarget) {

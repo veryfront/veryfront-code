@@ -10,7 +10,7 @@ import { registerWorkflow } from "#veryfront/workflow";
 import type { Workflow } from "#veryfront/workflow";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { isDeno, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
@@ -101,9 +101,39 @@ function createFsAdapterPlugin(fsAdapter: FileSystemAdapter): Plugin {
   };
 }
 
+// Setup veryfront modules as globals for compiled binary support
+let veryfrontGlobalsInitialized = false;
+
+async function ensureVeryfrontGlobals(): Promise<void> {
+  if (veryfrontGlobalsInitialized || !isDenoCompiled) return;
+
+  // Pre-import veryfront modules and expose them as globals
+  // This allows dynamically imported user code to access them
+  const [agentMod, toolMod, platformMod, promptMod, resourceMod] = await Promise.all([
+    import("#veryfront/agent"),
+    import("#veryfront/tool"),
+    import("#veryfront/platform"),
+    import("#veryfront/prompt"),
+    import("#veryfront/resource"),
+  ]);
+
+  (globalThis as Record<string, unknown>).__VERYFRONT_MODULES__ = {
+    "veryfront/agent": agentMod,
+    "veryfront/tool": toolMod,
+    "veryfront/platform": platformMod,
+    "veryfront/prompt": promptMod,
+    "veryfront/resource": resourceMod,
+  };
+
+  veryfrontGlobalsInitialized = true;
+}
+
 async function importModule(file: string, context: FileDiscoveryContext): Promise<unknown> {
   const cached = transpileCache.get(file);
   if (cached) return cached;
+
+  // Ensure veryfront modules are available as globals for compiled binaries
+  await ensureVeryfrontGlobals();
 
   const filePath = file.replace("file://", "");
 
@@ -120,7 +150,9 @@ async function importModule(file: string, context: FileDiscoveryContext): Promis
   const { build } = await import("esbuild");
   const fileDir = pathHelper.dirname(filePath);
 
-  const relativeImports = isDeno
+  // For compiled binaries, don't mark relative imports as external - they need to be bundled
+  // because the compiled binary can't dynamically import TypeScript files
+  const relativeImports = isDeno && !isDenoCompiled
     ? [...source.matchAll(/from\s+["'](\.\.[^"']+)["']/g)].map((m) => m[1]!).filter(Boolean)
     : [];
 
@@ -198,10 +230,46 @@ function rewriteForDeno(code: string, fileDir: string): string {
     transformed = transformed.replace(pattern, replacement);
   }
 
-  return transformed.replace(
+  // Handle relative imports
+  transformed = transformed.replace(
     /from\s+["'](\.\.\/[^"']+)["']/g,
     (_match, relativePath: string) => `from "file://${pathHelper.resolve(fileDir, relativePath)}"`,
   );
+
+  // For compiled binaries, rewrite veryfront imports to use globals
+  if (isDenoCompiled) {
+    // Rewrite: import { x, y } from "veryfront/agent" -> const { x, y } = globalThis.__VERYFRONT_MODULES__["veryfront/agent"]
+    const veryfrontModules = [
+      "veryfront/agent",
+      "veryfront/tool",
+      "veryfront/platform",
+      "veryfront/prompt",
+      "veryfront/resource",
+    ];
+
+    for (const mod of veryfrontModules) {
+      const escapedMod = mod.replace(/\//g, "\\/");
+      // Match: import { ... } from "veryfront/..."
+      const importPattern = new RegExp(
+        `import\\s*\\{([^}]+)\\}\\s*from\\s*["']${escapedMod}["']`,
+        "g",
+      );
+      transformed = transformed.replace(importPattern, (_match, imports: string) => {
+        return `const {${imports}} = globalThis.__VERYFRONT_MODULES__["${mod}"]`;
+      });
+
+      // Match: import * as X from "veryfront/..."
+      const namespacePattern = new RegExp(
+        `import\\s*\\*\\s*as\\s+(\\w+)\\s*from\\s*["']${escapedMod}["']`,
+        "g",
+      );
+      transformed = transformed.replace(namespacePattern, (_match, name: string) => {
+        return `const ${name} = globalThis.__VERYFRONT_MODULES__["${mod}"]`;
+      });
+    }
+  }
+
+  return transformed;
 }
 
 async function rewriteDiscoveryImports(

@@ -11,6 +11,7 @@ import { isAbsolute, join, resolve } from "#veryfront/platform/compat/path/index
 import { cliLogger } from "#veryfront/utils";
 import { exitProcess, registerTerminationSignals } from "../utils/index.ts";
 import { clearAllLocalCaches } from "../../transforms/mdx/esm-module-loader/cache/index.ts";
+import { discoverAll } from "../discovery/index.ts";
 import type { ParsedArgs } from "./types.ts";
 
 const DEFAULT_START_PORT = 8080;
@@ -168,6 +169,16 @@ export async function handleStartCommand(args: ParsedArgs): Promise<void> {
 
   if (!headless) {
     await showStartup(["Loading configuration", "Discovering projects", "Starting server"]);
+  }
+
+  // Run AI discovery for agents, tools, prompts, resources
+  const projectDir = discovered.defaultProject
+    ? discovered.projects.get(discovered.defaultProject) ?? cwd()
+    : cwd();
+  try {
+    await discoverAll({ baseDir: projectDir, verbose: false });
+  } catch (error) {
+    cliLogger.debug("AI discovery error:", error);
   }
 
   const allProjects = new Map([...discovered.projects, ...discovered.examples]);
