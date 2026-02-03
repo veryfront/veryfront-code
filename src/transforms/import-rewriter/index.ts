@@ -32,7 +32,6 @@ export {
   buildModuleServerUrl,
   buildReactUrl,
   buildVeryfrontModuleUrl,
-  CSSTYPE_VERSION,
   DEFAULT_REACT_VERSION,
   getReactImportMap,
   isEsmShUrl,

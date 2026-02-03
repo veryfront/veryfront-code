@@ -55,7 +55,8 @@ describe("UrlStrategy", () => {
         makeInfo("https://esm.sh/lodash"),
         makeCtx(),
       );
-      assertEquals(specifier?.includes("external=react"), true);
+      // Uses deps= to pin React version (not external= which causes bare imports)
+      assertEquals(specifier?.includes("deps=react@"), true);
     });
 
     it("should return null for URLs that already have params", () => {

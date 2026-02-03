@@ -19,7 +19,9 @@ export interface CodeBlockProps {
   inline?: boolean;
 }
 
-const ESM_REACT_MARKDOWN = "https://esm.sh/react-markdown@9?external=react,react-dom&target=es2022";
+// Use deps= to pin React version. Do NOT use external= which causes bare imports
+// that resolve to the latest React at runtime, breaking context sharing.
+const ESM_REACT_MARKDOWN = "https://esm.sh/react-markdown@9?deps=react@19.1.1,react-dom@19.1.1&target=es2022";
 const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4?target=es2022";
 const ESM_REHYPE_HIGHLIGHT = "https://esm.sh/rehype-highlight@7?target=es2022";
 const ESM_MERMAID = "https://esm.sh/mermaid@11";

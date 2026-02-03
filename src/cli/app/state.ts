@@ -351,8 +351,9 @@ export function scrollLogs(direction: "up" | "down"): StateUpdater {
   return (state) => {
     if (!state.logsExpanded) return state;
 
-    const maxScroll = Math.max(0, state.logs.length - 5);
-    const delta = direction === "up" ? 1 : -1;
+    const visibleLines = 15; // Must match the expanded log display count in index.ts
+    const maxScroll = Math.max(0, state.logs.length - visibleLines);
+    const delta = direction === "up" ? 3 : -3; // Scroll 3 lines at a time for responsiveness
     const newScroll = Math.min(maxScroll, Math.max(0, state.logScroll + delta));
 
     return { ...state, logScroll: newScroll };

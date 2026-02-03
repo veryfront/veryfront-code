@@ -8,7 +8,6 @@
 import { computeHash } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
 import {
-  CSSTYPE_VERSION,
   DEFAULT_REACT_VERSION,
   TAILWIND_VERSION,
 } from "../transforms/import-rewriter/url-builder.ts";
@@ -39,7 +38,6 @@ export function computeConfigHash(config: TransformConfig): Promise<string> {
     jsxImportSource: config.jsxImportSource ?? "react",
     studioEmbed: config.studioEmbed ?? false,
     dev: config.dev ?? false,
-    csstype: CSSTYPE_VERSION,
     tailwind: TAILWIND_VERSION,
   };
 

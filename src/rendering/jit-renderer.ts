@@ -28,6 +28,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { Span } from "@opentelemetry/api";
 import { getOrBuildBundle, type JitBundleResult } from "#veryfront/bundler/jit-bundler.ts";
 import { clearProjectModules, executeBundleForRender } from "#veryfront/bundler/bundle-executor.ts";
+import { BUNDLE_VERSION } from "#veryfront/bundler/bundle-cache.ts";
 import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import type { RenderContext } from "./context/render-context.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./orchestrator/types.ts";
@@ -77,7 +78,7 @@ import type * as React from "react";
 import { generateTailwind4CSS } from "#veryfront/html/styles-builder/index.ts";
 import { injectElementSelectors } from "#veryfront/studio/element-selector-injector.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
-import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
+import { type CollectedHead, runWithHeadCollector } from "#veryfront/react/head-collector.ts";
 import { detectAppRouter } from "./router-detection.ts";
 import { collectAncestorDirs, createErrorBoundary, tryLoadReservedInDirs } from "./app-reserved.ts";
 import { dirname, join } from "#veryfront/platform/compat/path-helper.ts";
@@ -302,23 +303,17 @@ export class JitRenderer {
    * The content hash in getOrBuildBundle ensures rebuilds only when needed.
    */
   private async getBundle(ctx: RenderContext): Promise<JitBundleResult> {
-    // Skip memory cache in dev/test mode to support dynamic file changes
-    // This allows tests to create files after bundle time and have them picked up
     const isDevOrTest = ctx.mode === "development" || getRuntimeEnv().denoTesting;
+    const reactVersion = ctx.config.react?.version ?? "default";
+    const memoryCacheKey = `${ctx.projectId}:${ctx.contentSourceId}:v${BUNDLE_VERSION}:react${reactVersion}`;
 
     if (!isDevOrTest) {
-      // Check in-memory cache in production mode
-      const memoryCacheKey = `${ctx.projectId}:${ctx.contentSourceId}`;
       const cached = this.bundleCache.get(memoryCacheKey);
-      if (cached) {
-        return cached;
-      }
+      if (cached) return cached;
     }
 
-    // Detect actual entry point
     const entryPoint = await this.detectEntryPoint(ctx);
 
-    // Build/fetch bundle (content hash ensures rebuilds only when files change)
     const result = await getOrBuildBundle({
       projectId: ctx.projectId,
       projectDir: ctx.projectDir,
@@ -327,9 +322,7 @@ export class JitRenderer {
       entryPoint,
     });
 
-    // Cache in memory (only in production mode)
     if (!isDevOrTest) {
-      const memoryCacheKey = `${ctx.projectId}:${ctx.contentSourceId}`;
       this.bundleCache.set(memoryCacheKey, result);
     }
 
@@ -497,15 +490,22 @@ export class JitRenderer {
       "jit-renderer.executeRender",
       async (span?: Span) => {
         const sourceKey = ctx.contentSourceId ?? "default";
-        const cacheKey = `${ctx.projectId}:${sourceKey}:bundle:${bundleHash}`;
+        // Include bundle version in module cache key to invalidate when bundler config changes.
+        // The content hash changes when project files change, but we also need to invalidate
+        // when bundler version changes (e.g., v7 bundles third-party packages differently than v6)
+        const cacheKey = `${ctx.projectId}:${sourceKey}:bundle:${bundleHash}:v${BUNDLE_VERSION}`;
 
         try {
           const {
             Component,
             React: BundledReact,
             renderToString,
+            renderToReadableStream,
             generateMetadata,
             headings: bundleHeadings,
+            pages: bundledPages,
+            layouts: bundledLayouts,
+            AppComponent: bundledAppComponent,
           } = await executeBundleForRender(
             bundleCode,
             cacheKey,
@@ -539,16 +539,21 @@ export class JitRenderer {
           span?.setAttribute("render.type", "component");
           span?.setAttribute("has.generateMetadata", !!generateMetadata);
           span?.setAttribute("has.headings", !!bundleHeadings);
+          span?.setAttribute("has.streaming", !!renderToReadableStream);
 
           return this.renderComponent(
             Component,
             BundledReact,
             renderToString,
+            renderToReadableStream,
             slug,
             ctx,
             options,
             generateMetadata,
             bundleHeadings,
+            bundledPages,
+            bundledLayouts,
+            bundledAppComponent,
           );
         } catch (error) {
           span?.setAttribute("error", true);
@@ -569,20 +574,27 @@ export class JitRenderer {
    * 3. Data fetching - call getServerData/getStaticData
    * 4. Metadata generation - call generateMetadata if present
    * 5. Layout application - wrap component with layouts
-   * 6. SSR rendering - render to HTML with head collection
+   * 6. SSR rendering - render to HTML with head collection (or stream)
    * 7. CSS generation - JIT Tailwind CSS
    * 8. Studio support - element selector injection
    *
    * @param Component - The page component from the bundle
    * @param BundledReact - Shared React instance from the bundle (avoids "two Reacts" problem)
    * @param bundledRenderToString - The renderToString from the bundle (must match React instance)
+   * @param bundledRenderToReadableStream - Optional streaming render function
    * @param generateMetadata - Optional function for dynamic metadata (App Router)
    * @param bundleHeadings - Optional headings from MDX
+   * @param bundledPages - All pages from the bundle (path -> component)
+   * @param bundledLayouts - All layouts from the bundle (path -> component)
+   * @param bundledAppComponent - App wrapper component containing providers (e.g., QueryClientProvider)
    */
   private async renderComponent(
     Component: unknown,
     BundledReact: typeof import("react"),
     bundledRenderToString: (element: unknown) => string,
+    bundledRenderToReadableStream:
+      | ((element: unknown, options?: unknown) => Promise<ReadableStream>)
+      | undefined,
     slug: string,
     ctx: RenderContext,
     options?: RenderOptions,
@@ -590,6 +602,9 @@ export class JitRenderer {
       params?: Record<string, unknown>,
     ) => Promise<Record<string, unknown>> | Record<string, unknown>,
     bundleHeadings?: Array<{ id: string; text: string; level: number }>,
+    bundledPages?: Record<string, unknown>,
+    bundledLayouts?: Record<string, unknown>,
+    bundledAppComponent?: unknown,
   ): Promise<RenderResult> {
     return withSpan(
       "jit-renderer.renderComponent",
@@ -625,42 +640,35 @@ export class JitRenderer {
           : await layoutCollector.collectLayouts(pageInfo);
         span?.setAttribute("layout.count", layoutResult.nestedLayouts.length);
 
-        // 2b. Load the actual page component from the resolved path
-        // The Component parameter from the bundle might be the wrong page for this route
-        // (e.g., bundle entry is app/page.tsx but we're rendering /nested which needs app/nested/page.tsx)
-        let ActualComponent: unknown = Component;
-        const moduleLoaderConfigForPage: ModuleLoaderConfig = {
-          projectDir: ctx.projectDir,
-          projectId: ctx.projectId,
-          contentSourceId: ctx.contentSourceId,
-          adapter: ctx.adapter,
-          mode: ctx.mode,
-          moduleCache: createModuleCache(),
-          esmCache: createEsmCache(),
-          reactVersion: ctx.config.react?.version,
-        };
+        logger.debug("[JitRenderer] Layout collection result", {
+          slug,
+          skipLayouts,
+          layoutCount: layoutResult.nestedLayouts.length,
+          layoutPaths: layoutResult.nestedLayouts.map((l) => l.path),
+          bundledLayoutKeys: bundledLayouts ? Object.keys(bundledLayouts) : [],
+        });
 
+        // 2b. Use the component from the JIT bundle
+        // NOTE: We intentionally do NOT use the legacy loadModule() here because it uses
+        // a different React instance (cached HTTP bundles) than the JIT bundle (esm.sh).
+        // Mixing React instances causes "Cannot read properties of null (reading 'useState')" errors.
+        // The JIT bundle contains the component with the correct React instance.
+        const ActualComponent: unknown = Component;
+
+        // Check for "use client" directive - skip SSR for client components
+        let isClientComponent = false;
         if (isComponentPage) {
           try {
-            const pageModule = await loadModule(pageInfo.entity.path, moduleLoaderConfigForPage);
-            if (pageModule && typeof pageModule === "object" && "default" in pageModule) {
-              ActualComponent = (pageModule as { default: unknown }).default;
-              logger.debug("[JitRenderer] Loaded page component from resolved path", {
+            const pageContent = await ctx.adapter.fs.readFile(pageInfo.entity.path);
+            isClientComponent = /^\s*['"]use client['"];?\s*$/m.test(pageContent);
+            if (isClientComponent) {
+              logger.debug("[JitRenderer] Detected 'use client' page, skipping SSR", {
                 slug,
                 pagePath: pageInfo.entity.path,
-                hasComponent: !!ActualComponent,
               });
             }
-          } catch (error) {
-            logger.warn(
-              "[JitRenderer] Failed to load page component, falling back to bundle default",
-              {
-                slug,
-                pagePath: pageInfo.entity.path,
-                error: String(error),
-              },
-            );
-            // Fall back to bundle's Component if loading fails
+          } catch {
+            // Could not read file, proceed with SSR attempt
           }
         }
 
@@ -793,131 +801,119 @@ export class JitRenderer {
           ctx.mode === "development",
         );
 
-        // 5. Apply layouts if any (simplified - layouts loaded via module loader)
+        // 5. Apply layouts if any
+        // Layouts are now loaded from the JIT bundle to ensure they use the same React instance.
         let wrappedElement = validatedElement;
-        if (layoutResult.nestedLayouts.length > 0) {
-          // For JIT renderer, layouts should be bundled with the component
-          // or applied by wrapping with layout components loaded via module loader
-          // This is a simplified approach - full layout orchestration would require
-          // the complete legacy infrastructure
-          logger.debug("[JitRenderer] Layouts discovered", {
+        if (layoutResult.nestedLayouts.length > 0 && bundledLayouts) {
+          // Apply layouts from innermost to outermost (reverse order)
+          // Each layout wraps the previous element as its children
+          const reversedLayouts = [...layoutResult.nestedLayouts].reverse();
+
+          for (const layoutItem of reversedLayouts) {
+            const layoutPath = layoutItem.path;
+            if (!layoutPath) continue;
+
+            // Look up layout component from the bundled layouts map
+            const LayoutComponent = bundledLayouts[layoutPath];
+            if (LayoutComponent && typeof LayoutComponent === "function") {
+              // Get layout-specific props if any
+              const layoutSpecificProps = layoutDataMap.get(layoutPath) || {};
+
+              // Wrap the current element with the layout
+              wrappedElement = ReactLib.createElement(
+                LayoutComponent as React.ComponentType<{ children: React.ReactNode }>,
+                { ...layoutSpecificProps, children: wrappedElement },
+              );
+
+              logger.debug("[JitRenderer] Applied layout from bundle", {
+                slug,
+                layoutPath,
+                hasLayoutProps: Object.keys(layoutSpecificProps).length > 0,
+              });
+            } else {
+              logger.warn("[JitRenderer] Layout not found in bundle, skipping", {
+                slug,
+                layoutPath,
+                bundledLayoutKeys: Object.keys(bundledLayouts || {}),
+              });
+            }
+          }
+
+          logger.debug("[JitRenderer] Layouts applied from bundle", {
+            slug,
+            appliedCount: reversedLayouts.filter((l) => l.path && bundledLayouts[l.path]).length,
+            totalCount: layoutResult.nestedLayouts.length,
+          });
+        } else if (layoutResult.nestedLayouts.length > 0) {
+          // No bundled layouts available - log warning
+          logger.warn("[JitRenderer] Layouts discovered but no bundled layouts available", {
             slug,
             layoutCount: layoutResult.nestedLayouts.length,
             layouts: layoutResult.nestedLayouts.map((l) => l.path),
           });
-
-          // Load and apply layout components from innermost to outermost
-          const moduleLoaderConfig: ModuleLoaderConfig = {
-            projectDir: ctx.projectDir,
-            projectId: ctx.projectId,
-            contentSourceId: ctx.contentSourceId,
-            adapter: ctx.adapter,
-            mode: ctx.mode,
-            moduleCache: createModuleCache(),
-            esmCache: createEsmCache(),
-            reactVersion: ctx.config.react?.version,
-          };
-
-          // Apply layouts in reverse order (innermost first, then wrap outward)
-          for (const layout of [...layoutResult.nestedLayouts].reverse()) {
-            if (!layout.componentPath && !layout.path) continue;
-            const layoutPath = layout.componentPath || layout.path || "";
-
-            try {
-              const layoutModule = await loadModule(layoutPath, moduleLoaderConfig);
-              const LayoutComponent = (layoutModule as { default?: unknown }).default;
-
-              if (LayoutComponent && typeof LayoutComponent === "function") {
-                const layoutProps = layoutDataMap.get(layoutPath) || {};
-                wrappedElement = ReactLib.createElement(
-                  LayoutComponent as React.ComponentType<Record<string, unknown>>,
-                  {
-                    ...layoutProps,
-                    children: wrappedElement,
-                  },
-                );
-              }
-            } catch (error) {
-              logger.warn("[JitRenderer] Failed to load layout", {
-                layoutPath,
-                error: String(error),
-              });
-              // Continue without this layout
-            }
-          }
         }
 
-        // 5b. Wrap with reserved components (loading/error) for App Router
+        // 5c. Apply App component wrapper (contains providers like QueryClientProvider)
+        // This must wrap everything including layouts to provide context to all components
+        if (bundledAppComponent && typeof bundledAppComponent === "function") {
+          wrappedElement = ReactLib.createElement(
+            bundledAppComponent as React.ComponentType<{ children: React.ReactNode }>,
+            { children: wrappedElement },
+          );
+          logger.debug("[JitRenderer] Applied App component wrapper", { slug });
+        }
+
+        // 5b. Reserved components (loading/error) for App Router
+        // NOTE: Disabled because tryLoadReservedInDirs uses the legacy module loader
+        // which has a different React instance, causing "two Reacts" errors.
+        // TODO: Include reserved components in the JIT bundle.
         const useAppRouter = await detectAppRouter(ctx.projectDir, ctx.config, ctx.adapter);
-        if (useAppRouter) {
-          try {
-            const pageFilePath = pageInfo.entity.path;
-            const segmentDir = dirname(pageFilePath);
-            const appRootDir = join(ctx.projectDir, "app");
-            const searchDirs = await collectAncestorDirs(segmentDir, appRootDir);
-
-            const [loadingComp, errorComp] = await Promise.all([
-              tryLoadReservedInDirs(
-                searchDirs,
-                "loading",
-                ctx.projectDir,
-                ctx.mode,
-                ctx.adapter,
-                ctx.projectId,
-                ctx.contentSourceId,
-              ),
-              tryLoadReservedInDirs(
-                searchDirs,
-                "error",
-                ctx.projectDir,
-                ctx.mode,
-                ctx.adapter,
-                ctx.projectId,
-                ctx.contentSourceId,
-              ),
-            ]);
-
-            if (loadingComp) {
-              const fallbackEl = ReactLib.createElement(loadingComp, {});
-              wrappedElement = ReactLib.createElement(
-                ReactLib.Suspense,
-                { fallback: fallbackEl },
-                wrappedElement,
-              ) as React.ReactElement;
-              logger.debug("[JitRenderer] Wrapped with Suspense/loading", { slug });
-            }
-
-            if (errorComp) {
-              const Boundary = createErrorBoundary(errorComp, ReactLib);
-              wrappedElement = ReactLib.createElement(
-                Boundary,
-                {},
-                wrappedElement,
-              ) as React.ReactElement;
-              logger.debug("[JitRenderer] Wrapped with ErrorBoundary", { slug });
-            }
-          } catch (error) {
-            logger.warn("[JitRenderer] Failed to apply reserved components", {
-              slug,
-              error: String(error),
-            });
-          }
+        if (useAppRouter && layoutResult.nestedLayouts.length > 0) {
+          logger.debug("[JitRenderer] Reserved components not applied (two Reacts fix)", { slug });
         }
 
-        // 6. Render to HTML using the shared renderToString
-        // IMPORTANT: We must use the shared renderToString (not SSRRenderer) because
+        // 6. Render to HTML using the shared renderToString or renderToReadableStream
+        // IMPORTANT: We must use the shared render functions (not SSRRenderer) because
         // the element was created with the shared React. Using a different React instance
-        // for renderToString causes the "two Reacts" problem where rendering fails.
+        // for rendering causes the "two Reacts" problem where rendering fails.
         const wantsStream = options?.delivery === "stream";
 
-        // Use head collector for metadata
-        const { result: ssrHtml, head: collectedHead } = await runWithHeadCollector(() => {
-          // Use bundled renderToString - this matches the React instance used for createElement
-          return bundledRenderToString(wrappedElement);
-        });
+        // For client components, skip SSR and use empty root - client will render
+        let ssrHtml: string;
+        let collectedHead: CollectedHead = { metas: [], links: [], styles: [] };
+        let stream: ReadableStream | null = null;
 
-        // Streaming not supported with bundled renderToString
-        const stream = wantsStream ? null : null;
+        if (isClientComponent) {
+          ssrHtml = '<div id="root"></div>';
+          logger.debug("[JitRenderer] Skipping SSR for client component", { slug });
+        } else if (wantsStream && bundledRenderToReadableStream) {
+          // Use streaming SSR when requested and available
+          try {
+            stream = await bundledRenderToReadableStream(wrappedElement);
+            // For streaming, we use a placeholder - the stream contains the actual content
+            ssrHtml = '<div id="root"></div>';
+            logger.debug("[JitRenderer] Using streaming SSR", { slug });
+          } catch (streamError) {
+            // Fall back to string rendering if streaming fails
+            logger.warn("[JitRenderer] Streaming SSR failed, falling back to string render", {
+              slug,
+              error: String(streamError),
+            });
+            const headResult = await runWithHeadCollector(() => {
+              return bundledRenderToString(wrappedElement);
+            });
+            ssrHtml = headResult.result;
+            collectedHead = headResult.head;
+          }
+        } else {
+          // Use head collector for metadata
+          const headResult = await runWithHeadCollector(() => {
+            // Use bundled renderToString - this matches the React instance used for createElement
+            return bundledRenderToString(wrappedElement);
+          });
+          ssrHtml = headResult.result;
+          collectedHead = headResult.head;
+        }
         span?.setAttribute("ssr.html.length", ssrHtml.length);
 
         // Compute SSR hash for hydration

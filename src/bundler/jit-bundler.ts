@@ -1,18 +1,7 @@
 /**
  * JIT (Just-In-Time) Bundler for Production Mode
  *
- * Bundles entire projects on first request using esbuild. The bundle is then
- * stored in the veryfront-api cache for subsequent requests. This approach:
- *
- * 1. Eliminates path tokenization issues (paths resolved at bundle time)
- * 2. Ensures every pod serves identical content (same bundle from cache)
- * 3. Provides automatic cache invalidation (content hash = cache key)
- *
- * Performance characteristics:
- * - First request: ~100-200ms to bundle
- * - Subsequent requests: ~5-10ms cache lookup
- *
- * @module bundler/jit-bundler
+ * Bundles entire projects on first request using esbuild with distributed caching.
  */
 
 import { logger } from "#veryfront/utils";
@@ -30,44 +19,67 @@ import {
 } from "./build-config.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { computeProjectContentHash, getBundleCache } from "./bundle-cache.ts";
+import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
+import {
+  isExtendedFSAdapter,
+  isVirtualFilesystem,
+} from "#veryfront/platform/adapters/fs/wrapper.ts";
+
+const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
+let cachedVeryfrontFilePaths: Record<string, string> | null = null;
+
+/**
+ * Get veryfront framework file paths from deno.json imports.
+ */
+function getVeryfrontFilePaths(): Record<string, string> {
+  if (cachedVeryfrontFilePaths) {
+    return cachedVeryfrontFilePaths;
+  }
+
+  const result: Record<string, string> = {};
+
+  try {
+    // Read deno.json from framework root
+    const denoJsonPath = joinPath(FRAMEWORK_ROOT, "deno.json");
+    const denoJson = JSON.parse(Deno.readTextFileSync(denoJsonPath)) as {
+      imports?: Record<string, string>;
+    };
+
+    const imports = denoJson.imports ?? {};
+
+    for (const [specifier, relativePath] of Object.entries(imports)) {
+      if (specifier.startsWith("veryfront/") && !specifier.startsWith("#")) {
+        const absolutePath = joinPath(FRAMEWORK_ROOT, relativePath);
+        result[specifier] = `file://${absolutePath}`;
+      }
+    }
+  } catch (error) {
+    logger.warn("[JitBundler] Failed to read veryfront paths from deno.json", { error });
+  }
+
+  cachedVeryfrontFilePaths = result;
+  return result;
+}
 
 export interface JitBundleResult {
-  /** Bundled code ready for execution */
   code: string;
-  /** Content hash used for caching */
   contentHash: string;
-  /** Whether the bundle was served from cache */
   fromCache: boolean;
-  /** Bundle creation/retrieval time in milliseconds */
   durationMs: number;
 }
 
 export interface JitBundleOptions {
-  /** Project identifier */
   projectId: string;
-  /** Project root directory */
   projectDir: string;
-  /** Runtime adapter for filesystem access */
   adapter: RuntimeAdapter;
-  /** React version */
   reactVersion?: string;
-  /** Entry point file (relative to projectDir) */
   entryPoint?: string;
-  /** Force rebuild even if cached */
   forceRebuild?: boolean;
-  /** Skip cache storage (for testing) */
   skipCache?: boolean;
 }
 
 /**
  * Get or build a production bundle for a project.
- *
- * This is the main entry point for JIT bundling. It:
- * 1. Collects all project files
- * 2. Computes a content hash
- * 3. Checks cache for existing bundle
- * 4. If cache miss, builds bundle with esbuild
- * 5. Stores bundle in cache for future requests
  */
 export async function getOrBuildBundle(options: JitBundleOptions): Promise<JitBundleResult> {
   const startTime = performance.now();
@@ -91,15 +103,12 @@ export async function getOrBuildBundle(options: JitBundleOptions): Promise<JitBu
         "force.rebuild": forceRebuild,
       });
 
-      // Step 1: Collect project files
       const projectFiles = await collectProjectFiles(projectDir, adapter);
       span?.setAttribute("project.files.count", projectFiles.size);
 
-      // Step 2: Compute content hash
       const contentHash = await computeProjectContentHash(projectFiles);
       span?.setAttribute("content.hash", contentHash);
 
-      // Step 3: Check cache (unless forced rebuild)
       if (!forceRebuild && !skipCache) {
         const cached = await getBundleCache().get(projectId, contentHash);
         if (cached) {
@@ -116,9 +125,7 @@ export async function getOrBuildBundle(options: JitBundleOptions): Promise<JitBu
       }
 
       span?.setAttribute("cache.hit", false);
-      logger.debug("[JitBundler] Cache miss, building bundle", { projectId, contentHash });
 
-      // Step 4: Build bundle
       const bundleResult = await buildProjectBundle({
         projectId,
         projectDir,
@@ -128,14 +135,12 @@ export async function getOrBuildBundle(options: JitBundleOptions): Promise<JitBu
         projectFiles,
       });
 
-      // Step 5: Store in cache
       if (!skipCache) {
         await getBundleCache().set(projectId, contentHash, {
           code: bundleResult.code,
           contentHash,
           metafile: bundleResult.metafile,
         });
-        logger.debug("[JitBundler] Bundle cached", { projectId, contentHash });
       }
 
       return {
@@ -154,6 +159,67 @@ interface BuildResult {
   metafile?: Record<string, unknown>;
 }
 
+function findAllPages(projectFiles: Map<string, string>): string[] {
+  const pages: string[] = [];
+  const pagePatterns = /\/(page|index)\.(tsx?|jsx?|mdx?)$/;
+
+  for (const filePath of projectFiles.keys()) {
+    // Match page files in app/ or pages/ directories
+    if (
+      (filePath.includes("/app/") || filePath.includes("/pages/")) &&
+      pagePatterns.test(filePath)
+    ) {
+      pages.push(filePath);
+    }
+  }
+
+  return pages;
+}
+
+function findAllLayouts(projectFiles: Map<string, string>): string[] {
+  const layouts: string[] = [];
+  const layoutPattern = /\/layout\.(tsx?|jsx?|mdx?)$/;
+  const namedLayoutPattern = /[Ll]ayout\.(tsx?|jsx?|mdx?)$/;
+
+  for (const filePath of projectFiles.keys()) {
+    const isAppLayout = filePath.includes("/app/") && layoutPattern.test(filePath);
+    const isComponentLayout = filePath.includes("/components/") && namedLayoutPattern.test(filePath);
+    const isLayoutDir = filePath.includes("/layouts/") && namedLayoutPattern.test(filePath);
+
+    if (isAppLayout || isComponentLayout || isLayoutDir) {
+      layouts.push(filePath);
+    }
+  }
+
+  return layouts;
+}
+
+/**
+ * Find the App wrapper component (components/app.tsx or similar).
+ * This component typically contains providers like QueryClientProvider.
+ */
+function findAppComponent(projectFiles: Map<string, string>): string | null {
+  const appPattern = /^components\/app\.(tsx?|jsx?)$/;
+
+  for (const filePath of projectFiles.keys()) {
+    if (appPattern.test(filePath)) {
+      return filePath;
+    }
+  }
+
+  return null;
+}
+
+function pathToVarName(filePath: string, prefix: string): string {
+  let hash = 0;
+  for (let i = 0; i < filePath.length; i++) {
+    const char = filePath.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return `${prefix}_${Math.abs(hash).toString(36)}`;
+}
+
 async function buildProjectBundle(options: {
   projectId: string;
   projectDir: string;
@@ -170,37 +236,65 @@ async function buildProjectBundle(options: {
       const esbuild = await getEsbuild();
       const entryPath = joinPath(projectDir, entryPoint);
 
+      const allPages = findAllPages(projectFiles);
+      const allLayouts = findAllLayouts(projectFiles);
+      const appComponent = findAppComponent(projectFiles);
+
       span?.setAttributes({
         "entry.path": entryPath,
         "react.version": reactVersion,
+        "app.component": appComponent || "none",
+        "pages.count": allPages.length,
+        "layouts.count": allLayouts.length,
       });
 
-      // NOTE: React remains external (esm.sh) so the JIT bundle shares
-      // the same React instance as SSR transforms.
+      // Generate imports for all pages
+      // Use ./ prefix to ensure these are treated as relative imports, not bare specifiers
+      const pageImports: string[] = [];
+      const pageExports: string[] = [];
+      for (const pagePath of allPages) {
+        const varName = pathToVarName(pagePath, "page");
+        pageImports.push(`import ${varName} from "./${pagePath}";`);
+        pageExports.push(`  "${pagePath}": ${varName},`);
+      }
 
-      // Create a virtual entry wrapper that imports the page and exports shared React
-      // This ensures the same React instance is used for both the Component and rendering
-      // Re-exports all named exports from page (including generateMetadata, headings, etc.)
+      // Generate imports for all layouts
+      const layoutImports: string[] = [];
+      const layoutExports: string[] = [];
+      for (const layoutPath of allLayouts) {
+        const varName = pathToVarName(layoutPath, "layout");
+        layoutImports.push(`import ${varName} from "./${layoutPath}";`);
+        layoutExports.push(`  "${layoutPath}": ${varName},`);
+      }
+
+      // Generate import for App component (providers wrapper)
+      // Use ./ prefix to ensure it's treated as a relative import, not a bare specifier
+      const appImport = appComponent ? `import __AppComponent from "./${appComponent}";` : "";
+      const appExport = appComponent ? "export { __AppComponent };" : "export const __AppComponent = null;";
+
       const virtualEntryPath = `${projectDir}/__jit_entry__.tsx`;
       const virtualEntryCode = `
-import Page from "${entryPath}";
-import { renderToString } from "react-dom/server";
+import { renderToString, renderToReadableStream } from "react-dom/server";
 import * as React from "react";
+import Page from "${entryPath}";
+${pageImports.join("\n")}
+${layoutImports.join("\n")}
+${appImport}
 
-// Re-export page component
 export default Page;
-
-// Re-export all named exports from the page (generateMetadata, headings, etc.)
 export * from "${entryPath}";
-
-// Export shared React for use in rendering (avoids "two Reacts" problem)
-export { React, renderToString };
+export { React, renderToString, renderToReadableStream };
+${appExport}
+export const __pages = {
+${pageExports.join("\n")}
+};
+export const __layouts = {
+${layoutExports.join("\n")}
+};
 `;
 
-      // Add virtual entry to project files
       projectFiles.set(virtualEntryPath, virtualEntryCode);
 
-      // Create build configuration with virtual entry
       const buildConfig: BundleConfig = {
         projectId,
         projectDir,
@@ -211,21 +305,20 @@ export { React, renderToString };
         entryPoints: [virtualEntryPath],
       };
 
-      // Get optimized build options for JIT bundling
       const buildOptions = createJitBuildOptions(buildConfig);
 
-      // Add virtual filesystem plugin with project files and MDX support
-      // MDX plugin must come BEFORE virtualFsPlugin to intercept MDX files
       buildOptions.plugins = [
-        createMdxPlugin(projectDir, adapter, "ssr", projectFiles), // Full MDX compilation support
+        createMdxPlugin(projectDir, adapter, "ssr", projectFiles),
         createVirtualFsPlugin(projectDir, adapter, projectFiles),
         createBareImportPlugin({
           reactVersion,
-          externalizeBareImports: false,
-        }), // Bundle deps, keep React external via esm.sh
+          veryfrontFilePaths: getVeryfrontFilePaths(),
+          // Keep packages external - bundling is too slow (fetches all deps from esm.sh).
+          // The "two Reacts" fix must rely on URL alignment instead.
+          externalizeBareImports: true,
+        }),
       ];
 
-      // Build with esbuild
       const result = await esbuild.build(buildOptions);
 
       if (result.errors.length > 0) {
@@ -250,19 +343,6 @@ export { React, renderToString };
   );
 }
 
-/**
- * Collect all relevant project files for bundling.
- *
- * This includes:
- * - TypeScript/JavaScript files (.ts, .tsx, .js, .jsx)
- * - MDX/Markdown files (.mdx, .md)
- * - JSON files (.json)
- *
- * Excludes:
- * - node_modules
- * - .git
- * - dist/build directories
- */
 async function collectProjectFiles(
   projectDir: string,
   adapter: RuntimeAdapter,
@@ -270,6 +350,40 @@ async function collectProjectFiles(
   const files = new Map<string, string>();
   const extensions = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".json", ".mdx", ".md"]);
   const excludeDirs = new Set(["node_modules", ".git", "dist", "build", ".cache", ".veryfront"]);
+
+  const isVirtual = isVirtualFilesystem(adapter.fs);
+  const isExtended = isExtendedFSAdapter(adapter.fs);
+
+  if (isVirtual && isExtended) {
+    const extendedFs = adapter.fs as import("#veryfront/platform/adapters/fs/wrapper.ts").ExtendedFileSystemAdapter;
+    const underlyingAdapter = extendedFs.getUnderlyingAdapter();
+
+    // deno-lint-ignore no-explicit-any
+    const adapterWithMethod = underlyingAdapter as any;
+    if (adapterWithMethod && typeof adapterWithMethod.getAllSourceFiles === "function") {
+
+      const sourceFiles: Array<{ path: string; content?: string }> =
+        await adapterWithMethod.getAllSourceFiles();
+
+      for (const file of sourceFiles) {
+        const ext = file.path.substring(file.path.lastIndexOf("."));
+        if (extensions.has(ext)) {
+          if (file.content !== undefined) {
+            files.set(file.path, file.content);
+          } else {
+            try {
+              const content = await adapter.fs.readFile(file.path);
+              files.set(file.path, content);
+            } catch {
+              // Skip files that can't be read
+            }
+          }
+        }
+      }
+
+      return files;
+    }
+  }
 
   async function walkDir(dir: string): Promise<void> {
     try {
@@ -285,7 +399,11 @@ async function collectProjectFiles(
           if (extensions.has(ext)) {
             try {
               const content = await adapter.fs.readFile(fullPath);
-              files.set(fullPath, content);
+              // Store relative path (strip projectDir prefix) for consistent bundle keys
+              const relativePath = fullPath.startsWith(projectDir)
+                ? fullPath.slice(projectDir.length).replace(/^\//, "")
+                : fullPath;
+              files.set(relativePath, content);
             } catch {
               // Skip files that can't be read
             }
@@ -298,12 +416,10 @@ async function collectProjectFiles(
   }
 
   await walkDir(projectDir);
+
   return files;
 }
 
-/**
- * Check if a cached bundle exists for a project
- */
 export async function hasCachedBundle(
   projectId: string,
   projectDir: string,
@@ -315,17 +431,10 @@ export async function hasCachedBundle(
   return cached !== null;
 }
 
-/**
- * Invalidate all cached bundles for a project
- */
 export async function invalidateProjectBundles(projectId: string): Promise<void> {
   await getBundleCache().invalidateProject(projectId);
-  logger.debug("[JitBundler] Invalidated all bundles", { projectId });
 }
 
-/**
- * Build a bundle from explicit project files (for testing/special cases)
- */
 export async function buildBundleFromFiles(
   projectId: string,
   files: Map<string, string>,
@@ -355,7 +464,7 @@ export async function buildBundleFromFiles(
   const buildOptions = createJitBuildOptions(buildConfig);
   buildOptions.plugins = [
     createVirtualFsPlugin("/virtual", virtualAdapter, files),
-    createBareImportPlugin(reactVersion, true),
+    createBareImportPlugin({ reactVersion, externalizeReact: true }),
   ];
 
   const result = await esbuild.build(buildOptions);
@@ -367,35 +476,19 @@ export async function buildBundleFromFiles(
   return new TextDecoder().decode(result.outputFiles?.[0]?.contents ?? new Uint8Array());
 }
 
-/**
- * Transform a single module using esbuild.
- * Used for data fetching modules that need to be imported dynamically.
- */
 export async function transformModule(
   code: string,
   filePath: string,
-  options: {
-    projectDir: string;
-    reactVersion?: string;
-    ssr?: boolean;
-  } = { projectDir: "/" },
+  options: { projectDir: string; reactVersion?: string; ssr?: boolean } = { projectDir: "/" },
 ): Promise<string> {
-  const {
-    projectDir: _projectDir,
-    reactVersion: _reactVersion = REACT_DEFAULT_VERSION,
-    ssr = true,
-  } = options;
+  const { ssr = true } = options;
   const esbuild = await getEsbuild();
 
-  // Determine loader from file extension
   const ext = filePath.substring(filePath.lastIndexOf("."));
-  const loader = ext === ".tsx" || ext === ".jsx"
-    ? "tsx"
-    : ext === ".ts"
-    ? "ts"
-    : ext === ".json"
-    ? "json"
-    : "js";
+  let loader: "tsx" | "ts" | "json" | "js" = "js";
+  if (ext === ".tsx" || ext === ".jsx") loader = "tsx";
+  else if (ext === ".ts") loader = "ts";
+  else if (ext === ".json") loader = "json";
 
   const result = await esbuild.transform(code, {
     loader,
@@ -409,19 +502,9 @@ export async function transformModule(
     treeShaking: true,
   });
 
-  if (result.warnings.length > 0) {
-    logger.debug("[JitBundler] Transform warnings", {
-      filePath,
-      warnings: result.warnings.map((w) => w.text),
-    });
-  }
-
   return result.code;
 }
 
-/**
- * Create a virtual adapter for building from a file map
- */
 function createVirtualAdapter(files: Map<string, string>): RuntimeAdapter {
   return {
     id: "memory",

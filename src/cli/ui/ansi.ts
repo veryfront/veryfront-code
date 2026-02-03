@@ -40,6 +40,9 @@ export const screen = {
   altOn: `${CSI}?1049h`,
   altOff: `${CSI}?1049l`,
   clearLineReturn: `${CSI}2K\r`,
+  // Mouse tracking (SGR mode for better compatibility)
+  mouseOn: `${CSI}?1000h${CSI}?1006h`,
+  mouseOff: `${CSI}?1006l${CSI}?1000l`,
 } as const;
 
 export const style = {

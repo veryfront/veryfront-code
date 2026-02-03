@@ -44,7 +44,78 @@ export interface BundleCacheConfig {
 
 // Current bundle format version - increment when format changes
 // v3: React externalized via esm.sh; bare imports bundled for single React instance
-const BUNDLE_VERSION = "3";
+// v4: Bare imports external by default to avoid SSR issues with browser-only modules
+// v5: Third-party esm.sh URLs include deps=react@version to pin React version (fix "two Reacts")
+// v6: Memory cache key includes bundle version and React version for proper invalidation
+// v7: Bundle third-party packages (not external) and redirect their React imports to our version
+// v8: Fix collectProjectFiles to use getAllSourceFiles for virtual filesystems (API-backed projects)
+//     and set effectiveProjectDir="/" for proxy mode to fix "two Reacts" problem
+// v9: Fix esm.sh URLs in user files that are missing deps=/external= params
+//     These direct esm.sh imports bypass bare import handling, causing React version mismatch
+// v10: Keep external but add deps= params to fix React version without bundling (avoid timeout)
+// v11: Remove deps=csstype from React URLs to match what external packages expect
+//      External packages with external=react use React without deps=csstype, creating different modules
+// v12: Fix React subpaths (jsx-runtime) to NOT use external=react
+//      jsx-runtime is PART of React, using external=react caused it to load a separate React instance
+// v13: Use esm.sh direct path format for React core (/react@ver/es2022/react.mjs)
+//      Query param URLs (?target=es2022) differ from internal paths used by external packages
+// v14: Use esm.sh alias param to redirect bare "react" imports to pinned version
+//      Without alias, bare "react" resolves to esm.sh/react (latest=19.2.4), not our 19.1.1
+// v15: Use esm.sh internal React URL format with deps=csstype@3.2.3 build key
+//      esm.sh packages internally resolve React to X-ZGNzc3R5cGVAMy4yLjM (deps=csstype@3.2.3)
+// v16: Add alias param to ALL external package URLs (not just react-dom)
+//      Ensures @tanstack/react-query and other packages resolve bare "react" to our exact URL
+// v17-18: Various React URL format experiments
+// v19: Fix MDX plugin to NEVER use adapter.fs during esbuild plugin callbacks
+//      AsyncLocalStorage context is lost in esbuild's native code execution,
+//      causing "No request context available" errors. All MDX files must be pre-loaded.
+// v20: Use esm.sh direct path format for React URLs (no query params, no build keys)
+//      /react@ver/es2022/react.mjs instead of /react@ver?target=es2022&deps=csstype
+//      This matches esm.sh internal resolution and ensures single React instance
+// v21: Use esm.sh alias parameter to redirect bare "react" imports in third-party packages
+//      alias=react:https://esm.sh/react@19.1.1/es2022/react.mjs ensures all packages
+//      resolve to the same React instance, fixing "two Reacts" problem at runtime
+// v22: Bundle third-party packages instead of externalizing to fix "two Reacts" at runtime
+//      When packages are external, esm.sh serves them with bare "react" imports that
+//      resolve to the latest React. Bundling ensures all React imports go through our handler.
+// v23: Remove external=react,react-dom from esm.sh URLs to fix "two Reacts" at runtime.
+//      The external= param causes esm.sh to output bare "import 'react'" which Deno resolves
+//      to the latest React at runtime (e.g., 19.2.4), not our pinned version (19.1.1).
+//      Using deps= only, esm.sh resolves React internally to /v135/react@19.1.1/es2022/react.mjs
+//      which ensures all packages use the same React instance.
+// v24: Remove deps=csstype@3.2.3 from React URLs to match third-party package imports.
+// v25: Use deps=react@19.1.1 instead of external=react for react-dom URLs.
+// v26: Use DIRECT PATH format for ALL React URLs to fix Deno module caching issue.
+//      Deno caches modules by their FETCH URL, not internal esm.sh path. So:
+//        https://esm.sh/react@19.1.1?target=es2022  ← one cache entry
+//        https://esm.sh/react@19.1.1/es2022/react.mjs  ← different cache entry!
+//      Third-party packages import React via direct path (no query params).
+//      Now ALL React URLs use direct path format to hit the same Deno cache entry.
+// v27: Fix all remaining external=react,react-dom usages to deps=react@version,react-dom@version.
+//      The external= param causes esm.sh to emit bare "import 'react'" which resolves to latest
+//      React at runtime. Using deps= makes esm.sh embed pinned version URLs internally.
+//      Fixed: addEsmShDeps(), bare-strategy.ts, markdown.tsx hardcoded URL.
+// v28: Fix isReactCore regex to not match "react-hook-form" when checking for React packages.
+//      The old check `/react`.startsWith() matched react-hook-form, skipping deps addition.
+// v29: Use relative paths for bundle keys (layout paths, page paths) so they match between
+//      LayoutCollector and the bundle. Previously filesystem adapter used absolute paths.
+// v30: Bundle App component (components/app.tsx) and apply as outermost wrapper during SSR.
+//      This enables providers like QueryClientProvider to wrap all components including layouts.
+// v31: Use ./ prefix for local file imports (pages, layouts, app) in virtual entry code.
+//      Bare paths like "components/app.tsx" were being treated as npm packages by the
+//      bare import plugin and rewritten to esm.sh URLs. The ./ prefix ensures they're
+//      recognized as relative imports and resolved from the project's virtual filesystem.
+// v32: Fix virtual FS and MDX plugins to try relative path keys when resolving imports.
+//      When ./components/app.tsx resolves to ${projectDir}/components/app.tsx, the map
+//      may have keys like "components/app.tsx" (relative). Now we try both formats.
+// v33: Fix the early virtual namespace handler (for paths starting with ".") to also
+//      try relative path keys. This handler runs before the generic relative path handler.
+// v34: Add debug logging and direct key lookup for relative path resolution.
+// v35: Add fallback handler for relative paths when namespace isn't "virtual".
+// v36: Fix resolveRelativePath to handle root projectDir "/" correctly.
+//      When projectDir="/" normalized to "", all paths "start with" empty string,
+//      causing off-by-one slice that stripped the first character from paths.
+export const BUNDLE_VERSION = "36";
 
 /**
  * Bundle cache for storing and retrieving production bundles.

@@ -1,23 +1,7 @@
 /**
- * Bundle Executor
- *
- * Executes pre-built bundles in an isolated module context for SSR.
- * This module provides the runtime environment for executing bundled
- * project code with proper React integration and error handling.
- *
- * ## Implementation Strategy
- *
- * Uses file-based dynamic imports instead of blob URLs for compiled binary
- * compatibility. Bundles are written to temp files and imported via file:// URLs.
- *
- * ## React Instance Consistency
- *
- * JIT bundles keep React external (esm.sh URLs) to ensure a single instance.
- *
- * @module bundler/bundle-executor
+ * Bundle Executor - Executes JIT bundles in SSR context.
  */
 
-import { logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { Span } from "@opentelemetry/api";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
@@ -25,32 +9,20 @@ import { joinPath } from "#veryfront/utils/path-utils.ts";
 import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 
 export interface BundleModule {
-  /** Default export - typically the app component */
   default?: unknown;
-  /** Named exports from the bundle */
   [key: string]: unknown;
 }
 
 export interface ExecuteOptions {
-  /** Project identifier for logging */
   projectId: string;
-  /** Global variables to inject into the bundle context */
   globals?: Record<string, unknown>;
-  /** Timeout for execution in milliseconds */
   timeoutMs?: number;
 }
 
-/**
- * Module cache to avoid re-evaluating the same bundle multiple times
- */
 const moduleCache = new Map<string, BundleModule>();
 const MAX_CACHE_SIZE = 100;
 
-/**
- * Generate a unique filename for a bundle based on its cache key.
- */
 function getBundleFilename(cacheKey: string): string {
-  // Create a safe filename from the cache key
   const safeKey = cacheKey.replace(/[^a-zA-Z0-9-_]/g, "_").slice(0, 50);
   const hash = simpleHash(cacheKey);
   return `bundle-${safeKey}-${hash}.mjs`;
@@ -69,13 +41,10 @@ async function removeBundleFile(cacheKey: string): Promise<void> {
   try {
     await remove(bundlePath);
   } catch {
-    // Ignore missing or locked files
+    // Ignore errors
   }
 }
 
-/**
- * Simple string hash for cache key uniqueness.
- */
 function simpleHash(str: string): string {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -88,9 +57,6 @@ function simpleHash(str: string): string {
 
 /**
  * Execute a bundled JavaScript module and return its exports.
- *
- * Uses file-based dynamic imports for compiled binary compatibility.
- * Bundles are written to temp files and imported via file:// URLs.
  */
 export async function executeBundle(
   code: string,
@@ -117,23 +83,16 @@ export async function executeBundle(
 
       span?.setAttribute("cache.hit", false);
 
-      // Write bundle to a temp file for import
-      // This works in both regular Deno and compiled binaries (unlike blob URLs)
       const bundleDir = getBundleDir();
       const bundleFilename = getBundleFilename(cacheKey);
       const bundlePath = joinPath(bundleDir, bundleFilename);
       const bundleUrl = `file://${bundlePath}`;
 
       try {
-        // Ensure directory exists
         await mkdir(bundleDir, { recursive: true });
-
-        // Write bundle to file
         await writeTextFile(bundlePath, code);
-
         span?.setAttribute("bundle.path", bundlePath);
 
-        // Dynamic import with timeout
         const importPromise = import(bundleUrl);
         let timeoutId: number | undefined;
         const timeoutPromise = new Promise<never>((_, reject) => {
@@ -147,7 +106,6 @@ export async function executeBundle(
           const module = await Promise.race([importPromise, timeoutPromise]) as BundleModule;
           if (timeoutId !== undefined) clearTimeout(timeoutId);
 
-          // Evict oldest cache entry if at capacity
           if (moduleCache.size >= MAX_CACHE_SIZE) {
             const firstKey = moduleCache.keys().next().value as string;
             moduleCache.delete(firstKey);
@@ -155,14 +113,6 @@ export async function executeBundle(
           }
 
           moduleCache.set(cacheKey, module);
-
-          logger.debug("[BundleExecutor] Bundle executed successfully", {
-            projectId,
-            cacheKey,
-            hasDefault: "default" in module,
-            exports: Object.keys(module).length,
-            usedFileImport: true,
-          });
 
           return module;
         } catch (error) {
@@ -173,24 +123,23 @@ export async function executeBundle(
         span?.setAttribute("error", true);
         span?.setAttribute("error.message", String(error));
 
-        logger.error("[BundleExecutor] Bundle execution failed", {
-          projectId,
-          cacheKey,
-          error: String(error),
-        });
+        const errorMessage = String(error);
+        if (isBrowserGlobalError(errorMessage)) {
+          const enhancedError = new Error(
+            `SSR Error: Browser globals accessed during server-side rendering. ` +
+              `Add "use client" directive or use dynamic imports. Original: ${errorMessage}`,
+          );
+          (enhancedError as Error & { cause?: unknown }).cause = error;
+          throw enhancedError;
+        }
 
         throw error;
       }
-      // Note: We keep the file for caching while the module stays in memory.
-      // Files are removed when the module cache evicts or is cleared.
     },
     { "bundler.operation": "execute" },
   );
 }
 
-/**
- * Metadata returned by generateMetadata function
- */
 export interface GeneratedMetadata {
   title?: string;
   description?: string;
@@ -198,39 +147,23 @@ export interface GeneratedMetadata {
   [key: string]: unknown;
 }
 
-/**
- * Result of executing a bundle for rendering.
- *
- * JIT bundles export:
- * - `default`: The page component
- * - `React`: The shared React library (to avoid "two Reacts" problem)
- * - `renderToString`: The renderToString function (same React instance)
- * - `generateMetadata`: Optional function for dynamic metadata
- * - `headings`: Optional array of headings (MDX)
- */
 export interface BundleRenderExports {
-  /** The page component (default export) */
   Component?: unknown;
-  /** Bundled React library - use this for createElement to avoid instance mismatch */
   React?: typeof import("react");
-  /** Bundled renderToString - use this for SSR */
   renderToString?: (element: unknown) => string;
-  /** Optional generateMetadata function for App Router dynamic metadata */
+  renderToReadableStream?: (element: unknown, options?: unknown) => Promise<ReadableStream>;
   generateMetadata?: (
     params?: Record<string, unknown>,
   ) => Promise<GeneratedMetadata> | GeneratedMetadata;
-  /** Optional headings array from MDX */
   headings?: Array<{ id: string; text: string; level: number }>;
-  /** Raw module for accessing other exports */
+  pages?: Record<string, unknown>;
+  layouts?: Record<string, unknown>;
+  AppComponent?: unknown;
   module: BundleModule;
 }
 
 /**
  * Execute a bundle and extract the component and shared React.
- *
- * JIT bundles export React from esm.sh to avoid the "two Reacts" problem.
- * The React export is used so callers can use the same instance
- * for createElement and renderToString.
  */
 export async function executeBundleForRender(
   code: string,
@@ -241,37 +174,38 @@ export async function executeBundleForRender(
 
   const result: BundleRenderExports = { module };
 
-  // Extract the page component (default export)
-  if (module.default !== undefined) {
-    result.Component = module.default;
-  }
-
-  // Extract shared React (avoids "two Reacts" problem)
+  if (module.default !== undefined) result.Component = module.default;
   if (module.React && typeof module.React === "object") {
     result.React = module.React as typeof import("react");
   }
-
-  // Extract bundled renderToString
   if (typeof module.renderToString === "function") {
     result.renderToString = module.renderToString as (element: unknown) => string;
   }
-
-  // Extract generateMetadata for App Router dynamic metadata
+  if (typeof module.renderToReadableStream === "function") {
+    result.renderToReadableStream = module.renderToReadableStream as (
+      element: unknown,
+      options?: unknown,
+    ) => Promise<ReadableStream>;
+  }
   if (typeof module.generateMetadata === "function") {
     result.generateMetadata = module.generateMetadata as BundleRenderExports["generateMetadata"];
   }
-
-  // Extract headings from MDX
   if (Array.isArray(module.headings)) {
     result.headings = module.headings as BundleRenderExports["headings"];
+  }
+  if (module.__pages && typeof module.__pages === "object") {
+    result.pages = module.__pages as Record<string, unknown>;
+  }
+  if (module.__layouts && typeof module.__layouts === "object") {
+    result.layouts = module.__layouts as Record<string, unknown>;
+  }
+  if (module.__AppComponent !== undefined && module.__AppComponent !== null) {
+    result.AppComponent = module.__AppComponent;
   }
 
   return result;
 }
 
-/**
- * Clear a specific cached module
- */
 export function clearModuleCache(cacheKey: string): boolean {
   const deleted = moduleCache.delete(cacheKey);
   if (deleted) {
@@ -280,9 +214,6 @@ export function clearModuleCache(cacheKey: string): boolean {
   return deleted;
 }
 
-/**
- * Clear all cached modules for a project
- */
 export function clearProjectModules(projectId: string): number {
   let count = 0;
   for (const key of moduleCache.keys()) {
@@ -295,9 +226,6 @@ export function clearProjectModules(projectId: string): number {
   return count;
 }
 
-/**
- * Clear all cached modules
- */
 export function clearAllModules(): void {
   for (const key of moduleCache.keys()) {
     void removeBundleFile(key);
@@ -305,12 +233,32 @@ export function clearAllModules(): void {
   moduleCache.clear();
 }
 
-/**
- * Get cache statistics
- */
 export function getModuleCacheStats(): { size: number; maxSize: number } {
   return {
     size: moduleCache.size,
     maxSize: MAX_CACHE_SIZE,
   };
+}
+
+function isBrowserGlobalError(errorMessage: string): boolean {
+  const browserGlobalPatterns = [
+    /Cannot use 'in' operator.*undefined/i,
+    /Cannot read propert.*of (undefined|null)/i,
+    /document is not defined/i,
+    /window is not defined/i,
+    /navigator is not defined/i,
+    /localStorage is not defined/i,
+    /sessionStorage is not defined/i,
+    /self is not defined/i,
+    /HTMLElement is not defined/i,
+    /customElements is not defined/i,
+    /getComputedStyle is not defined/i,
+    /requestAnimationFrame is not defined/i,
+    /matchMedia is not defined/i,
+    /ResizeObserver is not defined/i,
+    /IntersectionObserver is not defined/i,
+    /MutationObserver is not defined/i,
+  ];
+
+  return browserGlobalPatterns.some((pattern) => pattern.test(errorMessage));
 }

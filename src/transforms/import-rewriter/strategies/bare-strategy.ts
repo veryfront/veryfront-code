@@ -85,8 +85,10 @@ export class BareStrategy implements ImportRewriteStrategy {
       warnUnversionedImport(info.specifier, ctx.projectId);
     }
 
+    // Use deps= to pin React version. Do NOT use external= which causes bare imports
+    // that resolve to the latest React at runtime, breaking context sharing.
     const url = buildEsmShUrl(finalSpecifier, undefined, undefined, {
-      external: ["react", "react-dom"],
+      deps: { react: ctx.reactVersion, "react-dom": ctx.reactVersion },
     });
 
     return { specifier: url };

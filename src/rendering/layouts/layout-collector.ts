@@ -111,7 +111,7 @@ export class LayoutCollector {
           pagePath,
           projectDir: this.projectDir,
           hasConfig: !!this.config,
-          layout: this.config?.layout,
+          configLayout: this.config?.layout,
         });
 
         if (pagePath.includes("/.veryfront/") || pagePath.includes(".veryfront/")) {
@@ -250,7 +250,14 @@ export class LayoutCollector {
       );
     }
 
-    const layoutPath = layoutInfo.entity.path;
+    // Use the layoutName if it's a full path (has extension), otherwise derive from entity
+    // This ensures bundle keys match (bundle uses relative paths)
+    const isFullPath = /\.(mdx|md|tsx|jsx|ts|js)$/.test(layoutName);
+    const layoutPath = isFullPath
+      ? layoutName
+      : layoutInfo.entity.path.startsWith(this.projectDir)
+        ? layoutInfo.entity.path.slice(this.projectDir.length).replace(/^\//, "")
+        : layoutInfo.entity.path;
     const kind = getLayoutKind(layoutPath);
 
     logger.debug("Processing named layout", {

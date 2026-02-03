@@ -1,11 +1,5 @@
 /**
- * Shared esbuild configuration for production JIT bundling and preview watch mode.
- *
- * This module provides a unified build configuration that can be used by both:
- * - JIT Bundler: Full project bundling on first production request
- * - Preview Bundler: Watch mode with incremental rebuilds and HMR
- *
- * @module bundler/build-config
+ * Shared esbuild configuration for JIT bundling and preview watch mode.
  */
 
 import type { BuildOptions, Plugin } from "esbuild";
@@ -22,27 +16,14 @@ import {
 } from "#veryfront/utils/constants/cdn.ts";
 
 export interface BundleConfig {
-  /** Project identifier for cache isolation */
   projectId: string;
-  /** Root directory of the project */
   projectDir: string;
-  /** Runtime adapter for filesystem access */
   adapter: RuntimeAdapter;
-  /** React version to use */
   reactVersion?: string;
-  /** Development mode (affects minification, sourcemaps) */
   dev?: boolean;
-  /** Target: SSR or browser */
   target: "ssr" | "browser";
-  /** Entry point file paths */
   entryPoints: string[];
-  /** External packages (not bundled) */
   external?: string[];
-  /**
-   * Pre-cached React file:// paths for SSR.
-   * When provided, React imports resolve to these paths instead of CDN URLs.
-   * This ensures JIT bundled code uses the same React instance as SSR.
-   */
   reactFilePaths?: Record<string, string>;
 }
 
@@ -62,9 +43,6 @@ export interface SharedBuildConfig {
   metafile: boolean;
 }
 
-/**
- * Get React CDN URLs for a given version
- */
 export function getReactExternals(_reactVersion: string = REACT_DEFAULT_VERSION): string[] {
   return [
     "react",
@@ -76,9 +54,6 @@ export function getReactExternals(_reactVersion: string = REACT_DEFAULT_VERSION)
   ];
 }
 
-/**
- * Get React CDN URL mapping for browser imports
- */
 export function getReactCDNMapping(
   reactVersion: string = REACT_DEFAULT_VERSION,
 ): Record<string, string> {
@@ -94,9 +69,6 @@ export function getReactCDNMapping(
 
 type EsbuildLoader = "tsx" | "ts" | "jsx" | "js" | "css" | "json";
 
-/**
- * Get the appropriate esbuild loader for a file path
- */
 export function getLoaderForPath(path: string): EsbuildLoader {
   if (path.endsWith(".tsx")) return "tsx";
   if (path.endsWith(".ts")) return "ts";
@@ -108,9 +80,7 @@ export function getLoaderForPath(path: string): EsbuildLoader {
 
 /**
  * Create a virtual filesystem plugin for esbuild.
- *
- * This plugin allows esbuild to resolve and load files through the RuntimeAdapter,
- * which supports both local filesystem and remote API-backed filesystems.
+ * Resolves and loads files through the RuntimeAdapter.
  */
 export function createVirtualFsPlugin(
   projectDir: string,
@@ -122,16 +92,12 @@ export function createVirtualFsPlugin(
   return {
     name: "veryfront-virtual-fs",
     setup(build) {
-      // Handle virtual files
       if (virtualFiles?.size) {
-        // Resolve handler for virtual files (skip MDX - handled by MDX plugin)
         build.onResolve({ filter: /.*/ }, (args) => {
-          // Skip MDX files - they should be handled by createMdxPlugin
           if (args.path.endsWith(".mdx") || args.path.endsWith(".md")) {
             return undefined;
           }
 
-          // For entry points and absolute paths
           if (args.path.startsWith("/")) {
             if (virtualFiles.has(args.path)) {
               return {
@@ -142,13 +108,11 @@ export function createVirtualFsPlugin(
             return undefined;
           }
 
-          // For relative imports from virtual files
           if (args.path.startsWith(".") && args.namespace === "virtual") {
-            // resolveDir is set by onLoad, use it directly
             const baseDir = args.resolveDir || projectDir;
             const resolved = joinPath(baseDir, args.path);
 
-            // Try exact path first
+            // Try absolute path first
             if (virtualFiles.has(resolved)) {
               return {
                 path: resolved,
@@ -156,7 +120,32 @@ export function createVirtualFsPlugin(
               };
             }
 
-            // Try with extensions
+            // Try relative path (projectFiles map may use relative keys)
+            const relativeResolved = resolved.startsWith(projectDir + "/")
+              ? resolved.slice(projectDir.length + 1)
+              : resolved.startsWith(projectDir)
+                ? resolved.slice(projectDir.length).replace(/^\//, "")
+                : null;
+
+            // Also try stripping ./ from original path as a direct key
+            const directKey = args.path.startsWith("./") ? args.path.slice(2) : args.path;
+
+            if (relativeResolved && virtualFiles.has(relativeResolved)) {
+              return {
+                path: relativeResolved,
+                namespace: "virtual",
+              };
+            }
+
+            // Try direct key (strip ./ prefix)
+            if (virtualFiles.has(directKey)) {
+              return {
+                path: directKey,
+                namespace: "virtual",
+              };
+            }
+
+            // Try with extensions (absolute paths)
             for (const ext of exts) {
               const withExt = resolved + ext;
               if (virtualFiles.has(withExt)) {
@@ -167,7 +156,20 @@ export function createVirtualFsPlugin(
               }
             }
 
-            // Try index files
+            // Try with extensions (relative paths)
+            if (relativeResolved) {
+              for (const ext of exts) {
+                const withExt = relativeResolved + ext;
+                if (virtualFiles.has(withExt)) {
+                  return {
+                    path: withExt,
+                    namespace: "virtual",
+                  };
+                }
+              }
+            }
+
+            // Try index files (absolute paths)
             for (const ext of exts) {
               const indexPath = joinPath(resolved, `index${ext}`);
               if (virtualFiles.has(indexPath)) {
@@ -177,14 +179,37 @@ export function createVirtualFsPlugin(
                 };
               }
             }
+
+            // Try index files (relative paths)
+            if (relativeResolved) {
+              for (const ext of exts) {
+                const indexPath = joinPath(relativeResolved, `index${ext}`);
+                if (virtualFiles.has(indexPath)) {
+                  return {
+                    path: indexPath,
+                    namespace: "virtual",
+                  };
+                }
+              }
+            }
+          }
+
+          // Fallback for relative paths when namespace isn't "virtual"
+          // This handles cases where the entry point wasn't resolved through our handlers
+          if (args.path.startsWith(".") && args.namespace !== "virtual") {
+            const directKey = args.path.startsWith("./") ? args.path.slice(2) : args.path;
+            if (virtualFiles.has(directKey)) {
+              return {
+                path: directKey,
+                namespace: "virtual",
+              };
+            }
           }
 
           return undefined;
         });
 
-        // Load handler for virtual files (skip MDX - handled by MDX plugin)
         build.onLoad({ filter: /.*/, namespace: "virtual" }, (args) => {
-          // Skip MDX files - they should be handled by createMdxPlugin
           if (args.path.endsWith(".mdx") || args.path.endsWith(".md")) {
             return undefined;
           }
@@ -194,7 +219,6 @@ export function createVirtualFsPlugin(
             return {
               contents,
               loader: getLoaderForPath(args.path),
-              // Set resolveDir so relative imports work
               resolveDir: getDirectory(args.path),
             };
           }
@@ -202,10 +226,45 @@ export function createVirtualFsPlugin(
         });
       }
 
-      // Resolve relative and absolute imports through adapter
-      // Skip MDX files - they are handled by createMdxPlugin
+      build.onResolve({ filter: /^@\// }, async (args) => {
+        if (args.path.endsWith(".mdx") || args.path.endsWith(".md")) {
+          return undefined;
+        }
+
+        const relativePath = args.path.slice(2);
+        const candidate = joinPath(projectDir, relativePath);
+
+        const candidates: string[] = [candidate];
+        for (const ext of exts) candidates.push(candidate + ext);
+        for (const ext of exts) candidates.push(joinPath(candidate, `index${ext}`));
+
+        if (virtualFiles?.size) {
+          for (const f of candidates) {
+            if (virtualFiles.has(f)) {
+              return { path: f, namespace: "virtual" };
+            }
+          }
+        }
+
+        for (const f of candidates) {
+          try {
+            const st = await adapter.fs.stat(f);
+            if (st.isFile) {
+              if (virtualFiles) {
+                const content = await adapter.fs.readFile(f);
+                virtualFiles.set(f, content);
+              }
+              return { path: f, namespace: "virtual" };
+            }
+          } catch {
+            // File doesn't exist
+          }
+        }
+
+        return undefined;
+      });
+
       build.onResolve({ filter: /^(\.?\.?\/|\/)\/*/ }, async (args) => {
-        // Skip MDX files - let MDX plugin handle them
         if (args.path.endsWith(".mdx") || args.path.endsWith(".md")) {
           return undefined;
         }
@@ -220,21 +279,45 @@ export function createVirtualFsPlugin(
         for (const ext of exts) candidates.push(candidate + ext);
         for (const ext of exts) candidates.push(joinPath(candidate, `index${ext}`));
 
+        // Also try relative paths (projectFiles map may use relative keys)
+        const relativeCandidate = candidate.startsWith(projectDir + "/")
+          ? candidate.slice(projectDir.length + 1)
+          : candidate.startsWith(projectDir)
+            ? candidate.slice(projectDir.length).replace(/^\//, "")
+            : null;
+        if (relativeCandidate) {
+          candidates.push(relativeCandidate);
+          for (const ext of exts) candidates.push(relativeCandidate + ext);
+          for (const ext of exts) candidates.push(joinPath(relativeCandidate, `index${ext}`));
+        }
+
+        if (virtualFiles?.size) {
+          for (const f of candidates) {
+            if (virtualFiles.has(f)) {
+              return { path: f, namespace: "virtual" };
+            }
+          }
+        }
+
         for (const f of candidates) {
           try {
             const st = await adapter.fs.stat(f);
-            if (st.isFile) return { path: f };
+            if (st.isFile) {
+              if (virtualFiles) {
+                const content = await adapter.fs.readFile(f);
+                virtualFiles.set(f, content);
+              }
+              return { path: f, namespace: "virtual" };
+            }
           } catch {
-            // Try next candidate
+            // File doesn't exist
           }
         }
 
         return undefined;
       });
 
-      // Load files through adapter
       build.onLoad({ filter: /\.(tsx?|jsx?|mjs)$/ }, async (args) => {
-        // Skip virtual namespace (handled above) and https namespace (handled by bare-import plugin)
         if (args.namespace === "virtual" || args.namespace === "https") return undefined;
 
         try {
@@ -255,32 +338,22 @@ export function createVirtualFsPlugin(
   };
 }
 
-/**
- * Options for the bare import plugin
- */
 export interface BareImportPluginOptions {
-  /** React version for CDN mapping */
   reactVersion?: string;
-  /** Whether to mark React as external (default: true) */
   externalizeReact?: boolean;
-  /** Whether to mark non-React bare imports as external (default: true) */
   externalizeBareImports?: boolean;
-  /** Pre-cached React file:// paths to use instead of CDN URLs */
   reactFilePaths?: Record<string, string>;
+  veryfrontFilePaths?: Record<string, string>;
 }
 
 /**
- * Create a plugin that resolves bare imports to esm.sh URLs
- *
- * When reactFilePaths is provided, React imports are resolved to those file://
- * paths instead of CDN URLs. This enables sharing the same React instance
- * between JIT bundled code and SSR execution.
+ * Create a plugin that resolves bare imports to esm.sh URLs.
+ * React imports use file:// paths if provided, otherwise CDN URLs.
  */
 export function createBareImportPlugin(
   reactVersionOrOptions: string | BareImportPluginOptions = REACT_DEFAULT_VERSION,
   externalizeReact: boolean = true,
 ): Plugin {
-  // Support both old signature (string, boolean) and new options object
   const options: BareImportPluginOptions = typeof reactVersionOrOptions === "string"
     ? { reactVersion: reactVersionOrOptions, externalizeReact }
     : reactVersionOrOptions;
@@ -288,16 +361,47 @@ export function createBareImportPlugin(
   const reactVersion = options.reactVersion ?? REACT_DEFAULT_VERSION;
   const shouldExternalize = options.externalizeReact ?? true;
   const shouldExternalizeBare = options.externalizeBareImports ?? true;
-  const reactFilePaths = options.reactFilePaths;
-
-  // Use file:// paths if provided, otherwise fall back to CDN mapping
+  const { reactFilePaths, veryfrontFilePaths } = options;
   const reactMapping = reactFilePaths ?? getReactCDNMapping(reactVersion);
 
   return {
     name: "veryfront-bare-imports",
     setup(build) {
       build.onResolve({ filter: /.*/ }, (args) => {
-        // Skip relative, absolute, and URL imports
+        // Fix esm.sh URLs missing React version parameters.
+        // IMPORTANT: Do NOT add external=react,react-dom - it causes bare imports that resolve to latest React.
+        if (args.path.startsWith("https://esm.sh/") && !args.path.includes("deps=")) {
+          const url = new URL(args.path);
+          // Skip React core packages (react, react-dom) but NOT packages that start with "react-" (e.g., react-hook-form)
+          const isReactCore = /^\/react(@|$|\/)/i.test(url.pathname) ||
+            /^\/react-dom(@|$|\/)/i.test(url.pathname) ||
+            url.pathname.startsWith("/@types/react");
+          if (!isReactCore) {
+            url.searchParams.set("deps", `react@${reactVersion},react-dom@${reactVersion}`);
+            // Remove any existing external param that includes react
+            if (url.searchParams.has("external")) {
+              const existingExternal = url.searchParams.get("external") || "";
+              const nonReactExternal = existingExternal
+                .split(",")
+                .filter((e) => e !== "react" && e !== "react-dom")
+                .join(",");
+              if (nonReactExternal) {
+                url.searchParams.set("external", nonReactExternal);
+              } else {
+                url.searchParams.delete("external");
+              }
+            }
+            if (!url.searchParams.has("target")) {
+              url.searchParams.set("target", "es2022");
+            }
+            const fixedUrl = url.toString();
+            if (shouldExternalizeBare) {
+              return { path: fixedUrl, external: true };
+            }
+            return { path: fixedUrl, namespace: "https" };
+          }
+        }
+
         if (
           args.path.startsWith(".") ||
           args.path.startsWith("/") ||
@@ -308,28 +412,40 @@ export function createBareImportPlugin(
           return undefined;
         }
 
-        // Only handle import statements
         if (args.kind !== "import-statement" && args.kind !== "dynamic-import") {
           return undefined;
         }
 
-        // Map React packages
         const resolvedPath = reactMapping[args.path];
         if (resolvedPath) {
-          // File paths are always external (already cached locally)
           if (resolvedPath.startsWith("file://")) {
             return { path: resolvedPath, external: true };
           }
 
-          // CDN URLs: externalize or load from HTTPS
           if (shouldExternalize) {
             return { path: resolvedPath, external: true };
           }
           return { path: resolvedPath, namespace: "https" };
         }
 
-        // Map other bare imports to esm.sh with external React to prevent duplicate React copies
-        const url = `https://esm.sh/${args.path}?external=react,react-dom&target=es2022`;
+        if (veryfrontFilePaths) {
+          const veryfrontPath = veryfrontFilePaths[args.path];
+          if (veryfrontPath) {
+            if (veryfrontPath.startsWith("file://")) {
+              return { path: veryfrontPath, external: true };
+            }
+            if (shouldExternalizeBare) {
+              return { path: veryfrontPath, external: true };
+            }
+            return { path: veryfrontPath, namespace: "https" };
+          }
+        }
+
+        // Map bare imports to esm.sh with pinned React version.
+        // IMPORTANT: Do NOT use external=react,react-dom here!
+        // With external=, esm.sh outputs bare "import 'react'" which resolves to latest React at runtime.
+        // Using deps= only, esm.sh resolves React internally to the pinned version URL.
+        const url = `https://esm.sh/${args.path}?deps=react@${reactVersion},react-dom@${reactVersion}&target=es2022`;
         if (shouldExternalizeBare) {
           return { path: url, external: true };
         }
@@ -337,23 +453,39 @@ export function createBareImportPlugin(
       });
 
       const shouldLoadHttps = !shouldExternalize || !shouldExternalizeBare;
-      // If bundling any HTTPS modules, load from HTTPS and handle nested imports
       if (shouldLoadHttps) {
-        // Resolve imports within HTTPS modules (e.g., esm.sh internal paths)
+        // Resolve esm.sh internal paths
         build.onResolve({ filter: /^\//, namespace: "https" }, (args) => {
-          // Resolve absolute paths relative to the esm.sh base URL
+          const reactMatch = args.path.match(/\/(react)@[\d.]+/);
+          if (reactMatch) {
+            const reactUrl = reactMapping["react"];
+            if (reactUrl) {
+              return { path: reactUrl, external: shouldExternalize };
+            }
+          }
+
+          const reactDomMatch = args.path.match(/\/(react-dom)@[\d.]+(.*)$/);
+          if (reactDomMatch) {
+            const subpathPart = reactDomMatch[2] || "";
+            let mappingKey = "react-dom";
+            if (subpathPart.includes("/client")) mappingKey = "react-dom/client";
+            else if (subpathPart.includes("/server")) mappingKey = "react-dom/server";
+            const reactDomUrl = reactMapping[mappingKey] || reactMapping["react-dom"];
+            if (reactDomUrl) {
+              return { path: reactDomUrl, external: shouldExternalize };
+            }
+          }
+
           try {
             const baseUrl = new URL(args.importer).origin;
             const resolvedUrl = `${baseUrl}${args.path}`;
             return { path: resolvedUrl, namespace: "https" };
           } catch {
-            // If importer URL parsing fails, fall back to esm.sh origin
             const resolvedUrl = `https://esm.sh${args.path}`;
             return { path: resolvedUrl, namespace: "https" };
           }
         });
 
-        // Also handle relative paths in HTTPS modules
         build.onResolve({ filter: /^\./, namespace: "https" }, (args) => {
           try {
             const base = new URL(args.importer);
@@ -373,6 +505,7 @@ export function createBareImportPlugin(
             const contents = await response.text();
             return { contents, loader: "js" };
           } catch (error) {
+            console.error("[BareImportPlugin] Fetch failed:", args.path, error);
             return {
               errors: [
                 {
@@ -390,52 +523,109 @@ export function createBareImportPlugin(
 
 /**
  * Create a plugin that compiles MDX files to JavaScript.
- *
- * This preserves all MDX capabilities from the legacy renderer:
- * - Frontmatter extraction
- * - Remark/Rehype plugins
- * - Import rewriting
- * - JSX compilation
  */
 export function createMdxPlugin(
   projectDir: string,
-  adapter: RuntimeAdapter,
+  _adapter: RuntimeAdapter, // Adapter is unused - we read from virtualFiles only to avoid AsyncLocalStorage context loss
   target: "ssr" | "browser" = "ssr",
   virtualFiles?: Map<string, string>,
 ): Plugin {
   return {
     name: "veryfront-mdx",
     setup(build) {
-      // Resolve MDX file imports
+      // Always route MDX files through mdx-virtual namespace.
+      // We CANNOT use adapter.fs during esbuild plugin callbacks because
+      // AsyncLocalStorage context is lost in esbuild's native code execution.
+      // All MDX files must be pre-loaded into virtualFiles before building.
       build.onResolve({ filter: /\.mdx?$/ }, (args) => {
+        let resolvedPath: string;
+
         if (args.path.startsWith("/")) {
-          // Check if this is a virtual file
-          if (virtualFiles?.has(args.path)) {
-            return { path: args.path, namespace: "mdx-virtual" };
+          resolvedPath = args.path;
+        } else {
+          const basedir = args.resolveDir ||
+            (args.importer ? getDirectory(args.importer) : projectDir);
+          resolvedPath = joinPath(basedir, args.path);
+        }
+
+        // Try multiple path variations to handle path format inconsistencies
+        // projectFiles map may use relative keys like "components/layouts/ArticleLayout.mdx"
+        const relativeFromResolved = resolvedPath.startsWith(projectDir + "/")
+          ? resolvedPath.slice(projectDir.length + 1)
+          : resolvedPath.startsWith(projectDir)
+            ? resolvedPath.slice(projectDir.length).replace(/^\//, "")
+            : null;
+
+        const pathVariations = [
+          resolvedPath,
+          resolvedPath.startsWith("/") ? resolvedPath.slice(1) : `/${resolvedPath}`,
+          joinPath(projectDir, args.path.startsWith("/") ? args.path.slice(1) : args.path),
+        ];
+
+        // Add relative path variation (most likely to match for filesystem adapter)
+        if (relativeFromResolved) {
+          pathVariations.push(relativeFromResolved);
+        }
+        // Also try without leading ./ if present
+        if (args.path.startsWith("./")) {
+          pathVariations.push(args.path.slice(2));
+        }
+
+        for (const pathToTry of pathVariations) {
+          if (virtualFiles?.has(pathToTry)) {
+            return { path: pathToTry, namespace: "mdx-virtual" };
           }
-          return { path: args.path };
         }
 
-        // For relative imports, use resolveDir from esbuild (set by onLoad handlers)
-        // This avoids issues with namespace prefixes in args.importer
-        const basedir = args.resolveDir ||
-          (args.importer ? getDirectory(args.importer) : projectDir);
-        const resolved = joinPath(basedir, args.path);
-
-        // Check if resolved path is a virtual file
-        if (virtualFiles?.has(resolved)) {
-          return { path: resolved, namespace: "mdx-virtual" };
-        }
-        return { path: resolved };
+        // Always use mdx-virtual namespace - we'll handle missing files in onLoad
+        return { path: resolvedPath, namespace: "mdx-virtual" };
       });
 
-      // Compile MDX files from virtual filesystem
       build.onLoad({ filter: /\.mdx?$/, namespace: "mdx-virtual" }, async (args) => {
         try {
-          const content = virtualFiles?.get(args.path);
-          if (!content) {
+          // Try multiple path variations to handle path format inconsistencies
+          // projectFiles map may use relative keys like "components/layouts/ArticleLayout.mdx"
+          const relativeFromArgs = args.path.startsWith(projectDir + "/")
+            ? args.path.slice(projectDir.length + 1)
+            : args.path.startsWith(projectDir)
+              ? args.path.slice(projectDir.length).replace(/^\//, "")
+              : null;
+
+          const pathVariations = [
+            args.path,
+            args.path.startsWith("/") ? args.path.slice(1) : `/${args.path}`,
+            joinPath(projectDir, args.path.startsWith("/") ? args.path.slice(1) : args.path),
+          ];
+
+          // Add relative path variation (most likely to match for filesystem adapter)
+          if (relativeFromArgs) {
+            pathVariations.push(relativeFromArgs);
+          }
+          // Also try without leading ./ if present
+          if (args.path.startsWith("./")) {
+            pathVariations.push(args.path.slice(2));
+          }
+
+          let content: string | undefined;
+          let resolvedPath = args.path;
+
+          for (const pathToTry of pathVariations) {
+            content = virtualFiles?.get(pathToTry);
+            if (content !== undefined) {
+              resolvedPath = pathToTry;
+              break;
+            }
+          }
+
+          if (content === undefined) {
+            const availableKeys = virtualFiles ? [...virtualFiles.keys()].slice(0, 10) : [];
             return {
-              errors: [{ text: `Virtual MDX file not found: ${args.path}`, location: null }],
+              errors: [{
+                text: `Virtual MDX file not found: ${args.path}. ` +
+                  `Tried: ${pathVariations.join(", ")}. ` +
+                  `Available (first 10): ${availableKeys.join(", ")}`,
+                location: null,
+              }],
             };
           }
 
@@ -449,7 +639,7 @@ export function createMdxPlugin(
             projectDir,
             content,
             undefined,
-            args.path,
+            resolvedPath,
             compilationTarget,
             undefined,
           );
@@ -457,7 +647,7 @@ export function createMdxPlugin(
           return {
             contents: result.compiledCode,
             loader: "jsx",
-            resolveDir: getDirectory(args.path),
+            resolveDir: getDirectory(resolvedPath),
           };
         } catch (error) {
           return {
@@ -471,55 +661,14 @@ export function createMdxPlugin(
         }
       });
 
-      // Compile MDX files from real filesystem
-      build.onLoad({ filter: /\.mdx?$/ }, async (args) => {
-        // Skip if in a different namespace (like mdx-virtual, which is handled above)
-        if (args.namespace && args.namespace !== "file") return undefined;
-
-        try {
-          // Read MDX content
-          const content = await adapter.fs.readFile(args.path);
-
-          // Dynamic import to avoid circular dependencies
-          const { compileMDXRuntime } = await import(
-            "#veryfront/transforms/mdx/compiler/mdx-compiler.ts"
-          );
-
-          // Compile MDX to JavaScript (preserves all MDX features)
-          const compilationTarget = target === "ssr" ? "server" : "browser";
-          const result = await compileMDXRuntime(
-            "production",
-            projectDir,
-            content,
-            undefined, // frontmatter (extracted from content)
-            args.path,
-            compilationTarget,
-            undefined, // baseUrl
-          );
-
-          return {
-            contents: result.compiledCode,
-            loader: "jsx",
-            resolveDir: getDirectory(args.path),
-          };
-        } catch (error) {
-          return {
-            errors: [
-              {
-                text: `MDX compilation failed for ${args.path}: ${String(error)}`,
-                location: null,
-              },
-            ],
-          };
-        }
-      });
+      // Note: We intentionally do NOT have a fallback onLoad for adapter.fs.readFile()
+      // because esbuild plugin callbacks run outside AsyncLocalStorage context,
+      // causing "No request context available" errors with MultiProjectFSAdapter.
+      // All MDX files must be pre-loaded into virtualFiles before building.
     },
   };
 }
 
-/**
- * Create a plugin that injects HMR runtime code
- */
 export function createHmrPlugin(projectId: string, hmrPort?: number): Plugin {
   return {
     name: "veryfront-hmr",
@@ -527,7 +676,6 @@ export function createHmrPlugin(projectId: string, hmrPort?: number): Plugin {
       build.onEnd((result) => {
         if (result.errors.length > 0) return;
 
-        // Inject HMR runtime into output
         for (const file of result.outputFiles || []) {
           if (file.path.endsWith(".js")) {
             const hmrRuntime = createHmrRuntime(projectId, hmrPort);
@@ -541,9 +689,6 @@ export function createHmrPlugin(projectId: string, hmrPort?: number): Plugin {
   };
 }
 
-/**
- * Generate HMR client runtime code
- */
 export function createHmrRuntime(projectId: string, hmrPort?: number): string {
   const port = hmrPort || 3001;
   return `
@@ -627,9 +772,6 @@ export function createHmrRuntime(projectId: string, hmrPort?: number): string {
 `;
 }
 
-/**
- * Create shared esbuild build options
- */
 export function createBuildOptions(config: BundleConfig): BuildOptions {
   const {
     projectDir,
@@ -642,18 +784,18 @@ export function createBuildOptions(config: BundleConfig): BuildOptions {
     reactFilePaths,
   } = config;
 
-  // Use pre-cached file:// paths for SSR if available
-  const bareImportPlugin = reactFilePaths
-    ? createBareImportPlugin({ reactVersion, externalizeReact: true, reactFilePaths })
-    : createBareImportPlugin(reactVersion, true);
+  const bareImportPlugin = createBareImportPlugin({
+    reactVersion,
+    externalizeReact: true,
+    reactFilePaths,
+  });
 
   const plugins: Plugin[] = [
     createVirtualFsPlugin(projectDir, adapter),
-    createMdxPlugin(projectDir, adapter, target), // MDX support
+    createMdxPlugin(projectDir, adapter, target),
     bareImportPlugin,
   ];
 
-  // Base options shared between SSR and browser targets
   const baseOptions: BuildOptions = {
     entryPoints,
     bundle: true,
@@ -673,16 +815,11 @@ export function createBuildOptions(config: BundleConfig): BuildOptions {
       target: "es2022",
       minify: !dev,
       sourcemap: dev ? "inline" : false,
-      // NOTE: For JIT bundles, we do NOT externalize React because:
-      // 1. Blob URL execution cannot resolve external React imports
-      // 2. React needs to be bundled into the code for proper execution
-      // Only externalize non-React packages
       external: external.filter((pkg) => !pkg.startsWith("react")),
       conditions: ["node", "import"],
     };
   }
 
-  // Browser target
   return {
     ...baseOptions,
     platform: "browser",
@@ -694,9 +831,6 @@ export function createBuildOptions(config: BundleConfig): BuildOptions {
   };
 }
 
-/**
- * Create build options for production JIT bundling
- */
 export function createJitBuildOptions(config: BundleConfig): BuildOptions {
   return {
     ...createBuildOptions({ ...config, dev: false }),
@@ -708,9 +842,6 @@ export function createJitBuildOptions(config: BundleConfig): BuildOptions {
   };
 }
 
-/**
- * Create build options for preview watch mode
- */
 export function createPreviewBuildOptions(
   config: BundleConfig,
   hmrPort?: number,

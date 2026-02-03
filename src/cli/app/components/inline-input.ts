@@ -96,12 +96,24 @@ export function renderLogs(logs: LogEntry[], options: RenderLogsOptions = {}): s
       continue;
     }
 
+    // Parse message and metadata (key=value pairs)
+    const { message: mainMsg, metadata } = parseLogMessage(log.message);
     const prefix = `  ${dim(time)} ${levelColor(levelPrefix)} `;
-    const msgLines = wrapText(log.message, maxWidth - 15);
 
-    lines.push(`${prefix}${msgLines[0] || ""}`);
-    for (let i = 1; i < msgLines.length; i++) {
-      lines.push(`  ${"".padEnd(12)}${msgLines[i]}`);
+    // Show main message (truncated if needed)
+    const maxMsgWidth = maxWidth - 15;
+    const truncatedMsg = mainMsg.length > maxMsgWidth
+      ? `${mainMsg.slice(0, maxMsgWidth - 3)}...`
+      : mainMsg;
+    lines.push(`${prefix}${truncatedMsg}`);
+
+    // Show metadata on separate indented lines (dimmed)
+    if (expanded && metadata.length > 0) {
+      const metaIndent = "  " + "".padEnd(12);
+      for (const [key, value] of metadata) {
+        const shortValue = shortenValue(value);
+        lines.push(`${metaIndent}${dim(`${key}=${shortValue}`)}`);
+      }
     }
   }
 
@@ -134,6 +146,54 @@ function wrapText(text: string, maxWidth: number): string[] {
 
   if (remaining) lines.push(remaining);
   return lines;
+}
+
+/**
+ * Parse log message to extract main message and key=value metadata
+ */
+function parseLogMessage(text: string): { message: string; metadata: [string, string][] } {
+  // Match key=value or key="quoted value" patterns
+  const metaRegex = /\s+(\w+)=((?:"[^"]*")|(?:\{[^}]*\})|(?:\[[^\]]*\])|(?:[^\s]+))/g;
+
+  // Find first key=value to split message from metadata
+  const firstMatch = text.match(/\s+\w+=/);
+  if (!firstMatch || firstMatch.index === undefined) {
+    return { message: text, metadata: [] };
+  }
+
+  const message = text.slice(0, firstMatch.index).trim();
+  const metaPart = text.slice(firstMatch.index);
+
+  const metadata: [string, string][] = [];
+  let match;
+  while ((match = metaRegex.exec(metaPart)) !== null) {
+    if (match[1] && match[2]) {
+      metadata.push([match[1], match[2]]);
+    }
+  }
+
+  return { message, metadata };
+}
+
+/**
+ * Shorten long values (paths, JSON) for display
+ */
+function shortenValue(value: string): string {
+  // Remove surrounding quotes
+  const unquoted = value.replace(/^"|"$/g, "");
+
+  // Shorten home directory paths
+  const home = Deno.env.get("HOME") || "";
+  if (home && unquoted.startsWith(home)) {
+    return "~" + unquoted.slice(home.length);
+  }
+
+  // Truncate very long values
+  if (unquoted.length > 50) {
+    return unquoted.slice(0, 47) + "...";
+  }
+
+  return unquoted;
 }
 
 /**

@@ -1,6 +1,12 @@
 export function resolveRelativePath(filePath: string, projectDir: string): string {
   const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
 
+  // Handle root projectDir "/" which becomes "" after normalization
+  // In this case, we just need to strip leading slash if present
+  if (!normalizedProjectDir) {
+    return filePath.replace(/^\//, "");
+  }
+
   if (filePath.startsWith(normalizedProjectDir)) {
     return filePath.slice(normalizedProjectDir.length + 1);
   }

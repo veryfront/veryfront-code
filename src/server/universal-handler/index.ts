@@ -633,6 +633,17 @@ export function createVeryfrontHandler(
               });
             }
           } else if (isProxyMode && projectSlug && proxyToken) {
+            // For API-backed projects, set projectDir to "/" since the virtual filesystem
+            // uses paths relative to project root (e.g., /app/page.tsx, /app/layout.tsx).
+            // This fixes the "two Reacts" problem where projectDir incorrectly pointed to
+            // the renderer installation directory, causing collectProjectFiles to walk
+            // the wrong directory tree.
+            effectiveProjectDir = "/";
+            logger.debug("[universal] Using virtual root for proxy project", {
+              projectSlug,
+              projectDir: effectiveProjectDir,
+            });
+
             try {
               effectiveConfig = await timeAsync("config:load-proxy-project", () => {
                 if (

@@ -149,7 +149,7 @@ export class PreviewBundler {
         // Add plugins
         buildOptions.plugins = [
           createVirtualFsPlugin(projectDir, adapter),
-          createBareImportPlugin(reactVersion, true),
+          createBareImportPlugin({ reactVersion, externalizeReact: true }),
           this.createHmrNotifyPlugin(projectId),
         ];
 

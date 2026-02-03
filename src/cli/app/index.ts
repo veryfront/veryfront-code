@@ -812,17 +812,32 @@ export function createApp(config: AppConfig): App {
 
     // Toggle logs expanded with 'l'
     if (key === "l" || key === "L") {
+      // Toggle mouse tracking with logs (enabled = scroll works, disabled = text selection works)
+      if (state.logsExpanded) {
+        write(screen.mouseOff); // Disable mouse tracking when collapsing
+      } else {
+        write(screen.mouseOn); // Enable mouse tracking when expanding
+      }
       update(toggleLogsExpanded());
       return;
     }
 
-    // When logs are expanded, arrow keys scroll logs instead of list
+    // When logs are expanded, arrow keys and mouse wheel scroll logs
     if (state.logsExpanded && state.logs.length > 0) {
       if (key === "\x1b[A" || key === "k") {
         update(scrollLogs("up"));
         return;
       }
       if (key === "\x1b[B" || key === "j") {
+        update(scrollLogs("down"));
+        return;
+      }
+      // Mouse scroll wheel (SGR mode: \x1b[<64;x;yM = scroll up, \x1b[<65;x;yM = scroll down)
+      if (key.startsWith("\x1b[<64;")) {
+        update(scrollLogs("up"));
+        return;
+      }
+      if (key.startsWith("\x1b[<65;")) {
         update(scrollLogs("down"));
         return;
       }
@@ -1318,6 +1333,13 @@ export function createApp(config: AppConfig): App {
     render();
     handleInput();
 
+    // Re-render on terminal resize
+    try {
+      Deno.addSignalListener("SIGWINCH", render);
+    } catch {
+      // Signal listeners may not be supported on all platforms
+    }
+
     if (!state.server.running) startSpinner();
   }
 
@@ -1325,7 +1347,16 @@ export function createApp(config: AppConfig): App {
     running = false;
     stopSpinner();
 
-    if (isInteractiveMode) write(cursor.show + screen.altOff);
+    try {
+      Deno.removeSignalListener("SIGWINCH", render);
+    } catch {
+      // Ignore if signal listener wasn't added
+    }
+
+    if (isInteractiveMode) {
+      // Ensure mouse tracking is off before exiting
+      write(screen.mouseOff + cursor.show + screen.altOff);
+    }
   }
 
   return {

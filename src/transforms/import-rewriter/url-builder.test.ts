@@ -46,20 +46,22 @@ describe("transforms/import-rewriter/url-builder", () => {
   });
 
   describe("buildReactUrl", () => {
-    it("should build react URL with csstype dep", () => {
+    it("should build react URL with direct path format", () => {
       const url = buildReactUrl("react", "19.1.1");
       assertEquals(url.includes("react@19.1.1"), true);
-      assertEquals(url.includes("deps=csstype@"), true);
+      // Direct path format: /es2022/react.mjs
+      assertEquals(url.includes("/es2022/react.mjs"), true);
     });
 
-    it("should add external=react when external flag is true", () => {
+    it("should build react-dom URL with direct path format", () => {
       const url = buildReactUrl("react-dom", "19.1.1", undefined, true);
-      assertEquals(url.includes("external=react"), true);
+      // Direct path format, external param is ignored now
+      assertEquals(url.includes("/es2022/react-dom.mjs"), true);
     });
 
-    it("should not add external when flag is false", () => {
-      const url = buildReactUrl("react", "19.1.1", undefined, false);
-      assertEquals(url.includes("external="), false);
+    it("should build subpath URL with direct path format", () => {
+      const url = buildReactUrl("react", "19.1.1", "/jsx-runtime", false);
+      assertEquals(url.includes("/es2022/jsx-runtime.mjs"), true);
     });
   });
 
@@ -201,9 +203,10 @@ describe("transforms/import-rewriter/url-builder", () => {
 
   describe("addEsmShDeps", () => {
     it("should add deps to esm.sh URL without params", () => {
+      // Uses deps= to pin React version (not external= which causes bare imports)
       assertEquals(
         addEsmShDeps("https://esm.sh/lodash", "19.1.1"),
-        "https://esm.sh/lodash?external=react,react-dom&target=es2022",
+        "https://esm.sh/lodash?deps=react@19.1.1,react-dom@19.1.1&target=es2022",
       );
     });
 

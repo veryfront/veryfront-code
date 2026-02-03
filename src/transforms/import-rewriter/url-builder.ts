@@ -1,18 +1,9 @@
 /**
- * Canonical URL builders for import rewriting.
- *
- * Single source of truth for all URL generation.
- * Ensures consistent URLs across SSR and browser for hydration parity.
+ * URL builders for import rewriting.
  */
 
-/** Default React version - used when not specified */
 export const DEFAULT_REACT_VERSION = "19.1.1";
-
-/** Tailwind CSS version */
 export const TAILWIND_VERSION = "4.1.8";
-
-/** csstype version - must match deno.json for type consistency */
-export const CSSTYPE_VERSION = "3.2.3";
 
 type EsmShOptions = {
   external?: string[];
@@ -20,14 +11,6 @@ type EsmShOptions = {
   deps?: Record<string, string>;
 };
 
-/**
- * Build esm.sh URL with proper configuration.
- *
- * @param pkg - Package name (e.g., "react", "lodash")
- * @param version - Package version (optional)
- * @param subpath - Subpath (e.g., "/jsx-runtime")
- * @param options - URL options
- */
 export function buildEsmShUrl(
   pkg: string,
   version?: string,
@@ -57,49 +40,57 @@ export function buildEsmShUrl(
 }
 
 /**
- * Build React esm.sh URL.
- * Uses deps=csstype for type consistency.
+ * Build React esm.sh URL using DIRECT PATH format to match esm.sh internal imports.
+ *
+ * CRITICAL: Deno caches modules by FETCH URL, not internal path!
+ *
+ * Third-party packages built with deps=react@19.1.1 import React as:
+ *   import "/react@19.1.1/es2022/react.mjs"  (direct path on esm.sh)
+ *
+ * If we use query params like ?target=es2022, Deno caches it as a DIFFERENT module:
+ *   https://esm.sh/react@19.1.1?target=es2022  ← different cache entry!
+ *   https://esm.sh/react@19.1.1/es2022/react.mjs  ← what packages use
+ *
+ * Using direct paths ensures ALL React imports hit the same Deno module cache entry.
  */
 export function buildReactUrl(
   pkg: "react" | "react-dom",
   version: string,
   subpath?: string,
-  external = false,
+  _external = false,
 ): string {
-  return buildEsmShUrl(pkg, version, subpath, {
-    external: external ? ["react"] : undefined,
-    deps: { csstype: CSSTYPE_VERSION },
-  });
+  // Use direct path format that matches esm.sh internal imports
+  if (pkg === "react") {
+    if (!subpath) return `https://esm.sh/react@${version}/es2022/react.mjs`;
+    const sub = subpath.replace(/^\//, "");
+    return `https://esm.sh/react@${version}/es2022/${sub}.mjs`;
+  }
+
+  // react-dom - use direct path format
+  if (!subpath) return `https://esm.sh/react-dom@${version}/es2022/react-dom.mjs`;
+  const sub = subpath.replace(/^\//, "");
+  return `https://esm.sh/react-dom@${version}/es2022/${sub}.mjs`;
 }
 
-/**
- * Get complete React import map for a specific version.
- */
 export function getReactImportMap(version: string): Record<string, string> {
+  // Use direct path format to match esm.sh internal imports
   return {
-    react: buildReactUrl("react", version),
-    "react-dom": buildReactUrl("react-dom", version, undefined, true),
-    "react-dom/client": buildReactUrl("react-dom", version, "/client", true),
-    "react-dom/server": buildReactUrl("react-dom", version, "/server", true),
-    "react/jsx-runtime": buildReactUrl("react", version, "/jsx-runtime", true),
-    "react/jsx-dev-runtime": buildReactUrl("react", version, "/jsx-dev-runtime", true),
-    // Prefix match for any react/* subpath imports
-    "react/": buildReactUrl("react", version, "/", true),
+    react: `https://esm.sh/react@${version}/es2022/react.mjs`,
+    "react/jsx-runtime": `https://esm.sh/react@${version}/es2022/jsx-runtime.mjs`,
+    "react/jsx-dev-runtime": `https://esm.sh/react@${version}/es2022/jsx-dev-runtime.mjs`,
+    "react/": `https://esm.sh/react@${version}/es2022/`,
+    "react-dom": `https://esm.sh/react-dom@${version}/es2022/react-dom.mjs`,
+    "react-dom/client": `https://esm.sh/react-dom@${version}/es2022/client.mjs`,
+    "react-dom/server": `https://esm.sh/react-dom@${version}/es2022/server.mjs`,
   };
 }
 
-/**
- * Build module server URL for a path.
- */
 export function buildModuleServerUrl(baseUrl: string, path: string): string {
   const normalizedBase = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${normalizedBase}${normalizedPath}`;
 }
 
-/**
- * Build cross-project import URL.
- */
 export function buildCrossProjectUrl(
   projectSlug: string,
   version: string | null,
@@ -110,36 +101,25 @@ export function buildCrossProjectUrl(
   return `/_vf_modules/_cross/${projectRef}/@/${modulePath}`;
 }
 
-/**
- * Build veryfront framework module URL.
- */
 export function buildVeryfrontModuleUrl(path: string): string {
   const normalizedPath = path.replace(/\.(tsx?|jsx)$/, ".js");
   return `/_vf_modules/_veryfront/${normalizedPath}`;
 }
 
-/**
- * Normalize file extension for JavaScript output.
- */
 export function normalizeExtension(path: string, options?: { removeExtension?: boolean }): string {
   if (options?.removeExtension) return path.replace(/\.(tsx?|jsx|mdx)$/, "");
   return path.replace(/\.(tsx?|jsx|mdx)$/, ".js");
 }
 
-/**
- * Check if a URL is an esm.sh URL.
- */
 export function isEsmShUrl(url: string): boolean {
   return url.startsWith("https://esm.sh/") || url.startsWith("http://esm.sh/");
 }
 
-/**
- * Add deps query param to esm.sh URL if not already present.
- */
 export function addEsmShDeps(url: string, reactVersion: string): string {
-  if (!isEsmShUrl(url)) return url;
-  if (url.includes(`react@${reactVersion}`)) return url;
-  if (url.includes("?")) return url;
-
-  return `${url}?external=react,react-dom&target=es2022`;
+  if (!isEsmShUrl(url) || url.includes(`react@${reactVersion}`) || url.includes("?")) {
+    return url;
+  }
+  // Use deps= to pin React version. Do NOT use external= which causes bare imports
+  // that resolve to the latest React at runtime, breaking context sharing.
+  return `${url}?deps=react@${reactVersion},react-dom@${reactVersion}&target=es2022`;
 }

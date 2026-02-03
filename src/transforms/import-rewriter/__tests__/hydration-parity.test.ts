@@ -44,15 +44,15 @@ describe("Hydration Parity", () => {
       expect(ssrReactUrl).toBe(browserReactUrl);
     });
 
-    it("should use same query params for React packages", async () => {
+    it("should use direct path format for React packages", async () => {
       const code = `import ReactDOM from "react-dom";`;
 
       const ssrResult = await rewriteImports(code, createContext({ target: "ssr" }));
       const browserResult = await rewriteImports(code, createContext({ target: "browser" }));
 
       for (const result of [ssrResult, browserResult]) {
-        expect(result).toContain("external=react");
-        expect(result).toContain("target=es2022");
+        // Uses direct path format for module cache consistency
+        expect(result).toContain("/es2022/react-dom.mjs");
       }
     });
   });
@@ -93,7 +93,8 @@ describe("Hydration Parity", () => {
 
       const result = await rewriteImports(code, createContext({ target: "browser" }));
 
-      expect(result).toContain("deps=csstype");
+      // React uses direct path format for module cache consistency
+      expect(result).toContain("/es2022/react.mjs");
     });
 
     it("should not double-rewrite already resolved URLs", async () => {
@@ -274,7 +275,8 @@ describe("Strategy Unit Tests", () => {
       const code = `import React from "react";`;
       const result = await rewriteImports(code, createContext({ target: "browser" }));
 
-      expect(result).toContain("deps=csstype");
+      // React uses direct path format for module cache consistency
+      expect(result).toContain("/es2022/react.mjs");
     });
 
     it("should add version warning for unversioned packages", async () => {
