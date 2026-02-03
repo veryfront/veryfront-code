@@ -44,6 +44,18 @@ const FRAMEWORK_ROOT = RUNTIME_FRAMEWORK_ROOT;
 // In compiled binaries, files are extracted to the runtime directory.
 const EMBEDDED_SRC_DIR = join(RUNTIME_FRAMEWORK_ROOT, "dist", "framework-src");
 
+// Log initialization paths once for debugging
+let _initLogged = false;
+function logInitOnce(): void {
+  if (_initLogged) return;
+  _initLogged = true;
+  logger.info(`${LOG_PREFIX} Initialized`, {
+    importMetaUrl: import.meta.url,
+    frameworkRoot: FRAMEWORK_ROOT,
+    embeddedSrcDir: EMBEDDED_SRC_DIR,
+  });
+}
+
 // Extensions to try when resolving framework files
 const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 
@@ -676,6 +688,8 @@ export const ssrVfModulesPlugin: TransformPlugin = {
   condition: (ctx) => ctx.target === "ssr",
 
   async transform(ctx) {
+    logInitOnce();
+
     const vfModuleImports = findVfModuleImports(ctx.code);
     if (vfModuleImports.length === 0) return ctx.code;
 

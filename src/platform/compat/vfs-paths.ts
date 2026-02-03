@@ -15,29 +15,21 @@
  * Get the framework root directory from a file path.
  * Handles both dev paths and compiled binary VFS paths.
  *
- * For compiled binaries, the path structure is:
- *   /extraction_root/deno-compile-xxx/Original/Path/To/veryfront-renderer/src/...
+ * For compiled binaries, files are embedded with --include and extracted to:
+ *   /tmp/deno-compile-xxx/{relative_path_from_include}
  *
- * We need to extract the original path (/Original/Path/To/veryfront-renderer)
- * because embedded files are accessible via their original paths at runtime.
+ * The extraction root IS the framework root because --include paths are
+ * relative to the project root. So dist/framework-src extracts to
+ * /tmp/deno-compile-xxx/dist/framework-src.
  */
 export function getFrameworkRoot(filePath: string): string {
   const denoCompileMatch = filePath.match(/^(.*[/\\]deno-compile-[^/\\]+)[/\\]/);
   if (denoCompileMatch && denoCompileMatch[1]) {
-    const extractionRoot = denoCompileMatch[1];
-    // The path after extraction root preserves the original structure
-    // e.g., Users/koji/path/veryfront-renderer/src/transforms/...
-    const afterExtraction = filePath.slice(extractionRoot.length + 1);
-
-    // Find /src/ in the remaining path to get the framework root
-    const srcMatch = afterExtraction.match(/^(.*?)[/\\]src[/\\]/);
-    if (srcMatch && srcMatch[1]) {
-      // Return the original absolute path (prepend /)
-      return "/" + srcMatch[1];
-    }
-
-    // If no /src/ found, fall back to extraction root (shouldn't happen for framework code)
-    return extractionRoot;
+    // For compiled binaries, always return the extraction root.
+    // Files included with --include are placed relative to the extraction root,
+    // matching their original relative paths from the compile command's CWD.
+    // This means dist/framework-src is at {extraction_root}/dist/framework-src.
+    return denoCompileMatch[1];
   }
 
   // Dev mode: find the last /src/ and return the path before it
