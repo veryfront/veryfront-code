@@ -37,6 +37,7 @@ export {
 
 export { ChatFooter, ChatHeader, ChatInput, ChatMessages } from "./composition/api.tsx";
 
+import { ChatFooter, ChatHeader, ChatInput, ChatMessages } from "./composition/api.tsx";
 import {
   ConversationEmptyState,
   ConversationScrollButton,
