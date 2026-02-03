@@ -1,6 +1,6 @@
 export * from "./theme.ts";
 
-export { Chat, ChatComponents } from "./chat.tsx";
+export { Chat, ChatComponents, ChatFooter, ChatHeader, ChatInput, ChatMessages } from "./chat.tsx";
 export type { ChatProps } from "./chat.tsx";
 
 export { AgentCard } from "./agent-card.tsx";

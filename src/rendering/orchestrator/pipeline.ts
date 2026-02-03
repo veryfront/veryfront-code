@@ -160,9 +160,11 @@ export class RenderPipeline {
     }
 
     if (criticalFailures.length > 0) {
-      const failedPaths = criticalFailures.map((f) => f.path).join(", ");
+      const failedDetails = criticalFailures
+        .map((f) => `${f.path}: ${f.error}`)
+        .join("\n");
       throw new VeryfrontError(
-        `Critical page module(s) failed to load: ${failedPaths}. This would result in missing props and a broken page.`,
+        `Critical page module(s) failed to load:\n${failedDetails}`,
         ErrorCode.RENDER_ERROR,
         {
           criticalFailures,

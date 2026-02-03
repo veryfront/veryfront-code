@@ -398,7 +398,8 @@ describe("MDXCacheAdapter", () => {
       // Even with file:// imports that aren't HTTP bundles, should work
       const content = "# Local File Imports";
       const bundle = createBundle({
-        compiledCode: 'import Component from "file:///app/components/Test.js";\nexport default Component;',
+        compiledCode:
+          'import Component from "file:///app/components/Test.js";\nexport default Component;',
       });
 
       await adapter.setCachedBundle(content, bundle, "local-file.mdx");

@@ -2,6 +2,7 @@ import { escapeHTML } from "./html-escape.ts";
 import type { VeryfrontConfig } from "#veryfront/config/types.ts";
 import { REACT_DEFAULT_VERSION, VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { esmShReact } from "#veryfront/transforms/esm/package-registry.ts";
+import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 
 function joinAttributes(attrs: Array<string | false | undefined | null | "">): string {
   return attrs.filter(Boolean).join(" ");
@@ -67,9 +68,15 @@ const PLATFORM_UTILITY_PATHS = {
   router: "/_vf_modules/_veryfront/react/router/index.js",
   context: "/_vf_modules/_veryfront/react/context/index.js",
   fonts: "/_vf_modules/_veryfront/react/fonts/index.js",
+  // Client-side AI modules - use local module server in dev for faster iteration
+  // NOTE: These are NOT available in compiled binaries, so we use CDN URLs there instead
+  agentReact: "/_vf_modules/_veryfront/agent/react/index.js",
+  componentsAi: "/_vf_modules/_veryfront/react/components/ai/index.js",
+  primitives: "/_vf_modules/_veryfront/react/primitives/index.js",
 } as const;
 
-const PLATFORM_UTILITIES: Record<string, string> = {
+// Core platform utilities that are always served locally (embedded in compiled binary)
+const CORE_PLATFORM_UTILITIES: Record<string, string> = {
   "veryfront/head": PLATFORM_UTILITY_PATHS.head,
   "veryfront/router": PLATFORM_UTILITY_PATHS.router,
   "veryfront/context": PLATFORM_UTILITY_PATHS.context,
@@ -78,6 +85,21 @@ const PLATFORM_UTILITIES: Record<string, string> = {
   "veryfront/react/router": PLATFORM_UTILITY_PATHS.router,
   "veryfront/react/context": PLATFORM_UTILITY_PATHS.context,
   "veryfront/react/fonts": PLATFORM_UTILITY_PATHS.fonts,
+};
+
+// AI modules - only use local paths when running from source (not compiled binary)
+// In compiled binaries, these files aren't embedded, so we fall back to CDN URLs
+const AI_MODULE_UTILITIES: Record<string, string> = isDenoCompiled
+  ? {} // Use CDN URLs (set in buildCdnImportMapFromTemplates)
+  : {
+    "veryfront/agent/react": PLATFORM_UTILITY_PATHS.agentReact,
+    "veryfront/components/ai": PLATFORM_UTILITY_PATHS.componentsAi,
+    "veryfront/primitives": PLATFORM_UTILITY_PATHS.primitives,
+  };
+
+const PLATFORM_UTILITIES: Record<string, string> = {
+  ...CORE_PLATFORM_UTILITIES,
+  ...AI_MODULE_UTILITIES,
 };
 
 interface CdnUrlTemplates {
