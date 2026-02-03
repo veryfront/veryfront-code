@@ -13,7 +13,12 @@ export interface RouteEntry {
   isCatchAll: boolean;
 }
 
-export class DynamicRouter {
+/**
+ * API route matcher for matching URL paths to API route handlers.
+ * Uses LRU caching for performance and self-contained regex compilation.
+ * Suitable for API routes in /api/* and /app/api/* paths.
+ */
+export class ApiRouteMatcher {
   private _routes: Map<string, RouteEntry> = new Map();
   private routeCache: LRUCache<string, RouteMatch | null>;
 
@@ -171,6 +176,9 @@ export class DynamicRouter {
     this.clear();
   }
 }
+
+/** @deprecated Use ApiRouteMatcher instead - kept for backwards compatibility */
+export { ApiRouteMatcher as DynamicRouter };
 
 function shouldDisableLruInterval(): boolean {
   if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) return true;

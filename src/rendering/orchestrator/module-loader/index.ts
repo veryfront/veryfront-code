@@ -12,6 +12,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { findSourceFile } from "../file-resolver/index.ts";
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getProjectTmpDir } from "#veryfront/modules/react-loader/index.ts";
 import {
   generateCacheKey as generateTransformCacheKey,
@@ -178,6 +179,9 @@ async function resolveRelativeImport(
  * @param useLocalAdapter - Whether to use local adapter for reading
  * @returns Path to the transformed module file
  */
+/** Pattern to detect unresolved /_vf_modules/ imports that will fail at runtime */
+const UNRESOLVED_VF_MODULES_RE = /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/;
+
 export async function transformModuleWithDeps(
   filePath: string,
   tmpDir: string,
@@ -189,7 +193,29 @@ export async function transformModuleWithDeps(
   const cacheKey = getModuleCacheKey(filePath, projectId, projectDir, contentSourceId);
 
   const cachedPath = moduleCache.get(cacheKey);
-  if (cachedPath) return cachedPath;
+  if (cachedPath) {
+    // Validate cached file doesn't contain unresolved /_vf_modules/ imports
+    // These would fail at runtime and indicate stale cache from before framework import fix
+    try {
+      const cachedCode = await createFileSystem().readTextFile(cachedPath);
+      if (UNRESOLVED_VF_MODULES_RE.test(cachedCode)) {
+        logger.warn(
+          "[ModuleLoader] In-memory cache contains unresolved _vf_modules, invalidating",
+          {
+            filePath: filePath.slice(-60),
+            cachedPath: cachedPath.slice(-60),
+          },
+        );
+        moduleCache.delete(cacheKey);
+        // Don't return - fall through to re-transform
+      } else {
+        return cachedPath;
+      }
+    } catch {
+      // File doesn't exist or can't be read - fall through to re-transform
+      moduleCache.delete(cacheKey);
+    }
+  }
 
   if (projectId && contentSourceId) {
     const baseCacheDir = getMdxEsmCacheDir();
@@ -359,6 +385,22 @@ export async function transformModuleWithDeps(
         error,
       });
     });
+  }
+
+  // CRITICAL: Validate that no unresolved /_vf_modules/ imports remain after transform.
+  // These imports should have been resolved to file:// paths by ssrVfModulesPlugin.
+  // If they're still present, the import will fail at runtime with "Module not found".
+  if (UNRESOLVED_VF_MODULES_RE.test(transformedCode)) {
+    const match = transformedCode.match(UNRESOLVED_VF_MODULES_RE);
+    const unresolvedImport = match?.[1] || "unknown";
+    logger.error("[ModuleLoader] Transform produced code with unresolved _vf_modules import", {
+      filePath: filePath.slice(-60),
+      unresolvedImport: unresolvedImport.slice(0, 80),
+      hint:
+        "Check that framework sources exist in dist/framework-src/ and ssrVfModulesPlugin is running",
+    });
+    // Don't throw - let it fail at import time for better error context.
+    // The error message will show the exact missing module path.
   }
 
   const transformedHash = hashCodeHex(transformedCode).slice(0, 8);

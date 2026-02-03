@@ -60,13 +60,33 @@ function extractFrameworkBundlePaths(code: string): string[] {
 }
 
 /**
+ * Pattern to detect unresolved /_vf_modules/_veryfront/ imports in code.
+ * These should have been transformed to file:// paths by ssrVfModulesPlugin.
+ * If they're still present, the cache is stale/corrupted.
+ */
+const UNRESOLVED_VF_MODULES_PATTERN = /from\s*["'](\/?_vf_modules\/_veryfront\/[^"']+)["']/;
+
+/**
  * Validate that framework bundles referenced in cached code exist locally.
- * Returns true if all bundles exist, false if any are missing.
+ * Also validates that there are no unresolved /_vf_modules/ imports.
+ * Returns true if all bundles exist, false if any are missing or unresolved.
  */
 async function validateFrameworkBundles(
   code: string,
   cacheKey: string,
 ): Promise<boolean> {
+  // First, check for unresolved /_vf_modules/_veryfront/ imports.
+  // These should have been transformed to file:// paths.
+  // If they're still present, the cache is stale from a failed transform.
+  if (UNRESOLVED_VF_MODULES_PATTERN.test(code)) {
+    const match = code.match(UNRESOLVED_VF_MODULES_PATTERN);
+    logger.warn("[PIPELINE] Cache contains unresolved _vf_modules import, invalidating", {
+      cacheKey: cacheKey.slice(-40),
+      unresolvedImport: match?.[1]?.slice(0, 60),
+    });
+    return false;
+  }
+
   const bundlePaths = extractFrameworkBundlePaths(code);
   if (bundlePaths.length === 0) return true;
 

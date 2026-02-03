@@ -3,7 +3,12 @@ import { getSpecificityScore, parseRoute } from "./route-parser.ts";
 import { matchRoute } from "./route-matcher.ts";
 import { normalizePath } from "#veryfront/utils/path-utils.ts";
 
-export class DynamicRouter {
+/**
+ * Page route matcher for matching URL paths to page files.
+ * Uses specificity-based sorting and shared route parsing utilities.
+ * Suitable for page routing in both App Router and Pages Router.
+ */
+export class PageRouteMatcher {
   private routes: Route[] = [];
   private cache = new Map<string, RouteMatch | null>();
 
@@ -39,3 +44,6 @@ export class DynamicRouter {
     return [...this.routes];
   }
 }
+
+/** @deprecated Use PageRouteMatcher instead - kept for backwards compatibility */
+export { PageRouteMatcher as DynamicRouter };

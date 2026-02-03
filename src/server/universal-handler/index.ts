@@ -1,52 +1,29 @@
 /**
- * Universal Veryfront HTTP handler - Modular Architecture
+ * Universal Veryfront HTTP Handler - Composition Root
  *
- * Runtime-agnostic HTTP handler using handler-based architecture
+ * Runtime-agnostic HTTP handler using modular architecture.
+ * This file orchestrates the extracted modules for request handling.
+ *
+ * @module server/universal-handler
  */
 
-import {
-  endRequest,
-  isEnabled as isPerfEnabled,
-  startRequest,
-  startTimer,
-  timeAsync,
-} from "#veryfront/utils";
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
 import {
   type RequestContext,
   runWithRequestContextAsync,
 } from "#veryfront/utils/logger/request-context.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
-import {
-  endRequestMetrics,
-  startRequestMetrics,
-} from "#veryfront/platform/adapters/fs/veryfront/read-operations.ts";
-import {
-  endServerSpan,
-  extractContext,
-  setSpanAttributes,
-  startServerSpan,
-  withContext,
-  withSpan,
-} from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import type { HandlerContext } from "../handlers/types.ts";
-import { parseProjectDomain } from "../utils/domain-parser.ts";
-import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";
-import { parseProxyEnvironment } from "./proxy-environment.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { getConfig } from "#veryfront/config/loader.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
-import { runtime } from "#veryfront/platform/adapters/detect.ts";
-import { cwd } from "#veryfront/platform/compat/process.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
-import { getConfig } from "#veryfront/config/loader.ts";
-import type { VeryfrontConfig } from "#veryfront/config";
+
+// Re-export is at the bottom of the file
+import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
 import { createRequestContext } from "../context/request-context.ts";
-import { buildEnrichedContext } from "../context/enriched-context.ts";
-import { computeContentSourceId } from "../../cache/keys.ts";
+
+// Handler imports
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
 import { CorsHandler } from "../handlers/response/cors.ts";
 import { HealthHandler } from "../handlers/monitoring/health.handler.ts";
@@ -73,24 +50,45 @@ import { OpenAPIHandler } from "../handlers/request/openapi.handler.ts";
 import { OpenAPIDocsHandler } from "../handlers/request/openapi-docs.handler.ts";
 import { DevDashboardHandler } from "../handlers/dev/dashboard/index.ts";
 import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
-import { requestTracker } from "./request-tracker.ts";
-import { projectIsolation } from "./project-isolation.ts";
 
 // Extracted modules
 import {
+  endRequestTracing,
+  executeWithTracingContext,
+  setProjectAttributes,
+  setRequestAttributes,
+  SpanNames,
+  startRequestTracing,
+  withSpan,
+} from "./tracing.ts";
+import {
+  completeRequestTracking,
+  endContentMetrics,
+  endRequestLifecycle,
+  incrementRequestMetrics,
+  startContentMetrics,
+  startRequestLifecycle,
+  startRequestTracking,
+  timeAsync,
+} from "./request-lifecycle.ts";
+import { extractRequestHeaders, resolveProject } from "./project-resolution.ts";
+import {
+  checkRequestIsolation,
+  completeIsolatedRequest,
+  createIsolationErrorResponse,
+  startIsolatedRequest,
+} from "./isolation.ts";
+import { resolveAdapter } from "./adapter-factory.ts";
+import { resolveEnvironment } from "./environment-resolution.ts";
+import { buildHandlerContext, buildMinimalContext } from "./handler-context-builder.ts";
+import { handleProjectsRequest, shouldHandleProjectsUI } from "./projects-handler.ts";
+import {
   getRequestTimeout,
   HTTP_GATEWAY_TIMEOUT,
-  isInternalHost,
   isLightweightPath,
   isMonitoringPath,
   TIMEOUT_SENTINEL,
 } from "./request-utils.ts";
-import {
-  findLocalProjectPath,
-  localAdapterCache,
-  localProjectCache,
-  standardProjectDirs,
-} from "./local-project-discovery.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -202,135 +200,83 @@ export function createVeryfrontHandler(
   }
 
   const handler = async (req: Request): Promise<Response> => {
-    const perfEnabled = isPerfEnabled();
-    const perfRequestId = perfEnabled
-      ? (req.headers.get("x-request-id") ?? crypto.randomUUID())
-      : undefined;
-
-    if (perfRequestId) startRequest(perfRequestId);
-    const stopTotal = startTimer("total");
-
     const url = new URL(req.url);
+    const lifecycle = startRequestLifecycle(req, url.pathname, isLightweightPath(url.pathname));
 
+    // Fast path for monitoring endpoints
     if (isMonitoringPath(url.pathname)) {
       try {
         await readyPromise;
         if (!isProxyMode) await securityLoader.ensureLoaded();
 
-        const minimalCtx: HandlerContext = {
+        const minimalCtx = buildMinimalContext(
           projectDir,
           adapter,
-          securityConfig: securityLoader.getSecurityConfig(),
-          cspUserHeader: securityLoader.getCspUserHeader(),
-          debug: opts.debug,
+          securityLoader.getSecurityConfig(),
+          securityLoader.getCspUserHeader(),
+          opts.debug,
           config,
-        };
+        );
 
         const response = await registry.execute(req, minimalCtx);
         return response ?? new Response("Not Found", { status: 404 });
       } finally {
-        stopTotal();
-        if (perfRequestId) endRequest(perfRequestId);
+        endRequestLifecycle(lifecycle);
       }
     }
 
-    const trackingRequestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
-
+    // Build logger context
     const hostHeader = req.headers.get("host") ?? url.host;
     const domain = hostHeader.replace(/:\d+$/, "");
-    const projectSlugHeader = req.headers.get("x-project-slug") ?? undefined;
-    const projectIdHeader = req.headers.get("x-project-id") ?? undefined;
-    const releaseIdHeader = req.headers.get("x-release-id") ?? undefined;
-    const branchIdHeader = req.headers.get("x-branch-id") ?? undefined;
-    const branchNameHeader = req.headers.get("x-branch-name") ?? undefined;
-
-    const reqLogger = logger.child({
-      requestId: trackingRequestId,
-      request_url: req.url,
-      domain,
-      project_slug: projectSlugHeader,
-      project_id: projectIdHeader,
-      release_id: releaseIdHeader,
-      branch_id: branchIdHeader,
-      branch_name: branchNameHeader,
-      pathname: url.pathname,
-    });
+    const headers = extractRequestHeaders(req, url);
 
     const loggerContext: RequestContext = {
-      logger: reqLogger,
-      requestId: trackingRequestId,
-      projectSlug: projectSlugHeader,
-      projectId: projectIdHeader,
+      logger: logger.child({
+        requestId: lifecycle.requestId,
+        request_url: req.url,
+        domain,
+        project_slug: headers.projectSlug,
+        project_id: headers.projectId,
+        release_id: headers.releaseId,
+        branch_id: headers.branchId,
+        branch_name: headers.branchName,
+        pathname: url.pathname,
+      }),
+      requestId: lifecycle.requestId,
+      projectSlug: headers.projectSlug,
+      projectId: headers.projectId,
       domain,
     };
 
     return runWithRequestContextAsync(loggerContext, async () => {
-      const parentContext = extractContext(req.headers);
-      const spanInfo = startServerSpan(req.method, url.pathname, parentContext);
-      const span = spanInfo?.span;
+      const spanInfo = startRequestTracing(req, url.pathname);
+      setRequestAttributes(spanInfo.span, req, url);
 
-      if (span) {
-        setSpanAttributes(span, {
-          "http.url": req.url,
-          "http.host": req.headers.get("host") || url.host,
-          "http.scheme": url.protocol.replace(":", ""),
-        });
-      }
-
-      const earlyProjectSlug = req.headers.get("x-project-slug") || undefined;
-      const earlyEnv = req.headers.get("x-environment") || undefined;
-      const earlyReleaseId = req.headers.get("x-release-id") || undefined;
-
-      requestTracker.start(
-        trackingRequestId,
-        earlyProjectSlug,
+      startRequestTracking(
+        lifecycle.requestId,
+        headers.projectSlug,
         url.pathname,
         req.method,
-        earlyEnv || undefined,
-        earlyReleaseId || undefined,
+        headers.environment,
+        headers.releaseId,
       );
 
-      // Start per-request content metrics tracking
-      startRequestMetrics();
+      startContentMetrics();
 
-      const shouldCheckIsolation = !isLightweightPath(url.pathname);
-      const isolationCheck = shouldCheckIsolation
-        ? projectIsolation.checkRequest(earlyProjectSlug)
-        : { allowed: true };
+      // Check isolation
+      const isolationCheck = checkRequestIsolation(
+        headers.projectSlug,
+        lifecycle.shouldCheckIsolation,
+      );
 
       if (!isolationCheck.allowed) {
-        requestTracker.complete(trackingRequestId, 503, false);
-
-        const message = isolationCheck.reason === "circuit_open"
-          ? `Service temporarily unavailable for project. Retry after ${
-            Math.ceil((isolationCheck.waitTimeMs || 0) / 1000)
-          } seconds.`
-          : "Too many concurrent requests for this project. Please retry.";
-
-        const response = new Response(
-          JSON.stringify({
-            error: message,
-            reason: isolationCheck.reason,
-            retryAfterMs: isolationCheck.waitTimeMs,
-          }),
-          {
-            status: 503,
-            headers: {
-              "Content-Type": "application/json",
-              ...(isolationCheck.waitTimeMs
-                ? { "Retry-After": String(Math.ceil(isolationCheck.waitTimeMs / 1000)) }
-                : {}),
-            },
-          },
-        );
-
-        endServerSpan(span, response.status);
+        completeRequestTracking(lifecycle.requestId, 503, false);
+        const response = createIsolationErrorResponse(isolationCheck);
+        endRequestTracing(spanInfo.span, response.status);
         return response;
       }
 
-      if (shouldCheckIsolation) {
-        projectIsolation.startRequest(earlyProjectSlug);
-      }
+      startIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation);
 
       try {
         await readyPromise;
@@ -348,454 +294,103 @@ export function createVeryfrontHandler(
           const reqCtx = createRequestContext(req, opts.envConfig);
 
           const wsSlugOverride = url.searchParams.get("x-project-slug") || undefined;
-          const proxyProjectPath = req.headers.get("x-project-path") || undefined;
 
-          let proxyEnv = parseProxyEnvironment(
-            req.headers.get("x-environment") || url.searchParams.get("x-environment"),
-          );
-
-          const forwardedHost = req.headers.get("x-forwarded-host") || undefined;
-          const host = forwardedHost || req.headers.get("host") || url.host;
-          const parsedDomain = parseProjectDomain(host);
-
-          const configuredSlug = config?.fs?.veryfront?.projectSlug;
-          let projectSlug = reqCtx.slug || wsSlugOverride || configuredSlug ||
-            opts.defaultProjectSlug;
-
-          const proxyToken = reqCtx.token || undefined;
-          const proxyReleaseId = req.headers.get("x-release-id") || undefined;
-          const proxyProjectId = req.headers.get("x-project-id") || undefined;
-          const proxyContentSourceId = req.headers.get("x-content-source-id") || undefined;
-
-          let projectId: string | undefined = proxyProjectId || opts.defaultProjectId;
-          let releaseId: string | undefined = proxyReleaseId;
-          let environmentName: string | undefined;
-
-          logger.debug("[universal] config state", {
-            hasConfig: !!config,
-            hasFsConfig: !!config?.fs,
-            hasVeryfrontConfig: !!config?.fs?.veryfront,
-            configuredSlug,
-            reqCtxSlug: reqCtx.slug,
-            reqCtxMode: reqCtx.mode,
-            reqCtxBranch: reqCtx.branch,
-            parsedDomainSlug: parsedDomain.slug,
-            finalProjectSlug: projectSlug,
-            isVeryfrontDomain: parsedDomain.isVeryfrontDomain,
-            isLocalDev: reqCtx.isLocalDev,
-            proxyReleaseId,
-            proxyProjectId,
+          // Resolve project from various sources
+          const projectRes = await resolveProject(req, url, headers, {
+            config,
+            reqCtx,
+            defaultProjectSlug: opts.defaultProjectSlug,
+            defaultProjectId: opts.defaultProjectId,
+            wsSlugOverride,
           });
 
-          const shouldSkipDomainLookup = isInternalHost(host);
+          setProjectAttributes(spanInfo.span, projectRes.projectSlug, projectRes.proxyEnv);
 
+          // Handle projects discovery UI
           if (
-            !projectSlug && !parsedDomain.isVeryfrontDomain && config?.fs?.veryfront &&
-            !shouldSkipDomainLookup
+            shouldHandleProjectsUI(url.pathname, projectRes.projectSlug, projectRes.parsedDomain)
           ) {
-            const effectiveToken = proxyToken || config.fs.veryfront.apiToken || "";
-            const baseUrl = config.fs.veryfront.apiBaseUrl || "https://api.veryfront.com";
-
-            const lookupHost = forwardedHost || host;
-
-            if (effectiveToken) {
-              logger.debug("[universal] Custom domain detected, looking up project", {
-                host: lookupHost,
-                originalHost: host,
-                forwardedHost,
-                hasProxyToken: !!proxyToken,
-                hasConfigToken: !!config.fs.veryfront.apiToken,
-              });
-
-              const lookupResult = await withSpan(
-                SpanNames.DOMAIN_LOOKUP,
-                () =>
-                  lookupProjectByDomain(lookupHost, {
-                    apiBaseUrl: baseUrl,
-                    apiToken: effectiveToken,
-                  }),
-                { "domain.host": lookupHost, "domain.original_host": host },
-              );
-
-              if (lookupResult) {
-                projectSlug = lookupResult.project_slug;
-                projectId = projectId || lookupResult.project_id;
-                releaseId = releaseId || lookupResult.release_id || undefined;
-                environmentName = lookupResult.environment?.name;
-
-                if (!proxyEnv) proxyEnv = getEnvironmentType(lookupResult);
-
-                logger.debug("[universal] Domain lookup successful", {
-                  domain: host,
-                  projectSlug: lookupResult.project_slug,
-                  projectId: lookupResult.project_id,
-                  environment: proxyEnv,
-                  environmentName,
-                  releaseId: lookupResult.release_id,
-                });
-              } else {
-                logger.warn("[universal] No project found for domain", { host: lookupHost });
-              }
-            } else {
-              logger.warn("[universal] Cannot look up custom domain - no API token available", {
-                host: lookupHost,
-                hasProxyToken: !!proxyToken,
-                hasConfigToken: !!config?.fs?.veryfront?.apiToken,
-              });
-            }
-          }
-
-          if (
-            parsedDomain.isVeryfrontDomain &&
-            parsedDomain.isDraft === false &&
-            projectSlug &&
-            !releaseId &&
-            !proxyToken &&
-            config?.fs?.veryfront &&
-            !shouldSkipDomainLookup
-          ) {
-            const effectiveToken = proxyToken || config.fs.veryfront.apiToken || "";
-            const baseUrl = config.fs.veryfront.apiBaseUrl || "https://api.veryfront.com";
-
-            if (effectiveToken) {
-              const lookupResult = await withSpan(
-                SpanNames.DOMAIN_RELEASE_LOOKUP,
-                () =>
-                  lookupProjectByDomain(host, {
-                    apiBaseUrl: baseUrl,
-                    apiToken: effectiveToken,
-                  }),
-                { "domain.host": host, "domain.project_slug": projectSlug },
-              );
-
-              if (lookupResult?.release_id) {
-                releaseId = lookupResult.release_id;
-                projectId = projectId || lookupResult.project_id;
-                environmentName = environmentName || lookupResult.environment?.name;
-                proxyEnv = "production";
-
-                logger.debug("[universal] Veryfront domain release lookup successful", {
-                  projectSlug,
-                  releaseId,
-                  projectId,
-                  environmentName,
-                });
-              }
-            }
-          }
-
-          if (parsedDomain.slug && configuredSlug && parsedDomain.slug !== configuredSlug) {
-            logDebug("[universal] Project slug mismatch", {
-              fromUrl: parsedDomain.slug,
-              fromConfig: configuredSlug,
-              usingSlug: projectSlug,
-            });
-          }
-
-          if (reqCtx.token) {
-            logDebug("[universal] Request context resolved", {
-              projectSlug,
-              mode: reqCtx.mode,
-              branch: reqCtx.branch,
-              environment: proxyEnv,
-              hasToken: !!reqCtx.token,
-            });
-          }
-
-          if (span && projectSlug) {
-            setSpanAttributes(span, {
-              "veryfront.project_slug": projectSlug,
-              "veryfront.environment": proxyEnv || "unknown",
-            });
-          }
-
-          const isProjectsPath = url.pathname === "/" ||
-            url.pathname.startsWith("/_projects") ||
-            url.pathname === "/_vf/api/projects";
-
-          if (
-            !projectSlug && !parsedDomain.slug && parsedDomain.isVeryfrontDomain && isProjectsPath
-          ) {
-            const { PROJECTS_SHELL_HTML } = await import("../handlers/dev/projects/html-shell.ts");
-            const { handleProjectsAPI } = await import("../handlers/dev/projects/api.ts");
-            const { handleProjectsUI } = await import("../handlers/dev/projects/ui-handler.ts");
-
-            if (
-              url.pathname === "/" || url.pathname === "/_projects" ||
-              url.pathname === "/_projects/"
-            ) {
-              return new Response(PROJECTS_SHELL_HTML, {
-                status: 200,
-                headers: { "Content-Type": "text/html; charset=utf-8" },
-              });
-            }
-
-            if (url.pathname.startsWith("/_projects/ui/")) {
-              const response = await handleProjectsUI(req);
-              if (response) return response;
-            }
-
-            if (url.pathname.startsWith("/_projects/api/")) {
-              const response = await handleProjectsAPI(req, {} as HandlerContext);
-              if (response) return response;
-            }
-
-            if (url.pathname === "/_vf/api/projects") {
-              const nativeFs = createFileSystem();
-              const basePath = cwd();
-
-              for (const dir of standardProjectDirs) {
-                try {
-                  const dirPath = `${basePath}/${dir}`;
-                  if (!(await nativeFs.exists(dirPath))) continue;
-
-                  for await (const entry of nativeFs.readDir(dirPath)) {
-                    if (entry.name.startsWith(".") || !entry.isDirectory) continue;
-
-                    const projectPath = `${dirPath}/${entry.name}`;
-                    try {
-                      const [hasApp, hasPages, hasComponents] = await Promise.all([
-                        nativeFs.exists(`${projectPath}/app`),
-                        nativeFs.exists(`${projectPath}/pages`),
-                        nativeFs.exists(`${projectPath}/components`),
-                      ]);
-
-                      if (hasApp || hasPages || hasComponents) {
-                        localProjectCache.set(entry.name, projectPath);
-                      }
-                    } catch {
-                      // Skip entries that can't be stat'd
-                    }
-                  }
-                } catch {
-                  // Directory doesn't exist, skip
-                }
-              }
-
-              const localProjects = Array.from(localProjectCache.entries()).map(([slug, path]) => ({
-                id: slug,
-                name: slug,
-                slug,
-                path,
-                updated_at: new Date().toISOString(),
-              }));
-
-              return new Response(JSON.stringify({ data: localProjects }), {
-                status: 200,
-                headers: { "Content-Type": "application/json" },
-              });
-            }
-
-            return new Response("Not found", { status: 404 });
-          }
-
-          let effectiveProjectDir = projectDir;
-          let effectiveAdapter = adapter;
-
-          const localProjectPath = projectSlug
-            ? await findLocalProjectPath(projectSlug, adapter, proxyProjectPath)
-            : undefined;
-
-          const isLocalProject = !!localProjectPath;
-          let effectiveConfig: VeryfrontConfig | undefined = config;
-
-          if (isLocalProject && localProjectPath) {
-            effectiveProjectDir = localProjectPath;
-
-            logger.debug("[universal] Using local project (filesystem-first)", {
-              projectSlug,
-              projectDir: effectiveProjectDir,
-            });
-
-            if (!localAdapterCache.has(effectiveProjectDir)) {
-              const baseAdapter = await runtime.get();
-              localAdapterCache.set(effectiveProjectDir, baseAdapter);
-              logger.debug("[universal] Created local adapter for project", {
-                projectSlug,
-                projectDir: effectiveProjectDir,
-              });
-            }
-
-            effectiveAdapter = localAdapterCache.get(effectiveProjectDir)!;
-
-            try {
-              effectiveConfig = await timeAsync(
-                "config:load-project",
-                () => getConfig(effectiveProjectDir, effectiveAdapter),
-              );
-
-              logger.debug("[universal] Loaded project-specific config", {
-                projectSlug,
-                projectDir: effectiveProjectDir,
-                layout: effectiveConfig?.layout,
-                router: effectiveConfig?.router,
-              });
-            } catch (error) {
-              logger.warn("[universal] Failed to load project config, using defaults", {
-                projectSlug,
-                projectDir: effectiveProjectDir,
-                error: getErrorMessage(error),
-              });
-            }
-          } else if (isProxyMode && projectSlug && proxyToken) {
-            try {
-              effectiveConfig = await timeAsync("config:load-proxy-project", () => {
-                if (
-                  isExtendedFSAdapter(effectiveAdapter.fs) && effectiveAdapter.fs.runWithContext
-                ) {
-                  return effectiveAdapter.fs.runWithContext(
-                    projectSlug,
-                    proxyToken,
-                    async () => {
-                      return await getConfig(effectiveProjectDir, effectiveAdapter, {
-                        cacheKey: projectId || projectSlug,
-                      });
-                    },
-                    projectId,
-                    {
-                      productionMode: proxyEnv === "production",
-                      releaseId,
-                      branch: reqCtx.branch || parsedDomain.branch || null,
-                      environmentName,
-                    },
-                  );
-                }
-
-                return getConfig(effectiveProjectDir, effectiveAdapter, {
-                  cacheKey: projectId || projectSlug,
-                });
-              });
-
-              logger.debug("[universal] Loaded config in proxy mode", {
-                projectSlug,
-                hasConfig: !!effectiveConfig,
-                layout: effectiveConfig?.layout,
-                router: effectiveConfig?.router,
-                configKeys: effectiveConfig ? Object.keys(effectiveConfig) : [],
-              });
-            } catch (error) {
-              logger.warn("[universal] Failed to load proxy config, using defaults", {
-                projectSlug,
-                error: getErrorMessage(error),
-              });
-            }
-          }
-
-          let resolvedEnvironment = proxyEnv === "preview" || proxyEnv === "production"
-            ? proxyEnv
-            : reqCtx.mode;
-
-          // Skip releaseId validation for WebSocket/HMR endpoints - they're for development
-          // features and shouldn't require release context
-          const isWebSocketOrHMR = url.pathname === "/_ws" ||
-            url.pathname.startsWith("/_veryfront/");
-
-          if (
-            isProxyMode && resolvedEnvironment === "production" && projectSlug && !releaseId &&
-            !isLocalProject && !isWebSocketOrHMR
-          ) {
-            logger.error("[universal] Missing releaseId in proxy mode (production)", {
-              projectSlug,
-              projectId,
-              environmentName,
-              host,
-              proxyEnv,
-              resolvedEnvironment,
-            });
-
-            return new Response(
-              JSON.stringify({
-                error: "Missing releaseId for production request in proxy mode",
-                projectSlug,
-                environment: resolvedEnvironment,
-              }),
-              { status: 502, headers: { "Content-Type": "application/json" } },
+            const response = await handleProjectsRequest(
+              req,
+              url,
+              buildMinimalContext(
+                projectDir,
+                adapter,
+                securityLoader.getSecurityConfig(),
+                securityLoader.getCspUserHeader(),
+                opts.debug,
+                config,
+              ),
             );
+            if (response) return response;
           }
 
-          const isStandaloneWithoutRelease = !isProxyMode &&
-            resolvedEnvironment === "production" &&
-            !releaseId &&
-            !reqCtx.isLocalDev &&
-            !isLocalProject;
+          // Resolve adapter and config for project
+          const adapterRes = await resolveAdapter({
+            projectDir,
+            adapter,
+            config,
+            projectSlug: projectRes.projectSlug,
+            projectId: projectRes.projectId,
+            proxyToken: reqCtx.token,
+            releaseId: projectRes.releaseId,
+            proxyEnv: projectRes.proxyEnv,
+            branch: reqCtx.branch,
+            environmentName: projectRes.environmentName,
+            parsedDomain: projectRes.parsedDomain,
+            headerProjectPath: headers.projectPath,
+            isProxyMode,
+          });
 
-          if (isStandaloneWithoutRelease) {
-            const fallbackEnv = opts.defaultEnvironment ?? "preview";
-            logger.debug(
-              "[universal] Standalone mode without releaseId, using fallback environment",
-              {
-                projectSlug,
-                resolvedEnvironment,
-                fallbackEnv,
-              },
-            );
+          // Resolve environment and validate
+          const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host;
+          const envRes = resolveEnvironment({
+            proxyEnv: projectRes.proxyEnv,
+            reqCtxMode: reqCtx.mode,
+            releaseId: projectRes.releaseId,
+            projectSlug: projectRes.projectSlug,
+            projectId: projectRes.projectId,
+            environmentName: projectRes.environmentName,
+            host,
+            isLocalProject: adapterRes.isLocalProject,
+            isProxyMode,
+            isLocalDev: reqCtx.isLocalDev,
+            pathname: url.pathname,
+            defaultEnvironment: opts.defaultEnvironment,
+          });
 
-            resolvedEnvironment = fallbackEnv;
-
-            if (fallbackEnv === "production" && !releaseId) {
-              releaseId = "standalone-dev";
-              logger.debug("[universal] Using synthetic releaseId for standalone production mode", {
-                projectSlug,
-                releaseId,
-              });
-            }
+          if (envRes.errorResponse) {
+            return envRes.errorResponse;
           }
 
-          const contentSourceId = proxyContentSourceId ??
-            computeContentSourceId(
-              reqCtx.isLocalDev || isLocalProject,
-              resolvedEnvironment,
-              reqCtx.branch,
-              releaseId,
-            );
-
-          const enrichedContext = effectiveConfig && projectSlug
-            ? buildEnrichedContext({
-              projectId: projectId ?? projectSlug,
-              projectSlug,
-              projectDir: effectiveProjectDir,
-              token: isLocalProject ? "" : (proxyToken ?? ""),
-              environment: resolvedEnvironment,
-              branch: reqCtx.branch,
-              isLocalDev: reqCtx.isLocalDev || isLocalProject,
-              contentSourceId,
-              parsedDomain,
-              adapter: effectiveAdapter,
-              config: effectiveConfig,
-              releaseId,
-              environmentName,
-              moduleServerUrl: opts.moduleServerUrl,
-              debug: opts.debug,
-            })
-            : undefined;
-
-          const ctx: HandlerContext = {
-            projectDir: effectiveProjectDir,
-            adapter: effectiveAdapter,
-            moduleServerUrl: opts.moduleServerUrl,
+          // Build handler context
+          const ctx = buildHandlerContext({
+            projectDir: adapterRes.projectDir,
+            adapter: adapterRes.adapter,
             securityConfig: securityLoader.getSecurityConfig(),
             cspUserHeader: securityLoader.getCspUserHeader(),
             debug: opts.debug,
-            config: effectiveConfig,
-            parsedDomain,
-            projectSlug,
-            projectId,
-            releaseId,
-            proxyToken: isLocalProject ? undefined : proxyToken,
-            environmentName,
-            resolvedEnvironment,
-            requestContext: { ...reqCtx, mode: resolvedEnvironment },
+            config: adapterRes.config,
+            parsedDomain: projectRes.parsedDomain,
+            projectSlug: projectRes.projectSlug,
+            projectId: projectRes.projectId,
+            releaseId: envRes.releaseId,
+            proxyToken: reqCtx.token,
+            environmentName: projectRes.environmentName,
+            resolvedEnvironment: envRes.resolvedEnvironment ?? "preview",
+            requestContext: reqCtx,
             routeRegistry: registry,
-            enriched: enrichedContext,
-          };
+            isLocalProject: adapterRes.isLocalProject,
+            moduleServerUrl: opts.moduleServerUrl,
+          });
 
-          await timeAsync("metrics:inc-request", () => metrics.incRequest());
+          await incrementRequestMetrics();
 
           const response = await withSpan(
             SpanNames.HANDLER_EXECUTE,
             () => registry.execute(req, ctx),
             {
-              "handler.project_slug": projectSlug || "unknown",
+              "handler.project_slug": projectRes.projectSlug || "unknown",
               "handler.path": url.pathname,
               "handler.method": req.method,
             },
@@ -812,12 +407,8 @@ export function createVeryfrontHandler(
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
         try {
-          const executeWithContext = spanInfo?.context
-            ? () => withContext(spanInfo.context, executeHandler)
-            : executeHandler;
-
           response = await Promise.race([
-            executeWithContext(),
+            executeWithTracingContext(spanInfo, executeHandler),
             new Promise<never>((_, reject) => {
               timeoutId = setTimeout(() => reject(TIMEOUT_SENTINEL), getRequestTimeout());
             }),
@@ -849,26 +440,21 @@ export function createVeryfrontHandler(
           if (timeoutId !== undefined) clearTimeout(timeoutId);
         }
 
-        endServerSpan(span, response.status, error);
+        endRequestTracing(spanInfo.span, response.status, error);
 
-        // End per-request content metrics tracking and log summary
-        endRequestMetrics({
-          requestId: trackingRequestId,
+        endContentMetrics({
+          requestId: lifecycle.requestId,
           pathname: url.pathname,
-          mode: earlyEnv || "unknown",
+          mode: headers.environment || "unknown",
         });
 
         const isTimeout = response.status === HTTP_GATEWAY_TIMEOUT;
-        requestTracker.complete(trackingRequestId, response.status, isTimeout);
-
-        if (shouldCheckIsolation) {
-          projectIsolation.completeRequest(earlyProjectSlug, isTimeout);
-        }
+        completeRequestTracking(lifecycle.requestId, response.status, isTimeout);
+        completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, isTimeout);
 
         return response;
       } finally {
-        stopTotal();
-        if (perfRequestId) endRequest(perfRequestId);
+        endRequestLifecycle(lifecycle);
       }
     });
   };

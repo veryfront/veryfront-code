@@ -1175,10 +1175,15 @@ export default function Home() {
       assertStringIncludes(html, "Router works with deno.json", "Should render content");
 
       // Verify no errors about missing modules at relative paths
+      // The filter checks for patterns indicating the relative path from deno.json
+      // is being used instead of the framework path. Note: "framework-src/react/router"
+      // in debug logs is fine - we're looking for "./src/react/router" errors.
       const moduleErrors = server.logs.filter((l) =>
         l.includes("Missing module") ||
-        l.includes("src/react/router") ||
-        l.includes("src/react/head")
+        l.includes("./src/react/router") ||
+        l.includes("./src/react/head") ||
+        l.includes("Could not resolve ./src") ||
+        (l.includes("error") && l.toLowerCase().includes("src/react/router") && !l.includes("framework-src"))
       );
       assertEquals(
         moduleErrors.length,

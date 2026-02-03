@@ -3,11 +3,18 @@
 /**
  * Architecture Validation Script
  *
- * Enforces architectural constraints on the handler system:
- * - Maximum 3 levels deep from src/server/handlers/
- * - No nested handlers/ directories (handlers within handlers)
- * - Maximum 150 LOC per handler file
- * - Consistent .handler.ts naming for handler files
+ * Enforces architectural constraints:
+ *
+ * 1. Handler System:
+ *    - Maximum 3 levels deep from src/server/handlers/
+ *    - No nested handlers/ directories (handlers within handlers)
+ *    - Maximum 150 LOC per handler file
+ *    - Consistent .handler.ts naming for handler files
+ *
+ * 2. Layer Dependencies (from src/README.md):
+ *    - Bottom layer (platform/, utils/, errors/, http/) cannot import from middle or top
+ *    - Middle layer (routing/, security/, middleware/) cannot import from top (server/)
+ *    - Top layer (server/) can import from anywhere
  *
  * Run: deno task validate:architecture
  * Or:  deno run --allow-read scripts/validate-architecture.ts
@@ -31,6 +38,11 @@ const HANDLERS_ROOT = "src/server/handlers";
 const MAX_DEPTH = 3; // Maximum depth from handlers/ to any file
 const MAX_HANDLER_LOC = 150; // Maximum lines of code for a handler file
 const HANDLER_PATTERN = /\.handler\.ts$/;
+
+// Layer definitions for dependency enforcement
+const LAYER_BOTTOM = ["platform", "utils", "errors", "http", "cache", "types"];
+const LAYER_MIDDLE = ["routing", "security", "middleware", "config", "data"];
+const LAYER_TOP = ["server", "cli", "build"];
 
 async function countLines(path: string): Promise<number> {
   const content = await Deno.readTextFile(path);
