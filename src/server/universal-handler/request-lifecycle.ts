@@ -84,8 +84,8 @@ export function startRequestTracking(
 /**
  * Start per-request content metrics tracking.
  */
-export function startContentMetrics(): void {
-  startRequestMetrics();
+export function startContentMetrics<T>(callback: () => T): T {
+  return startRequestMetrics(callback);
 }
 
 /**
