@@ -104,6 +104,51 @@ function looksLikeHtmlNotJs(content: string): boolean {
   );
 }
 
+// ============================================================================
+// URL Embedding for Cache Resilience
+// ============================================================================
+// Embed source URLs in cached bundles for self-contained recovery.
+// When distributed cache has orphaned references (bundle exists but dependency
+// URL mapping is missing), the embedded URL allows recovery without external lookups.
+
+/** Preserved comment format that survives minification */
+const VF_SOURCE_PREFIX = "/*! @vf-source: ";
+const VF_SOURCE_SUFFIX = " */\n";
+
+/**
+ * Embed the source URL in bundle code as a preserved comment.
+ * This enables recovery when URL mapping is missing from distributed cache.
+ *
+ * @param code - The bundle code
+ * @param sourceUrl - The original URL the bundle was fetched from
+ * @returns Code with embedded source URL
+ */
+function embedSourceUrl(code: string, sourceUrl: string): string {
+  // Don't double-embed if already present
+  if (code.startsWith(VF_SOURCE_PREFIX)) return code;
+  return `${VF_SOURCE_PREFIX}${sourceUrl}${VF_SOURCE_SUFFIX}${code}`;
+}
+
+/**
+ * Extract the embedded source URL from bundle code.
+ *
+ * @param code - The bundle code
+ * @returns The source URL or null if not embedded
+ */
+function extractSourceUrl(code: string): string | null {
+  if (!code.startsWith(VF_SOURCE_PREFIX)) return null;
+  const endIndex = code.indexOf(VF_SOURCE_SUFFIX);
+  if (endIndex === -1) return null;
+  return code.slice(VF_SOURCE_PREFIX.length, endIndex).trim();
+}
+
+/**
+ * Check if code has an embedded source URL.
+ */
+function hasEmbeddedSourceUrl(code: string): boolean {
+  return code.startsWith(VF_SOURCE_PREFIX);
+}
+
 /**
  * Try to decode content if it's gzip-encoded, otherwise return as-is.
  * Returns [decodedContent, wasGzipped] tuple.
@@ -850,6 +895,9 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       processingStack.delete(normalizedUrl);
     }
 
+    // Embed source URL for self-contained recovery when URL mapping is missing
+    code = embedSourceUrl(code, normalizedUrl);
+
     await fs.mkdir(cacheDir, { recursive: true });
     await fs.writeTextFile(cachePath, code);
 
@@ -1057,6 +1105,54 @@ export async function cacheModuleToLocal(url: string, cacheDir: string): Promise
 }
 
 /**
+ * Scan local cache for a bundle that imports the given hash and has an embedded source URL.
+ * Used for last-resort recovery when URL mapping is missing from distributed cache.
+ *
+ * @param targetHash - The hash of the missing bundle
+ * @param cacheDir - The cache directory path
+ * @param fs - FileSystem instance
+ * @returns Parent bundle info with embedded source URL, or null if not found
+ */
+async function findParentBundleWithEmbeddedUrl(
+  targetHash: string,
+  cacheDir: string,
+  fs: ReturnType<typeof createFileSystem>,
+): Promise<{ path: string; sourceUrl: string } | null> {
+  try {
+    const files = fs.readDir(cacheDir);
+    const bundlePattern = /^http-(\d+)\.mjs$/;
+
+    for await (const file of files) {
+      if (!bundlePattern.test(file.name)) continue;
+
+      const filePath = join(cacheDir, file.name);
+      try {
+        const content = await fs.readTextFile(filePath);
+
+        // Check if this bundle imports the target hash (via relative or absolute path)
+        const importsTarget =
+          content.includes(`./http-${targetHash}.mjs`) ||
+          content.includes(`http-${targetHash}.mjs"`);
+
+        if (importsTarget) {
+          const sourceUrl = extractSourceUrl(content);
+          if (sourceUrl) {
+            return { path: filePath, sourceUrl };
+          }
+        }
+      } catch {
+        // Skip files that can't be read
+        continue;
+      }
+    }
+  } catch (error) {
+    logger.debug("[HTTP-CACHE] Error scanning for parent bundle", { targetHash, error });
+  }
+
+  return null;
+}
+
+/**
  * Recover a missing HTTP bundle by looking up the code directly from the hash.
  * Used for cross-pod recovery when a file:// path points to a bundle that
  * exists in distributed cache but not on the local filesystem.
@@ -1064,12 +1160,19 @@ export async function cacheModuleToLocal(url: string, cacheDir: string): Promise
  * Recovery strategy (in order of preference):
  * 1. Direct code lookup by hash (code:{hash}) - fastest, most reliable
  * 2. URL lookup then re-fetch (hash:{hash} → URL → fetch) - fallback
+ * 3. Parent URL extraction - extract embedded source URL from parent bundle,
+ *    then invalidate parent and re-fetch (which will recursively fetch deps)
  *
  * @param hash - The hash from the bundle filename (e.g., "974671618" from "http-974671618.mjs")
  * @param cacheDir - The cache directory path
+ * @param parentCode - Optional parent bundle code that imports this hash (for URL extraction)
  * @returns true if recovery succeeded, false otherwise
  */
-export async function recoverHttpBundleByHash(hash: string, cacheDir: string): Promise<boolean> {
+export async function recoverHttpBundleByHash(
+  hash: string,
+  cacheDir: string,
+  parentCode?: string,
+): Promise<boolean> {
   const absoluteCacheDir = ensureAbsoluteDir(cacheDir);
   const cachePath = join(absoluteCacheDir, `http-${hash}.mjs`);
   const fs = createFileSystem();
@@ -1145,6 +1248,83 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
       if (result) {
         logger.info("[HTTP-CACHE] Bundle recovery successful (re-fetch)", { hash, path: result });
         return true;
+      }
+    }
+
+    // Last resort: try to extract source URL from parent bundle and re-fetch parent
+    // This handles orphaned dependencies where the URL mapping was never stored
+    if (parentCode) {
+      const parentSourceUrl = extractSourceUrl(parentCode);
+      if (parentSourceUrl) {
+        logger.info("[HTTP-CACHE] Attempting recovery via parent URL re-fetch", {
+          hash,
+          parentUrl: parentSourceUrl,
+        });
+
+        // Invalidate the parent from distributed cache to prevent re-serving corrupted data
+        const parentHash = simpleHash(normalizeHttpUrl(parentSourceUrl));
+        await httpBundleCache.deleteCode(String(parentHash));
+
+        // Delete local parent file to force re-fetch
+        const parentPath = join(absoluteCacheDir, `http-${parentHash}.mjs`);
+        try {
+          await fs.remove(parentPath);
+        } catch {
+          // Ignore if file doesn't exist
+        }
+
+        // Re-fetch parent from network, which will recursively fetch dependencies
+        const importMap = { imports: {}, scopes: {} };
+        const result = await cacheHttpModule(parentSourceUrl, { cacheDir, importMap });
+        if (result) {
+          // Check if our target hash now exists
+          if (await exists(cachePath)) {
+            logger.info("[HTTP-CACHE] Bundle recovery successful (parent re-fetch)", {
+              hash,
+              path: cachePath,
+            });
+            return true;
+          }
+        }
+
+        logger.warn("[HTTP-CACHE] Parent re-fetch did not recover target bundle", {
+          hash,
+          parentUrl: parentSourceUrl,
+        });
+      }
+    }
+
+    // Final fallback: scan local cache for a bundle that imports this hash
+    // This handles the case where parentCode wasn't provided but we can find one locally
+    if (!parentCode) {
+      const foundParent = await findParentBundleWithEmbeddedUrl(hash, absoluteCacheDir, fs);
+      if (foundParent) {
+        logger.info("[HTTP-CACHE] Found parent bundle in local cache, attempting recovery", {
+          hash,
+          parentUrl: foundParent.sourceUrl,
+        });
+
+        // Invalidate the parent from distributed cache
+        const parentHashNum = simpleHash(normalizeHttpUrl(foundParent.sourceUrl));
+        await httpBundleCache.deleteCode(String(parentHashNum));
+
+        // Delete local parent file
+        try {
+          await fs.remove(foundParent.path);
+        } catch {
+          // Ignore if file doesn't exist
+        }
+
+        // Re-fetch parent from network
+        const importMap = { imports: {}, scopes: {} };
+        const result = await cacheHttpModule(foundParent.sourceUrl, { cacheDir, importMap });
+        if (result && await exists(cachePath)) {
+          logger.info("[HTTP-CACHE] Bundle recovery successful (local parent scan)", {
+            hash,
+            path: cachePath,
+          });
+          return true;
+        }
       }
     }
 
@@ -1331,3 +1511,48 @@ export async function ensureHttpBundlesExist(
 
 // Test-only export for extractBundleDeps
 export const __test_extractBundleDeps = extractBundleDeps;
+
+/**
+ * Invalidate a corrupted bundle from both local and distributed cache.
+ * Use this when a bundle has orphaned dependencies that can't be recovered.
+ *
+ * @param hash - The bundle hash to invalidate
+ * @param cacheDir - The cache directory path
+ * @returns true if invalidation was successful
+ */
+export async function invalidateHttpBundle(hash: string, cacheDir: string): Promise<boolean> {
+  const absoluteCacheDir = ensureAbsoluteDir(cacheDir);
+  const cachePath = join(absoluteCacheDir, `http-${hash}.mjs`);
+  const fs = createFileSystem();
+
+  logger.info("[HTTP-CACHE] Invalidating bundle", { hash, path: cachePath });
+
+  try {
+    // Delete from distributed cache
+    const deleted = await httpBundleCache.deleteCode(hash);
+    if (deleted) {
+      logger.info("[HTTP-CACHE] Deleted bundle from distributed cache", { hash });
+    }
+
+    // Delete local file
+    try {
+      await fs.remove(cachePath);
+      logger.info("[HTTP-CACHE] Deleted local bundle file", { hash, path: cachePath });
+    } catch {
+      // File might not exist locally, that's fine
+    }
+
+    // Note: We don't clear the LRU cache entry here since we can't easily
+    // reverse-lookup the key from the path. The entry will be overwritten
+    // on next fetch or naturally expire.
+
+    return true;
+  } catch (error) {
+    logger.error("[HTTP-CACHE] Failed to invalidate bundle", { hash, error });
+    return false;
+  }
+}
+
+// Export URL embedding functions for testing
+export const __test_embedSourceUrl = embedSourceUrl;
+export const __test_extractSourceUrl = extractSourceUrl;

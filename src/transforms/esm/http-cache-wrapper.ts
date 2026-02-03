@@ -373,6 +373,35 @@ export class HttpBundleCache {
   }
 
   /**
+   * Delete a bundle from distributed cache.
+   * Removes all keys associated with the hash (code, url, hash mapping).
+   *
+   * @param hash - Bundle hash to delete
+   * @returns true if deletion was attempted, false if cache unavailable
+   */
+  async deleteCode(hash: BundleHash | string): Promise<boolean> {
+    const distributed = await getDistributedCache();
+    if (!distributed) return false;
+
+    const hashStr = typeof hash === "string" ? hash : (hash as unknown as string);
+
+    try {
+      // Delete all keys associated with this hash
+      await Promise.all([
+        distributed.del(distributedKey("url", hashStr)),
+        distributed.del(distributedKey("code", hashStr)),
+        distributed.del(distributedKey("hash", hashStr)),
+      ]);
+
+      logger.info("[HTTP-CACHE-WRAPPER] Deleted bundle from distributed cache", { hash: hashStr });
+      return true;
+    } catch (error) {
+      logger.debug("[HTTP-CACHE-WRAPPER] Delete code failed", { hash: hashStr, error });
+      return false;
+    }
+  }
+
+  /**
    * Check if distributed cache is available.
    */
   async isAvailable(): Promise<boolean> {
