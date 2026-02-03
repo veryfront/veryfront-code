@@ -3,23 +3,24 @@ import { ESC, RESET } from "./ansi.ts";
 
 export type ColorLevel = "truecolor" | "256" | "16" | "none";
 
-export function getColorLevel(): ColorLevel {
-  const envObj = getEnvObject();
+function computeColorLevel(envObj: Record<string, string>, stdoutTty: boolean): ColorLevel {
+  const forceColorRaw = envObj.FORCE_COLOR;
+  if (forceColorRaw !== undefined) {
+    if (forceColorRaw === "0") return "none";
+
+    const forceColor = parseInt(forceColorRaw, 10);
+    if (Number.isNaN(forceColor)) return "16";
+    if (forceColor >= 3) return "truecolor";
+    if (forceColor >= 2) return "256";
+    if (forceColor >= 1) return "16";
+  }
 
   if (envObj.NO_COLOR !== undefined) return "none";
-  if (envObj.FORCE_COLOR === "0") return "none";
 
   const term = envObj.TERM ?? "";
   if (term === "dumb") return "none";
 
-  const forceColor = parseInt(envObj.FORCE_COLOR ?? "", 10);
-  if (forceColor >= 1) {
-    if (forceColor >= 3) return "truecolor";
-    if (forceColor >= 2) return "256";
-    return "16";
-  }
-
-  if (!isStdoutTTY()) return "none";
+  if (!stdoutTty) return "none";
 
   const colorTerm = envObj.COLORTERM ?? "";
   if (colorTerm === "truecolor" || colorTerm === "24bit") return "truecolor";
@@ -37,19 +38,44 @@ export function getColorLevel(): ColorLevel {
   return term ? "16" : "none";
 }
 
+export function getColorLevel(): ColorLevel {
+  const envObj = getEnvObject();
+  return computeColorLevel(envObj, isStdoutTTY());
+}
+
 export function shouldUseColor(): boolean {
   return getColorLevel() !== "none";
 }
 
 let cachedColorLevel: ColorLevel | null = null;
+let cachedColorEnvKey: string | null = null;
+
+function buildColorEnvKey(envObj: Record<string, string>, stdoutTty: boolean): string {
+  return [
+    envObj.NO_COLOR ?? "",
+    envObj.FORCE_COLOR ?? "",
+    envObj.TERM ?? "",
+    envObj.COLORTERM ?? "",
+    envObj.TERM_PROGRAM ?? "",
+    stdoutTty ? "1" : "0",
+  ].join("\u0000");
+}
 
 function getCachedColorLevel(): ColorLevel {
-  cachedColorLevel ??= getColorLevel();
+  const envObj = getEnvObject();
+  const stdoutTty = isStdoutTTY();
+  const envKey = buildColorEnvKey(envObj, stdoutTty);
+
+  if (cachedColorLevel === null || cachedColorEnvKey !== envKey) {
+    cachedColorEnvKey = envKey;
+    cachedColorLevel = computeColorLevel(envObj, stdoutTty);
+  }
   return cachedColorLevel;
 }
 
 export function resetColorCache(): void {
   cachedColorLevel = null;
+  cachedColorEnvKey = null;
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {

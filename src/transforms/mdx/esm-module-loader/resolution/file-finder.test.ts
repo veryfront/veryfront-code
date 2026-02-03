@@ -39,10 +39,20 @@ async function assertResolvedModuleFile(
   const result = await resolveModuleFile(modulePath, mockAdapter, undefined);
 
   assertExists(result, `Should resolve ${modulePath}`);
+  const suffixes = new Set<string>([expectedSuffix, `${expectedSuffix}.src`]);
+  if (expectedSuffix.startsWith("src/")) {
+    const embeddedSuffix = expectedSuffix.replace(/^src\//, "dist/framework-src/");
+    suffixes.add(embeddedSuffix);
+    suffixes.add(`${embeddedSuffix}.src`);
+  }
+
+  const matches = Array.from(suffixes).some((suffix) => result.actualFilePath.endsWith(suffix));
   assertEquals(
-    result.actualFilePath.endsWith(expectedSuffix),
+    matches,
     true,
-    `Expected path to end with ${expectedSuffix}, got: ${result.actualFilePath}`,
+    `Expected path to end with one of ${
+      Array.from(suffixes).join(", ")
+    }, got: ${result.actualFilePath}`,
   );
   assertExists(result.sourceCode, "Should have source code");
 

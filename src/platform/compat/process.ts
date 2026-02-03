@@ -9,6 +9,13 @@ const dynamicImport = new Function("specifier", "return import(specifier)") as <
   specifier: string,
 ) => Promise<T>;
 
+function isWindowsPlatform(): boolean {
+  if (IS_DENO) return Deno.build.os === "windows";
+  const platform = nodeProcess?.platform ??
+    (globalThis as { process?: { platform?: string } }).process?.platform;
+  return platform === "win32";
+}
+
 export function getArgs(): string[] {
   if (IS_DENO) return Deno.args;
   if (hasNodeProcess) return nodeProcess!.argv.slice(2);
@@ -489,8 +496,17 @@ export async function runCommand(
 
     const bunStdio = inherit ? "inherit" : capture ? "pipe" : "ignore";
 
+    const isWindows = isWindowsPlatform();
+    const bunCmd = shell
+      ? args.length === 0
+        ? isWindows ? ["cmd", "/c", cmd] : ["sh", "-c", cmd]
+        : isWindows
+        ? ["cmd", "/c", cmd, ...args]
+        : ["sh", "-c", 'exec "$@"', "sh", cmd, ...args]
+      : [cmd, ...args];
+
     const proc = bunGlobal.Bun.spawn({
-      cmd: shell ? ["sh", "-c", [cmd, ...args].join(" ")] : [cmd, ...args],
+      cmd: bunCmd,
       cwd: cmdCwd,
       env: cmdEnv,
       stdout: bunStdio,

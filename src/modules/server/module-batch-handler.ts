@@ -53,7 +53,22 @@ registerLRUCache("module-batch-transform-cache", transformCache);
 
 const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
 
+// Embedded source directory for compiled binaries (created by prepare-framework-sources.ts)
+const EMBEDDED_SRC_DIR = join(FRAMEWORK_ROOT, "dist", "framework-src");
+
 const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"] as const;
+
+// Extensions including .src for compiled binary embedded sources
+const FRAMEWORK_EXTENSIONS = [
+  ".tsx.src",
+  ".ts.src",
+  ".jsx.src",
+  ".js.src", // Embedded sources for compiled binaries
+  ".tsx",
+  ".ts",
+  ".jsx",
+  ".js", // Regular sources for dev mode
+] as const;
 
 export interface BatchHandlerOptions {
   projectDir: string;
@@ -281,17 +296,25 @@ async function loadAndTransformModule(
 
   if (!basePath.startsWith("lib/")) return null;
 
-  const platformFs = createFileSystem();
-  for (const ext of EXTENSIONS) {
-    const frameworkPath = join(FRAMEWORK_ROOT, "src", basePath + ext);
-    try {
-      const stat = await platformFs.stat(frameworkPath);
-      if (!stat.isFile) continue;
+  // Framework lookup directories in priority order
+  const frameworkLookupDirs = [
+    EMBEDDED_SRC_DIR, // Embedded sources for compiled binaries (.src files)
+    join(FRAMEWORK_ROOT, "src"), // Regular sources for dev mode
+  ];
 
-      const source = await platformFs.readTextFile(frameworkPath);
-      return transformModule(source, frameworkPath, projectDir, adapter, options);
-    } catch {
-      // Continue trying
+  const platformFs = createFileSystem();
+  for (const lookupDir of frameworkLookupDirs) {
+    for (const ext of FRAMEWORK_EXTENSIONS) {
+      const frameworkPath = join(lookupDir, basePath + ext);
+      try {
+        const stat = await platformFs.stat(frameworkPath);
+        if (!stat.isFile) continue;
+
+        const source = await platformFs.readTextFile(frameworkPath);
+        return transformModule(source, frameworkPath, projectDir, adapter, options);
+      } catch {
+        // Continue trying
+      }
     }
   }
 

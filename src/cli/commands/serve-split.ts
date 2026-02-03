@@ -138,6 +138,8 @@ export async function runSplitMode(options: SplitModeOptions): Promise<void> {
   cliLogger.info(`\nPress Ctrl+C to stop\n`);
 
   // Shutdown handler
+  let shutdownRequested = false;
+
   const shutdown = () => {
     cliLogger.info("\nShutting down...");
     try {
@@ -148,12 +150,33 @@ export async function runSplitMode(options: SplitModeOptions): Promise<void> {
     } catch { /* ignore */ }
   };
 
-  Deno.addSignalListener("SIGINT", shutdown);
-  Deno.addSignalListener("SIGTERM", shutdown);
+  const handleSignal = () => {
+    shutdownRequested = true;
+    shutdown();
+  };
+
+  Deno.addSignalListener("SIGINT", handleSignal);
+  Deno.addSignalListener("SIGTERM", handleSignal);
 
   // Wait for either process to exit
-  await Promise.race([rendererProcess.status, proxyProcess.status]);
+  const firstExit = await Promise.race([
+    rendererProcess.status.then((status) => ({ name: "renderer", status })),
+    proxyProcess.status.then((status) => ({ name: "proxy", status })),
+  ]);
 
   shutdown();
-  exitProcess(0);
+
+  const exitCode = shutdownRequested
+    ? 0
+    : firstExit.status.success
+    ? 1
+    : firstExit.status.code ?? 1;
+
+  if (!shutdownRequested) {
+    cliLogger.error(
+      `${firstExit.name} exited with code ${firstExit.status.code ?? "unknown"}`,
+    );
+  }
+
+  exitProcess(exitCode);
 }

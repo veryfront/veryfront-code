@@ -34,6 +34,28 @@ export class PageHandler {
       }
     }
 
+    function isDevMode() {
+      return window.__VERYFRONT_DEV__ === true;
+    }
+
+    function validateTrustedHtml(html) {
+      const patterns = [
+        { pattern: /<script[^>]*>[\\s\\S]*?<\\/script>/gi, name: 'inline script' },
+        { pattern: /javascript:/gi, name: 'javascript: URL' },
+        { pattern: /\\bon\\w+\\s*=/gi, name: 'event handler attribute' },
+        { pattern: /data:\\s*text\\/html/gi, name: 'data: HTML URL' },
+      ];
+
+      for (const { pattern, name } of patterns) {
+        pattern.lastIndex = 0;
+        if (!pattern.test(html)) continue;
+        console.warn(\`[Security] Suspicious \${name} detected in server HTML\`);
+        if (!isDevMode()) throw new Error(\`Potentially unsafe HTML: \${name} detected\`);
+      }
+
+      return html;
+    }
+
     (async () => {
       const renderUrl = '${renderUrl}';
       const payload =
@@ -41,7 +63,8 @@ export class PageHandler {
         (await fetchPayload('/_veryfront/rsc/payload')) ??
         { html: '<p>RSC unavailable</p>', clientRefs: [] };
 
-      document.getElementById('rsc-root').innerHTML = payload.html;
+      const safeHtml = validateTrustedHtml(String(payload.html || ''));
+      document.getElementById('rsc-root').innerHTML = safeHtml;
       window.__RSC_CLIENT_REFS__ = payload.clientRefs;
 
       if (!window.VeryfrontHydrate?.run) return;

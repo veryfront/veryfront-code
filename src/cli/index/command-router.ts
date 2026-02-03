@@ -8,7 +8,7 @@ import { handleError } from "#veryfront/errors";
 import { formatErrorBox } from "#veryfront/errors/user-friendly/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { basename, join } from "#veryfront/platform/compat/path/index.ts";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT, VERSION } from "#veryfront/utils";
 import { z } from "zod";
 import { analyzeChunksCommand } from "../commands/analyze-chunks.ts";
@@ -45,6 +45,16 @@ import { handleStartCommand } from "./start-handler.ts";
 import type { ParsedArgs } from "./types.ts";
 import type { InitTemplate } from "../commands/init/types.ts";
 import type { IntegrationName } from "../templates/types.ts";
+
+/**
+ * Generate a default project ID from the project directory name.
+ * Used for local filesystem mode when no project ID is available from API.
+ */
+function generateDefaultProjectId(projectDir: string): string {
+  const dirName = basename(projectDir);
+  // Clean the directory name to create a valid project ID
+  return `local-${dirName.replace(/[^a-zA-Z0-9-_]/g, "-").toLowerCase()}`;
+}
 
 /**
  * Handle validation errors using central COMMANDS registry for usage
@@ -268,6 +278,9 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           const debug = Boolean(args.debug);
           const shutdownController = new AbortController();
 
+          // Generate default project ID for local filesystem mode
+          const defaultProjectId = generateDefaultProjectId(projectDir);
+
           const server = await startUniversalServer({
             projectDir,
             port,
@@ -275,6 +288,8 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
             debug,
             adapter,
             signal: shutdownController.signal,
+            defaultProjectSlug: defaultProjectId,
+            defaultProjectId,
           });
           await server.ready;
 

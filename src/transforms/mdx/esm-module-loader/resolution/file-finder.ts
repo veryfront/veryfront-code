@@ -9,6 +9,27 @@ import {
 } from "../constants.ts";
 import { getLocalFs } from "../cache/index.ts";
 
+// Embedded source directory for compiled binaries (created by prepare-framework-sources.ts)
+const EMBEDDED_SRC_DIR = join(FRAMEWORK_ROOT, "dist", "framework-src");
+
+// Extensions to try for framework files (includes .src for compiled binary embedded sources)
+const FRAMEWORK_EXTENSIONS = [
+  ".tsx.src",
+  ".ts.src",
+  ".jsx.src",
+  ".js.src", // Embedded sources for compiled binaries
+  ".tsx",
+  ".ts",
+  ".jsx",
+  ".js", // Regular sources for dev mode
+];
+
+// Framework lookup directories in priority order
+const FRAMEWORK_LOOKUP_DIRS = [
+  EMBEDDED_SRC_DIR, // Embedded sources for compiled binaries (.src files)
+  join(FRAMEWORK_ROOT, "src"), // Regular sources for dev mode
+];
+
 export interface FileResolutionResult {
   sourceCode: string;
   actualFilePath: string;
@@ -114,24 +135,37 @@ export async function resolveModuleFile(
 
   if (!isFramework) return null;
 
+  // Try to resolve framework files from multiple locations:
+  // 1. EMBEDDED_SRC_DIR (dist/framework-src) - for compiled binaries with .src extensions
+  // 2. FRAMEWORK_ROOT/src - for development mode with regular extensions
   const localFs = getLocalFs();
-  for (const ext of MODULE_EXTENSIONS) {
-    const frameworkPath = join(FRAMEWORK_ROOT, "src", filePathWithoutJs + ext);
 
-    try {
-      const stat = await localFs.stat(frameworkPath);
-      if (!stat?.isFile) continue;
+  for (const lookupDir of FRAMEWORK_LOOKUP_DIRS) {
+    for (const ext of FRAMEWORK_EXTENSIONS) {
+      const frameworkPath = join(lookupDir, filePathWithoutJs + ext);
 
-      const content = await localFs.readTextFile(frameworkPath);
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} Found framework file`, {
-        basePath: filePathWithoutJs,
-        resolvedPath: frameworkPath,
-      });
-      return { sourceCode: content, actualFilePath: frameworkPath };
-    } catch {
-      // Continue trying other extensions
+      try {
+        const stat = await localFs.stat(frameworkPath);
+        if (!stat?.isFile) continue;
+
+        const content = await localFs.readTextFile(frameworkPath);
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Found framework file`, {
+          basePath: filePathWithoutJs,
+          resolvedPath: frameworkPath,
+          lookupDir,
+        });
+        return { sourceCode: content, actualFilePath: frameworkPath };
+      } catch {
+        // Continue trying other extensions/directories
+      }
     }
   }
+
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} Framework file not found`, {
+    filePathWithoutJs,
+    triedDirs: FRAMEWORK_LOOKUP_DIRS,
+    triedExtensions: FRAMEWORK_EXTENSIONS,
+  });
 
   return null;
 }

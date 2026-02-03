@@ -8,6 +8,7 @@ import {
   getReactDOMClientCDNUrl,
   REACT_DEFAULT_VERSION,
 } from "#veryfront/utils/constants/cdn.ts";
+import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { consumeNdjsonStream, getContainer } from "./client-dom.ts";
 import { FS_PATH_PREFIX, HYDRATION_DATA_ID, RSC_PATH_PREFIX, RSC_ROOT_ID } from "./constants.ts";
 
@@ -105,12 +106,12 @@ async function applyPayload(q: string): Promise<boolean> {
 
     if (data?.slots) {
       for (const [id, html] of Object.entries(data.slots)) {
-        getContainer(document, id).innerHTML = String(html || "");
+        getContainer(document, id).innerHTML = validateTrustedHtml(String(html || ""));
       }
       return true;
     }
 
-    getContainer(document, RSC_ROOT_ID).innerHTML = String(data?.html || "");
+    getContainer(document, RSC_ROOT_ID).innerHTML = validateTrustedHtml(String(data?.html || ""));
     return true;
   } catch (e) {
     console.debug?.("[RSC] payload fetch failed", e);

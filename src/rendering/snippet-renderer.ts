@@ -149,9 +149,7 @@ function getModuleServerBase(moduleServerUrl?: string): string {
   if (!moduleServerUrl) return "http://localhost:3002";
 
   if (moduleServerUrl.startsWith("http://")) return moduleServerUrl;
-  if (moduleServerUrl.startsWith("https://")) {
-    return moduleServerUrl.replace(/^https:\/\//, "http://");
-  }
+  if (moduleServerUrl.startsWith("https://")) return moduleServerUrl;
 
   return "http://localhost:3002";
 }

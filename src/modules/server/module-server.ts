@@ -426,6 +426,9 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
 const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
 
+// Embedded source directory for compiled binaries (created by prepare-framework-sources.ts)
+const EMBEDDED_SRC_DIR = join(FRAMEWORK_ROOT, "dist", "framework-src");
+
 interface FindSourceFileResult {
   path: string;
   isFrameworkFile: boolean;
@@ -438,13 +441,27 @@ async function findSourceFile(
   projectDir: string,
   basePath: string,
 ): Promise<FindSourceFileResult | null> {
-  const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"];
+  // Extensions including .src for compiled binary embedded sources
+  const extensions = [
+    ".tsx.src",
+    ".ts.src",
+    ".jsx.src",
+    ".js.src",
+    ".mdx.src",
+    ".md.src", // Embedded sources
+    ".tsx",
+    ".ts",
+    ".jsx",
+    ".js",
+    ".mdx",
+    ".md", // Regular sources
+  ];
 
   logger.debug("[ModuleServer] findSourceFile called", { projectDir, basePath });
 
   const hasKnownExt = extensions.some((ext) => basePath.endsWith(ext));
   const rawBasePathWithoutExt = hasKnownExt
-    ? basePath.replace(/\.(tsx|ts|jsx|js|mdx|md)$/, "")
+    ? basePath.replace(/\.(tsx|ts|jsx|js|mdx|md)(\.src)?$/, "")
     : basePath;
   let basePathWithoutExt = rawBasePathWithoutExt.replace(/^\/+/, "");
   if (basePathWithoutExt.startsWith("_vf_modules/")) {
@@ -452,6 +469,8 @@ async function findSourceFile(
   }
 
   const frameworkLookups: [string, string, string, boolean][] = [
+    // Embedded sources for compiled binaries (.src extensions)
+    ["_veryfront/", EMBEDDED_SRC_DIR, "_veryfront-embedded", true],
     ["_veryfront/", join(FRAMEWORK_ROOT, "src"), "_veryfront", true],
     // Fallback to projectDir for local dev/proxy setups where FRAMEWORK_ROOT may differ.
     ["_veryfront/", join(projectDir, "src"), "_veryfront-project", true],

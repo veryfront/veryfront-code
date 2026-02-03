@@ -27,6 +27,16 @@ function getProjectSlug(path: string): string {
   return path.replace(/\/+$/, "").split("/").pop() ?? "";
 }
 
+/**
+ * Generate a default project ID from the project directory name.
+ * Used for local filesystem mode when no project ID is available from API.
+ */
+function generateDefaultProjectId(projectDir: string): string {
+  const slug = getProjectSlug(projectDir);
+  // Clean the directory name to create a valid project ID
+  return `local-${slug.replace(/[^a-zA-Z0-9-_]/g, "-").toLowerCase()}`;
+}
+
 async function isVeryFrontProject(projectPath: string): Promise<boolean> {
   const fs = createFileSystem();
   const markers = ["app", "pages", "components"];
@@ -200,6 +210,9 @@ export async function handleStartCommand(args: ParsedArgs): Promise<void> {
     const bootstrap = await bootstrapProd(cwd(), baseAdapter);
     const adapter = bootstrap.adapter;
 
+    // Generate default project ID for local filesystem mode
+    const defaultProjectId = generateDefaultProjectId(cwd());
+
     server = await startUniversalServer({
       port,
       projectDir: cwd(),
@@ -208,6 +221,8 @@ export async function handleStartCommand(args: ParsedArgs): Promise<void> {
       bootstrapResult: bootstrap, // Pass bootstrap result to skip internal bootstrap
       signal: shutdownController.signal,
       requestInterceptor: proxy.interceptor,
+      defaultProjectSlug: defaultProjectId,
+      defaultProjectId,
     });
 
     // Run AI discovery with API-backed fsAdapter for multi-project mode
