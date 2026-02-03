@@ -27,6 +27,8 @@ export class RequestHandler {
     private isDebug: () => boolean,
     private hmrServer?: HMRServer,
     private config?: VeryfrontConfig,
+    private defaultProjectSlug?: string,
+    private defaultProjectId?: string,
   ) {}
 
   async handleRequest(req: Request): Promise<Response> {
@@ -155,6 +157,8 @@ export class RequestHandler {
         moduleServerUrl: "/_vf_modules",
         config: this.config,
         envConfig: { isLocalDev: true },
+        defaultProjectSlug: this.defaultProjectSlug,
+        defaultProjectId: this.defaultProjectId,
       });
     }
 

@@ -41,6 +41,10 @@ function withJsonLogFormat<T>(fn: () => T): T {
 
 describe("logger", () => {
   describe("getDefaultLevel", () => {
+    // Note: These tests pass explicit values to bypass the default parameter mechanism.
+    // When testing with undefined values (to test reading from env), we need to
+    // temporarily clear the environment variables.
+
     it("should return DEBUG for LOG_LEVEL=DEBUG", () => {
       assertEquals(getDefaultLevel("DEBUG", undefined), LogLevel.DEBUG);
     });
@@ -63,15 +67,19 @@ describe("logger", () => {
     });
 
     it("should return DEBUG when VERYFRONT_DEBUG=1", () => {
-      assertEquals(getDefaultLevel(undefined, "1"), LogLevel.DEBUG);
+      // Pass empty string for LOG_LEVEL to avoid triggering default parameter
+      // (empty string is treated as invalid/no value by parseLogLevel)
+      assertEquals(getDefaultLevel("", "1"), LogLevel.DEBUG);
     });
 
     it("should return DEBUG when VERYFRONT_DEBUG=true", () => {
-      assertEquals(getDefaultLevel(undefined, "true"), LogLevel.DEBUG);
+      // Pass empty string for LOG_LEVEL to avoid triggering default parameter
+      assertEquals(getDefaultLevel("", "true"), LogLevel.DEBUG);
     });
 
     it("should return INFO by default", () => {
-      assertEquals(getDefaultLevel(undefined, undefined), LogLevel.INFO);
+      // Pass empty strings to test default behavior without env var interference
+      assertEquals(getDefaultLevel("", ""), LogLevel.INFO);
     });
 
     it("should prefer LOG_LEVEL over VERYFRONT_DEBUG", () => {

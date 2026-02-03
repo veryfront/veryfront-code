@@ -183,11 +183,14 @@ describe(
 
           const port = await getFreePort();
           const adapter = new NodeAdapter();
+          const testProjectId = `test_node_${Date.now().toString(36)}`;
           const server = await startUniversalServer({
             projectDir: dir,
             port,
             bindAddress: "127.0.0.1",
             adapter,
+            defaultProjectSlug: testProjectId,
+            defaultProjectId: testProjectId,
           });
           await server.ready;
 

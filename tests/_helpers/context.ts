@@ -235,6 +235,8 @@ export class TestContext {
       enableHMR,
       fileWatcherDebounceMs: options.fileWatcherDebounceMs,
       signal: options.signal,
+      defaultProjectSlug: this.projectId,
+      defaultProjectId: this.projectId,
     });
 
     const testServer = server as TestServer;

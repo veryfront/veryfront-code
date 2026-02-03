@@ -75,6 +75,23 @@ interface FileSystemLike {
   stat(path: string): Promise<{ isFile: boolean; mtime: Date | null }>;
 }
 
+/**
+ * Injection interface for testing StaticFileService dependencies
+ */
+export interface StaticFileServiceDeps {
+  manifestCache?: Map<string, ManifestIndex>;
+  manifestLoading?: Map<string, Promise<ManifestIndex | null>>;
+}
+
+let injectedDeps: StaticFileServiceDeps | null = null;
+
+/**
+ * Inject dependencies for testing. Pass null to reset to defaults.
+ */
+export function __injectDepsForTests(deps: StaticFileServiceDeps | null): void {
+  injectedDeps = deps;
+}
+
 export class StaticFileService {
   private static manifestCache = new Map<string, ManifestIndex>();
   private static manifestLoading = new Map<string, Promise<ManifestIndex | null>>();
@@ -83,6 +100,14 @@ export class StaticFileService {
 
   constructor(fsRepo?: FileSystemRepository) {
     this.fsRepo = fsRepo;
+  }
+
+  private getManifestCache(): Map<string, ManifestIndex> {
+    return injectedDeps?.manifestCache ?? StaticFileService.manifestCache;
+  }
+
+  private getManifestLoading(): Map<string, Promise<ManifestIndex | null>> {
+    return injectedDeps?.manifestLoading ?? StaticFileService.manifestLoading;
   }
 
   private getFileSystem(options: StaticFileOptions): FileSystemLike {
@@ -211,10 +236,13 @@ export class StaticFileService {
     }
 
     const currentMtime = stat.mtime?.getTime() ?? null;
-    const cached = StaticFileService.manifestCache.get(cacheKey);
+    const manifestCache = this.getManifestCache();
+    const manifestLoading = this.getManifestLoading();
+
+    const cached = manifestCache.get(cacheKey);
     if (cached?.mtime === currentMtime) return cached;
 
-    const existingLoader = StaticFileService.manifestLoading.get(cacheKey);
+    const existingLoader = manifestLoading.get(cacheKey);
     if (existingLoader) return await existingLoader;
 
     const loader = (async (): Promise<ManifestIndex | null> => {
@@ -223,17 +251,17 @@ export class StaticFileService {
         const manifest = JSON.parse(manifestRaw) as BuildManifest;
         const assets = this.extractManifestAssets(manifest, distRoot);
         const indexValue: ManifestIndex = { assets, mtime: currentMtime };
-        StaticFileService.manifestCache.set(cacheKey, indexValue);
+        manifestCache.set(cacheKey, indexValue);
         return indexValue;
       } catch {
-        StaticFileService.manifestCache.delete(cacheKey);
+        manifestCache.delete(cacheKey);
         return null;
       } finally {
-        StaticFileService.manifestLoading.delete(cacheKey);
+        manifestLoading.delete(cacheKey);
       }
     })();
 
-    StaticFileService.manifestLoading.set(cacheKey, loader);
+    manifestLoading.set(cacheKey, loader);
     return await loader;
   }
 

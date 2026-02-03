@@ -57,6 +57,8 @@ describe(
           projectDir: context.projectDir,
           port,
           bindAddress: "127.0.0.1",
+          defaultProjectSlug: context.projectId,
+          defaultProjectId: context.projectId,
         });
         context.trackResource(server);
         await server.ready;
@@ -102,6 +104,8 @@ describe(
           projectDir: context.projectDir,
           port,
           bindAddress: "127.0.0.1",
+          defaultProjectSlug: context.projectId,
+          defaultProjectId: context.projectId,
         });
         context.trackResource(server);
         await server.ready;
@@ -133,6 +137,8 @@ describe(
           projectDir: context.projectDir,
           port,
           bindAddress: "127.0.0.1",
+          defaultProjectSlug: context.projectId,
+          defaultProjectId: context.projectId,
         });
         context.trackResource(server);
         await server.ready;
@@ -162,6 +168,8 @@ describe(
           projectDir: context.projectDir,
           port,
           bindAddress: "127.0.0.1",
+          defaultProjectSlug: context.projectId,
+          defaultProjectId: context.projectId,
         });
         context.trackResource(server);
         await server.ready;
@@ -195,6 +203,8 @@ describe(
           projectDir: context.projectDir,
           port,
           bindAddress: "127.0.0.1",
+          defaultProjectSlug: context.projectId,
+          defaultProjectId: context.projectId,
         });
         context.trackResource(server);
         await server.ready;
@@ -223,6 +233,8 @@ describe(
           projectDir: context.projectDir,
           port,
           bindAddress: "127.0.0.1",
+          defaultProjectSlug: context.projectId,
+          defaultProjectId: context.projectId,
         });
         context.trackResource(server);
         await server.ready;

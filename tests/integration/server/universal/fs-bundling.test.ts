@@ -43,6 +43,8 @@ describe(
           port,
           bindAddress: "127.0.0.1",
           mode: "development",
+          defaultProjectSlug: context.projectId,
+          defaultProjectId: context.projectId,
         });
 
         await server.ready;

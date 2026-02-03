@@ -13,6 +13,35 @@ import { type IsolationCheckResult, projectIsolation } from "./project-isolation
 export type { IsolationCheckResult } from "./project-isolation.ts";
 
 /**
+ * Injection interface for testing isolation dependencies
+ */
+export interface IsolationDeps {
+  checkRequest?: typeof projectIsolation.checkRequest;
+  startRequest?: typeof projectIsolation.startRequest;
+  completeRequest?: typeof projectIsolation.completeRequest;
+}
+
+let injectedDeps: IsolationDeps | null = null;
+
+/**
+ * Inject dependencies for testing. Pass null to reset to defaults.
+ */
+export function __injectDepsForTests(deps: IsolationDeps | null): void {
+  injectedDeps = deps;
+}
+
+function getDeps() {
+  return {
+    checkRequest: injectedDeps?.checkRequest ??
+      projectIsolation.checkRequest.bind(projectIsolation),
+    startRequest: injectedDeps?.startRequest ??
+      projectIsolation.startRequest.bind(projectIsolation),
+    completeRequest: injectedDeps?.completeRequest ??
+      projectIsolation.completeRequest.bind(projectIsolation),
+  };
+}
+
+/**
  * Check if a request is allowed to proceed based on isolation rules.
  */
 export function checkRequestIsolation(
@@ -23,7 +52,8 @@ export function checkRequestIsolation(
     return { allowed: true };
   }
 
-  return projectIsolation.checkRequest(projectSlug);
+  const deps = getDeps();
+  return deps.checkRequest(projectSlug);
 }
 
 /**
@@ -35,7 +65,8 @@ export function startIsolatedRequest(
   shouldCheck: boolean,
 ): void {
   if (shouldCheck) {
-    projectIsolation.startRequest(projectSlug);
+    const deps = getDeps();
+    deps.startRequest(projectSlug);
   }
 }
 
@@ -49,7 +80,8 @@ export function completeIsolatedRequest(
   isTimeout: boolean,
 ): void {
   if (shouldCheck) {
-    projectIsolation.completeRequest(projectSlug, isTimeout);
+    const deps = getDeps();
+    deps.completeRequest(projectSlug, isTimeout);
   }
 }
 

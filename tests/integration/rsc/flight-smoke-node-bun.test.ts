@@ -33,6 +33,8 @@ describe("RSC Flight Smoke Tests", { sanitizeOps: false, sanitizeResources: fals
             projectDir: context.projectDir,
             port,
             bindAddress: "127.0.0.1",
+            defaultProjectSlug: context.projectId,
+            defaultProjectId: context.projectId,
           });
 
           await h.ready;

@@ -148,6 +148,73 @@ async function checkHandlerLOC(): Promise<Violation[]> {
   return violations;
 }
 
+async function checkLayerDependencies(): Promise<Violation[]> {
+  const violations: Violation[] = [];
+
+  // Map layer to prohibited imports
+  const layerRules: Record<string, { prohibited: string[]; name: string }> = {
+    // Bottom layer cannot import from middle or top
+    platform: { prohibited: [...LAYER_MIDDLE, ...LAYER_TOP], name: "bottom" },
+    utils: { prohibited: [...LAYER_MIDDLE, ...LAYER_TOP], name: "bottom" },
+    errors: { prohibited: [...LAYER_MIDDLE, ...LAYER_TOP], name: "bottom" },
+    http: { prohibited: [...LAYER_MIDDLE, ...LAYER_TOP], name: "bottom" },
+    cache: { prohibited: [...LAYER_MIDDLE, ...LAYER_TOP], name: "bottom" },
+    types: { prohibited: [...LAYER_MIDDLE, ...LAYER_TOP], name: "bottom" },
+    // Middle layer cannot import from top
+    routing: { prohibited: LAYER_TOP, name: "middle" },
+    security: { prohibited: LAYER_TOP, name: "middle" },
+    middleware: { prohibited: LAYER_TOP, name: "middle" },
+    config: { prohibited: LAYER_TOP, name: "middle" },
+    data: { prohibited: LAYER_TOP, name: "middle" },
+    // Top layer can import from anywhere (no restrictions)
+  };
+
+  const importPattern = /import\s+(?:type\s+)?(?:\{[^}]*\}|[^;]+)\s+from\s+["']([^"']+)["']/g;
+  const vfImportPattern = /#veryfront\/(\w+)/;
+
+  try {
+    for await (const entry of walk("src", { includeFiles: true, exts: [".ts"] })) {
+      if (!entry.isFile) continue;
+      if (entry.name.includes(".test.")) continue;
+
+      // Determine which layer this file belongs to
+      const relativePath = entry.path.replace("src/", "");
+      const fileLayer = relativePath.split("/")[0];
+
+      const rules = layerRules[fileLayer!];
+      if (!rules) continue; // Top layer or unknown, no restrictions
+
+      const content = await Deno.readTextFile(entry.path);
+
+      // Find all imports
+      for (const match of content.matchAll(importPattern)) {
+        const importPath = match[1]!;
+        const vfMatch = importPath.match(vfImportPattern);
+
+        if (vfMatch) {
+          const importedLayer = vfMatch[1]!;
+
+          if (rules.prohibited.includes(importedLayer)) {
+            violations.push({
+              rule: "layer-dependencies",
+              path: entry.path,
+              message: `${rules.name} layer (${fileLayer}/) cannot import from ${importedLayer}/`,
+              severity: "error",
+            });
+          }
+        }
+      }
+    }
+  } catch (e) {
+    if (e instanceof Deno.errors.NotFound) {
+      return [];
+    }
+    throw e;
+  }
+
+  return violations;
+}
+
 async function checkNamingConvention(): Promise<Violation[]> {
   const violations: Violation[] = [];
   const exceptions = new Set([
@@ -200,6 +267,7 @@ async function main() {
     { name: "No Nested Handlers", check: checkNoNestedHandlers },
     { name: "Handler LOC Limit", check: checkHandlerLOC },
     { name: "Naming Convention", check: checkNamingConvention },
+    { name: "Layer Dependencies", check: checkLayerDependencies },
   ];
 
   let totalErrors = 0;

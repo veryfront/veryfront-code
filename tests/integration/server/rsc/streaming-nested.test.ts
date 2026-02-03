@@ -40,6 +40,8 @@ describe("RSC Stream Nested Tests", { sanitizeOps: false, sanitizeResources: fal
             projectDir: context.projectDir,
             port,
             bindAddress: "127.0.0.1",
+            defaultProjectSlug: context.projectId,
+            defaultProjectId: context.projectId,
           });
           await server.ready;
 

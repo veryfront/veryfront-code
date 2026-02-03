@@ -34,6 +34,8 @@ describe("RSC Flight Tests", { sanitizeOps: false, sanitizeResources: false }, (
             projectDir: context.projectDir,
             port,
             bindAddress: "127.0.0.1",
+            defaultProjectSlug: context.projectId,
+            defaultProjectId: context.projectId,
           });
 
           await h.ready;

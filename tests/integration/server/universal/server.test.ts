@@ -26,6 +26,8 @@ async function startServer(context: TestContext, port: number, signal: AbortSign
     bindAddress: "127.0.0.1",
     debug,
     signal,
+    defaultProjectSlug: context.projectId,
+    defaultProjectId: context.projectId,
   });
   await server.ready;
   return server;

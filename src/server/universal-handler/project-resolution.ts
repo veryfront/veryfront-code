@@ -20,6 +20,32 @@ import { isInternalHost } from "./request-utils.ts";
 
 const logger = getBaseLogger("SERVER");
 
+/**
+ * Injection interface for testing project resolution dependencies
+ */
+export interface ProjectResolutionDeps {
+  lookupProjectByDomain?: typeof lookupProjectByDomain;
+  parseProjectDomain?: typeof parseProjectDomain;
+  getEnvironmentType?: typeof getEnvironmentType;
+}
+
+let injectedDeps: ProjectResolutionDeps | null = null;
+
+/**
+ * Inject dependencies for testing. Pass null to reset to defaults.
+ */
+export function __injectDepsForTests(deps: ProjectResolutionDeps | null): void {
+  injectedDeps = deps;
+}
+
+function getDeps(): Required<ProjectResolutionDeps> {
+  return {
+    lookupProjectByDomain: injectedDeps?.lookupProjectByDomain ?? lookupProjectByDomain,
+    parseProjectDomain: injectedDeps?.parseProjectDomain ?? parseProjectDomain,
+    getEnvironmentType: injectedDeps?.getEnvironmentType ?? getEnvironmentType,
+  };
+}
+
 export interface RequestHeaders {
   /** Project slug from x-project-slug header */
   projectSlug: string | undefined;
@@ -113,7 +139,8 @@ export async function resolveProject(
   const forwardedHost = req.headers.get("x-forwarded-host") ?? undefined;
   const host = forwardedHost ?? hostHeader;
 
-  const parsedDomain = parseProjectDomain(host);
+  const deps = getDeps();
+  const parsedDomain = deps.parseProjectDomain(host);
   const configuredSlug = opts.config?.fs?.veryfront?.projectSlug;
 
   // Initial resolution from headers/config/context
@@ -145,7 +172,7 @@ export async function resolveProject(
       const lookupResult = await withSpan(
         SpanNames.DOMAIN_LOOKUP,
         () =>
-          lookupProjectByDomain(host, {
+          deps.lookupProjectByDomain(host, {
             apiBaseUrl: baseUrl,
             apiToken: effectiveToken,
           }),
@@ -158,7 +185,7 @@ export async function resolveProject(
         releaseId = releaseId ?? lookupResult.release_id ?? undefined;
         environmentName = lookupResult.environment?.name;
 
-        if (!proxyEnv) proxyEnv = getEnvironmentType(lookupResult);
+        if (!proxyEnv) proxyEnv = deps.getEnvironmentType(lookupResult);
 
         logger.debug("[project-resolution] Domain lookup successful", {
           domain: host,
@@ -189,7 +216,7 @@ export async function resolveProject(
       const lookupResult = await withSpan(
         SpanNames.DOMAIN_RELEASE_LOOKUP,
         () =>
-          lookupProjectByDomain(host, {
+          deps.lookupProjectByDomain(host, {
             apiBaseUrl: baseUrl,
             apiToken: effectiveToken,
           }),

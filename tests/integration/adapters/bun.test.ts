@@ -61,11 +61,14 @@ describe(
             await writeTextFile(join(dir, "app", "page.mdx"), "# Home");
 
             const port = await getFreePort();
+            const testProjectId = `test_bun_${Date.now().toString(36)}`;
             const server = await startUniversalServer({
               projectDir: dir,
               port,
               bindAddress: "127.0.0.1",
               adapter,
+              defaultProjectSlug: testProjectId,
+              defaultProjectId: testProjectId,
             });
             await server.ready;
 

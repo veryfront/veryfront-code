@@ -13,6 +13,10 @@ export interface DevServerOptions {
    * Used by proxy middleware to inject context headers.
    */
   requestInterceptor?: (req: Request) => Request | Promise<Request>;
+  /** Default project slug when not provided via proxy headers (for tests/local mode) */
+  defaultProjectSlug?: string;
+  /** Default project ID when not provided via proxy headers (for tests/local mode) */
+  defaultProjectId?: string;
 }
 
 export interface RouteDirectory {

@@ -265,6 +265,7 @@ export async function createTestProductionServer(options: {
   projectDir: string;
   port?: number;
   hostname?: string;
+  projectId?: string;
 }): Promise<TestServer> {
   const port = options.port ?? (await getFreePort());
   const hostname = options.hostname ?? "127.0.0.1";
@@ -272,6 +273,8 @@ export async function createTestProductionServer(options: {
     projectDir: options.projectDir,
     port,
     bindAddress: hostname,
+    defaultProjectSlug: options.projectId,
+    defaultProjectId: options.projectId,
   });
 
   return {

@@ -72,6 +72,8 @@ describe(
               port,
               bindAddress: "127.0.0.1",
               signal: controller.signal,
+              defaultProjectSlug: context.projectId,
+              defaultProjectId: context.projectId,
             });
             await h.ready;
 

@@ -164,6 +164,8 @@ export class DevServer {
       () => this.isDebug(),
       this.hmrServer,
       this.appConfig,
+      this.options.defaultProjectSlug,
+      this.options.defaultProjectId,
     );
     this.requestHandler = requestHandler;
 

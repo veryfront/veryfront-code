@@ -17,6 +17,34 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export type { APIContext, APIRoute };
 
+/**
+ * Injection interface for testing APIRouteHandler dependencies
+ */
+export interface APIRouteHandlerDeps {
+  loadHandlerModule?: typeof loadHandlerModule;
+  discoverPagesRoutes?: typeof discoverPagesRoutes;
+  discoverAppRoutes?: typeof discoverAppRoutes;
+  getConfig?: typeof getConfig;
+}
+
+let injectedDeps: APIRouteHandlerDeps | null = null;
+
+/**
+ * Inject dependencies for testing. Pass null to reset to defaults.
+ */
+export function __injectDepsForTests(deps: APIRouteHandlerDeps | null): void {
+  injectedDeps = deps;
+}
+
+function getDeps(): Required<APIRouteHandlerDeps> {
+  return {
+    loadHandlerModule: injectedDeps?.loadHandlerModule ?? loadHandlerModule,
+    discoverPagesRoutes: injectedDeps?.discoverPagesRoutes ?? discoverPagesRoutes,
+    discoverAppRoutes: injectedDeps?.discoverAppRoutes ?? discoverAppRoutes,
+    getConfig: injectedDeps?.getConfig ?? getConfig,
+  };
+}
+
 export interface APIResponse {
   body?: unknown;
   status?: number;
@@ -64,7 +92,8 @@ export class APIRouteHandler {
         logger.debug("[API] Checking API directory", { apiDir, exists: apiDirExists });
 
         if (apiDirExists) {
-          await discoverPagesRoutes(this.router, apiDir, "/api", adapter);
+          const deps = getDeps();
+          await deps.discoverPagesRoutes(this.router, apiDir, "/api", adapter);
           const discoveredRoutes = this.router.listRoutes();
           logger.debug("[API] Discovered Pages API routes", {
             count: discoveredRoutes.length,
@@ -79,7 +108,8 @@ export class APIRouteHandler {
         logger.debug("[API] Checking App directory", { appDir, exists: appDirExists });
 
         if (appDirExists) {
-          await discoverAppRoutes(this.router, appDir, "", adapter);
+          const deps = getDeps();
+          await deps.discoverAppRoutes(this.router, appDir, "", adapter);
           const allRoutes = this.router.listRoutes();
           logger.debug("[API] All discovered routes after App Router", {
             count: allRoutes.length,
@@ -183,7 +213,8 @@ export class APIRouteHandler {
         if (cached) return cached;
 
         try {
-          const handler = await loadHandlerModule({
+          const deps = getDeps();
+          const handler = await deps.loadHandlerModule({
             projectDir: this.projectDir,
             modulePath,
             adapter,
@@ -242,7 +273,8 @@ export class APIRouteHandler {
 
   private async loadCorsConfig(adapter: RuntimeAdapter): Promise<void> {
     try {
-      const config = await getConfig(this.projectDir, adapter);
+      const deps = getDeps();
+      const config = await deps.getConfig(this.projectDir, adapter);
       this.corsConfig = config.security?.cors ?? null;
     } catch (error) {
       this.corsConfig = null;
@@ -262,7 +294,8 @@ export class APIRouteHandler {
 
   private async loadFullConfig(adapter: RuntimeAdapter): Promise<void> {
     try {
-      this.config = await getConfig(this.projectDir, adapter);
+      const deps = getDeps();
+      this.config = await deps.getConfig(this.projectDir, adapter);
     } catch (error) {
       this.config = null;
       logger.warn("Failed to load config", error);
