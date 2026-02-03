@@ -9,6 +9,9 @@ import {
 import { getBundleManifestTTL } from "#veryfront/utils/bundle-manifest-init.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { MdxBundle } from "#veryfront/types";
+import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
+import { ensureHttpBundlesExist } from "../esm/http-cache.ts";
+import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 
 export interface MDXCompilationResult extends MdxBundle {
   headings?: Array<{ id: string; text: string; level: number }>;
@@ -65,6 +68,29 @@ export class MDXCacheAdapter {
           codeHash: metadata.codeHash,
         });
         return undefined;
+      }
+
+      // Validate HTTP bundle dependencies before returning cached bundle.
+      // If any bundles can't be recovered from Redis, invalidate this cache entry
+      // and return undefined to trigger recompilation with fresh bundles.
+      const httpBundles = extractHttpBundlePaths(bundleCode.code);
+      if (httpBundles.length > 0) {
+        const cacheDir = getHttpBundleCacheDir();
+        const failedHashes = await ensureHttpBundlesExist(httpBundles, cacheDir);
+
+        if (failedHashes.length > 0) {
+          logger.warn("[mdx-cache] HTTP bundle deps missing, invalidating cached MDX", {
+            filePath,
+            cacheKey,
+            failedHashes,
+            totalBundles: httpBundles.length,
+            hint: "Will recompile MDX with fresh HTTP bundles",
+          });
+
+          // Invalidate the cached bundle so future requests also recompile
+          await this.manifestStore.deleteBundle(cacheKey);
+          return undefined;
+        }
       }
 
       logger.debug("[mdx-cache] Cache hit for MDX compilation", {
