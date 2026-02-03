@@ -67,16 +67,24 @@ const projectTransformCounts = new Map<string, number>();
 const RATE_LIMIT_BYPASS_PROJECTS = new Set(["__single__"]);
 
 /**
+ * Project ID prefixes that bypass per-project rate limiting.
+ * - "local-": Used for compiled binary CLI, local filesystem projects, and tests
+ *   where there's no multi-tenancy and noisy-neighbor protection isn't needed.
+ */
+const RATE_LIMIT_BYPASS_PREFIXES = ["local-"];
+
+/**
  * Attempt to acquire a project-level transform slot immediately.
  * Returns true if acquired, false if project is at capacity.
  *
- * Note: The "__single__" project (used in local dev and tests) bypasses
+ * Note: The "__single__" project and projects with "local-" prefix bypass
  * rate limiting since there's no noisy-neighbor concern in single-project mode.
  */
 export function acquireTransformSlot(projectId: string): boolean {
   const limit = getTransformPerProjectLimit();
   if (limit <= 0) return true;
   if (RATE_LIMIT_BYPASS_PROJECTS.has(projectId)) return true;
+  if (RATE_LIMIT_BYPASS_PREFIXES.some((prefix) => projectId.startsWith(prefix))) return true;
 
   const current = projectTransformCounts.get(projectId) ?? 0;
   if (current >= limit) return false;
