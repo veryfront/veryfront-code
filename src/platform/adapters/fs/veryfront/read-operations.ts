@@ -34,6 +34,76 @@ const EXTENSION_PRIORITY = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"] as cons
 const IN_FLIGHT_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_IN_FLIGHT_REQUESTS = 100;
 
+// ============================================================================
+// CONTENT METRICS - Proving cache behavior before optimization
+// Remove after analysis is complete
+// ============================================================================
+interface ContentMetrics {
+  requestScopedHits: number;
+  persistentCacheHits: number;
+  fileListHits: number;
+  networkFetches: number;
+  previewModeSkips: number;
+  productionModeSkips: number;
+}
+
+const contentMetrics: ContentMetrics = {
+  requestScopedHits: 0,
+  persistentCacheHits: 0,
+  fileListHits: 0,
+  networkFetches: 0,
+  previewModeSkips: 0,
+  productionModeSkips: 0,
+};
+
+function logContentMetric(
+  event: "REQUEST_SCOPED_HIT" | "PERSISTENT_CACHE_HIT" | "FILE_LIST_HIT" | "NETWORK_FETCH" | "PREVIEW_SKIP_CACHE" | "PRODUCTION_SKIP_FILELIST",
+  details: Record<string, unknown>,
+): void {
+  switch (event) {
+    case "REQUEST_SCOPED_HIT":
+      contentMetrics.requestScopedHits++;
+      break;
+    case "PERSISTENT_CACHE_HIT":
+      contentMetrics.persistentCacheHits++;
+      break;
+    case "FILE_LIST_HIT":
+      contentMetrics.fileListHits++;
+      break;
+    case "NETWORK_FETCH":
+      contentMetrics.networkFetches++;
+      break;
+    case "PREVIEW_SKIP_CACHE":
+      contentMetrics.previewModeSkips++;
+      break;
+    case "PRODUCTION_SKIP_FILELIST":
+      contentMetrics.productionModeSkips++;
+      break;
+  }
+
+  // Log every event for analysis
+  logger.info(`[ContentMetrics] ${event}`, {
+    ...details,
+    totals: { ...contentMetrics },
+  });
+}
+
+/** Get current metrics snapshot for debugging endpoint */
+export function getContentMetricsSnapshot(): ContentMetrics {
+  return { ...contentMetrics };
+}
+
+/** Reset metrics (useful for per-request analysis) */
+export function resetContentMetrics(): void {
+  contentMetrics.requestScopedHits = 0;
+  contentMetrics.persistentCacheHits = 0;
+  contentMetrics.fileListHits = 0;
+  contentMetrics.networkFetches = 0;
+  contentMetrics.previewModeSkips = 0;
+  contentMetrics.productionModeSkips = 0;
+}
+// ============================================================================
+
 interface InFlightEntry {
   promise: Promise<string>;
   startedAt: number;
@@ -256,6 +326,11 @@ export class ReadOperations {
 
     const requestCached = getRequestScopedFile(cacheKey);
     if (requestCached) {
+      logContentMetric("REQUEST_SCOPED_HIT", {
+        path: normalizedPath,
+        mode: ctx?.sourceType ?? "unknown",
+        cacheKey,
+      });
       logger.debug("[ReadOperations] REQUEST_CACHE_HIT", {
         path: normalizedPath,
         cacheKey,
@@ -285,9 +360,16 @@ export class ReadOperations {
       });
     }
 
+    // Check persistent cache for PRODUCTION mode only
+    // Preview mode skips persistent cache to avoid staleness risk when WebSocket is slow/disconnected
     if (isProduction && !skipPersistentCaches) {
       const cached = await this.cache.getAsync<string>(cacheKey);
       if (cached) {
+        logContentMetric("PERSISTENT_CACHE_HIT", {
+          path: normalizedPath,
+          mode: ctx?.sourceType ?? "unknown",
+          cacheKey,
+        });
         logger.debug("[ReadOperations] PERSISTENT_CACHE_HIT", {
           path: normalizedPath,
           cacheKey,
@@ -299,22 +381,37 @@ export class ReadOperations {
       }
     }
 
-    // Skip file list cache for preview/branch mode to avoid stale content race conditions
-    // In preview mode, always fetch fresh from API to ensure consistency between SSR and client
+    // File list cache is enabled for BOTH preview and production modes.
+    // The file list is an in-memory index built from API response at init, updated by WebSocket pokes.
+    // This is safe because:
+    // - File list is refreshed on every WebSocket poke (websocket-manager.ts:483-500)
+    // - Request-scoped cache ensures consistency within a single render
+    // - Persistent cache is only written for production mode (to avoid staleness risk in preview)
     const isPreviewMode = ctx?.sourceType === "branch";
-    if (!skipPersistentCaches && !isPreviewMode) {
+    if (!skipPersistentCaches) {
       const fileListContent = await this.getContentFromFileList(normalizedPath);
       if (fileListContent) {
-        if (isProduction) this.cache.set(cacheKey, fileListContent);
+        logContentMetric("FILE_LIST_HIT", {
+          path: normalizedPath,
+          mode: ctx?.sourceType ?? "unknown",
+          cacheKey,
+          isPreviewMode,
+        });
+        // Only cache to persistent storage for production mode
+        // Preview mode uses file list cache directly without persisting (fresher, WebSocket-driven)
+        if (isProduction) {
+          this.cache.set(cacheKey, fileListContent);
+        }
         setRequestScopedFile(cacheKey, fileListContent);
         return fileListContent;
       }
-    } else if (isPreviewMode) {
-      logger.debug("[ReadOperations] Skipping file list cache for preview mode", {
-        path: normalizedPath,
-        sourceType: ctx?.sourceType,
-      });
     } else {
+      // Skip only happens during cache invalidation (both preview and production)
+      logContentMetric("PRODUCTION_SKIP_FILELIST", {
+        path: normalizedPath,
+        mode: ctx?.sourceType ?? "unknown",
+        reason: "invalidation_in_progress",
+      });
       logger.debug("[ReadOperations] Skipping file list cache due to invalidation", {
         path: normalizedPath,
         cacheKeyPrefix,
@@ -372,6 +469,16 @@ export class ReadOperations {
 
     const isPublished = ctx?.sourceType !== "branch";
 
+    // THIS IS A NETWORK FETCH - every call here = API round trip
+    // With caching enabled for preview mode, this should only happen on true cache misses
+    logContentMetric("NETWORK_FETCH", {
+      path: normalizedPath,
+      mode: ctx?.sourceType ?? "unknown",
+      isPublished,
+      isPreviewMode,
+      reason: "cache_miss",
+    });
+
     logger.debug("[ReadOperations] fetchContent decision", {
       path: normalizedPath,
       isPublished,
@@ -379,20 +486,29 @@ export class ReadOperations {
       sourceType: ctx?.sourceType ?? "null/undefined",
     });
 
+    const fetchStartTime = performance.now();
     const fetchPromise = (async () => {
       try {
-        if (isPublished) {
-          return await this.fetchPublishedContent(
-            normalizedPath,
-            apiPath,
-            cacheKey,
-            ctx?.releaseId ?? null,
-            ctx?.environmentName ?? null,
-            isProduction,
-          );
-        }
+        const result = isPublished
+          ? await this.fetchPublishedContent(
+              normalizedPath,
+              apiPath,
+              cacheKey,
+              ctx?.releaseId ?? null,
+              ctx?.environmentName ?? null,
+              isProduction,
+            )
+          : await this.fetchDraftContent(normalizedPath, apiPath, cacheKey, isProduction);
 
-        return await this.fetchDraftContent(normalizedPath, apiPath, cacheKey, isProduction);
+        const fetchDuration = Math.round(performance.now() - fetchStartTime);
+        logger.info("[ContentMetrics] NETWORK_FETCH_COMPLETE", {
+          path: normalizedPath,
+          mode: ctx?.sourceType ?? "unknown",
+          duration_ms: fetchDuration,
+          content_length: result.length,
+        });
+
+        return result;
       } finally {
         this.inFlightRequests.delete(cacheKey);
       }

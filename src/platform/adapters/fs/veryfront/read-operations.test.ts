@@ -179,7 +179,9 @@ describe("ReadOperations", () => {
       assertEquals(apiFetchCalled, false);
     });
 
-    it("should skip file list cache for branch (preview) mode", async () => {
+    it("should USE file list cache for branch (preview) mode", async () => {
+      // Preview mode now uses file list cache since WebSocket invalidation keeps it fresh
+      // This reduces network fetches dramatically while maintaining freshness
       let apiFetchCalled = false;
       const client = createMockClient({
         getFileContent: () => {
@@ -193,14 +195,15 @@ describe("ReadOperations", () => {
         false,
         createBranchContext(),
         (path: string) => path,
-        () => Promise.resolve([{ path: "pages/index.tsx", content: "stale cache" }]),
+        () => Promise.resolve([{ path: "pages/index.tsx", content: "cached file list content" }]),
       );
 
       readOps.setFileListReadyPromise(Promise.resolve());
 
       const content = await readOps.readTextFile("pages/index.tsx");
-      assertEquals(content, "fresh draft content");
-      assertEquals(apiFetchCalled, true);
+      // Now uses file list cache instead of API fetch
+      assertEquals(content, "cached file list content");
+      assertEquals(apiFetchCalled, false);
     });
 
     it("should normalize path with project dir prefix", async () => {

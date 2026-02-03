@@ -847,6 +847,9 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), HTTP_FETCH_TIMEOUT_MS);
 
+    // METRICS: Track HTTP module fetch timing
+    const httpFetchStartTime = performance.now();
+
     const response = await withSpan(
       SpanNames.HTTP_CLIENT_FETCH,
       () =>
@@ -864,6 +867,15 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       },
     );
     clearTimeout(timeout);
+
+    const httpFetchDuration = Math.round(performance.now() - httpFetchStartTime);
+    logger.info("[ContentMetrics] HTTP_MODULE_FETCH", {
+      url: normalizedUrl.substring(0, 120),
+      host: urlObj.host,
+      duration_ms: httpFetchDuration,
+      status: response.status,
+      slow: httpFetchDuration > 500,
+    });
 
     if (!response.ok) {
       throw new Error(`Failed to fetch ${normalizedUrl}: ${response.status}`);
