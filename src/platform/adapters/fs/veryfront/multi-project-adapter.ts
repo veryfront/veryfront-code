@@ -195,6 +195,17 @@ export class MultiProjectFSAdapter implements FSAdapter {
     return adapter.readdir(path);
   }
 
+  /**
+   * AsyncIterable version of readdir for compatibility with discovery code.
+   * Wraps the Promise-based readdir to yield entries one at a time.
+   */
+  async *readDir(path: string): AsyncIterable<DirectoryEntry> {
+    const entries = await this.readdir(path);
+    for (const entry of entries) {
+      yield entry;
+    }
+  }
+
   async resolveFile(basePath: string): Promise<string | null> {
     const adapter = await this.getAdapter();
     return adapter.resolveFile(basePath);

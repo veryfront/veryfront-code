@@ -171,22 +171,17 @@ export async function handleStartCommand(args: ParsedArgs): Promise<void> {
     await showStartup(["Loading configuration", "Discovering projects", "Starting server"]);
   }
 
-  // Run AI discovery for agents, tools, prompts, resources
-  const projectDir = discovered.defaultProject
-    ? discovered.projects.get(discovered.defaultProject) ?? cwd()
-    : cwd();
-  try {
-    await discoverAll({ baseDir: projectDir, verbose: false });
-  } catch (error) {
-    cliLogger.debug("AI discovery error:", error);
-  }
-
   const allProjects = new Map([...discovered.projects, ...discovered.examples]);
   const proxy = await trySetupProxy(allProjects);
   const shutdownController = new AbortController();
   const useProxy = typeof proxy.interceptor === "function";
 
   let server: { ready: Promise<void>; stop: () => Promise<void> };
+
+  // Determine project directory for discovery
+  const projectDir = discovered.defaultProject
+    ? discovered.projects.get(discovered.defaultProject) ?? cwd()
+    : cwd();
 
   if (useProxy) {
     // Enable proxy mode so the FSAdapter fetches files from the API
@@ -196,17 +191,52 @@ export async function handleStartCommand(args: ParsedArgs): Promise<void> {
     setEnv("NODE_ENV", "development");
 
     const { startUniversalServer } = await import("#veryfront/server/production-server.ts");
+    const { bootstrapProd } = await import("#veryfront/server/bootstrap.ts");
     const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
-    const adapter = await runtime.get();
+    const { isExtendedFSAdapter } = await import("#veryfront/platform/adapters/fs/wrapper.ts");
+    const baseAdapter = await runtime.get();
+
+    // Bootstrap to get the enhanced adapter with API-backed FS
+    const bootstrap = await bootstrapProd(cwd(), baseAdapter);
+    const adapter = bootstrap.adapter;
 
     server = await startUniversalServer({
       port,
       projectDir: cwd(),
       mode: "development",
       adapter,
+      bootstrapResult: bootstrap, // Pass bootstrap result to skip internal bootstrap
       signal: shutdownController.signal,
       requestInterceptor: proxy.interceptor,
     });
+
+    // Run AI discovery with API-backed fsAdapter for multi-project mode
+    // Must wrap in runWithContext to set project context for API calls
+    try {
+      if (isExtendedFSAdapter(adapter.fs) && adapter.fs.isMultiProjectMode()) {
+        const token = getEnv("VERYFRONT_API_TOKEN") ?? "";
+        // Prefer VERYFRONT_PROJECT_SLUG env var over discovered project to ensure
+        // remote slug matches (local folder names may differ from API slugs)
+        const slug = getEnv("VERYFRONT_PROJECT_SLUG") ?? discovered.defaultProject ?? "";
+        if (slug && token) {
+          await adapter.fs.runWithContext(slug, token, async () => {
+            // Use "" as baseDir since API adapter works with relative paths
+            // Note: "." would create paths like "./tools" which PathNormalizer doesn't handle
+            await discoverAll({ baseDir: "", fsAdapter: adapter.fs, verbose: false });
+          });
+        } else {
+          cliLogger.debug("AI discovery skipped: no project slug or token for proxy mode");
+        }
+      } else if (bootstrap.usingFSAdapter) {
+        // Non-multi-project API adapter (single project mode)
+        await discoverAll({ baseDir: "", fsAdapter: adapter.fs, verbose: false });
+      } else {
+        // Local filesystem fallback
+        await discoverAll({ baseDir: projectDir, verbose: false });
+      }
+    } catch (error) {
+      cliLogger.debug("AI discovery error (proxy mode):", error);
+    }
   } else {
     const { createDevServer } = await import("#veryfront/server/dev-server.ts");
     server = await createDevServer({
@@ -217,6 +247,13 @@ export async function handleStartCommand(args: ParsedArgs): Promise<void> {
       enableFastRefresh: true,
       signal: shutdownController.signal,
     });
+
+    // Run AI discovery with local filesystem
+    try {
+      await discoverAll({ baseDir: projectDir, verbose: false });
+    } catch (error) {
+      cliLogger.debug("AI discovery error:", error);
+    }
   }
 
   await server.ready;

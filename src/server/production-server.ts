@@ -3,7 +3,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./universal-handler/index.ts";
 import { requestTracker } from "./universal-handler/request-tracker.ts";
-import { bootstrapProd } from "./bootstrap.ts";
+import { bootstrapProd, type BootstrapResult } from "./bootstrap.ts";
 import { cwd, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import {
@@ -55,6 +55,8 @@ export function startUniversalServer(
   options: ServerOptions & {
     debug?: boolean;
     adapter?: RuntimeAdapter;
+    /** Pre-computed bootstrap result to skip internal bootstrap (avoids double initialization) */
+    bootstrapResult?: BootstrapResult;
   },
 ): Promise<ServerHandle> {
   return withSpan(
@@ -71,12 +73,13 @@ export function startUniversalServer(
         defaultProjectId,
         defaultEnvironment,
         requestInterceptor,
+        bootstrapResult,
       } = options;
 
       const baseAdapter = options.adapter ?? (await runtime.get());
 
-      // Bootstrap framework to initialize FSAdapter if configured
-      const bootstrap = await bootstrapProd(projectDir, baseAdapter);
+      // Use pre-computed bootstrap result if provided, otherwise bootstrap here
+      const bootstrap = bootstrapResult ?? await bootstrapProd(projectDir, baseAdapter);
       const adapter = bootstrap.adapter;
 
       if (bootstrap.usingFSAdapter) {
