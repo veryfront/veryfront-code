@@ -261,23 +261,24 @@ export function createVeryfrontHandler(
         headers.releaseId,
       );
 
-      return startContentMetrics(async () => {
-        // Check isolation
-        const isolationCheck = checkRequestIsolation(
-          headers.projectSlug,
-          lifecycle.shouldCheckIsolation,
-        );
+      startContentMetrics();
 
-        if (!isolationCheck.allowed) {
-          completeRequestTracking(lifecycle.requestId, 503, false);
-          const response = createIsolationErrorResponse(isolationCheck);
-          endRequestTracing(spanInfo.span, response.status);
-          return response;
-        }
+      // Check isolation
+      const isolationCheck = checkRequestIsolation(
+        headers.projectSlug,
+        lifecycle.shouldCheckIsolation,
+      );
 
-        startIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation);
+      if (!isolationCheck.allowed) {
+        completeRequestTracking(lifecycle.requestId, 503, false);
+        const response = createIsolationErrorResponse(isolationCheck);
+        endRequestTracing(spanInfo.span, response.status);
+        return response;
+      }
 
-        try {
+      startIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation);
+
+      try {
         await readyPromise;
 
         await timeAsync("security:load", async () => {
@@ -456,8 +457,7 @@ export function createVeryfrontHandler(
         endRequestLifecycle(lifecycle);
       }
     });
-  });
-};
+  };
 
   handler.ready = readyPromise;
 

@@ -23,6 +23,10 @@ interface RequestContext {
    * This is especially important in preview mode where the persistent cache is disabled.
    */
   fileCache?: Map<string, string>;
+  /**
+   * Per-request content metrics for optimization tracking.
+   */
+  metrics?: any;
 }
 
 const asyncLocalStorage = new AsyncLocalStorage<RequestContext>();

@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import { logger } from "#veryfront/utils";
 import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -9,7 +8,11 @@ import {
 import type { VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
-import { getRequestScopedFile, setRequestScopedFile } from "./multi-project-adapter.ts";
+import {
+  getCurrentRequestContext,
+  getRequestScopedFile,
+  setRequestScopedFile,
+} from "./multi-project-adapter.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import type { ResolvedContentContext } from "./types.ts";
 
@@ -84,9 +87,7 @@ const cumulativeMetrics: CumulativeMetrics = {
   requestsTracked: 0,
 };
 
-// Per-request metrics (stored in AsyncLocalStorage for request safety)
-const metricsStorage = new AsyncLocalStorage<PerRequestMetrics>();
-
+// Per-request metrics (stored in RequestContext for request safety)
 function createFreshRequestMetrics(): PerRequestMetrics {
   return {
     startTime: performance.now(),
@@ -113,15 +114,18 @@ function detectFileType(path: string): FileType {
 }
 
 /** Call at start of HTTP request to begin per-request tracking */
-export function startRequestMetrics<T>(callback: () => T): T {
-  return metricsStorage.run(createFreshRequestMetrics(), callback);
+export function startRequestMetrics(): void {
+  const ctx = getCurrentRequestContext();
+  if (ctx) {
+    ctx.metrics = createFreshRequestMetrics();
+  }
 }
 
 /** Call at end of HTTP request to log summary and update cumulative metrics */
 export function endRequestMetrics(
   requestContext?: { requestId?: string; pathname?: string; mode?: string },
 ): void {
-  const req = metricsStorage.getStore();
+  const req = getCurrentRequestContext()?.metrics as PerRequestMetrics | undefined;
   if (!req) return;
 
   const durationMs = Math.round(performance.now() - req.startTime);
@@ -189,7 +193,7 @@ function logContentMetric(
   },
 ): void {
   const path = details.path ?? "";
-  const currentRequest = metricsStorage.getStore();
+  const currentRequest = getCurrentRequestContext()?.metrics as PerRequestMetrics | undefined;
 
   // Track in per-request metrics if active
   if (currentRequest) {
@@ -491,15 +495,14 @@ export class ReadOperations {
       return requestCached;
     }
 
-    // Deduplicate in-flight requests early to avoid redundant L2 cache reads and API extension resolution
+    // Deduplicate in-flight requests early to avoid redundant L2 cache reads and extension resolution
     this.cleanupStaleInFlightRequests();
     const existingEntry = this.inFlightRequests.get(cacheKey);
     if (existingEntry) {
-      logger.debug("[ReadOperations] Deduplicating request - joining existing resolution pipeline", {
-        path: normalizedPath,
-        cacheKey,
-        ageMs: Date.now() - existingEntry.startedAt,
-      });
+      logger.debug(
+        "[ReadOperations] joining existing resolution pipeline",
+        { path: normalizedPath, cacheKey },
+      );
       const result = await existingEntry.promise;
       setRequestScopedFile(cacheKey, result);
       return result;
@@ -629,7 +632,7 @@ export class ReadOperations {
 
         return result;
       } finally {
-        // No-op here, deletion handled in outer finally
+        // No-op
       }
     })();
 
