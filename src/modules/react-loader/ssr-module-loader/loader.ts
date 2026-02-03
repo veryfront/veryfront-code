@@ -698,6 +698,9 @@ export class SSRModuleLoader {
       resolveTransform = resolve;
       rejectTransform = reject;
     });
+    // Attach no-op catch to prevent unhandled rejection when waiters timeout
+    // and stop listening. The actual error is thrown to the caller directly.
+    transformPromise.catch(() => {});
     globalInProgress.set(inProgressKey, transformPromise);
 
     try {
