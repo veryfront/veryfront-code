@@ -39,82 +39,219 @@ const IN_FLIGHT_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_IN_FLIGHT_REQUESTS = 100;
 
 // ============================================================================
-// CONTENT METRICS - Proving cache behavior before optimization
-// Remove after analysis is complete
+// CONTENT METRICS - Per-request tracking for optimization decisions
 // ============================================================================
-interface ContentMetrics {
+
+type FileType = "page" | "layout" | "component" | "api" | "data" | "config" | "other";
+type MissReason = "cold_start" | "not_in_filelist" | "invalidation" | "no_filelist_cache";
+
+interface PerRequestMetrics {
+  startTime: number;
+  // Cache layer hits
+  requestScopedHits: number;
+  persistentCacheHits: number;
+  fileListHits: number;
+  // Network
+  networkFetches: number;
+  networkMs: number;
+  // File type breakdown (for fetches only - where optimization matters)
+  fetchesByType: Record<FileType, number>;
+  // Miss reasons
+  missReasons: Record<MissReason, number>;
+  // Mode tracking
+  isPreviewMode: boolean | null;
+  // Unique files accessed
+  filesAccessed: Set<string>;
+}
+
+// Global cumulative metrics (for /metrics endpoint)
+interface CumulativeMetrics {
   requestScopedHits: number;
   persistentCacheHits: number;
   fileListHits: number;
   networkFetches: number;
-  previewModeSkips: number;
-  productionModeSkips: number;
+  totalNetworkMs: number;
+  requestsTracked: number;
 }
 
-const contentMetrics: ContentMetrics = {
+const cumulativeMetrics: CumulativeMetrics = {
   requestScopedHits: 0,
   persistentCacheHits: 0,
   fileListHits: 0,
   networkFetches: 0,
-  previewModeSkips: 0,
-  productionModeSkips: 0,
+  totalNetworkMs: 0,
+  requestsTracked: 0,
 };
 
-function logContentMetric(
-  event:
-    | "REQUEST_SCOPED_HIT"
-    | "PERSISTENT_CACHE_HIT"
-    | "FILE_LIST_HIT"
-    | "NETWORK_FETCH"
-    | "PREVIEW_SKIP_CACHE"
-    | "PRODUCTION_SKIP_FILELIST",
-  details: Record<string, unknown>,
+// Per-request metrics (reset each request via startRequestMetrics)
+let currentRequest: PerRequestMetrics | null = null;
+
+function createFreshRequestMetrics(): PerRequestMetrics {
+  return {
+    startTime: performance.now(),
+    requestScopedHits: 0,
+    persistentCacheHits: 0,
+    fileListHits: 0,
+    networkFetches: 0,
+    networkMs: 0,
+    fetchesByType: { page: 0, layout: 0, component: 0, api: 0, data: 0, config: 0, other: 0 },
+    missReasons: { cold_start: 0, not_in_filelist: 0, invalidation: 0, no_filelist_cache: 0 },
+    isPreviewMode: null,
+    filesAccessed: new Set(),
+  };
+}
+
+function detectFileType(path: string): FileType {
+  if (path.startsWith("pages/api/") || path.startsWith("app/api/")) return "api";
+  if (path.includes("/layout.") || path.includes("/layout/")) return "layout";
+  if (path.startsWith("pages/") || path.startsWith("app/")) return "page";
+  if (path.startsWith("components/") || path.includes("/components/")) return "component";
+  if (path.endsWith(".json") || path.endsWith(".yaml") || path.endsWith(".yml")) return "data";
+  if (path.includes("config") || path.includes(".config.")) return "config";
+  return "other";
+}
+
+/** Call at start of HTTP request to begin per-request tracking */
+export function startRequestMetrics(): void {
+  currentRequest = createFreshRequestMetrics();
+}
+
+/** Call at end of HTTP request to log summary and update cumulative metrics */
+export function endRequestMetrics(
+  requestContext?: { requestId?: string; pathname?: string; mode?: string },
 ): void {
-  switch (event) {
-    case "REQUEST_SCOPED_HIT":
-      contentMetrics.requestScopedHits++;
-      recordContentCacheHit("request");
-      break;
-    case "PERSISTENT_CACHE_HIT":
-      contentMetrics.persistentCacheHits++;
-      recordContentCacheHit("persistent");
-      break;
-    case "FILE_LIST_HIT":
-      contentMetrics.fileListHits++;
-      recordContentCacheHit("filelist");
-      break;
-    case "NETWORK_FETCH":
-      contentMetrics.networkFetches++;
-      // Note: recordContentNetworkFetch called separately with timing data
-      break;
-    case "PREVIEW_SKIP_CACHE":
-      contentMetrics.previewModeSkips++;
-      break;
-    case "PRODUCTION_SKIP_FILELIST":
-      contentMetrics.productionModeSkips++;
-      break;
+  if (!currentRequest) return;
+
+  const req = currentRequest;
+  const durationMs = Math.round(performance.now() - req.startTime);
+
+  // Compute derived metrics
+  const totalCacheHits = req.requestScopedHits + req.persistentCacheHits + req.fileListHits;
+  const totalOperations = totalCacheHits + req.networkFetches;
+  const cacheHitRate = totalOperations > 0
+    ? Math.round((totalCacheHits / totalOperations) * 100)
+    : 100;
+  const networkTimeRatio = durationMs > 0 ? Math.round((req.networkMs / durationMs) * 100) : 0;
+
+  // Update cumulative metrics
+  cumulativeMetrics.requestScopedHits += req.requestScopedHits;
+  cumulativeMetrics.persistentCacheHits += req.persistentCacheHits;
+  cumulativeMetrics.fileListHits += req.fileListHits;
+  cumulativeMetrics.networkFetches += req.networkFetches;
+  cumulativeMetrics.totalNetworkMs += req.networkMs;
+  cumulativeMetrics.requestsTracked++;
+
+  // Record to production metrics system
+  recordContentNetworkFetch(req.networkMs, req.isPreviewMode ?? false);
+
+  // Log summary
+  logger.info("[ContentMetrics] REQUEST_SUMMARY", {
+    ...requestContext,
+    // Timing
+    durationMs,
+    networkMs: req.networkMs,
+    networkTimeRatio: `${networkTimeRatio}%`,
+    // Cache performance
+    cacheHitRate: `${cacheHitRate}%`,
+    cacheHits: {
+      l1_request: req.requestScopedHits,
+      l2_persistent: req.persistentCacheHits,
+      l3_filelist: req.fileListHits,
+    },
+    networkFetches: req.networkFetches,
+    // Breakdown
+    fetchesByType: req.fetchesByType,
+    missReasons: req.missReasons,
+    // Context
+    uniqueFiles: req.filesAccessed.size,
+    isPreviewMode: req.isPreviewMode,
+  });
+
+  currentRequest = null;
+}
+
+type ContentMetricEvent =
+  | "REQUEST_SCOPED_HIT"
+  | "PERSISTENT_CACHE_HIT"
+  | "FILE_LIST_HIT"
+  | "NETWORK_FETCH"
+  | "NETWORK_FETCH_COMPLETE"
+  | "CACHE_MISS";
+
+function logContentMetric(
+  event: ContentMetricEvent,
+  details: {
+    path?: string;
+    mode?: string;
+    isPreviewMode?: boolean;
+    durationMs?: number;
+    missReason?: MissReason;
+    [key: string]: unknown;
+  },
+): void {
+  const path = details.path ?? "";
+
+  // Track in per-request metrics if active
+  if (currentRequest) {
+    currentRequest.filesAccessed.add(path);
+    if (details.isPreviewMode !== undefined) {
+      currentRequest.isPreviewMode = details.isPreviewMode;
+    }
+
+    switch (event) {
+      case "REQUEST_SCOPED_HIT":
+        currentRequest.requestScopedHits++;
+        recordContentCacheHit("request");
+        break;
+      case "PERSISTENT_CACHE_HIT":
+        currentRequest.persistentCacheHits++;
+        recordContentCacheHit("persistent");
+        break;
+      case "FILE_LIST_HIT":
+        currentRequest.fileListHits++;
+        recordContentCacheHit("filelist");
+        break;
+      case "NETWORK_FETCH":
+        currentRequest.networkFetches++;
+        currentRequest.fetchesByType[detectFileType(path)]++;
+        break;
+      case "NETWORK_FETCH_COMPLETE":
+        if (details.durationMs) {
+          currentRequest.networkMs += details.durationMs;
+        }
+        break;
+      case "CACHE_MISS":
+        if (details.missReason) {
+          currentRequest.missReasons[details.missReason]++;
+        }
+        break;
+    }
   }
 
-  // Log every event for analysis
-  logger.info(`[ContentMetrics] ${event}`, {
-    ...details,
-    totals: { ...contentMetrics },
-  });
+  // Debug log individual events (not info level to reduce noise)
+  logger.debug(`[ContentMetrics] ${event}`, details);
 }
 
-/** Get current metrics snapshot for debugging endpoint */
-export function getContentMetricsSnapshot(): ContentMetrics {
-  return { ...contentMetrics };
+/** Get current cumulative metrics snapshot for /metrics endpoint */
+export function getContentMetricsSnapshot(): CumulativeMetrics & {
+  avgNetworkMsPerRequest: number;
+} {
+  return {
+    ...cumulativeMetrics,
+    avgNetworkMsPerRequest: cumulativeMetrics.requestsTracked > 0
+      ? Math.round(cumulativeMetrics.totalNetworkMs / cumulativeMetrics.requestsTracked)
+      : 0,
+  };
 }
 
-/** Reset metrics (useful for per-request analysis) */
+/** Reset cumulative metrics */
 export function resetContentMetrics(): void {
-  contentMetrics.requestScopedHits = 0;
-  contentMetrics.persistentCacheHits = 0;
-  contentMetrics.fileListHits = 0;
-  contentMetrics.networkFetches = 0;
-  contentMetrics.previewModeSkips = 0;
-  contentMetrics.productionModeSkips = 0;
+  cumulativeMetrics.requestScopedHits = 0;
+  cumulativeMetrics.persistentCacheHits = 0;
+  cumulativeMetrics.fileListHits = 0;
+  cumulativeMetrics.networkFetches = 0;
+  cumulativeMetrics.totalNetworkMs = 0;
+  cumulativeMetrics.requestsTracked = 0;
 }
 // ============================================================================
 
@@ -421,10 +558,11 @@ export class ReadOperations {
       }
     } else {
       // Skip only happens during cache invalidation (both preview and production)
-      logContentMetric("PRODUCTION_SKIP_FILELIST", {
+      logContentMetric("CACHE_MISS", {
         path: normalizedPath,
         mode: ctx?.sourceType ?? "unknown",
-        reason: "invalidation_in_progress",
+        missReason: "invalidation" as MissReason,
+        isPreviewMode,
       });
       logger.debug("[ReadOperations] Skipping file list cache due to invalidation", {
         path: normalizedPath,
@@ -483,6 +621,15 @@ export class ReadOperations {
 
     const isPublished = ctx?.sourceType !== "branch";
 
+    // Track why we're making a network fetch (for optimization analysis)
+    const hasFileListCache = !!this.getFileListCache;
+    logContentMetric("CACHE_MISS", {
+      path: normalizedPath,
+      mode: ctx?.sourceType ?? "unknown",
+      missReason: (hasFileListCache ? "not_in_filelist" : "no_filelist_cache") as MissReason,
+      isPreviewMode,
+    });
+
     // THIS IS A NETWORK FETCH - every call here = API round trip
     // With caching enabled for preview mode, this should only happen on true cache misses
     logContentMetric("NETWORK_FETCH", {
@@ -490,7 +637,6 @@ export class ReadOperations {
       mode: ctx?.sourceType ?? "unknown",
       isPublished,
       isPreviewMode,
-      reason: "cache_miss",
     });
 
     logger.debug("[ReadOperations] fetchContent decision", {
@@ -516,14 +662,12 @@ export class ReadOperations {
 
         const fetchDuration = Math.round(performance.now() - fetchStartTime);
 
-        // Record to production metrics system (histograms, counters)
-        recordContentNetworkFetch(fetchDuration, isPreviewMode);
-
-        logger.info("[ContentMetrics] NETWORK_FETCH_COMPLETE", {
+        // Record fetch completion with timing for per-request metrics
+        logContentMetric("NETWORK_FETCH_COMPLETE", {
           path: normalizedPath,
           mode: ctx?.sourceType ?? "unknown",
-          duration_ms: fetchDuration,
-          content_length: result.length,
+          durationMs: fetchDuration,
+          contentLength: result.length,
           isPreviewMode,
         });
 

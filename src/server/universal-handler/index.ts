@@ -20,6 +20,10 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
 import {
+  endRequestMetrics,
+  startRequestMetrics,
+} from "#veryfront/platform/adapters/fs/veryfront/read-operations.ts";
+import {
   endServerSpan,
   extractContext,
   setSpanAttributes,
@@ -285,6 +289,9 @@ export function createVeryfrontHandler(
         earlyEnv || undefined,
         earlyReleaseId || undefined,
       );
+
+      // Start per-request content metrics tracking
+      startRequestMetrics();
 
       const shouldCheckIsolation = !isLightweightPath(url.pathname);
       const isolationCheck = shouldCheckIsolation
@@ -843,6 +850,13 @@ export function createVeryfrontHandler(
         }
 
         endServerSpan(span, response.status, error);
+
+        // End per-request content metrics tracking and log summary
+        endRequestMetrics({
+          requestId: trackingRequestId,
+          pathname: url.pathname,
+          mode: earlyEnv || "unknown",
+        });
 
         const isTimeout = response.status === HTTP_GATEWAY_TIMEOUT;
         requestTracker.complete(trackingRequestId, response.status, isTimeout);
