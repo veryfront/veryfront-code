@@ -31,6 +31,8 @@ export {
   recordCacheGet,
   recordCacheInvalidate,
   recordCacheSet,
+  recordContentCacheHit,
+  recordContentNetworkFetch,
   recordCorsRejection,
   recordHttp,
   recordRSC,
@@ -39,6 +41,8 @@ export {
   recordSSR,
 } from "./metrics-recorder.ts";
 
+export type { ContentCacheLayer } from "./metrics-recorder.ts";
+
 import {
   incRequest,
   recordApiRequest,
@@ -46,6 +50,8 @@ import {
   recordCacheGet,
   recordCacheInvalidate,
   recordCacheSet,
+  recordContentCacheHit,
+  recordContentNetworkFetch,
   recordCorsRejection,
   recordHttp,
   recordRSC,
@@ -68,6 +74,8 @@ export const metrics = {
   recordSecurityHeaders,
   recordApiRequest,
   recordApiRetry,
+  recordContentCacheHit,
+  recordContentNetworkFetch,
   snapshot: createSnapshot,
   reset: resetMetrics,
   getRequestCount,

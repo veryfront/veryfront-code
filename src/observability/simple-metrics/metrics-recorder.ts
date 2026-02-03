@@ -255,3 +255,70 @@ export function recordApiRequest(status: number): void {
 export function recordApiRetry(): void {
   state.apiRetries++;
 }
+
+// ============================================================================
+// Content Cache Metrics - Track cache behavior for file reads
+// ============================================================================
+
+import { getContentNetworkBoundaries } from "./metrics-state.ts";
+
+export type ContentCacheLayer = "request" | "persistent" | "filelist";
+
+/**
+ * Record a content cache hit at the specified layer
+ *
+ * @param layer - Which cache layer served the content
+ *
+ * @example
+ * ```ts
+ * recordContentCacheHit("request")   // L1 request-scoped cache
+ * recordContentCacheHit("persistent") // L2 persistent cache
+ * recordContentCacheHit("filelist")   // L3 file list cache
+ * ```
+ */
+export function recordContentCacheHit(layer: ContentCacheLayer): void {
+  switch (layer) {
+    case "request":
+      state.contentRequestScopedHits++;
+      break;
+    case "persistent":
+      state.contentPersistentCacheHits++;
+      break;
+    case "filelist":
+      state.contentFileListHits++;
+      break;
+  }
+}
+
+/**
+ * Record a content network fetch with timing
+ *
+ * @param durationMs - Time taken for the network fetch
+ * @param isPreview - Whether this is a preview mode request
+ *
+ * @example
+ * ```ts
+ * recordContentNetworkFetch(150, true)  // preview mode fetch
+ * recordContentNetworkFetch(80, false)  // production mode fetch
+ * ```
+ */
+export function recordContentNetworkFetch(durationMs: number, isPreview: boolean): void {
+  const d = Math.max(0, Math.floor(durationMs));
+  const boundaries = getContentNetworkBoundaries();
+
+  // Update counters
+  state.contentNetworkFetches++;
+  state.contentNetworkFetchMsTotal += d;
+
+  // Track preview vs production
+  if (isPreview) {
+    state.contentPreviewRequests++;
+  } else {
+    state.contentProductionRequests++;
+  }
+
+  // Update histogram
+  let idx = boundaries.findIndex((b) => d <= b);
+  if (idx === -1) idx = state._contentNetworkCounts.length - 1;
+  state._contentNetworkCounts[idx] = (state._contentNetworkCounts[idx] ?? 0) + 1;
+}

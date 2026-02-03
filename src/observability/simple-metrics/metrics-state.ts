@@ -1,6 +1,8 @@
 import type { MetricsState, VeryfrontMetrics } from "./types.ts";
 
 const SSR_BOUNDARIES_MS = [5, 10, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000];
+// Network fetch timing boundaries (ms) for content metrics
+const CONTENT_NETWORK_BOUNDARIES_MS = [10, 25, 50, 100, 200, 300, 500, 750, 1000, 2000, 5000];
 
 export const state: MetricsState = {
   requests: 0,
@@ -25,11 +27,25 @@ export const state: MetricsState = {
   apiRequests4xx: 0,
   apiRequests5xx: 0,
   apiRetries: 0,
+  // Content metrics
+  contentRequestScopedHits: 0,
+  contentPersistentCacheHits: 0,
+  contentFileListHits: 0,
+  contentNetworkFetches: 0,
+  contentNetworkFetchMsTotal: 0,
+  contentPreviewRequests: 0,
+  contentProductionRequests: 0,
+  contentNetworkHistogram: undefined,
   _ssrCounts: Array.from({ length: SSR_BOUNDARIES_MS.length + 1 }, () => 0),
+  _contentNetworkCounts: Array.from({ length: CONTENT_NETWORK_BOUNDARIES_MS.length + 1 }, () => 0),
 };
 
 export function getSSRBoundaries(): number[] {
   return SSR_BOUNDARIES_MS;
+}
+
+export function getContentNetworkBoundaries(): number[] {
+  return CONTENT_NETWORK_BOUNDARIES_MS;
 }
 
 export function createSnapshot(): VeryfrontMetrics {
@@ -54,6 +70,14 @@ export function createSnapshot(): VeryfrontMetrics {
     apiRequests4xx: state.apiRequests4xx,
     apiRequests5xx: state.apiRequests5xx,
     apiRetries: state.apiRetries,
+    // Content metrics
+    contentRequestScopedHits: state.contentRequestScopedHits,
+    contentPersistentCacheHits: state.contentPersistentCacheHits,
+    contentFileListHits: state.contentFileListHits,
+    contentNetworkFetches: state.contentNetworkFetches,
+    contentNetworkFetchMsTotal: state.contentNetworkFetchMsTotal,
+    contentPreviewRequests: state.contentPreviewRequests,
+    contentProductionRequests: state.contentProductionRequests,
     ssrHistogram: {
       boundaries: [...SSR_BOUNDARIES_MS],
       counts: [...state._ssrCounts],
@@ -64,6 +88,10 @@ export function createSnapshot(): VeryfrontMetrics {
         counts: [...state.rscStreamHistogram.counts],
       }
       : undefined,
+    contentNetworkHistogram: {
+      boundaries: [...CONTENT_NETWORK_BOUNDARIES_MS],
+      counts: [...state._contentNetworkCounts],
+    },
   };
 }
 
@@ -88,8 +116,18 @@ export function resetMetrics(): void {
   state.apiRequests4xx = 0;
   state.apiRequests5xx = 0;
   state.apiRetries = 0;
+  // Content metrics
+  state.contentRequestScopedHits = 0;
+  state.contentPersistentCacheHits = 0;
+  state.contentFileListHits = 0;
+  state.contentNetworkFetches = 0;
+  state.contentNetworkFetchMsTotal = 0;
+  state.contentPreviewRequests = 0;
+  state.contentProductionRequests = 0;
   state._ssrCounts.fill(0);
+  state._contentNetworkCounts.fill(0);
   state.rscStreamHistogram = undefined;
+  state.contentNetworkHistogram = undefined;
 }
 
 export function getRequestCount(): number {

@@ -49,10 +49,22 @@ export interface VeryfrontMetrics {
   apiRequests4xx: number;
   apiRequests5xx: number;
   apiRetries: number;
+  // Content metrics for file reads by cache layer
+  contentRequestScopedHits: number;
+  contentPersistentCacheHits: number;
+  contentFileListHits: number;
+  contentNetworkFetches: number;
+  contentNetworkFetchMsTotal: number;
+  // Preview vs production breakdown
+  contentPreviewRequests: number;
+  contentProductionRequests: number;
+  // Network fetch timing histogram
+  contentNetworkHistogram?: { boundaries: number[]; counts: number[] };
 }
 
 export interface MetricsState extends VeryfrontMetrics {
   _ssrCounts: number[];
+  _contentNetworkCounts: number[];
 }
 
 export interface OtelInstruments {

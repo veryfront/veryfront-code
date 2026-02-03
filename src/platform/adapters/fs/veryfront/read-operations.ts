@@ -1,6 +1,10 @@
 import { logger } from "#veryfront/utils";
 import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import {
+  recordContentCacheHit,
+  recordContentNetworkFetch,
+} from "#veryfront/observability/simple-metrics/index.ts";
 import type { VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
@@ -57,21 +61,31 @@ const contentMetrics: ContentMetrics = {
 };
 
 function logContentMetric(
-  event: "REQUEST_SCOPED_HIT" | "PERSISTENT_CACHE_HIT" | "FILE_LIST_HIT" | "NETWORK_FETCH" | "PREVIEW_SKIP_CACHE" | "PRODUCTION_SKIP_FILELIST",
+  event:
+    | "REQUEST_SCOPED_HIT"
+    | "PERSISTENT_CACHE_HIT"
+    | "FILE_LIST_HIT"
+    | "NETWORK_FETCH"
+    | "PREVIEW_SKIP_CACHE"
+    | "PRODUCTION_SKIP_FILELIST",
   details: Record<string, unknown>,
 ): void {
   switch (event) {
     case "REQUEST_SCOPED_HIT":
       contentMetrics.requestScopedHits++;
+      recordContentCacheHit("request");
       break;
     case "PERSISTENT_CACHE_HIT":
       contentMetrics.persistentCacheHits++;
+      recordContentCacheHit("persistent");
       break;
     case "FILE_LIST_HIT":
       contentMetrics.fileListHits++;
+      recordContentCacheHit("filelist");
       break;
     case "NETWORK_FETCH":
       contentMetrics.networkFetches++;
+      // Note: recordContentNetworkFetch called separately with timing data
       break;
     case "PREVIEW_SKIP_CACHE":
       contentMetrics.previewModeSkips++;
@@ -491,21 +505,26 @@ export class ReadOperations {
       try {
         const result = isPublished
           ? await this.fetchPublishedContent(
-              normalizedPath,
-              apiPath,
-              cacheKey,
-              ctx?.releaseId ?? null,
-              ctx?.environmentName ?? null,
-              isProduction,
-            )
+            normalizedPath,
+            apiPath,
+            cacheKey,
+            ctx?.releaseId ?? null,
+            ctx?.environmentName ?? null,
+            isProduction,
+          )
           : await this.fetchDraftContent(normalizedPath, apiPath, cacheKey, isProduction);
 
         const fetchDuration = Math.round(performance.now() - fetchStartTime);
+
+        // Record to production metrics system (histograms, counters)
+        recordContentNetworkFetch(fetchDuration, isPreviewMode);
+
         logger.info("[ContentMetrics] NETWORK_FETCH_COMPLETE", {
           path: normalizedPath,
           mode: ctx?.sourceType ?? "unknown",
           duration_ms: fetchDuration,
           content_length: result.length,
+          isPreviewMode,
         });
 
         return result;
