@@ -362,7 +362,12 @@ jobs:
       - name: Build and publish
         run: |
           deno task build:npm
-          cd npm && npm publish --access public
+          VERSION=$(jq -r '.version' deno.json)
+          if [[ "$VERSION" == *"-rc"* ]] || [[ "$VERSION" == *"-alpha"* ]] || [[ "$VERSION" == *"-beta"* ]]; then
+            cd npm && npm publish --access public --tag rc
+          else
+            cd npm && npm publish --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
 
