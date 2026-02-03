@@ -47,6 +47,16 @@ const EMBEDDED_SRC_DIR = join(RUNTIME_FRAMEWORK_ROOT, "dist", "framework-src");
 // Extensions to try when resolving framework files
 const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 
+/**
+ * Check if a transformed code string is a cycle placeholder.
+ * Cycle placeholders are returned when transformFrameworkCode detects a cycle
+ * (a file that's already being transformed). These should never be cached
+ * to disk as they represent an in-progress state, not the final transform.
+ */
+function isCyclePlaceholder(code: string): boolean {
+  return code.startsWith("/* Cycle detected:") && code.includes("export {};");
+}
+
 // Map of _vf_modules prefixes to framework directories
 // We try embedded sources first (for compiled binaries), then regular src/
 const FRAMEWORK_LOOKUPS: Array<[prefix: string, frameworkDir: string]> = [
@@ -130,39 +140,70 @@ async function resolveFrameworkFile(
 /**
  * Resolve a #veryfront/ import to the actual framework source file path.
  * Returns the resolved path if found, null otherwise.
+ *
+ * IMPORTANT: This function checks embedded sources FIRST (for compiled binaries),
+ * then falls back to regular src/. This matches resolveFrameworkFile's behavior
+ * and ensures consistent path resolution for cycle detection.
  */
 async function resolveVeryfrontSourcePath(specifier: string): Promise<string | null> {
   if (!specifier.startsWith("#veryfront/")) return null;
 
   const relativePath = specifier.slice("#veryfront/".length);
-  const basePath = join(FRAMEWORK_ROOT, "src", relativePath);
-
   const hasExtension = /\.(tsx?|jsx?|mjs)$/.test(relativePath);
 
-  if (hasExtension) {
-    try {
-      if (await exists(basePath)) return basePath;
-    } catch {
-      // Continue
-    }
-    return null;
-  }
+  // Check embedded sources first (for compiled binaries), then regular src/
+  // This order matches FRAMEWORK_LOOKUPS and resolveFrameworkFile to ensure
+  // consistent path resolution across the codebase, which is critical for
+  // cycle detection in transformingFiles.
+  const lookupDirs = [
+    EMBEDDED_SRC_DIR, // Embedded sources for compiled binaries (.src files)
+    join(FRAMEWORK_ROOT, "src"), // Regular sources for dev mode
+  ];
 
-  for (const ext of EXTENSIONS) {
-    const pathWithExt = basePath + ext;
-    try {
-      if (await exists(pathWithExt)) return pathWithExt;
-    } catch {
-      // Continue
-    }
-  }
+  for (const dir of lookupDirs) {
+    const basePath = join(dir, relativePath);
 
-  for (const ext of EXTENSIONS) {
-    const indexPath = join(basePath, "index" + ext);
-    try {
-      if (await exists(indexPath)) return indexPath;
-    } catch {
-      // Continue
+    if (hasExtension) {
+      // Try exact path with .src suffix first (for embedded sources)
+      try {
+        const srcPath = basePath + ".src";
+        if (await exists(srcPath)) return srcPath;
+      } catch {
+        // Continue
+      }
+      // Try exact path
+      try {
+        if (await exists(basePath)) return basePath;
+      } catch {
+        // Continue
+      }
+      continue;
+    }
+
+    // No extension provided - try all extensions
+    // For embedded sources, try .src suffixes first
+    const allExtensions = [
+      ...EXTENSIONS.map((ext) => ext + ".src"),
+      ...EXTENSIONS,
+    ];
+
+    for (const ext of allExtensions) {
+      const pathWithExt = basePath + ext;
+      try {
+        if (await exists(pathWithExt)) return pathWithExt;
+      } catch {
+        // Continue
+      }
+    }
+
+    // Try index file
+    for (const ext of allExtensions) {
+      const indexPath = join(basePath, "index" + ext);
+      try {
+        if (await exists(indexPath)) return indexPath;
+      } catch {
+        // Continue
+      }
     }
   }
 
@@ -426,6 +467,15 @@ async function transformFrameworkCode(
           depth + 1,
         );
 
+        // Skip cycle placeholders - don't cache or use them
+        if (isCyclePlaceholder(transformedDep)) {
+          logger.debug(`${LOG_PREFIX} Skipping relative import cycle placeholder`, {
+            specifier,
+            resolvedPath: resolvedPath.slice(-60),
+          });
+          continue;
+        }
+
         // Cache the transformed code
         const cachePath = await cacheTransformedCode(transformedDep, resolvedPath, ctx.fs);
         const fileUrl = `file://${cachePath}`;
@@ -517,6 +567,14 @@ async function resolveAndTransformVeryfrontImport(
 
     // Transform the dependency (recursively handles its own #veryfront/ imports)
     const transformed = await transformFrameworkCode(content, sourcePath, ctx, false);
+
+    // Don't cache cycle placeholders - they should never be persisted to disk.
+    // A cycle placeholder indicates the module is currently being transformed
+    // by another call in the same stack, so we should not cache it.
+    if (isCyclePlaceholder(transformed)) {
+      logger.debug(`${LOG_PREFIX} Skipping cache for cycle placeholder`, { specifier });
+      return null;
+    }
 
     // Cache the transformed code to filesystem
     const cachePath = await cacheTransformedCode(transformed, specifier, ctx.fs);
@@ -647,6 +705,12 @@ export const ssrVfModulesPlugin: TransformPlugin = {
           ctx.projectDir,
           fs,
         );
+
+        // Skip cycle placeholders - don't cache or use them
+        if (isCyclePlaceholder(transformed)) {
+          logger.warn(`${LOG_PREFIX} Cycle detected for ${vfModulePath}, skipping cache`);
+          continue;
+        }
 
         const cachePath = await cacheTransformedCode(transformed, vfModulePath, fs);
         replacements.set(vfModulePath, `file://${cachePath}`);
