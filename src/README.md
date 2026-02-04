@@ -1,6 +1,6 @@
 # Veryfront Code
 
-## Component Overview
+## Module Overview
 
 ### Core Infrastructure
 
@@ -47,7 +47,7 @@
 | **`build/`** | `#veryfront/build` | Production builds, SSG, asset optimization |
 | **`cli/`** | `veryfront/cli` | Command-line interface (`dev`, `build`, `init`) |
 
-### AI/Agent System
+### AI System
 
 | Module | Export Alias | Purpose |
 |--------|--------------|---------|
