@@ -4,76 +4,76 @@
 
 ### Core Infrastructure
 
-| Module | Export Alias | Purpose |
-|--------|--------------|---------|
-| **`config/`** | `#veryfront/config` | Configuration schema and loader |
-| **`types/`** | `#veryfront/types` | TypeScript type definitions |
-| **`utils/`** | `#veryfront/utils` | Shared utilities (logging, caching, hashing, paths) |
-| **`errors/`** | `#veryfront/errors` | Error handling with user-friendly messages |
-| **`platform/`** | `#veryfront/platform` | Runtime adapters (Deno, Node, Bun, Cloudflare) |
+| Module          | Export Alias          | Purpose                                             |
+| --------------- | --------------------- | --------------------------------------------------- |
+| **`config/`**   | `#veryfront/config`   | Configuration schema and loader                     |
+| **`types/`**    | `#veryfront/types`    | TypeScript type definitions                         |
+| **`utils/`**    | `#veryfront/utils`    | Shared utilities (logging, caching, hashing, paths) |
+| **`errors/`**   | `#veryfront/errors`   | Error handling with user-friendly messages          |
+| **`platform/`** | `#veryfront/platform` | Runtime adapters (Deno, Node, Bun, Cloudflare)      |
 
 ### Request Handling
 
-| Module | Export Alias | Purpose |
-|--------|--------------|---------|
-| **`server/`** | `#veryfront/server` | Dev server (HMR) + production server + handlers |
-| **`proxy/`** | - | Reverse proxy for multi-project routing |
-| **`routing/`** | `#veryfront/routing` | Route matching, API routes, dynamic routes |
-| **`middleware/`** | `#veryfront/middleware` | Composable request/response pipeline |
-| **`security/`** | `#veryfront/security` | Input validation, CORS, CSP, rate limiting |
+| Module            | Export Alias            | Purpose                                         |
+| ----------------- | ----------------------- | ----------------------------------------------- |
+| **`server/`**     | `#veryfront/server`     | Dev server (HMR) + production server + handlers |
+| **`proxy/`**      | -                       | Reverse proxy for multi-project routing         |
+| **`routing/`**    | `#veryfront/routing`    | Route matching, API routes, dynamic routes      |
+| **`middleware/`** | `#veryfront/middleware` | Composable request/response pipeline            |
+| **`security/`**   | `#veryfront/security`   | Input validation, CORS, CSP, rate limiting      |
 
 ### Rendering Pipeline
 
-| Module | Export Alias | Purpose |
-|--------|--------------|---------|
-| **`rendering/`** | `#veryfront/rendering` | SSR/RSC engine, layouts, streaming |
-| **`html/`** | `#veryfront/html` | HTML shell generation, metadata, hydration |
-| **`react/`** | `#veryfront/react`, `#veryfront/components` | Framework components and hooks |
-| **`data/`** | `#veryfront/data` | Data fetching (`getServerData`, etc.) |
+| Module           | Export Alias                                | Purpose                                    |
+| ---------------- | ------------------------------------------- | ------------------------------------------ |
+| **`rendering/`** | `#veryfront/rendering`                      | SSR/RSC engine, layouts, streaming         |
+| **`html/`**      | `#veryfront/html`                           | HTML shell generation, metadata, hydration |
+| **`react/`**     | `#veryfront/react`, `#veryfront/components` | Framework components and hooks             |
+| **`data/`**      | `#veryfront/data`                           | Data fetching (`getServerData`, etc.)      |
 
 ### Module System
 
-| Module | Export Alias | Purpose |
-|--------|--------------|---------|
-| **`modules/`** | `#veryfront/modules` | Component registry, React loader, module server |
+| Module            | Export Alias            | Purpose                                          |
+| ----------------- | ----------------------- | ------------------------------------------------ |
+| **`modules/`**    | `#veryfront/modules`    | Component registry, React loader, module server  |
 | **`transforms/`** | `#veryfront/transforms` | Code transformation (ESM, MDX, import rewriting) |
-| **`cache/`** | - | Multi-layer caching (memory, Redis, file) |
-| **`bundler/`** | - | esbuild integration for bundling |
+| **`cache/`**      | -                       | Multi-layer caching (memory, Redis, file)        |
+| **`bundler/`**    | -                       | esbuild integration for bundling                 |
 
 ### Build System
 
-| Module | Export Alias | Purpose |
-|--------|--------------|---------|
-| **`build/`** | `#veryfront/build` | Production builds, SSG, asset optimization |
-| **`cli/`** | `veryfront/cli` | Command-line interface (`dev`, `build`, `init`) |
+| Module       | Export Alias       | Purpose                                         |
+| ------------ | ------------------ | ----------------------------------------------- |
+| **`build/`** | `#veryfront/build` | Production builds, SSG, asset optimization      |
+| **`cli/`**   | `veryfront/cli`    | Command-line interface (`dev`, `build`, `init`) |
 
 ### AI System
 
-| Module | Export Alias | Purpose |
-|--------|--------------|---------|
-| **`agent/`** | `veryfront/agent` | AI agent runtime, memory, composition |
-| **`tool/`** | `veryfront/tool` | Tool definitions and registry |
-| **`workflow/`** | `veryfront/workflow` | Durable DAG-based workflow engine |
-| **`prompt/`** | `veryfront/prompt` | Prompt templates and registry |
-| **`resource/`** | `veryfront/resource` | Resource definitions (MCP protocol) |
-| **`mcp/`** | `veryfront/mcp` | Model Context Protocol server |
-| **`provider/`** | `veryfront/provider` | AI model providers (OpenAI, Anthropic, Google) |
-| **`ai/`** | - | AI utilities |
-| **`embeddings/`** | - | Vector embeddings for semantic search |
+| Module            | Export Alias         | Purpose                                        |
+| ----------------- | -------------------- | ---------------------------------------------- |
+| **`agent/`**      | `veryfront/agent`    | AI agent runtime, memory, composition          |
+| **`tool/`**       | `veryfront/tool`     | Tool definitions and registry                  |
+| **`workflow/`**   | `veryfront/workflow` | Durable DAG-based workflow engine              |
+| **`prompt/`**     | `veryfront/prompt`   | Prompt templates and registry                  |
+| **`resource/`**   | `veryfront/resource` | Resource definitions (MCP protocol)            |
+| **`mcp/`**        | `veryfront/mcp`      | Model Context Protocol server                  |
+| **`provider/`**   | `veryfront/provider` | AI model providers (OpenAI, Anthropic, Google) |
+| **`ai/`**         | -                    | AI utilities                                   |
+| **`embeddings/`** | -                    | Vector embeddings for semantic search          |
 
 ### Supporting Modules
 
-| Module | Purpose |
-|--------|---------|
+| Module               | Purpose                                      |
+| -------------------- | -------------------------------------------- |
 | **`observability/`** | Metrics, distributed tracing (OpenTelemetry) |
-| **`oauth/`** | OAuth authentication flows |
-| **`studio/`** | Studio integration (editor UI) |
-| **`testing/`** | Test utilities and fixtures |
-| **`repositories/`** | Data repositories abstraction |
-| **`issues/`** | Issue tracking integration |
-| **`exports/`** | Public API exports |
-| **`client/`** | Client-side utilities |
-| **`dev/`** | Development utilities |
+| **`oauth/`**         | OAuth authentication flows                   |
+| **`studio/`**        | Studio integration (editor UI)               |
+| **`testing/`**       | Test utilities and fixtures                  |
+| **`repositories/`**  | Data repositories abstraction                |
+| **`issues/`**        | Issue tracking integration                   |
+| **`exports/`**       | Public API exports                           |
+| **`client/`**        | Client-side utilities                        |
+| **`dev/`**           | Development utilities                        |
 
 ---
 
@@ -86,6 +86,7 @@
 **Exports**: `#veryfront/config`
 
 **Key Features**:
+
 - `veryfront.config.ts` schema and types
 - Environment-aware configuration
 - Default configuration merging
@@ -99,6 +100,7 @@
 **Exports**: `#veryfront/types`
 
 **Key Features**:
+
 - Framework type definitions
 - Request/response types
 - Component and page types
@@ -112,6 +114,7 @@
 **Exports**: `#veryfront/utils`
 
 **Key Features**:
+
 - Logger with debug/info/warn/error levels
 - LRU cache implementation
 - Content hashing
@@ -127,6 +130,7 @@
 **Exports**: `#veryfront/errors`
 
 **Key Features**:
+
 - Error catalog with codes
 - User-friendly error messages
 - Stack trace formatting
@@ -141,12 +145,14 @@
 **Exports**: `#veryfront/platform`
 
 **Key Features**:
+
 - Unified filesystem API across runtimes
 - KV store abstraction
 - Veryfront API client
 - Runtime detection and capabilities
 
 **Directories**:
+
 - `adapters/` - Runtime-specific implementations
   - `fs/` - Filesystem adapters (local, veryfront API, GitHub)
   - `veryfront-api-client/` - API client with retry handling
@@ -161,6 +167,7 @@
 **Exports**: `#veryfront/server`
 
 **Key Features**:
+
 - Dev server with Hot Module Replacement (HMR)
 - Production server with optimizations
 - Universal request handler (platform-agnostic)
@@ -168,6 +175,7 @@
 - Error overlay in development
 
 **Directories**:
+
 - `dev-server/` - Development server with HMR
 - `handlers/` - Request handlers by type
   - `request/` - SSR, module, CSS, snippet handlers
@@ -184,6 +192,7 @@
 **Purpose**: Multi-project routing and request proxying
 
 **Key Features**:
+
 - Route requests to correct project
 - Domain-based project resolution
 - API proxying to Veryfront backend
@@ -198,12 +207,14 @@
 **Exports**: `#veryfront/routing`
 
 **Key Features**:
+
 - App Router style dynamic routing (`[slug]`, `[...catchAll]`)
 - API route handlers (Pages Router and App Router patterns)
 - Route parameter extraction
 - Slug normalization and mapping
 
 **Directories**:
+
 - `api/` - API route handling
 - `dynamic-router/` - Dynamic route matching
 
@@ -216,11 +227,13 @@
 **Exports**: `#veryfront/middleware`
 
 **Key Features**:
+
 - Pipeline composition with `next()`
 - Built-in middleware (auth, logging, rate limiting, security)
 - Context passing between middleware
 
 **Directories**:
+
 - `builtin/` - Framework-provided middleware
 
 ---
@@ -232,6 +245,7 @@
 **Exports**: `#veryfront/security`
 
 **Key Features**:
+
 - Input validation with Zod
 - Path traversal protection
 - CORS configuration
@@ -240,6 +254,7 @@
 - Sandbox for untrusted code
 
 **Directories**:
+
 - `rate-limit/` - Rate limiting implementation
 - `sandbox/` - Sandboxed execution
 
@@ -252,6 +267,7 @@
 **Exports**: `#veryfront/rendering`
 
 **Key Features**:
+
 - SSR with React 17/18/19 support
 - RSC (React Server Components)
 - Layout system (nested layouts)
@@ -260,6 +276,7 @@
 - Context management
 
 **Directories**:
+
 - `ssr/` - Server-side rendering implementation
 - `rsc/` - React Server Components
 - `layouts/` - Layout discovery and compilation
@@ -277,6 +294,7 @@
 **Exports**: `#veryfront/html`
 
 **Key Features**:
+
 - HTML shell generation
 - Metadata extraction (Open Graph, Twitter Cards)
 - Import map injection
@@ -285,6 +303,7 @@
 - `<Head>` component support
 
 **Directories**:
+
 - `hydration-script-builder/` - Client-side hydration scripts
 - `styles-builder/` - CSS/Tailwind compilation
 
@@ -297,6 +316,7 @@
 **Exports**: `#veryfront/react`, `#veryfront/components`
 
 **Key Features**:
+
 - `<Head>` component for metadata
 - `<Link>` component for client routing
 - `<Image>` component with optimization
@@ -305,6 +325,7 @@
 - Hooks (`useRouter`, `useParams`, `usePathname`)
 
 **Directories**:
+
 - `components/` - Framework components
   - `ai/` - AI-related components
 - `compat/` - React version compatibility
@@ -319,6 +340,7 @@
 **Exports**: `#veryfront/data`
 
 **Key Features**:
+
 - `getServerData()` for SSR page data
 - `getStaticPaths()` for SSG
 - Data caching layer
@@ -333,6 +355,7 @@
 **Exports**: `#veryfront/modules`
 
 **Key Features**:
+
 - Component registry for React
 - React component loader for SSR
 - Module server (serves `/_vf_modules/*`)
@@ -340,6 +363,7 @@
 - Dynamic module loading
 
 **Directories**:
+
 - `react-loader/` - React-specific module loading
   - `ssr-module-loader/` - SSR module loading with caching
 - `import-map/` - Import map management
@@ -354,12 +378,14 @@
 **Exports**: `#veryfront/transforms`
 
 **Key Features**:
+
 - ESM transformation (TypeScript/JSX to browser-compatible JS)
 - MDX compilation to React components
 - Import rewriting (strategies for different import types)
 - Transform pipeline with plugin stages
 
 **Directories**:
+
 - `esm/` - ESM transformation engine
 - `mdx/` - MDX compilation system
 - `import-rewriter/` - Import specifier rewriting
@@ -375,6 +401,7 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 **Purpose**: Multi-layer caching for performance
 
 **Key Features**:
+
 - Memory cache (LRU)
 - Redis cache integration
 - File-based cache
@@ -388,6 +415,7 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 **Purpose**: esbuild integration for code bundling
 
 **Key Features**:
+
 - esbuild wrapper
 - Code splitting
 - Tree shaking
@@ -402,6 +430,7 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 **Exports**: `#veryfront/build`
 
 **Key Features**:
+
 - MDX compilation to JSX
 - TypeScript to JavaScript transformation
 - CSS optimization (Tailwind)
@@ -410,6 +439,7 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 - Production bundling
 
 **Directories**:
+
 - `production-build/` - Build orchestration
 
 ---
@@ -421,12 +451,14 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 **Exports**: `veryfront/cli`
 
 **Commands**:
+
 - `dev` - Start development server with HMR
 - `build` - Build for production
 - `init` - Initialize new project
 - `doctor` - Diagnose project issues
 
 **Directories**:
+
 - `commands/` - Individual CLI commands
 - `app/` - CLI application setup
 - `auth/` - Authentication commands
@@ -508,11 +540,13 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 **Exports**: `#veryfront/observability`
 
 **Key Features**:
+
 - Metrics collection (request count, latency)
 - Distributed tracing (OpenTelemetry compatible)
 - Performance monitoring
 
 **Directories**:
+
 - `tracing/` - Distributed tracing
 
 ---
@@ -564,14 +598,14 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 Veryfront uses a multi-strategy import resolution system:
 
-| Import Pattern | Example | Resolution |
-|----------------|---------|------------|
-| Framework | `veryfront/head` | `/_vf_modules/_veryfront/...` |
-| Internal | `#veryfront/...` | `/_vf_modules/_veryfront/...` |
-| Relative | `./Button` | `/_vf_modules/...` |
-| NPM | `lodash` | `https://esm.sh/lodash` |
-| Cross-project | `acme@1.0/@/Button` | Registry URL |
-| Node builtin | `node:fs` | Kept (SSR) / polyfill (browser) |
+| Import Pattern | Example             | Resolution                      |
+| -------------- | ------------------- | ------------------------------- |
+| Framework      | `veryfront/head`    | `/_vf_modules/_veryfront/...`   |
+| Internal       | `#veryfront/...`    | `/_vf_modules/_veryfront/...`   |
+| Relative       | `./Button`          | `/_vf_modules/...`              |
+| NPM            | `lodash`            | `https://esm.sh/lodash`         |
+| Cross-project  | `acme@1.0/@/Button` | Registry URL                    |
+| Node builtin   | `node:fs`           | Kept (SSR) / polyfill (browser) |
 
 See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README.md) for full documentation.
 
@@ -600,6 +634,7 @@ Orchestrators (most modules)
 ```
 
 **Rules**:
+
 1. Foundation modules have no internal dependencies
 2. Infrastructure depends only on foundation
 3. Features depend on foundation + infrastructure
