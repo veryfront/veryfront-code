@@ -239,8 +239,8 @@ import { ensureDir } from "std/fs/mod.ts";
 await import("https://esm.sh/lightningcss@1.22.0");
 
 // Internal imports with .ts extension
-import { logger } from "@veryfront/internal";
-import type { CSSBundle } from "@veryfront/types";
+import { logger } from "#veryfront/internal";
+import type { CSSBundle } from "#veryfront/types";
 ```
 
 ### Test Style
@@ -291,14 +291,14 @@ New exports available for extensibility:
 
 ```typescript
 // Import strategies directly
-import { LightningCSSStrategy, PurgeStrategy } from "@veryfront/css-optimizer";
+import { LightningCSSStrategy, PurgeStrategy } from "#veryfront/css-optimizer";
 
 // Import utilities
-import { CSSUtils } from "@veryfront/css-optimizer";
+import { CSSUtils } from "#veryfront/css-optimizer";
 const selectors = CSSUtils.extractSelectors(htmlContent);
 
 // Access service directly
-import { CSSOptimizerService } from "@veryfront/css-optimizer";
+import { CSSOptimizerService } from "#veryfront/css-optimizer";
 const service = new CSSOptimizerService(options);
 ```
 

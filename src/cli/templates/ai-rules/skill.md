@@ -77,7 +77,7 @@ export function GET(_req: Request, { params }: { params: { id: string } }) {
 - React 19 features (use, Server Components)
 - Tailwind CSS for styling
 - Co-locate tests with implementation
-- Use `@veryfront/*` imports for framework modules
+- Use `#veryfront/*` imports for framework modules
 
 ## Testing
 

@@ -432,7 +432,7 @@ tests/build/asset-pipeline/
 
 ### Internal
 
-- `@veryfront/internal` - Logging utilities
+- `#veryfront/internal` - Logging utilities
 - `../../../shared/constants/network.ts` - Constants
 
 ## Compatibility

@@ -79,11 +79,11 @@ rendering/
 
 ### Internal
 
-- `@veryfront/types` - TypeScript types
-- `@veryfront/utils` - Utilities (logging, caching)
-- `@veryfront/html` - HTML generation
-- `@veryfront/module-system` - Module loading
-- `@veryfront/platform` - Runtime adapters
+- `#veryfront/types` - TypeScript types
+- `#veryfront/utils` - Utilities (logging, caching)
+- `#veryfront/html` - HTML generation
+- `#veryfront/module-system` - Module loading
+- `#veryfront/platform` - Runtime adapters
 
 ### External
 
@@ -96,7 +96,7 @@ rendering/
 ### Basic SSR
 
 ```typescript
-import { createRenderer } from "@veryfront/rendering";
+import { createRenderer } from "#veryfront/rendering";
 
 const renderer = await createRenderer({
   projectDir: "./my-app",
@@ -203,7 +203,7 @@ export default function BlogIndex() {
 ### Render Caching
 
 ```typescript
-import { createRenderer } from "@veryfront/rendering";
+import { createRenderer } from "#veryfront/rendering";
 
 const renderer = await createRenderer({
   projectDir: "./my-app",
@@ -225,7 +225,7 @@ await renderer.renderPage("/products");
 ### Custom Renderer Options
 
 ```typescript
-import { createRenderer } from "@veryfront/rendering";
+import { createRenderer } from "#veryfront/rendering";
 
 const renderer = await createRenderer({
   projectDir: "./my-app",

@@ -52,7 +52,7 @@ export function GET(_req: Request, { params }: { params: { id: string } }) {
 - Use React 19 features
 - Use Tailwind for styling
 - Co-locate tests (`*.test.ts`)
-- Use `@veryfront/*` imports
+- Use `#veryfront/*` imports
 
 ## Testing
 

@@ -36,7 +36,7 @@ src/
 - React 19 features (use, Server Components)
 - Tailwind CSS for styling
 - Co-locate tests with implementation (`*.test.ts`)
-- Use `@veryfront/*` imports for framework modules
+- Use `#veryfront/*` imports for framework modules
 
 ## File Patterns
 

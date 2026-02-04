@@ -64,6 +64,6 @@ export function GET(_req: Request, { params }: { params: { id: string } }) {
 ## Best Practices
 
 - Co-locate test files with implementation (`*.test.ts`)
-- Use `@veryfront/*` import aliases for framework modules
+- Use `#veryfront/*` import aliases for framework modules
 - Follow React 19 patterns (use hook, Server Components)
 - Use Response.json() for API responses

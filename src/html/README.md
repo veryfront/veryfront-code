@@ -98,7 +98,7 @@ html/
 ### Generate Complete HTML Document
 
 ```typescript
-import { wrapInHTMLShell } from "@veryfront/html";
+import { wrapInHTMLShell } from "#veryfront/html";
 
 const html = await wrapInHTMLShell(reactHTML, {
   title: "My Page",
@@ -139,7 +139,7 @@ const html = await wrapInHTMLShell(reactHTML, {
 ### Development Mode with HMR
 
 ```typescript
-import { wrapInHTMLShell } from "@veryfront/html";
+import { wrapInHTMLShell } from "#veryfront/html";
 
 const html = await wrapInHTMLShell(reactHTML, {
   title: "Dev Mode",
@@ -164,7 +164,7 @@ const html = await wrapInHTMLShell(reactHTML, {
 ### Process Metadata
 
 ```typescript
-import { processMetadata } from "@veryfront/html";
+import { processMetadata } from "#veryfront/html";
 
 const processed = processMetadata({
   title: "My Page",
@@ -189,7 +189,7 @@ const processed = processMetadata({
 ### Generate Hydration Scripts
 
 ```typescript
-import { getDevScripts, getProdScripts } from "@veryfront/html";
+import { getDevScripts, getProdScripts } from "#veryfront/html";
 
 // Development
 const devScripts = getDevScripts(3000, 3001);
@@ -210,7 +210,7 @@ const prodScripts = getProdScripts("/manifest.json");
 ### HTML Injection
 
 ```typescript
-import { injectHTMLContent } from "@veryfront/html";
+import { injectHTMLContent } from "#veryfront/html";
 
 const html = '<html><head></head><body><div id="app"></div></body></html>';
 
@@ -224,7 +224,7 @@ const withScript = injectHTMLContent(html, '<script src="/analytics.js"></script
 ### HTML Escaping
 
 ```typescript
-import { buildAttributes, escapeHTML } from "@veryfront/html";
+import { buildAttributes, escapeHTML } from "#veryfront/html";
 
 // Escape user content
 const safe = escapeHTML('<script>alert("xss")</script>');
@@ -347,7 +347,7 @@ const html = await wrapInHTMLShell(reactHTML, {
 
 ```typescript
 // Use processMetadata for validation
-import { processMetadata } from "@veryfront/html";
+import { processMetadata } from "#veryfront/html";
 
 const validated = processMetadata({
   title: "My Page",

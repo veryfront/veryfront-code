@@ -1,4 +1,4 @@
-# @veryfront/platform
+# #veryfront/platform
 
 > Cross-platform adapters for Deno, Node.js, Bun, and Cloudflare Workers
 
@@ -26,14 +26,14 @@ Provides unified abstractions for platform-specific APIs:
 
 **Don't use for:**
 
-- Business logic (use `@veryfront/runtime`)
-- Route handling (use `@veryfront/routing`)
+- Business logic (use `#veryfront/runtime`)
+- Route handling (use `#veryfront/routing`)
 
 ## Quick Start
 
 ```typescript
 // Automatic platform detection
-import { getAdapter } from "@veryfront/platform/adapters/detect";
+import { getAdapter } from "#veryfront/platform/adapters/detect";
 
 const adapter = await getAdapter();
 console.log(adapter.runtime); // 'deno' | 'node' | 'bun' | 'cloudflare'
@@ -46,7 +46,7 @@ const exists = await adapter.fs.exists("/path/to/check.txt");
 const stats = await adapter.fs.stat("/path/to/file.txt");
 
 // HTTP Server
-import { createHttpServer } from "@veryfront/platform/compat/http";
+import { createHttpServer } from "#veryfront/platform/compat/http";
 
 const server = createHttpServer();
 await server.listen(3000, async (req) => {
@@ -59,7 +59,7 @@ adapter.fs.watch("/src", (event, path) => {
 });
 
 // Cached filesystem (faster reads)
-import { createFileCacheAdapter } from "@veryfront/platform/adapters/fs/cache";
+import { createFileCacheAdapter } from "#veryfront/platform/adapters/fs/cache";
 
 const cachedFs = createFileCacheAdapter(adapter.fs, {
   maxSize: 100 * 1024 * 1024, // 100MB cache
@@ -109,13 +109,13 @@ platform/
 
 **Depends on:**
 
-- `@veryfront/types` - Shared types
-- `@veryfront/utils` - Utilities
+- `#veryfront/types` - Shared types
+- `#veryfront/utils` - Utilities
 
 **Depended on by:**
 
-- `@veryfront/runtime` - Uses filesystem adapters
-- `@veryfront/transforms` - Uses filesystem for compilation
+- `#veryfront/runtime` - Uses filesystem adapters
+- `#veryfront/transforms` - Uses filesystem for compilation
 - All server-side code
 
 **Layer:** INFRASTRUCTURE (Adapters)
@@ -138,7 +138,7 @@ interface RuntimeAdapter {
 ### Platform Detection
 
 ```typescript
-import { detectRuntime } from "@veryfront/platform/compat/runtime";
+import { detectRuntime } from "#veryfront/platform/compat/runtime";
 
 const runtime = detectRuntime();
 // Uses feature detection, not user agent
@@ -150,13 +150,13 @@ Access remote files as if they were local:
 
 ```typescript
 // Veryfront API filesystem
-import { VeryfrontFSAdapter } from "@veryfront/platform/adapters/fs/veryfront";
+import { VeryfrontFSAdapter } from "#veryfront/platform/adapters/fs/veryfront";
 
 const vfAdapter = new VeryfrontFSAdapter(client);
 const content = await vfAdapter.readFile("pages/index.mdx");
 
 // GitHub filesystem
-import { GitHubFSAdapter } from "@veryfront/platform/adapters/fs/github";
+import { GitHubFSAdapter } from "#veryfront/platform/adapters/fs/github";
 
 const ghAdapter = new GitHubFSAdapter({ owner, repo, token });
 const content = await ghAdapter.readFile("README.md");
@@ -174,7 +174,7 @@ const content = await ghAdapter.readFile("README.md");
 ### Deno
 
 ```typescript
-import { DenoAdapter } from "@veryfront/platform/adapters/runtime/deno";
+import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno";
 
 const adapter = new DenoAdapter();
 // Native Deno.* APIs
@@ -185,7 +185,7 @@ const adapter = new DenoAdapter();
 ### Node.js
 
 ```typescript
-import { NodeAdapter } from "@veryfront/platform/adapters/runtime/node";
+import { NodeAdapter } from "#veryfront/platform/adapters/runtime/node";
 
 const adapter = await NodeAdapter.create();
 // Uses fs, path, http modules
@@ -196,7 +196,7 @@ const adapter = await NodeAdapter.create();
 ### Bun
 
 ```typescript
-import { BunAdapter } from "@veryfront/platform/adapters/runtime/bun";
+import { BunAdapter } from "#veryfront/platform/adapters/runtime/bun";
 
 const adapter = new BunAdapter();
 // Ultra-fast file operations
@@ -208,7 +208,7 @@ const adapter = new BunAdapter();
 
 ```typescript
 import { assertEquals } from "std/assert/mod.ts";
-import { MockAdapter } from "@veryfront/platform/adapters/mock";
+import { MockAdapter } from "#veryfront/platform/adapters/mock";
 
 Deno.test("Filesystem operations", async () => {
   const adapter = new MockAdapter();

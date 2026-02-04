@@ -96,8 +96,8 @@ routing/
 
 ### Internal
 
-- `@veryfront/types` - TypeScript types
-- `@veryfront/security` - Input validation, CORS
+- `#veryfront/types` - TypeScript types
+- `#veryfront/security` - Input validation, CORS
 
 ### External
 
@@ -108,7 +108,7 @@ None (zero external dependencies)
 ### Route Matching
 
 ```typescript
-import { DynamicRouter, normalizePath } from "@veryfront/routing";
+import { DynamicRouter, normalizePath } from "#veryfront/routing";
 
 // Create router
 const router = new DynamicRouter();
@@ -137,7 +137,7 @@ console.log(match);
 ### Dynamic Route Parameters
 
 ```typescript
-import { extractParams, matchRoute } from "@veryfront/routing";
+import { extractParams, matchRoute } from "#veryfront/routing";
 
 const pattern = "/api/users/:id/posts/:postId";
 const path = "/api/users/123/posts/456";
@@ -152,7 +152,7 @@ if (match) {
 ### Slug Mapping
 
 ```typescript
-import { normalizeSlug, pathToSlug, slugToPath } from "@veryfront/routing";
+import { normalizeSlug, pathToSlug, slugToPath } from "#veryfront/routing";
 
 // File path → URL slug
 const slug = pathToSlug("pages/blog/[category]/[slug].tsx");
@@ -175,7 +175,7 @@ console.log(normalized); // "/blog/post"
 ### API Routes
 
 ```typescript
-import { type APIContext, badRequest, json, notFound } from "@veryfront/routing";
+import { type APIContext, badRequest, json, notFound } from "#veryfront/routing";
 
 // GET /api/users/:id
 export async function GET(ctx: APIContext) {
@@ -214,7 +214,7 @@ export async function DELETE(ctx: APIContext) {
 ### API CORS Configuration
 
 ```typescript
-import { applyCORSHeaders, handleCORSPreflight } from "@veryfront/routing";
+import { applyCORSHeaders, handleCORSPreflight } from "#veryfront/routing";
 
 export async function OPTIONS() {
   return handleCORSPreflight({
@@ -237,7 +237,7 @@ export async function GET(ctx: APIContext) {
 ### Client-Side Page Loading
 
 ```typescript
-import { PageLoader, ViewportPrefetch } from "@veryfront/routing";
+import { PageLoader, ViewportPrefetch } from "#veryfront/routing";
 
 // Create page loader
 const loader = new PageLoader("/");
@@ -257,7 +257,7 @@ await loader.prefetch("/about");
 ### Client-Side Navigation
 
 ```typescript
-import { NavigationHandlers, PageTransition } from "@veryfront/routing";
+import { NavigationHandlers, PageTransition } from "#veryfront/routing";
 
 const handlers = new NavigationHandlers({
   loader: new PageLoader("/"),
@@ -287,7 +287,7 @@ transition.start(() => {
 ### Route Specificity
 
 ```typescript
-import { getSpecificityScore } from "@veryfront/routing";
+import { getSpecificityScore } from "#veryfront/routing";
 
 // More specific routes have higher scores
 const scores = [
@@ -429,7 +429,7 @@ export async function GET(ctx: APIContext) {
 const paths = ["/blog/", "blog", "/blog//post"];
 
 // Solution: Normalize all paths
-import { normalizePath } from "@veryfront/routing";
+import { normalizePath } from "#veryfront/routing";
 
 const normalized = paths.map(normalizePath);
 console.log(normalized); // ['/blog', '/blog', '/blog/post']

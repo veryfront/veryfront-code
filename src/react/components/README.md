@@ -1,4 +1,4 @@
-# @veryfront/components
+# #veryfront/components
 
 > Framework-provided React components for building Veryfront applications
 
@@ -29,7 +29,7 @@ Provides essential React components:
 
 ```typescript
 // Link component
-import { Link } from "@veryfront/components";
+import { Link } from "#veryfront/components";
 
 export default function Page() {
   return (
@@ -42,7 +42,7 @@ export default function Page() {
 }
 
 // Head component
-import { Head } from "@veryfront/components";
+import { Head } from "#veryfront/components";
 
 export default function Page() {
   return (
@@ -58,7 +58,7 @@ export default function Page() {
 }
 
 // MDX Provider
-import { MDXProvider } from "@veryfront/components";
+import { MDXProvider } from "#veryfront/components";
 
 const components = {
   h1: (props) => <h1 className="text-4xl font-bold" {...props} />,
@@ -74,7 +74,7 @@ export default function App({ children }) {
 }
 
 // Optimized Image
-import { OptimizedImage } from "@veryfront/components";
+import { OptimizedImage } from "#veryfront/components";
 
 export default function Page() {
   return (
@@ -112,13 +112,13 @@ components/
 **Depends on:**
 
 - `react` - React library
-- `@veryfront/types` - Shared types
-- `@veryfront/routing` - Navigation utilities
+- `#veryfront/types` - Shared types
+- `#veryfront/routing` - Navigation utilities
 
 **Depended on by:**
 
 - User applications - Import components directly
-- `@veryfront/runtime` - Uses layout components
+- `#veryfront/runtime` - Uses layout components
 
 **Layer:** 🟢 CORE (Business Logic)
 
@@ -184,7 +184,7 @@ Automatic image optimization:
 ### Custom Link Behavior
 
 ```typescript
-import { Link } from '@veryfront/components';
+import { Link } from '#veryfront/components';
 
 // With prefetch on hover
 <Link href="/page" prefetch>Prefetch Me</Link>
@@ -199,7 +199,7 @@ import { Link } from '@veryfront/components';
 ### Dynamic Head Content
 
 ```typescript
-import { Head } from "@veryfront/components";
+import { Head } from "#veryfront/components";
 
 export default function BlogPost({ title, description }) {
   return (
@@ -218,7 +218,7 @@ export default function BlogPost({ title, description }) {
 ### Layout Components
 
 ```typescript
-import { LayoutComponent } from "@veryfront/components";
+import { LayoutComponent } from "#veryfront/components";
 
 // Used internally by framework for layout nesting
 <LayoutComponent layout={layoutBundle}>
@@ -228,8 +228,8 @@ import { LayoutComponent } from "@veryfront/components";
 
 ## 🔗 See Also
 
-- [@veryfront/routing](../../routing/README.md) - Routing system
-- [@veryfront/rendering](../../rendering/README.md) - React rendering
+- [#veryfront/routing](../../routing/README.md) - Routing system
+- [#veryfront/rendering](../../rendering/README.md) - React rendering
 
 ## 📄 License
 

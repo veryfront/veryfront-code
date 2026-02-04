@@ -104,7 +104,7 @@ react/
 ### React Version Detection
 
 ```typescript
-import { getReactVersionInfo } from "@veryfront/react";
+import { getReactVersionInfo } from "#veryfront/react";
 
 const info = getReactVersionInfo();
 
@@ -243,8 +243,8 @@ export default function MDXLayout({ children }) {
 ### SSR Rendering
 
 ```typescript
-import { renderToReadableStream, renderToString } from "@veryfront/react/compat";
-import { buildResponse, wrapInHTML } from "@veryfront/react/compat";
+import { renderToReadableStream, renderToString } from "#veryfront/react/compat";
+import { buildResponse, wrapInHTML } from "#veryfront/react/compat";
 
 // String rendering (React 17/18)
 const html = renderToString(<App />);
@@ -345,7 +345,7 @@ deno task test src/react/compat/ssr-adapter/
 ### Version Detection Issues
 
 ```typescript
-import { getReactVersionInfo } from "@veryfront/react";
+import { getReactVersionInfo } from "#veryfront/react";
 
 try {
   const info = getReactVersionInfo();
@@ -360,7 +360,7 @@ try {
 
 ```typescript
 // Ensure same props on client and server
-import { renderToString } from "@veryfront/react/compat";
+import { renderToString } from "#veryfront/react/compat";
 
 const serverHTML = renderToString(<App initialData={data} />);
 

@@ -67,6 +67,6 @@ This API will be accessible at `/api/users/:id`.
 ## Best Practices
 
 - Co-locate tests with implementation files (`*.test.ts`)
-- Use `@veryfront/*` import aliases
+- Use `#veryfront/*` import aliases
 - Use React 19 features (use hook, Server Components)
 - Return `Response.json()` from API routes

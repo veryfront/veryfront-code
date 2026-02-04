@@ -94,7 +94,7 @@ modules/
 ### Load React Component
 
 ```typescript
-import { loadComponent } from "@veryfront/modules";
+import { loadComponent } from "#veryfront/modules";
 
 // Load a page component
 const PageComponent = await loadComponent("/pages/index.tsx", {
@@ -116,7 +116,7 @@ const Component = await loadComponent("/components/Button.tsx", {
 ### Component Registry
 
 ```typescript
-import { ComponentRegistry } from "@veryfront/modules";
+import { ComponentRegistry } from "#veryfront/modules";
 
 const registry = new ComponentRegistry();
 
@@ -138,7 +138,7 @@ registry.clearRegistry();
 ### Import Map Management
 
 ```typescript
-import { loadImportMap, mergeImportMaps, resolveImport } from "@veryfront/modules";
+import { loadImportMap, mergeImportMaps, resolveImport } from "#veryfront/modules";
 
 // Load project import map
 const projectMap = await loadImportMap("/path/to/project");
@@ -163,7 +163,7 @@ const aliased = resolveImport("@/components/Button", merged);
 ### Module Resolver
 
 ```typescript
-import { ModuleResolver } from "@veryfront/modules";
+import { ModuleResolver } from "#veryfront/modules";
 
 const resolver = new ModuleResolver({
   projectDir: "/path/to/project",
@@ -186,7 +186,7 @@ const aliased = await resolver.resolve("@/utils/helpers", "/pages/index.tsx");
 ### Transform Module Path
 
 ```typescript
-import { transformModulePath } from "@veryfront/modules";
+import { transformModulePath } from "#veryfront/modules";
 
 // Transform for browser
 const browserPath = transformModulePath("/src/components/Button.tsx", {
@@ -306,8 +306,8 @@ deno task test src/modules/react-loader/
 
 ```typescript
 // Enable verbose logging
-import { ModuleResolver } from "@veryfront/modules";
-import { logger } from "@veryfront/utils";
+import { ModuleResolver } from "#veryfront/modules";
+import { logger } from "#veryfront/utils";
 
 logger.level = "debug";
 
@@ -324,7 +324,7 @@ try {
 
 ```typescript
 // Verify import map loaded correctly
-import { loadImportMap } from "@veryfront/modules";
+import { loadImportMap } from "#veryfront/modules";
 
 const map = await loadImportMap(projectDir);
 console.log("Loaded import map:", map);
@@ -336,7 +336,7 @@ console.log("Loaded import map:", map);
 
 ```typescript
 // Clear registry on file changes (HMR)
-import { ComponentRegistry } from "@veryfront/modules";
+import { ComponentRegistry } from "#veryfront/modules";
 
 const registry = ComponentRegistry.getInstance();
 
@@ -350,7 +350,7 @@ registry.clearRegistry();
 
 ```typescript
 // Check esbuild configuration
-import { loadComponent } from "@veryfront/modules";
+import { loadComponent } from "#veryfront/modules";
 
 try {
   const Component = await loadComponent(path, {

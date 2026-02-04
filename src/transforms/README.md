@@ -32,7 +32,7 @@ transforms/
 ## Quick Start
 
 ```ts
-import { mdxRenderer, transformToESM } from "@veryfront/internal";
+import { mdxRenderer, transformToESM } from "#veryfront/internal";
 
 // Transform TypeScript to ESM
 const result = await transformToESM(code, {
