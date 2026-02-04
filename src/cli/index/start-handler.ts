@@ -10,6 +10,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { isAbsolute, join, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { cliLogger } from "#veryfront/utils";
 import { exitProcess, registerTerminationSignals } from "../utils/index.ts";
+import { generateDefaultProjectId } from "../utils/project.ts";
 import { clearAllLocalCaches } from "../../transforms/mdx/esm-module-loader/cache/index.ts";
 import { discoverAll } from "../discovery/index.ts";
 import type { ParsedArgs } from "./types.ts";
@@ -25,16 +26,6 @@ interface DiscoveredProjects {
 
 function getProjectSlug(path: string): string {
   return path.replace(/\/+$/, "").split("/").pop() ?? "";
-}
-
-/**
- * Generate a default project ID from the project directory name.
- * Used for local filesystem mode when no project ID is available from API.
- */
-function generateDefaultProjectId(projectDir: string): string {
-  const slug = getProjectSlug(projectDir);
-  // Clean the directory name to create a valid project ID
-  return `local-${slug.replace(/[^a-zA-Z0-9-_]/g, "-").toLowerCase()}`;
 }
 
 async function isVeryFrontProject(projectPath: string): Promise<boolean> {

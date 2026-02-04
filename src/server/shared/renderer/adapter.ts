@@ -144,7 +144,9 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
   // Derive a unique identifier from projectDir when no explicit projectId/slug is available
   // This prevents cache pollution between different local projects
   const derivedProjectId = ctx.projectId ?? ctx.projectSlug ??
-    (ctx.projectDir ? ctx.projectDir.split("/").filter(Boolean).pop() ?? "__single__" : "__single__");
+    (ctx.projectDir
+      ? ctx.projectDir.split("/").filter(Boolean).pop() ?? "__single__"
+      : "__single__");
 
   const enriched = buildEnrichedContext({
     projectId: derivedProjectId,

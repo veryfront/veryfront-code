@@ -124,4 +124,9 @@ export const CommonArgs = {
   env: { keys: ["env"], type: "string" },
   projectDir: { keys: ["project-dir", "dir", "d"], type: "string" },
   projectSlug: { keys: ["project-slug", "project", "p"], type: "string" },
+  quiet: { keys: ["quiet", "q"], type: "boolean" },
+  releaseName: { keys: ["release-name"], type: "string" },
+  into: { keys: ["into"], type: "string" },
+  release: { keys: ["release"], type: "string" },
+  output: { keys: ["output", "o"], type: "string" },
 } satisfies Record<string, ArgSpec>;

@@ -10,8 +10,8 @@
 import { z } from "zod";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "../shared/config.ts";
+import { CommonArgs, createArgParser } from "../shared/args.ts";
 import { confirmPrompt, createSpinner, logInfo, logSuccess } from "../utils/index.ts";
-import type { ParsedArgs } from "../index/types.ts";
 import { muted } from "../ui/colors.ts";
 
 /**
@@ -35,17 +35,14 @@ export type DeployOptions = z.infer<typeof DeployArgsSchema>;
 /**
  * Parse CLI arguments into validated DeployOptions
  */
-export function parseDeployArgs(args: ParsedArgs): z.SafeParseReturnType<unknown, DeployOptions> {
-  const rawArgs = {
-    branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
-    env: args.env ? String(args.env) : undefined,
-    releaseName: args["release-name"] ? String(args["release-name"]) : undefined,
-    dryRun: Boolean(args["dry-run"]),
-    force: Boolean(args.force) || Boolean(args.f),
-  };
-
-  return DeployArgsSchema.safeParse(rawArgs);
-}
+export const parseDeployArgs = createArgParser(DeployArgsSchema, {
+  branch: CommonArgs.branch,
+  env: CommonArgs.env,
+  releaseName: CommonArgs.releaseName,
+  dryRun: CommonArgs.dryRun,
+  force: CommonArgs.force,
+  quiet: CommonArgs.quiet,
+});
 
 /**
  * Environment from the API

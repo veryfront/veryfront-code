@@ -344,6 +344,14 @@ async function pullRemoteProject(
   render: () => void,
   focusedSlug: string,
 ): Promise<void> {
+  // Check authentication before pulling to avoid stdin conflict with interactive auth prompt
+  const token = await readToken();
+  if (!token) {
+    update(addLog("error", "Not authenticated. Press 'a' to login."));
+    render();
+    return;
+  }
+
   const projectDir = join(cwd(), "projects", focusedSlug);
   update(addLog("info", `Pulling to projects/${focusedSlug}/...`));
   render();
@@ -929,10 +937,13 @@ export function createApp(config: AppConfig): App {
     }
 
     if (key === "\r" || key === "\n") {
-      // Enter on remote projects: pull
+      // Enter on remote projects: open in browser (consistent with local projects)
       if (state.activeList === "remoteProjects") {
         const focused = state.remote.projects[state.remote.focusedIndex];
-        if (focused) await pullRemoteProject(state, update, render, focused.slug);
+        if (focused) {
+          const url = `http://${focused.slug}.veryfront.me:${state.server.port}`;
+          await openBrowser(url);
+        }
         return;
       }
 
@@ -1027,6 +1038,14 @@ export function createApp(config: AppConfig): App {
     if (key === "p" && state.activeList === "projects") {
       const selected = state.projects.items[state.projects.selectedIndex];
       if (!selected?.data) return;
+
+      // Check authentication before pulling to avoid stdin conflict with interactive auth prompt
+      const token = await readToken();
+      if (!token) {
+        update(addLog("error", "Not authenticated. Press 'a' to login."));
+        render();
+        return;
+      }
 
       const { slug, path: projectDir } = selected.data;
       update(addLog("info", `Pulling ${slug}...`));

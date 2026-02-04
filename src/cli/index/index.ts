@@ -1,4 +1,3 @@
-export { main } from "./cli-main.ts";
 export type { BuildCommandArgs, GenerateCommandArgs, ParsedArgs } from "./types.ts";
 export { parseArrayArg, parseCliArgs } from "./arg-parser.ts";
 export { handleBuildCommand } from "./build-handler.ts";

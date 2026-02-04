@@ -11,8 +11,8 @@ import { z } from "zod";
 import { cliLogger } from "#veryfront/utils";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { type ApiClient, createApiClient, resolveConfig } from "../shared/config.ts";
+import { CommonArgs, createArgParser } from "../shared/args.ts";
 import { confirmPrompt, createSpinner, logInfo, logSuccess } from "../utils/index.ts";
-import type { ParsedArgs } from "../index/types.ts";
 
 /**
  * Zod schema for merge command arguments
@@ -32,14 +32,12 @@ export type MergeOptions = z.infer<typeof MergeArgsSchema>;
 /**
  * Parse CLI arguments into validated MergeOptions
  */
-export function parseMergeArgs(args: ParsedArgs): z.SafeParseReturnType<unknown, MergeOptions> {
-  return MergeArgsSchema.safeParse({
-    branch: args._.length > 1 ? String(args._[1]) : undefined,
-    into: args.into ? String(args.into) : undefined,
-    dryRun: Boolean(args["dry-run"]),
-    force: Boolean(args.force) || Boolean(args.f),
-  });
-}
+export const parseMergeArgs = createArgParser(MergeArgsSchema, {
+  branch: { keys: [], type: "string", positional: 0 },
+  into: CommonArgs.into,
+  dryRun: CommonArgs.dryRun,
+  force: CommonArgs.force,
+});
 
 /**
  * Branch from the API
