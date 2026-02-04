@@ -250,13 +250,20 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             }
 
             console.log(`  ${dim("Opening browser...")}`);
-            const result = await login();
-            if (!result) return;
+            // Stop keyboard handler to release stdin reader before login prompts
+            keyboardHandler?.stop();
+            try {
+              const result = await login();
+              if (!result) return;
 
-            user = result;
-            const projectResult = await fetchRemoteProjects();
-            projects = projectResult.projects;
-            console.log(`  ${success("✓")} ${user.email} ${dim(`— ${projects.length} projects`)}`);
+              user = result;
+              const projectResult = await fetchRemoteProjects();
+              projects = projectResult.projects;
+              console.log(`  ${success("✓")} ${user.email} ${dim(`— ${projects.length} projects`)}`);
+            } finally {
+              // Restart keyboard handler after login completes
+              keyboardHandler?.start();
+            }
           },
           onSync: () => {
             if (!user) {
