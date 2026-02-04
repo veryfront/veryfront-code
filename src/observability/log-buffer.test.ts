@@ -2,7 +2,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { LogBuffer } from "./log-buffer.ts";
 
-describe("cli/mcp/log-buffer", () => {
+describe("observability/log-buffer", () => {
   describe("LogBuffer", () => {
     it("should append log entries", () => {
       const buf = new LogBuffer();

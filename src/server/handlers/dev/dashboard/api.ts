@@ -15,8 +15,8 @@ import { ERROR_CATALOG } from "#veryfront/errors/catalog/index.ts";
 import { TransformStage } from "#veryfront/transforms/pipeline/types.ts";
 import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
 import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
-import { getErrorCollector } from "../../../../cli/mcp/error-collector.ts";
-import { getLogBuffer } from "../../../../cli/mcp/log-buffer.ts";
+import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
+import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import { ReloadNotifier } from "../../../reload-notifier.ts";
 import type { HandlerContext } from "../../types.ts";
 
@@ -556,7 +556,7 @@ function handleLiveErrors(req: Request): Response {
   const collector = getErrorCollector();
 
   const filter = type
-    ? { type: type as import("../../../../cli/mcp/error-collector.ts").ErrorType }
+    ? { type: type as import("#veryfront/observability/error-collector.ts").ErrorType }
     : undefined;
 
   const errors = collector.getAll(filter);
@@ -578,7 +578,7 @@ function handleLiveLogs(req: Request): Response {
 
   const buffer = getLogBuffer();
   const entries = buffer.query({
-    level: level as import("../../../../cli/mcp/log-buffer.ts").LogLevel | undefined,
+    level: level as import("#veryfront/observability/log-buffer.ts").LogLevel | undefined,
     source,
     pattern,
     limit: limit ? parseInt(limit, 10) : undefined,

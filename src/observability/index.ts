@@ -63,3 +63,25 @@ export {
   type OTLPConfig,
   shutdownOTLP,
 } from "./tracing/otlp-setup.ts";
+
+export {
+  type DevError,
+  ErrorCollector,
+  type ErrorFilter,
+  type ErrorSubscriber,
+  type ErrorType,
+  getErrorCollector,
+  parseCompileError,
+  resetErrorCollector,
+} from "./error-collector.ts";
+
+export {
+  getLogBuffer,
+  interceptConsole,
+  LogBuffer,
+  type LogEntry,
+  type LogFilter as LogBufferFilter,
+  type LogLevel,
+  type LogSubscriber,
+  resetLogBuffer,
+} from "./log-buffer.ts";

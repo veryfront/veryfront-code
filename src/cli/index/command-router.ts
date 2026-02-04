@@ -505,7 +505,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         // if the user explicitly passed --port.
         const { DEFAULT_PORT } = await import("#veryfront/config/defaults.ts");
         const port = args.port !== DEFAULT_PORT ? Number(args.port) : undefined;
-        const { createStandaloneMCPServer } = await import("../mcp/standalone.ts");
+        const { createStandaloneMCPServer } = await import("../claude-code/standalone.ts");
         const mcpServer = createStandaloneMCPServer({ port });
         await new Promise(() => {});
         mcpServer.stop();

@@ -14,8 +14,8 @@ import type { HMRServer } from "./hmr-server.ts";
 import { createResponseBuilder } from "#veryfront/security/index.ts";
 import { resetApiHandler } from "../handlers/request/api/pages-api-handler.ts";
 import { clearLayoutDiscoveryCache } from "#veryfront/rendering/layouts/index.ts";
-import { getErrorCollector } from "#veryfront/cli/mcp/error-collector.ts";
-import { getLogBuffer } from "#veryfront/cli/mcp/log-buffer.ts";
+import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
+import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 
 export class RequestHandler {
   private universalHandler?: (req: Request) => Promise<Response>;

@@ -12,8 +12,8 @@ import { cwd, writeStdoutAsync } from "#veryfront/platform/compat/process.ts";
 import { getStdinReader, type StdinReader } from "#veryfront/platform/compat/stdin.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { createIssuesManager } from "../../issues/core.ts";
-import { getErrorCollector } from "./error-collector.ts";
-import { getLogBuffer } from "./log-buffer.ts";
+import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
+import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import { allTools, getTool, setServerStartTime } from "./tools.ts";
 
 export interface MCPServerConfig {
@@ -568,6 +568,6 @@ export function createMCPServer(config: MCPServerConfig): MCPDevServer {
   return server;
 }
 
-export * from "./error-collector.ts";
-export * from "./log-buffer.ts";
+export * from "#veryfront/observability/error-collector.ts";
+export * from "#veryfront/observability/log-buffer.ts";
 export * from "./tools.ts";

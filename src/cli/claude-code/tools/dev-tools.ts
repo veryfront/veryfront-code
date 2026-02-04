@@ -6,8 +6,8 @@ import { z } from "zod";
 import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ReloadNotifier } from "../../../server/reload-notifier.ts";
-import { getErrorCollector } from "../error-collector.ts";
-import { getLogBuffer } from "../log-buffer.ts";
+import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
+import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import type { MCPTool } from "../tools.ts";
 import { formatError } from "./helpers.ts";
 

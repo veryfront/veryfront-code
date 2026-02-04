@@ -3,22 +3,21 @@
  **************************/
 
 import { z } from "zod";
-import { type DevError, type ErrorType, getErrorCollector } from "./error-collector.ts";
-import { getLogBuffer, type LogEntry, type LogLevel } from "./log-buffer.ts";
+import {
+  type DevError,
+  type ErrorType,
+  getErrorCollector,
+} from "#veryfront/observability/error-collector.ts";
+import { getLogBuffer, type LogEntry, type LogLevel } from "#veryfront/observability/log-buffer.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { advancedTools } from "./advanced-tools.ts";
 import { remoteFileTools } from "./remote-file-tools.ts";
 import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { issuesMcpTools } from "../../issues/mcp.ts";
 
-// deno-lint-ignore no-explicit-any
-export interface MCPTool<TInput = any, TOutput = any> {
-  name: string;
-  description: string;
-  // deno-lint-ignore no-explicit-any
-  inputSchema: z.ZodType<any, any, any>;
-  execute: (input: TInput) => Promise<TOutput>;
-}
+// Re-export MCPTool type from central location
+export type { MCPTool } from "#veryfront/mcp/types.ts";
+import type { MCPTool } from "#veryfront/mcp/types.ts";
 
 const CACHE_DIRS: Record<string, string[]> = {
   all: [".cache/veryfront-modules", ".cache/veryfront-mdx-esm"],

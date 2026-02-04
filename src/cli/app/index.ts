@@ -66,7 +66,7 @@ import { openBrowser } from "../auth/browser.ts";
 import { fetchRemoteProjects } from "../sync/index.ts";
 import { pullCommand } from "../commands/pull.ts";
 import { pushCommand } from "../commands/push.ts";
-import { getLogBuffer } from "../mcp/log-buffer.ts";
+import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 
 export interface AppConfig {
   port: number;

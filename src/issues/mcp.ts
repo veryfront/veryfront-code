@@ -8,7 +8,7 @@
 
 import { z } from "zod";
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import type { MCPTool } from "../cli/mcp/tools.ts";
+import type { MCPTool } from "#veryfront/mcp/types.ts";
 import { createIssuesManager } from "./core.ts";
 import type { Issue } from "./types.ts";
 import { ISSUE_PREFIXES, parseState } from "./schema.ts";

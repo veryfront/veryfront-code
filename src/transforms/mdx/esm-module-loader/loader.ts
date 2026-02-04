@@ -10,7 +10,7 @@
 import { join } from "#std/path.ts";
 import React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
-import { getErrorCollector } from "#veryfront/cli/mcp/error-collector.ts";
+import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import {

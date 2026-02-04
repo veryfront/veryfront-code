@@ -2,7 +2,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ErrorCollector, parseCompileError } from "./error-collector.ts";
 
-describe("cli/mcp/error-collector", () => {
+describe("cli/mc./error-collector", () => {
   describe("ErrorCollector", () => {
     it("should add and retrieve errors", () => {
       const ec = new ErrorCollector();

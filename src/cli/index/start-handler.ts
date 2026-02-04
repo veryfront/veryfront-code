@@ -264,7 +264,7 @@ export async function handleStartCommand(args: ParsedArgs): Promise<void> {
 
   await server.ready;
 
-  const { createMCPServer } = await import("../mcp/index.ts");
+  const { createMCPServer } = await import("../claude-code/index.ts");
   const mcpServer = await createMCPServer({ httpPort: mcpPort });
 
   app.setServerReady();

@@ -1,5 +1,5 @@
 import { join } from "#std/path.ts";
-import { getErrorCollector } from "#veryfront/cli/mcp/error-collector.ts";
+import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getLocalFs } from "../cache/index.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";

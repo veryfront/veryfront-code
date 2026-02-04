@@ -16,7 +16,7 @@ import { banner } from "../ui/components/banner.ts";
 import { brand, dim, error as errorColor, success } from "../ui/colors.ts";
 import { createKeyboardHandler, type KeyboardHandler } from "../ui/keyboard.ts";
 import { openBrowser } from "../auth/browser.ts";
-import { createMCPServer, type MCPDevServer } from "../mcp/server.ts";
+import { createMCPServer, type MCPDevServer } from "../claude-code/server.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { login, type UserInfo, validateToken } from "../auth/login.ts";
 import { readToken } from "../auth/token-store.ts";

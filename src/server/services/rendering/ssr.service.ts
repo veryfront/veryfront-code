@@ -14,7 +14,7 @@ import {
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 import { VeryfrontAPIError } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
-import { getErrorCollector } from "#veryfront/cli/mcp/error-collector.ts";
+import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { ErrorOverlay } from "../../dev-server/error-overlay/index.ts";
 import { ErrorPages } from "../../utils/error-html.ts";
 import {
