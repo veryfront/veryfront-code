@@ -49,7 +49,7 @@ let _initLogged = false;
 function logInitOnce(): void {
   if (_initLogged) return;
   _initLogged = true;
-  logger.info(`${LOG_PREFIX} Initialized`, {
+  logger.warn(`${LOG_PREFIX} Initialized`, {
     importMetaUrl: import.meta.url,
     frameworkRoot: FRAMEWORK_ROOT,
     embeddedSrcDir: EMBEDDED_SRC_DIR,
@@ -748,6 +748,11 @@ export const ssrVfModulesPlugin: TransformPlugin = {
 
   async transform(ctx) {
     logInitOnce();
+    console.error(
+      `[SSR-VF-MODULES-DEBUG] Transform called for: ${
+        ctx.filePath?.slice(-60)
+      }, FRAMEWORK_ROOT: ${FRAMEWORK_ROOT}`,
+    );
 
     // DEBUG: Log the code snippet to see what imports exist
     const codeSnippet = ctx.code.slice(0, 500);

@@ -166,6 +166,9 @@ export function runPipeline(
   config?: PipelineConfig,
 ): Promise<TransformResult> {
   const fileName = filePath.split("/").pop() || filePath;
+  console.error(
+    `[PIPELINE-DEBUG] runPipeline called: file=${filePath.slice(-50)}, ssr=${options.ssr}`,
+  );
 
   return withSpan(
     "transform.pipeline",

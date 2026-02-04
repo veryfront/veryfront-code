@@ -12,6 +12,12 @@ import { getLocalFs } from "../cache/index.ts";
 // Embedded source directory for compiled binaries (created by prepare-framework-sources.ts)
 const EMBEDDED_SRC_DIR = join(FRAMEWORK_ROOT, "dist", "framework-src");
 
+// Log framework paths on first load for debugging
+logger.warn("[file-finder] Module loaded with framework paths", {
+  FRAMEWORK_ROOT,
+  EMBEDDED_SRC_DIR,
+});
+
 // Extensions to try for framework files (includes .src for compiled binary embedded sources)
 const FRAMEWORK_EXTENSIONS = [
   ".tsx.src",
@@ -139,6 +145,14 @@ export async function resolveModuleFile(
   // 1. EMBEDDED_SRC_DIR (dist/framework-src) - for compiled binaries with .src extensions
   // 2. FRAMEWORK_ROOT/src - for development mode with regular extensions
   const localFs = getLocalFs();
+
+  logger.warn(`${LOG_PREFIX_MDX_LOADER} Resolving framework file`, {
+    normalizedPath,
+    filePathWithoutJs,
+    FRAMEWORK_ROOT,
+    EMBEDDED_SRC_DIR,
+    lookupDirs: FRAMEWORK_LOOKUP_DIRS,
+  });
 
   for (const lookupDir of FRAMEWORK_LOOKUP_DIRS) {
     for (const ext of FRAMEWORK_EXTENSIONS) {

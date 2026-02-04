@@ -124,6 +124,8 @@ export class RendererLifecycle {
     const cacheCoordinator = new CacheCoordinator({
       store: cacheStore,
       ttlMs: renderCacheConfig.ttl,
+      projectId: this.projectId,
+      contentSourceId: this.contentSourceId,
     });
 
     const mdxCacheAdapter = new MDXCacheAdapter({ config, mode });
