@@ -60,4 +60,4 @@ deno test src/cli/ --allow-all
 
 - **STYLE_GUIDE.md** - CLI output conventions
 - **mcp/skills/** - MCP skill definitions
-- **observability/** - Error collection used by MCP tools
+- **../observability/** - Error collection used by MCP tools
