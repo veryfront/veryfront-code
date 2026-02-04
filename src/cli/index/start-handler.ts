@@ -102,7 +102,7 @@ async function trySetupProxy(localProjects: Map<string, string>): Promise<ProxyS
     const { createCacheFromEnv } = await import("../../proxy/cache/index.ts");
 
     const proxyConfig = {
-      apiBaseUrl: getEnv("VERYFRONT_API_BASE_URL") ?? "http://api.lvh.me:4000",
+      apiBaseUrl: getEnv("VERYFRONT_API_BASE_URL") ?? "http://api.veryfront.me:4000",
       clientId: getEnv("API_CLIENT_ID") ?? "",
       clientSecret: getEnv("API_CLIENT_SECRET") ?? "",
       previewClientId: getEnv("API_CLIENT_ID") ?? "",

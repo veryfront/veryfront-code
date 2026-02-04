@@ -6,7 +6,7 @@
  * direct filesystem access.
  *
  * Authentication: Uses the API token from environment or proxy context.
- * API Base: Configurable via VERYFRONT_API_BASE_URL (default: http://api.lvh.me:4000)
+ * API Base: Configurable via VERYFRONT_API_BASE_URL (default: http://api.veryfront.me:4000)
  */
 
 import { z } from "zod";
