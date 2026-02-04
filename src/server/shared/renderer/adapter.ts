@@ -141,9 +141,14 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
   // Use shared utility for contentSourceId (fallback path when no enriched context)
   const contentSourceId = computeContentSourceId(isLocalDev, environment, branch, ctx.releaseId);
 
+  // Derive a unique identifier from projectDir when no explicit projectId/slug is available
+  // This prevents cache pollution between different local projects
+  const derivedProjectId = ctx.projectId ?? ctx.projectSlug ??
+    (ctx.projectDir ? ctx.projectDir.split("/").filter(Boolean).pop() ?? "__single__" : "__single__");
+
   const enriched = buildEnrichedContext({
-    projectId: ctx.projectId ?? ctx.projectSlug ?? "__single__",
-    projectSlug: ctx.projectSlug ?? ctx.projectId ?? "__single__",
+    projectId: derivedProjectId,
+    projectSlug: ctx.projectSlug ?? ctx.projectId ?? derivedProjectId,
     projectDir: ctx.projectDir,
     token: ctx.proxyToken ?? "",
     environment,
