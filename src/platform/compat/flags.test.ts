@@ -275,7 +275,7 @@ describe("Flags Compat", () => {
 
   describe("value handling", () => {
     it("handles empty string values", () => {
-      const parsed = parse(["--value", ""]);
+      const parsed = parse(["--value", ""], { string: ["value"] });
 
       assertEquals(parsed.value, "");
     });

@@ -169,6 +169,8 @@
     "std/": "jsr:@std/",
     "#std/path": "jsr:@std/path",
     "#std/path.ts": "jsr:@std/path",
+    "#std/path/posix": "jsr:@std/path/posix",
+    "#std/path/posix.ts": "jsr:@std/path/posix",
     "#std/assert": "jsr:@std/assert",
     "#std/assert.ts": "jsr:@std/assert",
     "#std/dotenv": "jsr:@std/dotenv",

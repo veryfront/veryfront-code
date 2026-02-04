@@ -13,7 +13,7 @@
  */
 
 import { dirname, join, resolve } from "#std/path.ts";
-import * as posix from "jsr:@std/path/posix";
+import * as posix from "#std/path/posix";
 import { rendererLogger as globalLogger } from "#veryfront/utils";
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
