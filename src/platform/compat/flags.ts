@@ -20,10 +20,15 @@ export interface Args {
 type ParseFn = (args: string[], options?: ParseOptions) => Args;
 
 function getParser(): ParseFn {
-  const mod = flagsModule as { default?: unknown; parse?: unknown };
+  const mod = flagsModule as {
+    default?: unknown;
+    parse?: unknown;
+    parseArgs?: unknown;
+  };
 
   if (typeof mod.default === "function") return mod.default as ParseFn;
   if (typeof mod.parse === "function") return mod.parse as ParseFn;
+  if (typeof mod.parseArgs === "function") return mod.parseArgs as ParseFn;
 
   throw new Error("flags module has no parse function");
 }
