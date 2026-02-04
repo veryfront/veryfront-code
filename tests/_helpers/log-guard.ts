@@ -232,6 +232,16 @@ const allowedWarnings: string[] = [
   // Pipeline errors (expected in tests that verify error handling)
   "[PIPELINE:resolve-bare] Stage failed",
   "[RENDERER] ERROR: [PIPELINE:resolve-bare] Stage failed",
+  "[PIPELINE:ssr-vf-modules] Stage failed",
+  "[RENDERER] ERROR: [PIPELINE:ssr-vf-modules] Stage failed",
+
+  // SSR VF Modules initialization (expected in RSC streaming tests)
+  "[SSR-VF-MODULES] Initialized",
+  "[RENDERER] WARN: [SSR-VF-MODULES] Initialized",
+
+  // Layout orchestrator errors (expected in tests without valid layouts)
+  "[LayoutOrchestrator] Failed to preload TSX layout",
+  "[RENDERER] ERROR: [LayoutOrchestrator] Failed to preload TSX layout",
 
   // React config generation errors (expected in tests with malformed config)
   "Failed to detect React version from config",

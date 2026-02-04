@@ -147,6 +147,7 @@ describe("RSC Stream DOM Tests", { sanitizeOps: false, sanitizeResources: false 
         );
 
         const server = await context.createDevServer({ enableHMR: false });
+        if (!server.port) throw new Error("Server port not assigned");
         await waitForReady(server.port);
 
         const ac = new AbortController();
