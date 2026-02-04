@@ -288,9 +288,6 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
             debug,
             adapter,
             signal: shutdownController.signal,
-            // Enable development mode for local projects (isLocalDev=true enables
-            // proper contentSourceId="local-main" instead of "preview-main")
-            mode: "development",
             defaultProjectSlug: defaultProjectId,
             defaultProjectId,
           });
