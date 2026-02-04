@@ -15,9 +15,9 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import type { ApiClient } from "../shared/config.ts";
 
-// Load .env.local for credentials in record mode (skip validation against .env.example)
+// Load .env.local for credentials in record mode
 try {
-  await load({ envPath: ".env.local", examplePath: null, export: true });
+  await load({ envPath: ".env.local", export: true });
 } catch {
   // .env.local doesn't exist - that's fine for playback mode
 }
