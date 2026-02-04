@@ -14,10 +14,10 @@ import type { MCPTool } from "./tools.ts";
 import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-const DEFAULT_API_URL = "http://api.lvh.me:4000";
+import { DEFAULT_LOCAL_API_URL } from "../shared/constants.ts";
 
 function getApiBaseUrl(): string {
-  return getRuntimeEnv().apiBaseUrl || DEFAULT_API_URL;
+  return getRuntimeEnv().apiBaseUrl || DEFAULT_LOCAL_API_URL;
 }
 
 function getApiToken(): string | undefined {

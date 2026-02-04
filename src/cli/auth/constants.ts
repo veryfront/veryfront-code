@@ -1,13 +1,14 @@
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
-
-export const DEFAULT_API_URL = "https://api.veryfront.com";
-export const DEFAULT_CALLBACK_PORT = 9876;
-export const DEFAULT_LOGIN_TIMEOUT_MS = 120000;
-export const MAX_PORT_ATTEMPTS = 100;
-export const TOKEN_FILE_PERMISSIONS = 0o600;
-export const CONFIG_DIR_NAME = "veryfront";
-export const TOKEN_FILE_NAME = "token";
-
-export function getApiUrl(env: RuntimeEnv = getRuntimeEnv()): string {
-  return env.apiUrl ?? DEFAULT_API_URL;
-}
+/**
+ * Auth constants - re-exports from central location
+ * @deprecated Import from cli/shared/constants.ts instead
+ */
+export {
+  CONFIG_DIR_NAME,
+  DEFAULT_API_URL,
+  DEFAULT_CALLBACK_PORT,
+  DEFAULT_LOGIN_TIMEOUT_MS,
+  getApiUrl,
+  MAX_PORT_ATTEMPTS,
+  TOKEN_FILE_NAME,
+  TOKEN_FILE_PERMISSIONS,
+} from "../shared/constants.ts";

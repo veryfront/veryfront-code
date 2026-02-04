@@ -5,7 +5,7 @@
  * LogBuffer, and HMR data over HTTP from the user's running `veryfront` process.
  */
 
-const REQUEST_TIMEOUT_MS = 3000;
+import { REQUEST_TIMEOUT_MS } from "../shared/constants.ts";
 const MAX_RETRIES = 2;
 const RETRY_DELAYS_MS = [200, 500];
 

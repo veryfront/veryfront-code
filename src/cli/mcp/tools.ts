@@ -25,7 +25,7 @@ const CACHE_DIRS: Record<string, string[]> = {
   mdx: [".cache/veryfront-mdx-esm"],
 };
 
-const DEFAULT_PORT = 8080;
+import { DEFAULT_MCP_PORT } from "../shared/constants.ts";
 
 let serverStartTime = Date.now();
 
@@ -149,7 +149,7 @@ export function createVfGetStatus(
       const errors = getErrorCollector();
       const logs = getLogBuffer();
       const counts = errors.countByType();
-      const port = env.port ?? DEFAULT_PORT;
+      const port = env.port ?? DEFAULT_MCP_PORT;
 
       return {
         running: true,
