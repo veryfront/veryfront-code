@@ -16,4 +16,6 @@ export interface CacheStore {
   deleteByPrefix?(prefix: string): Promise<number>;
   clear(): Promise<void>;
   destroy(): Promise<void>;
+  /** Optional size accessor for cache stats */
+  size?(): number;
 }

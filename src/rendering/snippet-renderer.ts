@@ -39,6 +39,7 @@ export interface SnippetRenderResult {
 interface SnippetCacheEntry {
   code: string;
   frontmatter: Record<string, unknown>;
+  projectSlug?: string;
 }
 
 const snippetCache = new LRUCache<string, SnippetCacheEntry>({
@@ -115,19 +116,45 @@ export async function getCompiledSnippetAsync(
  * @deprecated Use clearSnippetCacheForProject for multi-tenant deployments
  */
 export function clearSnippetCache(): void {
-  const entriesCleared = snippetCache.size;
+  const keysToDelete = [...snippetCache.keys()];
+  const entriesCleared = keysToDelete.length;
   snippetCache.clear();
   logger.debug("[SnippetRenderer] ✓ Global snippet cache cleared", { entriesCleared });
+
+  if (keysToDelete.length === 0) return;
+
+  getDistributedSnippetCache()
+    .then((cache) => Promise.allSettled(keysToDelete.map((key) => cache.del(key))))
+    .catch(() => {
+      // Ignore distributed cache clear failures
+    });
 }
 
 export function clearSnippetCacheForProject(projectSlug: string): void {
-  const entriesCleared = snippetCache.size;
-  // TODO(#127): Implement per-project snippet clearing once cache entries store projectSlug
-  snippetCache.clear();
+  const keysToDelete: string[] = [];
+
+  for (const [key, entry] of snippetCache.entries()) {
+    if (entry?.projectSlug === projectSlug) {
+      keysToDelete.push(key);
+    }
+  }
+
+  for (const key of keysToDelete) {
+    snippetCache.delete(key);
+  }
+
   logger.debug("[SnippetRenderer] ✓ Snippet cache cleared for project", {
     projectSlug,
-    entriesCleared,
+    entriesCleared: keysToDelete.length,
   });
+
+  if (keysToDelete.length === 0) return;
+
+  getDistributedSnippetCache()
+    .then((cache) => Promise.allSettled(keysToDelete.map((key) => cache.del(key))))
+    .catch(() => {
+      // Ignore distributed cache clear failures
+    });
 }
 
 const HEX_CHARS = "0123456789abcdef";
@@ -200,6 +227,7 @@ export function renderSnippet(
         const cacheEntry: SnippetCacheEntry = {
           code: bundle.compiledCode,
           frontmatter,
+          projectSlug: options.projectSlug,
         };
 
         snippetCache.set(hash, cacheEntry);

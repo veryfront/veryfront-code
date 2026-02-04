@@ -17,7 +17,9 @@ export const PROJECT_ALIAS_IMPORT_PATTERN = /import\s+([^'"]+)\s+from\s+['"]@\/(
 
 export const MODULE_SERVER_IMPORT_PATTERN = /from\s*["']\/?_vf_modules\/([^"']+)["']/g;
 
-export const VF_MODULE_IMPORT_PATTERN = /from\s*["'](\/?_vf_modules\/[^"'?]+)(?:\?[^"']*)?["']/g;
+// Matches /_vf_modules/... and file:///_vf_modules/... imports (with optional query params)
+export const VF_MODULE_IMPORT_PATTERN =
+  /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"'?]+)(?:\?[^"']*)?["']/g;
 
 export const RELATIVE_IMPORT_PATTERN = /from\s*["'](\.\.?\/[^"'?]+)(?:\?[^"']*)?["']/g;
 

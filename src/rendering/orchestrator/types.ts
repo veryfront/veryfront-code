@@ -47,7 +47,7 @@ export interface RenderOptions {
   delivery?: "string" | "stream";
   request?: Request;
   url?: URL;
-  /** Optional cache key override; defaults to slug + normalized query params */
+  /** Optional cache key override; defaults to slug + normalized query params (without page/theme prefix) */
   cacheKey?: string;
   nonce?: string;
   studioEmbed?: boolean;

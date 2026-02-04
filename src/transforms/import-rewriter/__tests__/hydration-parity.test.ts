@@ -353,7 +353,9 @@ describe("Regression: Full Import Chain", () => {
     expect(browserResult).toContain("/_vf_modules/_veryfront/platform/compat/runtime.js");
 
     expect(ssrResult).toContain("esm.sh/react@");
-    expect(ssrResult).toContain("#veryfront/react/head-collector.ts");
-    expect(ssrResult).toContain("#veryfront/platform/compat/runtime.ts");
+    // SSR now rewrites #veryfront/* to /_vf_modules/ URLs with ?ssr=true
+    // This allows ssrVfModulesPlugin to identify and resolve these imports
+    expect(ssrResult).toContain("/_vf_modules/_veryfront/react/head-collector.js?ssr=true");
+    expect(ssrResult).toContain("/_vf_modules/_veryfront/platform/compat/runtime.js?ssr=true");
   });
 });

@@ -256,6 +256,7 @@ interface CachedRenderData {
  */
 export class Renderer {
   private cache: ContextAwareCacheCoordinator;
+  private layoutComponentCache = createLayoutComponentCache();
   private initialized = false;
   private initializationPromise: Promise<void> | null = null;
 
@@ -601,7 +602,7 @@ export class Renderer {
       moduleServerUrl: ctx.moduleServerUrl,
       layoutCollector,
       layoutCompiler,
-      layoutCache: createLayoutComponentCache(),
+      layoutCache: this.layoutComponentCache,
       componentRegistry: componentRegistry.getAllAsComponents(),
     });
 

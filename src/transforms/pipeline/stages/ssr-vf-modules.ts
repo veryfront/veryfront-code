@@ -132,19 +132,59 @@ async function resolveFrameworkFile(
     .replace(/\?.*$/, "")
     .replace(/\.js$/, "");
 
+  logger.info(`${LOG_PREFIX} resolveFrameworkFile`, {
+    input: vfModulePath,
+    pathWithoutPrefix,
+    lookupDirs: FRAMEWORK_LOOKUPS.map(([p, d]) => ({ prefix: p, dir: d })),
+  });
+
   for (const [prefix, frameworkDir] of FRAMEWORK_LOOKUPS) {
-    if (!pathWithoutPrefix.startsWith(prefix)) continue;
+    if (!pathWithoutPrefix.startsWith(prefix)) {
+      logger.debug(`${LOG_PREFIX} Skipping lookup - path doesn't start with prefix`, {
+        prefix,
+        pathWithoutPrefix,
+      });
+      continue;
+    }
 
     const relativePath = pathWithoutPrefix.slice(prefix.length);
+    const pathWithPrefixDir = join(frameworkDir, prefix, relativePath);
 
-    const withPrefix = await tryReadWithExtensions(fs, join(frameworkDir, prefix, relativePath));
-    if (withPrefix) return withPrefix;
+    logger.debug(`${LOG_PREFIX} Trying path with prefix`, {
+      prefix,
+      frameworkDir,
+      relativePath,
+      fullPath: pathWithPrefixDir,
+    });
+
+    const withPrefix = await tryReadWithExtensions(fs, pathWithPrefixDir);
+    if (withPrefix) {
+      logger.debug(`${LOG_PREFIX} Found with prefix`, { sourcePath: withPrefix.sourcePath });
+      return withPrefix;
+    }
 
     if (prefix !== "_veryfront/") continue;
 
-    const withoutPrefix = await tryReadWithExtensions(fs, join(frameworkDir, relativePath));
-    if (withoutPrefix) return withoutPrefix;
+    const pathWithoutPrefixDir = join(frameworkDir, relativePath);
+    logger.debug(`${LOG_PREFIX} Trying path without prefix`, {
+      frameworkDir,
+      relativePath,
+      fullPath: pathWithoutPrefixDir,
+    });
+
+    const withoutPrefix = await tryReadWithExtensions(fs, pathWithoutPrefixDir);
+    if (withoutPrefix) {
+      logger.debug(`${LOG_PREFIX} Found without prefix`, { sourcePath: withoutPrefix.sourcePath });
+      return withoutPrefix;
+    }
   }
+
+  logger.warn(`${LOG_PREFIX} resolveFrameworkFile: not found`, {
+    vfModulePath,
+    pathWithoutPrefix,
+    frameworkRoot: FRAMEWORK_ROOT,
+    embeddedSrcDir: EMBEDDED_SRC_DIR,
+  });
 
   return null;
 }
@@ -370,193 +410,212 @@ async function transformFrameworkCode(
     return result.code;
   }
 
-  // Check if we're in a cycle
+  // Check if already transformed (before cycle check to handle concurrent requests)
+  // This prevents false cycle detection when another request has already completed
+  // transforming this file and cached the result.
+  const cached = frameworkFileCache.get(sourcePath);
+  if (cached) {
+    // Validate cached code - reject cycle placeholders and unresolved imports
+    if (isCyclePlaceholder(cached)) {
+      logger.debug(`${LOG_PREFIX} Cache contains cycle placeholder, invalidating`, {
+        sourcePath: sourcePath.slice(-60),
+      });
+      frameworkFileCache.delete(sourcePath);
+    } else {
+      logger.debug(`${LOG_PREFIX} Framework file cache hit`, { sourcePath: sourcePath.slice(-60) });
+      return cached;
+    }
+  }
+
+  // Check if we're in a cycle (another request is currently transforming this file)
   if (transformingFiles.has(sourcePath)) {
     logger.debug(`${LOG_PREFIX} Detected cycle, skipping`, { sourcePath: sourcePath.slice(-60) });
     // Return a placeholder that will fail at runtime but won't cause infinite loop
     return `/* Cycle detected: ${sourcePath} */\nexport {};`;
   }
 
-  // Check if already transformed
-  const cached = frameworkFileCache.get(sourcePath);
-  if (cached) {
-    logger.debug(`${LOG_PREFIX} Framework file cache hit`, { sourcePath: sourcePath.slice(-60) });
-    return cached;
-  }
-
   // Mark as being transformed
   transformingFiles.add(sourcePath);
-  const { transform } = await import("esbuild");
 
-  const ext = sourcePath.match(/\.(tsx?|jsx?)$/)?.[1] ?? "tsx";
-  let loader: "tsx" | "ts" | "jsx" | "js" = "js";
-  if (ext === "tsx") loader = "tsx";
-  else if (ext === "ts") loader = "ts";
-  else if (ext === "jsx") loader = "jsx";
+  try {
+    const { transform } = await import("esbuild");
 
-  const result = await transform(content, {
-    loader,
-    jsx: "automatic",
-    jsxImportSource: "react",
-    format: "esm",
-    target: "es2022",
-  });
+    const ext = sourcePath.match(/\.(tsx?|jsx?)$/)?.[1] ?? "tsx";
+    let loader: "tsx" | "ts" | "jsx" | "js" = "js";
+    if (ext === "tsx") loader = "tsx";
+    else if (ext === "ts") loader = "ts";
+    else if (ext === "jsx") loader = "jsx";
 
-  let transformed = result.code;
+    const result = await transform(content, {
+      loader,
+      jsx: "automatic",
+      jsxImportSource: "react",
+      format: "esm",
+      target: "es2022",
+    });
 
-  // Collect and recursively resolve all #veryfront/ imports
-  const veryfrontReplacements = new Map<string, string>();
-  for (const match of transformed.matchAll(/from\s+["'](#veryfront\/[^"']+)["']/g)) {
-    const specifier = match[1]!;
-    if (veryfrontReplacements.has(specifier)) continue;
+    let transformed = result.code;
 
-    const resolved = await resolveAndTransformVeryfrontImport(specifier, ctx);
-    if (resolved) {
-      veryfrontReplacements.set(specifier, resolved);
-    } else if (throwOnMissingImport) {
-      throw new Error(
-        `${LOG_PREFIX} Could not resolve framework import "${specifier}" in ${sourcePath}. ` +
-          `Expected to find ${
-            join(FRAMEWORK_ROOT, "src", specifier.slice("#veryfront/".length))
-          }.{ts,tsx,js,jsx} ` +
-          `or an index file at that path.`,
-      );
+    // Collect and recursively resolve all #veryfront/ imports
+    const veryfrontReplacements = new Map<string, string>();
+    for (const match of transformed.matchAll(/from\s+["'](#veryfront\/[^"']+)["']/g)) {
+      const specifier = match[1]!;
+      if (veryfrontReplacements.has(specifier)) continue;
+
+      const resolved = await resolveAndTransformVeryfrontImport(specifier, ctx);
+      if (resolved) {
+        veryfrontReplacements.set(specifier, resolved);
+      } else if (throwOnMissingImport) {
+        throw new Error(
+          `${LOG_PREFIX} Could not resolve framework import "${specifier}" in ${sourcePath}. ` +
+            `Expected to find ${
+              join(FRAMEWORK_ROOT, "src", specifier.slice("#veryfront/".length))
+            }.{ts,tsx,js,jsx} ` +
+            `or an index file at that path.`,
+        );
+      }
     }
-  }
 
-  // Collect and transform relative imports (./foo, ../bar) at depth 0 only
-  // This fixes the bug where relative imports in framework files like index.ts
-  // weren't being converted to absolute file:// paths, causing "Module not found" errors
-  //
-  // We only process relative imports at the top level (depth=0) to avoid exponential
-  // explosion. Deeper files will have their #veryfront/ imports resolved by the
-  // existing mechanism, and relative imports within them will be handled by their
-  // own transformation when used directly.
-  const relativeReplacements = new Map<string, string>();
+    // Collect and transform relative imports (./foo, ../bar) at depth 0 only
+    // This fixes the bug where relative imports in framework files like index.ts
+    // weren't being converted to absolute file:// paths, causing "Module not found" errors
+    //
+    // We only process relative imports at the top level (depth=0) to avoid exponential
+    // explosion. Deeper files will have their #veryfront/ imports resolved by the
+    // existing mechanism, and relative imports within them will be handled by their
+    // own transformation when used directly.
+    const relativeReplacements = new Map<string, string>();
 
-  // Only process relative imports at depth 0 (top-level framework file)
-  if (depth === 0) {
-    const relativeImports = findRelativeImports(transformed);
+    // Only process relative imports at depth 0 (top-level framework file)
+    if (depth === 0) {
+      const relativeImports = findRelativeImports(transformed);
 
-    for (const specifier of relativeImports) {
-      // Skip non-code imports (like deno.json, package.json, etc.)
-      if (/\.(json|css|svg|png|jpg|jpeg|gif|ico|woff2?|ttf|eot)$/.test(specifier)) {
-        continue;
-      }
-
-      const resolvedPath = await resolveRelativeFrameworkImport(specifier, sourcePath, ctx.fs);
-      if (!resolvedPath) {
-        if (throwOnMissingImport) {
-          transformingFiles.delete(sourcePath);
-          throw new Error(
-            `${LOG_PREFIX} Could not resolve relative import "${specifier}" in ${sourcePath}`,
-          );
-        }
-        logger.warn(
-          `${LOG_PREFIX} Could not resolve relative import "${specifier}" in ${sourcePath}`,
-        );
-        continue;
-      }
-
-      // Check if this dependency was already transformed (by absolute path)
-      const existingFileUrl = frameworkFileCache.get(resolvedPath);
-      if (existingFileUrl) {
-        // Use existing cached file URL
-        const cachePath = await cacheTransformedCode(existingFileUrl, resolvedPath, ctx.fs);
-        relativeReplacements.set(specifier, `file://${cachePath}`);
-        continue;
-      }
-
-      try {
-        const depContent = await ctx.fs.readTextFile(resolvedPath);
-
-        // Transform the dependency with depth+1 (so its relative imports won't be processed)
-        const transformedDep = await transformFrameworkCode(
-          depContent,
-          resolvedPath,
-          ctx,
-          false,
-          depth + 1,
-        );
-
-        // Skip cycle placeholders - don't cache or use them
-        if (isCyclePlaceholder(transformedDep)) {
-          logger.debug(`${LOG_PREFIX} Skipping relative import cycle placeholder`, {
-            specifier,
-            resolvedPath: resolvedPath.slice(-60),
-          });
+      for (const specifier of relativeImports) {
+        // Skip non-code imports (like deno.json, package.json, etc.)
+        if (/\.(json|css|svg|png|jpg|jpeg|gif|ico|woff2?|ttf|eot)$/.test(specifier)) {
           continue;
         }
 
-        // Cache the transformed code
-        const cachePath = await cacheTransformedCode(transformedDep, resolvedPath, ctx.fs);
-        const fileUrl = `file://${cachePath}`;
+        const resolvedPath = await resolveRelativeFrameworkImport(specifier, sourcePath, ctx.fs);
+        if (!resolvedPath) {
+          if (throwOnMissingImport) {
+            throw new Error(
+              `${LOG_PREFIX} Could not resolve relative import "${specifier}" in ${sourcePath}`,
+            );
+          }
+          logger.warn(
+            `${LOG_PREFIX} Could not resolve relative import "${specifier}" in ${sourcePath}`,
+          );
+          continue;
+        }
 
-        relativeReplacements.set(specifier, fileUrl);
-        // Cache by resolved path for reuse
-        frameworkFileCache.set(resolvedPath, transformedDep);
+        // Check if this dependency was already transformed (by absolute path)
+        const existingFileUrl = frameworkFileCache.get(resolvedPath);
+        if (existingFileUrl) {
+          // Use existing cached file URL
+          const cachePath = await cacheTransformedCode(existingFileUrl, resolvedPath, ctx.fs);
+          relativeReplacements.set(specifier, `file://${cachePath}`);
+          continue;
+        }
 
-        logger.debug(`${LOG_PREFIX} Transformed relative import`, {
-          from: sourcePath.slice(-40),
-          specifier,
-          cachePath: cachePath.slice(-60),
-        });
-      } catch (error) {
-        logger.warn(`${LOG_PREFIX} Failed to transform relative import: ${specifier}`, {
-          from: sourcePath.slice(-40),
-          resolvedPath: resolvedPath.slice(-40),
-          error: error instanceof Error ? error.message : String(error),
-        });
+        try {
+          const depContent = await ctx.fs.readTextFile(resolvedPath);
+
+          // Transform the dependency with depth+1 (so its relative imports won't be processed)
+          const transformedDep = await transformFrameworkCode(
+            depContent,
+            resolvedPath,
+            ctx,
+            false,
+            depth + 1,
+          );
+
+          // Skip cycle placeholders - don't cache or use them
+          if (isCyclePlaceholder(transformedDep)) {
+            logger.debug(`${LOG_PREFIX} Skipping relative import cycle placeholder`, {
+              specifier,
+              resolvedPath: resolvedPath.slice(-60),
+            });
+            continue;
+          }
+
+          // Cache the transformed code
+          const cachePath = await cacheTransformedCode(transformedDep, resolvedPath, ctx.fs);
+          const fileUrl = `file://${cachePath}`;
+
+          relativeReplacements.set(specifier, fileUrl);
+          // Cache by resolved path for reuse
+          frameworkFileCache.set(resolvedPath, transformedDep);
+
+          logger.debug(`${LOG_PREFIX} Transformed relative import`, {
+            from: sourcePath.slice(-40),
+            specifier,
+            cachePath: cachePath.slice(-60),
+          });
+        } catch (error) {
+          logger.warn(`${LOG_PREFIX} Failed to transform relative import: ${specifier}`, {
+            from: sourcePath.slice(-40),
+            resolvedPath: resolvedPath.slice(-40),
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     }
+
+    // Rewrite imports to resolved paths
+    const reactImportMap = getReactImportMap(ctx.reactVersion);
+
+    transformed = await replaceSpecifiers(transformed, (specifier) => {
+      // Handle #veryfront/ imports
+      if (specifier.startsWith("#veryfront/")) {
+        return veryfrontReplacements.get(specifier) ?? null;
+      }
+
+      // Handle relative imports
+      if (specifier.startsWith("./") || specifier.startsWith("../")) {
+        return relativeReplacements.get(specifier) ?? null;
+      }
+
+      const mapped = reactImportMap[specifier];
+      if (mapped) return mapped;
+
+      if (specifier.startsWith("react/")) {
+        return buildReactUrl(
+          "react",
+          ctx.reactVersion,
+          "/" + specifier.slice("react/".length),
+          true,
+        );
+      }
+
+      if (specifier.startsWith("react-dom/")) {
+        return buildReactUrl(
+          "react-dom",
+          ctx.reactVersion,
+          "/" + specifier.slice("react-dom/".length),
+          true,
+        );
+      }
+
+      return null;
+    });
+
+    // Cache HTTP imports to local filesystem
+    const importMap = await loadImportMap(ctx.projectDir);
+    const cacheResult = await cacheHttpImportsToLocal(transformed, {
+      cacheDir: getHttpBundleCacheDir(),
+      importMap,
+      reactVersion: ctx.reactVersion,
+    });
+
+    // Cache the final transformed code
+    frameworkFileCache.set(sourcePath, cacheResult.code);
+
+    return cacheResult.code;
+  } finally {
+    // Always clean up the transformingFiles set to prevent false cycle detection
+    transformingFiles.delete(sourcePath);
   }
-
-  // Rewrite imports to resolved paths
-  const reactImportMap = getReactImportMap(ctx.reactVersion);
-
-  transformed = await replaceSpecifiers(transformed, (specifier) => {
-    // Handle #veryfront/ imports
-    if (specifier.startsWith("#veryfront/")) {
-      return veryfrontReplacements.get(specifier) ?? null;
-    }
-
-    // Handle relative imports
-    if (specifier.startsWith("./") || specifier.startsWith("../")) {
-      return relativeReplacements.get(specifier) ?? null;
-    }
-
-    const mapped = reactImportMap[specifier];
-    if (mapped) return mapped;
-
-    if (specifier.startsWith("react/")) {
-      return buildReactUrl("react", ctx.reactVersion, "/" + specifier.slice("react/".length), true);
-    }
-
-    if (specifier.startsWith("react-dom/")) {
-      return buildReactUrl(
-        "react-dom",
-        ctx.reactVersion,
-        "/" + specifier.slice("react-dom/".length),
-        true,
-      );
-    }
-
-    return null;
-  });
-
-  // Cache HTTP imports to local filesystem
-  const importMap = await loadImportMap(ctx.projectDir);
-  const cacheResult = await cacheHttpImportsToLocal(transformed, {
-    cacheDir: getHttpBundleCacheDir(),
-    importMap,
-    reactVersion: ctx.reactVersion,
-  });
-
-  // Cache the final transformed code and cleanup
-  frameworkFileCache.set(sourcePath, cacheResult.code);
-  transformingFiles.delete(sourcePath);
-
-  return cacheResult.code;
 }
 
 /**
@@ -690,10 +749,27 @@ export const ssrVfModulesPlugin: TransformPlugin = {
   async transform(ctx) {
     logInitOnce();
 
+    // DEBUG: Log the code snippet to see what imports exist
+    const codeSnippet = ctx.code.slice(0, 500);
+    logger.info(`${LOG_PREFIX} Transform called`, {
+      file: ctx.filePath?.slice(-60) ?? "<unknown>",
+      target: ctx.target,
+      codePreview: codeSnippet.replace(/\n/g, "\\n").slice(0, 200),
+      hasVfModulesString: ctx.code.includes("_vf_modules"),
+      hasVeryfrontString: ctx.code.includes("veryfront/"),
+    });
+
     const vfModuleImports = findVfModuleImports(ctx.code);
+    logger.info(`${LOG_PREFIX} findVfModuleImports result`, {
+      file: ctx.filePath?.slice(-60) ?? "<unknown>",
+      count: vfModuleImports.length,
+      imports: vfModuleImports.slice(0, 5),
+    });
+
     if (vfModuleImports.length === 0) return ctx.code;
 
     logger.debug(`${LOG_PREFIX} Found ${vfModuleImports.length} /_vf_modules/ imports`, {
+      file: ctx.filePath?.slice(-60) ?? "<unknown>",
       imports: vfModuleImports,
       frameworkRoot: FRAMEWORK_ROOT,
     });
@@ -703,6 +779,12 @@ export const ssrVfModulesPlugin: TransformPlugin = {
 
     for (const vfModulePath of vfModuleImports) {
       try {
+        logger.info(`${LOG_PREFIX} Resolving framework file`, {
+          vfModulePath,
+          frameworkRoot: FRAMEWORK_ROOT,
+          embeddedSrcDir: EMBEDDED_SRC_DIR,
+        });
+
         const resolved = await resolveFrameworkFile(vfModulePath, fs);
         if (!resolved) {
           logger.warn(`${LOG_PREFIX} Could not resolve ${vfModulePath}`, {
@@ -711,6 +793,12 @@ export const ssrVfModulesPlugin: TransformPlugin = {
           });
           continue;
         }
+
+        logger.info(`${LOG_PREFIX} Resolved framework file`, {
+          vfModulePath,
+          sourcePath: resolved.sourcePath,
+          contentLength: resolved.content.length,
+        });
 
         const transformed = await transformFrameworkSource(
           resolved.content,
@@ -729,10 +817,11 @@ export const ssrVfModulesPlugin: TransformPlugin = {
         const cachePath = await cacheTransformedCode(transformed, vfModulePath, fs);
         replacements.set(vfModulePath, `file://${cachePath}`);
 
-        logger.debug(`${LOG_PREFIX} Transformed ${vfModulePath} -> ${cachePath}`);
+        logger.info(`${LOG_PREFIX} Transformed ${vfModulePath} -> file://${cachePath}`);
       } catch (error) {
         logger.error(`${LOG_PREFIX} Failed to transform ${vfModulePath}`, {
           error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
         });
       }
     }

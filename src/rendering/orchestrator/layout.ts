@@ -66,7 +66,11 @@ export class LayoutOrchestrator {
   }
 
   clearCache(): void {
-    this.config.layoutCache.clear();
+    if (this.config.layoutCache.clearForProject) {
+      this.config.layoutCache.clearForProject(this.config.projectId);
+    } else {
+      this.config.layoutCache.clear();
+    }
     clearSSRModuleCacheForProject(this.config.projectId);
     clearImportMapCache(this.config.projectDir);
     this._preloadedImportMap = null;

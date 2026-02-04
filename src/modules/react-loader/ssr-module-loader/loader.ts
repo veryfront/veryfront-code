@@ -69,6 +69,7 @@ import { VF_MODULE_IMPORT_PATTERN } from "#veryfront/transforms/mdx/esm-module-l
 /**
  * Find /_vf_modules/ imports in transformed code.
  * These need to be resolved to file:// paths for dynamic import.
+ * Matches both /_vf_modules/... and file:///_vf_modules/... patterns.
  */
 function findVfModuleImports(code: string): Array<{ original: string; path: string }> {
   const imports: Array<{ original: string; path: string }> = [];
@@ -76,8 +77,12 @@ function findVfModuleImports(code: string): Array<{ original: string; path: stri
 
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(code)) !== null) {
-    const path = match[1];
-    if (path) imports.push({ original: match[0], path: path.replace(/^\//, "") });
+    const rawPath = match[1];
+    if (rawPath) {
+      // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
+      const path = rawPath.replace(/^(?:file:\/\/)?\/+/, "");
+      imports.push({ original: match[0], path });
+    }
   }
 
   return imports;

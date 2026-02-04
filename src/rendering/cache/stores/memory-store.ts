@@ -81,6 +81,12 @@ export class MemoryCacheStore implements CacheStore {
     this.cache.destroy?.();
     return Promise.resolve();
   }
+
+  size(): number {
+    let count = 0;
+    for (const _ of this.cache.keys()) count++;
+    return count;
+  }
 }
 
 function isLruIntervalDisabled(): boolean {

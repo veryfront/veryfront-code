@@ -214,6 +214,11 @@ export class ContextAwareCacheCoordinator {
   }
 
   getStats(): { size: number } {
+    const storeWithSize = this.store as unknown as { size?: number | (() => number) };
+    const sizeValue = storeWithSize.size;
+    // Call size() with the correct `this` context to avoid "undefined" errors
+    if (typeof sizeValue === "function") return { size: sizeValue.call(this.store) };
+    if (typeof sizeValue === "number") return { size: sizeValue };
     return { size: 0 };
   }
 
@@ -225,8 +230,12 @@ export class ContextAwareCacheCoordinator {
   ): string {
     // Use hyphen instead of equals sign (API cache key validation only allows: a-z A-Z 0-9 _ : . * - /)
     const themeKey = colorScheme ? `:theme-${colorScheme}` : "";
-    const contentKey = cacheKeyOverride ?? `page:${slug}${themeKey}`;
-    return createCacheKey(ctx, contentKey);
+    const baseKey = cacheKeyOverride && cacheKeyOverride.length > 0 ? cacheKeyOverride : slug;
+    const contentKey = baseKey.startsWith("page:") ? baseKey : `page:${baseKey}`;
+    const themedKey = themeKey && !/:theme-(light|dark)$/.test(contentKey)
+      ? `${contentKey}${themeKey}`
+      : contentKey;
+    return createCacheKey(ctx, themedKey);
   }
 
   private isExpired(entry: CachePayload): boolean {

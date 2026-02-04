@@ -377,6 +377,7 @@ function normalizePath(modulePath: string, parentModulePath?: string): string {
 
 /**
  * Find nested module imports in code.
+ * Matches both /_vf_modules/... and file:///_vf_modules/... patterns.
  */
 function findNestedImports(
   moduleCode: string,
@@ -390,8 +391,11 @@ function findNestedImports(
   const vfPattern = new RegExp(VF_MODULE_IMPORT_PATTERN.source, "g");
   let match: RegExpExecArray | null;
   while ((match = vfPattern.exec(moduleCode)) !== null) {
-    const path = match[1];
-    if (path) vfModules.push({ original: match[0], path: path.replace(/^\//, "") });
+    const rawPath = match[1];
+    // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
+    if (rawPath) {
+      vfModules.push({ original: match[0], path: rawPath.replace(/^(?:file:\/\/)?\/+/, "") });
+    }
   }
 
   const relativePattern = new RegExp(RELATIVE_IMPORT_PATTERN.source, "g");

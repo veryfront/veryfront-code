@@ -63,8 +63,14 @@ function extractFrameworkBundlePaths(code: string): string[] {
  * Pattern to detect unresolved /_vf_modules/_veryfront/ imports in code.
  * These should have been transformed to file:// paths by ssrVfModulesPlugin.
  * If they're still present, the cache is stale/corrupted.
+ *
+ * Handles multiple cases:
+ * - from "/_vf_modules/_veryfront/..."
+ * - from "_vf_modules/_veryfront/..."
+ * - from "file:///_vf_modules/_veryfront/..." (Deno adds file:// prefix to raw paths)
  */
-const UNRESOLVED_VF_MODULES_PATTERN = /from\s*["'](\/?_vf_modules\/_veryfront\/[^"']+)["']/;
+const UNRESOLVED_VF_MODULES_PATTERN =
+  /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/_veryfront\/[^"']+)["']/;
 
 /**
  * Validate that framework bundles referenced in cached code exist locally.
