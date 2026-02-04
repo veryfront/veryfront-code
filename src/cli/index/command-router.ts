@@ -36,11 +36,11 @@ import {
   setVerboseMode,
   showLogo,
 } from "../utils/index.ts";
-import { handleBuildCommand } from "./build-handler.ts";
-import { handleDevCommand } from "./dev-handler.ts";
-import { handleGenerateCommand } from "./generate-handler.ts";
-import { handleStudioCommand } from "./studio-handler.ts";
-import { handleStartCommand } from "./start-handler.ts";
+import { handleBuildCommand } from "../commands/build/handler.ts";
+import { handleDevCommand } from "../commands/dev/handler.ts";
+import { handleGenerateCommand } from "../commands/generate/handler.ts";
+import { handleStudioCommand } from "../commands/studio/handler.ts";
+import { handleStartCommand } from "../commands/start/handler.ts";
 import type { ParsedArgs } from "./types.ts";
 import type { InitTemplate } from "../commands/init/types.ts";
 import type { IntegrationName } from "../templates/types.ts";

@@ -1,14 +1,12 @@
 /**
- * Build command handler for CLI
- *
- * @module cli/index/build-handler
+ * Build command handler
  */
 
 import { cliLogger } from "#veryfront/utils";
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { buildCommand } from "../commands/build.ts";
-import { parseArrayArg } from "./arg-parser.ts";
-import type { BuildCommandArgs } from "./types.ts";
+import { buildCommand } from "./index.ts";
+import { parseArrayArg } from "../../index/arg-parser.ts";
+import type { BuildCommandArgs } from "../../index/types.ts";
 
 export async function handleBuildCommand(args: BuildCommandArgs): Promise<void> {
   const projectDir = cwd();

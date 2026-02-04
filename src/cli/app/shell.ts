@@ -18,7 +18,7 @@ import {
   getStdinReader,
   setRawMode,
 } from "#veryfront/platform/compat/stdin.ts";
-import { cursor, screen, SPINNER_FRAMES } from "../ui/ansi.ts";
+import { cursor, screen } from "../ui/ansi.ts";
 import { dim } from "../ui/colors.ts";
 import { getTerminalWidth } from "../ui/layout.ts";
 import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";

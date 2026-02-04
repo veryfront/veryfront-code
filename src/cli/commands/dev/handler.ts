@@ -1,10 +1,14 @@
+/**
+ * Dev command handler
+ */
+
 import { isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT } from "#veryfront/utils";
-import { devCommand } from "../commands/dev.ts";
-import { clearAllLocalCaches } from "../../transforms/mdx/esm-module-loader/cache/index.ts";
-import type { ParsedArgs } from "./types.ts";
+import { devCommand } from "./index.ts";
+import { clearAllLocalCaches } from "../../../transforms/mdx/esm-module-loader/cache/index.ts";
+import type { ParsedArgs } from "../../index/types.ts";
 
 async function resolveProjectDir(args: ParsedArgs): Promise<string> {
   const projectArg = args.project ? String(args.project) : undefined;

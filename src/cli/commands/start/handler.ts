@@ -9,11 +9,11 @@ import { cwd, getEnv, onGlobalError, setEnv } from "#veryfront/platform/compat/p
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { isAbsolute, join, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { cliLogger } from "#veryfront/utils";
-import { exitProcess, registerTerminationSignals } from "../utils/index.ts";
-import { generateDefaultProjectId } from "../utils/project.ts";
-import { clearAllLocalCaches } from "../../transforms/mdx/esm-module-loader/cache/index.ts";
-import { discoverAll } from "../discovery/index.ts";
-import type { ParsedArgs } from "./types.ts";
+import { exitProcess, registerTerminationSignals } from "../../utils/index.ts";
+import { generateDefaultProjectId } from "../../utils/project.ts";
+import { clearAllLocalCaches } from "../../../transforms/mdx/esm-module-loader/cache/index.ts";
+import { discoverAll } from "../../discovery/index.ts";
+import type { ParsedArgs } from "../../index/types.ts";
 
 const DEFAULT_START_PORT = 8080;
 const DEFAULT_MCP_PORT = 9999;
@@ -98,8 +98,8 @@ interface ProxySetup {
 async function trySetupProxy(localProjects: Map<string, string>): Promise<ProxySetup> {
   try {
     // Proxy is only available in local dev, not in the npm package
-    const { createProxyHandler, injectContextHeaders } = await import("../../proxy/handler.ts");
-    const { createCacheFromEnv } = await import("../../proxy/cache/index.ts");
+    const { createProxyHandler, injectContextHeaders } = await import("../../../proxy/handler.ts");
+    const { createCacheFromEnv } = await import("../../../proxy/cache/index.ts");
 
     const proxyConfig = {
       apiBaseUrl: getEnv("VERYFRONT_API_BASE_URL") ?? "http://api.veryfront.me:4000",
@@ -154,7 +154,7 @@ export async function handleStartCommand(args: ParsedArgs): Promise<void> {
   // Clear stale ESM caches to prevent module resolution issues
   await clearAllLocalCaches();
 
-  const { createApp, showStartup } = await import("../app/index.ts");
+  const { createApp, showStartup } = await import("../../app/index.ts");
   const discovered = await discoverProjects(projectPath);
 
   const app = createApp({
@@ -264,7 +264,7 @@ export async function handleStartCommand(args: ParsedArgs): Promise<void> {
 
   await server.ready;
 
-  const { createMCPServer } = await import("../mcp/index.ts");
+  const { createMCPServer } = await import("../../mcp/index.ts");
   const mcpServer = await createMCPServer({ httpPort: mcpPort });
 
   app.setServerReady();

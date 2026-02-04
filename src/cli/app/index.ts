@@ -11,7 +11,7 @@ export { showStartup } from "./startup.ts";
 
 // Types
 export type { App, AppConfig } from "./types.ts";
-export type { AppState, StateUpdater, LogMeta, ProjectInfo } from "./state.ts";
+export type { AppState, LogMeta, ProjectInfo, StateUpdater } from "./state.ts";
 
 // State management (for external consumers)
 export * from "./state.ts";

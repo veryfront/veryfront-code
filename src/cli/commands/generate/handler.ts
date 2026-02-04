@@ -1,13 +1,11 @@
 /**
- * Generate command handler for CLI
- *
- * @module cli/index/generate-handler
+ * Generate command handler
  */
 
-import { generateCommand } from "../commands/generate.ts";
-import { showCommandHelp } from "../help/index.ts";
-import { exitProcess } from "../utils/index.ts";
-import type { GenerateCommandArgs } from "./types.ts";
+import { generateCommand } from "./index.ts";
+import { showCommandHelp } from "../../help/index.ts";
+import { exitProcess } from "../../utils/index.ts";
+import type { GenerateCommandArgs } from "../../index/types.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 
 const VALID_TYPES = ["page", "layout", "provider", "api", "integration"] as const;

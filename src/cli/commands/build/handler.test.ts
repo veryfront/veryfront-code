@@ -4,10 +4,10 @@
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { handleBuildCommand } from "./build-handler.ts";
-import type { BuildCommandArgs } from "./types.ts";
+import { handleBuildCommand } from "./handler.ts";
+import type { BuildCommandArgs } from "../../index/types.ts";
 
-describe("index/build-handler", () => {
+describe("commands/build/handler", () => {
   describe("handleBuildCommand", () => {
     it("is an async function", () => {
       assertEquals(typeof handleBuildCommand, "function");

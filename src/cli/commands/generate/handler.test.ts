@@ -4,10 +4,10 @@
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { handleGenerateCommand } from "./generate-handler.ts";
-import type { GenerateCommandArgs } from "./types.ts";
+import { handleGenerateCommand } from "./handler.ts";
+import type { GenerateCommandArgs } from "../../index/types.ts";
 
-describe("index/generate-handler", () => {
+describe("commands/generate/handler", () => {
   describe("handleGenerateCommand", () => {
     it("is an async function", () => {
       assertEquals(typeof handleGenerateCommand, "function");

@@ -1,8 +1,12 @@
-import type { ParsedArgs } from "./types.ts";
-import { studioCommand } from "../commands/studio.ts";
+/**
+ * Studio command handler
+ */
+
+import type { ParsedArgs } from "../../index/types.ts";
+import { studioCommand } from "./index.ts";
 import { cliLogger } from "#veryfront/utils";
 import { formatUserError } from "#veryfront/errors/user-friendly/index.ts";
-import { exitProcess } from "../utils/index.ts";
+import { exitProcess } from "../../utils/index.ts";
 
 export async function handleStudioCommand(args: ParsedArgs): Promise<void> {
   const project = typeof args._[1] === "string" ? args._[1] : undefined;
