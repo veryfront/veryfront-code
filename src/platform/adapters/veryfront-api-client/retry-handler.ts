@@ -64,7 +64,10 @@ export async function requestWithRetry(
           if (!response.ok) {
             const text = await response.text();
 
-            logger.error("[VeryfrontAPIClient] Request failed", {
+            // Use debug level for 404s (expected for optional files like deno.json, globals.css)
+            // Use error level for other failures (5xx, 4xx except 404)
+            const logLevel = response.status === 404 ? "debug" : "error";
+            logger[logLevel]("[VeryfrontAPIClient] Request failed", {
               url: url.replace(/token=[^&]+/, "token=***"),
               status: response.status,
               statusText: response.statusText,
