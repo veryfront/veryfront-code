@@ -30,8 +30,8 @@ let parseArgsFn: ParseArgsFn | null = null;
 
 async function loadDeps(): Promise<void> {
   if (isDeno) {
-    const { parseArgs } = await import("std/flags/mod.ts");
-    parseArgsFn = parseArgs as ParseArgsFn;
+    const { parse } = await import("jsr:@std/flags");
+    parseArgsFn = parse as ParseArgsFn;
     return;
   }
 
