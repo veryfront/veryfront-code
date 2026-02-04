@@ -11,7 +11,13 @@ import { z } from "zod";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "../shared/config.ts";
 import { CommonArgs, createArgParser } from "../shared/args.ts";
-import { confirmPrompt, createSpinner, logInfo, logSuccess } from "../utils/index.ts";
+import {
+  confirmPrompt,
+  createNoopSpinner,
+  createSpinner,
+  logInfo,
+  logSuccess,
+} from "../utils/index.ts";
 import { muted } from "../ui/colors.ts";
 
 /**
@@ -140,14 +146,6 @@ export function createDeployment(
     release_id: releaseId,
     environment_id: environmentId,
   });
-}
-
-function createNoopSpinner(): {
-  start: () => void;
-  stop: () => void;
-  update: (msg: string) => void;
-} {
-  return { start: () => {}, stop: () => {}, update: () => {} };
 }
 
 /**

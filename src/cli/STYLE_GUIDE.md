@@ -127,12 +127,13 @@ catch (e) {
 ### Brand Palette
 
 ```typescript
-brand(); // #00A3F4 - Blue, primary actions and links
-success(); // #22C55E - Green, completed states
-error(); // #EF4444 - Red, failures only
-warning(); // #EAB308 - Yellow, caution
-muted(); // #71717A - Gray, secondary text
+brand(); // rgb(252,143,93) - Orange, primary actions and highlights
+success(); // rgb(34,197,94)  - Green, completed states
+error(); // rgb(239,68,68)  - Red, failures only
+warning(); // rgb(234,179,8)  - Yellow, caution
+muted(); // rgb(113,113,122) - Gray, secondary text
 dim(); // ANSI dim, de-emphasized text
+bold(); // ANSI bold
 ```
 
 ### Usage Rules

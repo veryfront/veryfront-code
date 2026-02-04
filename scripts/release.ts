@@ -184,7 +184,6 @@ async function updateTemplates(newVersion: string) {
 	console.log("\n📝 Updating template versions...");
 	const filesToUpdate = [
 		"src/cli/commands/init/config-generator.ts",
-		"src/cli/npm-cli.ts",
 		"src/core/utils/constants/cdn.ts",
 	];
 

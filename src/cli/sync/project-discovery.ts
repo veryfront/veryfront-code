@@ -1,4 +1,4 @@
-import { getApiUrl } from "../auth/constants.ts";
+import { getApiUrl } from "../shared/constants.ts";
 import { readToken } from "../auth/token-store.ts";
 import { type UserInfo, validateToken } from "../auth/login.ts";
 

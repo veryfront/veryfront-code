@@ -9,6 +9,7 @@ import { join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { cliLogger } from "#veryfront/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
 import { DEFAULT_API_URL } from "./constants.ts";
@@ -40,8 +41,8 @@ export async function readConfigFile(projectDir: string): Promise<VeryfrontConfi
       const config = module.default ?? module;
 
       if (config?.projectSlug) return { projectSlug: config.projectSlug };
-    } catch {
-      // Ignore import errors, try next format
+    } catch (error) {
+      cliLogger.debug(`Failed to import config file ${configPath}:`, error);
     }
   }
 
@@ -51,7 +52,8 @@ export async function readConfigFile(projectDir: string): Promise<VeryfrontConfi
     if (!(await fs.exists(rcPath))) return null;
     const content = await fs.readTextFile(rcPath);
     return JSON.parse(content) as VeryfrontConfig;
-  } catch {
+  } catch (error) {
+    cliLogger.debug(`Failed to read .veryfrontrc:`, error);
     return null;
   }
 }
@@ -71,8 +73,8 @@ async function inferProjectSlug(projectDir: string): Promise<string | null> {
       const name = pkg.name?.replace(/^@[^/]+\//, "");
       if (name) return slugify(name);
     }
-  } catch {
-    // Ignore errors
+  } catch (error) {
+    cliLogger.debug("Failed to read package.json for project slug:", error);
   }
 
   const dirName = projectDir.split(/[/\\]/).pop();
@@ -180,7 +182,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
         const errorBody = (await response.json()) as ApiError;
         errorMessage = errorBody.message || errorBody.error || errorMessage;
       } catch {
-        // Ignore JSON parse errors
+        // Keep default error message if JSON parsing fails
       }
 
       throw new Error(errorMessage);

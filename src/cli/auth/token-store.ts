@@ -1,7 +1,8 @@
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
-import { CONFIG_DIR_NAME, TOKEN_FILE_NAME, TOKEN_FILE_PERMISSIONS } from "./constants.ts";
+import { cliLogger } from "#veryfront/utils";
+import { CONFIG_DIR_NAME, TOKEN_FILE_NAME, TOKEN_FILE_PERMISSIONS } from "../shared/constants.ts";
 
 function getConfigDir(env: RuntimeEnv = getRuntimeEnv()): string {
   if (env.xdgConfigHome) return join(env.xdgConfigHome, CONFIG_DIR_NAME);
@@ -22,7 +23,8 @@ export async function readToken(env?: RuntimeEnv): Promise<string | null> {
     const content = await fs.readTextFile(tokenPath);
     const token = content.trim();
     return token ? token : null;
-  } catch {
+  } catch (error) {
+    cliLogger.debug("Failed to read token:", error);
     return null;
   }
 }
@@ -47,8 +49,8 @@ export async function deleteToken(env?: RuntimeEnv): Promise<void> {
   try {
     if (!(await fs.exists(tokenPath))) return;
     await fs.remove(tokenPath);
-  } catch {
-    // Ignore errors
+  } catch (error) {
+    cliLogger.debug("Failed to delete token:", error);
   }
 }
 

@@ -16,7 +16,7 @@ import { exitProcess, isTTY } from "../../utils/index.ts";
 import { readToken, saveToken, validateToken } from "../../auth/index.ts";
 import { canOpenBrowser, openBrowser } from "../../auth/browser.ts";
 import { getCallbackUrl, startCallbackServer } from "../../auth/callback-server.ts";
-import { DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "../../auth/constants.ts";
+import { DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "../../shared/constants.ts";
 import { newCommand } from "../new.ts";
 import { deployCommand } from "../deploy.ts";
 import { pushCommand } from "../push.ts";

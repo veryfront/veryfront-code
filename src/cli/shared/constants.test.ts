@@ -12,7 +12,7 @@ import {
 } from "./constants.ts";
 import type { RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
-describe("cli/auth/constants", () => {
+describe("cli/shared/constants", () => {
   describe("exported constants", () => {
     it("should have correct DEFAULT_API_URL", () => {
       assertEquals(DEFAULT_API_URL, "https://api.veryfront.com");

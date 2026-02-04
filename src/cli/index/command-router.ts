@@ -4,7 +4,6 @@
  * @module cli/index/command-router
  */
 
-import { handleError } from "#veryfront/errors";
 import { formatErrorBox } from "#veryfront/errors/user-friendly/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -521,14 +520,10 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         return;
     }
   } catch (error) {
-    const formattedError = error instanceof Error ? formatErrorBox(error) : String(error);
+    const message = error instanceof Error ? error.message : String(error);
     console.log();
-    console.log(formattedError);
+    console.log(formatErrorBox(new Error(message)));
     console.log();
-
-    if (!(error instanceof Error)) handleError(new Error(String(error)));
-
     exitProcess(1);
-    throw error;
   }
 }

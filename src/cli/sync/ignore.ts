@@ -4,6 +4,7 @@
 
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { cliLogger } from "#veryfront/utils";
 
 /** Default patterns always ignored */
 const DEFAULT_IGNORE_PATTERNS = [
@@ -82,8 +83,8 @@ export async function loadIgnorePatterns(projectPath: string): Promise<string[]>
       .filter((line) => line && !line.startsWith("#"));
 
     patterns.push(...customPatterns);
-  } catch {
-    // Ignore errors reading .vfignore
+  } catch (error) {
+    cliLogger.debug("Failed to read .vfignore:", error);
   }
 
   return patterns;

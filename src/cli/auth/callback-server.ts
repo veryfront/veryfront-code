@@ -1,5 +1,9 @@
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
-import { DEFAULT_CALLBACK_PORT, DEFAULT_LOGIN_TIMEOUT_MS, MAX_PORT_ATTEMPTS } from "./constants.ts";
+import {
+  DEFAULT_CALLBACK_PORT,
+  DEFAULT_LOGIN_TIMEOUT_MS,
+  MAX_PORT_ATTEMPTS,
+} from "../shared/constants.ts";
 
 export interface CallbackResult {
   token: string;
@@ -160,36 +164,16 @@ function createWaitForCallback(
   };
 }
 
-async function findAvailablePort(startPort: number): Promise<number> {
-  for (let port = startPort, i = 0; i < MAX_PORT_ATTEMPTS; i++, port++) {
-    try {
-      if (isDeno) {
-        // @ts-ignore - Deno global
-        const listener = Deno.listen({ port, hostname: "127.0.0.1" });
-        listener.close();
-        return port;
-      }
-
-      const net = await import("node:net");
-      const available = await new Promise<boolean>((resolve) => {
-        const server = net.createServer();
-
-        server.once("error", () => resolve(false));
-        server.once("listening", () => {
-          server.close();
-          resolve(true);
-        });
-
-        server.listen(port, "127.0.0.1");
-      });
-
-      if (available) return port;
-    } catch {
-      // Port in use
-    }
+function isAddrInUseError(error: unknown): boolean {
+  if (error instanceof Error) {
+    // Deno: "AddrInUse: Address already in use (os error 48)" - error.name is "AddrInUse"
+    // Node.js: error.code is "EADDRINUSE"
+    const name = error.name || "";
+    const message = error.message || "";
+    const code = (error as { code?: string }).code || "";
+    return name === "AddrInUse" || code === "EADDRINUSE" || message.includes("EADDRINUSE");
   }
-
-  throw new Error("Could not find an available port");
+  return false;
 }
 
 function handleCallback(url: URL): { result: CallbackResult; html: string } {
@@ -203,7 +187,7 @@ function handleCallback(url: URL): { result: CallbackResult; html: string } {
   return { result: { token: "", error: message }, html: renderErrorPage(message) };
 }
 
-function startDenoServer(port: number): CallbackServer {
+function tryStartDenoServer(port: number): CallbackServer {
   let resolveCallback: (result: CallbackResult) => void = () => {};
   const callbackPromise = new Promise<CallbackResult>((resolve) => {
     resolveCallback = resolve;
@@ -238,7 +222,21 @@ function startDenoServer(port: number): CallbackServer {
   };
 }
 
-async function startNodeServer(port: number): Promise<CallbackServer> {
+function startDenoServer(startPort: number): CallbackServer {
+  for (let port = startPort, i = 0; i < MAX_PORT_ATTEMPTS; i++, port++) {
+    try {
+      return tryStartDenoServer(port);
+    } catch (error) {
+      if (!isAddrInUseError(error) || i === MAX_PORT_ATTEMPTS - 1) {
+        throw error;
+      }
+      // Port in use, try next port
+    }
+  }
+  throw new Error("Could not find an available port");
+}
+
+async function tryStartNodeServer(port: number): Promise<CallbackServer> {
   const http = await import("node:http");
 
   let resolveCallback: (result: CallbackResult) => void = () => {};
@@ -262,7 +260,13 @@ async function startNodeServer(port: number): Promise<CallbackServer> {
     res.end(html);
   });
 
-  await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => {
+      server.removeListener("error", reject);
+      resolve();
+    });
+  });
 
   return {
     port,
@@ -273,11 +277,25 @@ async function startNodeServer(port: number): Promise<CallbackServer> {
   };
 }
 
+async function startNodeServer(startPort: number): Promise<CallbackServer> {
+  for (let port = startPort, i = 0; i < MAX_PORT_ATTEMPTS; i++, port++) {
+    try {
+      return await tryStartNodeServer(port);
+    } catch (error) {
+      if (!isAddrInUseError(error) || i === MAX_PORT_ATTEMPTS - 1) {
+        throw error;
+      }
+      // Port in use, try next port
+    }
+  }
+  throw new Error("Could not find an available port");
+}
+
 export async function startCallbackServer(
   preferredPort: number = DEFAULT_CALLBACK_PORT,
 ): Promise<CallbackServer> {
-  const port = await findAvailablePort(preferredPort);
-  return isDeno ? startDenoServer(port) : startNodeServer(port);
+  // Server functions handle port retry internally to avoid race conditions
+  return isDeno ? startDenoServer(preferredPort) : startNodeServer(preferredPort);
 }
 
 export function getCallbackUrl(port: number): string {

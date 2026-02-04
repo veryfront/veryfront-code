@@ -7,7 +7,7 @@ import { getCallbackUrl, startCallbackServer } from "./callback-server.ts";
 import { canOpenBrowser, openBrowser } from "./browser.ts";
 import { isTTY, promptUser } from "../utils/index.ts";
 import { brand, dim, error, muted, success, warning } from "../ui/colors.ts";
-import { DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "./constants.ts";
+import { DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "../shared/constants.ts";
 
 export type AuthMethod = "google" | "github" | "microsoft" | "token";
 
