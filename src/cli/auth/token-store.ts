@@ -14,10 +14,10 @@ function getTokenPath(env: RuntimeEnv = getRuntimeEnv()): string {
 }
 
 export async function readToken(env?: RuntimeEnv): Promise<string | null> {
-  const fs = createFileSystem();
-  const tokenPath = getTokenPath(env);
-
   try {
+    const fs = createFileSystem();
+    const tokenPath = getTokenPath(env);
+
     if (!(await fs.exists(tokenPath))) return null;
     const content = await fs.readTextFile(tokenPath);
     const token = content.trim();

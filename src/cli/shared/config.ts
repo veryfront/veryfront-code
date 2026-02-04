@@ -89,7 +89,7 @@ export async function resolveConfig(
 
   const apiUrl = env.apiUrl ?? configFile?.apiUrl ?? DEFAULT_API_URL;
 
-  const apiToken = env.apiToken ?? configFile?.apiToken ?? (await readToken());
+  const apiToken = env.apiToken ?? configFile?.apiToken ?? (await readToken(env));
   if (!apiToken) {
     throw new Error(
       "Missing API token. Run 'veryfront login' or set VERYFRONT_API_TOKEN environment variable",
@@ -122,7 +122,7 @@ export async function resolveConfigWithAuth(
   const apiUrl = env.apiUrl ?? configFile?.apiUrl ?? DEFAULT_API_URL;
 
   // Try to get token from environment or stored token
-  let apiToken = env.apiToken ?? configFile?.apiToken ?? (await readToken());
+  let apiToken = env.apiToken ?? configFile?.apiToken ?? (await readToken(env));
 
   // No token? Prompt login interactively
   if (!apiToken) {
@@ -131,7 +131,7 @@ export async function resolveConfigWithAuth(
       throw new Error("Authentication required for this operation.");
     }
     // Re-read token after successful login
-    apiToken = (await readToken()) ?? null;
+    apiToken = (await readToken(env)) ?? null;
     if (!apiToken) {
       throw new Error("Authentication failed. Please try again.");
     }

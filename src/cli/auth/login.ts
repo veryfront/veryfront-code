@@ -223,11 +223,11 @@ export async function ensureAuthenticated(
     console.log("  " + warning("Warning: VERYFRONT_API_TOKEN is invalid"));
   }
 
-  const storedToken = await readToken();
+  const storedToken = await readToken(env);
   if (storedToken) {
     const userInfo = await validateToken(storedToken);
     if (userInfo) return userInfo;
-    await deleteToken();
+    await deleteToken(env);
     console.log("  " + warning("Session expired. Please log in again."));
   }
 
