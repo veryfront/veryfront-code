@@ -1,44 +1,42 @@
-# Veryfront Renderer Source Code Reference
+# Veryfront Code
 
-Complete module reference for working with Veryfront Renderer's source code.
-
-## Quick Module Overview
+## Component Overview
 
 ### Core Infrastructure
 
 | Module | Export Alias | Purpose |
 |--------|--------------|---------|
-| **`config/`** | `@veryfront/config` | Configuration schema and loader |
-| **`types/`** | `@veryfront/types` | TypeScript type definitions |
-| **`utils/`** | `@veryfront/utils` | Shared utilities (logging, caching, hashing, paths) |
-| **`errors/`** | `@veryfront/errors` | Error handling with user-friendly messages |
-| **`platform/`** | `@veryfront/platform` | Runtime adapters (Deno, Node, Bun, Cloudflare) |
+| **`config/`** | `#veryfront/config` | Configuration schema and loader |
+| **`types/`** | `#veryfront/types` | TypeScript type definitions |
+| **`utils/`** | `#veryfront/utils` | Shared utilities (logging, caching, hashing, paths) |
+| **`errors/`** | `#veryfront/errors` | Error handling with user-friendly messages |
+| **`platform/`** | `#veryfront/platform` | Runtime adapters (Deno, Node, Bun, Cloudflare) |
 
 ### Request Handling
 
 | Module | Export Alias | Purpose |
 |--------|--------------|---------|
-| **`server/`** | `@veryfront/server` | Dev server (HMR) + production server + handlers |
+| **`server/`** | `#veryfront/server` | Dev server (HMR) + production server + handlers |
 | **`proxy/`** | - | Reverse proxy for multi-project routing |
-| **`routing/`** | `@veryfront/routing` | Route matching, API routes, dynamic routes |
-| **`middleware/`** | `@veryfront/middleware` | Composable request/response pipeline |
-| **`security/`** | `@veryfront/security` | Input validation, CORS, CSP, rate limiting |
+| **`routing/`** | `#veryfront/routing` | Route matching, API routes, dynamic routes |
+| **`middleware/`** | `#veryfront/middleware` | Composable request/response pipeline |
+| **`security/`** | `#veryfront/security` | Input validation, CORS, CSP, rate limiting |
 
 ### Rendering Pipeline
 
 | Module | Export Alias | Purpose |
 |--------|--------------|---------|
-| **`rendering/`** | `@veryfront/rendering` | SSR/RSC engine, layouts, streaming |
-| **`html/`** | `@veryfront/html` | HTML shell generation, metadata, hydration |
-| **`react/`** | `@veryfront/react`, `@veryfront/components` | Framework components and hooks |
-| **`data/`** | `@veryfront/data` | Data fetching (`getServerData`, etc.) |
+| **`rendering/`** | `#veryfront/rendering` | SSR/RSC engine, layouts, streaming |
+| **`html/`** | `#veryfront/html` | HTML shell generation, metadata, hydration |
+| **`react/`** | `#veryfront/react`, `#veryfront/components` | Framework components and hooks |
+| **`data/`** | `#veryfront/data` | Data fetching (`getServerData`, etc.) |
 
 ### Module System
 
 | Module | Export Alias | Purpose |
 |--------|--------------|---------|
-| **`modules/`** | `@veryfront/modules` | Component registry, React loader, module server |
-| **`transforms/`** | `@veryfront/transforms` | Code transformation (ESM, MDX, import rewriting) |
+| **`modules/`** | `#veryfront/modules` | Component registry, React loader, module server |
+| **`transforms/`** | `#veryfront/transforms` | Code transformation (ESM, MDX, import rewriting) |
 | **`cache/`** | - | Multi-layer caching (memory, Redis, file) |
 | **`bundler/`** | - | esbuild integration for bundling |
 
@@ -46,7 +44,7 @@ Complete module reference for working with Veryfront Renderer's source code.
 
 | Module | Export Alias | Purpose |
 |--------|--------------|---------|
-| **`build/`** | `@veryfront/build` | Production builds, SSG, asset optimization |
+| **`build/`** | `#veryfront/build` | Production builds, SSG, asset optimization |
 | **`cli/`** | `veryfront/cli` | Command-line interface (`dev`, `build`, `init`) |
 
 ### AI/Agent System
@@ -85,7 +83,7 @@ Complete module reference for working with Veryfront Renderer's source code.
 
 **Purpose**: Configuration schema, loading, and validation
 
-**Exports**: `@veryfront/config`
+**Exports**: `#veryfront/config`
 
 **Key Features**:
 - `veryfront.config.ts` schema and types
@@ -98,7 +96,7 @@ Complete module reference for working with Veryfront Renderer's source code.
 
 **Purpose**: Shared TypeScript type definitions
 
-**Exports**: `@veryfront/types`
+**Exports**: `#veryfront/types`
 
 **Key Features**:
 - Framework type definitions
@@ -111,7 +109,7 @@ Complete module reference for working with Veryfront Renderer's source code.
 
 **Purpose**: Shared utilities used across the framework
 
-**Exports**: `@veryfront/utils`
+**Exports**: `#veryfront/utils`
 
 **Key Features**:
 - Logger with debug/info/warn/error levels
@@ -126,7 +124,7 @@ Complete module reference for working with Veryfront Renderer's source code.
 
 **Purpose**: Structured error handling with user-friendly messages
 
-**Exports**: `@veryfront/errors`
+**Exports**: `#veryfront/errors`
 
 **Key Features**:
 - Error catalog with codes
@@ -140,7 +138,7 @@ Complete module reference for working with Veryfront Renderer's source code.
 
 **Purpose**: Multi-platform support (Deno, Node, Bun, Cloudflare Workers)
 
-**Exports**: `@veryfront/platform`
+**Exports**: `#veryfront/platform`
 
 **Key Features**:
 - Unified filesystem API across runtimes
@@ -160,7 +158,7 @@ Complete module reference for working with Veryfront Renderer's source code.
 
 **Purpose**: Development and production HTTP servers
 
-**Exports**: `@veryfront/server`
+**Exports**: `#veryfront/server`
 
 **Key Features**:
 - Dev server with Hot Module Replacement (HMR)
@@ -197,7 +195,7 @@ Complete module reference for working with Veryfront Renderer's source code.
 
 **Purpose**: Route matching, dynamic routes, API routes
 
-**Exports**: `@veryfront/routing`
+**Exports**: `#veryfront/routing`
 
 **Key Features**:
 - App Router style dynamic routing (`[slug]`, `[...catchAll]`)
@@ -215,7 +213,7 @@ Complete module reference for working with Veryfront Renderer's source code.
 
 **Purpose**: Composable request/response middleware system
 
-**Exports**: `@veryfront/middleware`
+**Exports**: `#veryfront/middleware`
 
 **Key Features**:
 - Pipeline composition with `next()`
@@ -231,7 +229,7 @@ Complete module reference for working with Veryfront Renderer's source code.
 
 **Purpose**: Security primitives, input validation, and protection
 
-**Exports**: `@veryfront/security`
+**Exports**: `#veryfront/security`
 
 **Key Features**:
 - Input validation with Zod
@@ -251,7 +249,7 @@ Complete module reference for working with Veryfront Renderer's source code.
 
 **Purpose**: Server-side rendering, React Server Components, layouts
 
-**Exports**: `@veryfront/rendering`
+**Exports**: `#veryfront/rendering`
 
 **Key Features**:
 - SSR with React 17/18/19 support
@@ -276,7 +274,7 @@ Complete module reference for working with Veryfront Renderer's source code.
 
 **Purpose**: HTML document generation, metadata, hydration
 
-**Exports**: `@veryfront/html`
+**Exports**: `#veryfront/html`
 
 **Key Features**:
 - HTML shell generation
@@ -296,7 +294,7 @@ Complete module reference for working with Veryfront Renderer's source code.
 
 **Purpose**: React components and React-specific utilities
 
-**Exports**: `@veryfront/react`, `@veryfront/components`
+**Exports**: `#veryfront/react`, `#veryfront/components`
 
 **Key Features**:
 - `<Head>` component for metadata
@@ -318,7 +316,7 @@ Complete module reference for working with Veryfront Renderer's source code.
 
 **Purpose**: Data fetching abstractions for SSR/SSG
 
-**Exports**: `@veryfront/data`
+**Exports**: `#veryfront/data`
 
 **Key Features**:
 - `getServerData()` for SSR page data
@@ -332,7 +330,7 @@ Complete module reference for working with Veryfront Renderer's source code.
 
 **Purpose**: Component registry and module serving at runtime
 
-**Exports**: `@veryfront/modules`
+**Exports**: `#veryfront/modules`
 
 **Key Features**:
 - Component registry for React
@@ -353,7 +351,7 @@ Complete module reference for working with Veryfront Renderer's source code.
 
 **Purpose**: Code transformation for ESM, MDX, and imports
 
-**Exports**: `@veryfront/transforms`
+**Exports**: `#veryfront/transforms`
 
 **Key Features**:
 - ESM transformation (TypeScript/JSX to browser-compatible JS)
@@ -401,7 +399,7 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 **Purpose**: Production builds, MDX compilation, asset optimization
 
-**Exports**: `@veryfront/build`
+**Exports**: `#veryfront/build`
 
 **Key Features**:
 - MDX compilation to JSX
@@ -507,7 +505,7 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 **Purpose**: Metrics collection, distributed tracing
 
-**Exports**: `@veryfront/observability`
+**Exports**: `#veryfront/observability`
 
 **Key Features**:
 - Metrics collection (request count, latency)
@@ -612,11 +610,11 @@ Orchestrators (most modules)
 
 ## Import Aliases
 
-All internal imports use `#veryfront/*` or `@veryfront/*` aliases defined in `deno.json`:
+All internal imports use `#veryfront/*` aliases defined in `deno.json`:
 
 ```typescript
 // Good - Using import alias
-import { createRenderer } from "@veryfront/rendering";
+import { createRenderer } from "#veryfront/rendering";
 import { serverLogger } from "#veryfront/utils";
 
 // Bad - Deep relative import
@@ -643,5 +641,3 @@ deno task test src/rendering/
 ## Learn More
 
 - Individual module READMEs: `src/<module>/README.md`
-- Import resolution: [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README.md)
-- Main CLAUDE.md: `/CLAUDE.md`
