@@ -2035,7 +2035,7 @@ export default function Home() {
         (l.includes("Invalid hook call") ||
           l.includes("Module not found") ||
           l.includes("Cannot find") ||
-          (l.includes("layout") && l.includes("failed") && !l.includes(" · "))
+          (l.includes("layout") && l.includes("failed") && !l.includes(" · ")))
       );
       assertEquals(errors.length, 0, `Should have no errors: ${errors.join("\n")}`);
     });
@@ -2373,7 +2373,7 @@ export default function Home() {
         (l.includes("not found") ||
           l.includes("Module not found") ||
           l.includes("Cannot find") ||
-          (l.includes("layout") && l.includes("failed") && !l.includes(" · "))
+          (l.includes("layout") && l.includes("failed") && !l.includes(" · ")))
       );
       assertEquals(errors.length, 0, `Should have no layout errors: ${errors.join("\n")}`);
     });
@@ -2512,7 +2512,7 @@ export default function Home() {
           (l.includes("not found") ||
             l.includes("Module not found") ||
             l.includes("FATAL") ||
-            (l.includes("layout") && l.includes("failed") && !l.includes(" · "))
+            (l.includes("layout") && l.includes("failed") && !l.includes(" · ")))
         );
         assertEquals(errors.length, 0, `Should have no errors: ${errors.join("\n")}`);
       },
