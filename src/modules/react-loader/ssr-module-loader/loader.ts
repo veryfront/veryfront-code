@@ -863,12 +863,6 @@ export class SSRModuleLoader {
         // Process /_vf_modules/ imports and resolve them to file:// paths
         // These are framework module imports that need to be fetched and cached
         const vfModuleImports = findVfModuleImports(transformed);
-        logger.warn("[SSR-MODULE-LOADER] findVfModuleImports result", {
-          file: filePath.slice(-40),
-          count: vfModuleImports.length,
-          paths: vfModuleImports.map((i) => i.path).slice(0, 5),
-          transformedSnippet: transformed.slice(0, 500),
-        });
         if (vfModuleImports.length > 0) {
           logger.debug("[SSR-MODULE-LOADER] Processing _vf_modules imports", {
             file: filePath.slice(-40),

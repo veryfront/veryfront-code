@@ -748,24 +748,9 @@ export const ssrVfModulesPlugin: TransformPlugin = {
 
   async transform(ctx) {
     logInitOnce();
-    console.error(
-      `[SSR-VF-MODULES-DEBUG] Transform called for: ${
-        ctx.filePath?.slice(-60)
-      }, FRAMEWORK_ROOT: ${FRAMEWORK_ROOT}`,
-    );
-
-    // DEBUG: Log the code snippet to see what imports exist
-    const codeSnippet = ctx.code.slice(0, 500);
-    logger.info(`${LOG_PREFIX} Transform called`, {
-      file: ctx.filePath?.slice(-60) ?? "<unknown>",
-      target: ctx.target,
-      codePreview: codeSnippet.replace(/\n/g, "\\n").slice(0, 200),
-      hasVfModulesString: ctx.code.includes("_vf_modules"),
-      hasVeryfrontString: ctx.code.includes("veryfront/"),
-    });
 
     const vfModuleImports = findVfModuleImports(ctx.code);
-    logger.info(`${LOG_PREFIX} findVfModuleImports result`, {
+    logger.debug(`${LOG_PREFIX} Transform called`, {
       file: ctx.filePath?.slice(-60) ?? "<unknown>",
       count: vfModuleImports.length,
       imports: vfModuleImports.slice(0, 5),
