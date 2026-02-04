@@ -389,18 +389,51 @@ export async function transformModuleWithDeps(
 
   // CRITICAL: Validate that no unresolved /_vf_modules/ imports remain after transform.
   // These imports should have been resolved to file:// paths by ssrVfModulesPlugin.
-  // If they're still present, the import will fail at runtime with "Module not found".
+  // If they're still present, retry the transform bypassing all caches.
   if (UNRESOLVED_VF_MODULES_RE.test(transformedCode)) {
     const match = transformedCode.match(UNRESOLVED_VF_MODULES_RE);
     const unresolvedImport = match?.[1] || "unknown";
-    logger.error("[ModuleLoader] Transform produced code with unresolved _vf_modules import", {
-      filePath: filePath.slice(-60),
-      unresolvedImport: unresolvedImport.slice(0, 80),
-      hint:
-        "Check that framework sources exist in dist/framework-src/ and ssrVfModulesPlugin is running",
+    logger.warn(
+      "[ModuleLoader] Transform has unresolved _vf_modules import, retrying without cache",
+      {
+        filePath: filePath.slice(-60),
+        unresolvedImport: unresolvedImport.slice(0, 80),
+        cacheHit: transformResult.cacheHit,
+      },
+    );
+
+    // Force a fresh transform bypassing all caches
+    // Import runPipeline directly to bypass getOrComputeTransform cache
+    const { runPipeline } = await import("#veryfront/transforms/pipeline/index.ts");
+    const pipelineResult = await runPipeline(fileContent, filePath, projectDir, {
+      projectId: effectiveProjectId,
+      dev: mode === "development",
+      ssr: true,
+      reactVersion: config.reactVersion,
     });
-    // Don't throw - let it fail at import time for better error context.
-    // The error message will show the exact missing module path.
+    transformedCode = pipelineResult.code;
+
+    // Check again after retry
+    if (UNRESOLVED_VF_MODULES_RE.test(transformedCode)) {
+      const retryMatch = transformedCode.match(UNRESOLVED_VF_MODULES_RE);
+      logger.error("[ModuleLoader] Transform still has unresolved _vf_modules after retry", {
+        filePath: filePath.slice(-60),
+        unresolvedImport: retryMatch?.[1]?.slice(0, 80) || "unknown",
+        hint:
+          "Check that framework sources exist in dist/framework-src/ and ssrVfModulesPlugin is running",
+      });
+      // Continue anyway - let it fail at import time for better error context
+    } else {
+      // Retry succeeded - update the cache
+      setCachedTransformAsync(
+        transformCacheKey,
+        transformedCode,
+        hashCodeHex(transformedCode).slice(0, 16),
+        TRANSFORM_CACHE_TTL_SECONDS,
+      ).catch((error) => {
+        logger.debug("[ModuleLoader] Failed to update cache after retry", { filePath, error });
+      });
+    }
   }
 
   const transformedHash = hashCodeHex(transformedCode).slice(0, 8);

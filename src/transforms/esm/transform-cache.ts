@@ -13,6 +13,16 @@ import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "../../cache/
 const DEFAULT_TTL_SECONDS = 300; // 5 minutes
 const FALLBACK_MAX_ENTRIES = 500;
 
+/**
+ * Pattern to match unresolved /_vf_modules/_veryfront/ imports.
+ * These should have been resolved to file:// paths by ssrVfModulesPlugin.
+ * Matches:
+ * - from "/_vf_modules/_veryfront/..."
+ * - from "file:///_vf_modules/_veryfront/..." (Deno adds file:// prefix to raw paths)
+ */
+const UNRESOLVED_VF_MODULES_PATTERN =
+  /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/_veryfront\/[^"']+)["']/;
+
 export interface TransformCacheEntry {
   code: string;
   hash: string;
@@ -287,8 +297,20 @@ export async function getOrComputeTransform(
 ): Promise<TransformCacheResult> {
   const cached = await getCachedTransformAsync(key);
   if (cached) {
-    logger.debug("[TransformCache] Cache hit", { key });
-    return { code: cached.code, bundleManifestId: cached.bundleManifestId, cacheHit: true };
+    // Validate cached code doesn't have unresolved _vf_modules imports.
+    // These imports should have been resolved to file:// paths by ssrVfModulesPlugin.
+    // If they're still present, the cache is stale and we need to recompute.
+    if (UNRESOLVED_VF_MODULES_PATTERN.test(cached.code)) {
+      const match = cached.code.match(UNRESOLVED_VF_MODULES_PATTERN);
+      logger.warn("[TransformCache] Cache contains unresolved _vf_modules import, invalidating", {
+        key: key.slice(-60),
+        unresolvedImport: match?.[1]?.slice(0, 60),
+      });
+      // Fall through to recompute
+    } else {
+      logger.debug("[TransformCache] Cache hit", { key });
+      return { code: cached.code, bundleManifestId: cached.bundleManifestId, cacheHit: true };
+    }
   }
 
   logger.debug("[TransformCache] Cache miss, computing", { key });

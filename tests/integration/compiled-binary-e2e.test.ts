@@ -2134,11 +2134,7 @@ export default function Home() {
   });
 
   // Test: config-based layout with useRouter hook (test framework imports work in config layouts)
-  // TODO: Framework module resolution fails for config-based layouts outside pages/ directory
-  // The _veryfront/react/context/index.js?ssr=true module can't be found when layout is at layouts/HooksLayout.tsx
-  // This works for file-convention layouts (pages/_layout.tsx) but not config-based ones.
-  // See: "should handle layout importing framework modules with hooks" which passes with pages/_layout.tsx
-  it.skip("should handle config layout with framework hooks", async () => {
+  it("should handle config layout with framework hooks", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-config-layout-hooks-test-" });
 
     await Deno.writeTextFile(

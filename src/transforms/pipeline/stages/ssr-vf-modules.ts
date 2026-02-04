@@ -132,7 +132,7 @@ async function resolveFrameworkFile(
     .replace(/\?.*$/, "")
     .replace(/\.js$/, "");
 
-  logger.info(`${LOG_PREFIX} resolveFrameworkFile`, {
+  logger.debug(`${LOG_PREFIX} resolveFrameworkFile`, {
     input: vfModulePath,
     pathWithoutPrefix,
     lookupDirs: FRAMEWORK_LOOKUPS.map(([p, d]) => ({ prefix: p, dir: d })),
@@ -769,7 +769,7 @@ export const ssrVfModulesPlugin: TransformPlugin = {
 
     for (const vfModulePath of vfModuleImports) {
       try {
-        logger.info(`${LOG_PREFIX} Resolving framework file`, {
+        logger.debug(`${LOG_PREFIX} Resolving framework file`, {
           vfModulePath,
           frameworkRoot: FRAMEWORK_ROOT,
           embeddedSrcDir: EMBEDDED_SRC_DIR,
@@ -784,7 +784,7 @@ export const ssrVfModulesPlugin: TransformPlugin = {
           continue;
         }
 
-        logger.info(`${LOG_PREFIX} Resolved framework file`, {
+        logger.debug(`${LOG_PREFIX} Resolved framework file`, {
           vfModulePath,
           sourcePath: resolved.sourcePath,
           contentLength: resolved.content.length,
@@ -807,7 +807,7 @@ export const ssrVfModulesPlugin: TransformPlugin = {
         const cachePath = await cacheTransformedCode(transformed, vfModulePath, fs);
         replacements.set(vfModulePath, `file://${cachePath}`);
 
-        logger.info(`${LOG_PREFIX} Transformed ${vfModulePath} -> file://${cachePath}`);
+        logger.debug(`${LOG_PREFIX} Transformed ${vfModulePath} -> file://${cachePath}`);
       } catch (error) {
         logger.error(`${LOG_PREFIX} Failed to transform ${vfModulePath}`, {
           error: error instanceof Error ? error.message : String(error),
