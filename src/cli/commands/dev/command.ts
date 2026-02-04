@@ -259,9 +259,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
               user = result;
               const projectResult = await fetchRemoteProjects();
               projects = projectResult.projects;
-              console.log(
-                `  ${success("✓")} ${user.email} ${dim(`— ${projects.length} projects`)}`,
-              );
+              console.log(`  ${success("✓")} ${user.email} ${dim(`— ${projects.length} projects`)}`);
             } finally {
               // Restart keyboard handler after login completes
               keyboardHandler?.start();
