@@ -69,12 +69,13 @@ function showHelp(command?: string): void {
   showMainHelp();
 }
 
+function resolvePath(path: string): string {
+  return path.startsWith("/") ? path : join(cwd(), path);
+}
+
 function resolveProjectDir(args: ParsedArgs, keys: Array<keyof ParsedArgs>): string {
   const raw = keys.map((k) => args[k]).find((v) => v != null);
-  if (!raw) return cwd();
-
-  const dir = String(raw);
-  return dir.startsWith("/") ? dir : join(cwd(), dir);
+  return raw ? resolvePath(String(raw)) : cwd();
 }
 
 function parseCsvArg(value: unknown): string[] | undefined {
@@ -95,16 +96,12 @@ function parseLoginMethod(
   return undefined;
 }
 
-function resolvePathFromCwd(path: string): string {
-  return path.startsWith("/") ? path : join(cwd(), path);
-}
-
-function parseBranchArg(args: ParsedArgs): string | undefined {
-  return args.branch ? String(args.branch) : args.b ? String(args.b) : undefined;
-}
-
-function parseOutputArg(args: ParsedArgs): string | undefined {
-  return args.output ? String(args.output) : args.o ? String(args.o) : undefined;
+function getStringArg(args: ParsedArgs, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const val = args[key];
+    if (val) return String(val);
+  }
+  return undefined;
 }
 
 /**
@@ -146,7 +143,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         const configPath = args.config || args.c;
         if (configPath) {
           const fs = createFileSystem();
-          const resolvedPath = resolvePathFromCwd(String(configPath));
+          const resolvedPath = resolvePath(String(configPath));
 
           try {
             const configContent = await fs.readTextFile(resolvedPath);
@@ -314,7 +311,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
       case "doctor":
         showLogo();
-        await doctorCommand(cwd(), { strict: Boolean(args.strict) || Boolean(args.s) });
+        await doctorCommand(cwd(), { strict: Boolean(args.strict || args.s) });
         break;
 
       case "clean":
@@ -332,13 +329,13 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         showLogo();
         await analyzeChunksCommand({
           projectDir: cwd(),
-          output: parseOutputArg(args),
+          output: getStringArg(args, "output", "o"),
         });
         break;
 
       case "routes":
         showLogo();
-        await routesCommand(cwd(), { json: Boolean(args.json) || Boolean(args.j) });
+        await routesCommand(cwd(), { json: Boolean(args.json || args.j) });
         break;
 
       case "studio":
@@ -349,11 +346,11 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         showLogo();
         await lockCommand({
           projectDir: cwd(),
-          update: Boolean(args.update) || Boolean(args.u),
+          update: Boolean(args.update || args.u),
           verify: Boolean(args.verify),
           clear: Boolean(args.clear),
-          list: Boolean(args.list) || Boolean(args.l),
-          force: Boolean(args.force) || Boolean(args.f),
+          list: Boolean(args.list || args.l),
+          force: Boolean(args.force || args.f),
         });
         break;
 
@@ -365,19 +362,14 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
       case "pull": {
         showLogo();
-
-        const projectSlug = args._.length > 1 ? String(args._[1]) : undefined;
-        const projects = parseCsvArg(args.projects);
-        const projectDir = resolveProjectDir(args, ["project-dir", "dir", "d"]);
-
         await pullCommand({
-          projectSlug,
-          projects,
-          projectDir,
-          branch: parseBranchArg(args),
-          env: args.env ? String(args.env) : undefined,
-          release: args.release ? String(args.release) : undefined,
-          force: Boolean(args.force) || Boolean(args.f),
+          projectSlug: args._.length > 1 ? String(args._[1]) : undefined,
+          projects: parseCsvArg(args.projects),
+          projectDir: resolveProjectDir(args, ["project-dir", "dir", "d"]),
+          branch: getStringArg(args, "branch", "b"),
+          env: getStringArg(args, "env"),
+          release: getStringArg(args, "release"),
+          force: Boolean(args.force || args.f),
           dryRun: Boolean(args["dry-run"]),
         });
         break;
@@ -385,13 +377,10 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
       case "push": {
         showLogo();
-
-        const projectDir = resolveProjectDir(args, ["dir", "d"]);
-
         await pushCommand({
-          projectDir,
-          branch: parseBranchArg(args),
-          force: Boolean(args.force) || Boolean(args.f),
+          projectDir: resolveProjectDir(args, ["dir", "d"]),
+          branch: getStringArg(args, "branch", "b"),
+          force: Boolean(args.force || args.f),
           dryRun: Boolean(args["dry-run"]),
         });
         break;
@@ -473,17 +462,17 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
       case "install":
         await installCommand({
-          target: args.target ? String(args.target) : undefined,
+          target: getStringArg(args, "target"),
           global: Boolean(args.global),
-          force: Boolean(args.force) || Boolean(args.f),
+          force: Boolean(args.force || args.f),
         });
         break;
 
       case "uninstall":
         await uninstallCommand({
-          target: args.target ? String(args.target) : undefined,
+          target: getStringArg(args, "target"),
           global: Boolean(args.global),
-          force: Boolean(args.force) || Boolean(args.f),
+          force: Boolean(args.force || args.f),
         });
         break;
 

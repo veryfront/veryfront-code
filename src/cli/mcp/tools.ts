@@ -10,22 +10,20 @@ import {
 } from "#veryfront/observability/error-collector.ts";
 import { getLogBuffer, type LogEntry, type LogLevel } from "#veryfront/observability/log-buffer.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import type { MCPTool } from "#veryfront/mcp/types.ts";
 import { advancedTools } from "./advanced-tools.ts";
 import { remoteFileTools } from "./remote-file-tools.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { issuesMcpTools } from "../../issues/mcp.ts";
+import { DEFAULT_MCP_PORT } from "../shared/constants.ts";
 
-// Re-export MCPTool type from central location
-export type { MCPTool } from "#veryfront/mcp/types.ts";
-import type { MCPTool } from "#veryfront/mcp/types.ts";
+export type { MCPTool };
 
 const CACHE_DIRS: Record<string, string[]> = {
   all: [".cache/veryfront-modules", ".cache/veryfront-mdx-esm"],
   modules: [".cache/veryfront-modules"],
   mdx: [".cache/veryfront-mdx-esm"],
 };
-
-import { DEFAULT_MCP_PORT } from "../shared/constants.ts";
 
 let serverStartTime = Date.now();
 

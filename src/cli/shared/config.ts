@@ -11,6 +11,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
+import { DEFAULT_API_URL } from "./constants.ts";
 
 export interface VeryfrontConfig {
   projectSlug?: string;
@@ -25,8 +26,6 @@ export interface ResolvedConfig {
   apiToken: string;
   projectSlug: string;
 }
-
-const DEFAULT_API_URL = "https://api.veryfront.com";
 
 export async function readConfigFile(projectDir: string): Promise<VeryfrontConfig | null> {
   const fs = createFileSystem();
@@ -80,16 +79,25 @@ async function inferProjectSlug(projectDir: string): Promise<string | null> {
   return dirName ? slugify(dirName) : null;
 }
 
-export async function resolveConfig(
-  projectDir?: string,
-  env: RuntimeEnv = getRuntimeEnv(),
+async function resolveConfigBase(
+  projectDir: string | undefined,
+  env: RuntimeEnv,
+  interactive: boolean,
 ): Promise<ResolvedConfig> {
   const dir = projectDir ?? cwd();
   const configFile = await readConfigFile(dir);
 
   const apiUrl = env.apiUrl ?? configFile?.apiUrl ?? DEFAULT_API_URL;
 
-  const apiToken = env.apiToken ?? configFile?.apiToken ?? (await readToken(env));
+  let apiToken = env.apiToken ?? configFile?.apiToken ?? (await readToken(env));
+
+  if (!apiToken && interactive) {
+    const userInfo = await ensureAuthenticated(env);
+    if (!userInfo) throw new Error("Authentication required for this operation.");
+    apiToken = (await readToken(env)) ?? null;
+    if (!apiToken) throw new Error("Authentication failed. Please try again.");
+  }
+
   if (!apiToken) {
     throw new Error(
       "Missing API token. Run 'veryfront login' or set VERYFRONT_API_TOKEN environment variable",
@@ -106,45 +114,24 @@ export async function resolveConfig(
   return { apiUrl, apiToken, projectSlug };
 }
 
+export function resolveConfig(
+  projectDir?: string,
+  env: RuntimeEnv = getRuntimeEnv(),
+): Promise<ResolvedConfig> {
+  return resolveConfigBase(projectDir, env, false);
+}
+
 /**
  * Resolve config with interactive authentication.
  *
  * If no token is available, prompts the user to login interactively.
  * Use this for commands that require authentication (push, pull, deploy).
  */
-export async function resolveConfigWithAuth(
+export function resolveConfigWithAuth(
   projectDir?: string,
   env: RuntimeEnv = getRuntimeEnv(),
 ): Promise<ResolvedConfig> {
-  const dir = projectDir ?? cwd();
-  const configFile = await readConfigFile(dir);
-
-  const apiUrl = env.apiUrl ?? configFile?.apiUrl ?? DEFAULT_API_URL;
-
-  // Try to get token from environment or stored token
-  let apiToken = env.apiToken ?? configFile?.apiToken ?? (await readToken(env));
-
-  // No token? Prompt login interactively
-  if (!apiToken) {
-    const userInfo = await ensureAuthenticated(env);
-    if (!userInfo) {
-      throw new Error("Authentication required for this operation.");
-    }
-    // Re-read token after successful login
-    apiToken = (await readToken(env)) ?? null;
-    if (!apiToken) {
-      throw new Error("Authentication failed. Please try again.");
-    }
-  }
-
-  const projectSlug = env.projectSlug ?? configFile?.projectSlug ?? (await inferProjectSlug(dir));
-  if (!projectSlug) {
-    throw new Error(
-      "Could not determine project slug. Set VERYFRONT_PROJECT_SLUG environment variable or add projectSlug to veryfront.config.ts",
-    );
-  }
-
-  return { apiUrl, apiToken, projectSlug };
+  return resolveConfigBase(projectDir, env, true);
 }
 
 export interface ApiClient {

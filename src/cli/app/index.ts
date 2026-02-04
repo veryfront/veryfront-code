@@ -23,6 +23,13 @@ import {
 import { cursor, screen, SPINNER_FRAMES } from "../ui/ansi.ts";
 import { brand, dim } from "../ui/colors.ts";
 import { getTerminalWidth } from "../ui/layout.ts";
+
+const KEY_UP = "\x1b[A";
+const KEY_DOWN = "\x1b[B";
+const KEY_ESCAPE = "\x1b";
+const KEY_ENTER = "\r";
+const KEY_NEWLINE = "\n";
+const KEY_CTRL_C = "\x03";
 import { moveDown, moveUp, selectByNumber } from "./components/list-select.ts";
 import { renderDashboard, renderEmptyState } from "./views/dashboard.ts";
 import {
@@ -788,14 +795,14 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
-    if (key === "\x03" || (key === "q" && state.view === "dashboard")) {
+    if (key === KEY_CTRL_C || (key === "q" && state.view === "dashboard")) {
       stop();
       exit(0);
     }
 
     // Handle Escape key (but not escape sequences like arrow keys)
     // Escape alone is \x1b, arrow keys are \x1b[A, \x1b[B, etc.
-    if (key === "\x1b") {
+    if (key === KEY_ESCAPE) {
       if (state.view !== "dashboard") update(goBack());
       return;
     }
@@ -826,17 +833,17 @@ export function createApp(config: AppConfig): App {
 
     // When logs are expanded, arrow keys scroll logs instead of list
     if (state.logsExpanded && state.logs.length > 0) {
-      if (key === "\x1b[A" || key === "k") {
+      if (key === KEY_UP || key === "k") {
         update(scrollLogs("up"));
         return;
       }
-      if (key === "\x1b[B" || key === "j") {
+      if (key === KEY_DOWN || key === "j") {
         update(scrollLogs("down"));
         return;
       }
     }
 
-    if (key === "\x1b[A" || key === "k") {
+    if (key === KEY_UP || key === "k") {
       if (state.activeList === "remoteProjects") {
         moveRemoteFocusUp();
       } else {
@@ -845,7 +852,7 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
-    if (key === "\x1b[B" || key === "j") {
+    if (key === KEY_DOWN || key === "j") {
       if (state.activeList === "remoteProjects") {
         moveRemoteFocusDown();
       } else {
@@ -936,7 +943,7 @@ export function createApp(config: AppConfig): App {
       }
     }
 
-    if (key === "\r" || key === "\n") {
+    if (key === KEY_ENTER || key === KEY_NEWLINE) {
       // Enter on remote projects: open in browser (consistent with local projects)
       if (state.activeList === "remoteProjects") {
         const focused = state.remote.projects[state.remote.focusedIndex];
@@ -1137,38 +1144,38 @@ export function createApp(config: AppConfig): App {
   }
 
   function handleTemplatesKey(key: string): void {
-    if (key === "\x1b[A" || key === "k") {
+    if (key === KEY_UP || key === "k") {
       state = { ...state, templates: moveUp(state.templates) };
       render();
       return;
     }
 
-    if (key === "\x1b[B" || key === "j") {
+    if (key === KEY_DOWN || key === "j") {
       state = { ...state, templates: moveDown(state.templates, state.templates.items.length) };
       render();
       return;
     }
 
-    if (key === "\r" || key === "\n") {
+    if (key === KEY_ENTER || key === KEY_NEWLINE) {
       const selected = state.templates.items[state.templates.selectedIndex];
       if (selected) promptForProjectName(selected.id as InitTemplate, () => render());
     }
   }
 
   function handleExamplesKey(key: string): void {
-    if (key === "\x1b[A" || key === "k") {
+    if (key === KEY_UP || key === "k") {
       state = { ...state, examples: moveUp(state.examples) };
       render();
       return;
     }
 
-    if (key === "\x1b[B" || key === "j") {
+    if (key === KEY_DOWN || key === "j") {
       state = { ...state, examples: moveDown(state.examples, state.examples.items.length) };
       render();
       return;
     }
 
-    if (key === "\r" || key === "\n") {
+    if (key === KEY_ENTER || key === KEY_NEWLINE) {
       const selected = state.examples.items[state.examples.selectedIndex];
       if (selected?.data) promptForExampleProject(selected.data, () => render());
     }
@@ -1229,7 +1236,7 @@ export function createApp(config: AppConfig): App {
 
   function handleNewProjectKey(key: string): void {
     // Arrow navigation
-    if (key === "\x1b[A" || key === "k") {
+    if (key === KEY_UP || key === "k") {
       state = {
         ...state,
         newProjectIndex: state.newProjectIndex > 0 ? state.newProjectIndex - 1 : 2,
@@ -1238,7 +1245,7 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
-    if (key === "\x1b[B" || key === "j") {
+    if (key === KEY_DOWN || key === "j") {
       state = {
         ...state,
         newProjectIndex: state.newProjectIndex < 2 ? state.newProjectIndex + 1 : 0,
@@ -1254,7 +1261,7 @@ export function createApp(config: AppConfig): App {
     }
 
     // Enter to confirm selection (or after number key press)
-    if (key !== "\r" && key !== "\n" && !(key >= "1" && key <= "3")) return;
+    if (key !== KEY_ENTER && key !== KEY_NEWLINE && !(key >= "1" && key <= "3")) return;
 
     switch (state.newProjectIndex) {
       case 0:
@@ -1277,7 +1284,7 @@ export function createApp(config: AppConfig): App {
     ];
 
     // Arrow navigation
-    if (key === "\x1b[A" || key === "k") {
+    if (key === KEY_UP || key === "k") {
       state = {
         ...state,
         authProviderIndex: state.authProviderIndex > 0 ? state.authProviderIndex - 1 : 2,
@@ -1286,7 +1293,7 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
-    if (key === "\x1b[B" || key === "j") {
+    if (key === KEY_DOWN || key === "j") {
       state = {
         ...state,
         authProviderIndex: state.authProviderIndex < 2 ? state.authProviderIndex + 1 : 0,
@@ -1303,7 +1310,7 @@ export function createApp(config: AppConfig): App {
     }
 
     // Enter to confirm selection
-    if (key !== "\r" && key !== "\n") return;
+    if (key !== KEY_ENTER && key !== KEY_NEWLINE) return;
 
     const provider = providerList[state.authProviderIndex];
     update(addLog("info", `Opening browser for ${provider} login...`));
