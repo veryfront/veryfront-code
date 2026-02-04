@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { logger } from "#veryfront/utils";
 import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -83,8 +84,8 @@ const cumulativeMetrics: CumulativeMetrics = {
   requestsTracked: 0,
 };
 
-// Per-request metrics (reset each request via startRequestMetrics)
-let currentRequest: PerRequestMetrics | null = null;
+// Per-request metrics (stored in AsyncLocalStorage for concurrent-safe tracking)
+const metricsStorage = new AsyncLocalStorage<PerRequestMetrics>();
 
 function createFreshRequestMetrics(): PerRequestMetrics {
   return {
@@ -113,16 +114,16 @@ function detectFileType(path: string): FileType {
 
 /** Call at start of HTTP request to begin per-request tracking */
 export function startRequestMetrics(): void {
-  currentRequest = createFreshRequestMetrics();
+  metricsStorage.enterWith(createFreshRequestMetrics());
 }
 
 /** Call at end of HTTP request to log summary and update cumulative metrics */
 export function endRequestMetrics(
   requestContext?: { requestId?: string; pathname?: string; mode?: string },
 ): void {
-  if (!currentRequest) return;
+  const req = metricsStorage.getStore();
+  if (!req) return;
 
-  const req = currentRequest;
   const durationMs = Math.round(performance.now() - req.startTime);
 
   // Compute derived metrics
@@ -166,8 +167,6 @@ export function endRequestMetrics(
     uniqueFiles: req.filesAccessed.size,
     isPreviewMode: req.isPreviewMode,
   });
-
-  currentRequest = null;
 }
 
 type ContentMetricEvent =
@@ -190,39 +189,40 @@ function logContentMetric(
   },
 ): void {
   const path = details.path ?? "";
+  const req = metricsStorage.getStore();
 
   // Track in per-request metrics if active
-  if (currentRequest) {
-    currentRequest.filesAccessed.add(path);
+  if (req) {
+    req.filesAccessed.add(path);
     if (details.isPreviewMode !== undefined) {
-      currentRequest.isPreviewMode = details.isPreviewMode;
+      req.isPreviewMode = details.isPreviewMode;
     }
 
     switch (event) {
       case "REQUEST_SCOPED_HIT":
-        currentRequest.requestScopedHits++;
+        req.requestScopedHits++;
         recordContentCacheHit("request");
         break;
       case "PERSISTENT_CACHE_HIT":
-        currentRequest.persistentCacheHits++;
+        req.persistentCacheHits++;
         recordContentCacheHit("persistent");
         break;
       case "FILE_LIST_HIT":
-        currentRequest.fileListHits++;
+        req.fileListHits++;
         recordContentCacheHit("filelist");
         break;
       case "NETWORK_FETCH":
-        currentRequest.networkFetches++;
-        currentRequest.fetchesByType[detectFileType(path)]++;
+        req.networkFetches++;
+        req.fetchesByType[detectFileType(path)]++;
         break;
       case "NETWORK_FETCH_COMPLETE":
         if (details.durationMs) {
-          currentRequest.networkMs += details.durationMs;
+          req.networkMs += details.durationMs;
         }
         break;
       case "CACHE_MISS":
         if (details.missReason) {
-          currentRequest.missReasons[details.missReason]++;
+          req.missReasons[details.missReason]++;
         }
         break;
     }
@@ -460,7 +460,7 @@ export class ReadOperations {
     const apiPath = this.getOriginalApiPath?.(normalizedPath) ?? normalizedPath;
     const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
     const cacheKey = `${cacheKeyPrefix}:${normalizedPath}`;
-    const isProduction = this.contextProvider?.isProductionMode() ?? false;
+    const isProductionMode = this.contextProvider?.isProductionMode() ?? false;
     const hasKnownExt = EXTENSION_PRIORITY.some((ext) => apiPath.endsWith(ext));
 
     logger.debug("[ReadOperations] fetchContent context", {
@@ -472,7 +472,7 @@ export class ReadOperations {
       branch: ctx?.branch,
       releaseId: ctx?.releaseId,
       cacheKeyPrefix,
-      isProduction,
+      isProductionMode,
     });
 
     const requestCached = getRequestScopedFile(cacheKey);
@@ -491,127 +491,14 @@ export class ReadOperations {
       return requestCached;
     }
 
-    const currentReleaseId = ctx?.releaseId;
-    const isPrefixInvalidated =
-      (isProduction && this.contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix)) ??
-        false;
-    const isReleaseInvalidated = isProduction && currentReleaseId
-      ? this.contextProvider?.isReleaseBeingInvalidated?.(currentReleaseId)
-      : undefined;
-
-    const skipPersistentCaches = !!(isPrefixInvalidated || isReleaseInvalidated);
-
-    if (isProduction && skipPersistentCaches) {
-      logger.info("[ReadOperations] PERSISTENT_CACHE_SKIPPED - cache invalidation in progress", {
-        path: normalizedPath,
-        cacheKey,
-        cacheKeyPrefix,
-        releaseId: currentReleaseId ?? undefined,
-        prefixInvalidated: isPrefixInvalidated,
-      });
-    }
-
-    // Check persistent cache for PRODUCTION mode only
-    // Preview mode skips persistent cache to avoid staleness risk when WebSocket is slow/disconnected
-    if (isProduction && !skipPersistentCaches) {
-      const cached = await this.cache.getAsync<string>(cacheKey);
-      if (cached) {
-        logContentMetric("PERSISTENT_CACHE_HIT", {
-          path: normalizedPath,
-          mode: ctx?.sourceType ?? "unknown",
-          cacheKey,
-        });
-        logger.debug("[ReadOperations] PERSISTENT_CACHE_HIT", {
-          path: normalizedPath,
-          cacheKey,
-          contentLength: cached.length,
-          preview: previewText(cached).replace(/\n/g, "\\n"),
-        });
-        setRequestScopedFile(cacheKey, cached);
-        return cached;
-      }
-    }
-
-    // File list cache is enabled for BOTH preview and production modes.
-    // The file list is an in-memory index built from API response at init, updated by WebSocket pokes.
-    // This is safe because:
-    // - File list is refreshed on every WebSocket poke (websocket-manager.ts:483-500)
-    // - Request-scoped cache ensures consistency within a single render
-    // - Persistent cache is only written for production mode (to avoid staleness risk in preview)
-    const isPreviewMode = ctx?.sourceType === "branch";
-    if (!skipPersistentCaches) {
-      const fileListContent = await this.getContentFromFileList(normalizedPath);
-      if (fileListContent) {
-        logContentMetric("FILE_LIST_HIT", {
-          path: normalizedPath,
-          mode: ctx?.sourceType ?? "unknown",
-          cacheKey,
-          isPreviewMode,
-        });
-        // Only cache to persistent storage for production mode
-        // Preview mode uses file list cache directly without persisting (fresher, WebSocket-driven)
-        if (isProduction) {
-          this.cache.set(cacheKey, fileListContent);
-        }
-        setRequestScopedFile(cacheKey, fileListContent);
-        return fileListContent;
-      }
-    } else {
-      // Skip only happens during cache invalidation (both preview and production)
-      logContentMetric("CACHE_MISS", {
-        path: normalizedPath,
-        mode: ctx?.sourceType ?? "unknown",
-        missReason: "invalidation" as MissReason,
-        isPreviewMode,
-      });
-      logger.debug("[ReadOperations] Skipping file list cache due to invalidation", {
-        path: normalizedPath,
-        cacheKeyPrefix,
-      });
-    }
-
-    if (!hasKnownExt) {
-      try {
-        const resolved = await this.client.resolveFileWithExtension(
-          apiPath,
-          [...EXTENSION_PRIORITY],
-        );
-        if (resolved) {
-          const resolvedPath = this.normalizer.normalize(resolved.path);
-          const resolvedCacheKey = `${cacheKeyPrefix}:${resolvedPath}`;
-
-          logger.debug("[ReadOperations] Resolved extension for base path", {
-            basePath: apiPath,
-            resolvedPath,
-            cacheKey,
-            resolvedCacheKey: resolvedCacheKey === cacheKey ? undefined : resolvedCacheKey,
-          });
-
-          if (isProduction) {
-            this.cache.set(cacheKey, resolved.content);
-            if (resolvedCacheKey !== cacheKey) this.cache.set(resolvedCacheKey, resolved.content);
-          }
-
-          setRequestScopedFile(cacheKey, resolved.content);
-          if (resolvedCacheKey !== cacheKey) {
-            setRequestScopedFile(resolvedCacheKey, resolved.content);
-          }
-
-          return resolved.content;
-        }
-      } catch (error) {
-        logger.debug("[ReadOperations] resolveFileWithExtension failed", {
-          basePath: apiPath,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
+    // ============================================================================
+    // EARLY IN-FLIGHT JOINING - Deduplicate L2, L3, and network fetches
+    // ============================================================================
     this.cleanupStaleInFlightRequests();
 
     const existingEntry = this.inFlightRequests.get(cacheKey);
     if (existingEntry) {
-      logger.debug("[ReadOperations] Deduplicating request - joining existing fetch", {
+      logger.debug("[ReadOperations] Deduplicating request - joining existing operation", {
         path: normalizedPath,
         cacheKey,
         ageMs: Date.now() - existingEntry.startedAt,
@@ -619,36 +506,193 @@ export class ReadOperations {
       return existingEntry.promise;
     }
 
+    const isPreviewMode = ctx?.sourceType === "branch";
     const isPublished = ctx?.sourceType !== "branch";
 
-    // Track why we're making a network fetch (for optimization analysis)
-    const hasFileListCache = !!this.getFileListCache;
-    logContentMetric("CACHE_MISS", {
-      path: normalizedPath,
-      mode: ctx?.sourceType ?? "unknown",
-      missReason: (hasFileListCache ? "not_in_filelist" : "no_filelist_cache") as MissReason,
-      isPreviewMode,
-    });
-
-    // THIS IS A NETWORK FETCH - every call here = API round trip
-    // With caching enabled for preview mode, this should only happen on true cache misses
-    logContentMetric("NETWORK_FETCH", {
-      path: normalizedPath,
-      mode: ctx?.sourceType ?? "unknown",
-      isPublished,
-      isPreviewMode,
-    });
-
-    logger.debug("[ReadOperations] fetchContent decision", {
-      path: normalizedPath,
-      isPublished,
-      willFetch: isPublished ? "published (environment)" : "draft (branch)",
-      sourceType: ctx?.sourceType ?? "null/undefined",
-    });
-
-    const fetchStartTime = performance.now();
     const fetchPromise = (async () => {
       try {
+        const currentReleaseId = ctx?.releaseId;
+        const isPrefixInvalidated =
+          (isProductionMode && this.contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix)) ??
+          false;
+        const isReleaseInvalidated = isProductionMode && currentReleaseId
+          ? this.contextProvider?.isReleaseBeingInvalidated?.(currentReleaseId)
+          : undefined;
+
+        const skipPersistentCaches = !!(isPrefixInvalidated || isReleaseInvalidated);
+
+        if (isProductionMode && skipPersistentCaches) {
+          logger.info("[ReadOperations] PERSISTENT_CACHE_SKIPPED - cache invalidation in progress", {
+            path: normalizedPath,
+            cacheKey,
+            cacheKeyPrefix,
+            releaseId: currentReleaseId ?? undefined,
+            prefixInvalidated: isPrefixInvalidated,
+          });
+        }
+
+        // Check persistent cache for PRODUCTION mode only
+        // Preview mode skips persistent cache to avoid staleness risk when WebSocket is slow/disconnected
+        if (isProductionMode && !skipPersistentCaches) {
+          const cached = await this.cache.getAsync<string>(cacheKey);
+          if (cached) {
+            logContentMetric("PERSISTENT_CACHE_HIT", {
+              path: normalizedPath,
+              mode: ctx?.sourceType ?? "unknown",
+              cacheKey,
+            });
+            logger.debug("[ReadOperations] PERSISTENT_CACHE_HIT", {
+              path: normalizedPath,
+              cacheKey,
+              contentLength: cached.length,
+              preview: previewText(cached).replace(/\n/g, "\\n"),
+            });
+            setRequestScopedFile(cacheKey, cached);
+            return cached;
+          }
+        }
+
+        // File list cache is enabled for BOTH preview and production modes.
+        // The file list is an in-memory index built from API response at init, updated by WebSocket pokes.
+        // This is safe because:
+        // - File list is refreshed on every WebSocket poke (websocket-manager.ts:483-500)
+        // - Request-scoped cache ensures consistency within a single render
+        // - Persistent cache is only written for production mode (to avoid staleness risk in preview)
+        if (!skipPersistentCaches) {
+          const fileListContent = await this.getContentFromFileList(normalizedPath);
+          if (fileListContent) {
+            logContentMetric("FILE_LIST_HIT", {
+              path: normalizedPath,
+              mode: ctx?.sourceType ?? "unknown",
+              cacheKey,
+              isPreviewMode,
+            });
+            // Only cache to persistent storage for production mode
+            // Preview mode uses file list cache directly without persisting (fresher, WebSocket-driven)
+            if (isProductionMode) {
+              this.cache.set(cacheKey, fileListContent);
+            }
+            setRequestScopedFile(cacheKey, fileListContent);
+            return fileListContent;
+          }
+
+          // Try to resolve extension using the file list index (L3 cache) to avoid API network call
+          if (!hasKnownExt) {
+            const index = await this.getOrBuildFileListIndex();
+            if (index) {
+              for (const ext of EXTENSION_PRIORITY) {
+                const resolvedPath = normalizedPath + ext;
+                const content = index.get(resolvedPath);
+                if (content) {
+                  const resolvedCacheKey = `${cacheKeyPrefix}:${resolvedPath}`;
+                  logContentMetric("FILE_LIST_HIT", {
+                    path: normalizedPath,
+                    resolvedPath,
+                    mode: ctx?.sourceType ?? "unknown",
+                    cacheKey,
+                    isPreviewMode,
+                  });
+
+                  logger.debug("[ReadOperations] FILE_LIST_CACHE_HIT - resolved extension", {
+                    path: normalizedPath,
+                    resolvedPath,
+                    cacheKey,
+                  });
+
+                  if (isProductionMode) {
+                    this.cache.set(cacheKey, content);
+                    if (resolvedCacheKey !== cacheKey) {
+                      this.cache.set(resolvedCacheKey, content);
+                    }
+                  }
+
+                  setRequestScopedFile(cacheKey, content);
+                  if (resolvedCacheKey !== cacheKey) {
+                    setRequestScopedFile(resolvedCacheKey, content);
+                  }
+
+                  return content;
+                }
+              }
+            }
+          }
+        } else {
+          // Skip only happens during cache invalidation (both preview and production)
+          logContentMetric("CACHE_MISS", {
+            path: normalizedPath,
+            mode: ctx?.sourceType ?? "unknown",
+            missReason: "invalidation" as MissReason,
+            isPreviewMode,
+          });
+          logger.debug("[ReadOperations] Skipping file list cache due to invalidation", {
+            path: normalizedPath,
+            cacheKeyPrefix,
+          });
+        }
+
+        if (!hasKnownExt) {
+          try {
+            const resolved = await this.client.resolveFileWithExtension(
+              apiPath,
+              [...EXTENSION_PRIORITY],
+            );
+            if (resolved) {
+              const resolvedPath = this.normalizer.normalize(resolved.path);
+              const resolvedCacheKey = `${cacheKeyPrefix}:${resolvedPath}`;
+
+              logger.debug("[ReadOperations] Resolved extension for base path", {
+                basePath: apiPath,
+                resolvedPath,
+                cacheKey,
+                resolvedCacheKey: resolvedCacheKey === cacheKey ? undefined : resolvedCacheKey,
+              });
+
+              if (isProductionMode) {
+                this.cache.set(cacheKey, resolved.content);
+                if (resolvedCacheKey !== cacheKey) this.cache.set(resolvedCacheKey, resolved.content);
+              }
+
+              setRequestScopedFile(cacheKey, resolved.content);
+              if (resolvedCacheKey !== cacheKey) {
+                setRequestScopedFile(resolvedCacheKey, resolved.content);
+              }
+
+              return resolved.content;
+            }
+          } catch (error) {
+            logger.debug("[ReadOperations] resolveFileWithExtension failed", {
+              basePath: apiPath,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
+        // Track why we're making a network fetch (for optimization analysis)
+        const hasFileListCache = !!this.getFileListCache;
+        logContentMetric("CACHE_MISS", {
+          path: normalizedPath,
+          mode: ctx?.sourceType ?? "unknown",
+          missReason: (hasFileListCache ? "not_in_filelist" : "no_filelist_cache") as MissReason,
+          isPreviewMode,
+        });
+
+        // THIS IS A NETWORK FETCH - every call here = API round trip
+        // With caching enabled for preview mode, this should only happen on true cache misses
+        logContentMetric("NETWORK_FETCH", {
+          path: normalizedPath,
+          mode: ctx?.sourceType ?? "unknown",
+          isPublished,
+          isPreviewMode,
+        });
+
+        logger.debug("[ReadOperations] fetchContent decision", {
+          path: normalizedPath,
+          isPublished,
+          willFetch: isPublished ? "published (environment)" : "draft (branch)",
+          sourceType: ctx?.sourceType ?? "null/undefined",
+        });
+
+        const fetchStartTime = performance.now();
         const result = isPublished
           ? await this.fetchPublishedContent(
             normalizedPath,
@@ -656,9 +700,9 @@ export class ReadOperations {
             cacheKey,
             ctx?.releaseId ?? null,
             ctx?.environmentName ?? null,
-            isProduction,
+            isProductionMode,
           )
-          : await this.fetchDraftContent(normalizedPath, apiPath, cacheKey, isProduction);
+          : await this.fetchDraftContent(normalizedPath, apiPath, cacheKey, isProductionMode);
 
         const fetchDuration = Math.round(performance.now() - fetchStartTime);
 
