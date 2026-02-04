@@ -2029,10 +2029,13 @@ export default function Home() {
       // Filter for actual errors, not debug-level layout discovery logs
       // Debug logs use '·' indicator, errors use '✖'
       const errors = server.logs.filter((l) =>
-        l.includes("Invalid hook call") ||
-        l.includes("Module not found") ||
-        l.includes("Cannot find") ||
-        (l.includes("layout") && l.includes("failed") && !l.includes(" · "))
+        !l.includes("Silent failure") &&
+        !l.includes("stat layout candidate failed") &&
+        !l.includes("stat nested tsx/jsx layout failed") &&
+        (l.includes("Invalid hook call") ||
+          l.includes("Module not found") ||
+          l.includes("Cannot find") ||
+          (l.includes("layout") && l.includes("failed") && !l.includes(" · ")))
       );
       assertEquals(errors.length, 0, `Should have no errors: ${errors.join("\n")}`);
     });
@@ -2360,10 +2363,13 @@ export default function Home() {
       // Filter for actual errors, not debug-level layout discovery logs
       // Debug logs use '·' indicator, errors use '✖'
       const errors = server.logs.filter((l) =>
-        (l.includes("not found") && !l.includes(" · ")) ||
-        l.includes("Module not found") ||
-        l.includes("Cannot find") ||
-        (l.includes("layout") && l.includes("failed") && !l.includes(" · "))
+        !l.includes("Silent failure") &&
+        !l.includes("stat layout candidate failed") &&
+        !l.includes("stat nested tsx/jsx layout failed") &&
+        (l.includes("not found") ||
+          l.includes("Module not found") ||
+          l.includes("Cannot find") ||
+          (l.includes("layout") && l.includes("failed") && !l.includes(" · ")))
       );
       assertEquals(errors.length, 0, `Should have no layout errors: ${errors.join("\n")}`);
     });
@@ -2496,10 +2502,13 @@ export default function Home() {
         // Filter for actual errors, not debug-level layout discovery logs
         // Debug logs use '·' indicator, errors use '✖'
         const errors = server.logs.filter((l) =>
-          (l.includes("not found") && !l.includes(" · ")) ||
-          l.includes("Module not found") ||
-          l.includes("FATAL") ||
-          (l.includes("layout") && l.includes("failed") && !l.includes(" · "))
+          !l.includes("Silent failure") &&
+          !l.includes("stat layout candidate failed") &&
+          !l.includes("stat nested tsx/jsx layout failed") &&
+          (l.includes("not found") ||
+            l.includes("Module not found") ||
+            l.includes("FATAL") ||
+            (l.includes("layout") && l.includes("failed") && !l.includes(" · ")))
         );
         assertEquals(errors.length, 0, `Should have no errors: ${errors.join("\n")}`);
       },

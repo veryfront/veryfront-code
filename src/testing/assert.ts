@@ -22,7 +22,7 @@ interface AssertImpl {
     errorClassOrMsg?: ErrorClass | string,
     msgIncludesOrMsg?: string,
     msg?: string,
-  ): Promise<void>;
+  ): Promise<unknown>;
   assertStringIncludes(actual: string, expected: string, msg?: string): void;
   assertMatch(actual: string, expected: RegExp, msg?: string): void;
   // deno-lint-ignore no-explicit-any
@@ -294,7 +294,7 @@ export function assertRejects(
   errorClassOrMsg?: ErrorClass | string,
   msgIncludesOrMsg?: string,
   msg?: string,
-): Promise<void> {
+): Promise<unknown> {
   return impl.assertRejects(fn, errorClassOrMsg, msgIncludesOrMsg, msg);
 }
 

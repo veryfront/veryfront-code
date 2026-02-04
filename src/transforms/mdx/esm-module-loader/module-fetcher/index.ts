@@ -12,7 +12,8 @@
  * @module build/transforms/mdx/esm-module-loader/module-fetcher
  */
 
-import { dirname, join, posix, resolve } from "#std/path.ts";
+import { dirname, join, resolve } from "#std/path.ts";
+import * as posix from "#std/path/posix";
 import { rendererLogger as globalLogger } from "#veryfront/utils";
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
