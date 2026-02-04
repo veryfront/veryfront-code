@@ -13,7 +13,7 @@ import { getLocalFs } from "../cache/index.ts";
 const EMBEDDED_SRC_DIR = join(FRAMEWORK_ROOT, "dist", "framework-src");
 
 // Log framework paths on first load for debugging
-logger.warn("[file-finder] Module loaded with framework paths", {
+logger.debug("[file-finder] Module loaded with framework paths", {
   FRAMEWORK_ROOT,
   EMBEDDED_SRC_DIR,
 });
@@ -146,7 +146,7 @@ export async function resolveModuleFile(
   // 2. FRAMEWORK_ROOT/src - for development mode with regular extensions
   const localFs = getLocalFs();
 
-  logger.warn(`${LOG_PREFIX_MDX_LOADER} Resolving framework file`, {
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} Resolving framework file`, {
     normalizedPath,
     filePathWithoutJs,
     FRAMEWORK_ROOT,
