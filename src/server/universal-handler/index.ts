@@ -50,6 +50,7 @@ import { OpenAPIHandler } from "../handlers/request/openapi.handler.ts";
 import { OpenAPIDocsHandler } from "../handlers/request/openapi-docs.handler.ts";
 import { DevDashboardHandler } from "../handlers/dev/dashboard/index.ts";
 import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
+import { ErrorPages } from "../utils/error-html.ts";
 
 // Extracted modules
 import {
@@ -399,7 +400,10 @@ export function createVeryfrontHandler(
           if (response) return response;
 
           logDebug("[universal] No handler produced response (unexpected)", { path: url.pathname });
-          return new Response("Internal Server Error", { status: 500 });
+          return new Response(ErrorPages.serverError(), {
+            status: 500,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          });
         };
 
         let response: Response;
@@ -434,7 +438,10 @@ export function createVeryfrontHandler(
             );
           } else {
             error = e instanceof Error ? e : new Error(String(e));
-            response = new Response("Internal Server Error", { status: 500 });
+            response = new Response(ErrorPages.serverError(), {
+              status: 500,
+              headers: { "Content-Type": "text/html; charset=utf-8" },
+            });
           }
         } finally {
           if (timeoutId !== undefined) clearTimeout(timeoutId);

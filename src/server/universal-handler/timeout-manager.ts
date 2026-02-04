@@ -8,6 +8,7 @@
 
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
 import { getRequestTimeout, HTTP_GATEWAY_TIMEOUT, TIMEOUT_SENTINEL } from "./request-utils.ts";
+import { ErrorPages } from "../utils/error-html.ts";
 
 const logger = getBaseLogger("SERVER");
 
@@ -59,7 +60,13 @@ export async function withRequestTimeout(
     }
 
     const error = e instanceof Error ? e : new Error(String(e));
-    return { response: new Response("Internal Server Error", { status: 500 }), error };
+    return {
+      response: new Response(ErrorPages.serverError(), {
+        status: 500,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      }),
+      error,
+    };
   } finally {
     if (timeoutId !== undefined) clearTimeout(timeoutId);
   }
