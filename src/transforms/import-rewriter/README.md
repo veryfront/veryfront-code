@@ -37,15 +37,15 @@ Served by the local module server. Contains:
 
 Strategies are applied in priority order (lower number = higher priority):
 
-| Priority | Strategy               | Handles                                       |
-| -------- | ---------------------- | --------------------------------------------- |
-| 1        | `ReactStrategy`        | `react`, `react-dom`, `react/*`               |
-| 2        | `NodeBuiltinStrategy`  | `node:*` builtins                             |
-| 3        | `VeryfrontStrategy`    | `veryfront/*`, `#veryfront/*`, `@veryfront/*` |
-| 4        | `CrossProjectStrategy` | `project@version/@/path`                      |
-| 5        | `RelativeStrategy`     | `./`, `../` paths                             |
-| 6        | `BareStrategy`         | NPM packages (`lodash`, `@org/pkg`)           |
-| 7        | `URLStrategy`          | `https://`, `http://` URLs                    |
+| Priority | Strategy               | Handles                             |
+| -------- | ---------------------- | ----------------------------------- |
+| 1        | `ReactStrategy`        | `react`, `react-dom`, `react/*`     |
+| 2        | `NodeBuiltinStrategy`  | `node:*` builtins                   |
+| 3        | `VeryfrontStrategy`    | `veryfront/*`, `#veryfront/*`       |
+| 4        | `CrossProjectStrategy` | `project@version/@/path`            |
+| 5        | `RelativeStrategy`     | `./`, `../` paths                   |
+| 6        | `BareStrategy`         | NPM packages (`lodash`, `@org/pkg`) |
+| 7        | `URLStrategy`          | `https://`, `http://` URLs          |
 
 ## Framework Imports
 

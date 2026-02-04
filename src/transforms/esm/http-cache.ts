@@ -546,7 +546,6 @@ function isParentHttpModule(baseUrl: string | undefined): boolean {
 
 function isInternalBare(specifier: string): boolean {
   return specifier.startsWith("veryfront/") ||
-    specifier.startsWith("@veryfront/") ||
     specifier.startsWith("#veryfront/") ||
     specifier.startsWith("@std/") ||
     specifier.startsWith("_vf_modules/") ||

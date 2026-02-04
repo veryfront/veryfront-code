@@ -1,6 +1,6 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import type { MDXExports, MDXImportInfo, ParsedMDX } from "./types.ts";
-import { extractFrontmatter, extractMetadata } from "./module-loader/metadata-extractor.ts";
+import { extractFrontmatter, extractMetadata } from "./esm-module-loader/metadata/index.ts";
 
 export type { ParsedMDX };
 

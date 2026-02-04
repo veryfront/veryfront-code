@@ -56,7 +56,6 @@ export class BareStrategy implements ImportRewriteStrategy {
       specifier.startsWith("@/") ||
       specifier.startsWith("#") ||
       specifier.startsWith("veryfront") ||
-      specifier.startsWith("@veryfront") ||
       specifier === "react" ||
       specifier === "react-dom" ||
       specifier.startsWith("react/") ||

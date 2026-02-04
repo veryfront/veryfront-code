@@ -58,7 +58,7 @@ function resolveFromImportMap(specifier) {
     return fileImportMap[specifier];
   }
 
-  // 2. Prefix match with wildcard (e.g., @veryfront/testing/* -> ./src/testing/*.ts)
+  // 2. Prefix match with wildcard (e.g., #veryfront/testing/* -> ./src/testing/*.ts)
   for (const [prefix, target] of Object.entries(fileImportMap)) {
     if (prefix.endsWith('/*') && specifier.startsWith(prefix.slice(0, -1))) {
       let suffix = specifier.slice(prefix.length - 1);
@@ -70,7 +70,7 @@ function resolveFromImportMap(specifier) {
     }
   }
 
-  // 3. Prefix match without wildcard (e.g., @veryfront/ -> ./src/)
+  // 3. Prefix match without wildcard (e.g., #veryfront/ -> ./src/)
   for (const [prefix, target] of Object.entries(fileImportMap)) {
     if (prefix.endsWith('/') && !prefix.endsWith('/*') && specifier.startsWith(prefix)) {
       const suffix = specifier.slice(prefix.length);
@@ -132,10 +132,8 @@ export async function resolve(specifier, context, nextResolve) {
     return nextResolve(packageName, context);
   }
 
-  // Handle @veryfront/* and @std/* imports via import map (legacy - being phased out)
+  // Handle @std/* and veryfront/* imports via import map
   if (
-    cleanSpecifier.startsWith('@veryfront/') ||
-    cleanSpecifier.startsWith('@veryfront') ||
     cleanSpecifier.startsWith('@std/') ||
     cleanSpecifier.startsWith('veryfront/')
   ) {

@@ -206,7 +206,7 @@ export function renderSnippet(
 
       try {
         const { compileContent } = await import(
-          "@veryfront/transforms/mdx/compiler/index.ts"
+          "#veryfront/transforms/mdx/compiler/index.ts"
         );
 
         const bundle = await compileContent(

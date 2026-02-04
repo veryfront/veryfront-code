@@ -48,7 +48,7 @@ export async function tryNotFoundFallback(
 
     const React = await import("react");
     const { renderToStringAdapter } = await import(
-      "@veryfront/react/compat/ssr-adapter/index.ts"
+      "#veryfront/react/compat/ssr-adapter/index.ts"
     );
 
     const element = React.createElement(NotFoundComp, {});

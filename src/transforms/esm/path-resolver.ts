@@ -74,18 +74,6 @@ export function blockExternalUrlImports(
   return Promise.resolve({ code, blockedUrls: [] });
 }
 
-export function resolveVeryfrontImports(code: string): Promise<string> {
-  return Promise.resolve(
-    replaceSpecifiers(code, (specifier) => {
-      if (specifier.startsWith("@veryfront/")) {
-        return specifier.replace("@veryfront/", "veryfront/");
-      }
-      if (specifier === "@veryfront") return "veryfront";
-      return null;
-    }),
-  );
-}
-
 export function resolveVeryfrontSubpathImports(code: string, ssr = false): Promise<string> {
   if (ssr) return Promise.resolve(code);
 

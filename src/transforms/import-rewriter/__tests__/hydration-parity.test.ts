@@ -173,11 +173,10 @@ describe("Strategy Unit Tests", () => {
   });
 
   describe("VeryfrontStrategy", () => {
-    it("should normalize @veryfront/ to veryfront/ for SSR", async () => {
+    it("should transform #veryfront/ to veryfront/ for SSR", async () => {
       const code = `import { something } from "#veryfront/utils";`;
       const result = await rewriteImports(code, createContext({ target: "ssr" }));
       expect(result).toContain("veryfront/utils");
-      expect(result).not.toContain("@veryfront/utils");
     });
 
     it("should map veryfront/* to module server URLs for browser", async () => {

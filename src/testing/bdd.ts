@@ -283,7 +283,7 @@ function normalizeDenoOptions(options: TestOptions): TestOptions {
 function requireImpl(): BddImpl {
   if (_impl) return _impl;
   throw new Error(
-    "BDD implementation not initialized. For Node/Bun, call initBdd() first, or import from @veryfront/testing which auto-initializes.",
+    "BDD implementation not initialized. For Node/Bun, call initBdd() first, or import from #veryfront/testing which auto-initializes.",
   );
 }
 

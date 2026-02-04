@@ -19,7 +19,6 @@ describe("transforms/import-rewriter/types", () => {
       ["http://cdn.com/lib.js", "url"],
       ["#veryfront/utils", "veryfront"],
       ["veryfront/client", "veryfront"],
-      ["@veryfront/sdk", "veryfront"],
       ["@/components/Button", "alias"],
       ["./utils", "relative"],
       ["../lib/helper", "relative"],

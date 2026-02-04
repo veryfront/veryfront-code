@@ -1,6 +1,6 @@
 /**
  * Bundler type definitions
- * Re-exported from @veryfront/types for backward compatibility
+ * Re-exported from #veryfront/types for backward compatibility
  */
 
 export type {

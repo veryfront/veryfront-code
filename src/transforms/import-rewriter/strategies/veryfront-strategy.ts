@@ -2,7 +2,7 @@
  * Veryfront framework import rewriting strategy.
  *
  * Priority: 1.5
- * Handles: #veryfront/*, veryfront/*, @veryfront/*
+ * Handles: #veryfront/*, veryfront/*
  */
 
 import type {
@@ -14,14 +14,6 @@ import type {
 import { buildVeryfrontModuleUrl } from "../url-builder.ts";
 import { resolveVeryfrontModuleUrl } from "../../veryfront-module-urls.ts";
 
-function normalizeVeryfrontSpecifier(specifier: string): string {
-  if (specifier === "@veryfront") return "veryfront";
-  if (specifier.startsWith("@veryfront/")) {
-    return specifier.replace("@veryfront/", "veryfront/");
-  }
-  return specifier;
-}
-
 export class VeryfrontStrategy implements ImportRewriteStrategy {
   readonly name = "veryfront";
   readonly priority = 1.5;
@@ -30,9 +22,7 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
     return (
       specifier.startsWith("#veryfront/") ||
       specifier.startsWith("veryfront/") ||
-      specifier.startsWith("@veryfront/") ||
-      specifier === "veryfront" ||
-      specifier === "@veryfront"
+      specifier === "veryfront"
     );
   }
 
@@ -54,18 +44,15 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
       return { specifier: builtUrl };
     }
 
-    const normalized = normalizeVeryfrontSpecifier(specifier);
-
-    // Handle veryfront/* and @veryfront/* imports
-    if (normalized === "veryfront" || normalized.startsWith("veryfront/")) {
-      const mapped = resolveVeryfrontModuleUrl(normalized);
+    // Handle veryfront/* imports
+    if (specifier === "veryfront" || specifier.startsWith("veryfront/")) {
+      const mapped = resolveVeryfrontModuleUrl(specifier);
       if (mapped) {
         // For SSR, append ?ssr=true to signal server-side rendering
         // This ensures ssrVfModulesPlugin can identify and resolve these imports
         if (ctx.target === "ssr") return { specifier: `${mapped}?ssr=true` };
         return { specifier: mapped };
       }
-      if (normalized !== specifier) return { specifier: normalized };
       return { specifier: null };
     }
 

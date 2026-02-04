@@ -46,7 +46,7 @@ export function checkDenoVersion(): Promise<DiagnosticResult> {
 export async function checkReactCompatibility(): Promise<DiagnosticResult> {
   try {
     const { getReactVersionInfo } = await import(
-      "@veryfront/react/compat/version-detector/index.ts"
+      "#veryfront/react/compat/version-detector/index.ts"
     );
     const reactInfo = getReactVersionInfo();
     const featureCount = Object.values(reactInfo.features).filter(Boolean).length;

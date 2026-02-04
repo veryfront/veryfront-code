@@ -1,6 +1,6 @@
 /**
  * Minimal path exports for cross-runtime testing.
- * Excludes security.ts which depends on @veryfront/utils.
+ * Excludes security.ts which depends on #veryfront/utils.
  */
 
 export type { NodePathModule, PathObject } from "./types.ts";

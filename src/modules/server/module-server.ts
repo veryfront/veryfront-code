@@ -179,7 +179,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         }
 
         const { getCompiledSnippetAsync } = await import(
-          "@veryfront/rendering/snippet-renderer.ts"
+          "#veryfront/rendering/snippet-renderer.ts"
         );
         const snippetCode = await getCompiledSnippetAsync(hash);
 

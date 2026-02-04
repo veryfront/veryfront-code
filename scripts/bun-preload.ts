@@ -1,19 +1,14 @@
 /**
  * Simplified Bun preload script for import aliasing.
  *
- * This plugin now ONLY handles:
- * 1. @veryfront/* aliases → ./src/* paths
- * 2. @std/* aliases → ./src/platform/compat/std/* shims
+ * This plugin handles:
+ * 1. #veryfront/* aliases → ./src/* paths
+ * 2. #std/* and @std/* aliases → ./src/platform/compat/std/* shims
  * 3. npm: protocol stripping (for Deno compat)
  * 4. file:// URLs with query params (cache busting)
  *
  * React and HTTP modules are now handled by shared facades (src/react/shared-*.ts)
  * which use node_modules in Bun (no esm.sh fetching needed).
- *
- * Note: To fully eliminate this plugin, migrate imports to use # prefix:
- * - @veryfront/* → #veryfront/*
- * - @std/* → #std/*
- * Then package.json imports field will work natively.
  */
 
 import { plugin } from "bun";
@@ -23,23 +18,8 @@ import { fileURLToPath } from "url";
 
 const projectRoot = resolve(dirname(import.meta.dir), "..");
 
-// Import map for local file resolution
+// Import map for @std/* aliases (Deno std compat)
 const importMap: Record<string, string> = {
-  // Testing
-  "@veryfront/testing": "./src/testing/index.ts",
-  "@veryfront/testing/assert": "./src/testing/assert.ts",
-  "@veryfront/testing/bdd": "./src/testing/bdd.ts",
-  "@veryfront/testing/deno-compat": "./src/testing/deno-compat.ts",
-
-  // Platform compat
-  "@veryfront/compat/fs": "./src/platform/compat/fs.ts",
-  "@veryfront/compat/path": "./src/platform/compat/path/index.ts",
-  "@veryfront/compat/process": "./src/platform/compat/process.ts",
-  "@veryfront/platform/compat/runtime": "./src/platform/compat/runtime.ts",
-  "@veryfront/platform/compat/fs": "./src/platform/compat/fs.ts",
-  "@veryfront/platform/compat/path/index": "./src/platform/compat/path/index.ts",
-
-  // Std compat
   "@std/assert": "./src/testing/assert.ts",
   "@std/testing/bdd": "./src/testing/bdd.ts",
   "@std/expect": "./src/platform/compat/std/expect.ts",
@@ -53,26 +33,9 @@ const importMap: Record<string, string> = {
 };
 
 function resolveImport(specifier: string): string | null {
-  // Direct match
+  // Direct match for @std/* aliases
   if (importMap[specifier]) {
     return resolve(projectRoot, importMap[specifier]);
-  }
-
-  // Prefix match for @veryfront/*
-  if (specifier.startsWith("@veryfront/")) {
-    const subpath = specifier.replace("@veryfront/", "");
-    const candidates = [
-      `./src/${subpath}.ts`,
-      `./src/${subpath}/index.ts`,
-      `./src/${subpath.replace(/\//g, "/")}.ts`,
-    ];
-
-    for (const candidate of candidates) {
-      const fullPath = resolve(projectRoot, candidate);
-      if (existsSync(fullPath) && statSync(fullPath).isFile()) {
-        return fullPath;
-      }
-    }
   }
 
   return null;
@@ -117,15 +80,6 @@ plugin({
       const atIndex = packageSpec.indexOf("@", 1);
       const packageName = atIndex > 0 ? packageSpec.slice(0, atIndex) : packageSpec;
       return { path: packageName };
-    });
-
-    // Handle @veryfront/* imports
-    build.onResolve({ filter: /^@veryfront\// }, (args) => {
-      const resolved = resolveImport(args.path);
-      if (resolved) {
-        return { path: resolved };
-      }
-      return undefined;
     });
 
     // Handle @std/* imports

@@ -188,7 +188,7 @@ async function loadErrorComponent(
 ): Promise<React.ComponentType<unknown> | null> {
   const src = await ctx.adapter.fs.readFile(filePath);
   const { loadComponentFromSource } = await import(
-    "@veryfront/modules/react-loader/component-loader.ts"
+    "#veryfront/modules/react-loader/component-loader.ts"
   );
 
   const isLocalDev = ctx.requestContext?.isLocalDev ?? false;
@@ -226,7 +226,7 @@ async function renderErrorPage(
 ): Promise<Response> {
   const React = await import("react");
   const { renderToStringAdapter } = await import(
-    "@veryfront/react/compat/ssr-adapter/index.ts"
+    "#veryfront/react/compat/ssr-adapter/index.ts"
   );
 
   const errorProps = { statusCode, err: error, pathname };

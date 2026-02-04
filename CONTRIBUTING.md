@@ -203,7 +203,7 @@ export async function renderPage(
 
 Organize imports in this order:
 1. External dependencies (Node.js, Deno, npm packages)
-2. Framework internal imports (`@veryfront/*`)
+2. Framework internal imports (`#veryfront/*`)
 3. Relative imports from same module
 
 ```typescript

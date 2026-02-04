@@ -85,7 +85,7 @@ export async function tryLoadReservedInDirs(
   const join = (a: string, b: string) => `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
   const candidateName = RESERVED_COMPONENTS[which];
   const { loadComponentFromSource } = await import(
-    "@veryfront/modules/react-loader/component-loader.ts"
+    "#veryfront/modules/react-loader/component-loader.ts"
   );
 
   for (const dir of dirs) {

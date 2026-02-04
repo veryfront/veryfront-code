@@ -235,7 +235,7 @@ export class LayoutApplicator {
             App = await this.loadMdxAppComponent(appSource, appPath);
           } else {
             const { loadComponentFromSource } = await import(
-              "@veryfront/modules/react-loader/index.ts"
+              "#veryfront/modules/react-loader/index.ts"
             );
             App = await loadComponentFromSource(
               appSource,
@@ -273,7 +273,7 @@ export class LayoutApplicator {
     try {
       const { compile } = await import("@mdx-js/mdx");
       const { getRehypePlugins, getRemarkPlugins } = await import(
-        "@veryfront/transforms/plugins/plugin-loader.ts"
+        "#veryfront/transforms/plugins/plugin-loader.ts"
       );
 
       const body = source.trim().startsWith("---") ? extract(source).body : source;
@@ -293,7 +293,7 @@ export class LayoutApplicator {
       });
 
       const { loadComponentFromSource } = await import(
-        "@veryfront/modules/react-loader/index.ts"
+        "#veryfront/modules/react-loader/index.ts"
       );
 
       return await loadComponentFromSource(

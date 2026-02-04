@@ -140,7 +140,7 @@ export async function generatePrefetchScript(_adapter: RuntimeAdapter): Promise<
  */
 export async function generateImportMap(): Promise<string> {
   const { getReactImportMap, REACT_DEFAULT_VERSION } = await import(
-    "@veryfront/utils/constants/cdn.ts"
+    "#veryfront/utils/constants/cdn.ts"
   );
   const imports = getReactImportMap(REACT_DEFAULT_VERSION);
 
@@ -156,7 +156,7 @@ function createClientShimPlugin(shimPath: string): Plugin {
   return {
     name: "veryfront-client-shims",
     setup(build) {
-      build.onResolve({ filter: /^@veryfront\/internal$/ }, () => ({ path: shimPath }));
+      build.onResolve({ filter: /^#veryfront\/utils$/ }, () => ({ path: shimPath }));
     },
   };
 }

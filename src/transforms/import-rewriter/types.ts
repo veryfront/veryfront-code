@@ -112,7 +112,7 @@ export interface ImportRewriteStrategy {
 export type SpecifierType =
   | "react" // react, react-dom, react/*
   | "alias" // @/components/Button
-  | "veryfront" // #veryfront/*, veryfront/*, @veryfront/*
+  | "veryfront" // #veryfront/*, veryfront/*
   | "bare" // lodash, @tanstack/react-query
   | "relative" // ./foo, ../bar
   | "cross-project" // myproject@1.0.0/@/components
@@ -140,10 +140,8 @@ export function classifySpecifier(specifier: string): SpecifierType {
 
   if (
     specifier === "veryfront" ||
-    specifier === "@veryfront" ||
     specifier.startsWith("#veryfront/") ||
-    specifier.startsWith("veryfront/") ||
-    specifier.startsWith("@veryfront/")
+    specifier.startsWith("veryfront/")
   ) {
     return "veryfront";
   }

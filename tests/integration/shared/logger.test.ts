@@ -6,14 +6,14 @@ import { delay } from "#std/async";
 
 function importFresh(): Promise<typeof import("#veryfront/utils/logger/index.ts")> {
   return import(
-    `@veryfront/utils/logger/index.ts?ts=${Date.now()}&r=${Math.random()}`
+    `#veryfront/utils/logger/index.ts?ts=${Date.now()}&r=${Math.random()}`
   );
 }
 
 function importSharedLogger(
   query: string,
 ): Promise<typeof import("#veryfront/utils/logger/index.ts")> {
-  return import(`@veryfront/utils/logger/index.ts?${query}`);
+  return import(`#veryfront/utils/logger/index.ts?${query}`);
 }
 
 function assertExists(value: unknown): asserts value is NonNullable<unknown> {
