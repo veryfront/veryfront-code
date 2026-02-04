@@ -110,8 +110,17 @@ export class WebSocketManager {
         this.wsReconnectTimer = setTimeout(() => this.connect(projectId), WS_RECONNECT_DELAY_MS);
       };
 
-      this.ws.onerror = (error) => {
-        logger.warn("[WebSocketManager] WebSocket error", { error });
+      this.ws.onerror = (event) => {
+        // WebSocket error events don't serialize well to JSON (results in empty {})
+        // Extract useful information from the event for logging
+        const errorInfo = {
+          type: event.type,
+          message: event instanceof ErrorEvent ? event.message : "WebSocket connection error",
+          url: this.ws?.url,
+          readyState: this.ws?.readyState,
+          connectionId: this.wsConnectionId,
+        };
+        logger.warn("[WebSocketManager] WebSocket error", errorInfo);
       };
     } catch (error) {
       logger.warn("[WebSocketManager] Failed to connect WebSocket", { error });
