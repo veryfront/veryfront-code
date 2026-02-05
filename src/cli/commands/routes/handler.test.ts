@@ -1,15 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { handleRoutesCommand } from "./handler.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
-
-function extractRoutesArgs(args: ParsedArgs, cwdVal: string) {
-  const projectDir = typeof args.project === "string" ? args.project : cwdVal;
-  return {
-    projectDir,
-    json: args.json === true,
-  };
-}
+import { handleRoutesCommand, parseRoutesArgs } from "./handler.ts";
 
 describe("commands/routes/handler", () => {
   describe("handleRoutesCommand", () => {
@@ -23,45 +14,47 @@ describe("commands/routes/handler", () => {
     });
   });
 
-  describe("argument extraction", () => {
-    const CWD = "/home/user/project";
-
-    it("uses cwd when no --project flag provided", () => {
-      const result = extractRoutesArgs({ _: ["routes"] }, CWD);
-      assertEquals(result.projectDir, CWD);
+  describe("parseRoutesArgs", () => {
+    it("defaults projectDir to empty string when not provided", () => {
+      const result = parseRoutesArgs({ _: ["routes"] });
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.projectDir, "");
     });
 
-    it("uses --project string value when provided", () => {
-      const result = extractRoutesArgs({ _: ["routes"], project: "/custom/path" }, CWD);
-      assertEquals(result.projectDir, "/custom/path");
+    it("uses --project-dir string value when provided", () => {
+      const result = parseRoutesArgs({ _: ["routes"], "project-dir": "/custom/path" });
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.projectDir, "/custom/path");
     });
 
-    it("falls back to cwd when --project is non-string (boolean true)", () => {
-      const result = extractRoutesArgs({ _: ["routes"], project: true }, CWD);
-      assertEquals(result.projectDir, CWD);
+    it("uses --dir alias", () => {
+      const result = parseRoutesArgs({ _: ["routes"], dir: "/custom/path" });
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.projectDir, "/custom/path");
     });
 
-    it("falls back to cwd when --project is a number", () => {
-      const result = extractRoutesArgs({ _: ["routes"], project: 42 }, CWD);
-      assertEquals(result.projectDir, CWD);
+    it("uses -d alias", () => {
+      const result = parseRoutesArgs({ _: ["routes"], d: "/custom/path" });
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.projectDir, "/custom/path");
     });
 
-    it("parses --json flag", () => {
-      assertEquals(extractRoutesArgs({ _: ["routes"], json: true }, CWD).json, true);
-      assertEquals(extractRoutesArgs({ _: ["routes"], json: false }, CWD).json, false);
-      assertEquals(extractRoutesArgs({ _: ["routes"] }, CWD).json, false);
+    it("parses --json flag as true", () => {
+      const result = parseRoutesArgs({ _: ["routes"], json: true });
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.json, true);
     });
 
-    it("rejects non-boolean values for --json via strict equality", () => {
-      const strArgs = { _: ["routes"], json: "true" } as unknown as ParsedArgs;
-      const numArgs = { _: ["routes"], json: 1 } as unknown as ParsedArgs;
-      assertEquals(extractRoutesArgs(strArgs, CWD).json, false);
-      assertEquals(extractRoutesArgs(numArgs, CWD).json, false);
+    it("defaults --json to false", () => {
+      const result = parseRoutesArgs({ _: ["routes"] });
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.json, false);
     });
 
-    it("defaults to human-readable output when --json is omitted", () => {
-      const result = extractRoutesArgs({ _: ["routes"] }, CWD);
-      assertEquals(result.json, false);
+    it("parses --json flag as false", () => {
+      const result = parseRoutesArgs({ _: ["routes"], json: false });
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.json, false);
     });
   });
 });
