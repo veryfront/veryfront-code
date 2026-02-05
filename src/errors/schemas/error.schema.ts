@@ -1,14 +1,5 @@
-/**
- * Error schemas
- *
- * Schemas for error codes and error handling.
- */
-
 import { z } from "zod";
 
-/**
- * Error code schema
- */
 export const errorCodeSchema = z.enum([
   "FILE_NOT_FOUND",
   "BUILD_ERROR",
@@ -27,10 +18,7 @@ export const errorCodeSchema = z.enum([
   "SERVICE_OVERLOADED",
 ]);
 
-/**
- * Error code constants (for runtime value access)
- * Provides enum-like value access: ErrorCode.CONFIG_ERROR
- */
+/** Error code constants for runtime value access (e.g., ErrorCode.CONFIG_ERROR) */
 export const ErrorCode = {
   FILE_NOT_FOUND: "FILE_NOT_FOUND",
   BUILD_ERROR: "BUILD_ERROR",

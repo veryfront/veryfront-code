@@ -1,14 +1,5 @@
-/**
- * AI Provider schemas
- *
- * Schemas for AI provider configuration and completion API.
- */
-
 import { z } from "zod";
 
-/**
- * Base provider configuration
- */
 export const ProviderConfigSchema = z.object({
   apiKey: z.string().optional(),
   baseURL: z.string().url().optional(),
@@ -16,30 +7,18 @@ export const ProviderConfigSchema = z.object({
   options: z.record(z.unknown()).optional(),
 });
 
-/**
- * OpenAI provider configuration
- */
 export const OpenAIConfigSchema = ProviderConfigSchema.extend({
   apiKey: z.string(),
 });
 
-/**
- * Anthropic provider configuration
- */
 export const AnthropicConfigSchema = ProviderConfigSchema.extend({
   apiKey: z.string(),
 });
 
-/**
- * Google provider configuration
- */
 export const GoogleConfigSchema = ProviderConfigSchema.extend({
   apiKey: z.string(),
 });
 
-/**
- * Multi-provider configuration
- */
 export const ProvidersConfigSchema = z.object({
   default: z.string().optional(),
   openai: OpenAIConfigSchema.optional(),
@@ -47,9 +26,6 @@ export const ProvidersConfigSchema = z.object({
   google: GoogleConfigSchema.optional(),
 });
 
-/**
- * Tool call schema for completion messages
- */
 const toolCallSchema = z.object({
   id: z.string(),
   type: z.string().optional(),
@@ -59,9 +35,6 @@ const toolCallSchema = z.object({
   }),
 });
 
-/**
- * Message schema for completion requests
- */
 const completionMessageSchema = z.object({
   role: z.string(),
   content: z.string(),
@@ -69,9 +42,6 @@ const completionMessageSchema = z.object({
   tool_call_id: z.string().optional(),
 });
 
-/**
- * Completion request schema
- */
 export const CompletionRequestSchema = z.object({
   model: z.string(),
   messages: z.array(completionMessageSchema),
@@ -88,18 +58,12 @@ export const CompletionRequestSchema = z.object({
     .optional(),
 });
 
-/**
- * Tool call result in completion response
- */
 const completionToolCallSchema = z.object({
   id: z.string(),
   name: z.string(),
   arguments: z.record(z.unknown()),
 });
 
-/**
- * Completion response schema
- */
 export const CompletionResponseSchema = z.object({
   text: z.string(),
   toolCalls: z.array(completionToolCallSchema).optional(),

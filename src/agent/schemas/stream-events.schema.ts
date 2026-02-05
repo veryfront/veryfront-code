@@ -1,15 +1,6 @@
-/**
- * Agent stream event schemas
- *
- * Schemas for real-time streaming events from agent execution.
- */
-
 import { z } from "zod";
 
-/**
- * Schema for agent streaming events.
- * These events are emitted during agent execution for real-time updates.
- */
+/** Events emitted during agent execution for real-time updates */
 export const AgentStreamEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("content"),

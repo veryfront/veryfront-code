@@ -1,14 +1,5 @@
-/**
- * OAuth schemas
- *
- * Schemas for OAuth provider configuration, tokens, and state management.
- */
-
 import { z } from "zod";
 
-/**
- * OAuth provider configuration
- */
 export const OAuthProviderConfigSchema = z.object({
   providerId: z.string(),
   displayName: z.string(),
@@ -33,18 +24,12 @@ export const OAuthProviderConfigSchema = z.object({
     .optional(),
 });
 
-/**
- * OAuth service configuration (extends provider config)
- */
 export const OAuthServiceConfigSchema = OAuthProviderConfigSchema.extend({
   serviceId: z.string(),
   defaultScopes: z.array(z.string()),
   apiBaseUrl: z.string().url(),
 });
 
-/**
- * OAuth tokens
- */
 export const OAuthTokensSchema = z.object({
   accessToken: z.string(),
   refreshToken: z.string().optional(),
@@ -54,9 +39,7 @@ export const OAuthTokensSchema = z.object({
   idToken: z.string().optional(),
 });
 
-/**
- * OAuth state (for CSRF protection and PKCE)
- */
+/** State for CSRF protection and PKCE */
 export const OAuthStateSchema = z.object({
   state: z.string(),
   codeVerifier: z.string().optional(),
@@ -66,9 +49,6 @@ export const OAuthStateSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
 });
 
-/**
- * Token exchange result
- */
 export const TokenExchangeResultSchema = z.object({
   success: z.boolean(),
   tokens: OAuthTokensSchema.optional(),
@@ -76,9 +56,6 @@ export const TokenExchangeResultSchema = z.object({
   errorDescription: z.string().optional(),
 });
 
-/**
- * Authorization URL options
- */
 export const AuthorizationUrlOptionsSchema = z.object({
   scopes: z.array(z.string()).optional(),
   state: z.string().optional(),
@@ -87,9 +64,6 @@ export const AuthorizationUrlOptionsSchema = z.object({
   redirectUri: z.string().optional(),
 });
 
-/**
- * Token exchange options
- */
 export const TokenExchangeOptionsSchema = z.object({
   code: z.string(),
   redirectUri: z.string().url(),

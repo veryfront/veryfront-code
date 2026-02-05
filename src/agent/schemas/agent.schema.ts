@@ -1,19 +1,7 @@
-/**
- * Agent schemas
- *
- * Schemas for agent configuration, messages, and responses.
- */
-
 import { z } from "zod";
 
-/**
- * Model provider schema
- */
 export const modelProviderSchema = z.enum(["openai", "anthropic", "google", "local"]);
 
-/**
- * Agent status schema
- */
 export const agentStatusSchema = z.enum([
   "idle",
   "thinking",
@@ -23,18 +11,12 @@ export const agentStatusSchema = z.enum([
   "error",
 ]);
 
-/**
- * Memory configuration schema
- */
 export const MemoryConfigSchema = z.object({
   type: z.enum(["conversation", "buffer", "summary", "redis"]),
   maxTokens: z.number().int().positive().optional(),
   maxMessages: z.number().int().positive().optional(),
 });
 
-/**
- * Edge configuration schema
- */
 export const EdgeConfigSchema = z.object({
   enabled: z.boolean(),
   maxSteps: z.number().int().positive().optional(),
@@ -42,9 +24,6 @@ export const EdgeConfigSchema = z.object({
   streaming: z.boolean().optional(),
 });
 
-/**
- * Tool call part with args schema
- */
 export const ToolCallPartWithArgsSchema = z.object({
   type: z.string().regex(/^tool-.+$/),
   toolCallId: z.string(),
@@ -52,9 +31,6 @@ export const ToolCallPartWithArgsSchema = z.object({
   args: z.record(z.unknown()),
 });
 
-/**
- * Tool call part with input schema
- */
 export const ToolCallPartWithInputSchema = z.object({
   type: z.string().regex(/^tool-.+$/),
   toolCallId: z.string(),
@@ -62,17 +38,11 @@ export const ToolCallPartWithInputSchema = z.object({
   input: z.record(z.unknown()),
 });
 
-/**
- * Tool call part schema (union)
- */
 export const ToolCallPartSchema = z.union([
   ToolCallPartWithArgsSchema,
   ToolCallPartWithInputSchema,
 ]);
 
-/**
- * Tool result part schema
- */
 export const ToolResultPartSchema = z.object({
   type: z.literal("tool-result"),
   toolCallId: z.string(),
@@ -80,9 +50,6 @@ export const ToolResultPartSchema = z.object({
   result: z.unknown(),
 });
 
-/**
- * Message part schema
- */
 export const MessagePartSchema = z.union([
   z.object({
     type: z.literal("text"),
@@ -98,9 +65,6 @@ export const MessagePartSchema = z.union([
   ToolResultPartSchema,
 ]);
 
-/**
- * Message schema
- */
 export const MessageSchema = z.object({
   id: z.string(),
   role: z.enum(["user", "assistant", "system", "tool"]),
@@ -109,18 +73,12 @@ export const MessageSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
 });
 
-/**
- * Stream tool call schema
- */
 export const StreamToolCallSchema = z.object({
   id: z.string(),
   name: z.string(),
   arguments: z.record(z.unknown()),
 });
 
-/**
- * Tool call schema
- */
 export const ToolCallSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -131,9 +89,6 @@ export const ToolCallSchema = z.object({
   executionTime: z.number().nonnegative().optional(),
 });
 
-/**
- * Agent response schema
- */
 export const AgentResponseSchema = z.object({
   text: z.string(),
   messages: z.array(MessageSchema),
@@ -150,9 +105,6 @@ export const AgentResponseSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
 });
 
-/**
- * Agent context schema
- */
 export const AgentContextSchema = z.object({
   agentId: z.string(),
   model: z.string().optional(),

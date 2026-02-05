@@ -1,29 +1,11 @@
-/**
- * HTML generation schemas
- *
- * Schemas for HTML generation options and hydration data.
- */
-
 import { z } from "zod";
 
-/**
- * Color scheme schema
- */
 export const colorSchemeSchema = z.enum(["light", "dark"]);
 
-/**
- * Deployment environment schema
- */
 export const environmentSchema = z.enum(["preview", "production"]);
 
-/**
- * Page type schema
- */
 export const pageTypeSchema = z.enum(["mdx", "md", "tsx", "jsx", "ts", "js"]);
 
-/**
- * HTML generation options schema
- */
 export const HTMLGenerationOptionsSchema = z.object({
   mode: z.enum(["development", "production"]),
   config: z.any(), // VeryfrontConfig is complex, use any
@@ -66,9 +48,6 @@ export const HTMLGenerationOptionsSchema = z.object({
   noHmr: z.boolean().optional(),
 });
 
-/**
- * Hydration data schema
- */
 export const HydrationDataSchema = z.object({
   slug: z.string(),
   props: z.record(z.unknown()),

@@ -1,16 +1,8 @@
-/**
- * Issue schemas and validation
- *
- * Single source of truth for issue types and validation.
- */
-
 import { z } from "zod";
 
-// Constants
 export const ISSUE_PREFIXES = ["ISSUE", "TASK", "PLAN"] as const;
 export const ISSUE_ID_PATTERN = /^(ISSUE|TASK|PLAN)-(\d{3,})$/;
 
-// Schemas
 export const issueStateSchema = z.enum(["open", "closed"]);
 
 export const issuePrefixSchema = z.enum(ISSUE_PREFIXES);

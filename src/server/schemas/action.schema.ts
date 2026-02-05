@@ -1,14 +1,6 @@
-/**
- * Server Action Schemas
- *
- * Zod schemas for RSC server action validation.
- */
-
 import { z } from "zod";
 
-/**
- * Schema for action payload from client
- */
+/** Action payload from client for RSC server actions */
 export const ActionPayloadSchema = z.object({
   id: z.string().min(1),
   args: z.array(z.unknown()).max(50).optional().default([]),

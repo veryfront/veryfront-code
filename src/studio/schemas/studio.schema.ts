@@ -1,14 +1,5 @@
-/**
- * Studio communication schemas
- *
- * Schemas for postMessage communication between Studio and Renderer iframe.
- */
-
 import { z } from "zod";
 
-/**
- * Log method schema
- */
 export const logMethodSchema = z.enum([
   "log",
   "debug",
@@ -26,18 +17,12 @@ export const logMethodSchema = z.enum([
   "dir",
 ]);
 
-/**
- * Log message schema
- */
 export const LogMessageSchema = z.object({
   method: logMethodSchema,
   data: z.array(z.unknown()).optional(),
   timestamp: z.string().optional(),
 });
 
-/**
- * Navigator node type schema
- */
 export const navigatorNodeTypeSchema = z.enum([
   "root",
   "component",
@@ -46,9 +31,6 @@ export const navigatorNodeTypeSchema = z.enum([
   "text",
 ]);
 
-/**
- * Navigator node schema (recursive)
- */
 export const NavigatorNodeSchema: z.ZodType<{
   id: string;
   name: string;
@@ -81,9 +63,6 @@ export const NavigatorNodeSchema: z.ZodType<{
   })
 );
 
-/**
- * Bundler message schema
- */
 export const BundlerMessageSchema = z.object({
   type: z.enum(["error", "warning"]),
   message: z.string(),
@@ -92,9 +71,7 @@ export const BundlerMessageSchema = z.object({
   column: z.number().int().nonnegative().optional(),
 });
 
-/**
- * Message from Renderer discriminated union schema
- */
+/** postMessage events from Renderer to Studio */
 export const MessageFromRendererSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("appLoaded"),
@@ -193,9 +170,7 @@ export const MessageFromRendererSchema = z.discriminatedUnion("action", [
   }),
 ]);
 
-/**
- * Message from Studio discriminated union schema
- */
+/** postMessage events from Studio to Renderer */
 export const MessageFromStudioSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("routeChange"),

@@ -1,11 +1,4 @@
-/**
- * GitHub API Schemas
- *
- * Zod schemas for runtime validation of GitHub API responses.
- * This file serves as documentation for all GitHub API endpoints used.
- *
- * @see https://docs.github.com/en/rest
- */
+/** @see https://docs.github.com/en/rest */
 
 import { z } from "zod";
 

@@ -1,14 +1,5 @@
-/**
- * Embedding provider schemas
- *
- * Schemas for embedding API requests, responses, and configuration.
- */
-
 import { z } from "zod";
 
-/**
- * Supported embedding dimensions
- */
 export const embeddingDimensionSchema = z.union([
   z.literal(768),
   z.literal(1024),
@@ -17,9 +8,6 @@ export const embeddingDimensionSchema = z.union([
   z.literal(4096),
 ]);
 
-/**
- * Embedding provider configuration
- */
 export const EmbeddingProviderConfigSchema = z.object({
   apiKey: z.string().optional(),
   baseURL: z.string().url().optional(),
@@ -28,34 +16,22 @@ export const EmbeddingProviderConfigSchema = z.object({
   batchSize: z.number().int().positive().optional(),
 });
 
-/**
- * Embedding request
- */
 export const EmbeddingRequestSchema = z.object({
   inputs: z.array(z.string().min(1)),
   model: z.string().optional(),
   dimension: embeddingDimensionSchema.optional(),
 });
 
-/**
- * Single embedding result
- */
 export const EmbeddingResultSchema = z.object({
   index: z.number().int().nonnegative(),
   embedding: z.array(z.number()),
 });
 
-/**
- * Embedding usage statistics
- */
 export const EmbeddingUsageSchema = z.object({
   promptTokens: z.number().int().nonnegative(),
   totalTokens: z.number().int().nonnegative(),
 });
 
-/**
- * Embedding response
- */
 export const EmbeddingResponseSchema = z.object({
   embeddings: z.array(EmbeddingResultSchema),
   model: z.string(),

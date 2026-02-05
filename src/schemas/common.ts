@@ -1,10 +1,6 @@
 import { z } from "zod";
 import { MAX_URL_LENGTH_FOR_VALIDATION } from "#veryfront/utils/constants/index.ts";
 
-/**
- * Common validation schemas used across multiple modules.
- * These schemas provide consistent validation for frequently-used data types.
- */
 export const CommonSchemas = {
   email: z.string().email().max(255),
   uuid: z.string().uuid(),

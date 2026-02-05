@@ -1,14 +1,5 @@
-/**
- * MCP (Model Context Protocol) schemas
- *
- * Schemas for MCP server configuration and registry types.
- */
-
 import { z } from "zod";
 
-/**
- * MCP Server configuration schema
- */
 export const MCPServerConfigSchema = z.object({
   enabled: z.boolean(),
   port: z.number().int().positive().optional(),
@@ -27,9 +18,6 @@ export const MCPServerConfigSchema = z.object({
     .optional(),
 });
 
-/**
- * MCP Stats schema
- */
 export const MCPStatsSchema = z.object({
   tools: z.number().int().nonnegative(),
   resources: z.number().int().nonnegative(),

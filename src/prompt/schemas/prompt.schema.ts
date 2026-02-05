@@ -1,14 +1,5 @@
-/**
- * Prompt schemas
- *
- * Schemas for prompt templates and configuration.
- */
-
 import { z } from "zod";
 
-/**
- * Prompt configuration schema
- */
 export const PromptConfigSchema = z.object({
   id: z.string().optional(),
   description: z.string(),
