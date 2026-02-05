@@ -80,4 +80,3 @@ export async function getTemplate(name: TemplateName): Promise<TemplateFile[] | 
 export function getTemplateConfig(name: TemplateName): TemplateConfig | null {
   return templateConfigs[name] ?? null;
 }
-
