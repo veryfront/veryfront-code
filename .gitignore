@@ -69,3 +69,7 @@ scripts/rlm-optimize/.venv/
 scripts/code-optimize/output/*
 !scripts/code-optimize/output/.gitkeep
 scripts/code-optimize/.venv/
+
+# Claude Octopus plugin state
+.claude-octopus/
+plan.md
