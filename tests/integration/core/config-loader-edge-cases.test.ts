@@ -419,17 +419,20 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
     });
 
     it("should handle concurrent config loads", async () => {
-      await withConfigTest('export default { title: "Concurrent" };', async ({ projectDir, adapter }) => {
-        const [config1, config2, config3] = await Promise.all([
-          getConfig(projectDir, adapter),
-          getConfig(projectDir, adapter),
-          getConfig(projectDir, adapter),
-        ]);
+      await withConfigTest(
+        'export default { title: "Concurrent" };',
+        async ({ projectDir, adapter }) => {
+          const [config1, config2, config3] = await Promise.all([
+            getConfig(projectDir, adapter),
+            getConfig(projectDir, adapter),
+            getConfig(projectDir, adapter),
+          ]);
 
-        assertEquals(config1.title, "Concurrent");
-        assertEquals(config2.title, "Concurrent");
-        assertEquals(config3.title, "Concurrent");
-      });
+          assertEquals(config1.title, "Concurrent");
+          assertEquals(config2.title, "Concurrent");
+          assertEquals(config3.title, "Concurrent");
+        },
+      );
     });
   });
 

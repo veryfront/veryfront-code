@@ -1,5 +1,8 @@
 import { logger } from "#veryfront/utils";
-import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import {
+  type EnvironmentConfig,
+  getEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { type EnvReader, OAuthService } from "../providers/base.ts";
 import type { AuthorizationUrlOptions, OAuthServiceConfig, TokenStore } from "../types.ts";

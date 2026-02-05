@@ -9,16 +9,13 @@
  * @see plans/architecture-audit/001.1-layout-bug-critical.md
  */
 
-import { assertEquals, assert } from "#veryfront/testing/assert";
-import { describe, it, beforeEach } from "#veryfront/testing/bdd";
+import { assert, assertEquals } from "#veryfront/testing/assert";
+import { beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {
-  discoverNestedLayouts,
   clearLayoutDiscoveryCache,
+  discoverNestedLayouts,
 } from "../../../src/rendering/layouts/utils/discovery.ts";
-import type {
-  RuntimeAdapter,
-  FileSystemAdapter,
-} from "../../../src/platform/adapters/base.ts";
+import type { FileSystemAdapter, RuntimeAdapter } from "../../../src/platform/adapters/base.ts";
 
 function createMockAdapter(existingFiles: Set<string>): RuntimeAdapter {
   const mockFS: FileSystemAdapter = {

@@ -90,7 +90,10 @@ describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, (
         Array.isArray(payload.modules) && payload.modules.length > 0,
         "Payload should contain module references",
       );
-      assert(payload.slots && typeof payload.slots.root === "string", "Payload should include root slot");
+      assert(
+        payload.slots && typeof payload.slots.root === "string",
+        "Payload should include root slot",
+      );
 
       const paramResponse = await fetch(`${baseUrl}/payload?name=Alice`);
       assertEquals(paramResponse.status, 200, "Parameterized payload should return 200");

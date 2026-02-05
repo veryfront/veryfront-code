@@ -145,9 +145,11 @@ export class TestContext {
     // Generate a unique short projectId for cache isolation
     // Use test name + random suffix to avoid collisions
     const randomSuffix = Math.random().toString(36).substring(2, 10);
-    this._projectId = `test_${this.testName
-      .replace(/[^a-zA-Z0-9]/g, "_")
-      .substring(0, 20)}_${randomSuffix}`;
+    this._projectId = `test_${
+      this.testName
+        .replace(/[^a-zA-Z0-9]/g, "_")
+        .substring(0, 20)
+    }_${randomSuffix}`;
 
     // NOTE: We intentionally do NOT set VF_CACHE_DIR env var here anymore.
     // Setting a global env var causes race conditions in parallel tests.

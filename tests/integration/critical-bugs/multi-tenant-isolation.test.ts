@@ -153,8 +153,16 @@ describe(
           collectHead({ title: "Second Request Title" });
         });
 
-        assertEquals(second.title, "Second Request Title", "Second request should have its own title");
-        assertEquals(second.metas.length, 0, "Second request should not have first request's metas");
+        assertEquals(
+          second.title,
+          "Second Request Title",
+          "Second request should have its own title",
+        );
+        assertEquals(
+          second.metas.length,
+          0,
+          "Second request should not have first request's metas",
+        );
 
         assertEquals(first.title, "First Request Title", "First result should be unchanged");
         assertEquals(first.metas.length, 1, "First result should still have its metas");
@@ -212,7 +220,11 @@ describe(
                 rendererB.renderPage("/"),
               ]);
 
-              assertStringIncludes(resultA.html, "project-a", "Project A should have project-a class");
+              assertStringIncludes(
+                resultA.html,
+                "project-a",
+                "Project A should have project-a class",
+              );
               assertStringIncludes(resultA.html, "theme-blue", "Project A should have blue theme");
               assertStringIncludes(
                 resultA.html,
@@ -222,7 +234,11 @@ describe(
               assert(!resultA.html.includes("project-b"), "Project A should NOT contain project-b");
               assert(!resultA.html.includes("theme-red"), "Project A should NOT have red theme");
 
-              assertStringIncludes(resultB.html, "project-b", "Project B should have project-b class");
+              assertStringIncludes(
+                resultB.html,
+                "project-b",
+                "Project B should have project-b class",
+              );
               assertStringIncludes(resultB.html, "theme-red", "Project B should have red theme");
               assertStringIncludes(
                 resultB.html,
@@ -297,7 +313,10 @@ describe(
               const resultsB: string[] = [];
 
               for (let i = 0; i < 3; i++) {
-                const [rA, rB] = await Promise.all([rendererA.renderPage("/"), rendererB.renderPage("/")]);
+                const [rA, rB] = await Promise.all([
+                  rendererA.renderPage("/"),
+                  rendererB.renderPage("/"),
+                ]);
                 resultsA.push(rA.html);
                 resultsB.push(rB.html);
               }
@@ -425,11 +444,27 @@ describe(
               const resultB2 = await rendererB.renderPage("/");
               const resultA2 = await rendererA.renderPage("/");
 
-              assertStringIncludes(resultA1.html, 'data-name="Alpha"', "A render 1 should have Alpha");
-              assertStringIncludes(resultA2.html, 'data-name="Alpha"', "A render 2 should have Alpha");
+              assertStringIncludes(
+                resultA1.html,
+                'data-name="Alpha"',
+                "A render 1 should have Alpha",
+              );
+              assertStringIncludes(
+                resultA2.html,
+                'data-name="Alpha"',
+                "A render 2 should have Alpha",
+              );
 
-              assertStringIncludes(resultB1.html, 'data-name="Beta"', "B render 1 should have Beta");
-              assertStringIncludes(resultB2.html, 'data-name="Beta"', "B render 2 should have Beta");
+              assertStringIncludes(
+                resultB1.html,
+                'data-name="Beta"',
+                "B render 1 should have Beta",
+              );
+              assertStringIncludes(
+                resultB2.html,
+                'data-name="Beta"',
+                "B render 2 should have Beta",
+              );
 
               assert(!resultA1.html.includes("Beta"), "A render 1 should NOT have Beta");
               assert(!resultA2.html.includes("Beta"), "A render 2 should NOT have Beta");

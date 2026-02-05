@@ -10,7 +10,7 @@ import {
   type ReactVersion,
 } from "#veryfront/react/compat/config-generator.ts";
 import { readTextFile, stat, writeTextFile } from "#veryfront/testing/deno-compat";
-import { withTestContext, type TestContext } from "../../../_helpers/context.ts";
+import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 
 function writeDenoJson(projectDir: string, value: unknown): Promise<void> {
   return writeTextFile(`${projectDir}/deno.json`, JSON.stringify(value, null, 2));

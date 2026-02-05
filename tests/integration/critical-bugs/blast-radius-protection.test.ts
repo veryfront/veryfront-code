@@ -214,7 +214,11 @@ describe(
             });
 
             const result1 = await (healthyRenderer as any).renderPage("/");
-            assertStringIncludes(result1.html, "healthy-marker", "Initial healthy render should work");
+            assertStringIncludes(
+              result1.html,
+              "healthy-marker",
+              "Initial healthy render should work",
+            );
 
             try {
               await (brokenRenderer as any).renderPage("/");
@@ -231,7 +235,11 @@ describe(
 
             for (let i = 0; i < 5; i++) {
               const result = await (healthyRenderer as any).renderPage("/");
-              assertStringIncludes(result.html, "healthy-marker", `Healthy render ${i + 1} must work`);
+              assertStringIncludes(
+                result.html,
+                "healthy-marker",
+                `Healthy render ${i + 1} must work`,
+              );
             }
 
             await clearRendererState(healthyRenderer);
@@ -307,7 +315,10 @@ describe(
               mode: "development",
             });
 
-            const slowPromises = Array.from({ length: 5 }, () => (slowRenderer as any).renderPage("/"));
+            const slowPromises = Array.from(
+              { length: 5 },
+              () => (slowRenderer as any).renderPage("/"),
+            );
 
             const fastStart = Date.now();
             const fastResult = await (fastRenderer as any).renderPage("/");
@@ -404,8 +415,16 @@ describe(
 
             const resultB = await (rendererB as any).renderPage("/");
 
-            assertStringIncludes(resultB.html, "project-b-success", "Project B should render its content");
-            assertStringIncludes(resultB.html, 'data-project="B"', "Project B should have its layout");
+            assertStringIncludes(
+              resultB.html,
+              "project-b-success",
+              "Project B should render its content",
+            );
+            assertStringIncludes(
+              resultB.html,
+              'data-project="B"',
+              "Project B should have its layout",
+            );
 
             assert(
               !resultB.html.includes("ERROR_MARKER_A_12345"),
@@ -482,7 +501,11 @@ describe(
             });
 
             const result1 = await (cleanRenderer as any).renderPage("/");
-            assertStringIncludes(result1.html, "Clean Content", "Clean project should work initially");
+            assertStringIncludes(
+              result1.html,
+              "Clean Content",
+              "Clean project should work initially",
+            );
 
             await writeTextFile(
               join(corruptDir, "app", "page.tsx"),
@@ -512,7 +535,11 @@ describe(
               "Clean Content",
               "Clean project must work after corrupt project attempt",
             );
-            assertStringIncludes(result2.html, "clean-layout", "Clean project layout must be intact");
+            assertStringIncludes(
+              result2.html,
+              "clean-layout",
+              "Clean project layout must be intact",
+            );
 
             for (let i = 0; i < 3; i++) {
               const result = await (cleanRenderer as any).renderPage("/");

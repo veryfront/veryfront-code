@@ -1,4 +1,10 @@
-import { assert, assertEquals, assertExists, assertMatch, assertStringIncludes } from "#veryfront/testing/assert";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertMatch,
+  assertStringIncludes,
+} from "#veryfront/testing/assert";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
 
@@ -19,7 +25,12 @@ if (typeof globalThis.addEventListener === "function") {
   });
 }
 
-async function startServer(context: TestContext, port: number, signal: AbortSignal, debug?: boolean) {
+async function startServer(
+  context: TestContext,
+  port: number,
+  signal: AbortSignal,
+  debug?: boolean,
+) {
   const server = await startUniversalServer({
     projectDir: context.projectDir,
     port,
@@ -200,7 +211,10 @@ describe(
 
         const dir = join(context.projectDir, "app");
         await mkdir(dir, { recursive: true });
-        await writeTextFile(join(dir, "page.ts"), `export default async function Page(){ return '<div>Hi</div>'; }`);
+        await writeTextFile(
+          join(dir, "page.ts"),
+          `export default async function Page(){ return '<div>Hi</div>'; }`,
+        );
 
         const port = await context.allocatePort();
         const controller = new AbortController();
@@ -231,7 +245,10 @@ describe(
       await withTestContext("universal-server-500-fallback", async (context: TestContext) => {
         const dir = join(context.projectDir, "app");
         await mkdir(dir, { recursive: true });
-        await writeTextFile(join(dir, "boom.tsx"), `export default function Page(){ throw new Error('fail'); }`);
+        await writeTextFile(
+          join(dir, "boom.tsx"),
+          `export default function Page(){ throw new Error('fail'); }`,
+        );
 
         const port = await context.allocatePort();
         const controller = new AbortController();
@@ -380,7 +397,10 @@ describe(
 
         const dir = join(context.projectDir, "app", "rsc");
         await mkdir(dir, { recursive: true });
-        await writeTextFile(join(dir, "page.ts"), `export default async function Page(){ return '<div>RSC Stream</div>'; }`);
+        await writeTextFile(
+          join(dir, "page.ts"),
+          `export default async function Page(){ return '<div>RSC Stream</div>'; }`,
+        );
 
         const port = await context.allocatePort();
         const controller = new AbortController();
@@ -427,7 +447,9 @@ describe(
         if (!ids.includes("sidebar")) throw new Error("sidebar slot missing");
 
         const lastRootIndex = events.map((e) => e.id).lastIndexOf("root");
-        const anySidebarBefore = events.slice(0, Math.max(0, lastRootIndex)).some((e) => e.id === "sidebar");
+        const anySidebarBefore = events.slice(0, Math.max(0, lastRootIndex)).some((e) =>
+          e.id === "sidebar"
+        );
         if (!anySidebarBefore) throw new Error("sidebar did not appear before final root");
 
         controller.abort();
@@ -473,7 +495,10 @@ describe(
 
         const adminDir = join(context.projectDir, "app", "admin");
         await mkdir(adminDir, { recursive: true });
-        await writeTextFile(join(adminDir, "route.ts"), `export async function POST(_req: Request){ return new Response('ok'); }`);
+        await writeTextFile(
+          join(adminDir, "route.ts"),
+          `export async function POST(_req: Request){ return new Response('ok'); }`,
+        );
 
         const docsDir = join(context.projectDir, "app", "docs", "[...parts]");
         await mkdir(docsDir, { recursive: true });

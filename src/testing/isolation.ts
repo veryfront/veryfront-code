@@ -486,7 +486,7 @@ export function registerTestCleanup(task: CleanupTask): void {
  * called at the start and end of each test to ensure clean state.
  *
  * Includes:
- * - Config state (_runtimeEnv, runtimeConfig, configCache)
+ * - Config state (_environmentConfig, runtimeConfig, configCache)
  * - Layout discovery cache
  * - SSR module caches
  * - React cache and compat hooks

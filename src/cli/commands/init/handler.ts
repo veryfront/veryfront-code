@@ -10,7 +10,7 @@ import { join } from "#veryfront/platform/compat/path/index.ts";
 import { cliLogger } from "#veryfront/utils";
 import { exitProcess } from "../../utils/index.ts";
 import { initCommand } from "./init-command.ts";
-import type { ParsedArgs } from "../../index/types.ts";
+import type { ParsedArgs } from "../../shared/types.ts";
 import type { InitTemplate } from "./types.ts";
 import type { IntegrationName } from "../../templates/types.ts";
 

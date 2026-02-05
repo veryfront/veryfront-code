@@ -9,11 +9,11 @@ export { BINARY_PATH, ensureBinaryCompiled } from "./binary.ts";
 
 // Server management
 export {
-  type ServerOptions,
-  type TestServer,
   fetchJson,
   fetchPage,
+  type ServerOptions,
   startServer,
+  type TestServer,
   withServer,
 } from "./binary-server.ts";
 

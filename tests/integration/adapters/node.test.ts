@@ -166,95 +166,99 @@ describe(
       });
     });
 
-    describe("Universal server integration", { sanitizeOps: false, sanitizeResources: false }, () => {
-      it("should run with universal server", async () => {
-        const dir = await makeTempDir({ prefix: "vf_node_universal_" });
-
-        try {
-          await mkdir(join(dir, "public"), { recursive: true });
-          await writeTextFile(join(dir, "public", "hello.txt"), "hi");
-          await mkdir(join(dir, "app"), { recursive: true });
-          await writeTextFile(join(dir, "app", "page.mdx"), "# Home");
-          await mkdir(join(dir, "app", "api", "echo"), { recursive: true });
-          await writeTextFile(
-            join(dir, "app", "api", "echo", "route.ts"),
-            `export async function POST(req: Request){ const d = await req.json(); return Response.json(d); }`,
-          );
-
-          const port = await getFreePort();
-          const adapter = new NodeAdapter();
-          const testProjectId = `test_node_${Date.now().toString(36)}`;
-          const server = await startUniversalServer({
-            projectDir: dir,
-            port,
-            bindAddress: "127.0.0.1",
-            adapter,
-            defaultProjectSlug: testProjectId,
-            defaultProjectId: testProjectId,
-          });
-          await server.ready;
+    describe(
+      "Universal server integration",
+      { sanitizeOps: false, sanitizeResources: false },
+      () => {
+        it("should run with universal server", async () => {
+          const dir = await makeTempDir({ prefix: "vf_node_universal_" });
 
           try {
-            const health = await fetch(`http://127.0.0.1:${port}/healthz`);
-            const ready = await fetch(`http://127.0.0.1:${port}/readyz`);
-            assertEquals(health.status, 200);
-            assertEquals(ready.status, 200);
-            await health.body?.cancel(); // Consume response to prevent leak
-            await ready.body?.cancel(); // Consume response to prevent leak
+            await mkdir(join(dir, "public"), { recursive: true });
+            await writeTextFile(join(dir, "public", "hello.txt"), "hi");
+            await mkdir(join(dir, "app"), { recursive: true });
+            await writeTextFile(join(dir, "app", "page.mdx"), "# Home");
+            await mkdir(join(dir, "app", "api", "echo"), { recursive: true });
+            await writeTextFile(
+              join(dir, "app", "api", "echo", "route.ts"),
+              `export async function POST(req: Request){ const d = await req.json(); return Response.json(d); }`,
+            );
 
-            const staticFile = await fetch(`http://127.0.0.1:${port}/hello.txt`);
-            assertEquals(await staticFile.text(), "hi");
-
-            const page = await fetch(`http://127.0.0.1:${port}/`);
-            const html = await page.text();
-            assert(/Home/i.test(html));
-
-            const apiResponse = await fetch(`http://127.0.0.1:${port}/api/echo`, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ ok: true }),
+            const port = await getFreePort();
+            const adapter = new NodeAdapter();
+            const testProjectId = `test_node_${Date.now().toString(36)}`;
+            const server = await startUniversalServer({
+              projectDir: dir,
+              port,
+              bindAddress: "127.0.0.1",
+              adapter,
+              defaultProjectSlug: testProjectId,
+              defaultProjectId: testProjectId,
             });
-            const apiJson = await apiResponse.json().catch(() => ({}));
-            assertEquals(apiJson.ok, true);
+            await server.ready;
 
-            const etag = staticFile.headers.get("etag");
-            if (etag) {
-              const cached = await fetch(`http://127.0.0.1:${port}/hello.txt`, {
-                headers: { "if-none-match": etag },
+            try {
+              const health = await fetch(`http://127.0.0.1:${port}/healthz`);
+              const ready = await fetch(`http://127.0.0.1:${port}/readyz`);
+              assertEquals(health.status, 200);
+              assertEquals(ready.status, 200);
+              await health.body?.cancel(); // Consume response to prevent leak
+              await ready.body?.cancel(); // Consume response to prevent leak
+
+              const staticFile = await fetch(`http://127.0.0.1:${port}/hello.txt`);
+              assertEquals(await staticFile.text(), "hi");
+
+              const page = await fetch(`http://127.0.0.1:${port}/`);
+              const html = await page.text();
+              assert(/Home/i.test(html));
+
+              const apiResponse = await fetch(`http://127.0.0.1:${port}/api/echo`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ ok: true }),
               });
-              assertEquals(cached.status, 304);
-              await cached.body?.cancel();
+              const apiJson = await apiResponse.json().catch(() => ({}));
+              assertEquals(apiJson.ok, true);
+
+              const etag = staticFile.headers.get("etag");
+              if (etag) {
+                const cached = await fetch(`http://127.0.0.1:${port}/hello.txt`, {
+                  headers: { "if-none-match": etag },
+                });
+                assertEquals(cached.status, 304);
+                await cached.body?.cancel();
+              }
+            } finally {
+              await server.stop();
             }
           } finally {
-            await server.stop();
+            await remove(dir, { recursive: true }).catch(() => {});
           }
-        } finally {
-          await remove(dir, { recursive: true }).catch(() => {});
-        }
-      });
+        });
 
-      it("should work with thin server wrapper", async () => {
-        const { startUniversalServer: startNode } = await import(
-          "../../../src/server/production-server.ts"
-        );
-        const dir = await makeTempDir({ prefix: "vf_node_wrap_" });
+        it("should work with thin server wrapper", async () => {
+          const { startUniversalServer: startNode } = await import(
+            "../../../src/server/production-server.ts"
+          );
+          const dir = await makeTempDir({ prefix: "vf_node_wrap_" });
 
-        try {
-          const port = 9050 + Math.floor(Math.random() * 100);
-          const handle = await startNode({
-            projectDir: dir,
-            port,
-            bindAddress: "127.0.0.1",
-          });
+          try {
+            const port = 9050 + Math.floor(Math.random() * 100);
+            const handle = await startNode({
+              projectDir: dir,
+              port,
+              bindAddress: "127.0.0.1",
+            });
 
-          assertExists(handle);
-          assertEquals(typeof handle.stop, "function");
-          await handle.stop();
-        } finally {
-          await remove(dir, { recursive: true }).catch(() => {});
-        }
-      });
-    });
+            assertExists(handle);
+            assertEquals(typeof handle.stop, "function");
+            await handle.stop();
+          } finally {
+            await remove(dir, { recursive: true }).catch(() => {});
+          }
+        });
+      },
+    );
 
     describe("Singleton instance", { sanitizeOps: false, sanitizeResources: false }, () => {
       it("should have same properties as new instance", () => {

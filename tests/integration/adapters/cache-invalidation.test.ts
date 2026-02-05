@@ -61,13 +61,21 @@ describe("Cache Invalidation - Key Prefix Matching", () => {
     it("file cache key matches full invalidation prefix", () => {
       const key = buildFileCacheKeyPrefix(branchContext);
       assertEquals(key, "file:branch:test-project:main");
-      assertMatchesPrefix(key, FULL_INVALIDATION_PREFIXES.file, `${FULL_INVALIDATION_PREFIXES.file}`);
+      assertMatchesPrefix(
+        key,
+        FULL_INVALIDATION_PREFIXES.file,
+        `${FULL_INVALIDATION_PREFIXES.file}`,
+      );
     });
 
     it("stat cache key matches full invalidation prefix", () => {
       const key = buildStatCacheKeyPrefix(branchContext);
       assertEquals(key, "stat:branch:test-project:main");
-      assertMatchesPrefix(key, FULL_INVALIDATION_PREFIXES.stat, `${FULL_INVALIDATION_PREFIXES.stat}`);
+      assertMatchesPrefix(
+        key,
+        FULL_INVALIDATION_PREFIXES.stat,
+        `${FULL_INVALIDATION_PREFIXES.stat}`,
+      );
     });
 
     it("dir cache key matches full invalidation prefix", () => {
@@ -97,13 +105,21 @@ describe("Cache Invalidation - Key Prefix Matching", () => {
     it("file cache key matches full invalidation prefix", () => {
       const key = buildFileCacheKeyPrefix(releaseContext);
       assertEquals(key, "file:release:test-project:release-123");
-      assertMatchesPrefix(key, FULL_INVALIDATION_PREFIXES.file, `${FULL_INVALIDATION_PREFIXES.file}`);
+      assertMatchesPrefix(
+        key,
+        FULL_INVALIDATION_PREFIXES.file,
+        `${FULL_INVALIDATION_PREFIXES.file}`,
+      );
     });
 
     it("stat cache key matches full invalidation prefix", () => {
       const key = buildStatCacheKeyPrefix(releaseContext);
       assertEquals(key, "stat:release:test-project:release-123");
-      assertMatchesPrefix(key, FULL_INVALIDATION_PREFIXES.stat, `${FULL_INVALIDATION_PREFIXES.stat}`);
+      assertMatchesPrefix(
+        key,
+        FULL_INVALIDATION_PREFIXES.stat,
+        `${FULL_INVALIDATION_PREFIXES.stat}`,
+      );
     });
 
     it("dir cache key matches full invalidation prefix", () => {
@@ -134,13 +150,21 @@ describe("Cache Invalidation - Key Prefix Matching", () => {
     it("file cache key matches full invalidation prefix", () => {
       const key = buildFileCacheKeyPrefix(envContext);
       assertEquals(key, "file:env:test-project:production:release-456");
-      assertMatchesPrefix(key, FULL_INVALIDATION_PREFIXES.file, `${FULL_INVALIDATION_PREFIXES.file}`);
+      assertMatchesPrefix(
+        key,
+        FULL_INVALIDATION_PREFIXES.file,
+        `${FULL_INVALIDATION_PREFIXES.file}`,
+      );
     });
 
     it("stat cache key matches full invalidation prefix", () => {
       const key = buildStatCacheKeyPrefix(envContext);
       assertEquals(key, "stat:env:test-project:production:release-456");
-      assertMatchesPrefix(key, FULL_INVALIDATION_PREFIXES.stat, `${FULL_INVALIDATION_PREFIXES.stat}`);
+      assertMatchesPrefix(
+        key,
+        FULL_INVALIDATION_PREFIXES.stat,
+        `${FULL_INVALIDATION_PREFIXES.stat}`,
+      );
     });
 
     it("dir cache key matches full invalidation prefix", () => {

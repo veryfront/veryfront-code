@@ -1,6 +1,6 @@
 import type { VeryfrontConfig } from "./schemas/index.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { getEnvironmentConfig, type EnvironmentConfig } from "./environment-config.ts";
+import { type EnvironmentConfig, getEnvironmentConfig } from "./environment-config.ts";
 
 export function defineConfig(config: VeryfrontConfig): VeryfrontConfig {
   return config;
@@ -8,9 +8,9 @@ export function defineConfig(config: VeryfrontConfig): VeryfrontConfig {
 
 export function defineConfigWithEnv(
   factory: (env: string) => VeryfrontConfig,
-  runtimeEnv: EnvironmentConfig = getEnvironmentConfig(),
+  envConfig: EnvironmentConfig = getEnvironmentConfig(),
 ): VeryfrontConfig {
-  return factory(runtimeEnv.nodeEnv);
+  return factory(envConfig.nodeEnv);
 }
 
 export function mergeConfigs(...configs: Partial<VeryfrontConfig>[]): VeryfrontConfig {

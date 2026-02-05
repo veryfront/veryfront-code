@@ -4,11 +4,11 @@
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { NewTuiResult } from "./new-tui.ts";
+import type { NewTuiResult } from "./tui.ts";
 
 describe("new-tui", () => {
   it("exports runNewTui function", async () => {
-    const mod = await import("./new-tui.ts");
+    const mod = await import("./tui.ts");
     assertExists(mod.runNewTui);
     assertEquals(typeof mod.runNewTui, "function");
   });

@@ -22,9 +22,7 @@ export async function withTenants<T>(
   tenants: (string | TenantConfig)[],
   fn: (contexts: TestContext[]) => Promise<T>,
 ): Promise<T> {
-  const configs: TenantConfig[] = tenants.map((t) =>
-    typeof t === "string" ? { name: t } : t,
-  );
+  const configs: TenantConfig[] = tenants.map((t) => typeof t === "string" ? { name: t } : t);
 
   async function nest(
     index: number,

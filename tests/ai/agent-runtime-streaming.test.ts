@@ -91,12 +91,19 @@ describe("AgentRuntime streaming JSON buffering", () => {
         { type: "content", content: "Hello" },
         { type: "tool_call_start", toolCall: { id: "1", name: "testTool" } },
         { type: "tool_call_delta", id: "1", arguments: '{"x":1}' },
-        { type: "tool_call_complete", toolCall: { id: "1", name: "testTool", arguments: '{"x":1}' } },
+        {
+          type: "tool_call_complete",
+          toolCall: { id: "1", name: "testTool", arguments: '{"x":1}' },
+        },
         { type: "finish", finishReason: "stop" },
       ]);
 
       const runtime = new AgentRuntime("test", baseConfig);
-      const messages: Message[] = [{ id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] }];
+      const messages: Message[] = [{
+        id: "m1",
+        role: "user",
+        parts: [{ type: "text", text: "hi" }],
+      }];
       const controller = {
         enqueue: (_chunk: Uint8Array) => {},
         close: () => {},
@@ -116,7 +123,8 @@ describe("AgentRuntime streaming JSON buffering", () => {
 
       const assistant = response.messages.find((m: Message) => m.role === "assistant");
       const toolCallParts = assistant?.parts.filter(
-        (p: MessagePart): p is ToolCallPart => p.type.startsWith("tool-") && p.type !== "tool-result",
+        (p: MessagePart): p is ToolCallPart =>
+          p.type.startsWith("tool-") && p.type !== "tool-result",
       );
 
       assert(toolCallParts?.length === 1, "assistant tool-call parts captured");

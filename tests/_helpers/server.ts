@@ -214,7 +214,9 @@ export async function createTestDevServer(options: {
  */
 export function assertResponseOk(response: Response, message?: string): void {
   if (response.ok) return;
-  throw new Error(message ?? `Expected OK response but got ${response.status} ${response.statusText}`);
+  throw new Error(
+    message ?? `Expected OK response but got ${response.status} ${response.statusText}`,
+  );
 }
 
 /**

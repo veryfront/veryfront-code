@@ -8,6 +8,7 @@ Each test should prevent the bug from reoccurring in future releases.
 Files should be named with the pattern: `YYYY-MM-DD-short-description.test.ts`
 
 Examples:
+
 - `2026-01-31-relative-import-bug.test.ts`
 - `2026-01-30-missing-http-bundles.test.ts`
 
@@ -41,43 +42,51 @@ Each regression test should include:
  *   [Brief explanation of the fix]
  */
 
-import { describe, it, beforeAll } from "#veryfront/testing/bdd.ts";
+import { beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createProject,
-  withServer,
   ensureBinaryCompiled,
   expectPage,
   expectServer,
   fetchPage,
+  withServer,
 } from "../setup/index.ts";
 
-describe("Regression: [Short Description]", { sanitizeOps: false, sanitizeResources: false }, () => {
-  beforeAll(async () => {
-    await ensureBinaryCompiled();
-  });
+describe(
+  "Regression: [Short Description]",
+  { sanitizeOps: false, sanitizeResources: false },
+  () => {
+    beforeAll(async () => {
+      await ensureBinaryCompiled();
+    });
 
-  it("should [expected behavior that was broken]", async () => {
-    const projectDir = await createProject("regression-test-name", `
+    it("should [expected behavior that was broken]", async () => {
+      const projectDir = await createProject(
+        "regression-test-name",
+        `
 // Page content that reproduces the bug scenario
 export default function Home() {
   return <div id="content">Test</div>;
 }
-`, {
-      files: {
-        // Additional files needed to reproduce
-      },
+`,
+        {
+          files: {
+            // Additional files needed to reproduce
+          },
+        },
+      );
+
+      await withServer(projectDir, async (server) => {
+        const { response, html } = await fetchPage(server, "/");
+
+        expectPage(html, response)
+          .toRender()
+          .withoutErrors();
+
+        expectServer(server)
+          .withoutErrors();
+      });
     });
-
-    await withServer(projectDir, async (server) => {
-      const { response, html } = await fetchPage(server, "/");
-
-      expectPage(html, response)
-        .toRender()
-        .withoutErrors();
-
-      expectServer(server)
-        .withoutErrors();
-    });
-  });
-});
+  },
+);
 ```

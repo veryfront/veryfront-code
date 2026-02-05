@@ -44,7 +44,9 @@ describe("RSC Flight Smoke Tests", { sanitizeOps: false, sanitizeResources: fals
           const ac = new AbortController();
           const timeoutId = setTimeout(() => ac.abort(), scaleMs(3000));
 
-          const res = await fetch(url, { signal: ac.signal }).finally(() => clearTimeout(timeoutId));
+          const res = await fetch(url, { signal: ac.signal }).finally(() =>
+            clearTimeout(timeoutId)
+          );
           await res.body?.cancel();
 
           assertEquals(res.status, 410);

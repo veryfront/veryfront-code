@@ -493,9 +493,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
           errorDuration < absoluteCeilingMs,
           `Error handling took ${
             errorDuration.toFixed(0)
-          }ms, exceeding ${absoluteCeilingMs}ms ceiling (success: ${
-            successDuration.toFixed(0)
-          }ms)`,
+          }ms, exceeding ${absoluteCeilingMs}ms ceiling (success: ${successDuration.toFixed(0)}ms)`,
         );
 
         await stopServer(server);

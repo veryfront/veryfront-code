@@ -518,7 +518,8 @@ title: Stream Test
           });
 
           await assertRejects(
-            async () => await renderer.compileMDX("<InvalidComponent unclosed={", { title: "Broken" }),
+            async () =>
+              await renderer.compileMDX("<InvalidComponent unclosed={", { title: "Broken" }),
             Error,
             "compilation",
           );

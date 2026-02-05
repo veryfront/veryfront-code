@@ -14,7 +14,10 @@ import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import type { EntityInfo, MdxBundle } from "#veryfront/types";
 import { cleanupTestDir, createTestProjectDir } from "../../../_helpers/server.ts";
 
-function createMockCompileMDX(): (_content: string, frontmatter?: Record<string, unknown>) => Promise<MdxBundle> {
+function createMockCompileMDX(): (
+  _content: string,
+  frontmatter?: Record<string, unknown>,
+) => Promise<MdxBundle> {
   return (_content: string, frontmatter?: Record<string, unknown>) =>
     Promise.resolve({
       compiledCode: `export default () => "compiled"`,

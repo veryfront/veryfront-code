@@ -14,7 +14,12 @@
  * The test runs with various environment configurations and verifies safe behavior.
  */
 
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { join } from "#veryfront/compat/path";
 import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
@@ -198,9 +203,18 @@ describe(
 
               const result = await renderer.renderPage("/");
 
-              assert(!result.html.includes(sensitiveToken), "API token must NOT appear in rendered HTML");
-              assert(!result.html.includes("super_secret_key"), "Secret keys must NOT appear in rendered HTML");
-              assert(!result.html.includes("password@host"), "Database credentials must NOT appear in rendered HTML");
+              assert(
+                !result.html.includes(sensitiveToken),
+                "API token must NOT appear in rendered HTML",
+              );
+              assert(
+                !result.html.includes("super_secret_key"),
+                "Secret keys must NOT appear in rendered HTML",
+              );
+              assert(
+                !result.html.includes("password@host"),
+                "Database credentials must NOT appear in rendered HTML",
+              );
 
               await clearRendererState(renderer);
             } finally {
@@ -246,7 +260,11 @@ describe(
             });
 
             const result = await renderer.renderPage("/");
-            assertStringIncludes(result.html, "Branch Mode", "Branch mode should render successfully");
+            assertStringIncludes(
+              result.html,
+              "Branch Mode",
+              "Branch mode should render successfully",
+            );
 
             await clearRendererState(renderer);
           } finally {
@@ -408,7 +426,11 @@ describe(
           );
         } catch (e) {
           if (e instanceof Error && !e.message.includes("assertion")) {
-            assertStringIncludes(e.message.toLowerCase(), "not found", "Error message should indicate path not found");
+            assertStringIncludes(
+              e.message.toLowerCase(),
+              "not found",
+              "Error message should indicate path not found",
+            );
           }
         } finally {
           await cleanupBundler();
@@ -458,7 +480,11 @@ describe(
             });
 
             const result2 = await renderer2.renderPage("/");
-            assertStringIncludes(result2.html, "Content", "Should render content after mode switch");
+            assertStringIncludes(
+              result2.html,
+              "Content",
+              "Should render content after mode switch",
+            );
 
             await clearRendererState(renderer2);
           } finally {

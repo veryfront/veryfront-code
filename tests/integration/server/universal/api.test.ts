@@ -113,63 +113,74 @@ describe(
         });
 
         it("handles App Router params and method Allow header", async () => {
-          await withTestContext("universal-server-app-route-methods", async (context: TestContext) => {
-            const postDir = join(context.projectDir, "app", "post", "[slug]");
-            await mkdir(postDir, { recursive: true });
-            await writeTextFile(
-              join(postDir, "route.ts"),
-              `export async function GET(_req: Request, { params }: any){ return Response.json({ slug: params.slug }); }`,
-            );
+          await withTestContext(
+            "universal-server-app-route-methods",
+            async (context: TestContext) => {
+              const postDir = join(context.projectDir, "app", "post", "[slug]");
+              await mkdir(postDir, { recursive: true });
+              await writeTextFile(
+                join(postDir, "route.ts"),
+                `export async function GET(_req: Request, { params }: any){ return Response.json({ slug: params.slug }); }`,
+              );
 
-            const adminDir = join(context.projectDir, "app", "admin");
-            await mkdir(adminDir, { recursive: true });
-            await writeTextFile(
-              join(adminDir, "route.ts"),
-              `export async function POST(_req: Request){ return new Response('ok'); }`,
-            );
+              const adminDir = join(context.projectDir, "app", "admin");
+              await mkdir(adminDir, { recursive: true });
+              await writeTextFile(
+                join(adminDir, "route.ts"),
+                `export async function POST(_req: Request){ return new Response('ok'); }`,
+              );
 
-            const docsDir = join(context.projectDir, "app", "docs", "[...parts]");
-            await mkdir(docsDir, { recursive: true });
-            await writeTextFile(
-              join(docsDir, "route.ts"),
-              `export async function GET(_req: Request, { params }: any){ return Response.json({ parts: params.parts }); }`,
-            );
+              const docsDir = join(context.projectDir, "app", "docs", "[...parts]");
+              await mkdir(docsDir, { recursive: true });
+              await writeTextFile(
+                join(docsDir, "route.ts"),
+                `export async function GET(_req: Request, { params }: any){ return Response.json({ parts: params.parts }); }`,
+              );
 
-            const optDir = join(context.projectDir, "app", "opt", "[[...rest]]");
-            await mkdir(optDir, { recursive: true });
-            await writeTextFile(
-              join(optDir, "route.ts"),
-              `export async function GET(_req: Request, { params }: any){ return Response.json({ rest: params.rest ?? '' }); }`,
-            );
+              const optDir = join(context.projectDir, "app", "opt", "[[...rest]]");
+              await mkdir(optDir, { recursive: true });
+              await writeTextFile(
+                join(optDir, "route.ts"),
+                `export async function GET(_req: Request, { params }: any){ return Response.json({ rest: params.rest ?? '' }); }`,
+              );
 
-            const server = await context.createProductionServer();
-            const url = baseUrl(server.port);
+              const server = await context.createProductionServer();
+              const url = baseUrl(server.port);
 
-            const gj = await fetchJson(`${url}/post/hello`);
-            assertEquals(gj.slug, "hello");
+              const gj = await fetchJson(`${url}/post/hello`);
+              assertEquals(gj.slug, "hello");
 
-            const h = await fetch(`${url}/post/hello`, { method: "HEAD" });
-            assertEquals(h.status, 200);
-            await h.text();
+              const h = await fetch(`${url}/post/hello`, { method: "HEAD" });
+              assertEquals(h.status, 200);
+              await h.text();
 
-            const x = await fetch(`${url}/admin`);
-            assertEquals(x.status, 405);
-            const allow = getAllowHeader(x.headers);
-            if (!allow || !/POST/.test(allow)) throw new Error(`Allow header missing POST: ${allow}`);
-            await x.text();
+              const x = await fetch(`${url}/admin`);
+              assertEquals(x.status, 405);
+              const allow = getAllowHeader(x.headers);
+              if (!allow || !/POST/.test(allow)) {
+                throw new Error(
+                  `Allow header missing POST: ${allow}`,
+                );
+              }
+              await x.text();
 
-            const opt = await fetch(`${url}/admin`, { method: "OPTIONS" });
-            assertEquals(opt.status, 204);
-            const a = getAllowHeader(opt.headers);
-            if (!a || !/POST/.test(a) || !/OPTIONS/.test(a)) throw new Error(`OPTIONS Allow missing: ${a}`);
-            await opt.text();
+              const opt = await fetch(`${url}/admin`, { method: "OPTIONS" });
+              assertEquals(opt.status, 204);
+              const a = getAllowHeader(opt.headers);
+              if (!a || !/POST/.test(a) || !/OPTIONS/.test(a)) {
+                throw new Error(
+                  `OPTIONS Allow missing: ${a}`,
+                );
+              }
+              await opt.text();
 
-            const dj = await fetchJson(`${url}/docs/a/b/c`);
-            assertEquals(dj.parts, "a/b/c");
+              const dj = await fetchJson(`${url}/docs/a/b/c`);
+              assertEquals(dj.parts, "a/b/c");
 
-            const oj = await fetchJson(`${url}/opt`);
-            assertEquals(oj.rest, "");
-          });
+              const oj = await fetchJson(`${url}/opt`);
+              assertEquals(oj.rest, "");
+            },
+          );
         });
       },
     );

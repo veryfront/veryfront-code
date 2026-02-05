@@ -29,7 +29,9 @@ ${props.map((p) => `  ${p}: any;`).join("\n")}
       : "";
 
     const propsParam = hasProps ? `{ ${props.join(", ")} }: ${name}Props` : "()";
-    const propsSpans = hasProps ? `\n      ${props.map((p) => `<span>{${p}}</span>`).join("\n      ")}` : "";
+    const propsSpans = hasProps
+      ? `\n      ${props.map((p) => `<span>{${p}}</span>`).join("\n      ")}`
+      : "";
 
     return `import React from 'react';
 

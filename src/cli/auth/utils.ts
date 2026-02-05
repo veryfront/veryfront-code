@@ -4,7 +4,7 @@
  * Shared utilities for authentication-related CLI operations.
  */
 
-import type { ParsedArgs } from "../index/types.ts";
+import type { ParsedArgs } from "../shared/types.ts";
 
 /**
  * Parse login method from CLI arguments

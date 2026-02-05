@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { COMMANDS } from "../help/command-definitions.ts";
+import { COMMANDS } from "./help/command-definitions.ts";
 
 function resolveProjectDir(
   args: Record<string, unknown>,
@@ -39,7 +39,7 @@ function formatIssues(issues: Array<{ path: string[]; message: string }>): strin
   return issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`).join("\n");
 }
 
-describe("cli/index/command-definitions integrity", () => {
+describe("cli/command-definitions integrity", () => {
   it("should have all expected commands", () => {
     const expectedCommands = [
       "init",
@@ -119,7 +119,7 @@ describe("cli/index/command-definitions integrity", () => {
   });
 });
 
-describe("cli/index/command-router helpers", () => {
+describe("cli/router helpers", () => {
   describe("resolveProjectDir pattern", () => {
     it("should return cwd when no matching key found", () => {
       assertEquals(resolveProjectDir({}, ["dir", "d"], "/home/user"), "/home/user");

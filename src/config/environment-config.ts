@@ -203,7 +203,7 @@ function warnEarlyAccess(): void {
   warnedEarlyEnvConfig = true;
 
   const message = "[EnvironmentConfig] getEnvironmentConfig called before .env load. " +
-    "Returning uncached snapshot; ensure loadEnv runs before runtime env access.";
+    "Returning uncached snapshot; ensure loadEnv runs before environment config access.";
   const debugStack = getEnv("VERYFRONT_DEBUG_RUNTIME_ENV");
   if (debugStack === "1" || debugStack === "true") {
     logger.warn(message, { stack: new Error().stack });
@@ -234,7 +234,9 @@ export function isEnvironmentConfigInitialized(): boolean {
   return _environmentConfig !== null;
 }
 
-export function createTestEnvironmentConfig(overrides: Partial<EnvironmentConfig> = {}): EnvironmentConfig {
+export function createTestEnvironmentConfig(
+  overrides: Partial<EnvironmentConfig> = {},
+): EnvironmentConfig {
   const base = _environmentConfig ?? readEnvSnapshot();
 
   return {

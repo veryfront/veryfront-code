@@ -1,6 +1,9 @@
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import {
+  type EnvironmentConfig,
+  getEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 import { cliLogger } from "#veryfront/utils";
 import { CONFIG_DIR_NAME, TOKEN_FILE_NAME, TOKEN_FILE_PERMISSIONS } from "../shared/constants.ts";
 

@@ -5,7 +5,7 @@
 
 import { assertEquals, assertMatch } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createBranch, generateBranchName, uploadFiles, type UploadOp } from "./index.ts";
+import { createBranch, generateBranchName, uploadFiles, type UploadOp } from "./command.ts";
 import type { ApiClient } from "../../shared/config.ts";
 
 type MockClientOverrides = Partial<{

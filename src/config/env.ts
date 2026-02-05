@@ -2,12 +2,12 @@
  * Centralized environment accessors.
  *
  * Runtime code should depend on these helpers rather than calling getEnv directly.
- * All functions accept an optional RuntimeEnv parameter for test isolation.
+ * All functions accept an optional EnvironmentConfig parameter for test isolation.
  *
  * @module
  */
 
-import { getEnvironmentConfig, type EnvironmentConfig } from "./environment-config.ts";
+import { type EnvironmentConfig, getEnvironmentConfig } from "./environment-config.ts";
 
 export function getDisableLruIntervalEnv(env: EnvironmentConfig = getEnvironmentConfig()): boolean {
   return env.disableLruInterval;
@@ -24,7 +24,9 @@ export function getSsrMaxConcurrentTransformsEnv(
   return env.ssrMaxConcurrentTransforms || defaultValue;
 }
 
-export function getRedisUrlEnv(env: EnvironmentConfig = getEnvironmentConfig()): string | undefined {
+export function getRedisUrlEnv(
+  env: EnvironmentConfig = getEnvironmentConfig(),
+): string | undefined {
   return env.redisUrl;
 }
 
@@ -32,7 +34,9 @@ export function getV8FlagsEnv(env: EnvironmentConfig = getEnvironmentConfig()): 
   return env.denoV8Flags;
 }
 
-export function getCacheDirEnv(env: EnvironmentConfig = getEnvironmentConfig()): string | undefined {
+export function getCacheDirEnv(
+  env: EnvironmentConfig = getEnvironmentConfig(),
+): string | undefined {
   return env.cacheDir;
 }
 
@@ -54,7 +58,9 @@ export function getGithubEnvConfig(env: EnvironmentConfig = getEnvironmentConfig
   };
 }
 
-export function getApiTokenEnv(env: EnvironmentConfig = getEnvironmentConfig()): string | undefined {
+export function getApiTokenEnv(
+  env: EnvironmentConfig = getEnvironmentConfig(),
+): string | undefined {
   return env.apiToken;
 }
 
@@ -66,7 +72,7 @@ export function getOpenAIEnvConfig(env: EnvironmentConfig = getEnvironmentConfig
   return {
     apiKey: env.openaiApiKey,
     baseURL: env.openaiBaseUrl,
-    organizationId: undefined, // Not in RuntimeEnv, kept for interface compatibility
+    organizationId: undefined, // Not in EnvironmentConfig, kept for interface compatibility
   };
 }
 
@@ -102,7 +108,9 @@ export function getNoColorEnv(env: EnvironmentConfig = getEnvironmentConfig()): 
   return env.noColor ? "1" : undefined;
 }
 
-export function getForceColorEnv(env: EnvironmentConfig = getEnvironmentConfig()): string | undefined {
+export function getForceColorEnv(
+  env: EnvironmentConfig = getEnvironmentConfig(),
+): string | undefined {
   return env.forceColor ? "1" : undefined;
 }
 
@@ -110,11 +118,15 @@ export function isRscExperimentalEnabled(env: EnvironmentConfig = getEnvironment
   return env.experimentalRsc;
 }
 
-export function getVeryfrontVersion(env: EnvironmentConfig = getEnvironmentConfig()): string | undefined {
+export function getVeryfrontVersion(
+  env: EnvironmentConfig = getEnvironmentConfig(),
+): string | undefined {
   return env.veryfrontVersion;
 }
 
-export function getEnvironmentFromEnv(env: EnvironmentConfig = getEnvironmentConfig()): string | undefined {
+export function getEnvironmentFromEnv(
+  env: EnvironmentConfig = getEnvironmentConfig(),
+): string | undefined {
   return env.veryfrontEnv || env.nodeEnv;
 }
 

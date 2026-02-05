@@ -43,7 +43,14 @@ async function withIsolatedCache<T>(fn: (projectDir: string) => Promise<T>): Pro
 }
 
 async function loadESM(projectDir: string, code: string): Promise<any> {
-  return await mdxRenderer.loadModuleESM(code, undefined, "test-mdx", projectDir, "test-mdx", "test");
+  return await mdxRenderer.loadModuleESM(
+    code,
+    undefined,
+    "test-mdx",
+    projectDir,
+    "test-mdx",
+    "test",
+  );
 }
 
 describe(

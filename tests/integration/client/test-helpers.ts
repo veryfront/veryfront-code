@@ -391,12 +391,11 @@ export class FetchMock {
     const global = globalThis as GlobalWithBrowserAPIs;
 
     global.fetch = async (input: URL | RequestInfo, init?: RequestInit) => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : (input as Request).url;
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+        ? input.toString()
+        : (input as Request).url;
 
       let response = this.responses.get(url);
 
@@ -786,7 +785,9 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
   }
 
   const isSSRStubDocument = (originalDocument as any)?.__veryfrontSSRStub === true;
-  if (!originalDocument || typeof originalDocument.createElement !== "function" || isSSRStubDocument) {
+  if (
+    !originalDocument || typeof originalDocument.createElement !== "function" || isSSRStubDocument
+  ) {
     global.document = createMinimalDocument() as unknown as Document;
   }
 
@@ -853,8 +854,9 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
     if (originalAddEventListener) (globalThis as any).addEventListener = originalAddEventListener;
     else delete (globalThis as any).addEventListener;
 
-    if (originalRemoveEventListener) (globalThis as any).removeEventListener = originalRemoveEventListener;
-    else delete (globalThis as any).removeEventListener;
+    if (originalRemoveEventListener) {
+      (globalThis as any).removeEventListener = originalRemoveEventListener;
+    } else delete (globalThis as any).removeEventListener;
 
     if (originalScrollTo) (globalThis as any).scrollTo = originalScrollTo;
     else delete (globalThis as any).scrollTo;

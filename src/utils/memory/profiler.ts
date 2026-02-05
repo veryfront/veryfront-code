@@ -7,7 +7,10 @@
 
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getArgs, memoryUsage } from "#veryfront/platform/compat/process.ts";
-import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import {
+  type EnvironmentConfig,
+  getEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 
 const cacheRegistry = new Map<string, () => CacheStats>();
 

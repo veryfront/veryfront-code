@@ -35,7 +35,11 @@ async function cleanupTempDir(dir: string): Promise<void> {
   }
 }
 
-async function writeConfigFile(projectDir: string, filename: string, content: string): Promise<void> {
+async function writeConfigFile(
+  projectDir: string,
+  filename: string,
+  content: string,
+): Promise<void> {
   await writeTextFile(join(projectDir, filename), content);
 }
 
@@ -69,7 +73,10 @@ function createBasicConfig(
   return `export default ${JSON.stringify(config, null, 2)};`;
 }
 
-async function withTempProjectDir<T>(prefix: string, fn: (projectDir: string) => Promise<T>): Promise<T> {
+async function withTempProjectDir<T>(
+  prefix: string,
+  fn: (projectDir: string) => Promise<T>,
+): Promise<T> {
   const projectDir = await createTempDir(prefix);
   try {
     return await fn(projectDir);
@@ -158,7 +165,11 @@ describe("bootstrap - Basic Flow", () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("no_fs", async (projectDir) => {
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default { title: 'No FS Config' };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default { title: 'No FS Config' };`,
+      );
 
       const result = await bootstrap(projectDir, adapter);
 
@@ -183,7 +194,11 @@ describe("bootstrap - Basic Flow", () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("ts_config", async (projectDir) => {
-      await writeConfigFile(projectDir, "veryfront.config.ts", `export default { title: 'TypeScript Config' };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.ts",
+        `export default { title: 'TypeScript Config' };`,
+      );
 
       const result = await bootstrap(projectDir, adapter);
 
@@ -195,7 +210,11 @@ describe("bootstrap - Basic Flow", () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("mjs_config", async (projectDir) => {
-      await writeConfigFile(projectDir, "veryfront.config.mjs", `export default { title: 'MJS Config' };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.mjs",
+        `export default { title: 'MJS Config' };`,
+      );
 
       const result = await bootstrap(projectDir, adapter);
 
@@ -232,7 +251,11 @@ describe("bootstrap - Basic Flow", () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("merge_config", async (projectDir) => {
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default { title: 'Merged', dev: { port: 5000 } };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default { title: 'Merged', dev: { port: 5000 } };`,
+      );
 
       const result = await bootstrap(projectDir, adapter);
 
@@ -263,7 +286,11 @@ describe("bootstrap - FSAdapter Initialization", {
     const adapter = await getAdapter();
 
     await withTempProjectDir("skip_fs", async (projectDir) => {
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default { title: 'Skip FS', fs: { type: 'local' } };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default { title: 'Skip FS', fs: { type: 'local' } };`,
+      );
 
       const result = await bootstrap(projectDir, adapter);
 
@@ -276,7 +303,11 @@ describe("bootstrap - FSAdapter Initialization", {
     const adapter = await getAdapter();
 
     await withTempProjectDir("undefined_fs", async (projectDir) => {
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default { title: 'No FS' };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default { title: 'No FS' };`,
+      );
 
       const result = await bootstrap(projectDir, adapter);
 
@@ -326,7 +357,11 @@ describe("bootstrap - FSAdapter Initialization", {
     const adapter = await getAdapter();
 
     await withTempProjectDir("fs_error", async (projectDir) => {
-      await writeConfigFile(projectDir, "veryfront.config.js", createBasicConfig({ fsType: "memory" }));
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        createBasicConfig({ fsType: "memory" }),
+      );
 
       const result = await bootstrap(projectDir, adapter);
 
@@ -399,7 +434,11 @@ describe("bootstrap - Config Reloading", () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("reload_cache", async (projectDir) => {
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default { title: 'Original' };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default { title: 'Original' };`,
+      );
 
       const result1 = await bootstrap(projectDir, adapter);
       assertEquals(result1.config.title, "Original");
@@ -407,7 +446,11 @@ describe("bootstrap - Config Reloading", () => {
       clearConfigCache();
       await delay(50);
 
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default { title: 'Updated' };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default { title: 'Updated' };`,
+      );
 
       const result2 = await bootstrap(projectDir, adapter);
       assertEquals(result2.config.title, "Updated");
@@ -418,11 +461,19 @@ describe("bootstrap - Config Reloading", () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("cached_config", async (projectDir) => {
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default { title: 'Cached' };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default { title: 'Cached' };`,
+      );
 
       const result1 = await bootstrap(projectDir, adapter);
 
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default { title: 'Should Not See This' };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default { title: 'Should Not See This' };`,
+      );
 
       const result2 = await bootstrap(projectDir, adapter);
 
@@ -435,7 +486,11 @@ describe("bootstrap - Config Reloading", () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("clear_before_reload", async (projectDir) => {
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default { title: 'Pre-Cache', dev: { port: 3000 } };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default { title: 'Pre-Cache', dev: { port: 3000 } };`,
+      );
 
       const result1 = await bootstrap(projectDir, adapter);
       assertEquals(result1.config.dev?.port, 3000);
@@ -443,7 +498,11 @@ describe("bootstrap - Config Reloading", () => {
       clearConfigCache();
       await delay(50);
 
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default { title: 'Post-Cache', dev: { port: 5000 } };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default { title: 'Post-Cache', dev: { port: 5000 } };`,
+      );
 
       const result = await bootstrap(projectDir, adapter);
       assertEquals(result.config.title, "Post-Cache");
@@ -455,7 +514,11 @@ describe("bootstrap - Config Reloading", () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("reload_error", async (projectDir) => {
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default { title: 'Valid Config' };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default { title: 'Valid Config' };`,
+      );
 
       const result = await bootstrap(projectDir, adapter);
       assertEquals(result.config.title, "Valid Config");
@@ -474,8 +537,16 @@ describe("bootstrap - Config Reloading", () => {
     const projectDir2 = await createTempDir("project_2");
 
     try {
-      await writeConfigFile(projectDir1, "veryfront.config.js", `export default { title: 'Project 1' };`);
-      await writeConfigFile(projectDir2, "veryfront.config.js", `export default { title: 'Project 2' };`);
+      await writeConfigFile(
+        projectDir1,
+        "veryfront.config.js",
+        `export default { title: 'Project 1' };`,
+      );
+      await writeConfigFile(
+        projectDir2,
+        "veryfront.config.js",
+        `export default { title: 'Project 2' };`,
+      );
 
       const result1 = await bootstrap(projectDir1, adapter);
       const result2 = await bootstrap(projectDir2, adapter);
@@ -492,7 +563,11 @@ describe("bootstrap - Config Reloading", () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("concurrent_reload", async (projectDir) => {
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default { title: 'Concurrent' };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default { title: 'Concurrent' };`,
+      );
 
       clearConfigCache();
 
@@ -559,7 +634,11 @@ describe("bootstrap - Config Reloading", () => {
       clearConfigCache();
       await delay(50);
 
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default { title: 'Empty Cache' };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default { title: 'Empty Cache' };`,
+      );
 
       const result = await bootstrap(projectDir, adapter);
       assertEquals(result.config.title, "Empty Cache");
@@ -570,7 +649,11 @@ describe("bootstrap - Config Reloading", () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("invalidation", async (projectDir) => {
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default { title: 'V1', description: 'Version 1' };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default { title: 'V1', description: 'Version 1' };`,
+      );
 
       const result1 = await bootstrap(projectDir, adapter);
       assertEquals(result1.config.description, "Version 1");
@@ -578,7 +661,11 @@ describe("bootstrap - Config Reloading", () => {
       clearConfigCache();
       await delay(50);
 
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default { title: 'V2', description: 'Version 2' };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default { title: 'V2', description: 'Version 2' };`,
+      );
 
       const result = await bootstrap(projectDir, adapter);
       assertEquals(result.config.description, "Version 2");
@@ -611,7 +698,11 @@ describe("bootstrap - Error Handling", () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("invalid_syntax", async (projectDir) => {
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default { invalid syntax here`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default { invalid syntax here`,
+      );
 
       await expectBootstrapThrows(projectDir, adapter);
     });
@@ -621,7 +712,11 @@ describe("bootstrap - Error Handling", () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("runtime_error", async (projectDir) => {
-      await writeConfigFile(projectDir, "veryfront.config.js", `throw new Error('Runtime error'); export default {};`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `throw new Error('Runtime error'); export default {};`,
+      );
 
       await expectBootstrapThrows(projectDir, adapter);
     });
@@ -704,7 +799,11 @@ describe("bootstrap - Error Handling", () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("eval_error", async (projectDir) => {
-      await writeConfigFile(projectDir, "veryfront.config.js", `const x = undefined; x.property; export default {};`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `const x = undefined; x.property; export default {};`,
+      );
 
       await expectBootstrapThrows(projectDir, adapter);
     });
@@ -739,7 +838,11 @@ describe("bootstrap - Error Handling", () => {
         };`,
       );
 
-      await assertRejects(() => bootstrap(projectDir, adapter), Error, "Unknown config keys: onBuild");
+      await assertRejects(
+        () => bootstrap(projectDir, adapter),
+        Error,
+        "Unknown config keys: onBuild",
+      );
     });
   });
 });
@@ -785,7 +888,11 @@ describe("bootstrap - Dev and Prod Modes", () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("prod_error", async (projectDir) => {
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default { security: { cors: { origin: 123 } } };`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default { security: { cors: { origin: 123 } } };`,
+      );
 
       await assertRejects(() => bootstrapProd(projectDir, adapter), Error);
     });
@@ -854,7 +961,11 @@ describe("bootstrap - Edge Cases", () => {
         largeConfig.theme.colors[`color${i}`] = `#${i.toString(16).padStart(6, "0")}`;
       }
 
-      await writeConfigFile(projectDir, "veryfront.config.js", `export default ${JSON.stringify(largeConfig)};`);
+      await writeConfigFile(
+        projectDir,
+        "veryfront.config.js",
+        `export default ${JSON.stringify(largeConfig)};`,
+      );
 
       const result = await bootstrap(projectDir, adapter);
 
@@ -888,9 +999,21 @@ describe("bootstrap - Edge Cases", () => {
     const projectDir3 = await createTempDir("concurrent_3");
 
     try {
-      await writeConfigFile(projectDir1, "veryfront.config.js", `export default { title: 'Project 1' };`);
-      await writeConfigFile(projectDir2, "veryfront.config.js", `export default { title: 'Project 2' };`);
-      await writeConfigFile(projectDir3, "veryfront.config.js", `export default { title: 'Project 3' };`);
+      await writeConfigFile(
+        projectDir1,
+        "veryfront.config.js",
+        `export default { title: 'Project 1' };`,
+      );
+      await writeConfigFile(
+        projectDir2,
+        "veryfront.config.js",
+        `export default { title: 'Project 2' };`,
+      );
+      await writeConfigFile(
+        projectDir3,
+        "veryfront.config.js",
+        `export default { title: 'Project 3' };`,
+      );
 
       const [result1, result2, result3] = await Promise.all([
         bootstrap(projectDir1, adapter),
@@ -1011,7 +1134,11 @@ describe("bootstrap - Edge Cases", () => {
     const projectDir2 = await createTempDir("success_config");
 
     try {
-      await writeConfigFile(projectDir1, "veryfront.config.js", `export default { security: { cors: { origin: 123 } } };`);
+      await writeConfigFile(
+        projectDir1,
+        "veryfront.config.js",
+        `export default { security: { cors: { origin: 123 } } };`,
+      );
 
       try {
         await bootstrap(projectDir1, adapter);

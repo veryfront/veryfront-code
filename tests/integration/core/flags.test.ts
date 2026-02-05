@@ -1,17 +1,17 @@
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { createTestRuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { createTestEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
 
 describe("flags", () => {
   describe("isRSCEnabled", () => {
     it("returns false when experimentalRsc is false", () => {
-      const env = createTestRuntimeEnv({ experimentalRsc: false });
+      const env = createTestEnvironmentConfig({ experimentalRsc: false });
       assertEquals(isRSCEnabled(undefined, env), false);
     });
 
     it("returns true when experimentalRsc is true", () => {
-      const env = createTestRuntimeEnv({ experimentalRsc: true });
+      const env = createTestEnvironmentConfig({ experimentalRsc: true });
       assertEquals(isRSCEnabled(undefined, env), true);
     });
 
@@ -19,7 +19,7 @@ describe("flags", () => {
       assertEquals(
         isRSCEnabled(
           { experimental: { rsc: false } },
-          createTestRuntimeEnv({ experimentalRsc: true }),
+          createTestEnvironmentConfig({ experimentalRsc: true }),
         ),
         false,
       );
@@ -27,7 +27,7 @@ describe("flags", () => {
       assertEquals(
         isRSCEnabled(
           { experimental: { rsc: true } },
-          createTestRuntimeEnv({ experimentalRsc: false }),
+          createTestEnvironmentConfig({ experimentalRsc: false }),
         ),
         true,
       );
@@ -35,12 +35,12 @@ describe("flags", () => {
 
     it("falls back to env when config is not provided", () => {
       assertEquals(
-        isRSCEnabled({}, createTestRuntimeEnv({ experimentalRsc: true })),
+        isRSCEnabled({}, createTestEnvironmentConfig({ experimentalRsc: true })),
         true,
       );
 
       assertEquals(
-        isRSCEnabled({}, createTestRuntimeEnv({ experimentalRsc: false })),
+        isRSCEnabled({}, createTestEnvironmentConfig({ experimentalRsc: false })),
         false,
       );
     });

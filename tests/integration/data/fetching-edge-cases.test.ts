@@ -50,7 +50,11 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
         getStaticData: undefined,
       };
 
-      const result = await fetcher.fetchData(page, makeContext("http://localhost/test"), "production");
+      const result = await fetcher.fetchData(
+        page,
+        makeContext("http://localhost/test"),
+        "production",
+      );
 
       assertEquals(result.props, {});
     });
@@ -352,7 +356,11 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
         }),
       };
 
-      const result = await fetcher.fetchData(page, makeContext("http://localhost/test"), "production");
+      const result = await fetcher.fetchData(
+        page,
+        makeContext("http://localhost/test"),
+        "production",
+      );
 
       assertEquals(result.revalidate, 0);
     });
@@ -367,7 +375,11 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
         }),
       };
 
-      const result = await fetcher.fetchData(page, makeContext("http://localhost/test"), "production");
+      const result = await fetcher.fetchData(
+        page,
+        makeContext("http://localhost/test"),
+        "production",
+      );
 
       assertEquals(result.revalidate, -100);
     });
@@ -382,7 +394,11 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
         }),
       };
 
-      const result = await fetcher.fetchData(page, makeContext("http://localhost/test"), "production");
+      const result = await fetcher.fetchData(
+        page,
+        makeContext("http://localhost/test"),
+        "production",
+      );
 
       assertEquals(result.revalidate, Number.MAX_SAFE_INTEGER);
     });

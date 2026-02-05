@@ -8,7 +8,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT } from "#veryfront/utils";
 import { devCommand } from "./index.ts";
 import { clearAllLocalCaches } from "../../../transforms/mdx/esm-module-loader/cache/index.ts";
-import type { ParsedArgs } from "../../index/types.ts";
+import type { ParsedArgs } from "../../shared/types.ts";
 
 async function resolveProjectDir(args: ParsedArgs): Promise<string> {
   const projectArg = args.project ? String(args.project) : undefined;

@@ -2,7 +2,7 @@
  * Studio command handler
  */
 
-import type { ParsedArgs } from "../../index/types.ts";
+import type { ParsedArgs } from "../../shared/types.ts";
 import { studioCommand } from "./index.ts";
 import { cliLogger } from "#veryfront/utils";
 import { formatUserError } from "#veryfront/errors/user-friendly/index.ts";

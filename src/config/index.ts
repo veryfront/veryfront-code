@@ -10,10 +10,10 @@ export {
   _resetEnvironmentConfig,
   _setEnvironmentConfigForTesting,
   createTestEnvironmentConfig,
+  type EnvironmentConfig,
   getEnvironmentConfig,
   initEnvironmentConfig,
   isEnvironmentConfigInitialized,
-  type EnvironmentConfig,
 } from "./environment-config.ts";
 
 export {

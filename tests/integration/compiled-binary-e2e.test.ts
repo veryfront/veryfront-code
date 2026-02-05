@@ -1183,7 +1183,8 @@ export default function Home() {
         l.includes("./src/react/router") ||
         l.includes("./src/react/head") ||
         l.includes("Could not resolve ./src") ||
-        (l.includes("error") && l.toLowerCase().includes("src/react/router") && !l.includes("framework-src"))
+        (l.includes("error") && l.toLowerCase().includes("src/react/router") &&
+          !l.includes("framework-src"))
       );
       assertEquals(
         moduleErrors.length,
@@ -2407,7 +2408,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         const html = await response.text();
 
         assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
-        assertStringIncludes(html, "prod-layout-wrapper", "Should have layout wrapper in production");
+        assertStringIncludes(
+          html,
+          "prod-layout-wrapper",
+          "Should have layout wrapper in production",
+        );
         assertStringIncludes(html, "Production Layout Header", "Should render layout header");
         assertStringIncludes(html, "Production Layout Footer", "Should render layout footer");
         assertStringIncludes(html, "Production page content", "Should render page content");
@@ -2629,7 +2634,11 @@ export default function Blog() {
         const homeHtml = await homeRes.text();
         assertEquals(homeRes.status, 200);
         assertStringIncludes(homeHtml, "nested-prod-layout", "Home should have layout");
-        assertStringIncludes(homeHtml, "Nested Production Header", "Home should have layout header");
+        assertStringIncludes(
+          homeHtml,
+          "Nested Production Header",
+          "Home should have layout header",
+        );
         assertStringIncludes(homeHtml, "Home Page", "Home should render content");
 
         // Test about page
@@ -2706,7 +2715,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       },
       "production",
       // Clear API env vars to test pure local filesystem fallback
-      { PROXY_MODE: "1", PRODUCTION_MODE: "1", VERYFRONT_API_BASE_URL: "", VERYFRONT_API_TOKEN: "" },
+      {
+        PROXY_MODE: "1",
+        PRODUCTION_MODE: "1",
+        VERYFRONT_API_BASE_URL: "",
+        VERYFRONT_API_TOKEN: "",
+      },
     );
   });
 
@@ -2777,7 +2791,11 @@ export default function Home() {
           "Should have config layout in PROXY_MODE=1",
         );
         assertStringIncludes(html, "Proxy Config Nav", "Should render nav from config layout");
-        assertStringIncludes(html, "Proxy Config Footer", "Should render footer from config layout");
+        assertStringIncludes(
+          html,
+          "Proxy Config Footer",
+          "Should render footer from config layout",
+        );
         assertStringIncludes(
           html,
           "Proxy config layout page",
@@ -2786,7 +2804,12 @@ export default function Home() {
       },
       "production",
       // Clear API env vars to test pure local filesystem fallback
-      { PROXY_MODE: "1", PRODUCTION_MODE: "1", VERYFRONT_API_BASE_URL: "", VERYFRONT_API_TOKEN: "" },
+      {
+        PROXY_MODE: "1",
+        PRODUCTION_MODE: "1",
+        VERYFRONT_API_BASE_URL: "",
+        VERYFRONT_API_TOKEN: "",
+      },
     );
   });
 });

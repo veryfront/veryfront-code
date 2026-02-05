@@ -9,10 +9,10 @@ import {
   _resetEnvironmentConfig,
   _setEnvironmentConfigForTesting,
   createTestEnvironmentConfig,
+  type EnvironmentConfig,
   getEnvironmentConfig,
   initEnvironmentConfig,
   isEnvironmentConfigInitialized,
-  type EnvironmentConfig,
 } from "./environment-config.ts";
 import { __resetEnvLoaderForTests, markEnvLoaded } from "#veryfront/utils/env-loader.ts";
 
@@ -25,7 +25,7 @@ describe("EnvironmentConfig", () => {
   });
 
   describe("initEnvironmentConfig", () => {
-    it("initializes RuntimeEnv from environment", () => {
+    it("initializes EnvironmentConfig from environment", () => {
       const env = initEnvironmentConfig();
 
       expect(env).toBeDefined();
@@ -66,7 +66,7 @@ describe("EnvironmentConfig", () => {
     });
   });
 
-  describe("isRuntimeEnvInitialized", () => {
+  describe("isEnvironmentConfigInitialized", () => {
     it("returns false before initialization", () => {
       expect(isEnvironmentConfigInitialized()).toBe(false);
     });
@@ -124,7 +124,7 @@ describe("EnvironmentConfig", () => {
     });
   });
 
-  describe("_setRuntimeEnvForTesting", () => {
+  describe("_setEnvironmentConfigForTesting", () => {
     it("overrides global env", () => {
       initEnvironmentConfig();
 
@@ -204,7 +204,7 @@ describe("EnvironmentConfig", () => {
       expect(env.ssrMaxConcurrentTransforms).toBe(3);
     });
 
-    it("handles all RuntimeEnv properties", () => {
+    it("handles all EnvironmentConfig properties", () => {
       const env = createTestEnvironmentConfig();
 
       const expectedProps: (keyof EnvironmentConfig)[] = [

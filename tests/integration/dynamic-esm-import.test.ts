@@ -83,7 +83,10 @@ async function runTests(): Promise<void> {
     const mod = await loadModuleFromEsmSh("tailwindcss-animate@1.0.7");
     const pluginExport = (mod as { default: unknown }).default;
 
-    assert(typeof pluginExport === "object" && pluginExport !== null, `Expected object, got ${typeof pluginExport}`);
+    assert(
+      typeof pluginExport === "object" && pluginExport !== null,
+      `Expected object, got ${typeof pluginExport}`,
+    );
     assert("handler" in pluginExport, "Plugin missing 'handler' property");
 
     console.log("✅ Test 1 PASSED: tailwindcss-animate loaded successfully\n");

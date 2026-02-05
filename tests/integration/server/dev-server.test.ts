@@ -133,7 +133,11 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
 
         const allowedResponse = await fetch(`http://127.0.0.1:${server.port}/api/allowed`);
         assertEquals(allowedResponse.status, 200, "Should allow esm.sh imports");
-        assertEquals(await allowedResponse.text(), "ok", "Should successfully import from allowed host");
+        assertEquals(
+          await allowedResponse.text(),
+          "ok",
+          "Should successfully import from allowed host",
+        );
 
         // Returns 502 (build failure) or 500 (runtime import failure in Deno direct mode)
         const blockedResponse = await fetch(`http://127.0.0.1:${server.port}/api/blocked`);
@@ -207,7 +211,11 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
           "text/css; charset=utf-8",
           "Should set correct content-type for CSS",
         );
-        assertEquals(await cssResponse.text(), "body { margin: 0; padding: 0; }", "Should serve correct CSS");
+        assertEquals(
+          await cssResponse.text(),
+          "body { margin: 0; padding: 0; }",
+          "Should serve correct CSS",
+        );
 
         const jsResponse = await fetch(`http://127.0.0.1:${server.port}/script.js`);
         assertEquals(jsResponse.status, 200, "Should serve JS file");

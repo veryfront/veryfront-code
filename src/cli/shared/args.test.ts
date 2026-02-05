@@ -2,7 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { z } from "zod";
 import { type ArgSpec, CommonArgs, createArgParser, extractArg, extractArgs } from "./args.ts";
-import type { ParsedArgs } from "../index/types.ts";
+import type { ParsedArgs } from "./types.ts";
 
 function makeParsedArgs(overrides: Record<string, unknown> = {}): ParsedArgs {
   return { _: [], ...overrides } as ParsedArgs;

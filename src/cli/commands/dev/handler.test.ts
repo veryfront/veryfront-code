@@ -5,7 +5,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleDevCommand } from "./handler.ts";
-import type { ParsedArgs } from "../../index/types.ts";
+import type { ParsedArgs } from "../../shared/types.ts";
 
 describe("commands/dev/handler", () => {
   describe("handleDevCommand", () => {

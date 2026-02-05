@@ -4,11 +4,11 @@ This module manages all configuration for the Veryfront renderer.
 
 ## Configuration Hierarchy
 
-| Layer | Type | Source | Purpose |
-|-------|------|--------|---------|
-| **Project Config** | `VeryfrontConfig` | `veryfront.config.ts` | Per-project settings defined by the user |
-| **Environment Config** | `EnvironmentConfig` | Environment variables | System-level settings from env vars |
-| **Runtime Config** | `RuntimeConfig` | Merged at startup | Combined config with runtime info |
+| Layer                  | Type                | Source                | Purpose                                  |
+| ---------------------- | ------------------- | --------------------- | ---------------------------------------- |
+| **Project Config**     | `VeryfrontConfig`   | `veryfront.config.ts` | Per-project settings defined by the user |
+| **Environment Config** | `EnvironmentConfig` | Environment variables | System-level settings from env vars      |
+| **Runtime Config**     | `RuntimeConfig`     | Merged at startup     | Combined config with runtime info        |
 
 ## Project Config (`VeryfrontConfig`)
 
@@ -35,11 +35,12 @@ System-level configuration read from environment variables. Captured as a frozen
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 const env = getEnvironmentConfig();
-console.log(env.apiBaseUrl);  // from VERYFRONT_API_BASE_URL
-console.log(env.debug);       // from DEBUG
+console.log(env.apiBaseUrl); // from VERYFRONT_API_BASE_URL
+console.log(env.debug); // from DEBUG
 ```
 
 **Key properties:**
+
 - Runtime: `nodeEnv`, `debug`, `ci`, `denoTesting`
 - API: `apiBaseUrl`, `apiToken`, `projectSlug`
 - Observability: `otelEnabled`, `otelEndpoint`, `otelServiceName`
@@ -54,12 +55,13 @@ The merged configuration used at runtime. Combines project config with environme
 import { getRuntimeConfig } from "#veryfront/config";
 
 const config = getRuntimeConfig();
-console.log(config.build.target);           // from VeryfrontConfig
-console.log(config.runtime.isDevelopment);  // computed from env
-console.log(config.runtime.env.apiToken);   // from EnvironmentConfig
+console.log(config.build.target); // from VeryfrontConfig
+console.log(config.runtime.isDevelopment); // computed from env
+console.log(config.runtime.env.apiToken); // from EnvironmentConfig
 ```
 
 **Structure:**
+
 ```typescript
 interface RuntimeConfig extends VeryfrontConfig {
   runtime: {
@@ -112,9 +114,9 @@ import { getApiBaseUrlEnv, isDebugEnvEnabled } from "#veryfront/config/env.ts";
 ### Testing with isolated config
 
 ```typescript
-import { 
+import {
+  _resetEnvironmentConfig,
   createTestEnvironmentConfig,
-  _resetEnvironmentConfig 
 } from "#veryfront/config/environment-config.ts";
 
 beforeEach(() => {

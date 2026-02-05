@@ -11,7 +11,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { initVCRTest, type VCRTestContext } from "../../test-utils/vcr.ts";
-import { getFileContent, listAllFiles, type PullSource } from "./index.ts";
+import { getFileContent, listAllFiles, type PullSource } from "./command.ts";
 
 describe("pull command integration", () => {
   let ctx: VCRTestContext;

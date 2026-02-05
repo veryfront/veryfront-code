@@ -363,7 +363,10 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
 
         const pagesDir = await ensurePagesDir(context.projectDir);
         await writeTextFile(join(pagesDir, "index.mdx"), "# Home");
-        await writeTextFile(join(pagesDir, "broken.mdx"), "# Broken\n\n<Component with={invalid syntax");
+        await writeTextFile(
+          join(pagesDir, "broken.mdx"),
+          "# Broken\n\n<Component with={invalid syntax",
+        );
 
         const stats = await buildProduction({
           projectDir: context.projectDir,
@@ -486,7 +489,10 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
         await removeAppDir(context.projectDir);
 
         const pagesDir = await ensurePagesDir(context.projectDir);
-        await writeTextFile(join(pagesDir, "index.mdx"), "# Home\n\nContent without frontmatter data.");
+        await writeTextFile(
+          join(pagesDir, "index.mdx"),
+          "# Home\n\nContent without frontmatter data.",
+        );
 
         const stats = await buildProduction({
           projectDir: context.projectDir,
@@ -519,8 +525,7 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
               enableCompression: false,
               enablePrefetch: false,
               dryRun: true,
-            }),
-          ),
+            })),
         );
 
         for (const stats of builds) {

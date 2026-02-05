@@ -4,9 +4,11 @@
 
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { lockCommand } from "./command.ts";
-import type { ParsedArgs } from "../../index/types.ts";
+import { showLogo } from "../../utils/index.ts";
+import type { ParsedArgs } from "../../shared/types.ts";
 
 export async function handleLockCommand(args: ParsedArgs): Promise<void> {
+  showLogo();
   const projectDir = typeof args.project === "string" ? args.project : cwd();
 
   await lockCommand({

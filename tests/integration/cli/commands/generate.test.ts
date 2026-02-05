@@ -5,7 +5,10 @@ import { exists, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { generateCommand } from "../../../../src/cli/commands/generate/index.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 
-async function setPreferredRouter(context: TestContext, preferredRouter: "app-router" | "pages-router"): Promise<void> {
+async function setPreferredRouter(
+  context: TestContext,
+  preferredRouter: "app-router" | "pages-router",
+): Promise<void> {
   const configPath = join(context.projectDir, "veryfront.config.js");
   await remove(configPath);
   await writeTextFile(

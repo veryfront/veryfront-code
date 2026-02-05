@@ -8,7 +8,10 @@
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import {
+  type EnvironmentConfig,
+  getEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 import { cliLogger } from "#veryfront/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";

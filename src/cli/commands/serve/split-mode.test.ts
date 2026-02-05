@@ -4,7 +4,7 @@
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { runSplitMode } from "./serve-split.ts";
+import { runSplitMode } from "./split-mode.ts";
 
 describe("serve-split command", () => {
   describe("runSplitMode", () => {

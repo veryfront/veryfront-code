@@ -1,39 +1,44 @@
-/**
- * CLI Commands - Central export for all CLI commands
- *
- * Commands are organized in subdirectories with:
- * - index.ts: Barrel file re-exporting command and handler
- * - handler.ts: Command handler (argument processing)
- * - Other files: Command implementation
- */
-
-// Command implementations (used by handlers and router)
-export { buildCommand } from "./build.ts";
+export { buildCommand } from "./build/index.ts";
 export { devCommand } from "./dev/index.ts";
 export { generateCommand } from "./generate/index.ts";
 export { studioCommand } from "./studio/index.ts";
-export { analyzeChunksCommand, handleAnalyzeChunksCommand } from "./analyze-chunks/index.ts";
-export { cleanCommand, handleCleanCommand } from "./clean/index.ts";
-export { handleLockCommand, lockCommand } from "./lock/index.ts";
-export { handleRoutesCommand, routesCommand } from "./routes/index.ts";
-export { handleIssuesCommand, issuesCommand } from "./issues/index.ts";
-export { handlePullCommand, parsePullArgs, pullCommand } from "./pull/index.ts";
-export { handlePushCommand, parsePushArgs, pushCommand } from "./push/index.ts";
-export { handleMergeCommand, mergeCommand, parseMergeArgs } from "./merge/index.ts";
-export { deployCommand, handleDeployCommand, parseDeployArgs } from "./deploy/index.ts";
-export { handleUpCommand, parseUpArgs, UpArgsSchema, upCommand } from "./up/index.ts";
+export { analyzeChunksCommand } from "./analyze-chunks/index.ts";
+export { cleanCommand } from "./clean/index.ts";
+export { lockCommand } from "./lock/index.ts";
+export { routesCommand } from "./routes/index.ts";
+export { issuesCommand } from "./issues/index.ts";
+export { pullCommand } from "./pull/index.ts";
+export { pushCommand } from "./push/index.ts";
+export { mergeCommand } from "./merge/index.ts";
+export { deployCommand } from "./deploy/index.ts";
+export { upCommand } from "./up/index.ts";
 export type { UpOptions } from "./up/index.ts";
-export { handleNewCommand, newCommand, parseNewArgs } from "./new/index.ts";
-export { promptProjectName } from "./main.ts";
-
-// Command handlers (for routing)
-export { handleBuildCommand } from "./build/handler.ts";
-export { handleDevCommand } from "./dev/handler.ts";
-export { handleGenerateCommand } from "./generate/handler.ts";
-export { handleStudioCommand } from "./studio/handler.ts";
-export { handleStartCommand } from "./start/handler.ts";
-
-// Subdirectory exports (init, doctor, install, demo need special handling)
+export { newCommand } from "./new/index.ts";
 export { initCommand } from "./init/index.ts";
+export { startCommand } from "./start/index.ts";
+export { serveCommand } from "./serve/index.ts";
 export { doctorCommand } from "./doctor/index.ts";
 export { installCommand, uninstallCommand } from "./install/index.ts";
+
+export { handleAnalyzeChunksCommand } from "./analyze-chunks/handler.ts";
+export { handleBuildCommand } from "./build/handler.ts";
+export { handleCleanCommand } from "./clean/handler.ts";
+export { handleDemoCommand } from "./demo/handler.ts";
+export { handleDeployCommand } from "./deploy/handler.ts";
+export { handleDevCommand } from "./dev/handler.ts";
+export { handleDoctorCommand } from "./doctor/handler.ts";
+export { handleGenerateCommand } from "./generate/handler.ts";
+export { handleInitCommand } from "./init/handler.ts";
+export { handleInstallCommand, handleUninstallCommand } from "./install/handler.ts";
+export { handleIssuesCommand } from "./issues/index.ts";
+export { handleLockCommand } from "./lock/handler.ts";
+export { handleMCPCommand } from "./mcp/handler.ts";
+export { handleMergeCommand } from "./merge/handler.ts";
+export { handleNewCommand } from "./new/index.ts";
+export { handlePullCommand } from "./pull/index.ts";
+export { handlePushCommand } from "./push/index.ts";
+export { handleRoutesCommand } from "./routes/handler.ts";
+export { handleServeCommand } from "./serve/handler.ts";
+export { handleStartCommand } from "./start/handler.ts";
+export { handleStudioCommand } from "./studio/handler.ts";
+export { handleUpCommand } from "./up/index.ts";

@@ -1,7 +1,10 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { clearConfigCache, getConfig } from "#veryfront/config";
-import { getEnvironmentConfig, refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import {
+  getEnvironmentConfig,
+  refreshEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
@@ -59,7 +62,7 @@ function logEnvConfig(): void {
   if (envLogged) return;
   envLogged = true;
 
-  const runtimeEnv = getEnvironmentConfig();
+  const envConfig = getEnvironmentConfig();
   const apiBaseUrlSource = getEnvSource("VERYFRONT_API_BASE_URL");
   const apiTokenSource = getEnvSource("VERYFRONT_API_TOKEN");
 
@@ -71,9 +74,9 @@ function logEnvConfig(): void {
   }
 
   logger.info("[Bootstrap] API base URL", {
-    apiBaseUrl: runtimeEnv.apiBaseUrl,
+    apiBaseUrl: envConfig.apiBaseUrl,
     apiBaseUrlSource,
-    apiTokenPresent: Boolean(runtimeEnv.apiToken),
+    apiTokenPresent: Boolean(envConfig.apiToken),
     apiTokenSource,
   });
 }

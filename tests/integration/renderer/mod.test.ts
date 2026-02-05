@@ -15,7 +15,9 @@ async function removeAppDir(projectDir: string): Promise<void> {
   await remove(join(projectDir, "app"), { recursive: true });
 }
 
-async function createDevRenderer(projectDir: string): Promise<Awaited<ReturnType<typeof createRenderer>>> {
+async function createDevRenderer(
+  projectDir: string,
+): Promise<Awaited<ReturnType<typeof createRenderer>>> {
   return await createRenderer({ projectDir, mode: "development" });
 }
 

@@ -411,7 +411,10 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
       );
 
       assertEquals((data1.props as { title: string; content: string }).title, "Post 1");
-      assertEquals((data1.props as { title: string; content: string }).content, "Content for post 1");
+      assertEquals(
+        (data1.props as { title: string; content: string }).content,
+        "Content for post 1",
+      );
     });
   });
 

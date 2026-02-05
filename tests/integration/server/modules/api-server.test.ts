@@ -47,7 +47,11 @@ describe("API Server Tests", () => {
       const server = new APIServer({ renderer: new MockRenderer() });
 
       assertEquals(await server.handleRequest("/"), null, "Should return null for root path");
-      assertEquals(await server.handleRequest("/about"), null, "Should return null for regular pages");
+      assertEquals(
+        await server.handleRequest("/about"),
+        null,
+        "Should return null for regular pages",
+      );
       assertEquals(
         await server.handleRequest("/static/style.css"),
         null,
@@ -58,7 +62,11 @@ describe("API Server Tests", () => {
     it("returns null for user-defined API routes", async () => {
       const server = new APIServer({ renderer: new MockRenderer() });
 
-      assertEquals(await server.handleRequest("/api/users"), null, "Should return null for /api/ routes");
+      assertEquals(
+        await server.handleRequest("/api/users"),
+        null,
+        "Should return null for /api/ routes",
+      );
       assertEquals(
         await server.handleRequest("/api/posts/123"),
         null,
@@ -281,11 +289,19 @@ describe("API Server Tests", () => {
 
       assertExists(response, "Should return response for missing pages");
       assertEquals(response.status, 404, "Should return 404 status");
-      assertEquals(response.headers.get("content-type"), "application/json", "Should still return JSON");
+      assertEquals(
+        response.headers.get("content-type"),
+        "application/json",
+        "Should still return JSON",
+      );
 
       const data = await response.json();
       assertExists(data.error, "Should include error message");
-      assertEquals(data.error, "Page not found: nonexistent", "Should include specific error message");
+      assertEquals(
+        data.error,
+        "Page not found: nonexistent",
+        "Should include specific error message",
+      );
     });
 
     it("handles renderer errors gracefully", async () => {

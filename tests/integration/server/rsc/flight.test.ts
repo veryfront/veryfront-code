@@ -45,9 +45,7 @@ describe("RSC Flight Tests", { sanitizeOps: false, sanitizeResources: false }, (
             `http://127.0.0.1:${port}/_veryfront/rsc/flight_page?name=Neo`,
           );
           assertEquals(res.status, 410);
-          await res.text().catch((e) =>
-            console.debug?.("[test] flight_page text read failed", e)
-          );
+          await res.text().catch((e) => console.debug?.("[test] flight_page text read failed", e));
         } finally {
           await h?.stop?.();
 

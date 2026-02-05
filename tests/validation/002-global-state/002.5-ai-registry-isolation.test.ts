@@ -114,8 +114,14 @@ describe("002.5 AI Registry Isolation", () => {
         createMockTool("veryfront-search", "Framework"),
       );
 
-      const canSeeA = runWithCacheKeyContext(projectAContext, () => toolRegistry.has("veryfront-search"));
-      const canSeeB = runWithCacheKeyContext(projectBContext, () => toolRegistry.has("veryfront-search"));
+      const canSeeA = runWithCacheKeyContext(
+        projectAContext,
+        () => toolRegistry.has("veryfront-search"),
+      );
+      const canSeeB = runWithCacheKeyContext(
+        projectBContext,
+        () => toolRegistry.has("veryfront-search"),
+      );
 
       assertEquals(canSeeA, true);
       assertEquals(canSeeB, true);
@@ -163,7 +169,10 @@ describe("002.5 AI Registry Isolation", () => {
         promptRegistry.register("secret-prompt", createMockPrompt("secret-prompt", "A"));
       });
 
-      const canSee = runWithCacheKeyContext(projectBContext, () => promptRegistry.has("secret-prompt"));
+      const canSee = runWithCacheKeyContext(
+        projectBContext,
+        () => promptRegistry.has("secret-prompt"),
+      );
       assertEquals(canSee, false);
     });
   });
@@ -178,8 +187,14 @@ describe("002.5 AI Registry Isolation", () => {
         resourceRegistry.register("users", createMockResource("users", "Project B"));
       });
 
-      const resourceA = runWithCacheKeyContext(projectAContext, () => resourceRegistry.get("users"));
-      const resourceB = runWithCacheKeyContext(projectBContext, () => resourceRegistry.get("users"));
+      const resourceA = runWithCacheKeyContext(
+        projectAContext,
+        () => resourceRegistry.get("users"),
+      );
+      const resourceB = runWithCacheKeyContext(
+        projectBContext,
+        () => resourceRegistry.get("users"),
+      );
 
       assertEquals(resourceA?.description, "Resource from Project A");
       assertEquals(resourceB?.description, "Resource from Project B");

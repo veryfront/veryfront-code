@@ -78,7 +78,8 @@ export async function assertHydrationWorks(page: Page, errors: string[]): Promis
   }
 
   const hydrationErrors = errors.filter(
-    (e) => e.includes("hydrat") || e.includes("Minified React error") || e.includes("did not match"),
+    (e) =>
+      e.includes("hydrat") || e.includes("Minified React error") || e.includes("did not match"),
   );
 
   expect(hydrationErrors).toEqual([]);

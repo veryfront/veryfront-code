@@ -9,14 +9,14 @@
  * @see plans/architecture-audit/001.4-layout-cache-no-project-scope.md
  */
 
-import { assertEquals, assert } from "#veryfront/testing/assert";
-import { describe, it, beforeEach } from "#veryfront/testing/bdd";
+import { assert, assertEquals } from "#veryfront/testing/assert";
+import { beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {
-  discoverNestedLayouts,
   clearLayoutDiscoveryCache,
+  discoverNestedLayouts,
   getLayoutDiscoveryCacheStats,
 } from "../../../src/rendering/layouts/utils/discovery.ts";
-import type { RuntimeAdapter, FileSystemAdapter } from "../../../src/platform/adapters/base.ts";
+import type { FileSystemAdapter, RuntimeAdapter } from "../../../src/platform/adapters/base.ts";
 
 function createMockAdapter(existingFiles: Set<string>): RuntimeAdapter {
   const mockFS: FileSystemAdapter = {
@@ -146,7 +146,9 @@ describe("001.4 Layout Cache Isolation", () => {
     });
 
     it("should reuse cached results", async () => {
-      const adapter = createMockAdapter(new Set(["/project/app/layout.tsx", "/project/app/page.tsx"]));
+      const adapter = createMockAdapter(
+        new Set(["/project/app/layout.tsx", "/project/app/page.tsx"]),
+      );
 
       const layouts1 = await discoverNestedLayouts(
         "/project/app/page.tsx",
@@ -172,11 +174,25 @@ describe("001.4 Layout Cache Isolation", () => {
 
   describe("Project-Specific Cache Clearing", () => {
     it("should clear only entries for specified project", async () => {
-      const adapterA = createMockAdapter(new Set(["/project-a/app/layout.tsx", "/project-a/app/page.tsx"]));
-      const adapterB = createMockAdapter(new Set(["/project-b/app/layout.tsx", "/project-b/app/page.tsx"]));
+      const adapterA = createMockAdapter(
+        new Set(["/project-a/app/layout.tsx", "/project-a/app/page.tsx"]),
+      );
+      const adapterB = createMockAdapter(
+        new Set(["/project-b/app/layout.tsx", "/project-b/app/page.tsx"]),
+      );
 
-      await discoverNestedLayouts("/project-a/app/page.tsx", "/project-a/app", "/project-a", adapterA);
-      await discoverNestedLayouts("/project-b/app/page.tsx", "/project-b/app", "/project-b", adapterB);
+      await discoverNestedLayouts(
+        "/project-a/app/page.tsx",
+        "/project-a/app",
+        "/project-a",
+        adapterA,
+      );
+      await discoverNestedLayouts(
+        "/project-b/app/page.tsx",
+        "/project-b/app",
+        "/project-b",
+        adapterB,
+      );
 
       assertEquals(getLayoutDiscoveryCacheStats().size, 2, "Should have 2 cached entries");
 

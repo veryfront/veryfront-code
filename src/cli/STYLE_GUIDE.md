@@ -94,6 +94,12 @@ Follow Pydantic's approach: **specific, actionable, helpful**.
   How to fix it
 ```
 
+For simple validation errors, a single line is fine:
+
+```typescript
+console.log("  " + error("✗") + " Missing required flag: " + brand("--project"));
+```
+
 ### Examples
 
 ```typescript
@@ -136,15 +142,23 @@ dim(); // ANSI dim, de-emphasized text
 bold(); // ANSI bold
 ```
 
+### Warning Example
+
+```typescript
+// Deprecation or non-fatal issue
+console.log("  " + warning("!") + " Config key 'port' is deprecated, use 'server.port' instead");
+```
+
 ### Usage Rules
 
 1. **Use color for meaning, not decoration**
 2. **Red is reserved for errors** - never use for emphasis
-3. **Respect `NO_COLOR` environment variable**
-4. **Disable colors when stdout is not a TTY**
+3. **Yellow is for non-fatal warnings** - deprecations, risky config, recoverable issues
+4. **Respect `NO_COLOR` environment variable**
+5. **Disable colors when stdout is not a TTY**
 
 ```typescript
-import { isTTY } from "../utils/index.ts";
+import { isTTY } from "../ui/layout.ts";
 
 // Colors auto-disable in non-TTY contexts
 if (!isTTY()) {
@@ -156,16 +170,16 @@ if (!isTTY()) {
 
 ## Icons & Symbols
 
-| Symbol | Meaning          | Function       |
-| ------ | ---------------- | -------------- |
-| `✓`    | Success/Complete | `success("✓")` |
-| `✗`    | Error/Failed     | `error("✗")`   |
-| `●`    | Active/Current   | `brand("●")`   |
-| `○`    | Inactive/Pending | `muted("○")`   |
-| `⠋⠙⠹⠸` | Loading spinner  | Animated       |
-| `❯`    | Selection cursor | `brand("❯")`   |
-| `▶`    | Collapsed        | `dim("▶")`     |
-| `▼`    | Expanded         | `dim("▼")`     |
+| Symbol | Meaning          | Function                                |
+| ------ | ---------------- | --------------------------------------- |
+| `✓`    | Success/Complete | `success("✓")`                          |
+| `✗`    | Error/Failed     | `error("✗")`                            |
+| `●`    | Active/Current   | `brand("●")`                            |
+| `○`    | Inactive/Pending | `muted("○")`                            |
+| `⠋⠙⠹⠸` | Loading spinner  | `createSpinner()` from `ui/progress.ts` |
+| `❯`    | Selection cursor | `brand("❯")`                            |
+| `▶`    | Collapsed        | `dim("▶")`                              |
+| `▼`    | Expanded         | `dim("▼")`                              |
 
 **No emoji in standard output** - use unicode symbols only.
 
@@ -253,11 +267,28 @@ console.log("Continue? (yes/no/maybe)");
 
 ### Progress
 
+Use `createSpinner()` for animated loading states. It auto-degrades in non-TTY:
+
 ```typescript
-// Show what's happening
-console.log("  " + brand("⠋") + " Installing dependencies...");
-console.log("  " + success("✓") + " Dependencies installed");
-console.log("  " + brand("⠋") + " Building project...");
+import { createSpinner } from "../ui/progress.ts";
+
+const spinner = createSpinner("Installing dependencies...");
+// ... do work ...
+spinner.success("Dependencies installed");
+```
+
+For multi-step operations, use `TaskList`:
+
+```typescript
+import { TaskList } from "../ui/progress.ts";
+
+const tasks = new TaskList();
+const buildIdx = tasks.add("Building project");
+const deployIdx = tasks.add("Deploying");
+tasks.start(buildIdx);
+// ... build ...
+tasks.complete(buildIdx);
+tasks.start(deployIdx);
 ```
 
 ---
@@ -298,16 +329,35 @@ console.log("  " + brand("⠋") + " Building project...");
 
 ## Machine Output
 
+### stdout vs. stderr
+
+**stdout** is for primary output (results, `--json` data). **stderr** is for human-facing side-effects (progress, spinners, errors). This ensures `--json` output stays parseable when piped:
+
+```bash
+veryfront deploy --json 2>/dev/null | jq '.url'
+```
+
+Progress indicators (`createSpinner`) already write to stdout with ANSI clear sequences, so they self-clean in TTY mode and are suppressed in non-TTY mode.
+
 ### JSON Mode
+
+Commands that support `--json` should return a consistent envelope:
 
 ```typescript
 if (options.json) {
+  // Success
   console.log(JSON.stringify({
     success: true,
-    url: "https://app.veryfront.com",
+    data: { url: "https://app.veryfront.com" },
   }));
   return;
 }
+
+// Error
+console.log(JSON.stringify({
+  success: false,
+  error: { code: "PROJECT_NOT_FOUND", message: "Project 'myapp' not found" },
+}));
 ```
 
 ### Exit Codes
@@ -324,7 +374,7 @@ if (options.json) {
 ## Quick Reference
 
 ```typescript
-import { brand, dim, error, muted, success } from "../ui/colors.ts";
+import { brand, dim, error, muted, success, warning } from "../ui/colors.ts";
 
 // Success
 console.log("  " + success("✓") + " Done");
@@ -334,6 +384,9 @@ console.log("  " + error("✗") + " Failed");
 
 // Info
 console.log("  " + brand("●") + " " + "Running...");
+
+// Warning
+console.log("  " + warning("!") + " Deprecated option");
 
 // Secondary
 console.log("  " + dim("https://example.com"));
@@ -354,5 +407,6 @@ Before shipping CLI output:
 - [ ] Red only for actual errors
 - [ ] Errors are actionable
 - [ ] Works without color (`NO_COLOR=1`)
-- [ ] Long operations show progress
+- [ ] Long operations show progress (`createSpinner` or `TaskList`)
 - [ ] Ctrl+C exits cleanly
+- [ ] `--json` flag returns `{ success, data?, error? }` envelope (if applicable)

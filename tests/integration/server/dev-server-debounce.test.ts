@@ -100,7 +100,8 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
         if (!metrics) return;
 
         assert(
-          metrics.routeDiscoveryCalls < metrics.totalFileChangeEvents || metrics.routeDiscoveryCalls === 0,
+          metrics.routeDiscoveryCalls < metrics.totalFileChangeEvents ||
+            metrics.routeDiscoveryCalls === 0,
           `Should batch changes: ${metrics.routeDiscoveryCalls} discoveries < ${metrics.totalFileChangeEvents} events`,
         );
 
@@ -201,7 +202,9 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
 
         for (const file of initialFiles) {
           const lastSlash = file.lastIndexOf("/");
-          const dir = lastSlash >= 0 ? join(context.projectDir, file.slice(0, lastSlash)) : context.projectDir;
+          const dir = lastSlash >= 0
+            ? join(context.projectDir, file.slice(0, lastSlash))
+            : context.projectDir;
 
           await mkdir(dir, { recursive: true });
           await writeTextFile(join(context.projectDir, file), getFixtureContent(file, "initial"));
@@ -231,7 +234,10 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
           `Should show reduction in FS operations for git checkout scenario: ${metrics.fsOperationReduction}`,
         );
 
-        console.log(`[TEST] Git checkout scenario - ${initialFiles.length} files changed:`, metrics);
+        console.log(
+          `[TEST] Git checkout scenario - ${initialFiles.length} files changed:`,
+          metrics,
+        );
       });
     });
   });

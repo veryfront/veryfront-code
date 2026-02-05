@@ -218,8 +218,16 @@ describe(
         const invalidated = await store.invalidateSource(source);
         assertEquals(invalidated, 2, "Should invalidate 2 entries");
 
-        assertEquals(await store.getBundleMetadata("bundle:dev"), undefined, "dev bundle should be gone");
-        assertEquals(await store.getBundleMetadata("bundle:prod"), undefined, "prod bundle should be gone");
+        assertEquals(
+          await store.getBundleMetadata("bundle:dev"),
+          undefined,
+          "dev bundle should be gone",
+        );
+        assertEquals(
+          await store.getBundleMetadata("bundle:prod"),
+          undefined,
+          "prod bundle should be gone",
+        );
 
         const other = await store.getBundleMetadata("bundle:other");
         assert(other !== undefined, "other bundle should remain");
@@ -345,7 +353,10 @@ describe(
               "Version 2 Content",
               "After cache clear, should have v2 content",
             );
-            assert(!result2.html.includes("Version 1 Content"), "After cache clear, should NOT have v1 content");
+            assert(
+              !result2.html.includes("Version 1 Content"),
+              "After cache clear, should NOT have v1 content",
+            );
 
             await renderer.clearAllState?.();
           } finally {
@@ -445,7 +456,10 @@ describe(
         );
 
         const result = cache.get(key);
-        assert(values.includes(result as string), `Result should be one of the set values: ${result}`);
+        assert(
+          values.includes(result as string),
+          `Result should be one of the set values: ${result}`,
+        );
       });
 
       it("async get during delete returns correct value or undefined", async () => {

@@ -3,7 +3,10 @@
  * @module cli/shared/constants
  */
 
-import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import {
+  type EnvironmentConfig,
+  getEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 
 export const DEFAULT_DEV_PORT = 3000;
 export const DEFAULT_PROXY_PORT = 8080;

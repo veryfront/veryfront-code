@@ -6,7 +6,10 @@ import { join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd as getCwd } from "#veryfront/platform/compat/process.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
 import { type AIToolId, type DetectOptions, DetectOptionsSchema } from "./types.ts";
-import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import {
+  type EnvironmentConfig,
+  getEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 
 function createDetectionRules(
   env: EnvironmentConfig,

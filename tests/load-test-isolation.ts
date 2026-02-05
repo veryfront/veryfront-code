@@ -133,12 +133,16 @@ async function testIsolation(config: TestConfig): Promise<boolean> {
   console.log("\n" + "=".repeat(60));
   if (passed) {
     console.log(
-      `${COLORS.green}✓ TEST PASSED${COLORS.reset} - Success rate: ${(successRate * 100).toFixed(1)}%`,
+      `${COLORS.green}✓ TEST PASSED${COLORS.reset} - Success rate: ${
+        (successRate * 100).toFixed(1)
+      }%`,
     );
     console.log(`  System remained responsive under load (no cascading failures)`);
   } else {
     console.log(
-      `${COLORS.red}✗ TEST FAILED${COLORS.reset} - Success rate: ${(successRate * 100).toFixed(1)}%`,
+      `${COLORS.red}✗ TEST FAILED${COLORS.reset} - Success rate: ${
+        (successRate * 100).toFixed(1)
+      }%`,
     );
     console.log(`  System may have blocking issues - investigate timeouts and errors`);
   }
@@ -195,7 +199,9 @@ async function main(): Promise<void> {
   if (!baseUrl) {
     console.error("Error: URL is required");
     console.error("Usage: deno run --allow-all tests/load-test-isolation.ts <url>");
-    console.error("Example: deno run --allow-all tests/load-test-isolation.ts http://myproject.lvh.me:8080");
+    console.error(
+      "Example: deno run --allow-all tests/load-test-isolation.ts http://myproject.lvh.me:8080",
+    );
     Deno.exit(1);
   }
 

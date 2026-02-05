@@ -10,12 +10,7 @@
  */
 
 import { beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  createProject,
-  ensureBinaryCompiled,
-  pages,
-  withServer,
-} from "../setup/index.ts";
+import { createProject, ensureBinaryCompiled, pages, withServer } from "../setup/index.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 
 describe("Feature: Response Headers", {

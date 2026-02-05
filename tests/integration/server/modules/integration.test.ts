@@ -358,8 +358,14 @@ describe(
           const testCases = [
             { error: new Error("Unexpected token <"), expectedSuggestion: "syntax errors" },
             { error: new Error("Module not found: react"), expectedSuggestion: "module exists" },
-            { error: new Error("Invalid frontmatter syntax"), expectedSuggestion: "frontmatter syntax" },
-            { error: new Error("Cannot use hook outside component"), expectedSuggestion: "hooks can only" },
+            {
+              error: new Error("Invalid frontmatter syntax"),
+              expectedSuggestion: "frontmatter syntax",
+            },
+            {
+              error: new Error("Cannot use hook outside component"),
+              expectedSuggestion: "hooks can only",
+            },
           ];
 
           for (const { error, expectedSuggestion } of testCases) {

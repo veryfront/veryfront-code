@@ -95,7 +95,7 @@ describe("002.8 Tailwind Compiler Isolation", () => {
       const results = await Promise.all(
         stylesheets.map((stylesheet) =>
           generateTailwindCSS(stylesheet, ["mt-4", "p-2", "text-sm"])
-        )
+        ),
       );
 
       for (const { css, error } of results) {
@@ -110,7 +110,7 @@ describe("002.8 Tailwind Compiler Isolation", () => {
       const stylesheet = `@import "tailwindcss"; /* shared */`;
 
       const results = await Promise.all(
-        Array.from({ length: 10 }, () => generateTailwindCSS(stylesheet, ["mt-4"]))
+        Array.from({ length: 10 }, () => generateTailwindCSS(stylesheet, ["mt-4"])),
       );
 
       for (const { error } of results) {

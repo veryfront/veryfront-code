@@ -50,7 +50,9 @@ function mockDetectRuntime(mockGlobals: any): string {
   if (typeof mockGlobals.Deno !== "undefined") return "deno";
   if (typeof mockGlobals.Bun !== "undefined") return "bun";
   if (mockGlobals.process?.versions?.node) return "node";
-  if (typeof mockGlobals.caches !== "undefined" && typeof mockGlobals.WebSocketPair !== "undefined") {
+  if (
+    typeof mockGlobals.caches !== "undefined" && typeof mockGlobals.WebSocketPair !== "undefined"
+  ) {
     return "cloudflare";
   }
   return "unknown";

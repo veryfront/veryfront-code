@@ -10,10 +10,7 @@
 
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import {
-  collectHead,
-  runWithHeadCollector,
-} from "../../../src/react/head-collector.ts";
+import { collectHead, runWithHeadCollector } from "../../../src/react/head-collector.ts";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

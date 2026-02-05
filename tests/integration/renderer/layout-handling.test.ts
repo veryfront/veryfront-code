@@ -546,8 +546,7 @@ describe("Layout Handling", () => {
         };
 
         const bundle2: MdxBundle = {
-          compiledCode:
-            "export const MDXLayout = ({ children }) => <section>{children}</section>",
+          compiledCode: "export const MDXLayout = ({ children }) => <section>{children}</section>",
           frontmatter: {},
         };
 

@@ -54,8 +54,9 @@ describe("ProductionServer", { sanitizeResources: false, sanitizeOps: false }, (
         const server = await context.createProductionServer();
 
         const responses = await Promise.all(
-          Array.from({ length: 10 }, (_, i) =>
-            fetch(`http://127.0.0.1:${server.port}/test.txt?req=${i}`),
+          Array.from(
+            { length: 10 },
+            (_, i) => fetch(`http://127.0.0.1:${server.port}/test.txt?req=${i}`),
           ),
         );
 
@@ -137,10 +138,9 @@ class TestDataFactory {
   }
 
   static createReactComponent(name: string, props: string[] = []): string {
-    const propsStr =
-      props.length > 0
-        ? `{ ${props.join(", ")} }: { ${props.map((p) => `${p}: unknown`).join("; ")} }`
-        : "()";
+    const propsStr = props.length > 0
+      ? `{ ${props.join(", ")} }: { ${props.map((p) => `${p}: unknown`).join("; ")} }`
+      : "()";
 
     return `
 import React from 'react';

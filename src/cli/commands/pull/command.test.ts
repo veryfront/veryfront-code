@@ -13,7 +13,7 @@ import {
   type PullOptions,
   type PullSource,
   resolvePullSource,
-} from "./index.ts";
+} from "./command.ts";
 import type { ApiClient } from "../../shared/config.ts";
 
 function createMockClient(overrides: {

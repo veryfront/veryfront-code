@@ -7,7 +7,7 @@
  */
 
 import { z } from "zod";
-import type { ParsedArgs } from "../index/types.ts";
+import type { ParsedArgs } from "./types.ts";
 
 /**
  * Argument specification for a single option

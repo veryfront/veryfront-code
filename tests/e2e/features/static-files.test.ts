@@ -131,7 +131,8 @@ describe("Feature: Static Files", {
         pages.basic,
         {
           files: {
-            "public/images/icons/favicon.svg": `<svg xmlns="http://www.w3.org/2000/svg"><rect width="16" height="16" fill="red"/></svg>`,
+            "public/images/icons/favicon.svg":
+              `<svg xmlns="http://www.w3.org/2000/svg"><rect width="16" height="16" fill="red"/></svg>`,
           },
         },
       );

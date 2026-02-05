@@ -130,7 +130,10 @@ describe(
               "After dependency change, should have V2 button text",
             );
 
-            assert(!result2.html.includes("btn-v1"), "After dependency change, should NOT have V1 class");
+            assert(
+              !result2.html.includes("btn-v1"),
+              "After dependency change, should NOT have V1 class",
+            );
             assert(
               !result2.html.includes("Button V1"),
               "After dependency change, should NOT have V1 text",
@@ -386,7 +389,11 @@ describe(
 
             const result2 = await renderer.renderPage("/");
 
-            assertStringIncludes(result2.html, "card-red", "After shared dep change, Card should be red");
+            assertStringIncludes(
+              result2.html,
+              "card-red",
+              "After shared dep change, Card should be red",
+            );
             assertStringIncludes(
               result2.html,
               "btn-red",
@@ -479,7 +486,10 @@ describe(
         // because invalidateSource only matches the source field directly.
         // A real implementation would need to track dependency graphs.
         const pageBundle = await store.getBundleMetadata("bundle:page");
-        assert(pageBundle !== undefined, "Page bundle still exists (demonstrates need for dependency graph)");
+        assert(
+          pageBundle !== undefined,
+          "Page bundle still exists (demonstrates need for dependency graph)",
+        );
       });
     });
 

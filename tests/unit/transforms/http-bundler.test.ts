@@ -7,10 +7,7 @@
 
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals } from "#veryfront/testing/assert";
-import {
-  bundleHttpImports,
-  hasHttpImports,
-} from "../../../src/transforms/esm/http-bundler.ts";
+import { bundleHttpImports, hasHttpImports } from "../../../src/transforms/esm/http-bundler.ts";
 
 describe("hasHttpImports", () => {
   it("detects https imports", () => {

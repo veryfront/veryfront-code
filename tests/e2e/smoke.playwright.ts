@@ -135,8 +135,7 @@ for (const subdomain of PROJECTS) {
           await expectPageRenders(page);
 
           const pageContent = await page.content();
-          const hasStudioBridge =
-            pageContent.includes("StudioBridge") ||
+          const hasStudioBridge = pageContent.includes("StudioBridge") ||
             pageContent.includes("studio-bridge") ||
             pageContent.includes("parent.postMessage");
           expect(hasStudioBridge).toBeTruthy();

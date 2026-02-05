@@ -21,7 +21,9 @@ export async function getFreePort(): Promise<number> {
   }
 
   if (isBun) {
-    const bun = (globalThis as { Bun?: { serve: (options: Record<string, unknown>) => { stop: () => void; port: number } } })
+    const bun = (globalThis as {
+      Bun?: { serve: (options: Record<string, unknown>) => { stop: () => void; port: number } };
+    })
       .Bun;
     if (!bun) throw new Error("Bun global not available");
 
@@ -138,8 +140,9 @@ export async function assertDrained({
   // deno-lint-ignore no-explicit-any
   const denoAny = Deno as any;
 
-  const resourcesFn: (() => Record<number, string>) | null =
-    typeof denoAny.resources === "function" ? denoAny.resources.bind(Deno) : null;
+  const resourcesFn: (() => Record<number, string>) | null = typeof denoAny.resources === "function"
+    ? denoAny.resources.bind(Deno)
+    : null;
 
   const metricsFn: (() => { opsDispatched: number; opsCompleted: number }) | null =
     typeof denoAny.metrics === "function" ? denoAny.metrics.bind(Deno) : null;
@@ -153,7 +156,9 @@ export async function assertDrained({
     await drainEventLoop(2, delayMs);
 
     const resources = resourcesFn?.() ?? {};
-    const leftoverEntries = Object.entries(resources).filter(([, name]) => !isAllowedResource(name));
+    const leftoverEntries = Object.entries(resources).filter(([, name]) =>
+      !isAllowedResource(name)
+    );
 
     const metrics = metricsFn?.() ?? { opsDispatched: 0, opsCompleted: 0 };
     const pending = Math.max(0, (metrics.opsDispatched ?? 0) - (metrics.opsCompleted ?? 0));
@@ -166,6 +171,8 @@ export async function assertDrained({
 
   const filtered = Object.entries(lastResources).filter(([, name]) => !isAllowedResource(name));
   throw new Error(
-    `Event loop not fully drained after retries. resources=${JSON.stringify(filtered)} pendingOps=${lastPendingOps}`,
+    `Event loop not fully drained after retries. resources=${
+      JSON.stringify(filtered)
+    } pendingOps=${lastPendingOps}`,
   );
 }

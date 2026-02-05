@@ -1,11 +1,7 @@
-/**
- * Tests for build command handler
- */
-
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleBuildCommand } from "./handler.ts";
-import type { BuildCommandArgs } from "../../index/types.ts";
+import type { BuildCommandArgs } from "../../shared/types.ts";
 
 describe("commands/build/handler", () => {
   describe("handleBuildCommand", () => {

@@ -470,13 +470,21 @@ import lodash from 'lodash';
         resolveBare: true,
       });
 
-      assertEquals(transformed.includes('from "https://esm.sh/react@18"'), true, "Should transform react import");
+      assertEquals(
+        transformed.includes('from "https://esm.sh/react@18"'),
+        true,
+        "Should transform react import",
+      );
       assertEquals(
         transformed.includes('from "https://esm.sh/react-dom@18"'),
         true,
         "Should transform react-dom import",
       );
-      assertEquals(transformed.includes('from "https://esm.sh/lodash@4"'), true, "Should transform lodash import");
+      assertEquals(
+        transformed.includes('from "https://esm.sh/lodash@4"'),
+        true,
+        "Should transform lodash import",
+      );
     });
 
     it("should not transform relative imports", () => {

@@ -186,7 +186,10 @@ export default function DocsPage({ params }: { params: { slug: string[] } }) {
       );
 
       await withServer(projectDir, async (server) => {
-        const { response, html } = await fetchPage(server, "/docs/getting-started/installation/linux");
+        const { response, html } = await fetchPage(
+          server,
+          "/docs/getting-started/installation/linux",
+        );
 
         expectPage(html, response)
           .toRender()

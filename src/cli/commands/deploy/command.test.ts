@@ -13,7 +13,7 @@ import {
   parseDeployArgs,
 } from "./index.ts";
 import type { ApiClient } from "../../shared/config.ts";
-import type { ParsedArgs } from "../../index/types.ts";
+import type { ParsedArgs } from "../../shared/types.ts";
 
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;

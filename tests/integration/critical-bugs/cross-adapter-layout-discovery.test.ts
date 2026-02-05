@@ -270,7 +270,12 @@ describe(
         };
 
         clearLayoutDiscoveryCache();
-        const localLayouts = await discoverNestedLayouts(pageFile, rootDir, projectDir, localAdapter);
+        const localLayouts = await discoverNestedLayouts(
+          pageFile,
+          rootDir,
+          projectDir,
+          localAdapter,
+        );
 
         clearLayoutDiscoveryCache();
         const apiLayouts = await discoverNestedLayouts(pageFile, rootDir, projectDir, apiAdapter);
@@ -298,7 +303,11 @@ describe(
         const apiPaths = apiLayouts.map((l) => l.path).sort();
         const githubPaths = githubLayouts.map((l) => l.path).sort();
 
-        assertEquals(localPaths, apiPaths, "Local and API adapters must find layouts at same paths");
+        assertEquals(
+          localPaths,
+          apiPaths,
+          "Local and API adapters must find layouts at same paths",
+        );
         assertEquals(
           apiPaths,
           githubPaths,
@@ -310,7 +319,11 @@ describe(
         const githubKinds = githubLayouts.map((l) => l.kind).sort();
 
         assertEquals(localKinds, apiKinds, "Local and API adapters must assign same layout kinds");
-        assertEquals(apiKinds, githubKinds, "API and GitHub adapters must assign same layout kinds");
+        assertEquals(
+          apiKinds,
+          githubKinds,
+          "API and GitHub adapters must assign same layout kinds",
+        );
       });
 
       it("handles concurrent stat operations consistently", async () => {
@@ -465,7 +478,9 @@ describe(
     describe("Integration with Real Test Context", () => {
       it("discovers layouts consistently with real file system", async () => {
         await withTestContext("cross-adapter-real-fs", async (context) => {
-          await mkdir(join(context.projectDir, "app", "dashboard", "settings"), { recursive: true });
+          await mkdir(join(context.projectDir, "app", "dashboard", "settings"), {
+            recursive: true,
+          });
 
           await writeTextFile(
             join(context.projectDir, "app", "layout.tsx"),
@@ -489,7 +504,12 @@ describe(
           const pageFile = join(context.projectDir, "app", "dashboard", "settings", "page.tsx");
 
           clearLayoutDiscoveryCache();
-          const layouts = await discoverNestedLayouts(pageFile, rootDir, context.projectDir, adapter);
+          const layouts = await discoverNestedLayouts(
+            pageFile,
+            rootDir,
+            context.projectDir,
+            adapter,
+          );
 
           assertEquals(layouts.length, 2, "Should discover both root and dashboard layouts");
 

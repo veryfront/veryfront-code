@@ -1,7 +1,7 @@
 import { assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { writeTextFile } from "#veryfront/compat/fs.ts";
-import { buildCommand } from "../../../src/cli/commands/build.ts";
+import { buildCommand } from "../../../src/cli/commands/build/command.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
 describe("cli build", () => {
@@ -13,7 +13,7 @@ describe("cli build", () => {
       );
 
       await assertRejects(() =>
-        buildCommand({ projectDir: context.projectDir, dryRun: true } as any),
+        buildCommand({ projectDir: context.projectDir, dryRun: true } as any)
       );
     });
   });

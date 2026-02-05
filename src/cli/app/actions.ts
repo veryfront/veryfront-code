@@ -10,7 +10,10 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getOsType, runCommand } from "#veryfront/platform/compat/process.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import type { ProjectInfo } from "./state.ts";
-import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import {
+  type EnvironmentConfig,
+  getEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 
 export type IDE = "cursor" | "code" | "zed" | "idea" | "webstorm";
 
@@ -150,7 +153,9 @@ export async function clearProjectCache(project: ProjectInfo): Promise<ActionRes
   return { success: true, message };
 }
 
-export async function openMCPSettings(env: EnvironmentConfig = getEnvironmentConfig()): Promise<ActionResult> {
+export async function openMCPSettings(
+  env: EnvironmentConfig = getEnvironmentConfig(),
+): Promise<ActionResult> {
   const home = env.homeDir ?? "";
   const claudeDir = join(home, ".claude");
   const settingsPath = join(claudeDir, "settings.json");

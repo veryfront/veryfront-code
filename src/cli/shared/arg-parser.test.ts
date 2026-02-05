@@ -2,7 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseArrayArg, parseCliArgs } from "./arg-parser.ts";
 
-describe("cli/index/arg-parser", () => {
+describe("cli/shared/arg-parser", () => {
   describe("parseCliArgs", () => {
     it("should parse positional arguments", () => {
       assertEquals(parseCliArgs(["dev"])._[0], "dev");

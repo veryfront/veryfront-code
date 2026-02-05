@@ -15,7 +15,10 @@ function createMockDevCommand(): (options: { signal?: AbortSignal } & any) => Pr
     console.log("Starting development server...");
 
     const adapter = await (await import("#veryfront/platform/adapters/detect.ts")).getAdapter();
-    const config = await (await import("#veryfront/config/loader.ts")).getConfig(projectDir, adapter);
+    const config = await (await import("#veryfront/config/loader.ts")).getConfig(
+      projectDir,
+      adapter,
+    );
 
     const finalPort = config?.dev?.port || port;
 

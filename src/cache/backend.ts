@@ -5,7 +5,11 @@ import type { Span } from "@opentelemetry/api";
 import { getRedisClient, isRedisConfigured, type RedisClient } from "../utils/redis-client.ts";
 import { runtime } from "../platform/adapters/registry.ts";
 import { tryGetCacheKeyContext } from "./cache-key-builder.ts";
-import { getEnvironmentConfig, isEnvironmentConfigInitialized, type EnvironmentConfig } from "../config/environment-config.ts";
+import {
+  type EnvironmentConfig,
+  getEnvironmentConfig,
+  isEnvironmentConfigInitialized,
+} from "../config/environment-config.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "../utils/circuit-breaker.ts";
 import { MEMORY_CACHE_MAX_ENTRIES } from "../utils/constants/cache.ts";
 import type { CacheBackend } from "./types.ts";
@@ -38,10 +42,10 @@ const ENV_KEY_MAP: Record<string, keyof EnvironmentConfig | undefined> = {
 };
 
 function getEnvValue(key: string, env?: EnvironmentConfig): string | undefined {
-  const runtimeEnv = env ?? (isEnvironmentConfigInitialized() ? getEnvironmentConfig() : null);
-  if (runtimeEnv) {
+  const envConfig = env ?? (isEnvironmentConfigInitialized() ? getEnvironmentConfig() : null);
+  if (envConfig) {
     const prop = ENV_KEY_MAP[key];
-    return prop ? (runtimeEnv[prop] as string | undefined) : undefined;
+    return prop ? (envConfig[prop] as string | undefined) : undefined;
   }
 
   if (runtime.isInitialized()) return runtime.getSync().env.get(key);

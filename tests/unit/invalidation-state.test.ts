@@ -220,6 +220,10 @@ describe("Global Invalidation State - Race Condition Scenario", () => {
     assertEquals(blocked, true);
 
     const state = getInvalidationDebugState();
-    assertEquals(state.totalBlockedReads >= 1, true, "Should have at least one blocked read recorded");
+    assertEquals(
+      state.totalBlockedReads >= 1,
+      true,
+      "Should have at least one blocked read recorded",
+    );
   });
 });

@@ -29,7 +29,8 @@ async function startServer(context: {
   return server;
 }
 
-const rootLayout = `export default function RootLayout({ children }: { children: React.ReactNode }) {
+const rootLayout =
+  `export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (<html><body><div id="root">{children}</div></body></html>);
 }
 `;
@@ -278,7 +279,10 @@ export default function HomePage() {
           await mkdir(join(context.projectDir, "pages", "blog"), { recursive: true });
           await writeDenoConfig(context.projectDir);
 
-          await writeTextFile(join(context.projectDir, "pages", "blog", "[slug].tsx"), blogPostPage);
+          await writeTextFile(
+            join(context.projectDir, "pages", "blog", "[slug].tsx"),
+            blogPostPage,
+          );
 
           const server = await startServer(context);
 
@@ -286,12 +290,18 @@ export default function HomePage() {
           assertEquals(response.status, 200);
 
           const html = await response.text();
-          assert(html.includes("Post:") && html.includes("test-post"), `Expected "Post:" and "test-post" in HTML`);
+          assert(
+            html.includes("Post:") && html.includes("test-post"),
+            `Expected "Post:" and "test-post" in HTML`,
+          );
           assert(
             html.includes("This is the content for") && html.includes("test-post"),
             `Expected content text in HTML`,
           );
-          assert(html.includes("Slug:") && html.includes("test-post"), `Expected "Slug:" and "test-post" in HTML`);
+          assert(
+            html.includes("Slug:") && html.includes("test-post"),
+            `Expected "Slug:" and "test-post" in HTML`,
+          );
         });
       });
 
@@ -300,7 +310,10 @@ export default function HomePage() {
           await mkdir(join(context.projectDir, "pages", "blog"), { recursive: true });
           await writeDenoConfig(context.projectDir);
 
-          await writeTextFile(join(context.projectDir, "pages", "blog", "[slug].tsx"), blogPostPage);
+          await writeTextFile(
+            join(context.projectDir, "pages", "blog", "[slug].tsx"),
+            blogPostPage,
+          );
 
           const server = await startServer(context);
 
@@ -374,7 +387,9 @@ export default function HomePage() {
 
           const server = await startServer(context);
 
-          const response = await fetch(`http://127.0.0.1:${server.port}/api/posts/789`, { method: "DELETE" });
+          const response = await fetch(`http://127.0.0.1:${server.port}/api/posts/789`, {
+            method: "DELETE",
+          });
           assertEquals(response.status, 405);
           assertEquals(response.headers.get("Allow"), "GET, POST");
           await response.body?.cancel();
@@ -388,7 +403,10 @@ export default function HomePage() {
           await mkdir(join(context.projectDir, "pages", "products"), { recursive: true });
           await writeDenoConfig(context.projectDir);
 
-          await writeTextFile(join(context.projectDir, "pages", "products", "[id].tsx"), isrProductPage);
+          await writeTextFile(
+            join(context.projectDir, "pages", "products", "[id].tsx"),
+            isrProductPage,
+          );
 
           const server = await startServer(context);
 
@@ -396,8 +414,14 @@ export default function HomePage() {
           assertEquals(response.status, 200);
 
           const html = await response.text();
-          assert(html.includes("Product") && html.includes("1"), `Expected "Product" and "1" in HTML`);
-          assert(html.includes("Price:") && html.includes("100"), `Expected "Price:" and "100" in HTML`);
+          assert(
+            html.includes("Product") && html.includes("1"),
+            `Expected "Product" and "1" in HTML`,
+          );
+          assert(
+            html.includes("Price:") && html.includes("100"),
+            `Expected "Price:" and "100" in HTML`,
+          );
           assert(html.includes("ID:") && html.includes("1"), `Expected "ID:" and "1" in HTML`);
         });
       });
@@ -407,7 +431,10 @@ export default function HomePage() {
           await mkdir(join(context.projectDir, "pages", "products"), { recursive: true });
           await writeDenoConfig(context.projectDir);
 
-          await writeTextFile(join(context.projectDir, "pages", "products", "[id].tsx"), isrProductPage);
+          await writeTextFile(
+            join(context.projectDir, "pages", "products", "[id].tsx"),
+            isrProductPage,
+          );
 
           const server = await startServer(context);
 
@@ -466,7 +493,10 @@ export default function SearchPage({ query, page, results }) {
           assertEquals(response.status, 200);
 
           const html = await response.text();
-          assert(html.includes("Search:") && html.includes("veryfront"), `Expected "Search:" and "veryfront" in HTML`);
+          assert(
+            html.includes("Search:") && html.includes("veryfront"),
+            `Expected "Search:" and "veryfront" in HTML`,
+          );
           assert(html.includes("Page:") && html.includes("2"), `Expected "Page:" and "2" in HTML`);
           assert(
             html.includes("Result for") && html.includes("veryfront"),

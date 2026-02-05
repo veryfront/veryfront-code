@@ -223,7 +223,10 @@ describe("Layout Handling", () => {
         await mkdir(appDir, { recursive: true });
 
         const pageFile = `${appDir}/page.tsx`;
-        await writeTextFile(pageFile, "export default function Page() { return <div>Dashboard</div>; }");
+        await writeTextFile(
+          pageFile,
+          "export default function Page() { return <div>Dashboard</div>; }",
+        );
 
         const rootLayout = `${context.projectDir}/app/layout.tsx`;
         const dashboardLayout = `${appDir}/layout.tsx`;
@@ -334,7 +337,11 @@ describe("Layout Handling", () => {
         const compileMDX = createMockCompileMDX();
 
         const layouts: LayoutItem[] = [
-          { kind: "tsx", path: `${context.projectDir}/layout.tsx`, componentPath: `${context.projectDir}/layout.tsx` },
+          {
+            kind: "tsx",
+            path: `${context.projectDir}/layout.tsx`,
+            componentPath: `${context.projectDir}/layout.tsx`,
+          },
         ];
 
         await compileMDXLayouts(layouts, compileMDX, adapter);
@@ -399,7 +406,10 @@ describe("Layout Handling", () => {
           throw new Error("Compilation failed");
         };
 
-        const layouts: LayoutItem[] = [{ kind: "mdx", path: `${context.projectDir}/broken-layout.mdx` }];
+        const layouts: LayoutItem[] = [{
+          kind: "mdx",
+          path: `${context.projectDir}/broken-layout.mdx`,
+        }];
 
         await writeTextFile(layouts[0]!.path!, "broken mdx content");
 
@@ -438,7 +448,11 @@ describe("Layout Handling", () => {
           "export default function Layout({ children }) { return <div>{children}</div>; }",
         );
 
-        const nestedLayouts: LayoutItem[] = [{ kind: "tsx", componentPath: layoutPath, path: layoutPath }];
+        const nestedLayouts: LayoutItem[] = [{
+          kind: "tsx",
+          componentPath: layoutPath,
+          path: layoutPath,
+        }];
 
         const hash = await computeDepsHash(undefined, nestedLayouts, adapter);
 
@@ -462,7 +476,11 @@ describe("Layout Handling", () => {
           "export default function Layout({ children }) { return <div>{children}</div>; }",
         );
 
-        const nestedLayouts: LayoutItem[] = [{ kind: "tsx", componentPath: layoutPath, path: layoutPath }];
+        const nestedLayouts: LayoutItem[] = [{
+          kind: "tsx",
+          componentPath: layoutPath,
+          path: layoutPath,
+        }];
 
         const hash = await computeDepsHash(layoutBundle, nestedLayouts, adapter);
 
@@ -486,7 +504,11 @@ describe("Layout Handling", () => {
         const adapter = await getAdapter();
 
         const missingPath = `${context.projectDir}/non-existent.tsx`;
-        const nestedLayouts: LayoutItem[] = [{ kind: "tsx", componentPath: missingPath, path: missingPath }];
+        const nestedLayouts: LayoutItem[] = [{
+          kind: "tsx",
+          componentPath: missingPath,
+          path: missingPath,
+        }];
 
         const hash = await computeDepsHash(undefined, nestedLayouts, adapter);
 

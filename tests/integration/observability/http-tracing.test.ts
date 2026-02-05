@@ -4,11 +4,7 @@ import {
   createInstrumentedFetch,
   instrumentHttpHandler,
 } from "../../../src/observability/auto-instrument/http-instrumentation.ts";
-import {
-  endSpan,
-  startSpan,
-  withActiveSpan,
-} from "../../../src/observability/tracing/index.ts";
+import { endSpan, startSpan, withActiveSpan } from "../../../src/observability/tracing/index.ts";
 
 describe("HTTP Tracing Integration", () => {
   it("should inject W3C trace context into fetch headers", async () => {

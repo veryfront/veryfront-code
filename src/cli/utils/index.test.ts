@@ -8,7 +8,6 @@ import {
   logSuccess,
   logWarning,
   promptUser,
-  showHelp,
   showLogo,
   showVersion,
 } from "./index.ts";
@@ -65,43 +64,6 @@ describe("showLogo", () => {
   it("outputs Veryfront in cyan", () => {
     const { stdout } = captureOutput(showLogo);
     assertStringIncludes(stdout, "Veryfront");
-  });
-});
-
-describe("showHelp", () => {
-  it("displays complete help information", () => {
-    const { stdout } = captureOutput(showHelp);
-
-    assertStringIncludes(stdout, "Veryfront");
-
-    assertStringIncludes(stdout, "Usage:");
-    assertStringIncludes(stdout, "veryfront <command> [options]");
-
-    assertStringIncludes(stdout, "Commands:");
-    assertStringIncludes(stdout, "init");
-    assertStringIncludes(stdout, "dev");
-    assertStringIncludes(stdout, "build");
-    assertStringIncludes(stdout, "serve");
-    assertStringIncludes(stdout, "doctor");
-    assertStringIncludes(stdout, "clean");
-    assertStringIncludes(stdout, "routes");
-    assertStringIncludes(stdout, "generate");
-
-    assertStringIncludes(stdout, "Options:");
-    assertStringIncludes(stdout, "--version");
-    assertStringIncludes(stdout, "--help");
-
-    assertStringIncludes(stdout, "Examples:");
-    assertStringIncludes(stdout, "veryfront init my-app");
-    assertStringIncludes(stdout, "veryfront dev --port 3000");
-
-    assertStringIncludes(stdout, "Config tips:");
-    assertStringIncludes(stdout, "veryfront.config.js");
-
-    assertStringIncludes(stdout, "Docs:");
-    assertStringIncludes(stdout, "RSC Security");
-
-    assertStringIncludes(stdout, `Version: ${VERSION}`);
   });
 });
 
@@ -217,7 +179,6 @@ describe("promptUser", () => {
 describe("exports", () => {
   it("all exports are available", () => {
     assertExists(showLogo);
-    assertExists(showHelp);
     assertExists(showVersion);
     assertExists(promptUser);
     assertExists(logSuccess);
@@ -227,7 +188,6 @@ describe("exports", () => {
     assertExists(formatBytes);
 
     assertEquals(typeof showLogo, "function");
-    assertEquals(typeof showHelp, "function");
     assertEquals(typeof showVersion, "function");
     assertEquals(typeof promptUser, "function");
     assertEquals(typeof logSuccess, "function");

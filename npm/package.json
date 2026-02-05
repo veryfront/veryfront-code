@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.3",
+  "version": "0.1.7-rc.46",
   "description": "The simplest way to build AI-powered apps",
   "keywords": [
     "react",
@@ -58,6 +58,9 @@
     "./react/components/ai": {
       "import": "./esm/src/react/components/ai/index.js"
     },
+    "./components/ai": {
+      "import": "./esm/src/react/components/ai/index.js"
+    },
     "./react/primitives": {
       "import": "./esm/src/react/primitives/index.js"
     },
@@ -81,6 +84,9 @@
     },
     "./platform": {
       "import": "./esm/src/platform/index.js"
+    },
+    "./platform/path": {
+      "import": "./esm/src/platform/compat/path/index.js"
     },
     "./tool": {
       "import": "./esm/src/tool/index.js"
@@ -191,8 +197,7 @@
     "lightningcss": "1.22.0",
     "mdast-util-to-string": "4.0.0",
     "mime-types": "2.1.35",
-    "mri": "^1.2.0",
-    "picocolors": "^1.1.0",
+    "picocolors": "1.1.1",
     "react": "19.1.1",
     "react-dom": "19.1.1",
     "redis": "*",

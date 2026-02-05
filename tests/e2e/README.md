@@ -62,16 +62,16 @@ VERYFRONT_BINARY=/path/to/binary deno task test:e2e
 ### Using the Setup Infrastructure
 
 ```typescript
-import { describe, it, beforeAll } from "#veryfront/testing/bdd.ts";
+import { beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createProject,
-  withServer,
   ensureBinaryCompiled,
   expectPage,
   expectServer,
   fetchPage,
-  pages,
   layouts,
+  pages,
+  withServer,
 } from "./setup/index.ts";
 
 describe("My Feature", { sanitizeOps: false, sanitizeResources: false }, () => {
@@ -109,38 +109,38 @@ describe("My Feature", { sanitizeOps: false, sanitizeResources: false }, () => {
 The `fixtures.ts` module provides pre-built page content:
 
 ```typescript
-import { pages, layouts, appProviders, components, apiRoutes, mdxContent } from "./setup/index.ts";
+import { apiRoutes, appProviders, components, layouts, mdxContent, pages } from "./setup/index.ts";
 
 // Pages
-pages.basic           // Basic page with <div id="content">
-pages.withHead        // Page with veryfront/head import
-pages.withRouter      // Page with veryfront/router import
-pages.clientComponent // Client component with useState
+pages.basic; // Basic page with <div id="content">
+pages.withHead; // Page with veryfront/head import
+pages.withRouter; // Page with veryfront/router import
+pages.clientComponent; // Client component with useState
 
 // Layouts
-layouts.basic         // Layout with header/footer
-layouts.withHead      // Layout using Head component
-layouts.withRouter    // Layout using useRouter
+layouts.basic; // Layout with header/footer
+layouts.withHead; // Layout using Head component
+layouts.withRouter; // Layout using useRouter
 
 // API Routes
-apiRoutes.json        // GET returning JSON
-apiRoutes.customStatus // Custom status code
+apiRoutes.json; // GET returning JSON
+apiRoutes.customStatus; // Custom status code
 
 // MDX Content
-mdxContent.basic      // Basic markdown
-mdxContent.withComponents // MDX with React components
+mdxContent.basic; // Basic markdown
+mdxContent.withComponents; // MDX with React components
 ```
 
 ### Helper Functions
 
 ```typescript
 import {
-  createLayoutProject,      // Project with layout.tsx
-  createAppProject,         // Project with app.tsx
-  createNestedLayoutProject, // Nested layouts
+  createApiProject, // API routes
+  createAppProject, // Project with app.tsx
   createDynamicRouteProject, // Dynamic [slug] routes
-  createApiProject,         // API routes
-  createMdxProject,         // MDX pages
+  createLayoutProject, // Project with layout.tsx
+  createMdxProject, // MDX pages
+  createNestedLayoutProject, // Nested layouts
 } from "./setup/index.ts";
 ```
 
@@ -149,22 +149,22 @@ import {
 ```typescript
 // Page assertions
 expectPage(html, response)
-  .toRender()          // Assert 200 OK
-  .withElement("id")   // Assert element exists
-  .withText("text")    // Assert text content
-  .withLayout()        // Assert layout-wrapper exists
-  .withoutErrors();    // Assert no module/React errors
+  .toRender() // Assert 200 OK
+  .withElement("id") // Assert element exists
+  .withText("text") // Assert text content
+  .withLayout() // Assert layout-wrapper exists
+  .withoutErrors(); // Assert no module/React errors
 
 // Server assertions
 expectServer(server)
-  .withoutErrors()     // Assert no error logs
+  .withoutErrors() // Assert no error logs
   .withoutReactErrors() // Assert no React errors
   .withoutModuleErrors(); // Assert no module errors
 
 // API assertions
 expectApi(response, json)
-  .toBeOk()            // Assert 200 OK
-  .toBeJson()          // Assert JSON content type
+  .toBeOk() // Assert 200 OK
+  .toBeJson() // Assert JSON content type
   .toHaveProperty("key", value); // Assert property
 ```
 

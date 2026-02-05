@@ -375,7 +375,10 @@ description: Test description
         await withTestContext("renderer-core-empty-frontmatter", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await writeTextFile(join(context.projectDir, "pages", "no-frontmatter.mdx"), `# Just Content`);
+          await writeTextFile(
+            join(context.projectDir, "pages", "no-frontmatter.mdx"),
+            `# Just Content`,
+          );
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,

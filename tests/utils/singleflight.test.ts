@@ -59,14 +59,10 @@ describe("Singleflight", () => {
       throw new Error("Test error");
     };
 
-    const promises = Array.from({ length: 3 }, () =>
-      flight.do("key1", failingOperation),
-    );
+    const promises = Array.from({ length: 3 }, () => flight.do("key1", failingOperation));
 
     await Promise.all(
-      promises.map((promise) =>
-        assertRejects(() => promise, Error, "Test error")
-      ),
+      promises.map((promise) => assertRejects(() => promise, Error, "Test error")),
     );
 
     assertEquals(callCount, 1);

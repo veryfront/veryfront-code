@@ -861,8 +861,7 @@ describe("ModuleResolver", () => {
           adapter: await getAdapter(),
         });
 
-        const longName =
-          "@very-long-org-name/super-long-package-name-that-goes-on-forever";
+        const longName = "@very-long-org-name/super-long-package-name-that-goes-on-forever";
         const resolved = await r.resolve(longName);
         assertExists(resolved);
         assertEquals(resolved.type, "npm");
@@ -1135,8 +1134,7 @@ describe("ModuleResolver", () => {
 
     it("should handle virtual module with very large content", async () => {
       await withTestContext("virtual-large", async (context) => {
-        const largeContent =
-          "export const data = " + JSON.stringify(new Array(1000).fill("x"));
+        const largeContent = "export const data = " + JSON.stringify(new Array(1000).fill("x"));
         const r = new ModuleResolver({
           projectDir: context.projectDir,
           virtualModules: new Map([["virtual:large", largeContent]]),

@@ -28,7 +28,7 @@ import {
 } from "../../utils/index.ts";
 import { getApiTokenEnv } from "#veryfront/config/env.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import type { ParsedArgs } from "../../index/types.ts";
+import type { ParsedArgs } from "../../shared/types.ts";
 
 /**
  * Zod schema for pull command arguments

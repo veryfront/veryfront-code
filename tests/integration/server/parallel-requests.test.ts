@@ -63,8 +63,7 @@ This is a test page for verifying parallel request handling.
                 renderer.renderPage("test").catch((error) => ({
                   error: true as const,
                   message: error instanceof Error ? error.message : String(error),
-                })),
-              ),
+                }))),
             );
 
             for (let i = 0; i < results.length; i++) {
@@ -181,8 +180,7 @@ Testing concurrent request handling under load.`,
                     success: false as const,
                     error: error instanceof Error ? error.message : String(error),
                     index,
-                  })),
-              ),
+                  }))),
             );
 
             const successes = results.filter((r) => r.success);
@@ -191,9 +189,11 @@ Testing concurrent request handling under load.`,
             assertEquals(
               failures.length,
               0,
-              `Expected no failures but got ${failures.length}: ${failures
-                .map((f) => `#${f.index}: ${f.error}`)
-                .join(", ")}`,
+              `Expected no failures but got ${failures.length}: ${
+                failures
+                  .map((f) => `#${f.index}: ${f.error}`)
+                  .join(", ")
+              }`,
             );
 
             assertEquals(successes.length, 10, "All 10 requests should succeed");
