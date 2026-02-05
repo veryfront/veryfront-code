@@ -49,6 +49,7 @@ export function shouldUseColor(): boolean {
 
 let cachedColorLevel: ColorLevel | null = null;
 let cachedColorEnvKey: string | null = null;
+let testOverrideColorLevel: ColorLevel | null = null;
 
 function buildColorEnvKey(envObj: Record<string, string>, stdoutTty: boolean): string {
   return [
@@ -62,6 +63,11 @@ function buildColorEnvKey(envObj: Record<string, string>, stdoutTty: boolean): s
 }
 
 function getCachedColorLevel(): ColorLevel {
+  // Test override takes precedence
+  if (testOverrideColorLevel !== null) {
+    return testOverrideColorLevel;
+  }
+
   const envObj = getEnvObject();
   const stdoutTty = isStdoutTTY();
   const envKey = buildColorEnvKey(envObj, stdoutTty);
@@ -76,6 +82,16 @@ function getCachedColorLevel(): ColorLevel {
 export function resetColorCache(): void {
   cachedColorLevel = null;
   cachedColorEnvKey = null;
+  testOverrideColorLevel = null;
+}
+
+/**
+ * Override the color level for testing purposes.
+ * Call with null to clear the override.
+ * @internal - Only for testing
+ */
+export function setTestColorLevel(level: ColorLevel | null): void {
+  testOverrideColorLevel = level;
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
