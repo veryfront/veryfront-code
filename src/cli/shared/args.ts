@@ -7,6 +7,7 @@
  */
 
 import { z } from "zod";
+import { cwd } from "#veryfront/platform/compat/process.ts";
 import type { ParsedArgs } from "./types.ts";
 
 /**
@@ -112,6 +113,28 @@ export function createArgParser<T extends z.ZodRawShape>(
   ): z.SafeParseReturnType<unknown, z.infer<z.ZodObject<T>>> {
     return schema.safeParse(extractArgs(args, argMap));
   };
+}
+
+/**
+ * Get the first non-empty string value from parsed args for any of the given keys
+ */
+export function getStringArg(args: ParsedArgs, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const val = args[key];
+    if (typeof val === "string" && val) return val;
+  }
+  return undefined;
+}
+
+/**
+ * Resolve a project directory from parsed args, falling back to cwd()
+ */
+export function resolveProjectDir(args: ParsedArgs, keys: string[]): string {
+  for (const key of keys) {
+    const val = args[key];
+    if (typeof val === "string" && val) return val;
+  }
+  return cwd();
 }
 
 /**
