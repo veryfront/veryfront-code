@@ -14,7 +14,7 @@ import {
   serializeIssue,
   serializeYaml,
 } from "./core.ts";
-import type { Issue, IssueMetadata } from "./types.ts";
+import type { Issue, IssueMetadata } from "./schemas/index.ts";
 
 // ============================================================================
 // YAML Parser Tests

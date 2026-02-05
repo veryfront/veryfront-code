@@ -9,7 +9,7 @@
  **************************/
 
 import { rendererLogger as logger } from "#veryfront/utils";
-import { getConfig } from "#veryfront/config";
+import { getConfig, type VeryfrontConfig } from "#veryfront/config";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import type { HandlerContext } from "../../handlers/types.ts";
 import { buildEnrichedContext } from "../../context/enriched-context.ts";
@@ -133,6 +133,9 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
     });
   }
 
+  // At this point, config is guaranteed to be defined (either from ctx or getConfig)
+  const resolvedConfig = config as VeryfrontConfig;
+
   const contextStartTime = performance.now();
   const environment = resolveEnvironment(ctx);
   const branch = ctx.requestContext?.branch ?? null;
@@ -166,7 +169,7 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
       allowIframeEmbed: false,
     },
     adapter: ctx.adapter,
-    config,
+    config: resolvedConfig,
     releaseId: ctx.releaseId,
     environmentName: ctx.environmentName,
     moduleServerUrl: ctx.moduleServerUrl,

@@ -6,8 +6,12 @@
 
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { cliLogger } from "#veryfront/utils";
-import { createIssuesManager, type Issue, parseState } from "../../../issues/index.ts";
-import type { IssuePrefix } from "../../../issues/schema.ts";
+import {
+  createIssuesManager,
+  type Issue,
+  type IssuePrefix,
+  parseState,
+} from "../../../issues/index.ts";
 
 /**
  * Issues command arguments type

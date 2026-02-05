@@ -15,7 +15,7 @@ import {
   type ProjectFile,
   ProjectSchema,
   ReleaseFileDetailSchema,
-} from "./schemas.ts";
+} from "./schemas/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 

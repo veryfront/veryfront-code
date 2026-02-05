@@ -40,7 +40,7 @@ const MODULES_TO_TEST = [
   "#veryfront/modules/react-loader/temp-directory.ts",
   "#veryfront/modules/react-loader/unified-loader.ts",
   "#veryfront/modules/react-loader/component-loader.ts",
-  "#veryfront/modules/react-loader/ssr-module-loader.ts",
+  "#veryfront/modules/react-loader/ssr-module-loader/index.ts",
   "#veryfront/modules/server/module-server.ts",
   "#veryfront/server/dev-server/middleware.ts",
   "#veryfront/server/dev-server/route-discovery.ts",

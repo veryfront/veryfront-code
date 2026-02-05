@@ -1,4 +1,4 @@
-import type { VeryfrontConfig } from "./types.ts";
+import type { VeryfrontConfig } from "./schemas/index.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { getRuntimeEnv, type RuntimeEnv } from "./runtime-env.ts";
 

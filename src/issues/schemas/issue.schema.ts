@@ -1,18 +1,19 @@
-/**********************************
- * Zod schemas for issue validation and parsing
+/**
+ * Issue schemas and validation
  *
- * @module issues/schema
- **********************************/
+ * Single source of truth for issue types and validation.
+ */
 
 import { z } from "zod";
-import type { IssueMetadata, IssueState } from "./types.ts";
 
+// Constants
 export const ISSUE_PREFIXES = ["ISSUE", "TASK", "PLAN"] as const;
-export type IssuePrefix = (typeof ISSUE_PREFIXES)[number];
-
 export const ISSUE_ID_PATTERN = /^(ISSUE|TASK|PLAN)-(\d{3,})$/;
 
+// Schemas
 export const issueStateSchema = z.enum(["open", "closed"]);
+
+export const issuePrefixSchema = z.enum(ISSUE_PREFIXES);
 
 export const issueIdSchema = z
   .string()
@@ -35,13 +36,19 @@ export const issueMetadataSchema = z.object({
   updated_at: isoDateSchema,
 });
 
+export const issueSchema = z.object({
+  metadata: issueMetadataSchema,
+  body: z.string(),
+  path: z.string(),
+});
+
 export const createIssueSchema = z.object({
   title: z.string().min(1).max(500),
   body: z.string().optional(),
   labels: z.array(labelSchema).optional(),
   milestone: z.string().optional(),
   assignees: z.array(z.string()).optional(),
-  prefix: z.enum(ISSUE_PREFIXES).optional().default("ISSUE"),
+  prefix: issuePrefixSchema.optional(),
 });
 
 export const updateIssueSchema = z.object({
@@ -58,12 +65,28 @@ export const listIssuesSchema = z.object({
   labels: z.array(labelSchema).optional(),
   milestone: z.string().optional(),
   assignee: z.string().optional(),
-  prefix: z.enum(ISSUE_PREFIXES).optional(),
-  sortBy: z.enum(["created_at", "updated_at", "id"]).optional().default("created_at"),
-  sortDirection: z.enum(["asc", "desc"]).optional().default("desc"),
+  prefix: issuePrefixSchema.optional(),
+  sortBy: z.enum(["created_at", "updated_at", "id"]).optional(),
+  sortDirection: z.enum(["asc", "desc"]).optional(),
   limit: z.number().positive().optional(),
 });
 
+export const listIssuesResultSchema = z.object({
+  issues: z.array(issueSchema),
+  total: z.number(),
+});
+
+// Inferred types
+export type IssueState = z.infer<typeof issueStateSchema>;
+export type IssuePrefix = z.infer<typeof issuePrefixSchema>;
+export type IssueMetadata = z.infer<typeof issueMetadataSchema>;
+export type Issue = z.infer<typeof issueSchema>;
+export type CreateIssueOptions = z.infer<typeof createIssueSchema>;
+export type UpdateIssueOptions = z.infer<typeof updateIssueSchema>;
+export type ListIssuesOptions = z.infer<typeof listIssuesSchema>;
+export type ListIssuesResult = z.infer<typeof listIssuesResultSchema>;
+
+// Validation functions
 export function validateMetadata(data: unknown): IssueMetadata {
   return issueMetadataSchema.parse(data);
 }

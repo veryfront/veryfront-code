@@ -1,7 +1,8 @@
 # Schema Consolidation Refactoring Plan
 
 **Created:** 2026-02-05
-**Status:** Draft
+**Status:** In Progress (37% complete)
+**Last Updated:** 2026-02-05
 
 ---
 
@@ -407,47 +408,47 @@ Apply pattern to remaining modules in priority order:
 
 ### Phase 1: Foundation
 
-- [ ] Create `src/schemas/` directory
-  - [ ] ✓ `deno task verify` passes
-- [ ] Create `src/schemas/index.ts` barrel export
-  - [ ] ✓ `deno task verify` passes
-- [ ] Create `src/schemas/common.ts` (move from `security/input-validation/schemas.ts`)
-  - [ ] ✓ `deno task verify` passes
-- [ ] Create `src/schemas/primitives.ts` (non-empty string, positive int, etc.)
-  - [ ] ✓ `deno task verify` passes
-- [ ] Add `#veryfront/schemas` to import map in `deno.json`
-  - [ ] ✓ `deno task verify` passes
-- [ ] Create `src/schemas/README.md` documenting conventions
-  - [ ] ✓ `deno task verify` passes
+- [x] Create `src/schemas/` directory
+  - [x] ✓ `deno task verify` passes
+- [x] Create `src/schemas/index.ts` barrel export
+  - [x] ✓ `deno task verify` passes
+- [x] Create `src/schemas/common.ts` (move from `security/input-validation/schemas.ts`)
+  - [x] ✓ `deno task verify` passes
+- [x] Create `src/schemas/primitives.ts` (non-empty string, positive int, etc.)
+  - [x] ✓ `deno task verify` passes
+- [x] Add `#veryfront/schemas` to import map in `deno.json`
+  - [x] ✓ `deno task verify` passes
+- [x] Create `src/schemas/README.md` documenting conventions
+  - [x] ✓ `deno task verify` passes
 
 ### Phase 2: Modules with Existing Schemas (Consolidate)
 
 #### High Priority
-- [ ] `src/config/` - Consolidate `schema.ts` + `types.ts` → `schemas/`
-  - [ ] ✓ `deno task verify` passes
-- [ ] `src/issues/` - Consolidate `schema.ts` + `types.ts` → `schemas/`
-  - [ ] ✓ `deno task verify` passes
+- [x] `src/config/` - Consolidate `schema.ts` + `types.ts` → `schemas/`
+  - [x] ✓ `deno task verify` passes
+- [x] `src/issues/` - Consolidate `schema.ts` + `types.ts` → `schemas/`
+  - [x] ✓ `deno task verify` passes
 
 #### Already Good (Verify & Minor Adjustments)
-- [ ] `src/platform/adapters/veryfront-api-client/` - Already exemplary, move to `schemas/` subfolder
-  - [ ] ✓ `deno task verify` passes
-- [ ] `src/platform/adapters/fs/github/` - Already exemplary, move to `schemas/` subfolder
-  - [ ] ✓ `deno task verify` passes
-- [ ] `src/security/input-validation/` - Move common schemas to `src/schemas/`, keep module-specific
-  - [ ] ✓ `deno task verify` passes
+- [x] `src/platform/adapters/veryfront-api-client/` - Already exemplary, move to `schemas/` subfolder
+  - [x] ✓ `deno task verify` passes
+- [x] `src/platform/adapters/fs/github/` - Already exemplary, move to `schemas/` subfolder
+  - [x] ✓ `deno task verify` passes
+- [x] `src/security/input-validation/` - Move common schemas to `src/schemas/`, keep module-specific
+  - [x] ✓ `deno task verify` passes
 
 ### Phase 3: Modules with Inline Schemas (Extract)
 
-- [ ] `src/agent/streaming/stream-events.ts` → `src/agent/schemas/stream-events.schema.ts`
-  - [ ] ✓ `deno task verify` passes
-- [ ] `src/agent/composition/composition.ts` → `src/agent/schemas/tool.schema.ts`
-  - [ ] ✓ `deno task verify` passes
-- [ ] `src/cache/cache-key-builder.ts` → `src/cache/schemas/cache-key.schema.ts`
-  - [ ] ✓ `deno task verify` passes
-- [ ] `src/server/services/rsc/endpoints/action-parser.ts` → `src/server/schemas/action.schema.ts`
-  - [ ] ✓ `deno task verify` passes
-- [ ] `src/platform/adapters/fs/veryfront/proxy-manager.ts` → `src/platform/adapters/fs/veryfront/schemas/`
-  - [ ] ✓ `deno task verify` passes
+- [x] `src/agent/streaming/stream-events.ts` → `src/agent/schemas/stream-events.schema.ts`
+  - [x] ✓ `deno task verify` passes
+- [x] `src/agent/composition/composition.ts` → `src/agent/schemas/tool.schema.ts`
+  - [x] ✓ `deno task verify` passes
+- [x] `src/cache/cache-key-builder.ts` → `src/cache/schemas/cache-key.schema.ts`
+  - [x] ✓ `deno task verify` passes
+- [x] `src/server/services/rsc/endpoints/action-parser.ts` → `src/server/schemas/action.schema.ts`
+  - [x] ✓ `deno task verify` passes
+- [x] `src/platform/adapters/fs/veryfront/proxy-manager.ts` → `src/platform/adapters/fs/veryfront/schemas/`
+  - [x] ✓ `deno task verify` passes
 
 ### Phase 4: Modules with types.ts (Create Schemas)
 
@@ -518,14 +519,14 @@ Apply pattern to remaining modules in priority order:
 
 | Phase | Tasks | Completed | Progress |
 |-------|-------|-----------|----------|
-| Foundation | 6 | 0 | 0% |
-| Existing Schemas | 5 | 0 | 0% |
-| Inline Schemas | 5 | 0 | 0% |
+| Foundation | 6 | 6 | 100% ✓ |
+| Existing Schemas | 5 | 5 | 100% ✓ |
+| Inline Schemas | 5 | 5 | 100% ✓ |
 | Create Schemas (High) | 2 | 0 | 0% |
 | Create Schemas (Medium) | 10 | 0 | 0% |
 | Create Schemas (Low) | 12 | 0 | 0% |
 | Final Cleanup | 3 | 0 | 0% |
-| **Total** | **43** | **0** | **0%** |
+| **Total** | **43** | **16** | **37%** |
 
 > **Note:** Each task has a nested `deno task verify` checkpoint.
 > A task is only complete when both the work AND verification pass.

@@ -6,7 +6,7 @@ import {
   isValidIssueId,
   parseIssueId,
   parseState,
-} from "./schema.ts";
+} from "./issue.schema.ts";
 
 describe("issues/schema", () => {
   describe("ISSUE_PREFIXES", () => {

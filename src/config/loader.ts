@@ -1,5 +1,5 @@
-import type { VeryfrontConfig } from "./types.ts";
-import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./schema.ts";
+import type { VeryfrontConfig } from "./schemas/index.ts";
+import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./schemas/index.ts";
 import { extname, join, resolve } from "#veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
@@ -17,7 +17,7 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 
-export type { VeryfrontConfig } from "./types.ts";
+export type { VeryfrontConfig } from "./schemas/index.ts";
 
 /**
  * Creates fresh default import map per-request.

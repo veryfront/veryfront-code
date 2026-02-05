@@ -1,7 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { validateAIConfig } from "./config-validator.ts";
-import type { VeryfrontConfig } from "#veryfront/config/types.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 describe("cli/discovery/config-validator", () => {
   describe("validateAIConfig", () => {

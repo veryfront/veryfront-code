@@ -25,4 +25,4 @@ export {
   GitHubContentsResponseSchema,
   GitHubTreeEntrySchema,
   GitHubTreeResponseSchema,
-} from "./schemas.ts";
+} from "./schemas/index.ts";

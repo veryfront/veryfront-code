@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { MAX_URL_LENGTH_FOR_VALIDATION } from "#veryfront/utils/constants/index.ts";
 
+/**
+ * Common validation schemas used across multiple modules.
+ * These schemas provide consistent validation for frequently-used data types.
+ */
 export const CommonSchemas = {
   email: z.string().email().max(255),
   uuid: z.string().uuid(),
@@ -32,3 +36,13 @@ export const CommonSchemas = {
     .regex(/[0-9]/, "Password must contain at least one number")
     .regex(/[^A-Za-z0-9]/, "Password must contain at least one special character"),
 };
+
+// Export inferred types for convenience
+export type Email = z.infer<typeof CommonSchemas.email>;
+export type Uuid = z.infer<typeof CommonSchemas.uuid>;
+export type Slug = z.infer<typeof CommonSchemas.slug>;
+export type Url = z.infer<typeof CommonSchemas.url>;
+export type PhoneNumber = z.infer<typeof CommonSchemas.phoneNumber>;
+export type Pagination = z.infer<typeof CommonSchemas.pagination>;
+export type DateRange = z.infer<typeof CommonSchemas.dateRange>;
+export type StrongPassword = z.infer<typeof CommonSchemas.strongPassword>;

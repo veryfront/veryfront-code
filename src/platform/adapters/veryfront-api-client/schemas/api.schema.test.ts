@@ -12,7 +12,7 @@ import {
   ProjectFileSchema,
   ProjectSchema,
   ReleaseFileListItemSchema,
-} from "./schemas.ts";
+} from "./schemas/index.ts";
 
 describe("schemas", () => {
   describe("ProjectSchema", () => {

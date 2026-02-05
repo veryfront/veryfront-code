@@ -7,7 +7,7 @@
  * @module
  */
 
-import type { VeryfrontConfig } from "./types.ts";
+import type { VeryfrontConfig } from "./schemas/index.ts";
 import type { RuntimeEnv } from "./runtime-env.ts";
 import { createTestRuntimeEnv, getRuntimeEnv } from "./runtime-env.ts";
 

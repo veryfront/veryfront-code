@@ -1,6 +1,6 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./schema.ts";
+import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./config.schema.ts";
 
 describe("configSchema", () => {
   it("validates valid config and finds unknown keys", () => {
