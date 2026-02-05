@@ -2,7 +2,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { ensureDir } from "#std/fs";
 import { describe, it } from "#veryfront/testing/bdd";
 import { writeTextFile } from "#veryfront/compat/fs.ts";
-import type { DevCommandOptions } from "../../../../src/cli/commands/dev.ts";
+import type { DevCommandOptions } from "../../../../src/cli/commands/dev/index.ts";
 import { clearConfigCache } from "#veryfront/config";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { delay } from "#std/async";
@@ -53,7 +53,7 @@ async function runDevAndAbort(
 
 describe("devCommand", () => {
   it("exports", async () => {
-    const mod = await import("../../../../src/cli/commands/dev.ts");
+    const mod = await import("../../../../src/cli/commands/dev/index.ts");
     assertExists(mod.devCommand);
     assertEquals(typeof mod.devCommand, "function");
   });

@@ -8,7 +8,7 @@ import { cwd } from "#veryfront/platform/compat/process.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { readToken } from "../auth/token-store.ts";
-import { pullCommand } from "../commands/pull.ts";
+import { pullCommand } from "../commands/pull/index.ts";
 import { addLog, type AppState, type StateUpdater } from "./state.ts";
 import { ADJECTIVES, NOUNS } from "./data/slug-words.ts";
 

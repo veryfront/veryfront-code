@@ -9,24 +9,21 @@ import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT, VERSION } from "#veryfront/utils";
-import { z } from "zod";
-import { analyzeChunksCommand } from "../commands/analyze-chunks.ts";
-import { cleanCommand } from "../commands/clean.ts";
+import { analyzeChunksCommand } from "../commands/analyze-chunks/index.ts";
+import { cleanCommand } from "../commands/clean/index.ts";
 import { doctorCommand } from "../commands/doctor/index.ts";
 import { initCommand } from "../commands/init/index.ts";
 import { installCommand, uninstallCommand } from "../commands/install/index.ts";
-import { lockCommand } from "../commands/lock.ts";
-import { routesCommand } from "../commands/routes.ts";
-import { pullCommand } from "../commands/pull.ts";
-import { pushCommand } from "../commands/push.ts";
-import { mergeCommand, parseMergeArgs } from "../commands/merge.ts";
-import { deployCommand, parseDeployArgs } from "../commands/deploy.ts";
-import { parseUpArgs, upCommand } from "../commands/up.ts";
-import { newCommand, parseNewArgs } from "../commands/new.ts";
-import { promptProjectName } from "../commands/main.ts";
-import { issuesCommand } from "../commands/issues.ts";
+import { lockCommand } from "../commands/lock/index.ts";
+import { routesCommand } from "../commands/routes/index.ts";
+import { handlePullCommand } from "../commands/pull/index.ts";
+import { handlePushCommand } from "../commands/push/index.ts";
+import { handleMergeCommand } from "../commands/merge/index.ts";
+import { handleDeployCommand } from "../commands/deploy/index.ts";
+import { handleUpCommand } from "../commands/up/index.ts";
+import { handleNewCommand } from "../commands/new/index.ts";
+import { handleIssuesCommand } from "../commands/issues/index.ts";
 import { login, logout, whoami } from "../auth/index.ts";
-import { COMMANDS } from "../help/command-definitions.ts";
 import { showCommandHelp, showMainHelp } from "../help/index.ts";
 import {
   exitProcess,
@@ -47,17 +44,6 @@ import type { IntegrationName } from "../templates/types.ts";
 import { generateDefaultProjectId } from "../utils/project.ts";
 
 /**
- * Handle validation errors using central COMMANDS registry for usage
- */
-function handleValidationError(error: z.ZodError, commandName: string): void {
-  const issues = error.issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`).join("\n");
-  cliLogger.error(`Invalid ${commandName} arguments:\n${issues}`);
-
-  const command = COMMANDS[commandName];
-  if (command?.usage) cliLogger.info(`Usage: ${command.usage}`);
-}
-
-/**
  * Show help for a specific command or main help
  */
 function showHelp(command?: string): void {
@@ -70,19 +56,6 @@ function showHelp(command?: string): void {
 
 function resolvePath(path: string): string {
   return path.startsWith("/") ? path : join(cwd(), path);
-}
-
-function resolveProjectDir(args: ParsedArgs, keys: Array<keyof ParsedArgs>): string {
-  const raw = keys.map((k) => args[k]).find((v) => v != null);
-  return raw ? resolvePath(String(raw)) : cwd();
-}
-
-function parseCsvArg(value: unknown): string[] | undefined {
-  if (!value) return undefined;
-  return String(value)
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
 }
 
 function parseLoginMethod(
@@ -359,93 +332,33 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         await handleGenerateCommand(args);
         break;
 
-      case "pull": {
+      case "pull":
         showLogo();
-        await pullCommand({
-          projectSlug: args._.length > 1 ? String(args._[1]) : undefined,
-          projects: parseCsvArg(args.projects),
-          projectDir: resolveProjectDir(args, ["project-dir", "dir", "d"]),
-          branch: getStringArg(args, "branch", "b"),
-          env: getStringArg(args, "env"),
-          release: getStringArg(args, "release"),
-          force: Boolean(args.force || args.f),
-          dryRun: Boolean(args["dry-run"]),
-        });
+        await handlePullCommand(args);
         break;
-      }
 
-      case "push": {
+      case "push":
         showLogo();
-        await pushCommand({
-          projectDir: resolveProjectDir(args, ["dir", "d"]),
-          branch: getStringArg(args, "branch", "b"),
-          force: Boolean(args.force || args.f),
-          dryRun: Boolean(args["dry-run"]),
-        });
+        await handlePushCommand(args);
         break;
-      }
 
-      case "merge": {
+      case "merge":
         showLogo();
-
-        const result = parseMergeArgs(args);
-        if (!result.success) {
-          handleValidationError(result.error, "merge");
-          exitProcess(1);
-          return;
-        }
-
-        await mergeCommand(result.data);
+        await handleMergeCommand(args);
         break;
-      }
 
-      case "deploy": {
+      case "deploy":
         showLogo();
-
-        const result = parseDeployArgs(args);
-        if (!result.success) {
-          handleValidationError(result.error, "deploy");
-          exitProcess(1);
-          return;
-        }
-
-        await deployCommand(result.data);
+        await handleDeployCommand(args);
         break;
-      }
 
-      case "up": {
-        const result = parseUpArgs(args);
-        if (!result.success) {
-          handleValidationError(result.error, "up");
-          exitProcess(1);
-          return;
-        }
-
-        await upCommand(result.data);
+      case "up":
+        await handleUpCommand(args);
         break;
-      }
 
-      case "new": {
-        let name = args._[1] as string;
-        if (!name) {
-          const prompted = await promptProjectName();
-          if (!prompted) {
-            exitProcess(0);
-            return;
-          }
-          name = prompted;
-        }
-
-        const result = parseNewArgs(args);
-        if (!result.success) {
-          handleValidationError(result.error, "new");
-          exitProcess(1);
-          return;
-        }
-
-        await newCommand(name, result.data);
+      case "new":
+        await handleNewCommand(args);
         break;
-      }
 
       case "login":
         await login(parseLoginMethod(args));
@@ -501,7 +414,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       }
 
       case "issues":
-        await issuesCommand(args);
+        await handleIssuesCommand(args);
         break;
 
       case "help":

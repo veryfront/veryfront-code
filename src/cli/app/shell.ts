@@ -75,8 +75,8 @@ import { login, logout, validateToken } from "../auth/login.ts";
 import { readToken } from "../auth/token-store.ts";
 import { openBrowser } from "../auth/browser.ts";
 import { fetchRemoteProjects } from "../sync/index.ts";
-import { pullCommand } from "../commands/pull.ts";
-import { pushCommand } from "../commands/push.ts";
+import { pullCommand } from "../commands/pull/index.ts";
+import { pushCommand } from "../commands/push/index.ts";
 
 const KEY_UP = "\x1b[A";
 const KEY_DOWN = "\x1b[B";

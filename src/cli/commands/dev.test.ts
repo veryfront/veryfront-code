@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { DevCommandOptions, DevCommandResult, DevOptions } from "./dev.ts";
+import type { DevCommandOptions, DevCommandResult, DevOptions } from "./dev/index.ts";
 
 describe("cli/commands/dev", () => {
   describe("DevOptions type", () => {

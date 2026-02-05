@@ -2,5 +2,5 @@
  * Generate command - Scaffold pages, APIs, components
  */
 
-export { generateCommand } from "../generate.ts";
+export { generateCommand } from "./command.ts";
 export { handleGenerateCommand } from "./handler.ts";

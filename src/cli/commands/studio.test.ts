@@ -1,6 +1,6 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildStudioUrl } from "./studio.ts";
+import { buildStudioUrl } from "./studio/index.ts";
 
 describe("buildStudioUrl", () => {
   it("builds URL with project only", () => {

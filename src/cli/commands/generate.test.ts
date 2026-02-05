@@ -4,7 +4,7 @@
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { generateCommand } from "./generate.ts";
+import { generateCommand } from "./generate/index.ts";
 
 describe("generate command", () => {
   describe("generateCommand", () => {

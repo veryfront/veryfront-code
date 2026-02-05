@@ -1,0 +1,28 @@
+/**
+ * New command handler
+ */
+
+import { newCommand, parseNewArgs } from "./command.ts";
+import { promptProjectName } from "../main.ts";
+import { exitProcess } from "../../utils/index.ts";
+import type { ParsedArgs } from "../../index/types.ts";
+
+export async function handleNewCommand(args: ParsedArgs): Promise<void> {
+  let name = args._[1] as string;
+
+  if (!name) {
+    const prompted = await promptProjectName();
+    if (!prompted) {
+      exitProcess(0);
+      return;
+    }
+    name = prompted;
+  }
+
+  const result = parseNewArgs(args);
+  if (!result.success) {
+    throw new Error(`Invalid new arguments: ${result.error.message}`);
+  }
+
+  await newCommand(name, result.data);
+}

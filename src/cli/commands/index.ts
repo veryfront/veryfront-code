@@ -9,20 +9,21 @@
 
 // Command implementations (used by handlers and router)
 export { buildCommand } from "./build.ts";
-export { devCommand } from "./dev.ts";
-export { generateCommand } from "./generate.ts";
-export { studioCommand } from "./studio.ts";
-export { analyzeChunksCommand } from "./analyze-chunks.ts";
-export { cleanCommand } from "./clean.ts";
-export { lockCommand } from "./lock.ts";
-export { routesCommand } from "./routes.ts";
-export { issuesCommand } from "./issues.ts";
-export { pullCommand } from "./pull.ts";
-export { pushCommand } from "./push.ts";
-export { mergeCommand } from "./merge.ts";
-export { deployCommand } from "./deploy.ts";
-export { upCommand } from "./up.ts";
-export { newCommand } from "./new.ts";
+export { devCommand } from "./dev/index.ts";
+export { generateCommand } from "./generate/index.ts";
+export { studioCommand } from "./studio/index.ts";
+export { analyzeChunksCommand, handleAnalyzeChunksCommand } from "./analyze-chunks/index.ts";
+export { cleanCommand, handleCleanCommand } from "./clean/index.ts";
+export { handleLockCommand, lockCommand } from "./lock/index.ts";
+export { handleRoutesCommand, routesCommand } from "./routes/index.ts";
+export { handleIssuesCommand, issuesCommand } from "./issues/index.ts";
+export { handlePullCommand, parsePullArgs, pullCommand } from "./pull/index.ts";
+export { handlePushCommand, parsePushArgs, pushCommand } from "./push/index.ts";
+export { handleMergeCommand, mergeCommand, parseMergeArgs } from "./merge/index.ts";
+export { deployCommand, handleDeployCommand, parseDeployArgs } from "./deploy/index.ts";
+export { handleUpCommand, parseUpArgs, UpArgsSchema, upCommand } from "./up/index.ts";
+export type { UpOptions } from "./up/index.ts";
+export { handleNewCommand, newCommand, parseNewArgs } from "./new/index.ts";
 export { promptProjectName } from "./main.ts";
 
 // Command handlers (for routing)
