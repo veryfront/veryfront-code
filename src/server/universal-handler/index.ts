@@ -279,174 +279,176 @@ export function createVeryfrontHandler(
 
       return runWithContentMetrics(async () => {
         try {
-        await readyPromise;
+          await readyPromise;
 
-        await timeAsync("security:load", async () => {
-          if (isProxyMode) return;
-          await securityLoader.ensureLoaded();
-        });
-
-        await timeAsync("config:load", async () => {
-          await configPromise;
-        });
-
-        const executeHandler = async (): Promise<Response> => {
-          const reqCtx = createRequestContext(req, opts.envConfig);
-
-          const wsSlugOverride = url.searchParams.get("x-project-slug") || undefined;
-
-          // Resolve project from various sources
-          const projectRes = await resolveProject(req, url, headers, {
-            config,
-            reqCtx,
-            defaultProjectSlug: opts.defaultProjectSlug,
-            defaultProjectId: opts.defaultProjectId,
-            wsSlugOverride,
+          await timeAsync("security:load", async () => {
+            if (isProxyMode) return;
+            await securityLoader.ensureLoaded();
           });
 
-          setProjectAttributes(spanInfo.span, projectRes.projectSlug, projectRes.proxyEnv);
-
-          // Handle projects discovery UI
-          if (
-            shouldHandleProjectsUI(url.pathname, projectRes.projectSlug, projectRes.parsedDomain)
-          ) {
-            const response = await handleProjectsRequest(
-              req,
-              url,
-              buildMinimalContext(
-                projectDir,
-                adapter,
-                securityLoader.getSecurityConfig(),
-                securityLoader.getCspUserHeader(),
-                opts.debug,
-                config,
-              ),
-            );
-            if (response) return response;
-          }
-
-          // Resolve adapter and config for project
-          const adapterRes = await resolveAdapter({
-            projectDir,
-            adapter,
-            config,
-            projectSlug: projectRes.projectSlug,
-            projectId: projectRes.projectId,
-            proxyToken: reqCtx.token,
-            releaseId: projectRes.releaseId,
-            proxyEnv: projectRes.proxyEnv,
-            branch: reqCtx.branch,
-            environmentName: projectRes.environmentName,
-            parsedDomain: projectRes.parsedDomain,
-            headerProjectPath: headers.projectPath,
-            isProxyMode,
+          await timeAsync("config:load", async () => {
+            await configPromise;
           });
 
-          // Resolve environment and validate
-          const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host;
-          const envRes = resolveEnvironment({
-            proxyEnv: projectRes.proxyEnv,
-            reqCtxMode: reqCtx.mode,
-            releaseId: projectRes.releaseId,
-            projectSlug: projectRes.projectSlug,
-            projectId: projectRes.projectId,
-            environmentName: projectRes.environmentName,
-            host,
-            isLocalProject: adapterRes.isLocalProject,
-            isProxyMode,
-            isLocalDev: reqCtx.isLocalDev,
-            pathname: url.pathname,
-            defaultEnvironment: opts.defaultEnvironment,
-          });
+          const executeHandler = async (): Promise<Response> => {
+            const reqCtx = createRequestContext(req, opts.envConfig);
 
-          if (envRes.errorResponse) {
-            return envRes.errorResponse;
-          }
+            const wsSlugOverride = url.searchParams.get("x-project-slug") || undefined;
 
-          // Build handler context
-          const ctx = buildHandlerContext({
-            projectDir: adapterRes.projectDir,
-            adapter: adapterRes.adapter,
-            securityConfig: securityLoader.getSecurityConfig(),
-            cspUserHeader: securityLoader.getCspUserHeader(),
-            debug: opts.debug,
-            config: adapterRes.config,
-            parsedDomain: projectRes.parsedDomain,
-            projectSlug: projectRes.projectSlug,
-            projectId: projectRes.projectId,
-            releaseId: envRes.releaseId,
-            proxyToken: reqCtx.token,
-            environmentName: projectRes.environmentName,
-            resolvedEnvironment: envRes.resolvedEnvironment ?? "preview",
-            requestContext: reqCtx,
-            routeRegistry: registry,
-            isLocalProject: adapterRes.isLocalProject,
-            moduleServerUrl: opts.moduleServerUrl,
-          });
-
-          await incrementRequestMetrics();
-
-          const response = await withSpan(
-            SpanNames.HANDLER_EXECUTE,
-            () => registry.execute(req, ctx),
-            {
-              "handler.project_slug": projectRes.projectSlug || "unknown",
-              "handler.path": url.pathname,
-              "handler.method": req.method,
-            },
-          );
-
-          if (response) return response;
-
-          logDebug("[universal] No handler produced response (unexpected)", { path: url.pathname });
-          return new Response(ErrorPages.serverError(), {
-            status: 500,
-            headers: { "Content-Type": "text/html; charset=utf-8" },
-          });
-        };
-
-        let response: Response;
-        let error: Error | undefined;
-        let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-        try {
-          response = await Promise.race([
-            executeWithTracingContext(spanInfo, executeHandler),
-            new Promise<never>((_, reject) => {
-              timeoutId = setTimeout(() => reject(TIMEOUT_SENTINEL), getRequestTimeout());
-            }),
-          ]);
-        } catch (e) {
-          if (e === TIMEOUT_SENTINEL) {
-            logger.warn("[universal] Request timed out", {
-              path: url.pathname,
-              method: req.method,
-              timeoutMs: getRequestTimeout(),
+            // Resolve project from various sources
+            const projectRes = await resolveProject(req, url, headers, {
+              config,
+              reqCtx,
+              defaultProjectSlug: opts.defaultProjectSlug,
+              defaultProjectId: opts.defaultProjectId,
+              wsSlugOverride,
             });
 
-            response = new Response(
-              JSON.stringify({
-                error: "Request timeout",
-                timeoutMs: getRequestTimeout(),
-                path: url.pathname,
-              }),
+            setProjectAttributes(spanInfo.span, projectRes.projectSlug, projectRes.proxyEnv);
+
+            // Handle projects discovery UI
+            if (
+              shouldHandleProjectsUI(url.pathname, projectRes.projectSlug, projectRes.parsedDomain)
+            ) {
+              const response = await handleProjectsRequest(
+                req,
+                url,
+                buildMinimalContext(
+                  projectDir,
+                  adapter,
+                  securityLoader.getSecurityConfig(),
+                  securityLoader.getCspUserHeader(),
+                  opts.debug,
+                  config,
+                ),
+              );
+              if (response) return response;
+            }
+
+            // Resolve adapter and config for project
+            const adapterRes = await resolveAdapter({
+              projectDir,
+              adapter,
+              config,
+              projectSlug: projectRes.projectSlug,
+              projectId: projectRes.projectId,
+              proxyToken: reqCtx.token,
+              releaseId: projectRes.releaseId,
+              proxyEnv: projectRes.proxyEnv,
+              branch: reqCtx.branch,
+              environmentName: projectRes.environmentName,
+              parsedDomain: projectRes.parsedDomain,
+              headerProjectPath: headers.projectPath,
+              isProxyMode,
+            });
+
+            // Resolve environment and validate
+            const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host;
+            const envRes = resolveEnvironment({
+              proxyEnv: projectRes.proxyEnv,
+              reqCtxMode: reqCtx.mode,
+              releaseId: projectRes.releaseId,
+              projectSlug: projectRes.projectSlug,
+              projectId: projectRes.projectId,
+              environmentName: projectRes.environmentName,
+              host,
+              isLocalProject: adapterRes.isLocalProject,
+              isProxyMode,
+              isLocalDev: reqCtx.isLocalDev,
+              pathname: url.pathname,
+              defaultEnvironment: opts.defaultEnvironment,
+            });
+
+            if (envRes.errorResponse) {
+              return envRes.errorResponse;
+            }
+
+            // Build handler context
+            const ctx = buildHandlerContext({
+              projectDir: adapterRes.projectDir,
+              adapter: adapterRes.adapter,
+              securityConfig: securityLoader.getSecurityConfig(),
+              cspUserHeader: securityLoader.getCspUserHeader(),
+              debug: opts.debug,
+              config: adapterRes.config,
+              parsedDomain: projectRes.parsedDomain,
+              projectSlug: projectRes.projectSlug,
+              projectId: projectRes.projectId,
+              releaseId: envRes.releaseId,
+              proxyToken: reqCtx.token,
+              environmentName: projectRes.environmentName,
+              resolvedEnvironment: envRes.resolvedEnvironment ?? "preview",
+              requestContext: reqCtx,
+              routeRegistry: registry,
+              isLocalProject: adapterRes.isLocalProject,
+              moduleServerUrl: opts.moduleServerUrl,
+            });
+
+            await incrementRequestMetrics();
+
+            const response = await withSpan(
+              SpanNames.HANDLER_EXECUTE,
+              () => registry.execute(req, ctx),
               {
-                status: HTTP_GATEWAY_TIMEOUT,
-                headers: { "Content-Type": "application/json" },
+                "handler.project_slug": projectRes.projectSlug || "unknown",
+                "handler.path": url.pathname,
+                "handler.method": req.method,
               },
             );
-          } else {
-            error = e instanceof Error ? e : new Error(String(e));
-            response = new Response(ErrorPages.serverError(), {
+
+            if (response) return response;
+
+            logDebug("[universal] No handler produced response (unexpected)", {
+              path: url.pathname,
+            });
+            return new Response(ErrorPages.serverError(), {
               status: 500,
               headers: { "Content-Type": "text/html; charset=utf-8" },
             });
-          }
-        } finally {
-          if (timeoutId !== undefined) clearTimeout(timeoutId);
-        }
+          };
 
-        endRequestTracing(spanInfo.span, response.status, error);
+          let response: Response;
+          let error: Error | undefined;
+          let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+          try {
+            response = await Promise.race([
+              executeWithTracingContext(spanInfo, executeHandler),
+              new Promise<never>((_, reject) => {
+                timeoutId = setTimeout(() => reject(TIMEOUT_SENTINEL), getRequestTimeout());
+              }),
+            ]);
+          } catch (e) {
+            if (e === TIMEOUT_SENTINEL) {
+              logger.warn("[universal] Request timed out", {
+                path: url.pathname,
+                method: req.method,
+                timeoutMs: getRequestTimeout(),
+              });
+
+              response = new Response(
+                JSON.stringify({
+                  error: "Request timeout",
+                  timeoutMs: getRequestTimeout(),
+                  path: url.pathname,
+                }),
+                {
+                  status: HTTP_GATEWAY_TIMEOUT,
+                  headers: { "Content-Type": "application/json" },
+                },
+              );
+            } else {
+              error = e instanceof Error ? e : new Error(String(e));
+              response = new Response(ErrorPages.serverError(), {
+                status: 500,
+                headers: { "Content-Type": "text/html; charset=utf-8" },
+              });
+            }
+          } finally {
+            if (timeoutId !== undefined) clearTimeout(timeoutId);
+          }
+
+          endRequestTracing(spanInfo.span, response.status, error);
 
           endContentMetrics({
             requestId: lifecycle.requestId,

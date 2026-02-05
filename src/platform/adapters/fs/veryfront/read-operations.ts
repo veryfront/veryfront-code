@@ -197,7 +197,6 @@ export function endRequestMetrics(
     uniqueFiles: req.filesAccessed.size,
     isPreviewMode: req.isPreviewMode,
   });
-
 }
 
 type ContentMetricEvent =
@@ -490,7 +489,8 @@ export class ReadOperations {
 
     // Use Set for slightly faster extension check
     const lastDotIndex = apiPath.lastIndexOf(".");
-    const hasKnownExt = lastDotIndex !== -1 && EXTENSION_PRIORITY_SET.has(apiPath.slice(lastDotIndex));
+    const hasKnownExt = lastDotIndex !== -1 &&
+      EXTENSION_PRIORITY_SET.has(apiPath.slice(lastDotIndex));
 
     logger.debug("[ReadOperations] fetchContent context", {
       path: normalizedPath,
