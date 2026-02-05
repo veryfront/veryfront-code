@@ -2,7 +2,7 @@ import { cliLogger } from "#veryfront/utils";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { buildCommand } from "./command.ts";
 import { parseArrayArg } from "../../shared/arg-parser.ts";
-import { showLogo } from "../../utils/index.ts";
+import { exitProcess, showLogo } from "../../utils/index.ts";
 import type { BuildCommandArgs } from "../../shared/types.ts";
 
 export async function handleBuildCommand(args: BuildCommandArgs): Promise<void> {
@@ -27,6 +27,9 @@ export async function handleBuildCommand(args: BuildCommandArgs): Promise<void> 
     exclude: parseArrayArg(args.exclude),
     dryRun: Boolean(args["dry-run"] ?? args.dryrun),
   });
+
+  // Build tools (esbuild) may leave hanging timers; force clean exit
+  exitProcess(0);
 }
 
 async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Promise<void> {

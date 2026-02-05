@@ -12,6 +12,7 @@ import {
   type IssuePrefix,
   parseState,
 } from "../../../issues/index.ts";
+import { bold, muted, success } from "../../ui/colors.ts";
 
 /**
  * Issues command arguments type
@@ -40,8 +41,7 @@ export interface IssuesArgs {
   limit?: number;
   sort?: string;
   dir?: string;
-  // deno-lint-ignore no-explicit-any
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**
@@ -51,14 +51,12 @@ function formatIssue(issue: Issue, verbose = false): string {
   const { metadata } = issue;
   const isOpen = metadata.state === "open";
   const stateIcon = isOpen ? "○" : "●";
-  const stateColor = isOpen ? "\x1b[32m" : "\x1b[90m";
-  const reset = "\x1b[0m";
+  const colorFn = isOpen ? success : muted;
 
   const labels = metadata.labels.length ? ` [${metadata.labels.join(", ")}]` : "";
   const assignees = metadata.assignees.length ? ` → ${metadata.assignees.join(", ")}` : "";
 
-  let line =
-    `${stateColor}${stateIcon}${reset} ${metadata.id}: ${metadata.title}${labels}${assignees}`;
+  let line = `${colorFn(stateIcon)} ${metadata.id}: ${metadata.title}${labels}${assignees}`;
 
   if (!verbose) return line;
 
@@ -76,7 +74,7 @@ function formatIssueDetails(issue: Issue): string {
   const { metadata, body } = issue;
   const lines: string[] = [];
 
-  lines.push(`\x1b[1m${metadata.id}: ${metadata.title}\x1b[0m`);
+  lines.push(bold(`${metadata.id}: ${metadata.title}`));
   lines.push("");
   lines.push(`State:      ${metadata.state}`);
   lines.push(`Labels:     ${metadata.labels.join(", ") || "(none)"}`);

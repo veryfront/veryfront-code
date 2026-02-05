@@ -1,6 +1,7 @@
 import { cliLogger } from "#veryfront/utils";
 import { createLockfileManager } from "#veryfront/utils/import-lockfile.ts";
-import { confirmPrompt, createSpinner, logSuccess, logWarning } from "../../utils/index.ts";
+import { confirmPrompt, logSuccess, logWarning } from "../../utils/index.ts";
+import { createSpinner } from "../../ui/progress.ts";
 
 export interface LockOptions {
   projectDir: string;
@@ -63,7 +64,6 @@ async function listLockfile(lockfile: ReturnType<typeof createLockfileManager>):
 
 async function clearLockfile(lockfile: ReturnType<typeof createLockfileManager>): Promise<void> {
   const spinner = createSpinner("Clearing lockfile...");
-  spinner.start();
 
   try {
     await lockfile.clear();
@@ -83,7 +83,6 @@ async function verifyLockfile(lockfile: ReturnType<typeof createLockfileManager>
   }
 
   const spinner = createSpinner("Verifying lockfile entries...");
-  spinner.start();
 
   let verified = 0;
   let failed = 0;
@@ -147,7 +146,6 @@ async function updateLockfile(lockfile: ReturnType<typeof createLockfileManager>
   }
 
   const spinner = createSpinner("Updating lockfile entries...");
-  spinner.start();
 
   let updated = 0;
   let failed = 0;

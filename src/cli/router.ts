@@ -84,7 +84,6 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
       case "build":
         await handleBuildCommand(args);
-        exitProcess(0);
         break;
 
       case "preview":

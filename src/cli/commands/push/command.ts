@@ -19,15 +19,8 @@ import {
   type ResolvedConfig,
 } from "../../shared/config.ts";
 import { reserveProjectSlug } from "../new/reserve-slug.ts";
-import {
-  confirmPrompt,
-  createNoopSpinner,
-  createSpinner,
-  logError,
-  logInfo,
-  logSuccess,
-  logWarning,
-} from "../../utils/index.ts";
+import { confirmPrompt, logError, logInfo, logSuccess, logWarning } from "../../utils/index.ts";
+import { createNoopSpinner, createSpinner } from "../../ui/progress.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import { listAllFiles } from "../pull/index.ts";
@@ -259,8 +252,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         quiet = false,
       } = options;
 
-      const spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
-      spinner.start();
+      let spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
 
       let config: ResolvedConfig;
       try {
@@ -352,12 +344,10 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       }
 
       let branchId: string | null = null;
-      spinner.start();
+      const uploadMsg = isMainBranch ? "Pushing to main..." : `Creating branch "${branchName}"...`;
+      spinner = quiet ? createNoopSpinner() : createSpinner(uploadMsg);
 
-      if (isMainBranch) {
-        spinner.update("Pushing to main...");
-      } else {
-        spinner.update(`Creating branch "${branchName}"...`);
+      if (!isMainBranch) {
         try {
           const createdBranch = await createBranch(client, config.projectSlug, branchName);
           branchId = createdBranch.id;

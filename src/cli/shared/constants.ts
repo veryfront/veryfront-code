@@ -10,7 +10,7 @@ import {
 
 export const DEFAULT_DEV_PORT = 3000;
 export const DEFAULT_PROXY_PORT = 8080;
-export const DEFAULT_MCP_PORT = 8080;
+export const DEFAULT_MCP_PORT = 9999;
 export const DEFAULT_CALLBACK_PORT = 9876;
 export const MAX_PORT_ATTEMPTS = 100;
 

@@ -106,6 +106,15 @@ export interface SpinnerController {
   stop: () => void;
 }
 
+export function createNoopSpinner(): SpinnerController {
+  return {
+    update() {},
+    success() {},
+    error() {},
+    stop() {},
+  };
+}
+
 export function createSpinner(text: string): SpinnerController {
   if (!isTTY()) {
     const print = (prefix: string, msg: string): void => {

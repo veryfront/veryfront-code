@@ -18,14 +18,8 @@ import {
   resolveConfigWithAuth,
   type ResolvedConfig,
 } from "../../shared/config.ts";
-import {
-  confirmPrompt,
-  createNoopSpinner,
-  createSpinner,
-  logInfo,
-  logSuccess,
-  logWarning,
-} from "../../utils/index.ts";
+import { confirmPrompt, logInfo, logSuccess, logWarning } from "../../utils/index.ts";
+import { createNoopSpinner, createSpinner } from "../../ui/progress.ts";
 import { getApiTokenEnv } from "#veryfront/config/env.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
@@ -359,10 +353,9 @@ async function pullSingleProject(
   quiet = false,
 ): Promise<{ written: number; skipped: number }> {
   const sourceLabel = formatPullSource(source);
-  const spinner = quiet
+  let spinner = quiet
     ? createNoopSpinner()
     : createSpinner(`Fetching files from ${projectSlug} (${sourceLabel})...`);
-  spinner.start();
 
   const client = createApiClient({ ...config, projectSlug });
 
@@ -404,8 +397,7 @@ async function pullSingleProject(
     }
   }
 
-  spinner.start();
-  spinner.update(`Writing files to ${projectDir}...`);
+  spinner = quiet ? createNoopSpinner() : createSpinner(`Writing files to ${projectDir}...`);
 
   const result = await writeFiles(writeOps, client, projectSlug, source, dryRun);
 
@@ -442,7 +434,6 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
       } = options;
 
       const spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
-      spinner.start();
 
       const configFile = await readConfigFile(projectDir);
       const projects = projectsOverride ?? configFile?.projects;

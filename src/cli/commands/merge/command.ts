@@ -12,7 +12,8 @@ import { cliLogger } from "#veryfront/utils";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { type ApiClient, createApiClient, resolveConfig } from "../../shared/config.ts";
 import { CommonArgs, createArgParser } from "../../shared/args.ts";
-import { confirmPrompt, createSpinner, logInfo, logSuccess } from "../../utils/index.ts";
+import { confirmPrompt, logInfo, logSuccess } from "../../utils/index.ts";
+import { createSpinner } from "../../ui/progress.ts";
 
 /**
  * Zod schema for merge command arguments
@@ -147,8 +148,7 @@ function getMergePreview(
 export async function mergeCommand(options: MergeOptions): Promise<void> {
   const { branch, into, dryRun = false, force = false } = options;
 
-  const spinner = createSpinner("Resolving configuration...");
-  spinner.start();
+  let spinner = createSpinner("Resolving configuration...");
 
   const config = await resolveConfig(cwd());
   const client = createApiClient(config);
@@ -206,8 +206,7 @@ export async function mergeCommand(options: MergeOptions): Promise<void> {
     }
   }
 
-  spinner.start();
-  spinner.update(`Merging "${branch}" into ${targetName}...`);
+  spinner = createSpinner(`Merging "${branch}" into ${targetName}...`);
 
   const result = await mergeBranch(client, config.projectSlug, sourceBranch.id, targetBranchId);
 

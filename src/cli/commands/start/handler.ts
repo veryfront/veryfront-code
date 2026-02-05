@@ -1,8 +1,8 @@
 import { startCommand } from "./command.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
+import { DEFAULT_MCP_PORT } from "../../shared/constants.ts";
 
 const DEFAULT_START_PORT = 8080;
-const DEFAULT_MCP_PORT = 9999;
 
 export async function handleStartCommand(args: ParsedArgs): Promise<void> {
   const hasExplicitPort = args.__explicit?.port === true;

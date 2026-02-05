@@ -4,22 +4,14 @@
  * Handles argument parsing and config file loading for the init command.
  */
 
-import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
 import { cliLogger } from "#veryfront/utils";
 import { exitProcess } from "../../utils/index.ts";
+import { resolvePath } from "../../shared/path-utils.ts";
 import { initCommand } from "./init-command.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
 import type { InitTemplate } from "./types.ts";
 import type { IntegrationName } from "../../templates/types.ts";
-
-/**
- * Resolve a path relative to cwd if not absolute
- */
-function resolvePath(path: string): string {
-  return path.startsWith("/") ? path : join(cwd(), path);
-}
 
 /**
  * Handle the init command with argument parsing and config file support

@@ -11,13 +11,8 @@ import { z } from "zod";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "../../shared/config.ts";
 import { CommonArgs, createArgParser } from "../../shared/args.ts";
-import {
-  confirmPrompt,
-  createNoopSpinner,
-  createSpinner,
-  logInfo,
-  logSuccess,
-} from "../../utils/index.ts";
+import { confirmPrompt, logInfo, logSuccess } from "../../utils/index.ts";
+import { createNoopSpinner, createSpinner } from "../../ui/progress.ts";
 import { muted } from "../../ui/colors.ts";
 
 /**
@@ -154,8 +149,7 @@ export function createDeployment(
 export async function deployCommand(options: DeployOptions): Promise<void> {
   const { branch, env, releaseName, dryRun, force, quiet } = options;
 
-  const spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
-  spinner.start();
+  let spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
 
   // Use interactive auth - prompts for login if not authenticated
   const config = await resolveConfigWithAuth(cwd());
@@ -187,8 +181,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     }
   }
 
-  spinner.start();
-  spinner.update(`Creating release from "${branch}"...`);
+  spinner = quiet ? createNoopSpinner() : createSpinner(`Creating release from "${branch}"...`);
 
   const release = await createRelease(client, config.projectSlug, { name: releaseName, branch });
 

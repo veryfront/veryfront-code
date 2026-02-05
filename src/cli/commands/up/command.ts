@@ -9,7 +9,8 @@ import {
   type EnvironmentConfig,
   getEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
-import { createSpinner, getColorEnabled, isTTY, promptUser } from "../../utils/index.ts";
+import { getColorEnabled, isTTY, promptUser } from "../../utils/index.ts";
+import { createSpinner } from "../../ui/progress.ts";
 import { CommonArgs, createArgParser } from "../../shared/args.ts";
 import { readConfigFile, type VeryfrontConfig } from "../../shared/config.ts";
 import { pushCommand } from "../push/index.ts";
@@ -110,7 +111,6 @@ export async function upCommand(
   if (!userInfo) return;
 
   const spinner = createSpinner("Analyzing project...");
-  spinner.start();
   const context = await analyzeDirectory(projectDir);
   spinner.stop();
 
@@ -146,7 +146,6 @@ export async function upCommand(
       cliLogger.info(c(dim, `Would create project: ${slug}`));
     } else {
       const projectSpinner = createSpinner(`Creating project "${slug}"...`);
-      projectSpinner.start();
 
       try {
         const apiUrl = env.apiUrl ?? "https://api.veryfront.com";

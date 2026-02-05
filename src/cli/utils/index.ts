@@ -1,21 +1,15 @@
 import { cliLogger, formatBytes, VERSION } from "#veryfront/utils";
-import { bold, cyan, dim, green, red, yellow } from "#veryfront/compat/console";
-import {
-  exit,
-  isInteractive,
-  isStdoutTTY,
-  onSignal,
-  promptSync,
-  writeStdout,
-} from "#veryfront/platform/compat/process.ts";
+import { bold, cyan, dim } from "#veryfront/compat/console";
+import { exit, isStdoutTTY, onSignal, promptSync } from "#veryfront/platform/compat/process.ts";
 import { getForceColorEnv, getNoColorEnv } from "#veryfront/config/env.ts";
+import {
+  error as errorColor,
+  success as successColor,
+  warning as warningColor,
+} from "../ui/colors.ts";
 
 export function isTTY(): boolean {
   return isStdoutTTY();
-}
-
-export function isStderrTTY(): boolean {
-  return isInteractive();
 }
 
 let _colorEnabled: boolean | undefined;
@@ -71,15 +65,15 @@ export function showVersion(): void {
 }
 
 export function logSuccess(message: string): void {
-  console.log(`  ${green("✓")} ${message}`);
+  console.log(`  ${successColor("✓")} ${message}`);
 }
 
 export function logError(message: string): void {
-  console.error(`  ${red("✗")} ${message}`);
+  console.error(`  ${errorColor("✗")} ${message}`);
 }
 
 export function logWarning(message: string): void {
-  console.warn(`  ${yellow("!")} ${message}`);
+  console.warn(`  ${warningColor("!")} ${message}`);
 }
 
 export function logInfo(message: string): void {
@@ -88,7 +82,7 @@ export function logInfo(message: string): void {
 
 export function registerTerminationSignals(
   handler: (signal: "SIGINT" | "SIGTERM") => void | Promise<void>,
-): () => void {
+): void {
   const signals: Array<"SIGINT" | "SIGTERM"> = ["SIGINT", "SIGTERM"];
 
   for (const signal of signals) {
@@ -96,8 +90,6 @@ export function registerTerminationSignals(
       void handler(signal);
     });
   }
-
-  return () => {};
 }
 
 let _verboseMode = false;
@@ -144,69 +136,6 @@ export async function confirmPrompt(
 
   const normalized = response.toLowerCase().trim();
   return normalized === "y" || normalized === "yes";
-}
-
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-interface Spinner {
-  start: () => void;
-  stop: (finalMessage?: string) => void;
-  update: (message: string) => void;
-}
-
-export function createNoopSpinner(): Spinner {
-  return {
-    start() {},
-    stop() {},
-    update() {},
-  };
-}
-
-export function createSpinner(message: string): Spinner {
-  let frameIndex = 0;
-  let intervalId: ReturnType<typeof setInterval> | null = null;
-  let currentMessage = message;
-  const interactive = isTTY();
-
-  function clearLine(): void {
-    if (!interactive) return;
-    writeStdout("\r\x1b[K");
-  }
-
-  function render(): void {
-    if (!interactive) return;
-
-    const frame = SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length] ?? "⠋";
-    const outputFrame = getColorEnabled() ? cyan(frame) : frame;
-
-    writeStdout(`\r${outputFrame} ${currentMessage}`);
-    frameIndex++;
-  }
-
-  return {
-    start(): void {
-      if (!interactive) {
-        cliLogger.info(`... ${message}`);
-        return;
-      }
-
-      render();
-      intervalId = setInterval(render, 80);
-    },
-    stop(finalMessage?: string): void {
-      if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = null;
-      }
-
-      clearLine();
-      if (finalMessage) cliLogger.info(finalMessage);
-    },
-    update(newMessage: string): void {
-      currentMessage = newMessage;
-      if (!interactive) cliLogger.info(`... ${newMessage}`);
-    },
-  };
 }
 
 export function exitProcess(code: number): void {
