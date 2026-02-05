@@ -17,6 +17,8 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export type { APIContext, APIRoute };
 
+const IS_APP_ROUTE_REGEX = /\/route\.(ts|js|tsx|jsx)$/;
+
 /**
  * Injection interface for testing APIRouteHandler dependencies
  */
@@ -182,7 +184,7 @@ export class APIRouteHandler {
         // App Router routes are always named route.ts/js/tsx/jsx
         // Pages Router routes have descriptive names like articles.ts
         // Note: Cannot use path-based detection (/app/) as projectDir may be '/app' in production
-        const isAppRoute = /\/route\.(ts|js|tsx|jsx)$/.test(match.route.page);
+        const isAppRoute = IS_APP_ROUTE_REGEX.test(match.route.page);
 
         const response = isAppRoute
           ? await executeAppRoute(handler, request, match, pathname, adapter)

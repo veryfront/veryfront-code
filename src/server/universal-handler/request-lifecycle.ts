@@ -82,10 +82,10 @@ export function startRequestTracking(
 }
 
 /**
- * Start per-request content metrics tracking.
+ * Run a function within a per-request content metrics context.
  */
-export function startContentMetrics(): void {
-  startRequestMetrics();
+export function runWithContentMetrics<T>(fn: () => Promise<T>): Promise<T> {
+  return startRequestMetrics(fn) as unknown as Promise<T>;
 }
 
 /**

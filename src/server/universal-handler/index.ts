@@ -67,7 +67,7 @@ import {
   endContentMetrics,
   endRequestLifecycle,
   incrementRequestMetrics,
-  startContentMetrics,
+  runWithContentMetrics,
   startRequestLifecycle,
   startRequestTracking,
   timeAsync,
@@ -262,8 +262,6 @@ export function createVeryfrontHandler(
         headers.releaseId,
       );
 
-      startContentMetrics();
-
       // Check isolation
       const isolationCheck = checkRequestIsolation(
         headers.projectSlug,
@@ -279,7 +277,8 @@ export function createVeryfrontHandler(
 
       startIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation);
 
-      try {
+      return runWithContentMetrics(async () => {
+        try {
         await readyPromise;
 
         await timeAsync("security:load", async () => {
@@ -449,20 +448,21 @@ export function createVeryfrontHandler(
 
         endRequestTracing(spanInfo.span, response.status, error);
 
-        endContentMetrics({
-          requestId: lifecycle.requestId,
-          pathname: url.pathname,
-          mode: headers.environment || "unknown",
-        });
+          endContentMetrics({
+            requestId: lifecycle.requestId,
+            pathname: url.pathname,
+            mode: headers.environment || "unknown",
+          });
 
-        const isTimeout = response.status === HTTP_GATEWAY_TIMEOUT;
-        completeRequestTracking(lifecycle.requestId, response.status, isTimeout);
-        completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, isTimeout);
+          const isTimeout = response.status === HTTP_GATEWAY_TIMEOUT;
+          completeRequestTracking(lifecycle.requestId, response.status, isTimeout);
+          completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, isTimeout);
 
-        return response;
-      } finally {
-        endRequestLifecycle(lifecycle);
-      }
+          return response;
+        } finally {
+          endRequestLifecycle(lifecycle);
+        }
+      });
     });
   };
 

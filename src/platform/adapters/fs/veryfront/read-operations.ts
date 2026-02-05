@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { logger } from "#veryfront/utils";
 import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -11,6 +12,8 @@ import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
 import { getRequestScopedFile, setRequestScopedFile } from "./multi-project-adapter.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import type { ResolvedContentContext } from "./types.ts";
+
+const TEXT_ENCODER = new TextEncoder();
 
 export interface ContentContextProvider {
   isProductionMode: () => boolean;
@@ -34,6 +37,7 @@ export interface ContentContextProvider {
 }
 
 const EXTENSION_PRIORITY = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"] as const;
+const EXTENSION_PRIORITY_SET = new Set<string>(EXTENSION_PRIORITY);
 
 const IN_FLIGHT_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_IN_FLIGHT_REQUESTS = 100;
@@ -84,7 +88,7 @@ const cumulativeMetrics: CumulativeMetrics = {
 };
 
 // Per-request metrics (reset each request via startRequestMetrics)
-let currentRequest: PerRequestMetrics | null = null;
+const requestMetricsStore = new AsyncLocalStorage<PerRequestMetrics>();
 
 function createFreshRequestMetrics(): PerRequestMetrics {
   return {
@@ -101,28 +105,55 @@ function createFreshRequestMetrics(): PerRequestMetrics {
   };
 }
 
+const DATA_EXTENSIONS = new Set([".json", ".yaml", ".yml"]);
+
 function detectFileType(path: string): FileType {
-  if (path.startsWith("pages/api/") || path.startsWith("app/api/")) return "api";
+  // Check extensions first for common data types (fastest)
+  const lastDotIndex = path.lastIndexOf(".");
+  if (lastDotIndex !== -1 && DATA_EXTENSIONS.has(path.slice(lastDotIndex))) {
+    return "data";
+  }
+
+  // Check common directory patterns
+  if (path.startsWith("pages/")) {
+    if (path.startsWith("pages/api/")) return "api";
+    return "page";
+  }
+
+  if (path.startsWith("app/")) {
+    if (path.startsWith("app/api/")) return "api";
+    return "page";
+  }
+
+  if (path.startsWith("components/") || path.includes("/components/")) {
+    return "component";
+  }
+
+  // Check more expensive inclusions
   if (path.includes("/layout.") || path.includes("/layout/")) return "layout";
-  if (path.startsWith("pages/") || path.startsWith("app/")) return "page";
-  if (path.startsWith("components/") || path.includes("/components/")) return "component";
-  if (path.endsWith(".json") || path.endsWith(".yaml") || path.endsWith(".yml")) return "data";
   if (path.includes("config") || path.includes(".config.")) return "config";
+
   return "other";
 }
 
-/** Call at start of HTTP request to begin per-request tracking */
-export function startRequestMetrics(): void {
-  currentRequest = createFreshRequestMetrics();
+/**
+ * Call at start of HTTP request to begin per-request tracking.
+ * Returns a function to call when the request is complete.
+ */
+export function startRequestMetrics<T>(callback?: () => Promise<T> | T): Promise<T> | T | void {
+  const metrics = createFreshRequestMetrics();
+  if (callback) {
+    return requestMetricsStore.run(metrics, callback);
+  }
 }
 
 /** Call at end of HTTP request to log summary and update cumulative metrics */
 export function endRequestMetrics(
   requestContext?: { requestId?: string; pathname?: string; mode?: string },
 ): void {
-  if (!currentRequest) return;
+  const req = requestMetricsStore.getStore();
+  if (!req) return;
 
-  const req = currentRequest;
   const durationMs = Math.round(performance.now() - req.startTime);
 
   // Compute derived metrics
@@ -167,7 +198,6 @@ export function endRequestMetrics(
     isPreviewMode: req.isPreviewMode,
   });
 
-  currentRequest = null;
 }
 
 type ContentMetricEvent =
@@ -190,39 +220,40 @@ function logContentMetric(
   },
 ): void {
   const path = details.path ?? "";
+  const req = requestMetricsStore.getStore();
 
   // Track in per-request metrics if active
-  if (currentRequest) {
-    currentRequest.filesAccessed.add(path);
+  if (req) {
+    req.filesAccessed.add(path);
     if (details.isPreviewMode !== undefined) {
-      currentRequest.isPreviewMode = details.isPreviewMode;
+      req.isPreviewMode = details.isPreviewMode;
     }
 
     switch (event) {
       case "REQUEST_SCOPED_HIT":
-        currentRequest.requestScopedHits++;
+        req.requestScopedHits++;
         recordContentCacheHit("request");
         break;
       case "PERSISTENT_CACHE_HIT":
-        currentRequest.persistentCacheHits++;
+        req.persistentCacheHits++;
         recordContentCacheHit("persistent");
         break;
       case "FILE_LIST_HIT":
-        currentRequest.fileListHits++;
+        req.fileListHits++;
         recordContentCacheHit("filelist");
         break;
       case "NETWORK_FETCH":
-        currentRequest.networkFetches++;
-        currentRequest.fetchesByType[detectFileType(path)]++;
+        req.networkFetches++;
+        req.fetchesByType[detectFileType(path)]++;
         break;
       case "NETWORK_FETCH_COMPLETE":
         if (details.durationMs) {
-          currentRequest.networkMs += details.durationMs;
+          req.networkMs += details.durationMs;
         }
         break;
       case "CACHE_MISS":
         if (details.missReason) {
-          currentRequest.missReasons[details.missReason]++;
+          req.missReasons[details.missReason]++;
         }
         break;
     }
@@ -277,6 +308,7 @@ export class ReadOperations {
 
   private fileListIndex: Map<string, string> | null = null;
   private fileListIndexKey: string | null = null;
+  private fileListIndexPromise: Promise<Map<string, string> | null> | null = null;
 
   private fileListReadyPromise: Promise<void> | null = null;
 
@@ -296,11 +328,10 @@ export class ReadOperations {
   }
 
   clearFileListIndex(): void {
-    if (!this.fileListIndex) return;
-
-    const size = this.fileListIndex.size;
+    const size = this.fileListIndex?.size ?? 0;
     this.fileListIndex = null;
     this.fileListIndexKey = null;
+    this.fileListIndexPromise = null;
     logger.debug("[ReadOperations] Cleared file list index", { entriesCleared: size });
   }
 
@@ -339,53 +370,48 @@ export class ReadOperations {
   }
 
   private async getOrBuildFileListIndex(): Promise<Map<string, string> | null> {
-    if (!this.getFileListCache) {
-      logger.debug("[ReadOperations] getOrBuildFileListIndex: no getFileListCache function");
-      return null;
+    if (this.fileListIndexPromise) return this.fileListIndexPromise;
+
+    this.fileListIndexPromise = (async () => {
+      if (!this.getFileListCache) {
+        logger.debug("[ReadOperations] getOrBuildFileListIndex: no getFileListCache function");
+        return null;
+      }
+
+      const fileList = await this.getFileListCache();
+      if (!fileList) {
+        logger.debug(
+          "[ReadOperations] getOrBuildFileListIndex: getFileListCache returned null/undefined",
+        );
+        return null;
+      }
+
+      const indexKey = `${fileList.length}:${fileList[0]?.path ?? ""}:${
+        fileList[fileList.length - 1]?.path ?? ""
+      }`;
+      if (this.fileListIndex && this.fileListIndexKey === indexKey) return this.fileListIndex;
+
+      const index = new Map<string, string>();
+      for (const file of fileList) {
+        if (file.content) index.set(file.path, file.content);
+      }
+
+      this.fileListIndex = index;
+      this.fileListIndexKey = indexKey;
+
+      logger.debug("[ReadOperations] Built file list index", {
+        fileListSize: fileList.length,
+        indexedWithContent: index.size,
+      });
+
+      return index;
+    })();
+
+    try {
+      return await this.fileListIndexPromise;
+    } finally {
+      this.fileListIndexPromise = null;
     }
-
-    const fileList = await this.getFileListCache();
-    if (!fileList) {
-      logger.debug(
-        "[ReadOperations] getOrBuildFileListIndex: getFileListCache returned null/undefined",
-      );
-      return null;
-    }
-
-    const cacheCheckSample = fileList.find((f) => /welcome/i.test(f.path));
-    logger.debug("[ReadOperations] getOrBuildFileListIndex: got file list from cache", {
-      fileListSize: fileList.length,
-      filesWithContent: fileList.filter((f) => f.content).length,
-      sampleFilePath: cacheCheckSample?.path,
-      sampleContentLength: cacheCheckSample?.content?.length,
-      sampleContentPreview: cacheCheckSample?.content?.slice(0, 200)?.replace(/\n/g, "\\n"),
-    });
-
-    const indexKey = `${fileList.length}:${fileList[0]?.path ?? ""}:${
-      fileList[fileList.length - 1]?.path ?? ""
-    }`;
-    if (this.fileListIndex && this.fileListIndexKey === indexKey) return this.fileListIndex;
-
-    const index = new Map<string, string>();
-    for (const file of fileList) {
-      if (file.content) index.set(file.path, file.content);
-    }
-
-    this.fileListIndex = index;
-    this.fileListIndexKey = indexKey;
-
-    const sampleFile = fileList.find((f) => /welcome/i.test(f.path));
-    const sampleContent = sampleFile?.content;
-    logger.debug("[ReadOperations] Built file list index", {
-      fileListSize: fileList.length,
-      indexedWithContent: index.size,
-      sampleFilePath: sampleFile?.path,
-      sampleContentLength: sampleContent?.length,
-      sampleContentHash: sampleContent ? hashPreview(sampleContent) : undefined,
-      sampleContentPreview: sampleContent?.slice(0, 200)?.replace(/\n/g, "\\n"),
-    });
-
-    return index;
   }
 
   private async getContentFromFileList(normalizedPath: string): Promise<string | undefined> {
@@ -428,7 +454,7 @@ export class ReadOperations {
       async () => {
         const normalizedPath = this.normalizer.normalize(path);
         const content = await this.fetchContent(normalizedPath);
-        return new TextEncoder().encode(content);
+        return TEXT_ENCODER.encode(content);
       },
       { "fs.path": path },
     );
@@ -461,7 +487,10 @@ export class ReadOperations {
     const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
     const cacheKey = `${cacheKeyPrefix}:${normalizedPath}`;
     const isProduction = this.contextProvider?.isProductionMode() ?? false;
-    const hasKnownExt = EXTENSION_PRIORITY.some((ext) => apiPath.endsWith(ext));
+
+    // Use Set for slightly faster extension check
+    const lastDotIndex = apiPath.lastIndexOf(".");
+    const hasKnownExt = lastDotIndex !== -1 && EXTENSION_PRIORITY_SET.has(apiPath.slice(lastDotIndex));
 
     logger.debug("[ReadOperations] fetchContent context", {
       path: normalizedPath,
