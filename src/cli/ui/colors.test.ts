@@ -3,8 +3,7 @@
  */
 
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   bold,
   brand,
@@ -19,32 +18,13 @@ import {
 } from "./colors.ts";
 
 describe("colors", () => {
-  let originalForceColor: string | undefined;
-  let originalNoColor: string | undefined;
-
-  beforeEach(() => {
-    originalForceColor = getEnv("FORCE_COLOR");
-    originalNoColor = getEnv("NO_COLOR");
-
-    if (originalNoColor !== undefined) deleteEnv("NO_COLOR");
-
-    setEnv("FORCE_COLOR", "3");
-    resetColorCache();
+  beforeAll(() => {
+    // Force truecolor mode for consistent test behavior across environments
+    setTestColorLevel("truecolor");
   });
 
-  afterEach(() => {
-    if (originalForceColor !== undefined) {
-      setEnv("FORCE_COLOR", originalForceColor);
-    } else {
-      deleteEnv("FORCE_COLOR");
-    }
-
-    if (originalNoColor !== undefined) {
-      setEnv("NO_COLOR", originalNoColor);
-    } else {
-      deleteEnv("NO_COLOR");
-    }
-
+  afterAll(() => {
+    // Reset to normal behavior
     resetColorCache();
   });
 
