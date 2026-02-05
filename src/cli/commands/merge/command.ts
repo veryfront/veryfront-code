@@ -10,7 +10,7 @@
 import { z } from "zod";
 import { cliLogger } from "#veryfront/utils";
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { type ApiClient, createApiClient, resolveConfig } from "../../shared/config.ts";
+import { type ApiClient, createApiClient, resolveConfigWithAuth } from "../../shared/config.ts";
 import { CommonArgs, createArgParser } from "../../shared/args.ts";
 import { confirmPrompt, logInfo, logSuccess } from "../../utils/index.ts";
 import { createSpinner } from "../../ui/progress.ts";
@@ -150,7 +150,7 @@ export async function mergeCommand(options: MergeOptions): Promise<void> {
 
   let spinner = createSpinner("Resolving configuration...");
 
-  const config = await resolveConfig(cwd());
+  const config = await resolveConfigWithAuth(cwd());
   const client = createApiClient(config);
 
   spinner.update(`Looking up branch "${branch}"...`);

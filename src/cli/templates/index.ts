@@ -81,4 +81,3 @@ export function getTemplateConfig(name: TemplateName): TemplateConfig | null {
   return templateConfigs[name] ?? null;
 }
 
-export const templates: Record<string, TemplateFile[]> = {};
