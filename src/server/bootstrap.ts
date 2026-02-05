@@ -1,7 +1,7 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { clearConfigCache, getConfig } from "#veryfront/config";
-import { getRuntimeEnv, refreshRuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
@@ -44,7 +44,7 @@ async function ensureEnvLoaded(projectDir: string, adapter: RuntimeAdapter): Pro
         cwd: projectDir,
         debug: isDebugEnabled(adapter.env),
       });
-      refreshRuntimeEnv();
+      refreshEnvironmentConfig();
     } catch (error) {
       logger.warn("[Bootstrap] Failed to load .env files", {
         error: getErrorMessage(error),
@@ -59,7 +59,7 @@ function logEnvConfig(): void {
   if (envLogged) return;
   envLogged = true;
 
-  const runtimeEnv = getRuntimeEnv();
+  const runtimeEnv = getEnvironmentConfig();
   const apiBaseUrlSource = getEnvSource("VERYFRONT_API_BASE_URL");
   const apiTokenSource = getEnvSource("VERYFRONT_API_TOKEN");
 

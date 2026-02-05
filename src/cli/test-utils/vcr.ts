@@ -12,7 +12,7 @@ import { load } from "#std/dotenv.ts";
 import { cliLogger } from "#veryfront/utils";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import type { ApiClient } from "../shared/config.ts";
 
 // Load .env.local for credentials in record mode
@@ -68,7 +68,7 @@ export async function createVCRClient(
   cassetteName: string,
   realClient?: ApiClient,
   projectSlug?: string,
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<{ client: ApiClient; save: () => Promise<void>; projectSlug: string }> {
   const fs = createFileSystem();
   const recording = env.vcr === "record";
@@ -164,7 +164,7 @@ export async function createVCRClient(
 /**
  * Check if running in record mode
  */
-export function isRecording(env: RuntimeEnv = getRuntimeEnv()): boolean {
+export function isRecording(env: EnvironmentConfig = getEnvironmentConfig()): boolean {
   return env.vcr === "record";
 }
 
@@ -185,7 +185,7 @@ export interface VCRTestContext {
  */
 export async function initVCRTest(
   cassetteName: string,
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<VCRTestContext> {
   if (!isRecording(env)) {
     const vcr = await createVCRClient(cassetteName);

@@ -502,8 +502,8 @@ export async function resetAllTestState(): Promise<void> {
       clearConfigCache();
     },
     async () => {
-      const { _resetRuntimeEnv } = await import("../config/runtime-env.ts");
-      _resetRuntimeEnv();
+      const { _resetEnvironmentConfig } = await import("../config/environment-config.ts");
+      _resetEnvironmentConfig();
     },
     async () => {
       const { _resetRuntimeConfig } = await import("../config/runtime-config.ts");

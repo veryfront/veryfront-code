@@ -7,7 +7,7 @@ import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { getConfig } from "#veryfront/config";
-import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { createDevServer } from "#veryfront/server/dev-server.ts";
 import { runAIConfigValidation } from "../../discovery/config-validator.ts";
 import { discoverAll } from "../../discovery/index.ts";
@@ -70,7 +70,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       const finalPort = port !== DEFAULT_DEV_PORT ? port : (config?.dev?.port ?? port);
       const enableHMR = config?.dev?.hmr !== false && hmr;
 
-      const env = getRuntimeEnv();
+      const env = getEnvironmentConfig();
       const isProxyMode = config?.fs?.veryfront?.proxyMode === true;
       const projectSlug = config?.fs?.veryfront?.projectSlug ?? env.projectSlug;
 

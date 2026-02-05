@@ -21,12 +21,12 @@ async function ensureEnvLoaded(): Promise<void> {
 
   markEnvLoaded();
 
-  const { initRuntimeEnv } = await import("#veryfront/config/runtime-env.ts");
-  initRuntimeEnv();
+  const { initEnvironmentConfig } = await import("#veryfront/config/environment-config.ts");
+  initEnvironmentConfig();
 }
 
 await ensureEnvLoaded();
 const args = getArgs();
-const { parseCliArgs } = await import("./index/arg-parser.ts");
-const { routeCommand } = await import("./index/command-router.ts");
+const { parseCliArgs } = await import("./shared/arg-parser.ts");
+const { routeCommand } = await import("./router.ts");
 await routeCommand(parseCliArgs(args));

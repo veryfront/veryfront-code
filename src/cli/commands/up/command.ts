@@ -5,7 +5,7 @@ import { join } from "#veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cyan, dim, green, red, yellow } from "#veryfront/compat/console";
 import { ensureAuthenticated, readToken } from "../../auth/index.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { createSpinner, getColorEnabled, isTTY, promptUser } from "../../utils/index.ts";
 import { CommonArgs, createArgParser } from "../../shared/args.ts";
 import { readConfigFile, type VeryfrontConfig } from "../../shared/config.ts";
@@ -94,7 +94,7 @@ async function saveConfig(projectDir: string, config: VeryfrontConfig): Promise<
 
 export async function upCommand(
   options: Partial<UpOptions> = {},
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<void> {
   const { force = false, dryRun = false } = options;
 

@@ -3,7 +3,7 @@
  */
 
 import { z } from "zod";
-import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ReloadNotifier } from "../../../server/reload-notifier.ts";
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
@@ -363,7 +363,7 @@ export const vfGetFlywheelStatus: MCPTool<GetFlywheelStatusInput, FlywheelStatus
 
         const logCounts = logBuffer.countByLevel();
 
-        const env = getRuntimeEnv();
+        const env = getEnvironmentConfig();
         const uptime = env.serverStartTime
           ? Date.now() - Number.parseInt(env.serverStartTime, 10)
           : undefined;

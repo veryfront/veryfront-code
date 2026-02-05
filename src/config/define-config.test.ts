@@ -7,7 +7,7 @@ import {
   validateConfig,
 } from "./define-config.ts";
 import type { VeryfrontConfig } from "./schemas/index.ts";
-import { createTestRuntimeEnv } from "./runtime-env.ts";
+import { createTestEnvironmentConfig } from "./environment-config.ts";
 
 describe("define-config", () => {
   describe("defineConfig", () => {
@@ -41,19 +41,19 @@ describe("define-config", () => {
 
   describe("defineConfigWithEnv", () => {
     it("should use development as default environment", () => {
-      const testEnv = createTestRuntimeEnv({ nodeEnv: "development" });
+      const testEnv = createTestEnvironmentConfig({ nodeEnv: "development" });
       const result = defineConfigWithEnv((env) => ({ title: `App-${env}` }), testEnv);
       expect(result.title).toBe("App-development");
     });
 
     it("should use NODE_ENV if set", () => {
-      const testEnv = createTestRuntimeEnv({ nodeEnv: "production" });
+      const testEnv = createTestEnvironmentConfig({ nodeEnv: "production" });
       const result = defineConfigWithEnv((env) => ({ title: `App-${env}` }), testEnv);
       expect(result.title).toBe("App-production");
     });
 
     it("should allow environment-specific configuration", () => {
-      const testEnv = createTestRuntimeEnv({ nodeEnv: "production" });
+      const testEnv = createTestEnvironmentConfig({ nodeEnv: "production" });
       const result = defineConfigWithEnv(
         (env) => {
           if (env === "production") return { dev: { port: 8080 } };
@@ -65,7 +65,7 @@ describe("define-config", () => {
     });
 
     it("should work with development environment", () => {
-      const testEnv = createTestRuntimeEnv({ nodeEnv: "development" });
+      const testEnv = createTestEnvironmentConfig({ nodeEnv: "development" });
       const result = defineConfigWithEnv(
         (env) => {
           if (env === "production") return { dev: { port: 8080 } };
@@ -77,13 +77,13 @@ describe("define-config", () => {
     });
 
     it("should work with custom environments", () => {
-      const testEnv = createTestRuntimeEnv({ nodeEnv: "staging" });
+      const testEnv = createTestEnvironmentConfig({ nodeEnv: "staging" });
       const result = defineConfigWithEnv((env) => ({ title: `Staging-${env}` }), testEnv);
       expect(result.title).toBe("Staging-staging");
     });
 
     it("should pass full config from factory", () => {
-      const testEnv = createTestRuntimeEnv({ nodeEnv: "test" });
+      const testEnv = createTestEnvironmentConfig({ nodeEnv: "test" });
       const result = defineConfigWithEnv(
         (env) => ({
           title: "Test App",

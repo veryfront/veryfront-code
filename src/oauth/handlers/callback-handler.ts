@@ -6,7 +6,7 @@
 
 import { logger } from "#veryfront/utils";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { type EnvReader, OAuthService } from "../providers/base.ts";
 import { memoryTokenStore } from "../token-store/memory.ts";
 import type { OAuthServiceConfig, TokenStore } from "../types.ts";
@@ -30,8 +30,8 @@ export interface OAuthCallbackHandlerOptions {
   /** Custom error callback */
   onError?: (serviceId: string, error: string) => void | Promise<void>;
 
-  /** RuntimeEnv for test isolation (defaults to getRuntimeEnv()) */
-  env?: RuntimeEnv;
+  /** EnvironmentConfig for test isolation (defaults to getEnvironmentConfig()) */
+  env?: EnvironmentConfig;
 
   /** EnvReader for dynamic env vars (defaults to getEnv) */
   envReader?: EnvReader;
@@ -48,7 +48,7 @@ export function createOAuthCallbackHandler(
     errorRedirect = "/",
     onSuccess,
     onError,
-    env = getRuntimeEnv(),
+    env = getEnvironmentConfig(),
     envReader = getEnv,
   } = options;
 

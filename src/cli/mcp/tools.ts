@@ -10,7 +10,7 @@ import {
 } from "#veryfront/observability/error-collector.ts";
 import { getLogBuffer, type LogEntry, type LogLevel } from "#veryfront/observability/log-buffer.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import type { MCPTool } from "#veryfront/mcp/types.ts";
 import { advancedTools } from "./advanced-tools.ts";
 import { remoteFileTools } from "./remote-file-tools.ts";
@@ -137,7 +137,7 @@ interface ServerStatus {
 }
 
 export function createVfGetStatus(
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): MCPTool<GetStatusInput, ServerStatus> {
   return {
     name: "vf_get_status",

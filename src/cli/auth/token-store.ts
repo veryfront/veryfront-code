@@ -1,20 +1,20 @@
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { cliLogger } from "#veryfront/utils";
 import { CONFIG_DIR_NAME, TOKEN_FILE_NAME, TOKEN_FILE_PERMISSIONS } from "../shared/constants.ts";
 
-function getConfigDir(env: RuntimeEnv = getRuntimeEnv()): string {
+function getConfigDir(env: EnvironmentConfig = getEnvironmentConfig()): string {
   if (env.xdgConfigHome) return join(env.xdgConfigHome, CONFIG_DIR_NAME);
   if (!env.homeDir) throw new Error("Could not determine home directory");
   return join(env.homeDir, ".config", CONFIG_DIR_NAME);
 }
 
-function getTokenPath(env: RuntimeEnv = getRuntimeEnv()): string {
+function getTokenPath(env: EnvironmentConfig = getEnvironmentConfig()): string {
   return join(getConfigDir(env), TOKEN_FILE_NAME);
 }
 
-export async function readToken(env?: RuntimeEnv): Promise<string | null> {
+export async function readToken(env?: EnvironmentConfig): Promise<string | null> {
   try {
     const fs = createFileSystem();
     const tokenPath = getTokenPath(env);
@@ -29,7 +29,7 @@ export async function readToken(env?: RuntimeEnv): Promise<string | null> {
   }
 }
 
-export async function saveToken(token: string, env?: RuntimeEnv): Promise<void> {
+export async function saveToken(token: string, env?: EnvironmentConfig): Promise<void> {
   const fs = createFileSystem();
   const configDir = getConfigDir(env);
   const tokenPath = getTokenPath(env);
@@ -42,7 +42,7 @@ export async function saveToken(token: string, env?: RuntimeEnv): Promise<void> 
   await fs.chmod(tokenPath, TOKEN_FILE_PERMISSIONS);
 }
 
-export async function deleteToken(env?: RuntimeEnv): Promise<void> {
+export async function deleteToken(env?: EnvironmentConfig): Promise<void> {
   const fs = createFileSystem();
   const tokenPath = getTokenPath(env);
 
@@ -54,10 +54,10 @@ export async function deleteToken(env?: RuntimeEnv): Promise<void> {
   }
 }
 
-export async function hasToken(env?: RuntimeEnv): Promise<boolean> {
+export async function hasToken(env?: EnvironmentConfig): Promise<boolean> {
   return (await readToken(env)) !== null;
 }
 
-export function getTokenLocation(env?: RuntimeEnv): string {
+export function getTokenLocation(env?: EnvironmentConfig): string {
   return getTokenPath(env);
 }

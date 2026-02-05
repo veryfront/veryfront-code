@@ -3,7 +3,7 @@ import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
 import { hasEnvLoaded } from "#veryfront/utils/env-loader.ts";
 
-export interface RuntimeEnv {
+export interface EnvironmentConfig {
   nodeEnv: "development" | "production" | "test" | string;
   veryfrontEnv: string;
   veryfrontMode: string;
@@ -79,9 +79,9 @@ const DEFAULTS = {
   ssrMaxConcurrentTransforms: 3,
 } as const;
 
-let _runtimeEnv: RuntimeEnv | null = null;
-let runtimeEnvInitializedBeforeEnvLoad = false;
-let warnedEarlyRuntimeEnv = false;
+let _environmentConfig: EnvironmentConfig | null = null;
+let envConfigInitializedBeforeEnvLoad = false;
+let warnedEarlyEnvConfig = false;
 
 function parseNumber(value: string | undefined, defaultVal: number): number {
   if (!value) return defaultVal;
@@ -90,7 +90,7 @@ function parseNumber(value: string | undefined, defaultVal: number): number {
   return Number.isFinite(parsed) ? parsed : defaultVal;
 }
 
-function readEnvSnapshot(): RuntimeEnv {
+function readEnvSnapshot(): EnvironmentConfig {
   const nodeEnv = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
   const veryfrontEnv = getEnv("VERYFRONT_ENV") ?? nodeEnv;
 
@@ -179,30 +179,30 @@ function readEnvSnapshot(): RuntimeEnv {
   };
 }
 
-export function initRuntimeEnv(): RuntimeEnv {
-  if (_runtimeEnv) return _runtimeEnv;
+export function initEnvironmentConfig(): EnvironmentConfig {
+  if (_environmentConfig) return _environmentConfig;
 
   if (!hasEnvLoaded()) {
-    runtimeEnvInitializedBeforeEnvLoad = true;
+    envConfigInitializedBeforeEnvLoad = true;
     return readEnvSnapshot();
   }
 
-  _runtimeEnv = Object.freeze(readEnvSnapshot());
-  runtimeEnvInitializedBeforeEnvLoad = false;
-  return _runtimeEnv;
+  _environmentConfig = Object.freeze(readEnvSnapshot());
+  envConfigInitializedBeforeEnvLoad = false;
+  return _environmentConfig;
 }
 
-export function refreshRuntimeEnv(): RuntimeEnv {
-  _runtimeEnv = Object.freeze(readEnvSnapshot());
-  runtimeEnvInitializedBeforeEnvLoad = false;
-  return _runtimeEnv;
+export function refreshEnvironmentConfig(): EnvironmentConfig {
+  _environmentConfig = Object.freeze(readEnvSnapshot());
+  envConfigInitializedBeforeEnvLoad = false;
+  return _environmentConfig;
 }
 
 function warnEarlyAccess(): void {
-  if (warnedEarlyRuntimeEnv) return;
-  warnedEarlyRuntimeEnv = true;
+  if (warnedEarlyEnvConfig) return;
+  warnedEarlyEnvConfig = true;
 
-  const message = "[RuntimeEnv] getRuntimeEnv called before .env load. " +
+  const message = "[EnvironmentConfig] getEnvironmentConfig called before .env load. " +
     "Returning uncached snapshot; ensure loadEnv runs before runtime env access.";
   const debugStack = getEnv("VERYFRONT_DEBUG_RUNTIME_ENV");
   if (debugStack === "1" || debugStack === "true") {
@@ -212,13 +212,13 @@ function warnEarlyAccess(): void {
   }
 }
 
-export function getRuntimeEnv(): RuntimeEnv {
+export function getEnvironmentConfig(): EnvironmentConfig {
   // If cached and env has loaded since init, refresh to pick up .env values
-  if (_runtimeEnv && runtimeEnvInitializedBeforeEnvLoad && hasEnvLoaded()) {
-    return refreshRuntimeEnv();
+  if (_environmentConfig && envConfigInitializedBeforeEnvLoad && hasEnvLoaded()) {
+    return refreshEnvironmentConfig();
   }
-  if (_runtimeEnv) {
-    return _runtimeEnv;
+  if (_environmentConfig) {
+    return _environmentConfig;
   }
 
   // Env not loaded yet - return uncached snapshot with warning
@@ -227,15 +227,15 @@ export function getRuntimeEnv(): RuntimeEnv {
     return readEnvSnapshot();
   }
 
-  return initRuntimeEnv();
+  return initEnvironmentConfig();
 }
 
-export function isRuntimeEnvInitialized(): boolean {
-  return _runtimeEnv !== null;
+export function isEnvironmentConfigInitialized(): boolean {
+  return _environmentConfig !== null;
 }
 
-export function createTestRuntimeEnv(overrides: Partial<RuntimeEnv> = {}): RuntimeEnv {
-  const base = _runtimeEnv ?? readEnvSnapshot();
+export function createTestEnvironmentConfig(overrides: Partial<EnvironmentConfig> = {}): EnvironmentConfig {
+  const base = _environmentConfig ?? readEnvSnapshot();
 
   return {
     ...base,
@@ -247,13 +247,13 @@ export function createTestRuntimeEnv(overrides: Partial<RuntimeEnv> = {}): Runti
   };
 }
 
-export function _setRuntimeEnvForTesting(env: Partial<RuntimeEnv>): void {
-  const base = _runtimeEnv ?? readEnvSnapshot();
-  _runtimeEnv = Object.freeze({ ...base, ...env });
+export function _setEnvironmentConfigForTesting(env: Partial<EnvironmentConfig>): void {
+  const base = _environmentConfig ?? readEnvSnapshot();
+  _environmentConfig = Object.freeze({ ...base, ...env });
 }
 
-export function _resetRuntimeEnv(): void {
-  _runtimeEnv = null;
-  runtimeEnvInitializedBeforeEnvLoad = false;
-  warnedEarlyRuntimeEnv = false;
+export function _resetEnvironmentConfig(): void {
+  _environmentConfig = null;
+  envConfigInitializedBeforeEnvLoad = false;
+  warnedEarlyEnvConfig = false;
 }

@@ -7,7 +7,7 @@ import { cwd as getCwd, writeStdout } from "#veryfront/platform/compat/process.t
 import { exists, mkdir, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
 import { z } from "zod";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { bold, brand, dim, muted, success, warning } from "../../ui/colors.ts";
 import { isTTY } from "../../utils/index.ts";
 import { detectAITools, formatDetectionHint } from "./detect.ts";
@@ -164,7 +164,7 @@ export function parseTargetFlag(target: string): AIToolId[] {
 export async function installTargets(
   targets: AIToolId[],
   options: Pick<InstallOptions, "cwd" | "force" | "global">,
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<void> {
   z.array(AIToolIdSchema).min(1).parse(targets);
 

@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { RuntimeEnv } from "./runtime-env.ts";
+import type { EnvironmentConfig } from "./environment-config.ts";
 import {
   getAnthropicEnvConfig,
   getApiBaseUrlEnv,
@@ -26,7 +26,7 @@ import {
   isRscExperimentalEnabled,
 } from "./env.ts";
 
-function createMockEnv(overrides: Partial<RuntimeEnv> = {}): RuntimeEnv {
+function createMockEnv(overrides: Partial<EnvironmentConfig> = {}): EnvironmentConfig {
   return {
     nodeEnv: "test",
     veryfrontEnv: "",
@@ -80,6 +80,7 @@ function createMockEnv(overrides: Partial<RuntimeEnv> = {}): RuntimeEnv {
     forceColor: false,
     veryfrontVersion: undefined,
     denoV8Flags: "",
+    v8MaxOldSpaceSize: undefined,
     ...overrides,
   };
 }

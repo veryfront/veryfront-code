@@ -1,7 +1,7 @@
 import { cliLogger } from "#veryfront/utils";
 import { writeStdout } from "#veryfront/platform/compat/process.ts";
 import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { deleteToken, getTokenLocation, hasToken, readToken, saveToken } from "./token-store.ts";
 import { getCallbackUrl, startCallbackServer } from "./callback-server.ts";
 import { canOpenBrowser, openBrowser } from "./browser.ts";
@@ -215,7 +215,7 @@ export async function login(method?: AuthMethod): Promise<UserInfo | null> {
 }
 
 export async function ensureAuthenticated(
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<UserInfo | null> {
   if (env.apiToken) {
     const userInfo = await validateToken(env.apiToken);
@@ -245,7 +245,7 @@ export async function logout(): Promise<void> {
   console.log("  " + success("✓") + " Logged out");
 }
 
-export async function whoami(env: RuntimeEnv = getRuntimeEnv()): Promise<UserInfo | null> {
+export async function whoami(env: EnvironmentConfig = getEnvironmentConfig()): Promise<UserInfo | null> {
   if (env.apiToken) {
     const userInfo = await validateToken(env.apiToken);
     if (userInfo) {

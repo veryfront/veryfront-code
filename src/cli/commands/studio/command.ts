@@ -9,7 +9,7 @@ import { cwd } from "#veryfront/platform/compat/process.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { brand, dim, muted, success } from "../../ui/colors.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 /**
  * Build Studio URL with optional query params
@@ -33,7 +33,7 @@ export function buildStudioUrl(
  */
 async function resolveProjectSlug(
   projectDir: string,
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<string> {
   if (env.projectSlug) return env.projectSlug;
 
@@ -69,7 +69,7 @@ export async function studioCommand(
     branch?: string;
     file?: string;
   } = {},
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<{ url: string; opened: boolean }> {
   const project = options.project ?? (await resolveProjectSlug(cwd(), env));
   const url = buildStudioUrl(project, options);

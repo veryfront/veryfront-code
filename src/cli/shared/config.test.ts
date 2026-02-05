@@ -6,9 +6,9 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { resolveConfig, resolveConfigWithAuth } from "./config.ts";
-import type { RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
-function createMockEnv(overrides: Partial<RuntimeEnv> = {}): RuntimeEnv {
+function createMockEnv(overrides: Partial<EnvironmentConfig> = {}): EnvironmentConfig {
   return {
     apiUrl: overrides.apiUrl,
     apiToken: overrides.apiToken,
@@ -16,7 +16,7 @@ function createMockEnv(overrides: Partial<RuntimeEnv> = {}): RuntimeEnv {
     isDev: false,
     isProduction: true,
     ...overrides,
-  } as RuntimeEnv;
+  } as EnvironmentConfig;
 }
 
 describe("resolveConfig", () => {

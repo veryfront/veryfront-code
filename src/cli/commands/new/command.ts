@@ -6,7 +6,7 @@ import { chdir, cwd } from "#veryfront/platform/compat/process.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { z } from "zod";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 import { ensureAuthenticated, readToken, validateToken } from "../../auth/index.ts";
 import { canOpenBrowser, openBrowser } from "../../auth/browser.ts";
@@ -14,7 +14,7 @@ import { exitProcess, isTTY } from "../../utils/index.ts";
 import { CommonArgs, createArgParser } from "../../shared/args.ts";
 import { scaffoldProjectFast } from "./fast-scaffold.ts";
 import { reserveProjectSlug } from "./reserve-slug.ts";
-import { runNewTui } from "../new-tui.ts";
+import { runNewTui } from "./tui.ts";
 import {
   brand,
   createTui,
@@ -112,7 +112,7 @@ async function deployToCloud(slug: string, token: string): Promise<string> {
 export async function newCommand(
   name: string,
   options: Partial<NewOptions> = {},
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<void> {
   let {
     template,

@@ -14,7 +14,7 @@ import {
 import { ERROR_CATALOG } from "#veryfront/errors/catalog/index.ts";
 import { TransformStage } from "#veryfront/transforms/pipeline/types.ts";
 import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
-import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import { ReloadNotifier } from "../../../reload-notifier.ts";
@@ -626,7 +626,7 @@ function handleGetConfig(ctx: HandlerContext): Response {
     },
   ];
 
-  const env = getRuntimeEnv();
+  const env = getEnvironmentConfig();
   const safeEnvVars: Record<string, string | boolean> = {
     NODE_ENV: env.nodeEnv,
     VERYFRONT_MODE: env.veryfrontMode,

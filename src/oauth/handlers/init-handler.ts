@@ -1,5 +1,5 @@
 import { logger } from "#veryfront/utils";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { type EnvReader, OAuthService } from "../providers/base.ts";
 import type { AuthorizationUrlOptions, OAuthServiceConfig, TokenStore } from "../types.ts";
@@ -15,8 +15,8 @@ export interface OAuthInitHandlerOptions {
   /** Additional authorization options */
   authOptions?: AuthorizationUrlOptions;
 
-  /** RuntimeEnv for test isolation (defaults to getRuntimeEnv()) */
-  env?: RuntimeEnv;
+  /** EnvironmentConfig for test isolation (defaults to getEnvironmentConfig()) */
+  env?: EnvironmentConfig;
 
   /** EnvReader for dynamic env vars (defaults to getEnv) */
   envReader?: EnvReader;
@@ -28,7 +28,7 @@ export function createOAuthInitHandler(
 ): () => Promise<Response> {
   const tokenStore = options.tokenStore ?? memoryTokenStore;
   const authOptions = options.authOptions ?? {};
-  const env = options.env ?? getRuntimeEnv();
+  const env = options.env ?? getEnvironmentConfig();
   const envReader = options.envReader ?? getEnv;
 
   return async function handler(): Promise<Response> {

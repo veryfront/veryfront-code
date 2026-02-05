@@ -7,40 +7,40 @@
  * @module
  */
 
-import { getRuntimeEnv, type RuntimeEnv } from "./runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "./environment-config.ts";
 
-export function getDisableLruIntervalEnv(env: RuntimeEnv = getRuntimeEnv()): boolean {
+export function getDisableLruIntervalEnv(env: EnvironmentConfig = getEnvironmentConfig()): boolean {
   return env.disableLruInterval;
 }
 
-export function getApiBaseUrlEnv(env: RuntimeEnv = getRuntimeEnv()): string {
+export function getApiBaseUrlEnv(env: EnvironmentConfig = getEnvironmentConfig()): string {
   return env.apiBaseUrl;
 }
 
 export function getSsrMaxConcurrentTransformsEnv(
   defaultValue = 3,
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): number {
   return env.ssrMaxConcurrentTransforms || defaultValue;
 }
 
-export function getRedisUrlEnv(env: RuntimeEnv = getRuntimeEnv()): string | undefined {
+export function getRedisUrlEnv(env: EnvironmentConfig = getEnvironmentConfig()): string | undefined {
   return env.redisUrl;
 }
 
-export function getV8FlagsEnv(env: RuntimeEnv = getRuntimeEnv()): string {
+export function getV8FlagsEnv(env: EnvironmentConfig = getEnvironmentConfig()): string {
   return env.denoV8Flags;
 }
 
-export function getCacheDirEnv(env: RuntimeEnv = getRuntimeEnv()): string | undefined {
+export function getCacheDirEnv(env: EnvironmentConfig = getEnvironmentConfig()): string | undefined {
   return env.cacheDir;
 }
 
-export function isPerfEnabledEnv(env: RuntimeEnv = getRuntimeEnv()): boolean {
+export function isPerfEnabledEnv(env: EnvironmentConfig = getEnvironmentConfig()): boolean {
   return env.perfEnabled;
 }
 
-export function getGithubEnvConfig(env: RuntimeEnv = getRuntimeEnv()): {
+export function getGithubEnvConfig(env: EnvironmentConfig = getEnvironmentConfig()): {
   token?: string;
   owner?: string;
   repo?: string;
@@ -54,11 +54,11 @@ export function getGithubEnvConfig(env: RuntimeEnv = getRuntimeEnv()): {
   };
 }
 
-export function getApiTokenEnv(env: RuntimeEnv = getRuntimeEnv()): string | undefined {
+export function getApiTokenEnv(env: EnvironmentConfig = getEnvironmentConfig()): string | undefined {
   return env.apiToken;
 }
 
-export function getOpenAIEnvConfig(env: RuntimeEnv = getRuntimeEnv()): {
+export function getOpenAIEnvConfig(env: EnvironmentConfig = getEnvironmentConfig()): {
   apiKey?: string;
   baseURL?: string;
   organizationId?: string;
@@ -70,7 +70,7 @@ export function getOpenAIEnvConfig(env: RuntimeEnv = getRuntimeEnv()): {
   };
 }
 
-export function getAnthropicEnvConfig(env: RuntimeEnv = getRuntimeEnv()): {
+export function getAnthropicEnvConfig(env: EnvironmentConfig = getEnvironmentConfig()): {
   apiKey?: string;
   baseURL?: string;
 } {
@@ -80,45 +80,45 @@ export function getAnthropicEnvConfig(env: RuntimeEnv = getRuntimeEnv()): {
   };
 }
 
-export function getGoogleGenAIEnvConfig(env: RuntimeEnv = getRuntimeEnv()): {
+export function getGoogleGenAIEnvConfig(env: EnvironmentConfig = getEnvironmentConfig()): {
   apiKey?: string;
 } {
   return { apiKey: env.googleApiKey };
 }
 
-export function isDebugEnvEnabled(env: RuntimeEnv = getRuntimeEnv()): boolean {
+export function isDebugEnvEnabled(env: EnvironmentConfig = getEnvironmentConfig()): boolean {
   return env.debug;
 }
 
-export function isCiEnv(env: RuntimeEnv = getRuntimeEnv()): boolean {
+export function isCiEnv(env: EnvironmentConfig = getEnvironmentConfig()): boolean {
   return env.ci;
 }
 
-export function isDenoTestingEnv(env: RuntimeEnv = getRuntimeEnv()): boolean {
+export function isDenoTestingEnv(env: EnvironmentConfig = getEnvironmentConfig()): boolean {
   return env.denoTesting;
 }
 
-export function getNoColorEnv(env: RuntimeEnv = getRuntimeEnv()): string | undefined {
+export function getNoColorEnv(env: EnvironmentConfig = getEnvironmentConfig()): string | undefined {
   return env.noColor ? "1" : undefined;
 }
 
-export function getForceColorEnv(env: RuntimeEnv = getRuntimeEnv()): string | undefined {
+export function getForceColorEnv(env: EnvironmentConfig = getEnvironmentConfig()): string | undefined {
   return env.forceColor ? "1" : undefined;
 }
 
-export function isRscExperimentalEnabled(env: RuntimeEnv = getRuntimeEnv()): boolean {
+export function isRscExperimentalEnabled(env: EnvironmentConfig = getEnvironmentConfig()): boolean {
   return env.experimentalRsc;
 }
 
-export function getVeryfrontVersion(env: RuntimeEnv = getRuntimeEnv()): string | undefined {
+export function getVeryfrontVersion(env: EnvironmentConfig = getEnvironmentConfig()): string | undefined {
   return env.veryfrontVersion;
 }
 
-export function getEnvironmentFromEnv(env: RuntimeEnv = getRuntimeEnv()): string | undefined {
+export function getEnvironmentFromEnv(env: EnvironmentConfig = getEnvironmentConfig()): string | undefined {
   return env.veryfrontEnv || env.nodeEnv;
 }
 
-export function getOtelTracingConfig(env: RuntimeEnv = getRuntimeEnv()): {
+export function getOtelTracingConfig(env: EnvironmentConfig = getEnvironmentConfig()): {
   enabledFlag?: string;
   veryfrontFlag?: string;
   serviceName?: string;
@@ -143,7 +143,7 @@ export function getOtelTracingConfig(env: RuntimeEnv = getRuntimeEnv()): {
   };
 }
 
-export function getOtelMetricsConfig(env: RuntimeEnv = getRuntimeEnv()): {
+export function getOtelMetricsConfig(env: EnvironmentConfig = getEnvironmentConfig()): {
   enabledFlag?: string;
   veryfrontFlag?: string;
   endpoint?: string;

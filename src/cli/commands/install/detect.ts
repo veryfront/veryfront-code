@@ -6,10 +6,10 @@ import { join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd as getCwd } from "#veryfront/platform/compat/process.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
 import { type AIToolId, type DetectOptions, DetectOptionsSchema } from "./types.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 function createDetectionRules(
-  env: RuntimeEnv,
+  env: EnvironmentConfig,
 ): Record<AIToolId, (cwd: string) => Promise<boolean>> {
   return {
     cursor: async (cwd) => (await exists(join(cwd, ".cursor"))) || Boolean(env.cursorSession),
@@ -23,7 +23,7 @@ function createDetectionRules(
 
 export async function detectAITools(
   options: DetectOptions = {},
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<AIToolId[]> {
   const { cwd = getCwd() } = DetectOptionsSchema.parse(options);
   const rules = createDetectionRules(env);

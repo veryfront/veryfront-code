@@ -10,7 +10,7 @@ import {
   TOKEN_FILE_NAME,
   TOKEN_FILE_PERMISSIONS,
 } from "./constants.ts";
-import type { RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 describe("cli/shared/constants", () => {
   describe("exported constants", () => {
@@ -46,17 +46,17 @@ describe("cli/shared/constants", () => {
 
   describe("getApiUrl", () => {
     it("should return default API URL when env has no override", () => {
-      const env = {} as RuntimeEnv;
+      const env = {} as EnvironmentConfig;
       assertEquals(getApiUrl(env), DEFAULT_API_URL);
     });
 
     it("should return custom API URL from env", () => {
-      const env = { apiUrl: "http://localhost:4000" } as RuntimeEnv;
+      const env = { apiUrl: "http://localhost:4000" } as EnvironmentConfig;
       assertEquals(getApiUrl(env), "http://localhost:4000");
     });
 
     it("should prefer env apiUrl over default", () => {
-      const env = { apiUrl: "https://custom.api.com" } as RuntimeEnv;
+      const env = { apiUrl: "https://custom.api.com" } as EnvironmentConfig;
       assertEquals(getApiUrl(env), "https://custom.api.com");
     });
   });

@@ -8,15 +8,15 @@
  */
 
 import type { VeryfrontConfig } from "./schemas/index.ts";
-import type { RuntimeEnv } from "./runtime-env.ts";
-import { createTestRuntimeEnv, getRuntimeEnv } from "./runtime-env.ts";
+import type { EnvironmentConfig } from "./environment-config.ts";
+import { createTestEnvironmentConfig, getEnvironmentConfig } from "./environment-config.ts";
 
 /**
  * Runtime-specific configuration derived from environment.
  */
 export interface RuntimeInfo {
   /** The runtime environment snapshot */
-  env: RuntimeEnv;
+  env: EnvironmentConfig;
 
   /** True if NODE_ENV is "production" */
   isProduction: boolean;
@@ -80,7 +80,7 @@ export const DEFAULT_CONFIG: Partial<VeryfrontConfig> = {
   },
 };
 
-function createRuntimeInfo(env: RuntimeEnv): RuntimeInfo {
+function createRuntimeInfo(env: EnvironmentConfig): RuntimeInfo {
   return {
     env,
     isProduction: env.nodeEnv === "production",
@@ -91,7 +91,7 @@ function createRuntimeInfo(env: RuntimeEnv): RuntimeInfo {
   };
 }
 
-function mergeConfigWithEnv(fileConfig: VeryfrontConfig, env: RuntimeEnv): VeryfrontConfig {
+function mergeConfigWithEnv(fileConfig: VeryfrontConfig, env: EnvironmentConfig): VeryfrontConfig {
   return {
     ...fileConfig,
 
@@ -134,7 +134,7 @@ function mergeConfigWithEnv(fileConfig: VeryfrontConfig, env: RuntimeEnv): Veryf
 
 export function createRuntimeConfig(
   fileConfig: VeryfrontConfig = {},
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): RuntimeConfig {
   const mergedConfig = mergeConfigWithEnv({ ...DEFAULT_CONFIG, ...fileConfig }, env);
 
@@ -176,12 +176,12 @@ export function updateRuntimeConfig(fileConfig: VeryfrontConfig): RuntimeConfig 
 
 export function createTestConfig(
   overrides: Partial<VeryfrontConfig> & {
-    runtime?: { env?: Partial<RuntimeEnv> };
+    runtime?: { env?: Partial<EnvironmentConfig> };
   } = {},
 ): RuntimeConfig {
   const { runtime: runtimeOverrides, ...configOverrides } = overrides;
 
-  const testEnv = createTestRuntimeEnv(runtimeOverrides?.env);
+  const testEnv = createTestEnvironmentConfig(runtimeOverrides?.env);
   const fileConfig = { ...DEFAULT_CONFIG, ...configOverrides };
 
   return createRuntimeConfig(fileConfig, testEnv);

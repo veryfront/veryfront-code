@@ -7,7 +7,7 @@
 
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getArgs, memoryUsage } from "#veryfront/platform/compat/process.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 const cacheRegistry = new Map<string, () => CacheStats>();
 
@@ -75,7 +75,7 @@ export function getHeapStats(): HeapStats {
   };
 }
 
-function getConfiguredHeapLimit(env: RuntimeEnv = getRuntimeEnv()): number {
+function getConfiguredHeapLimit(env: EnvironmentConfig = getEnvironmentConfig()): number {
   const args = getArgs().join(" ");
 
   const v8FlagsMatch = args.match(/--max-old-space-size=(\d+)/);

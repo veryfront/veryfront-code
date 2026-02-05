@@ -1,13 +1,13 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
-import { createTestRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { createTestEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { deleteToken, getTokenLocation, readToken, saveToken } from "./token-store.ts";
 
 describe("Token Store", () => {
   const testToken = "test-token-12345";
   let tempDir = "";
-  let testEnv: RuntimeEnv;
+  let testEnv: EnvironmentConfig;
 
   async function safeDeleteToken(): Promise<void> {
     try {
@@ -20,7 +20,7 @@ describe("Token Store", () => {
   beforeAll(async () => {
     tempDir = await makeTempDir({ prefix: "token-store-test-" });
     // Create isolated RuntimeEnv for this test - avoids global state conflicts
-    testEnv = createTestRuntimeEnv({
+    testEnv = createTestEnvironmentConfig({
       xdgConfigHome: tempDir,
       homeDir: tempDir,
     });

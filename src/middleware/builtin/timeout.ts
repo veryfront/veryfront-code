@@ -1,7 +1,7 @@
 import type { Middleware } from "./types.ts";
 import { getRequest } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 const DEFAULT_TIMEOUT_MS = 60000;
 const HTTP_GATEWAY_TIMEOUT = 504;
@@ -76,7 +76,7 @@ export function timeout(options?: TimeoutOptions): Middleware {
  *
  * @param env - Optional RuntimeEnv for test isolation
  */
-export function getTimeoutFromEnv(env: RuntimeEnv = getRuntimeEnv()): number {
+export function getTimeoutFromEnv(env: EnvironmentConfig = getEnvironmentConfig()): number {
   const timeoutMs = env.requestTimeoutMs;
   return timeoutMs && timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS;
 }

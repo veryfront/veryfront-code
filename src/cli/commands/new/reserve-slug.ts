@@ -6,7 +6,7 @@
  * @module cli/commands/new/reserve-slug
  */
 
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 export interface ReserveResult {
   slug: string;
@@ -27,14 +27,14 @@ interface CreateProjectResult {
 
 const MAX_SLUG_ATTEMPTS = 10;
 
-function getApiUrl(env: RuntimeEnv = getRuntimeEnv()): string {
+function getApiUrl(env: EnvironmentConfig = getEnvironmentConfig()): string {
   return env.apiUrl ?? "https://api.veryfront.com";
 }
 
 export async function reserveProjectSlug(
   slug: string,
   token: string,
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<ReserveResult> {
   let currentSlug = slug;
 
@@ -62,7 +62,7 @@ export async function reserveProjectSlug(
 async function tryCreateProject(
   slug: string,
   token: string,
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<CreateProjectResult> {
   try {
     const response = await fetch(`${getApiUrl(env)}/projects`, {
@@ -94,7 +94,7 @@ async function tryCreateProject(
 export async function isSlugAvailable(
   slug: string,
   token: string,
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<boolean> {
   try {
     const response = await fetch(`${getApiUrl(env)}/projects/${slug}`, {

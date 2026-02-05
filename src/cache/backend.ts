@@ -5,7 +5,7 @@ import type { Span } from "@opentelemetry/api";
 import { getRedisClient, isRedisConfigured, type RedisClient } from "../utils/redis-client.ts";
 import { runtime } from "../platform/adapters/registry.ts";
 import { tryGetCacheKeyContext } from "./cache-key-builder.ts";
-import { getRuntimeEnv, isRuntimeEnvInitialized, type RuntimeEnv } from "../config/runtime-env.ts";
+import { getEnvironmentConfig, isEnvironmentConfigInitialized, type EnvironmentConfig } from "../config/environment-config.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "../utils/circuit-breaker.ts";
 import { MEMORY_CACHE_MAX_ENTRIES } from "../utils/constants/cache.ts";
 import type { CacheBackend } from "./types.ts";
@@ -32,13 +32,13 @@ function getCurrentRequestContext(): CacheRequestContext | null {
   return (mod?.getCurrentRequestContext?.() as CacheRequestContext | undefined) ?? null;
 }
 
-const ENV_KEY_MAP: Record<string, keyof RuntimeEnv | undefined> = {
+const ENV_KEY_MAP: Record<string, keyof EnvironmentConfig | undefined> = {
   VERYFRONT_API_BASE_URL: "apiBaseUrl",
   VERYFRONT_API_TOKEN: "apiToken",
 };
 
-function getEnvValue(key: string, env?: RuntimeEnv): string | undefined {
-  const runtimeEnv = env ?? (isRuntimeEnvInitialized() ? getRuntimeEnv() : null);
+function getEnvValue(key: string, env?: EnvironmentConfig): string | undefined {
+  const runtimeEnv = env ?? (isEnvironmentConfigInitialized() ? getEnvironmentConfig() : null);
   if (runtimeEnv) {
     const prop = ENV_KEY_MAP[key];
     return prop ? (runtimeEnv[prop] as string | undefined) : undefined;
@@ -286,7 +286,7 @@ export class ApiCacheBackend implements CacheBackend {
   private apiBaseUrl: string;
   private keyPrefix: string;
   private timeoutMs: number;
-  private env?: RuntimeEnv;
+  private env?: EnvironmentConfig;
   private circuitBreaker;
 
   constructor(
@@ -294,7 +294,7 @@ export class ApiCacheBackend implements CacheBackend {
       apiBaseUrl?: string;
       keyPrefix?: string;
       timeoutMs?: number;
-      env?: RuntimeEnv;
+      env?: EnvironmentConfig;
       circuitBreakerName?: string;
     } = {},
   ) {
@@ -480,11 +480,11 @@ export interface CacheBackendConfig {
   memoryMaxEntries?: number;
   preferredBackend?: "api" | "redis" | "memory";
   apiBaseUrl?: string;
-  env?: RuntimeEnv;
+  env?: EnvironmentConfig;
   circuitBreakerName?: string;
 }
 
-export function isApiCacheAvailable(env?: RuntimeEnv): boolean {
+export function isApiCacheAvailable(env?: EnvironmentConfig): boolean {
   // deno-lint-ignore no-explicit-any
   const g = globalThis as any;
   const getEnvDirect = (key: string) => g.Deno?.env?.get(key) ?? g.process?.env?.[key];

@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createTestRuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { createTestEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { isRSCEnabled } from "./feature-flags.ts";
 
 describe("feature-flags", () => {
@@ -14,32 +14,32 @@ describe("feature-flags", () => {
     });
 
     it("should return true when env experimentalRsc is true", () => {
-      const env = createTestRuntimeEnv({ experimentalRsc: true });
+      const env = createTestEnvironmentConfig({ experimentalRsc: true });
       assertEquals(isRSCEnabled(undefined, env), true);
     });
 
     it("should return false when env is not set and no config", () => {
-      const env = createTestRuntimeEnv({ experimentalRsc: false });
+      const env = createTestEnvironmentConfig({ experimentalRsc: false });
       assertEquals(isRSCEnabled(undefined, env), false);
     });
 
     it("should return false when experimentalRsc is false in env", () => {
-      const env = createTestRuntimeEnv({ experimentalRsc: false });
+      const env = createTestEnvironmentConfig({ experimentalRsc: false });
       assertEquals(isRSCEnabled(undefined, env), false);
     });
 
     it("should prefer config over env when config is provided", () => {
-      const env = createTestRuntimeEnv({ experimentalRsc: true });
+      const env = createTestEnvironmentConfig({ experimentalRsc: true });
       assertEquals(isRSCEnabled({ experimental: { rsc: false } }, env), false);
     });
 
     it("should fall back to env when config.experimental is missing", () => {
-      const env = createTestRuntimeEnv({ experimentalRsc: true });
+      const env = createTestEnvironmentConfig({ experimentalRsc: true });
       assertEquals(isRSCEnabled({}, env), true);
     });
 
     it("should fall back to env when config.experimental.rsc is undefined", () => {
-      const env = createTestRuntimeEnv({ experimentalRsc: true });
+      const env = createTestEnvironmentConfig({ experimentalRsc: true });
       assertEquals(isRSCEnabled({ experimental: {} }, env), true);
     });
   });

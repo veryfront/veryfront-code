@@ -10,7 +10,7 @@ import type { Plugin } from "esbuild";
 import { replaceSpecifiers } from "./lexer.ts";
 import { DEFAULT_REACT_VERSION, getReactUrls } from "./package-registry.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 
@@ -26,7 +26,7 @@ const HTTP_USER_AGENT = "Mozilla/5.0 Veryfront/1.0";
  *
  * @param env - Optional RuntimeEnv for test isolation
  */
-function getHttpTimeout(env: RuntimeEnv = getRuntimeEnv()): number {
+function getHttpTimeout(env: EnvironmentConfig = getEnvironmentConfig()): number {
   const timeout = env.httpFetchTimeoutMs;
   if (timeout !== undefined && timeout > 0) return timeout;
   return HTTP_FETCH_TIMEOUT_MS;

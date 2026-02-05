@@ -3,7 +3,7 @@
  * @module cli/shared/constants
  */
 
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 export const DEFAULT_DEV_PORT = 3000;
 export const DEFAULT_PROXY_PORT = 8080;
@@ -14,7 +14,7 @@ export const MAX_PORT_ATTEMPTS = 100;
 export const DEFAULT_API_URL = "https://api.veryfront.com";
 export const DEFAULT_LOCAL_API_URL = "http://api.veryfront.me:4000";
 
-export function getApiUrl(env: RuntimeEnv = getRuntimeEnv()): string {
+export function getApiUrl(env: EnvironmentConfig = getEnvironmentConfig()): string {
   return env.apiUrl ?? DEFAULT_API_URL;
 }
 

@@ -6,7 +6,7 @@
 
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
-import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { readToken } from "../auth/token-store.ts";
 import { pullCommand } from "../commands/pull/index.ts";
 import { addLog, type AppState, type StateUpdater } from "./state.ts";
@@ -54,7 +54,7 @@ export async function createRemoteProject(
   token: string,
   slug: string,
 ): Promise<{ slug: string }> {
-  const apiUrl = getRuntimeEnv().apiUrl || "https://api.veryfront.com";
+  const apiUrl = getEnvironmentConfig().apiUrl || "https://api.veryfront.com";
   const response = await fetch(`${apiUrl}/projects`, {
     method: "POST",
     headers: {

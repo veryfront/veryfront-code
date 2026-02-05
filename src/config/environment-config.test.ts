@@ -6,27 +6,27 @@
 import { afterEach, beforeEach, describe, it } from "#std/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import {
-  _resetRuntimeEnv,
-  _setRuntimeEnvForTesting,
-  createTestRuntimeEnv,
-  getRuntimeEnv,
-  initRuntimeEnv,
-  isRuntimeEnvInitialized,
-  type RuntimeEnv,
-} from "./runtime-env.ts";
+  _resetEnvironmentConfig,
+  _setEnvironmentConfigForTesting,
+  createTestEnvironmentConfig,
+  getEnvironmentConfig,
+  initEnvironmentConfig,
+  isEnvironmentConfigInitialized,
+  type EnvironmentConfig,
+} from "./environment-config.ts";
 import { __resetEnvLoaderForTests, markEnvLoaded } from "#veryfront/utils/env-loader.ts";
 
-describe("RuntimeEnv", () => {
-  beforeEach(_resetRuntimeEnv);
+describe("EnvironmentConfig", () => {
+  beforeEach(_resetEnvironmentConfig);
   beforeEach(markEnvLoaded);
   afterEach(() => {
     __resetEnvLoaderForTests();
-    _resetRuntimeEnv();
+    _resetEnvironmentConfig();
   });
 
-  describe("initRuntimeEnv", () => {
+  describe("initEnvironmentConfig", () => {
     it("initializes RuntimeEnv from environment", () => {
-      const env = initRuntimeEnv();
+      const env = initEnvironmentConfig();
 
       expect(env).toBeDefined();
       expect(typeof env.nodeEnv).toBe("string");
@@ -35,32 +35,32 @@ describe("RuntimeEnv", () => {
     });
 
     it("returns same instance on subsequent calls", () => {
-      const env1 = initRuntimeEnv();
-      const env2 = initRuntimeEnv();
+      const env1 = initEnvironmentConfig();
+      const env2 = initEnvironmentConfig();
 
       expect(env1).toBe(env2);
     });
 
     it("freezes the returned object", () => {
-      const env = initRuntimeEnv();
+      const env = initEnvironmentConfig();
 
       expect(Object.isFrozen(env)).toBe(true);
     });
   });
 
-  describe("getRuntimeEnv", () => {
+  describe("getEnvironmentConfig", () => {
     it("auto-initializes if not initialized", () => {
-      expect(isRuntimeEnvInitialized()).toBe(false);
+      expect(isEnvironmentConfigInitialized()).toBe(false);
 
-      const env = getRuntimeEnv();
+      const env = getEnvironmentConfig();
 
       expect(env).toBeDefined();
-      expect(isRuntimeEnvInitialized()).toBe(true);
+      expect(isEnvironmentConfigInitialized()).toBe(true);
     });
 
     it("returns initialized env", () => {
-      const initialized = initRuntimeEnv();
-      const retrieved = getRuntimeEnv();
+      const initialized = initEnvironmentConfig();
+      const retrieved = getEnvironmentConfig();
 
       expect(retrieved).toBe(initialized);
     });
@@ -68,24 +68,24 @@ describe("RuntimeEnv", () => {
 
   describe("isRuntimeEnvInitialized", () => {
     it("returns false before initialization", () => {
-      expect(isRuntimeEnvInitialized()).toBe(false);
+      expect(isEnvironmentConfigInitialized()).toBe(false);
     });
 
     it("returns true after initialization", () => {
-      initRuntimeEnv();
-      expect(isRuntimeEnvInitialized()).toBe(true);
+      initEnvironmentConfig();
+      expect(isEnvironmentConfigInitialized()).toBe(true);
     });
 
     it("returns false after reset", () => {
-      initRuntimeEnv();
-      _resetRuntimeEnv();
-      expect(isRuntimeEnvInitialized()).toBe(false);
+      initEnvironmentConfig();
+      _resetEnvironmentConfig();
+      expect(isEnvironmentConfigInitialized()).toBe(false);
     });
   });
 
-  describe("createTestRuntimeEnv", () => {
+  describe("createTestEnvironmentConfig", () => {
     it("creates env with test defaults", () => {
-      const env = createTestRuntimeEnv();
+      const env = createTestEnvironmentConfig();
 
       expect(env.nodeEnv).toBe("test");
       expect(env.debug).toBe(false);
@@ -94,7 +94,7 @@ describe("RuntimeEnv", () => {
     });
 
     it("allows overrides", () => {
-      const env = createTestRuntimeEnv({
+      const env = createTestEnvironmentConfig({
         debug: true,
         experimentalRsc: true,
         port: 9999,
@@ -107,18 +107,18 @@ describe("RuntimeEnv", () => {
     });
 
     it("does not affect global singleton", () => {
-      initRuntimeEnv();
-      const globalEnv = getRuntimeEnv();
+      initEnvironmentConfig();
+      const globalEnv = getEnvironmentConfig();
 
-      const testEnv = createTestRuntimeEnv({ debug: true });
+      const testEnv = createTestEnvironmentConfig({ debug: true });
 
       expect(testEnv.debug).toBe(true);
-      expect(getRuntimeEnv()).toBe(globalEnv);
-      expect(getRuntimeEnv().debug).toBe(globalEnv.debug);
+      expect(getEnvironmentConfig()).toBe(globalEnv);
+      expect(getEnvironmentConfig().debug).toBe(globalEnv.debug);
     });
 
     it("can override nodeEnv", () => {
-      const env = createTestRuntimeEnv({ nodeEnv: "production" });
+      const env = createTestEnvironmentConfig({ nodeEnv: "production" });
 
       expect(env.nodeEnv).toBe("production");
     });
@@ -126,37 +126,37 @@ describe("RuntimeEnv", () => {
 
   describe("_setRuntimeEnvForTesting", () => {
     it("overrides global env", () => {
-      initRuntimeEnv();
+      initEnvironmentConfig();
 
-      _setRuntimeEnvForTesting({ debug: true, port: 8888 });
+      _setEnvironmentConfigForTesting({ debug: true, port: 8888 });
 
-      const env = getRuntimeEnv();
+      const env = getEnvironmentConfig();
       expect(env.debug).toBe(true);
       expect(env.port).toBe(8888);
     });
 
     it("freezes the overridden env", () => {
-      _setRuntimeEnvForTesting({ debug: true });
+      _setEnvironmentConfigForTesting({ debug: true });
 
-      const env = getRuntimeEnv();
+      const env = getEnvironmentConfig();
       expect(Object.isFrozen(env)).toBe(true);
     });
   });
 
-  describe("_resetRuntimeEnv", () => {
+  describe("_resetEnvironmentConfig", () => {
     it("clears the singleton", () => {
-      initRuntimeEnv();
-      expect(isRuntimeEnvInitialized()).toBe(true);
+      initEnvironmentConfig();
+      expect(isEnvironmentConfigInitialized()).toBe(true);
 
-      _resetRuntimeEnv();
+      _resetEnvironmentConfig();
 
-      expect(isRuntimeEnvInitialized()).toBe(false);
+      expect(isEnvironmentConfigInitialized()).toBe(false);
     });
   });
 
   describe("test isolation pattern", () => {
-    it("createTestRuntimeEnv provides isolated config for tests", () => {
-      const testEnv = createTestRuntimeEnv({
+    it("createTestEnvironmentConfig provides isolated config for tests", () => {
+      const testEnv = createTestEnvironmentConfig({
         apiToken: "test-token-123",
         projectSlug: "test-project",
         ci: true,
@@ -167,13 +167,13 @@ describe("RuntimeEnv", () => {
       expect(testEnv.ci).toBe(true);
       expect(testEnv.nodeEnv).toBe("test");
 
-      const globalEnv = getRuntimeEnv();
+      const globalEnv = getEnvironmentConfig();
       expect(globalEnv.apiToken).not.toBe("test-token-123");
     });
 
     it("test envs are independent of each other", () => {
-      const env1 = createTestRuntimeEnv({ port: 1111 });
-      const env2 = createTestRuntimeEnv({ port: 2222 });
+      const env1 = createTestEnvironmentConfig({ port: 1111 });
+      const env2 = createTestEnvironmentConfig({ port: 2222 });
 
       expect(env1.port).toBe(1111);
       expect(env2.port).toBe(2222);
@@ -181,7 +181,7 @@ describe("RuntimeEnv", () => {
     });
 
     it("supports CLI-specific fields", () => {
-      const env = createTestRuntimeEnv({
+      const env = createTestEnvironmentConfig({
         homeDir: "/home/test",
         xdgConfigHome: "/home/test/.config",
         sshClient: "192.168.1.1 12345 22",
@@ -197,7 +197,7 @@ describe("RuntimeEnv", () => {
 
   describe("environment variable parsing", () => {
     it("has expected default values", () => {
-      const env = createTestRuntimeEnv();
+      const env = createTestEnvironmentConfig();
 
       expect(env.apiBaseUrl).toBeDefined();
       expect(typeof env.apiBaseUrl).toBe("string");
@@ -205,9 +205,9 @@ describe("RuntimeEnv", () => {
     });
 
     it("handles all RuntimeEnv properties", () => {
-      const env = createTestRuntimeEnv();
+      const env = createTestEnvironmentConfig();
 
-      const expectedProps: (keyof RuntimeEnv)[] = [
+      const expectedProps: (keyof EnvironmentConfig)[] = [
         "nodeEnv",
         "veryfrontEnv",
         "veryfrontMode",

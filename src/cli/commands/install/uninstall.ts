@@ -7,7 +7,7 @@ import { cwd as getCwd, writeStdout } from "#veryfront/platform/compat/process.t
 import { exists, readDir, remove } from "#veryfront/platform/compat/fs.ts";
 import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
 import { z } from "zod";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { bold, brand, dim, muted, success, warning } from "../../ui/colors.ts";
 import { isTTY } from "../../utils/index.ts";
 import { AI_TOOLS, getToolById, isValidToolId } from "./registry.ts";
@@ -165,7 +165,7 @@ export function parseTargetFlag(target: string): AIToolId[] {
 
 export async function findInstalledTools(
   options: Pick<UninstallOptions, "cwd" | "global">,
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<AIToolId[]> {
   const cwd = options.cwd ?? getCwd();
   const homeDir = env.homeDir!;
@@ -187,7 +187,7 @@ async function isDirEmpty(path: string): Promise<boolean> {
 export async function uninstallTargets(
   targets: AIToolId[],
   options: Pick<UninstallOptions, "cwd" | "global">,
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<void> {
   z.array(AIToolIdSchema).min(1).parse(targets);
 

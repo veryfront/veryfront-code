@@ -8,7 +8,7 @@
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig, type EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { cliLogger } from "#veryfront/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
@@ -83,7 +83,7 @@ async function inferProjectSlug(projectDir: string): Promise<string | null> {
 
 async function resolveConfigBase(
   projectDir: string | undefined,
-  env: RuntimeEnv,
+  env: EnvironmentConfig,
   interactive: boolean,
 ): Promise<ResolvedConfig> {
   const dir = projectDir ?? cwd();
@@ -118,7 +118,7 @@ async function resolveConfigBase(
 
 export function resolveConfig(
   projectDir?: string,
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<ResolvedConfig> {
   return resolveConfigBase(projectDir, env, false);
 }
@@ -131,7 +131,7 @@ export function resolveConfig(
  */
 export function resolveConfigWithAuth(
   projectDir?: string,
-  env: RuntimeEnv = getRuntimeEnv(),
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<ResolvedConfig> {
   return resolveConfigBase(projectDir, env, true);
 }

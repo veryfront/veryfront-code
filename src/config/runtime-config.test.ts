@@ -17,11 +17,11 @@ import {
   type RuntimeConfig,
   updateRuntimeConfig,
 } from "./runtime-config.ts";
-import { _resetRuntimeEnv, createTestRuntimeEnv } from "./runtime-env.ts";
+import { _resetEnvironmentConfig, createTestEnvironmentConfig } from "./environment-config.ts";
 
 function reset(): void {
   _resetRuntimeConfig();
-  _resetRuntimeEnv();
+  _resetEnvironmentConfig();
 }
 
 describe("RuntimeConfig", () => {
@@ -41,7 +41,7 @@ describe("RuntimeConfig", () => {
 
   describe("createRuntimeConfig", () => {
     it("creates config with defaults", () => {
-      const env = createTestRuntimeEnv();
+      const env = createTestEnvironmentConfig();
       const config = createRuntimeConfig({}, env);
 
       expect(config.title).toBe("Veryfront App");
@@ -50,7 +50,7 @@ describe("RuntimeConfig", () => {
     });
 
     it("merges file config with defaults", () => {
-      const env = createTestRuntimeEnv();
+      const env = createTestEnvironmentConfig();
       const config = createRuntimeConfig(
         { title: "My App", projectSlug: "my-app" },
         env,
@@ -64,7 +64,7 @@ describe("RuntimeConfig", () => {
     it("computes runtime flags correctly", () => {
       const prodConfig = createRuntimeConfig(
         {},
-        createTestRuntimeEnv({ nodeEnv: "production" }),
+        createTestEnvironmentConfig({ nodeEnv: "production" }),
       );
 
       expect(prodConfig.runtime.isProduction).toBe(true);
@@ -73,7 +73,7 @@ describe("RuntimeConfig", () => {
 
       const devConfig = createRuntimeConfig(
         {},
-        createTestRuntimeEnv({ nodeEnv: "development" }),
+        createTestEnvironmentConfig({ nodeEnv: "development" }),
       );
 
       expect(devConfig.runtime.isProduction).toBe(false);
@@ -82,7 +82,7 @@ describe("RuntimeConfig", () => {
 
       const testConfig = createRuntimeConfig(
         {},
-        createTestRuntimeEnv({ nodeEnv: "test" }),
+        createTestEnvironmentConfig({ nodeEnv: "test" }),
       );
 
       expect(testConfig.runtime.isProduction).toBe(false);
@@ -93,7 +93,7 @@ describe("RuntimeConfig", () => {
     it("detects test mode from DENO_TESTING", () => {
       const config = createRuntimeConfig(
         {},
-        createTestRuntimeEnv({ nodeEnv: "development", denoTesting: true }),
+        createTestEnvironmentConfig({ nodeEnv: "development", denoTesting: true }),
       );
 
       expect(config.runtime.isTest).toBe(true);
@@ -102,7 +102,7 @@ describe("RuntimeConfig", () => {
     it("env projectSlug overrides file config", () => {
       const config = createRuntimeConfig(
         { projectSlug: "file-slug" },
-        createTestRuntimeEnv({ projectSlug: "env-slug" }),
+        createTestEnvironmentConfig({ projectSlug: "env-slug" }),
       );
 
       expect(config.projectSlug).toBe("env-slug");
@@ -111,7 +111,7 @@ describe("RuntimeConfig", () => {
     it("env can enable experimental.rsc", () => {
       const config = createRuntimeConfig(
         {},
-        createTestRuntimeEnv({ experimentalRsc: true }),
+        createTestEnvironmentConfig({ experimentalRsc: true }),
       );
 
       expect(config.experimental?.rsc).toBe(true);
@@ -120,7 +120,7 @@ describe("RuntimeConfig", () => {
     it("file config experimental.rsc takes precedence", () => {
       const config = createRuntimeConfig(
         { experimental: { rsc: true } },
-        createTestRuntimeEnv({ experimentalRsc: false }),
+        createTestEnvironmentConfig({ experimentalRsc: false }),
       );
 
       expect(config.experimental?.rsc).toBe(true);
@@ -129,7 +129,7 @@ describe("RuntimeConfig", () => {
     it("env port overrides file config", () => {
       const config = createRuntimeConfig(
         { dev: { port: 3000 } },
-        createTestRuntimeEnv({ port: 9000 }),
+        createTestEnvironmentConfig({ port: 9000 }),
       );
 
       expect(config.dev?.port).toBe(9000);

@@ -7,14 +7,14 @@ export {
 export { defineConfig } from "./define-config.ts";
 
 export {
-  _resetRuntimeEnv,
-  _setRuntimeEnvForTesting,
-  createTestRuntimeEnv,
-  getRuntimeEnv,
-  initRuntimeEnv,
-  isRuntimeEnvInitialized,
-  type RuntimeEnv,
-} from "./runtime-env.ts";
+  _resetEnvironmentConfig,
+  _setEnvironmentConfigForTesting,
+  createTestEnvironmentConfig,
+  getEnvironmentConfig,
+  initEnvironmentConfig,
+  isEnvironmentConfigInitialized,
+  type EnvironmentConfig,
+} from "./environment-config.ts";
 
 export {
   _resetRuntimeConfig,

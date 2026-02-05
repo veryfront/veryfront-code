@@ -11,17 +11,17 @@
 
 import { z } from "zod";
 import type { MCPTool } from "./tools.ts";
-import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 import { DEFAULT_LOCAL_API_URL } from "../shared/constants.ts";
 
 function getApiBaseUrl(): string {
-  return getRuntimeEnv().apiBaseUrl || DEFAULT_LOCAL_API_URL;
+  return getEnvironmentConfig().apiBaseUrl || DEFAULT_LOCAL_API_URL;
 }
 
 function getApiToken(): string | undefined {
-  return getRuntimeEnv().apiToken;
+  return getEnvironmentConfig().apiToken;
 }
 
 async function apiRequest<T>(
