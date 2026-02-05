@@ -44,8 +44,8 @@ export async function resolveComponents(
 
   try {
     const [{ ComponentRegistry }, { VirtualModuleSystem }] = await Promise.all([
-      import("../../ssr.ts"),
-      import("../../virtual-module-system.ts"),
+      import("#veryfront/rendering/ssr/component-registry.ts"),
+      import("#veryfront/rendering/virtual-module-system.ts"),
     ]);
 
     const virtualModules = new VirtualModuleSystem();

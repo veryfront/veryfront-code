@@ -21,7 +21,6 @@ import {
 import { cursor, screen } from "../ui/ansi.ts";
 import { dim } from "../ui/colors.ts";
 import { getTerminalWidth } from "../ui/layout.ts";
-import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 
 import type { App, AppConfig } from "./types.ts";
 import {
@@ -31,7 +30,6 @@ import {
   endInput,
   getActiveSelection,
   goBack,
-  type LogMeta,
   navigateTo,
   type ProjectInfo,
   scrollLogs,
@@ -61,22 +59,30 @@ import {
   renderTemplatesView,
 } from "./views/index.ts";
 import { openInBrowser, openInIDE, openInStudio, openMCPSettings } from "./actions.ts";
-import {
-  copyDirectory,
-  createRemoteProject,
-  generateRandomSlug,
-  getLocalProjectsFromState,
-  normalizeSlug,
-  pullRemoteProject,
-} from "./utils.ts";
-import { initCommand } from "../commands/init/init-command.ts";
+import { generateRandomSlug, pullRemoteProject } from "./utils.ts";
 import type { InitTemplate } from "../commands/init/types.ts";
-import { login, logout, validateToken } from "../auth/login.ts";
+import { logout, validateToken } from "../auth/login.ts";
 import { readToken } from "../auth/token-store.ts";
 import { openBrowser } from "../auth/browser.ts";
 import { fetchRemoteProjects } from "../sync/index.ts";
 import { pullCommand } from "../commands/pull/index.ts";
 import { pushCommand } from "../commands/push/index.ts";
+
+// Import extracted modules
+import {
+  moveRemoteFocusDown,
+  moveRemoteFocusUp,
+  updateRemoteFocus,
+} from "./handlers/remote-navigation.ts";
+import {
+  handleAuthKey,
+  handleExamplesKey,
+  handleNewProjectKey,
+  handleTemplatesKey,
+  type ViewHandlerContext,
+} from "./handlers/view-handlers.ts";
+import { createProject, createProjectFromExample } from "./operations/project-creation.ts";
+import { interceptConsole } from "./logging/console-interceptor.ts";
 
 const KEY_UP = "\x1b[A";
 const KEY_DOWN = "\x1b[B";
@@ -228,124 +234,16 @@ export function createApp(config: AppConfig): App {
     spinnerInterval = null;
   }
 
-  function updateRemoteFocus(newIndex: number): void {
-    const visibleCount = 5;
-    let scrollOffset = state.remote.scrollOffset;
-    if (newIndex < scrollOffset) {
-      scrollOffset = newIndex;
-    } else if (newIndex >= scrollOffset + visibleCount) {
-      scrollOffset = newIndex - visibleCount + 1;
-    }
-    update(updateRemote({ focusedIndex: newIndex, scrollOffset }));
-  }
-
-  function moveRemoteFocusUp(): void {
-    const total = state.remote.projects.length;
-    const visibleCount = 5;
-    const newIndex = state.remote.focusedIndex > 0 ? state.remote.focusedIndex - 1 : total - 1;
-
-    let scrollOffset = state.remote.scrollOffset;
-    if (newIndex < scrollOffset) {
-      scrollOffset = newIndex;
-    } else if (newIndex === total - 1) {
-      scrollOffset = Math.max(0, total - visibleCount);
-    }
-    update(updateRemote({ focusedIndex: newIndex, scrollOffset }));
-  }
-
-  function moveRemoteFocusDown(): void {
-    const total = state.remote.projects.length;
-    const visibleCount = 5;
-    const newIndex = state.remote.focusedIndex < total - 1 ? state.remote.focusedIndex + 1 : 0;
-
-    let scrollOffset = state.remote.scrollOffset;
-    if (newIndex === 0) {
-      scrollOffset = 0;
-    } else if (newIndex >= scrollOffset + visibleCount) {
-      scrollOffset = newIndex - visibleCount + 1;
-    }
-    update(updateRemote({ focusedIndex: newIndex, scrollOffset }));
-  }
-
-  async function createProject(projectName: string, template: InitTemplate): Promise<void> {
-    try {
-      state = addLog("info", "Creating project...")(state);
-      render();
-
-      const token = await readToken();
-      if (!token) {
-        state = addLog("error", "Not authenticated. Press 'a' to login.")(state);
-        return;
-      }
-
-      const normalizedSlug = normalizeSlug(projectName);
-      const { slug } = await createRemoteProject(token, normalizedSlug);
-      const projectPath = `${cwd()}/projects/${slug}`;
-
-      await initCommand({
-        name: `projects/${slug}`,
-        template,
-        skipInstall: true,
-        skipEnvPrompt: true,
-        quiet: true,
-      });
-
-      const currentProjects = getLocalProjectsFromState(state);
-      currentProjects.push({ slug, path: projectPath });
-      state = setProjects(currentProjects)(state);
-
-      const result = await fetchRemoteProjects();
-      state = updateRemote({
-        projects: result.projects.map((p) => ({ id: p.id, name: p.name, slug: p.slug })),
-      })(state);
-
-      state = addLog("info", `Created ${slug}`)(state);
-    } catch (error) {
-      state = addLog("error", `Failed: ${error}`)(state);
-    }
-  }
-
-  async function createProjectFromExample(
-    projectName: string,
-    example: ProjectInfo,
-  ): Promise<void> {
-    try {
-      state = addLog("info", `Creating project from ${example.slug}...`)(state);
-      render();
-
-      const token = await readToken();
-      if (!token) {
-        state = addLog("error", "Not authenticated. Press 'a' to login.")(state);
-        return;
-      }
-
-      const normalizedSlug = normalizeSlug(projectName);
-      const { slug } = await createRemoteProject(token, normalizedSlug);
-      const projectPath = `${cwd()}/projects/${slug}`;
-
-      await copyDirectory(example.path, projectPath);
-
-      const currentProjects = getLocalProjectsFromState(state);
-      currentProjects.push({ slug, path: projectPath });
-      state = setProjects(currentProjects)(state);
-
-      const result = await fetchRemoteProjects();
-      state = updateRemote({
-        projects: result.projects.map((p) => ({ id: p.id, name: p.name, slug: p.slug })),
-      })(state);
-
-      state = addLog("info", `Created ${slug} from ${example.slug}`)(state);
-    } catch (error) {
-      state = addLog("error", `Failed: ${error}`)(state);
-    }
-  }
-
+  // Project creation prompts using extracted module
   function promptForProjectName(template: InitTemplate, onCancel: () => void): void {
     const suggested = generateRandomSlug();
     state = startInput(
       "Project name",
       async (name: string) => {
-        if (name.trim()) await createProject(name.trim(), template);
+        if (name.trim()) {
+          const ctx = { state, render };
+          state = await createProject(ctx, name.trim(), template);
+        }
         state = navigateTo("dashboard")(state);
         render();
       },
@@ -360,7 +258,10 @@ export function createApp(config: AppConfig): App {
     state = startInput(
       "Project name",
       async (name: string) => {
-        if (name.trim()) await createProjectFromExample(name.trim(), example);
+        if (name.trim()) {
+          const ctx = { state, render };
+          state = await createProjectFromExample(ctx, name.trim(), example);
+        }
         state = navigateTo("dashboard")(state);
         render();
       },
@@ -370,135 +271,19 @@ export function createApp(config: AppConfig): App {
     render();
   }
 
-  function handleTemplatesKey(key: string): void {
-    if (key === KEY_UP || key === "k") {
-      state = { ...state, templates: moveUp(state.templates) };
-      render();
-      return;
-    }
-
-    if (key === KEY_DOWN || key === "j") {
-      state = { ...state, templates: moveDown(state.templates, state.templates.items.length) };
-      render();
-      return;
-    }
-
-    if (key === KEY_ENTER || key === KEY_NEWLINE) {
-      const selected = state.templates.items[state.templates.selectedIndex];
-      if (selected) promptForProjectName(selected.id as InitTemplate, () => render());
-    }
-  }
-
-  function handleExamplesKey(key: string): void {
-    if (key === KEY_UP || key === "k") {
-      state = { ...state, examples: moveUp(state.examples) };
-      render();
-      return;
-    }
-
-    if (key === KEY_DOWN || key === "j") {
-      state = { ...state, examples: moveDown(state.examples, state.examples.items.length) };
-      render();
-      return;
-    }
-
-    if (key === KEY_ENTER || key === KEY_NEWLINE) {
-      const selected = state.examples.items[state.examples.selectedIndex];
-      if (selected?.data) promptForExampleProject(selected.data, () => render());
-    }
-  }
-
-  function handleNewProjectKey(key: string): void {
-    if (key === KEY_UP || key === "k") {
-      state = {
-        ...state,
-        newProjectIndex: state.newProjectIndex > 0 ? state.newProjectIndex - 1 : 2,
-      };
-      render();
-      return;
-    }
-
-    if (key === KEY_DOWN || key === "j") {
-      state = {
-        ...state,
-        newProjectIndex: state.newProjectIndex < 2 ? state.newProjectIndex + 1 : 0,
-      };
-      render();
-      return;
-    }
-
-    if (key >= "1" && key <= "3") {
-      state = { ...state, newProjectIndex: parseInt(key, 10) - 1 };
-      render();
-    }
-
-    if (key !== KEY_ENTER && key !== KEY_NEWLINE && !(key >= "1" && key <= "3")) return;
-
-    switch (state.newProjectIndex) {
-      case 0:
-        update(navigateTo("templates"));
-        return;
-      case 1:
-        update(navigateTo("examples"));
-        return;
-      case 2:
-        promptForProjectName("minimal", () => render());
-        return;
-    }
-  }
-
-  function handleAuthKey(key: string): void {
-    const providerList: Array<"google" | "github" | "microsoft"> = [
-      "google",
-      "github",
-      "microsoft",
-    ];
-
-    if (key === KEY_UP || key === "k") {
-      state = {
-        ...state,
-        authProviderIndex: state.authProviderIndex > 0 ? state.authProviderIndex - 1 : 2,
-      };
-      render();
-      return;
-    }
-
-    if (key === KEY_DOWN || key === "j") {
-      state = {
-        ...state,
-        authProviderIndex: state.authProviderIndex < 2 ? state.authProviderIndex + 1 : 0,
-      };
-      render();
-      return;
-    }
-
-    if (key >= "1" && key <= "3") {
-      state = { ...state, authProviderIndex: parseInt(key, 10) - 1 };
-      render();
-      return;
-    }
-
-    if (key !== KEY_ENTER && key !== KEY_NEWLINE) return;
-
-    const provider = providerList[state.authProviderIndex];
-    update(addLog("info", `Opening browser for ${provider} login...`));
-    update(navigateTo("dashboard"));
-
-    void (async () => {
-      const user = await login(provider);
-      if (user) {
-        const result = await fetchRemoteProjects();
-        update(updateRemote({
-          user,
-          projects: result.projects.map((p) => ({ id: p.id, name: p.name, slug: p.slug })),
-        }));
-        update(addLog("info", `Logged in as ${user.email}`));
-      }
-      render();
-    })();
+  // View handler context for delegating to extracted handlers
+  function getViewHandlerContext(): ViewHandlerContext {
+    return {
+      state,
+      render,
+      update,
+      promptForProjectName,
+      promptForExampleProject,
+    };
   }
 
   async function handleKey(key: string): Promise<void> {
+    // Handle input mode
     if (state.input.active) {
       const result = handleInputKey(key, state.input.value, state.input.cursorPos);
 
@@ -528,6 +313,7 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
+    // Global keys
     if (key === KEY_CTRL_C || (key === "q" && state.view === "dashboard")) {
       stop();
       exit(0);
@@ -538,24 +324,48 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
+    // View-specific handlers (delegated to extracted modules)
+    const ctx = getViewHandlerContext();
+
     switch (state.view) {
-      case "templates":
-        handleTemplatesKey(key);
+      case "templates": {
+        const result = handleTemplatesKey(key, ctx);
+        if (result.handled) {
+          state = result.state;
+          render();
+        }
         return;
-      case "examples":
-        handleExamplesKey(key);
+      }
+      case "examples": {
+        const result = handleExamplesKey(key, ctx);
+        if (result.handled) {
+          state = result.state;
+          render();
+        }
         return;
-      case "new-project":
-        handleNewProjectKey(key);
+      }
+      case "new-project": {
+        const result = handleNewProjectKey(key, ctx);
+        if (result.handled) {
+          state = result.state;
+          render();
+        }
         return;
-      case "auth":
-        handleAuthKey(key);
+      }
+      case "auth": {
+        const result = handleAuthKey(key, ctx);
+        if (result.handled) {
+          state = result.state;
+          render();
+        }
         return;
+      }
       case "help":
         update(goBack());
         return;
     }
 
+    // Dashboard key handlers
     if (key === "l" || key === "L") {
       update(toggleLogsExpanded());
       return;
@@ -572,9 +382,10 @@ export function createApp(config: AppConfig): App {
       }
     }
 
+    // Navigation with extracted remote navigation handlers
     if (key === KEY_UP || key === "k") {
       if (state.activeList === "remoteProjects") {
-        moveRemoteFocusUp();
+        update(moveRemoteFocusUp(state));
       } else {
         update(updateActiveList((list) => moveUp(list)));
       }
@@ -583,13 +394,14 @@ export function createApp(config: AppConfig): App {
 
     if (key === KEY_DOWN || key === "j") {
       if (state.activeList === "remoteProjects") {
-        moveRemoteFocusDown();
+        update(moveRemoteFocusDown(state));
       } else {
         update(updateActiveList((list) => moveDown(list, 5)));
       }
       return;
     }
 
+    // Tab to switch sections
     if (key === "\t") {
       const hasProjects = state.projects.items.length > 0;
       const hasExamples = state.examples.items.length > 0;
@@ -609,9 +421,12 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
+    // Number/letter selection for remote projects
     if (key >= "1" && key <= "9" && state.activeList === "remoteProjects") {
       const num = parseInt(key, 10);
-      if (num <= state.remote.projects.length) updateRemoteFocus(num - 1);
+      if (num <= state.remote.projects.length) {
+        update(updateRemoteFocus(state, num - 1));
+      }
       return;
     }
 
@@ -621,10 +436,13 @@ export function createApp(config: AppConfig): App {
       state.activeList === "remoteProjects"
     ) {
       const num = key.charCodeAt(0) - 96 + 9;
-      if (num <= state.remote.projects.length) updateRemoteFocus(num - 1);
+      if (num <= state.remote.projects.length) {
+        update(updateRemoteFocus(state, num - 1));
+      }
       return;
     }
 
+    // Auth actions
     if (key === "a" && !state.remote.user) {
       update(navigateTo("auth"));
       return;
@@ -637,6 +455,7 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
+    // Number/letter selection for local projects/examples
     if (key >= "1" && key <= "9" && state.activeList !== "remoteProjects") {
       const num = parseInt(key, 10);
       const activeList = state[state.activeList];
@@ -663,6 +482,7 @@ export function createApp(config: AppConfig): App {
       }
     }
 
+    // Open selected item
     if (key === KEY_ENTER || key === KEY_NEWLINE) {
       if (state.activeList === "remoteProjects") {
         const focused = state.remote.projects[state.remote.focusedIndex];
@@ -746,6 +566,7 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
+    // Pull/push operations
     if (key === "p" && state.activeList === "remoteProjects") {
       const focused = state.remote.projects[state.remote.focusedIndex];
       if (focused) await pullRemoteProject(state, update, render, focused.slug);
@@ -869,63 +690,10 @@ export function createApp(config: AppConfig): App {
     interceptConsole: (): () => void => {
       if (!isInteractiveMode) return () => {};
 
-      const orig = {
-        log: console.log,
-        error: console.error,
-        warn: console.warn,
-        info: console.info,
-        debug: console.debug,
-      };
-
-      const parseRequestLog = (msg: string): LogMeta | undefined => {
-        const match = msg.match(
-          /^\s*(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\S+)\s+(\d{3})\s+(\d+)ms(?:\s+(\S+))?/,
-        );
-        if (!match) return undefined;
-
-        const [, method, path, status, duration, context] = match;
-        const meta: LogMeta = {
-          method,
-          path,
-          status: parseInt(status!, 10),
-          durationMs: parseInt(duration!, 10),
-        };
-
-        if (context) {
-          const parts = context.split(":");
-          if (parts[0]) meta.project = parts[0];
-          if (parts[1]) meta.env = parts[1];
-          if (parts[2]) meta.releaseId = parts[2];
-        }
-
-        return meta;
-      };
-
-      // deno-lint-ignore no-control-regex
-      const ansiPattern = /\x1b\[[0-9;]*m/g;
-      const logBuffer = getLogBuffer();
-
-      const capture =
-        (level: "info" | "warn" | "error" | "debug") => (...args: unknown[]): void => {
-          const msg = args
-            .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
-            .join(" ")
-            .replace(ansiPattern, "");
-          if (!msg.trim()) return;
-
-          const meta = parseRequestLog(msg);
-          state = addLog(level, msg, meta)(state);
-          logBuffer.append({ level, message: msg, source: "console" });
-          render();
-        };
-
-      console.log = capture("info");
-      console.error = capture("error");
-      console.warn = capture("warn");
-      console.info = capture("info");
-      console.debug = capture("debug");
-
-      return () => Object.assign(console, orig);
+      return interceptConsole({
+        updateState: update,
+        render,
+      });
     },
   };
 }
