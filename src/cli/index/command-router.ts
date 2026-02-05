@@ -6,7 +6,9 @@
 
 import { formatErrorBox } from "#veryfront/errors/user-friendly/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { cliLogger, VERSION } from "#veryfront/utils";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { cliLogger, DEFAULT_DEV_SERVER_PORT, VERSION } from "#veryfront/utils";
 import { analyzeChunksCommand } from "../commands/analyze-chunks/index.ts";
 import { cleanCommand } from "../commands/clean/index.ts";
 import { doctorCommand } from "../commands/doctor/index.ts";
@@ -21,7 +23,6 @@ import { handleUpCommand } from "../commands/up/index.ts";
 import { handleNewCommand } from "../commands/new/index.ts";
 import { handleIssuesCommand } from "../commands/issues/index.ts";
 import { login, logout, whoami } from "../auth/index.ts";
-import { parseLoginMethod } from "../auth/utils.ts";
 import { showCommandHelp, showMainHelp } from "../help/index.ts";
 import {
   exitProcess,
@@ -38,6 +39,9 @@ import { handleStartCommand } from "../commands/start/handler.ts";
 import { handleInitCommand } from "../commands/init/handler.ts";
 import { handleServeCommand } from "../commands/serve/handler.ts";
 import type { ParsedArgs } from "./types.ts";
+import type { InitTemplate } from "../commands/init/types.ts";
+import type { IntegrationName } from "../templates/types.ts";
+import { generateDefaultProjectId } from "../utils/project.ts";
 
 /**
  * Show help for a specific command or main help
@@ -50,9 +54,20 @@ function showHelp(command?: string): void {
   showMainHelp();
 }
 
-/**
- * Get string argument from multiple possible keys
- */
+function resolvePath(path: string): string {
+  return path.startsWith("/") ? path : join(cwd(), path);
+}
+
+function parseLoginMethod(
+  args: ParsedArgs,
+): "google" | "github" | "microsoft" | "token" | undefined {
+  if (args.google) return "google";
+  if (args.github) return "github";
+  if (args.microsoft) return "microsoft";
+  if (args.token) return "token";
+  return undefined;
+}
+
 function getStringArg(args: ParsedArgs, ...keys: string[]): string | undefined {
   for (const key of keys) {
     const val = args[key];

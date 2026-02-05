@@ -68,22 +68,6 @@ import { fetchRemoteProjects } from "../sync/index.ts";
 import { pullCommand } from "../commands/pull/index.ts";
 import { pushCommand } from "../commands/push/index.ts";
 
-// Import extracted modules
-import {
-  moveRemoteFocusDown,
-  moveRemoteFocusUp,
-  updateRemoteFocus,
-} from "./handlers/remote-navigation.ts";
-import {
-  handleAuthKey,
-  handleExamplesKey,
-  handleNewProjectKey,
-  handleTemplatesKey,
-  type ViewHandlerContext,
-} from "./handlers/view-handlers.ts";
-import { createProject, createProjectFromExample } from "./operations/project-creation.ts";
-import { interceptConsole } from "./logging/console-interceptor.ts";
-
 const KEY_UP = "\x1b[A";
 const KEY_DOWN = "\x1b[B";
 const KEY_ESCAPE = "\x1b";
