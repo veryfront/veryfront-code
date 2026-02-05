@@ -3,7 +3,7 @@
  */
 
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   bold,
   brand,
@@ -18,12 +18,12 @@ import {
 } from "./colors.ts";
 
 describe("colors", () => {
-  beforeAll(() => {
+  beforeEach(() => {
     // Force truecolor mode for consistent test behavior across environments
     setTestColorLevel("truecolor");
   });
 
-  afterAll(() => {
+  afterEach(() => {
     // Reset to normal behavior
     resetColorCache();
   });
