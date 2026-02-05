@@ -71,14 +71,6 @@ await build({
 
 	// Map Deno std and type packages to npm equivalents
 	mappings: {
-		"https://deno.land/std@0.220.0/fmt/colors.ts": {
-			name: "picocolors",
-			version: "1.1.1",
-		},
-		"https://deno.land/std@0.220.0/flags/mod.ts": {
-			name: "mri",
-			version: "^1.2.0",
-		},
 		// Type-only packages - map to @types versions
 		"npm:@types/mdast@4.0.3": {
 			name: "@types/mdast",
