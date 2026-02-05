@@ -1,10 +1,15 @@
 import type { DirEntry, FileInfo } from "#veryfront/platform/adapters/base.ts";
 
-export interface RepositoryContext {
-  projectId: string;
-  environment: "production" | "preview";
-  versionId: string;
-}
+// Re-export schema-based types
+export type {
+  CacheRepositoryOptions,
+  CacheStats,
+  FileSystemRepositoryOptions,
+  RepositoryContext,
+} from "./schemas/index.ts";
+
+// Import for use in interface definitions
+import type { CacheStats, RepositoryContext } from "./schemas/index.ts";
 
 export interface FileSystemRepository {
   readFile(path: string): Promise<string>;
@@ -18,15 +23,6 @@ export interface FileSystemRepository {
   readonly context: RepositoryContext;
 }
 
-export interface CacheStats {
-  gets: number;
-  hits: number;
-  misses: number;
-  sets: number;
-  deletes: number;
-  hitRate: number;
-}
-
 export interface CacheRepository<T = string> {
   get(key: string): Promise<T | null>;
   set(key: string, value: T, ttlSeconds?: number): Promise<void>;
@@ -36,21 +32,4 @@ export interface CacheRepository<T = string> {
   has?(key: string): Promise<boolean>;
   clear?(): Promise<void>;
   readonly context: RepositoryContext;
-}
-
-export interface CacheRepositoryOptions {
-  name?: string;
-  defaultTtlSeconds?: number;
-  maxEntries?: number;
-}
-
-export interface FileSystemRepositoryOptions {
-  baseDir: string;
-  securityContext?:
-    | "user-input"
-    | "static-serving"
-    | "build"
-    | "internal"
-    | "route-discovery"
-    | "module-loading";
 }

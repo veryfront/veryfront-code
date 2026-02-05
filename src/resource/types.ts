@@ -8,12 +8,11 @@
 
 import type { z } from "zod";
 
-export type CachePolicy = "no-cache" | "cache" | "cache-first";
+// Re-export schema-based types
+export type { CachePolicy, McpConfig } from "./schemas/index.ts";
 
-export interface McpConfig {
-  enabled?: boolean;
-  cachePolicy?: CachePolicy;
-}
+// Import for use in interface definitions
+import type { McpConfig } from "./schemas/index.ts";
 
 export interface ResourceConfig<TParams = unknown, TData = unknown> {
   pattern?: string;

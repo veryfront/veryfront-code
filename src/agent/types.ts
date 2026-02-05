@@ -3,10 +3,35 @@
  **************************/
 
 import type { Tool } from "#veryfront/tool";
-import type { Platform } from "../platform/core-platform.ts";
 import type { Memory } from "./memory/memory-interface.ts";
 
-export type ModelProvider = "openai" | "anthropic" | "google" | "local";
+// Re-export schema-based types
+export type {
+  AgentContext,
+  AgentResponse,
+  AgentStatus,
+  EdgeConfig,
+  MemoryConfig,
+  Message,
+  MessagePart,
+  ModelProvider,
+  StreamToolCall,
+  ToolCall,
+  ToolCallPart,
+  ToolCallPartWithArgs,
+  ToolCallPartWithInput,
+  ToolResultPart,
+} from "./schemas/index.ts";
+
+// Import for use in interfaces and functions
+import type {
+  Message,
+  MessagePart,
+  ToolCall,
+  ToolCallPart,
+  ToolCallPartWithArgs,
+  ToolCallPartWithInput,
+} from "./schemas/index.ts";
 
 /**
  * Model configuration string format: "provider/model-name"
@@ -14,19 +39,8 @@ export type ModelProvider = "openai" | "anthropic" | "google" | "local";
  */
 export type ModelString = string;
 
-export interface MemoryConfig {
-  type: "conversation" | "buffer" | "summary" | "redis";
-  maxTokens?: number;
-  maxMessages?: number;
-}
-
-export type AgentStatus =
-  | "idle"
-  | "thinking"
-  | "tool_execution"
-  | "streaming"
-  | "completed"
-  | "error";
+// Import for use in AgentConfig
+import type { EdgeConfig, MemoryConfig } from "./schemas/index.ts";
 
 export interface AgentConfig {
   id?: string;
@@ -44,69 +58,15 @@ export interface AgentConfig {
   };
 }
 
-export interface EdgeConfig {
-  enabled: boolean;
-  maxSteps?: number;
-  timeoutMs?: number;
-  streaming?: boolean;
-}
+// Import for use in AgentMiddleware
+import type { AgentContext, AgentResponse } from "./schemas/index.ts";
 
 export type AgentMiddleware = (
   context: AgentContext,
   next: () => Promise<AgentResponse>,
 ) => Promise<AgentResponse>;
 
-export interface AgentContext {
-  agentId: string;
-  model?: string;
-  input: string | Message[];
-  data?: Record<string, unknown>;
-  platform: Platform;
-  metadata?: Record<string, unknown>;
-}
-
-export interface ToolCallPartWithArgs {
-  type: `tool-${string}`;
-  toolCallId: string;
-  toolName: string;
-  args: Record<string, unknown>;
-}
-
-export interface ToolCallPartWithInput {
-  type: `tool-${string}`;
-  toolCallId: string;
-  toolName: string;
-  input: Record<string, unknown>;
-}
-
-export type ToolCallPart = ToolCallPartWithArgs | ToolCallPartWithInput;
-
-export interface ToolResultPart {
-  type: "tool-result";
-  toolCallId: string;
-  toolName: string;
-  result: unknown;
-}
-
-export type MessagePart =
-  | { type: "text"; text: string }
-  | ToolCallPart
-  | {
-    type: "tool-call";
-    toolCallId: string;
-    toolName: string;
-    args: Record<string, unknown>;
-  }
-  | ToolResultPart;
-
-export interface Message {
-  id: string;
-  role: "user" | "assistant" | "system" | "tool";
-  parts: MessagePart[];
-  timestamp?: number;
-  metadata?: Record<string, unknown>;
-}
-
+// Utility functions for working with message parts and tool calls
 export function getTextFromParts(parts: MessagePart[]): string {
   return parts
     .filter((p): p is { type: "text"; text: string } => p.type === "text")
@@ -130,36 +90,6 @@ export function getToolArguments(part: ToolCallPart): Record<string, unknown> {
   throw new Error(
     `Tool call part for "${basePart.toolName}" (${basePart.toolCallId}) missing both 'args' and 'input' fields`,
   );
-}
-
-export interface StreamToolCall {
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
-}
-
-export interface ToolCall {
-  id: string;
-  name: string;
-  args: Record<string, unknown>;
-  status: "pending" | "executing" | "completed" | "error";
-  result?: unknown;
-  error?: string;
-  executionTime?: number;
-}
-
-export interface AgentResponse {
-  text: string;
-  messages: Message[];
-  toolCalls: ToolCall[];
-  status: AgentStatus;
-  thinking?: string;
-  usage?: {
-    promptTokens: number;
-    completionTokens: number;
-    totalTokens: number;
-  };
-  metadata?: Record<string, unknown>;
 }
 
 export interface AgentStreamResult {

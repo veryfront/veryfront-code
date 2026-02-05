@@ -1,11 +1,5 @@
-export interface PromptConfig {
-  id?: string;
-  description: string;
-  content?: string;
-  generate?: (variables: Record<string, unknown>) => string | Promise<string>;
-  /** Example message text to use as a chat suggestion */
-  suggestion?: string;
-}
+// Re-export schema-based type
+export type { PromptConfig } from "./schemas/index.ts";
 
 export interface Prompt {
   id: string;
