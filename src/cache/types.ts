@@ -7,13 +7,19 @@
  * @module cache/types
  */
 
+// Re-export schema types
+export type { CacheBackendType, CacheSetBatchEntry } from "./schemas/index.ts";
+
+// Import for use in interface
+import type { CacheBackendType, CacheSetBatchEntry } from "./schemas/index.ts";
+
 /**
  * Interface for cache backends (memory, redis, api).
  * All cache backends must implement this interface.
  */
 export interface CacheBackend {
   /** Backend type identifier */
-  readonly type: "memory" | "redis" | "api";
+  readonly type: CacheBackendType;
 
   /**
    * Get a value from the cache.
@@ -41,7 +47,7 @@ export interface CacheBackend {
    * Set multiple values in the cache in a single batch.
    * @param entries - Array of {key, value, ttl} objects
    */
-  setBatch?(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void>;
+  setBatch?(entries: CacheSetBatchEntry[]): Promise<void>;
 
   /**
    * Delete a value from the cache.

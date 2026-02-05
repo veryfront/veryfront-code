@@ -9,18 +9,16 @@
 
 import type { Agent } from "../types.ts";
 import type { Tool } from "#veryfront/tool";
-import { z } from "zod";
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/ai/registry-manager.ts";
+import { AgentToolInputSchema } from "../schemas/index.ts";
 
 export function agentAsTool(agent: Agent, description: string): Tool {
   return {
     id: `agent_${agent.id}`,
     type: "function",
     description,
-    inputSchema: z.object({
-      input: z.string().describe("Input for the agent"),
-    }),
+    inputSchema: AgentToolInputSchema,
     execute({ input }) {
       return withSpan(
         "agent.composition.agentAsTool.execute",

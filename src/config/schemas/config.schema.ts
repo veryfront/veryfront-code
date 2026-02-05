@@ -1,13 +1,15 @@
 import { z } from "zod";
-import type { VeryfrontConfig } from "./types.ts";
-import { type ConfigContext, createError, toError } from "../errors/veryfront-error.ts";
+import { type ConfigContext, createError, toError } from "../../errors/veryfront-error.ts";
 
+// Sub-schemas
 const corsSchema = z.union([z.boolean(), z.object({ origin: z.string().optional() }).strict()]);
+
 const basicAuthSchema = z.object({
   username: z.string(),
   password: z.string(),
   realm: z.string().optional(),
 });
+
 const bearerAuthSchema = z.object({
   token: z.string(),
 });
@@ -20,6 +22,7 @@ const embeddingDimensionSchema = z.union([
   z.literal(4096),
 ]);
 
+// Main config schema
 export const veryfrontConfigSchema = z
   .object({
     projectSlug: z.string().optional(),
@@ -29,6 +32,15 @@ export const veryfrontConfigSchema = z
       .object({
         /** React version to use (e.g., "18.3.1", "19.1.1"). Defaults to auto-detect from package.json or 19.1.1 */
         version: z.string().optional(),
+      })
+      .partial()
+      .optional(),
+    directories: z
+      .object({
+        app: z.string().optional(),
+        pages: z.string().optional(),
+        components: z.array(z.string()).optional(),
+        ai: z.string().optional(),
       })
       .partial()
       .optional(),
@@ -73,6 +85,17 @@ export const veryfrontConfigSchema = z
           })
           .partial()
           .optional(),
+        render: z
+          .object({
+            type: z.enum(["memory", "filesystem", "kv", "redis"]).optional(),
+            ttl: z.number().optional(),
+            maxEntries: z.number().optional(),
+            kvPath: z.string().optional(),
+            redisUrl: z.string().optional(),
+            redisKeyPrefix: z.string().optional(),
+          })
+          .partial()
+          .optional(),
         /**
          * Query parameter handling for page cache keys.
          * Controls which URL query params affect cache key generation.
@@ -108,7 +131,9 @@ export const veryfrontConfigSchema = z
         host: z.string().optional(),
         open: z.boolean().optional(),
         hmr: z.boolean().optional(),
+        hmrPort: z.number().optional(),
         components: z.array(z.string()).optional(),
+        moduleServerUrl: z.string().optional(),
       })
       .partial()
       .optional(),
@@ -139,12 +164,19 @@ export const veryfrontConfigSchema = z
         coop: z.enum(["same-origin", "same-origin-allow-popups", "unsafe-none"]).optional(),
         corp: z.enum(["same-origin", "same-site", "cross-origin"]).optional(),
         coep: z.enum(["require-corp", "unsafe-none"]).optional(),
+        /**
+         * Restrict module imports to specific directories (opt-in security).
+         * When not set, users can import from any directory in the project.
+         * When set, only imports from these directories are allowed.
+         * @example ["app", "pages", "components", "lib", "src", "utils"]
+         */
+        allowedImportDirs: z.array(z.string()).optional(),
       })
       .partial()
       .optional(),
     middleware: z
       .object({
-        custom: z.array(z.function()).optional(),
+        custom: z.array(z.any()).optional(),
       })
       .partial()
       .optional(),
@@ -245,9 +277,13 @@ export const veryfrontConfigSchema = z
         veryfront: z
           .object({
             apiBaseUrl: z.string().url(),
-            apiToken: z.string(),
-            projectSlug: z.string(),
+            /** API token - optional in proxy mode (token provided per-request via headers) */
+            apiToken: z.string().optional(),
+            /** Project slug - optional in proxy mode (slug provided per-request via headers) */
+            projectSlug: z.string().optional(),
+            /** Enable proxy mode for multi-project handling (tokens/slugs from headers) */
             proxyMode: z.boolean().optional(),
+            /** Production mode - fetch from releases instead of draft files */
             productionMode: z.boolean().optional(),
             cache: z
               .object({
@@ -276,9 +312,13 @@ export const veryfrontConfigSchema = z
           .optional(),
         github: z
           .object({
+            /** GitHub Personal Access Token */
             token: z.string(),
+            /** Repository owner (user or organization) */
             owner: z.string(),
+            /** Repository name */
             repo: z.string(),
+            /** Branch, tag, or commit SHA (default: "main") */
             ref: z.string().optional(),
             cache: z
               .object({
@@ -298,6 +338,51 @@ export const veryfrontConfigSchema = z
               .partial()
               .optional(),
           })
+          .optional(),
+      })
+      .partial()
+      .optional(),
+    ai: z
+      .object({
+        enabled: z.boolean().optional(),
+        providers: z.record(
+          z.object({
+            apiKey: z.string().optional(),
+            baseURL: z.string().optional(),
+            defaultModel: z.string().optional(),
+            organization: z.string().optional(),
+          }).passthrough(),
+        ).optional(),
+        tools: z
+          .object({
+            discovery: z
+              .object({
+                enabled: z.boolean().optional(),
+                paths: z.array(z.string()).optional(),
+              })
+              .partial()
+              .optional(),
+          })
+          .partial()
+          .optional(),
+        agents: z
+          .object({
+            discovery: z
+              .object({
+                enabled: z.boolean().optional(),
+                paths: z.array(z.string()).optional(),
+              })
+              .partial()
+              .optional(),
+          })
+          .partial()
+          .optional(),
+        mcp: z
+          .object({
+            enabled: z.boolean().optional(),
+            port: z.number().optional(),
+            expose: z.array(z.string()).optional(),
+          })
           .partial()
           .optional(),
       })
@@ -305,10 +390,13 @@ export const veryfrontConfigSchema = z
       .optional(),
     client: z
       .object({
+        /** How to resolve veryfront client modules in browser */
         moduleResolution: z.enum(["cdn", "self-hosted", "bundled"]).optional(),
+        /** CDN options when moduleResolution is 'cdn' */
         cdn: z
           .object({
             provider: z.enum(["esm.sh", "unpkg", "jsdelivr"]).optional(),
+            /** 'auto' detects from package.json, or pin specific versions */
             versions: z
               .union([
                 z.literal("auto"),
@@ -324,35 +412,84 @@ export const veryfrontConfigSchema = z
       })
       .partial()
       .optional(),
+    /** CLI generate command preferences */
     generate: z
       .object({
+        /** Preferred router for generated pages */
         preferredRouter: z.enum(["app-router", "pages-router"]).optional(),
       })
       .partial()
       .optional(),
     tailwind: z
       .object({
+        /** Path to the global stylesheet (default: "globals.css") */
         stylesheet: z.string().optional(),
+        /** Enable built-in Tailwind CDN plugins (forms, typography, aspect-ratio, container-queries) */
         plugins: z.array(z.enum(["forms", "typography", "aspect-ratio", "container-queries"]))
           .optional(),
+        /** Extend the Tailwind theme (merged with veryfront defaults) */
         theme: z
           .object({
             extend: z.record(z.unknown()).optional(),
           })
           .partial()
           .optional(),
+        /** Custom CSS content to add (for @layer, @apply directives, etc.) */
         customCSS: z.string().optional(),
+      })
+      .partial()
+      .optional(),
+    /** OpenAPI documentation configuration */
+    openapi: z
+      .object({
+        /** Enable OpenAPI endpoint (default: true) */
+        enabled: z.boolean().optional(),
+        /** Enable interactive docs page using Scalar (default: true) */
+        docs: z.boolean().optional(),
+        /** API title for OpenAPI info section */
+        title: z.string().optional(),
+        /** API version (default: "1.0.0") */
+        version: z.string().optional(),
+        /** API description */
+        description: z.string().optional(),
+        /** Custom path configuration */
+        paths: z
+          .object({
+            /** Path for JSON spec (default: "/_openapi.json") */
+            json: z.string().optional(),
+            /** Path for YAML spec (default: "/_openapi.yaml") */
+            yaml: z.string().optional(),
+            /** Path for interactive docs (default: "/_docs") */
+            docs: z.string().optional(),
+          })
+          .partial()
+          .optional(),
+        /** MCP integration configuration */
+        mcp: z
+          .object({
+            /** Expose OpenAPI spec as MCP resource at openapi://spec (default: true) */
+            resource: z.boolean().optional(),
+            /** Auto-generate MCP tools from API routes (default: true) */
+            tools: z.boolean().optional(),
+            /** Tool naming prefix (default: "api") - tools named as prefix:operationId */
+            toolPrefix: z.string().optional(),
+          })
+          .partial()
+          .optional(),
       })
       .partial()
       .optional(),
   })
   .partial();
 
+// Inferred types
+export type VeryfrontConfig = z.infer<typeof veryfrontConfigSchema>;
 export type VeryfrontConfigInput = z.input<typeof veryfrontConfigSchema>;
 
+// Validation function
 export function validateVeryfrontConfig(input: unknown): VeryfrontConfig {
   const parsed = veryfrontConfigSchema.safeParse(input);
-  if (parsed.success) return parsed.data as VeryfrontConfig;
+  if (parsed.success) return parsed.data;
 
   const first = parsed.error.issues[0];
   const path = first?.path?.length ? first.path.join(".") : "<root>";

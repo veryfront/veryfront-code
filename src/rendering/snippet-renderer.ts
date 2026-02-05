@@ -1,6 +1,6 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import type { RenderMetadata } from "#veryfront/types";
-import type { VeryfrontConfig } from "../config/types.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import { wrapInHTMLShell } from "../html/html-shell-generator.ts";
 import { LRUCache } from "../utils/lru-wrapper.ts";
 import { registerCache } from "../utils/memory/index.ts";

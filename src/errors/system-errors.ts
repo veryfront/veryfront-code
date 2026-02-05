@@ -1,13 +1,14 @@
 import { ErrorCode, VeryfrontError } from "./types.ts";
+import type { ErrorCodeType } from "./types.ts";
 
 class SystemError extends VeryfrontError {
-  constructor(name: string, message: string, code: ErrorCode, context?: unknown) {
+  constructor(name: string, message: string, code: ErrorCodeType, context?: unknown) {
     super(message, code, context);
     this.name = name;
   }
 }
 
-function createSystemErrorClass(name: string, code: ErrorCode) {
+function createSystemErrorClass(name: string, code: ErrorCodeType) {
   return class extends SystemError {
     constructor(message: string, context?: unknown) {
       super(name, message, code, context);

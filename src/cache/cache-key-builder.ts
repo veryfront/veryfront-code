@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { z } from "zod";
 import type { HandlerContext } from "../types/server.ts";
+import { type CacheKeyContext, CacheKeyContextSchema } from "./schemas/index.ts";
 
 type MultiProjectRequestContextType = {
   projectSlug: string;
@@ -14,17 +14,7 @@ type MultiProjectRequestContextType = {
 
 let _getCurrentRequestContext: (() => MultiProjectRequestContextType | null) | null | undefined;
 
-const CacheKeyContextSchema = z.object({
-  projectId: z.string().min(1, "projectId cannot be empty"),
-  mode: z.enum(["production", "preview"]),
-  versionId: z.string().min(1, "versionId cannot be empty"),
-});
-
-export interface CacheKeyContext {
-  projectId: string;
-  mode: "production" | "preview";
-  versionId: string;
-}
+export type { CacheKeyContext };
 
 const cacheKeyContextStorage = new AsyncLocalStorage<CacheKeyContext>();
 

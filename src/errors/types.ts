@@ -1,26 +1,15 @@
-export enum ErrorCode {
-  FILE_NOT_FOUND = "FILE_NOT_FOUND",
-  BUILD_ERROR = "BUILD_ERROR",
-  CONFIG_ERROR = "CONFIG_ERROR",
-  COMPILATION_ERROR = "COMPILATION_ERROR",
-  NETWORK_ERROR = "NETWORK_ERROR",
-  PERMISSION_ERROR = "PERMISSION_ERROR",
-  RENDER_ERROR = "RENDER_ERROR",
-  INITIALIZATION_ERROR = "INITIALIZATION_ERROR",
-  AGENT_ERROR = "AGENT_ERROR",
-  AGENT_NOT_FOUND = "AGENT_NOT_FOUND",
-  AGENT_TIMEOUT = "AGENT_TIMEOUT",
-  AGENT_INTENT_ERROR = "AGENT_INTENT_ERROR",
-  ORCHESTRATION_ERROR = "ORCHESTRATION_ERROR",
-  NOT_SUPPORTED = "NOT_SUPPORTED",
-  SERVICE_OVERLOADED = "SERVICE_OVERLOADED",
-}
+// Re-export schema-based ErrorCode (both as value and type)
+export { ErrorCode } from "./schemas/index.ts";
+export type { ErrorCodeType } from "./schemas/index.ts";
+
+// Import for use in class definition
+import type { ErrorCodeType } from "./schemas/index.ts";
 
 export class VeryfrontError extends Error {
-  public code: ErrorCode;
+  public code: ErrorCodeType;
   public context?: unknown;
 
-  constructor(message: string, code: ErrorCode, context?: unknown) {
+  constructor(message: string, code: ErrorCodeType, context?: unknown) {
     super(message);
     this.name = "VeryfrontError";
     this.code = code;

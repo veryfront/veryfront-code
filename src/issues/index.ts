@@ -2,11 +2,12 @@ export type {
   CreateIssueOptions,
   Issue,
   IssueMetadata,
+  IssuePrefix,
   IssueState,
   ListIssuesOptions,
   ListIssuesResult,
   UpdateIssueOptions,
-} from "./types.ts";
+} from "./schemas/index.ts";
 
 export {
   createIssueSchema,
@@ -22,8 +23,7 @@ export {
   parseState,
   updateIssueSchema,
   validateMetadata,
-} from "./schema.ts";
-export type { IssuePrefix } from "./schema.ts";
+} from "./schemas/index.ts";
 
 export {
   createIssuesManager,

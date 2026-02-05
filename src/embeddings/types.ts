@@ -1,35 +1,12 @@
-export type EmbeddingDimension = 768 | 1024 | 1536 | 3072 | 4096;
-
-export interface EmbeddingProviderConfig {
-  apiKey?: string;
-  baseURL?: string;
-  model?: string;
-  dimension?: EmbeddingDimension;
-  batchSize?: number;
-}
-
-export interface EmbeddingRequest {
-  inputs: string[];
-  model?: string;
-  dimension?: EmbeddingDimension;
-}
-
-export interface EmbeddingResult {
-  index: number;
-  embedding: number[];
-}
-
-export interface EmbeddingUsage {
-  promptTokens: number;
-  totalTokens: number;
-}
-
-export interface EmbeddingResponse {
-  embeddings: EmbeddingResult[];
-  model: string;
-  dimension: number;
-  usage?: EmbeddingUsage;
-}
+// Re-export schema-based types
+export type {
+  EmbeddingDimension,
+  EmbeddingProviderConfig,
+  EmbeddingRequest,
+  EmbeddingResponse,
+  EmbeddingResult,
+  EmbeddingUsage,
+} from "./schemas/index.ts";
 
 export interface EmbeddingProvider {
   name: string;

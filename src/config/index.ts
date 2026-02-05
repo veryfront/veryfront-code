@@ -5,7 +5,6 @@ export {
   type GetConfigOptions,
 } from "./loader.ts";
 export { defineConfig } from "./define-config.ts";
-export type { VeryfrontConfig } from "./types.ts";
 
 export {
   _resetRuntimeEnv,
@@ -34,8 +33,10 @@ export {
 export {
   findUnknownTopLevelKeys,
   validateVeryfrontConfig,
+  type VeryfrontConfig,
+  type VeryfrontConfigInput,
   veryfrontConfigSchema,
-} from "./schema.ts";
+} from "./schemas/index.ts";
 
 export {
   DEFAULT_CACHE_MAX_SIZE,

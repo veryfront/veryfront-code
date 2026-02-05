@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { CommonSchemas } from "./schemas.ts";
+import { CommonSchemas } from "../schemas/index.ts";
 
 function assertParseSuccess<T>(
   result: { success: boolean; data?: T },

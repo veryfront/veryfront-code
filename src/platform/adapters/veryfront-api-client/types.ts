@@ -10,7 +10,7 @@ export type {
   PageInfo,
   Project,
   ProjectFile,
-} from "./schemas.ts";
+} from "./schemas/index.ts";
 
 export interface VeryfrontAPIConfig {
   apiBaseUrl: string;

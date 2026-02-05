@@ -1,20 +1,18 @@
-export interface DataContext {
-  params: Record<string, string | string[]>;
-  query: URLSearchParams;
-  request: Request;
-  url: URL;
-}
+/**
+ * Data module types
+ *
+ * Re-exports schema types and defines interfaces with methods.
+ */
 
-export interface DataResult<T = unknown> {
-  props?: T;
-  redirect?: {
-    destination: string;
-    permanent?: boolean;
-  };
-  notFound?: boolean;
-  revalidate?: number | false;
-}
+// Re-export schema types
+export type { CacheEntry, DataContext, DataResult, StaticPathsResult } from "./schemas/index.ts";
 
+// Import for use in interfaces
+import type { DataContext, DataResult, StaticPathsResult } from "./schemas/index.ts";
+
+/**
+ * Page with data fetching capabilities
+ */
 export interface PageWithData<T = unknown> {
   default: unknown;
   getServerData?: (context: DataContext) => DataResult<T> | Promise<DataResult<T>>;
@@ -24,17 +22,7 @@ export interface PageWithData<T = unknown> {
   getStaticPaths?: () => StaticPathsResult | Promise<StaticPathsResult>;
 }
 
-export interface StaticPathsResult {
-  paths: Array<{
-    params: Record<string, string | string[]>;
-  }>;
-  fallback: boolean | "blocking";
-}
-
-export interface CacheEntry<T = unknown> {
-  data: DataResult<T>;
-  timestamp: number;
-  revalidate?: number | false;
-}
-
+/**
+ * Utility type to infer props from a page with data
+ */
 export type InferGetServerDataProps<T> = T extends PageWithData<infer P> ? P : never;

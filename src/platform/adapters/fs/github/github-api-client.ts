@@ -8,7 +8,7 @@ import {
   GitHubContentsResponseSchema,
   type GitHubTreeResponse,
   GitHubTreeResponseSchema,
-} from "./schemas.ts";
+} from "./schemas/index.ts";
 
 const LOG_PREFIX = "[GitHubAPIClient]";
 

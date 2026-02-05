@@ -8,7 +8,7 @@ export type {
   GitHubContentsResponse,
   GitHubTreeEntry,
   GitHubTreeResponse,
-} from "./schemas.ts";
+} from "./schemas/index.ts";
 
 export interface GitHubConfig {
   token: string;

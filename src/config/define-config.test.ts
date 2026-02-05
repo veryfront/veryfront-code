@@ -6,7 +6,7 @@ import {
   mergeConfigs,
   validateConfig,
 } from "./define-config.ts";
-import type { VeryfrontConfig } from "./types.ts";
+import type { VeryfrontConfig } from "./schemas/index.ts";
 import { createTestRuntimeEnv } from "./runtime-env.ts";
 
 describe("define-config", () => {

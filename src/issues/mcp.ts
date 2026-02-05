@@ -10,8 +10,8 @@ import { z } from "zod";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import type { MCPTool } from "#veryfront/mcp/types.ts";
 import { createIssuesManager } from "./core.ts";
-import type { Issue } from "./types.ts";
-import { ISSUE_PREFIXES, parseState } from "./schema.ts";
+import type { Issue } from "./schemas/index.ts";
+import { ISSUE_PREFIXES, parseState } from "./schemas/index.ts";
 
 function getManager(projectDir?: string) {
   return createIssuesManager(projectDir ?? cwd());

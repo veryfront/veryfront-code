@@ -15,16 +15,15 @@ import type {
   ListIssuesOptions,
   ListIssuesResult,
   UpdateIssueOptions,
-} from "./types.ts";
+} from "./schemas/index.ts";
 import {
   createIssueSchema,
   generateIssueId,
   ISSUE_ID_PATTERN,
-  type IssuePrefix,
   listIssuesSchema,
   updateIssueSchema,
   validateMetadata,
-} from "./schema.ts";
+} from "./schemas/index.ts";
 
 /**
  * Default directory for issues
@@ -215,7 +214,7 @@ export class IssuesManager {
     const validated = createIssueSchema.parse(options);
     await this.ensureDir();
 
-    const id = generateIssueId(validated.prefix as IssuePrefix, await this.listIds());
+    const id = generateIssueId(validated.prefix ?? "ISSUE", await this.listIds());
     const now = new Date().toISOString();
 
     const metadata: IssueMetadata = {

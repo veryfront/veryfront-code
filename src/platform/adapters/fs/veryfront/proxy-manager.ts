@@ -1,6 +1,5 @@
 import { logger } from "#veryfront/utils";
 import { buildProxyManagerCacheKey } from "#veryfront/cache";
-import { z } from "zod";
 import { VeryfrontFSAdapter } from "./index.ts";
 import type { CacheStats, FSAdapterConfig, ResolvedContentContext } from "./types.ts";
 import { ReloadNotifier } from "../../../../server/reload-notifier.ts";
@@ -22,6 +21,7 @@ import {
 } from "../../../../rendering/snippet-renderer.ts";
 import { clearRendererCacheForProject } from "../../../../rendering/renderer.ts";
 import { clearDomainCache } from "../../../../server/utils/domain-lookup.ts";
+import { GetAdapterParamsSchema } from "./schemas/index.ts";
 
 interface ProjectAdapter {
   adapter: VeryfrontFSAdapter;
@@ -35,16 +35,6 @@ interface ProxyFSAdapterManagerConfig {
   cleanupIntervalMs?: number;
   maxIdleMs?: number;
 }
-
-const GetAdapterParamsSchema = z.object({
-  projectSlug: z.string().min(1, "projectSlug must be non-empty"),
-  token: z.string().min(1, "token must be non-empty"),
-  projectId: z.string().optional(),
-  productionMode: z.boolean(),
-  releaseId: z.string().nullable().optional(),
-  environmentName: z.string().nullable().optional(),
-  branch: z.string().nullable().optional(),
-});
 
 export class ProxyFSAdapterManager {
   private adapters = new Map<string, ProjectAdapter>();

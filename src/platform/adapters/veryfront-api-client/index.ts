@@ -32,4 +32,4 @@ export {
   ProjectSchema,
   ReleaseFileDetailSchema,
   ReleaseFileListItemSchema,
-} from "./schemas.ts";
+} from "./schemas/index.ts";

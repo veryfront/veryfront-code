@@ -1,5 +1,5 @@
 import { escapeHTML } from "./html-escape.ts";
-import type { VeryfrontConfig } from "#veryfront/config/types.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import { REACT_DEFAULT_VERSION, VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { esmShReact } from "#veryfront/transforms/esm/package-registry.ts";
 import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";

@@ -1,6 +1,7 @@
 import { serverLogger } from "#veryfront/utils";
 import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
 import type { ActionBody } from "./types.ts";
+import { ActionPayloadSchema } from "../../../schemas/index.ts";
 
 const ACTION_ID_PATTERN = /^[A-Za-z0-9_/-]+(?:\/[A-Za-z0-9_/-]+)*$/;
 
@@ -18,13 +19,7 @@ export async function parseActionBody(body: unknown): Promise<ActionBody | Respo
   let args: unknown[] = [];
 
   try {
-    const { z } = await import("zod");
-    const Payload = z.object({
-      id: z.string().min(1),
-      args: z.array(z.unknown()).max(50).optional().default([]),
-    });
-
-    const parsed = Payload.parse(body);
+    const parsed = ActionPayloadSchema.parse(body);
     id = parsed.id;
     args = parsed.args;
   } catch (schemaError) {
