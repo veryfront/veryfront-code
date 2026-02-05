@@ -2,21 +2,39 @@
  * Lock command handler
  */
 
+import { z } from "zod";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { lockCommand } from "./command.ts";
 import { showLogo } from "../../utils/index.ts";
+import { createArgParser } from "../../shared/args.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
+
+const LockArgsSchema = z.object({
+  projectDir: z.string().default(""),
+  update: z.boolean().default(false),
+  verify: z.boolean().default(false),
+  clear: z.boolean().default(false),
+  list: z.boolean().default(false),
+  force: z.boolean().default(false),
+});
+
+const parseLockArgs = createArgParser(LockArgsSchema, {
+  projectDir: { keys: ["project"], type: "string" },
+  update: { keys: ["update"], type: "boolean" },
+  verify: { keys: ["verify"], type: "boolean" },
+  clear: { keys: ["clear"], type: "boolean" },
+  list: { keys: ["list"], type: "boolean" },
+  force: { keys: ["force", "f", "y"], type: "boolean" },
+});
 
 export async function handleLockCommand(args: ParsedArgs): Promise<void> {
   showLogo();
-  const projectDir = typeof args.project === "string" ? args.project : cwd();
-
+  const result = parseLockArgs(args);
+  if (!result.success) {
+    throw new Error(`Invalid lock arguments: ${result.error.message}`);
+  }
   await lockCommand({
-    projectDir,
-    update: args.update === true,
-    verify: args.verify === true,
-    clear: args.clear === true,
-    list: args.list === true,
-    force: args.force === true || args.f === true || args.y === true,
+    ...result.data,
+    projectDir: result.data.projectDir || cwd(),
   });
 }
