@@ -9,7 +9,8 @@ import {
   type EnvironmentConfig,
   getEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
-import { getColorEnabled, isTTY, promptUser } from "../../utils/index.ts";
+import { shouldUseColor } from "../../ui/colors.ts";
+import { isTTY, promptUser } from "../../utils/index.ts";
 import { createSpinner } from "../../ui/progress.ts";
 import { CommonArgs, createArgParser } from "../../shared/args.ts";
 import { readConfigFile, type VeryfrontConfig } from "../../shared/config.ts";
@@ -102,7 +103,7 @@ export async function upCommand(
 ): Promise<void> {
   const { force = false, dryRun = false } = options;
 
-  const useColor = getColorEnabled();
+  const useColor = shouldUseColor();
   const c = (fn: (s: string) => string, s: string): string => (useColor ? fn(s) : s);
 
   const projectDir = cwd();

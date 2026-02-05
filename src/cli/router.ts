@@ -31,7 +31,8 @@ import { handleUpCommand } from "./commands/up/index.ts";
 import { login, logout, whoami } from "./auth/index.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
 import { showCommandHelp, showMainHelp } from "./help/index.ts";
-import { exitProcess, setColorMode, setQuietMode, setVerboseMode } from "./utils/index.ts";
+import { setColorOverride } from "./ui/colors.ts";
+import { exitProcess, setQuietMode, setVerboseMode } from "./utils/index.ts";
 import type { ParsedArgs } from "./shared/types.ts";
 
 /**
@@ -52,8 +53,8 @@ function showHelp(command?: string): void {
  */
 export async function routeCommand(args: ParsedArgs): Promise<void> {
   // Handle global flags
-  if (args["no-color"]) setColorMode(false);
-  else if (args.color) setColorMode(true);
+  if (args["no-color"]) setColorOverride(false);
+  else if (args.color) setColorOverride(true);
 
   if (args.verbose) setVerboseMode(true);
   else if (args.quiet || args.q) setQuietMode(true);

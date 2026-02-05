@@ -50,6 +50,7 @@ export function shouldUseColor(): boolean {
 let cachedColorLevel: ColorLevel | null = null;
 let cachedColorEnvKey: string | null = null;
 let testOverrideColorLevel: ColorLevel | null = null;
+let cliColorOverride: boolean | undefined;
 
 function buildColorEnvKey(envObj: Record<string, string>, stdoutTty: boolean): string {
   return [
@@ -68,6 +69,10 @@ function getCachedColorLevel(): ColorLevel {
     return testOverrideColorLevel;
   }
 
+  // CLI --no-color / --color flag override
+  if (cliColorOverride === false) return "none";
+  if (cliColorOverride === true) return "truecolor";
+
   const envObj = getEnvObject();
   const stdoutTty = isStdoutTTY();
   const envKey = buildColorEnvKey(envObj, stdoutTty);
@@ -83,6 +88,15 @@ export function resetColorCache(): void {
   cachedColorLevel = null;
   cachedColorEnvKey = null;
   testOverrideColorLevel = null;
+  cliColorOverride = undefined;
+}
+
+/**
+ * Override color output from CLI flags (--color / --no-color).
+ * Pass `true` to force colors on, `false` to force off, `undefined` to clear.
+ */
+export function setColorOverride(enabled: boolean | undefined): void {
+  cliColorOverride = enabled;
 }
 
 /**

@@ -1,9 +1,12 @@
 import { cliLogger, formatBytes, VERSION } from "#veryfront/utils";
-import { bold, cyan, dim } from "#veryfront/compat/console";
 import { exit, isStdoutTTY, onSignal, promptSync } from "#veryfront/platform/compat/process.ts";
-import { getForceColorEnv, getNoColorEnv } from "#veryfront/config/env.ts";
 import {
+  bold,
+  brand,
+  dim,
   error as errorColor,
+  muted,
+  shouldUseColor,
   success as successColor,
   warning as warningColor,
 } from "../ui/colors.ts";
@@ -12,51 +15,18 @@ export function isTTY(): boolean {
   return isStdoutTTY();
 }
 
-let _colorEnabled: boolean | undefined;
-
-export function shouldUseColor(forceColor?: boolean): boolean {
-  if (forceColor !== undefined) return forceColor;
-
-  if (getNoColorEnv()) return false;
-
-  const forceColorEnv = getForceColorEnv();
-  if (forceColorEnv && forceColorEnv !== "0") return true;
-
-  return isTTY();
-}
-
-export function setColorMode(enabled: boolean | undefined): void {
-  _colorEnabled = enabled;
-}
-
-export function getColorEnabled(): boolean {
-  return shouldUseColor(_colorEnabled);
-}
-
-export function stripColors(str: string): string {
-  // deno-lint-ignore no-control-regex
-  return str.replace(/\x1b\[[0-9;]*m/g, "");
-}
-
-export function conditionalColor<T extends (s: string) => string>(
-  colorFn: T,
-  text: string,
-): string {
-  return getColorEnabled() ? colorFn(text) : text;
-}
-
-function colorize(useColor: boolean, fn: (s: string) => string, s: string): string {
-  return useColor ? fn(s) : s;
-}
-
 export function showLogo(): void {
-  const useColor = getColorEnabled();
+  if (!shouldUseColor()) {
+    cliLogger.info(`
+⚡ Veryfront v${VERSION}
+──────────────────────
+`);
+    return;
+  }
 
   cliLogger.info(`
-${colorize(useColor, cyan, "⚡")} ${
-    colorize(useColor, bold, colorize(useColor, cyan, "Veryfront"))
-  } ${colorize(useColor, dim, `v${VERSION}`)}
-${colorize(useColor, dim, "──────────────────────")}
+${brand("⚡")} ${bold(brand("Veryfront"))} ${dim(`v${VERSION}`)}
+${muted("──────────────────────")}
 `);
 }
 
