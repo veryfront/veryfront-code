@@ -1,35 +1,92 @@
+/**
+ * Workflow type definitions
+ *
+ * Re-exports schema types and defines interfaces with functions/methods.
+ */
+
 import type { z } from "zod";
 import type { Agent } from "#veryfront/agent";
 import type { Tool } from "#veryfront/tool";
 import type { BlobRef, BlobStorage } from "./blob/types.ts";
 
-export type WorkflowStatus =
-  | "pending"
-  | "running"
-  | "waiting"
-  | "completed"
-  | "failed"
-  | "cancelled";
+// Re-export schema types (Checkpoint excluded - defined locally to use WorkflowContext interface)
+export type {
+  ApprovalDecision,
+  ApprovalStatus,
+  BackoffStrategy,
+  LoopExecutionContext,
+  NodeState,
+  NodeStatus,
+  ParallelStrategy,
+  PendingApproval,
+  RetryConfig,
+  RunFilter,
+  WaitType,
+  WorkflowError,
+  WorkflowJob,
+  WorkflowNodeType,
+  WorkflowStatus,
+} from "./schemas/index.ts";
 
-export type NodeStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+// Import for use in interfaces
+import type {
+  LoopExecutionContext,
+  NodeState,
+  ParallelStrategy,
+  PendingApproval,
+  RetryConfig,
+  WaitType,
+  WorkflowError,
+  WorkflowStatus,
+} from "./schemas/index.ts";
 
-export type WorkflowNodeType =
-  | "step"
-  | "parallel"
-  | "map"
-  | "branch"
-  | "wait"
-  | "subWorkflow"
-  | "loop";
+// Duration string type alias
+export type DurationString = string;
 
-export interface RetryConfig {
-  maxAttempts?: number;
-  backoff?: "fixed" | "linear" | "exponential";
-  initialDelay?: number;
-  maxDelay?: number;
-  retryIf?: (error: Error) => boolean;
+/**
+ * Workflow context - accumulates node outputs during execution
+ */
+export interface WorkflowContext {
+  input: unknown;
+  [nodeId: string]: unknown;
 }
 
+/**
+ * Checkpoint - defined locally to use WorkflowContext interface
+ * (Zod inference doesn't handle index signatures with required properties well)
+ */
+export interface Checkpoint {
+  id: string;
+  nodeId: string;
+  timestamp: Date;
+  context: WorkflowContext;
+  nodeStates: Record<string, NodeState>;
+}
+
+/**
+ * Blob resolver interface
+ */
+export interface BlobResolver {
+  getText(ref: BlobRef): Promise<string | null>;
+  getBytes(ref: BlobRef): Promise<Uint8Array | null>;
+  getStream(ref: BlobRef): Promise<ReadableStream | null>;
+  stat(ref: BlobRef): Promise<BlobRef | null>;
+  delete(ref: BlobRef): Promise<void>;
+}
+
+/**
+ * Step builder context
+ */
+export interface StepBuilderContext<TInput = unknown> {
+  input: TInput;
+  context: WorkflowContext;
+  blobStorage?: BlobStorage;
+  blob?: BlobResolver;
+}
+
+/**
+ * Base node configuration (shared by all node types)
+ */
 export interface BaseNodeConfig {
   checkpoint?: boolean;
   retry?: RetryConfig;
@@ -37,6 +94,9 @@ export interface BaseNodeConfig {
   skip?: (context: WorkflowContext) => boolean | Promise<boolean>;
 }
 
+/**
+ * Step node configuration
+ */
 export interface StepNodeConfig extends BaseNodeConfig {
   type: "step";
   agent?: string | Agent;
@@ -44,12 +104,18 @@ export interface StepNodeConfig extends BaseNodeConfig {
   input?: string | Record<string, unknown> | ((context: WorkflowContext) => unknown);
 }
 
+/**
+ * Parallel node configuration
+ */
 export interface ParallelNodeConfig extends BaseNodeConfig {
   type: "parallel";
   nodes: WorkflowNode[];
-  strategy?: "all" | "race" | "allSettled";
+  strategy?: ParallelStrategy;
 }
 
+/**
+ * Branch node configuration
+ */
 export interface BranchNodeConfig extends BaseNodeConfig {
   type: "branch";
   condition: (context: WorkflowContext) => boolean | Promise<boolean>;
@@ -57,15 +123,21 @@ export interface BranchNodeConfig extends BaseNodeConfig {
   else?: WorkflowNode[];
 }
 
+/**
+ * Wait node configuration
+ */
 export interface WaitNodeConfig extends BaseNodeConfig {
   type: "wait";
-  waitType: "approval" | "event";
+  waitType: WaitType;
   message?: string;
   payload?: unknown | ((context: WorkflowContext) => unknown);
   approvers?: string[];
   eventName?: string;
 }
 
+/**
+ * Sub-workflow node configuration
+ */
 export interface SubWorkflowNodeConfig extends BaseNodeConfig {
   type: "subWorkflow";
   workflow: string | WorkflowDefinition;
@@ -73,6 +145,9 @@ export interface SubWorkflowNodeConfig extends BaseNodeConfig {
   output?: (result: unknown) => unknown;
 }
 
+/**
+ * Map node configuration
+ */
 export interface MapNodeConfig extends BaseNodeConfig {
   type: "map";
   items: unknown[] | ((context: WorkflowContext) => unknown[] | Promise<unknown[]>);
@@ -80,6 +155,9 @@ export interface MapNodeConfig extends BaseNodeConfig {
   concurrency?: number;
 }
 
+/**
+ * Loop node configuration
+ */
 export interface LoopNodeConfig extends BaseNodeConfig {
   type: "loop";
   while: (context: WorkflowContext, loop: LoopExecutionContext) => boolean | Promise<boolean>;
@@ -99,6 +177,9 @@ export interface LoopNodeConfig extends BaseNodeConfig {
   delay?: number | string;
 }
 
+/**
+ * Union of all workflow node configurations
+ */
 export type WorkflowNodeConfig =
   | StepNodeConfig
   | ParallelNodeConfig
@@ -108,40 +189,18 @@ export type WorkflowNodeConfig =
   | SubWorkflowNodeConfig
   | LoopNodeConfig;
 
-export interface LoopExecutionContext {
-  iteration: number;
-  totalIterations: number;
-  previousResults: unknown[];
-  isFirstIteration: boolean;
-  isLastAllowedIteration: boolean;
-}
-
+/**
+ * Workflow node
+ */
 export interface WorkflowNode {
   id: string;
   config: WorkflowNodeConfig;
   dependsOn?: string[];
 }
 
-export interface WorkflowContext {
-  input: unknown;
-  [nodeId: string]: unknown;
-}
-
-export interface BlobResolver {
-  getText(ref: BlobRef): Promise<string | null>;
-  getBytes(ref: BlobRef): Promise<Uint8Array | null>;
-  getStream(ref: BlobRef): Promise<ReadableStream | null>;
-  stat(ref: BlobRef): Promise<BlobRef | null>;
-  delete(ref: BlobRef): Promise<void>;
-}
-
-export interface StepBuilderContext<TInput = unknown> {
-  input: TInput;
-  context: WorkflowContext;
-  blobStorage?: BlobStorage;
-  blob?: BlobResolver;
-}
-
+/**
+ * Workflow definition
+ */
 export interface WorkflowDefinition<TInput = unknown, TOutput = unknown> {
   id: string;
   description?: string;
@@ -156,45 +215,18 @@ export interface WorkflowDefinition<TInput = unknown, TOutput = unknown> {
   onComplete?: (result: TOutput, context: WorkflowContext) => void | Promise<void>;
 }
 
+/**
+ * Workflow instance
+ */
 export interface Workflow<TInput = unknown, TOutput = unknown> {
   definition: WorkflowDefinition<TInput, TOutput>;
   id: string;
   version?: string;
 }
 
-export interface NodeState {
-  nodeId: string;
-  status: NodeStatus;
-  input?: unknown;
-  output?: unknown;
-  error?: string;
-  attempt: number;
-  startedAt?: Date;
-  completedAt?: Date;
-}
-
-export interface Checkpoint {
-  id: string;
-  nodeId: string;
-  timestamp: Date;
-  context: WorkflowContext;
-  nodeStates: Record<string, NodeState>;
-}
-
-export interface PendingApproval {
-  id: string;
-  nodeId: string;
-  message: string;
-  payload: unknown;
-  approvers?: string[];
-  requestedAt: Date;
-  expiresAt?: Date;
-  status: "pending" | "approved" | "rejected" | "expired";
-  decidedBy?: string;
-  decidedAt?: Date;
-  comment?: string;
-}
-
+/**
+ * Workflow run state
+ */
 export interface WorkflowRun<TInput = unknown, TOutput = unknown> {
   id: string;
   workflowId: string;
@@ -207,41 +239,17 @@ export interface WorkflowRun<TInput = unknown, TOutput = unknown> {
   context: WorkflowContext;
   checkpoints: Checkpoint[];
   pendingApprovals: PendingApproval[];
-  error?: {
-    message: string;
-    stack?: string;
-    nodeId?: string;
-  };
+  error?: WorkflowError;
   createdAt: Date;
   startedAt?: Date;
   completedAt?: Date;
 }
 
-export interface ApprovalDecision {
-  approved: boolean;
-  approver: string;
-  comment?: string;
-}
+// Utility functions
 
-export interface WorkflowJob {
-  runId: string;
-  workflowId: string;
-  input: unknown;
-  priority?: number;
-  createdAt: Date;
-}
-
-export interface RunFilter {
-  workflowId?: string;
-  status?: WorkflowStatus | WorkflowStatus[];
-  createdAfter?: Date;
-  createdBefore?: Date;
-  limit?: number;
-  offset?: number;
-}
-
-export type DurationString = string;
-
+/**
+ * Parse duration string to milliseconds
+ */
 export function parseDuration(duration: string | number): number {
   if (typeof duration === "number") {
     if (duration < 0) throw new Error(`Duration cannot be negative: ${duration}`);
@@ -270,6 +278,9 @@ export function parseDuration(duration: string | number): number {
   }
 }
 
+/**
+ * Validate retry configuration
+ */
 export function validateRetryConfig(config: RetryConfig): void {
   const { maxAttempts, initialDelay, maxDelay, backoff } = config;
 
@@ -291,11 +302,7 @@ export function validateRetryConfig(config: RetryConfig): void {
 
   if (backoff === undefined) return;
 
-  const validBackoffs: ReadonlySet<NonNullable<RetryConfig["backoff"]>> = new Set([
-    "fixed",
-    "linear",
-    "exponential",
-  ]);
+  const validBackoffs = new Set(["fixed", "linear", "exponential"]);
 
   if (validBackoffs.has(backoff)) return;
 
@@ -304,6 +311,9 @@ export function validateRetryConfig(config: RetryConfig): void {
   );
 }
 
+/**
+ * Generate a unique workflow ID
+ */
 export function generateId(prefix: string = "wf"): string {
   return `${prefix}_${crypto.randomUUID().slice(0, 12)}`;
 }
