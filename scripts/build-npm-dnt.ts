@@ -216,7 +216,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const nativeBinary = join(__dirname, process.platform === 'win32' ? 'veryfront.exe' : 'veryfront');
 
 async function runJsFallback() {
-  const { main } = await import('../esm/src/cli/index.js');
+  const { main } = await import('../esm/cli/main.js');
   await main();
 }
 

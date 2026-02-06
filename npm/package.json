@@ -29,7 +29,7 @@
       "import": "./esm/src/index.js"
     },
     "./cli": {
-      "import": "./esm/src/cli/main.js"
+      "import": "./esm/cli/main.js"
     },
     "./server": {
       "import": "./esm/src/server/index.js"

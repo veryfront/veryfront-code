@@ -125,7 +125,7 @@ async function ensureBinaryCompiled(): Promise<void> {
       "dist/framework-src",
       "--output",
       BINARY_PATH,
-      "src/cli/main.ts",
+      "cli/main.ts",
     ],
     stdout: "inherit",
     stderr: "inherit",

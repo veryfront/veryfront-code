@@ -9,7 +9,7 @@
 
 import { createFileSystem } from "../src/platform/compat/fs.ts";
 import { exit, getArgs } from "../src/platform/compat/process.ts";
-import { promptUser } from "../src/cli/utils/index.ts";
+import { promptUser } from "../cli/utils/index.ts";
 
 type PathModule = {
   resolve: (...paths: string[]) => string;
@@ -183,7 +183,7 @@ async function updateExampleVersions(newVersion: string) {
 async function updateTemplates(newVersion: string) {
 	console.log("\n📝 Updating template versions...");
 	const filesToUpdate = [
-		"src/cli/commands/init/config-generator.ts",
+		"cli/commands/init/config-generator.ts",
 		"src/core/utils/constants/cdn.ts",
 	];
 

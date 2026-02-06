@@ -41,7 +41,7 @@ if (USE_COMPILED) {
     await Deno.stat("./veryfront-local");
   } catch {
     console.log("❌ Binary not found. Compile first:");
-    console.log("   deno compile --allow-all --unstable-net --output ./veryfront-local src/cli/main.ts");
+    console.log("   deno compile --allow-all --unstable-net --output ./veryfront-local cli/main.ts");
     Deno.exit(1);
   }
 
@@ -54,9 +54,9 @@ if (USE_COMPILED) {
   });
   serverProcess = command.spawn();
 } else {
-  console.log("🚀 Starting source server (src/cli/main.ts dev)...");
+  console.log("🚀 Starting source server (cli/main.ts dev)...");
   const command = new Deno.Command("deno", {
-    args: ["run", "--allow-all", "--unstable-net", "src/cli/main.ts", "dev", "-p", String(PORT)],
+    args: ["run", "--allow-all", "--unstable-net", "cli/main.ts", "dev", "-p", String(PORT)],
     env,
     stdout: "piped",
     stderr: "piped",

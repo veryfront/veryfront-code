@@ -10,12 +10,12 @@
     "examples/",
     "data/",
     ".deno_cache/",
-    "src/cli/templates/files/",
-    "src/cli/templates/integrations/"
+    "cli/templates/files/",
+    "cli/templates/integrations/"
   ],
   "exports": {
     ".": "./src/index.ts",
-    "./cli": "./src/cli/main.ts",
+    "./cli": "./cli/main.ts",
     "./server": "./src/server/index.ts",
     "./middleware": "./src/middleware/index.ts",
     "./head": "./src/react/components/Head.tsx",
@@ -77,7 +77,7 @@
     "#veryfront/agent/react": "./src/agent/react/index.ts",
     "#veryfront/build": "./src/build/index.ts",
     "#veryfront/cache": "./src/cache/index.ts",
-    "#veryfront/cli/ui": "./src/cli/ui/index.ts",
+    "#veryfront/cli/ui": "./cli/ui/index.ts",
     "#veryfront/config": "./src/config/index.ts",
     "#veryfront/data": "./src/data/index.ts",
     "#veryfront/errors": "./src/errors/index.ts",
@@ -232,31 +232,31 @@
   },
   "tasks": {
     "setup": "deno run --allow-all scripts/setup.ts",
-    "start": "deno run --allow-all src/cli/main.ts",
-    "start:headless": "deno run --allow-all src/cli/main.ts --headless",
-    "proxy": "deno run --allow-all src/cli/main.ts serve --mode=proxy",
-    "dev": "deno run --allow-all src/cli/main.ts dev",
-    "renderer": "deno run --allow-all src/cli/main.ts serve --mode=renderer",
-    "build": "deno run -A scripts/generate-templates-manifest.ts && deno run -A scripts/generate-dev-ui-manifest.ts && deno run -A scripts/prepare-framework-sources.ts && deno compile --allow-all --include src/platform/polyfills --include src/proxy/main.ts --include dist/framework-src --output ./bin/veryfront src/cli/main.ts",
+    "start": "deno run --allow-all cli/main.ts",
+    "start:headless": "deno run --allow-all cli/main.ts --headless",
+    "proxy": "deno run --allow-all cli/main.ts serve --mode=proxy",
+    "dev": "deno run --allow-all cli/main.ts dev",
+    "renderer": "deno run --allow-all cli/main.ts serve --mode=renderer",
+    "build": "deno run -A scripts/generate-templates-manifest.ts && deno run -A scripts/generate-dev-ui-manifest.ts && deno run -A scripts/prepare-framework-sources.ts && deno compile --allow-all --include src/platform/polyfills --include src/proxy/main.ts --include dist/framework-src --output ./bin/veryfront cli/main.ts",
     "build:npm": "deno run -A scripts/build-npm-dnt.ts",
     "release": "deno run -A scripts/release.ts",
     "test": "VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --allow-all '--ignore=tests/e2e,tests/integration/compiled-binary-e2e.test.ts' --unstable-worker-options --unstable-net",
-    "test:unit": "VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --allow-all --v8-flags=--max-old-space-size=8192 '--ignore=tests,src/ai/workflow/__tests__,src/cli/commands/*.integration.test.ts' --unstable-worker-options --unstable-net",
+    "test:unit": "VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --allow-all --v8-flags=--max-old-space-size=8192 '--ignore=tests,src/ai/workflow/__tests__,cli/commands/*.integration.test.ts' --unstable-worker-options --unstable-net",
     "test:integration": "VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --allow-all '--ignore=tests/e2e,tests/integration/compiled-binary-e2e.test.ts' tests --unstable-worker-options --unstable-net",
-    "test:integration:cli": "VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --allow-all src/cli/commands/*.integration.test.ts --unstable-worker-options --unstable-net",
-    "test:record": "VCR=record deno test --no-check --allow-all src/cli/commands/*.integration.test.ts",
+    "test:integration:cli": "VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --allow-all cli/commands/*.integration.test.ts --unstable-worker-options --unstable-net",
+    "test:record": "VCR=record deno test --no-check --allow-all cli/commands/*.integration.test.ts",
     "test:coverage": "rm -rf coverage && VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --fail-fast --allow-all --coverage=coverage '--ignore=tests/integration/compiled-binary-e2e.test.ts' --unstable-worker-options --unstable-net || exit 1",
-    "test:coverage:unit": "rm -rf coverage && VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --fail-fast --allow-all --coverage=coverage '--ignore=tests,src/ai/workflow/__tests__,src/cli/commands/*.integration.test.ts' --unstable-worker-options --unstable-net || exit 1",
+    "test:coverage:unit": "rm -rf coverage && VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --fail-fast --allow-all --coverage=coverage '--ignore=tests,src/ai/workflow/__tests__,cli/commands/*.integration.test.ts' --unstable-worker-options --unstable-net || exit 1",
     "test:coverage:integration": "rm -rf coverage && VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --fail-fast --allow-all --coverage=coverage '--ignore=tests/e2e,tests/integration/compiled-binary-e2e.test.ts' tests --unstable-worker-options --unstable-net || exit 1",
     "coverage:report": "deno coverage coverage --include=src/ --exclude=tests --exclude=src/**/*_test.ts --exclude=src/**/*_test.tsx --exclude=src/**/*.test.ts --exclude=src/**/*.test.tsx --lcov > coverage/lcov.info && deno run --allow-read scripts/check-coverage.ts 80",
     "coverage:html": "deno coverage coverage --include=src/ --exclude=tests --exclude=src/**/*_test.ts --exclude=src/**/*_test.tsx --exclude=src/**/*.test.ts --exclude=src/**/*.test.tsx --html",
     "clean": "rm -rf .cache/",
-    "lint": "DENO_NO_PACKAGE_JSON=1 deno lint src/",
-    "fmt": "deno fmt src/",
-    "fmt:check": "deno fmt --check src/",
-    "typecheck": "deno check src/index.ts src/cli/main.ts src/server/index.ts src/routing/api/index.ts src/rendering/index.ts src/platform/index.ts src/platform/adapters/index.ts src/build/index.ts src/build/production-build/index.ts src/transforms/index.ts src/config/index.ts src/utils/index.ts src/data/index.ts src/security/index.ts src/middleware/index.ts src/server/handlers/dev/index.ts src/server/handlers/request/api/index.ts src/rendering/cache/index.ts src/rendering/cache/stores/index.ts src/rendering/rsc/actions/index.ts src/html/index.ts src/modules/index.ts src/proxy/main.ts scripts/server.ts",
-    "verify": "deno fmt --check src/ && DENO_NO_PACKAGE_JSON=1 deno lint src/ && deno task typecheck && deno task test && deno task test:e2e:binary",
-    "verify:quick": "deno fmt --check src/ && DENO_NO_PACKAGE_JSON=1 deno lint src/ && deno task typecheck",
+    "lint": "DENO_NO_PACKAGE_JSON=1 deno lint src/ cli/",
+    "fmt": "deno fmt src/ cli/",
+    "fmt:check": "deno fmt --check src/ cli/",
+    "typecheck": "deno check src/index.ts cli/main.ts src/server/index.ts src/routing/api/index.ts src/rendering/index.ts src/platform/index.ts src/platform/adapters/index.ts src/build/index.ts src/build/production-build/index.ts src/transforms/index.ts src/config/index.ts src/utils/index.ts src/data/index.ts src/security/index.ts src/middleware/index.ts src/server/handlers/dev/index.ts src/server/handlers/request/api/index.ts src/rendering/cache/index.ts src/rendering/cache/stores/index.ts src/rendering/rsc/actions/index.ts src/html/index.ts src/modules/index.ts src/proxy/main.ts scripts/server.ts",
+    "verify": "deno fmt --check src/ cli/ && DENO_NO_PACKAGE_JSON=1 deno lint src/ cli/ && deno task typecheck && deno task test && deno task test:e2e:binary",
+    "verify:quick": "deno fmt --check src/ cli/ && DENO_NO_PACKAGE_JSON=1 deno lint src/ cli/ && deno task typecheck",
     "docs:check-links": "deno run -A scripts/check-doc-links.ts",
     "lint:ban-console": "deno run --allow-read scripts/ban-console.ts",
     "lint:ban-deep-imports": "deno run --allow-read scripts/ban-deep-imports.ts",
@@ -273,8 +273,8 @@
     "test:e2e:binary": "deno test --allow-all tests/integration/compiled-binary-e2e.test.ts",
     "test:e2e:binary:fresh": "VERYFRONT_BINARY_FRESH=1 deno test --allow-all tests/integration/compiled-binary-e2e.test.ts",
     "check:circular": "deno run -A jsr:@cunarist/deno-circular-deps src/index.ts",
-    "cli": "deno run --allow-all src/cli/main.ts",
-    "mcp": "deno run --allow-all src/cli/main.ts mcp",
+    "cli": "deno run --allow-all cli/main.ts",
+    "mcp": "deno run --allow-all cli/main.ts mcp",
     "batch:estimate": "deno run -A scripts/batch-simplify/batch-simplify.ts estimate",
     "batch:prepare": "deno run -A scripts/batch-simplify/batch-simplify.ts prepare",
     "batch:submit": "deno run -A scripts/batch-simplify/batch-simplify.ts submit",
@@ -285,13 +285,15 @@
     "rlm:example": "deno run -A scripts/rlm-ts/examples/basic.ts",
     "rlm:explore": "deno run -A scripts/rlm-ts/apps/explore.ts",
     "rlm:audit": "deno run -A scripts/rlm-ts/apps/audit.ts",
-    "start-split": "deno run --allow-all src/cli/main.ts serve --split",
-    "start-split:binary": "deno run --allow-all src/cli/main.ts serve --split --binary"
+    "start-split": "deno run --allow-all cli/main.ts serve --split",
+    "start-split:binary": "deno run --allow-all cli/main.ts serve --split --binary"
   },
   "lint": {
     "include": [
       "src/**/*.ts",
-      "src/**/*.tsx"
+      "src/**/*.tsx",
+      "cli/**/*.ts",
+      "cli/**/*.tsx"
     ],
     "exclude": [
       "dist/",
@@ -315,7 +317,9 @@
   "fmt": {
     "include": [
       "src/**/*.ts",
-      "src/**/*.tsx"
+      "src/**/*.tsx",
+      "cli/**/*.ts",
+      "cli/**/*.tsx"
     ],
     "exclude": [
       "dist/",

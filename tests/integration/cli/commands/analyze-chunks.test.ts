@@ -1,6 +1,6 @@
 import { assert } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { analyzeChunksCommand } from "../../../../src/cli/commands/analyze-chunks/index.ts";
+import { analyzeChunksCommand } from "../../../../cli/commands/analyze-chunks/index.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 
 describe("CLI analyze-chunks", () => {

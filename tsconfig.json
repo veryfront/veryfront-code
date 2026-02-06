@@ -20,7 +20,7 @@
       "#veryfront/build/*": ["./src/build/*"],
       "#veryfront/cache": ["./src/cache/index.ts"],
       "#veryfront/cache/*": ["./src/cache/*"],
-      "#veryfront/cli/*": ["./src/cli/*"],
+      "#veryfront/cli/*": ["./cli/*"],
       "#veryfront/components": ["./src/react/components/index.ts"],
       "#veryfront/config": ["./src/config/index.ts"],
       "#veryfront/config/*": ["./src/config/*"],
@@ -71,6 +71,6 @@
     },
     "baseUrl": "."
   },
-  "include": ["src/**/*", "tests/**/*"],
+  "include": ["src/**/*", "cli/**/*", "tests/**/*"],
   "exclude": ["node_modules", "dist", ".cache", "npm"]
 }
