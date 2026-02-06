@@ -87,12 +87,8 @@ export class PageResolver {
         pageInfo ??= await getEntityBySlug(this.projectDir, slug, this.adapter);
 
         if (!pageInfo) {
-          throw new VeryfrontError(`Page not found: ${slug}`, {
-            slug: FILE_NOT_FOUND.slug,
-            category: FILE_NOT_FOUND.category,
-            status: FILE_NOT_FOUND.status,
-            title: FILE_NOT_FOUND.title,
-            suggestion: FILE_NOT_FOUND.suggestion,
+          throw FILE_NOT_FOUND.create({
+            detail: `Page not found: ${slug}`,
             context: { slug, useAppRouter },
           });
         }

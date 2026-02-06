@@ -46,9 +46,14 @@ describe("error-registry", () => {
       }
     });
 
-    it("should have max 40 characters for all slugs", () => {
+    it("should have between 3 and 40 characters for all slugs", () => {
       const slugs = getAllSlugs();
       for (const slug of slugs) {
+        assertEquals(
+          slug.length >= 3,
+          true,
+          `Slug "${slug}" is too short (min 3 characters)`,
+        );
         assertEquals(
           slug.length <= 40,
           true,

@@ -81,16 +81,12 @@ export function defineError(definition: ErrorDefinition): RegisteredError {
 /**
  * Options for VeryfrontError constructor
  */
-export interface VeryfrontErrorOptions {
+export interface VeryfrontErrorOptions extends ErrorCreateOptions {
   slug: string;
   category: ErrorCategory;
   status: number;
   title: string;
   suggestion?: string;
-  detail?: string;
-  cause?: string;
-  instance?: string;
-  context?: unknown;
 }
 
 /**

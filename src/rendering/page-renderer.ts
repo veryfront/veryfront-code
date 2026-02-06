@@ -1,7 +1,6 @@
 import * as React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
-import { VeryfrontError } from "#veryfront/errors/index.ts";
 import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
 import { createDefaultMDXComponents } from "./utils/index.ts";
 import { extractRouteParams } from "#veryfront/utils/route-path-utils.ts";
@@ -237,12 +236,8 @@ export class PageRenderer {
     if (result.scriptResult) return;
     if (result.pageElement && result.pageBundle) return;
 
-    throw new VeryfrontError("Failed to prepare page bundle", {
-      slug: RENDER_ERROR.slug,
-      category: RENDER_ERROR.category,
-      status: RENDER_ERROR.status,
-      title: RENDER_ERROR.title,
-      suggestion: RENDER_ERROR.suggestion,
+    throw RENDER_ERROR.create({
+      detail: "Failed to prepare page bundle",
       context: {
         slug,
         hasElement: !!result.pageElement,

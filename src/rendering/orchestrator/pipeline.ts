@@ -164,21 +164,14 @@ export class RenderPipeline {
       const failedDetails = criticalFailures
         .map((f) => `${f.path}: ${f.error}`)
         .join("\n");
-      throw new VeryfrontError(
-        `Critical page module(s) failed to load:\n${failedDetails}`,
-        {
-          slug: RENDER_ERROR.slug,
-          category: RENDER_ERROR.category,
-          status: RENDER_ERROR.status,
-          title: RENDER_ERROR.title,
-          suggestion: RENDER_ERROR.suggestion,
-          context: {
-            criticalFailures,
-            loadedCount: loaded.length,
-            totalModules: modules.length,
-          },
+      throw RENDER_ERROR.create({
+        detail: `Critical page module(s) failed to load:\n${failedDetails}`,
+        context: {
+          criticalFailures,
+          loadedCount: loaded.length,
+          totalModules: modules.length,
         },
-      );
+      });
     }
 
     return loaded;
@@ -324,26 +317,15 @@ export class RenderPipeline {
                   if (!result) continue;
 
                   if (result.notFound) {
-                    throw new VeryfrontError("Page/Layout returned notFound", {
-                      slug: FILE_NOT_FOUND.slug,
-                      category: FILE_NOT_FOUND.category,
-                      status: FILE_NOT_FOUND.status,
-                      title: FILE_NOT_FOUND.title,
-                      suggestion: FILE_NOT_FOUND.suggestion,
-                      context: {
-                        slug,
-                        component: id,
-                      },
+                    throw FILE_NOT_FOUND.create({
+                      detail: "Page/Layout returned notFound",
+                      context: { slug, component: id },
                     });
                   }
 
                   if (result.redirect) {
-                    throw new VeryfrontError(`Redirect to ${result.redirect.destination}`, {
-                      slug: RENDER_ERROR.slug,
-                      category: RENDER_ERROR.category,
-                      status: RENDER_ERROR.status,
-                      title: RENDER_ERROR.title,
-                      suggestion: RENDER_ERROR.suggestion,
+                    throw RENDER_ERROR.create({
+                      detail: `Redirect to ${result.redirect.destination}`,
                       context: { slug, redirect: result.redirect },
                     });
                   }
@@ -392,12 +374,8 @@ export class RenderPipeline {
         if (pageBundleResult.scriptResult) return pageBundleResult.scriptResult;
 
         if (!pageBundleResult.pageElement || !pageBundleResult.pageBundle) {
-          throw new VeryfrontError("Failed to prepare page bundle", {
-            slug: RENDER_ERROR.slug,
-            category: RENDER_ERROR.category,
-            status: RENDER_ERROR.status,
-            title: RENDER_ERROR.title,
-            suggestion: RENDER_ERROR.suggestion,
+          throw RENDER_ERROR.create({
+            detail: "Failed to prepare page bundle",
             context: { slug },
           });
         }

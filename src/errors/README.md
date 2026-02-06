@@ -81,14 +81,10 @@ console.log(error.suggestion); // "Create veryfront.config.js..."
 ### VeryfrontError Class
 
 ```typescript
-import { VeryfrontError } from "#veryfront/errors";
+import { CONFIG_NOT_FOUND } from "#veryfront/errors";
 
-const error = new VeryfrontError("Configuration not found", {
-  slug: "config-not-found",
-  category: "CONFIG",
-  status: 500,
-  title: "Configuration not found",
-  suggestion: "Create veryfront.config.js in your project root",
+// Preferred: use .create() from registry
+const error = CONFIG_NOT_FOUND.create({
   detail: "Could not find config file",
   context: { projectDir: "/path/to/project" },
 });
@@ -98,7 +94,7 @@ const response = error.toRFC9457();
 // {
 //   type: "https://veryfront.com/docs/errors/config-not-found",
 //   title: "Configuration not found",
-//   status: 500,
+//   status: 404,
 //   detail: "Could not find config file",
 //   category: "CONFIG",
 //   suggestion: "Create veryfront.config.js..."

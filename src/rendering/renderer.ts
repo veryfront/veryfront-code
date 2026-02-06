@@ -33,7 +33,6 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
-import { VeryfrontError } from "#veryfront/errors/index.ts";
 import { SERVICE_OVERLOADED } from "#veryfront/errors/error-registry.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { buildQueryAwareCacheKey, type QueryParamCacheOptions } from "#veryfront/cache/keys.ts";
@@ -332,22 +331,16 @@ export class Renderer {
             activeRenders: activeCount,
             limit: RENDER_PER_PROJECT_LIMIT,
           });
-          throw new VeryfrontError(
-            `Per-project render limit reached (${activeCount}/${RENDER_PER_PROJECT_LIMIT} active). Try again shortly.`,
-            {
-              slug: SERVICE_OVERLOADED.slug,
-              category: SERVICE_OVERLOADED.category,
-              status: SERVICE_OVERLOADED.status,
-              title: SERVICE_OVERLOADED.title,
-              suggestion: SERVICE_OVERLOADED.suggestion,
-              context: {
-                slug,
-                projectId: ctx.projectId,
-                activeRenders: activeCount,
-                limit: RENDER_PER_PROJECT_LIMIT,
-              },
+          throw SERVICE_OVERLOADED.create({
+            detail:
+              `Per-project render limit reached (${activeCount}/${RENDER_PER_PROJECT_LIMIT} active). Try again shortly.`,
+            context: {
+              slug,
+              projectId: ctx.projectId,
+              activeRenders: activeCount,
+              limit: RENDER_PER_PROJECT_LIMIT,
             },
-          );
+          });
         }
 
         const acquired = await renderSemaphore.tryAcquire(RENDER_ACQUIRE_TIMEOUT_MS);
@@ -359,17 +352,11 @@ export class Renderer {
             waiting: renderSemaphore.waiting,
             available: renderSemaphore.available,
           });
-          throw new VeryfrontError(
-            `Render capacity exceeded (${renderSemaphore.waiting} waiting). Service is overloaded.`,
-            {
-              slug: SERVICE_OVERLOADED.slug,
-              category: SERVICE_OVERLOADED.category,
-              status: SERVICE_OVERLOADED.status,
-              title: SERVICE_OVERLOADED.title,
-              suggestion: SERVICE_OVERLOADED.suggestion,
-              context: { slug, projectId: ctx.projectId, waiting: renderSemaphore.waiting },
-            },
-          );
+          throw SERVICE_OVERLOADED.create({
+            detail:
+              `Render capacity exceeded (${renderSemaphore.waiting} waiting). Service is overloaded.`,
+            context: { slug, projectId: ctx.projectId, waiting: renderSemaphore.waiting },
+          });
         }
 
         try {

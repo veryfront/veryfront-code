@@ -1,4 +1,3 @@
-import { VeryfrontError } from "#veryfront/errors/index.ts";
 import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
@@ -191,12 +190,8 @@ export class SSRRenderer {
 
     if (renderResult.html) return { html: renderResult.html, stream: null };
 
-    throw new VeryfrontError("SSR failed - no output", {
-      slug: RENDER_ERROR.slug,
-      category: RENDER_ERROR.category,
-      status: RENDER_ERROR.status,
-      title: RENDER_ERROR.title,
-      suggestion: RENDER_ERROR.suggestion,
+    throw RENDER_ERROR.create({
+      detail: "SSR failed - no output",
     });
   }
 
