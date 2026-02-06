@@ -1,19 +1,3 @@
-export interface BuildCommandArgs {
-  _: (string | number)[];
-  output?: string;
-  o?: string;
-  preset?: string;
-  split?: boolean;
-  compress?: boolean;
-  prefetch?: boolean;
-  ssg?: boolean;
-  "no-ssg"?: boolean;
-  include?: string | string[];
-  exclude?: string | string[];
-  "dry-run"?: boolean;
-  dryrun?: boolean;
-}
-
 export interface GenerateCommandArgs {
   _: (string | number)[];
 }

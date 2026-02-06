@@ -7,6 +7,19 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleDevCommand } from "./handler.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
 
+const DEFAULT_DEV_SERVER_PORT = 3000;
+
+/**
+ * Mirrors the dev handler's extraction logic for testing.
+ */
+function extractDevArgs(args: ParsedArgs) {
+  return {
+    project: typeof args.project === "string" ? args.project : undefined,
+    port: typeof args.port === "number" ? args.port : DEFAULT_DEV_SERVER_PORT,
+    hmr: args.hmr !== false,
+  };
+}
+
 describe("commands/dev/handler", () => {
   describe("handleDevCommand", () => {
     it("is an async function", () => {
@@ -19,41 +32,45 @@ describe("commands/dev/handler", () => {
     });
   });
 
-  describe("ParsedArgs for dev command", () => {
-    it("supports port configuration", () => {
-      const args: ParsedArgs = {
-        _: ["dev"],
-        port: 3000,
-      };
-      assertEquals(args.port, 3000);
+  describe("dev argument extraction", () => {
+    it("extracts port when provided as number", () => {
+      const result = extractDevArgs({ _: ["dev"], port: 4000 });
+      assertEquals(result.port, 4000);
     });
 
-    it("supports project path via --project flag", () => {
-      const args: ParsedArgs = {
-        _: ["dev"],
-        project: "/path/to/project",
-      };
-      assertEquals(args.project, "/path/to/project");
+    it("defaults port to DEFAULT_DEV_SERVER_PORT (3000) when not provided", () => {
+      const result = extractDevArgs({ _: ["dev"] });
+      assertEquals(result.port, DEFAULT_DEV_SERVER_PORT);
     });
 
-    it("supports hmr flag (enabled by default)", () => {
-      const argsEnabled: ParsedArgs = {
-        _: ["dev"],
-        hmr: true,
-      };
-      const argsDisabled: ParsedArgs = {
-        _: ["dev"],
-        hmr: false,
-      };
-      assertEquals(argsEnabled.hmr, true);
-      assertEquals(argsDisabled.hmr, false);
+    it("extracts project path from --project flag", () => {
+      const result = extractDevArgs({ _: ["dev"], project: "/path/to/project" });
+      assertEquals(result.project, "/path/to/project");
     });
 
-    it("handles missing port (uses default)", () => {
-      const args: ParsedArgs = {
-        _: ["dev"],
-      };
-      assertEquals(args.port, undefined);
+    it("returns undefined project when not provided", () => {
+      const result = extractDevArgs({ _: ["dev"] });
+      assertEquals(result.project, undefined);
+    });
+
+    it("returns undefined project when value is not a string", () => {
+      const result = extractDevArgs({ _: ["dev"], project: true });
+      assertEquals(result.project, undefined);
+    });
+
+    it("defaults hmr to true when not specified", () => {
+      const result = extractDevArgs({ _: ["dev"] });
+      assertEquals(result.hmr, true);
+    });
+
+    it("enables hmr when explicitly set to true", () => {
+      const result = extractDevArgs({ _: ["dev"], hmr: true });
+      assertEquals(result.hmr, true);
+    });
+
+    it("disables hmr when set to false", () => {
+      const result = extractDevArgs({ _: ["dev"], hmr: false });
+      assertEquals(result.hmr, false);
     });
   });
 });

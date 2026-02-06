@@ -3,19 +3,12 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleInstallCommand, handleUninstallCommand } from "./handler.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
 
+/**
+ * Mirrors the parseInstallArgs extraction logic for testing.
+ */
 function extractInstallArgs(args: ParsedArgs) {
-  const target = typeof args.target === "string" ? args.target : undefined;
   return {
-    target,
-    global: Boolean(args.global),
-    force: Boolean(args.force || args.f),
-  };
-}
-
-function extractUninstallArgs(args: ParsedArgs) {
-  const target = typeof args.target === "string" ? args.target : undefined;
-  return {
-    target,
+    target: typeof args.target === "string" ? args.target : undefined,
     global: Boolean(args.global),
     force: Boolean(args.force || args.f),
   };
@@ -95,22 +88,6 @@ describe("commands/install/handler", () => {
       assertEquals(extractInstallArgs({ _: ["install"] }).force, false);
     });
 
-    it("uses Boolean() coercion (truthy values enable flags)", () => {
-      const globalArgs = { _: ["install"], global: "yes" } as unknown as ParsedArgs;
-      const forceArgs = { _: ["install"], force: 1 } as unknown as ParsedArgs;
-      assertEquals(extractInstallArgs(globalArgs).global, true);
-      assertEquals(extractInstallArgs(forceArgs).force, true);
-    });
-
-    it("Boolean() coercion treats falsy values as false", () => {
-      const zeroArgs = { _: ["install"], global: 0 } as unknown as ParsedArgs;
-      const emptyArgs = { _: ["install"], global: "" } as unknown as ParsedArgs;
-      const nullArgs = { _: ["install"], global: null } as unknown as ParsedArgs;
-      assertEquals(extractInstallArgs(zeroArgs).global, false);
-      assertEquals(extractInstallArgs(emptyArgs).global, false);
-      assertEquals(extractInstallArgs(nullArgs).global, false);
-    });
-
     it("does not use -y as force alias (unlike clean/lock)", () => {
       const result = extractInstallArgs({ _: ["install"], y: true });
       assertEquals(result.force, false);
@@ -125,7 +102,7 @@ describe("commands/install/handler", () => {
         global: true,
         force: true,
       });
-      const uninstallResult = extractUninstallArgs({
+      const uninstallResult = extractInstallArgs({
         _: ["uninstall"],
         target: "/usr/local/bin",
         global: true,
@@ -138,22 +115,22 @@ describe("commands/install/handler", () => {
     });
 
     it("parses --target as string value", () => {
-      const result = extractUninstallArgs({ _: ["uninstall"], target: "/usr/local/bin" });
+      const result = extractInstallArgs({ _: ["uninstall"], target: "/usr/local/bin" });
       assertEquals(result.target, "/usr/local/bin");
     });
 
     it("returns undefined for --target when not provided", () => {
-      const result = extractUninstallArgs({ _: ["uninstall"] });
+      const result = extractInstallArgs({ _: ["uninstall"] });
       assertEquals(result.target, undefined);
     });
 
     it("parses --global flag", () => {
-      assertEquals(extractUninstallArgs({ _: ["uninstall"], global: true }).global, true);
-      assertEquals(extractUninstallArgs({ _: ["uninstall"] }).global, false);
+      assertEquals(extractInstallArgs({ _: ["uninstall"], global: true }).global, true);
+      assertEquals(extractInstallArgs({ _: ["uninstall"] }).global, false);
     });
 
     it("parses -f as alias for --force", () => {
-      assertEquals(extractUninstallArgs({ _: ["uninstall"], f: true }).force, true);
+      assertEquals(extractInstallArgs({ _: ["uninstall"], f: true }).force, true);
     });
   });
 });

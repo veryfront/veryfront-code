@@ -1,5 +1,5 @@
 // Core
-export type { BuildCommandArgs, GenerateCommandArgs, ParsedArgs } from "./shared/types.ts";
+export type { GenerateCommandArgs, ParsedArgs } from "./shared/types.ts";
 export { parseArrayArg, parseCliArgs } from "./shared/arg-parser.ts";
 export { routeCommand } from "./router.ts";
 

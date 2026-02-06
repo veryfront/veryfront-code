@@ -1,7 +1,34 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleBuildCommand } from "./handler.ts";
-import type { BuildCommandArgs } from "../../shared/types.ts";
+import type { ParsedArgs } from "../../shared/types.ts";
+
+/**
+ * Mirrors the parseBuildArgs extraction logic for testing.
+ * Validates that CLI flags are correctly mapped to build options.
+ */
+function extractBuildArgs(args: ParsedArgs) {
+  let outputDir: string | undefined;
+  if (typeof args.output === "string") {
+    outputDir = args.output;
+  } else if (typeof args.o === "string") {
+    outputDir = args.o;
+  }
+
+  const preset = typeof args.preset === "string" ? args.preset : undefined;
+
+  return {
+    outputDir,
+    preset,
+    splitting: args.split !== false,
+    compress: args.compress !== false,
+    prefetch: args.prefetch !== false,
+    ssg: args.ssg !== false && args["no-ssg"] !== true,
+    include: typeof args.include === "string" ? [args.include] : undefined,
+    exclude: typeof args.exclude === "string" ? [args.exclude] : undefined,
+    dryRun: Boolean(args["dry-run"] ?? args.dryrun),
+  };
+}
 
 describe("commands/build/handler", () => {
   describe("handleBuildCommand", () => {
@@ -10,79 +37,99 @@ describe("commands/build/handler", () => {
       assertEquals(handleBuildCommand.constructor.name, "AsyncFunction");
     });
 
-    it("accepts BuildCommandArgs parameter", () => {
+    it("accepts a single parameter", () => {
       assertEquals(handleBuildCommand.length, 1);
     });
   });
 
-  describe("BuildCommandArgs interface", () => {
-    it("supports output directory via --output flag", () => {
-      const args: BuildCommandArgs = {
-        _: ["build"],
-        output: "custom-dist",
-      };
-      assertEquals(args.output, "custom-dist");
+  describe("build argument extraction", () => {
+    it("extracts --output as outputDir", () => {
+      const result = extractBuildArgs({ _: ["build"], output: "custom-dist" });
+      assertEquals(result.outputDir, "custom-dist");
     });
 
-    it("supports output directory via -o shorthand", () => {
-      const args: BuildCommandArgs = {
-        _: ["build"],
-        o: "build",
-      };
-      assertEquals(args.o, "build");
+    it("extracts -o as outputDir", () => {
+      const result = extractBuildArgs({ _: ["build"], o: "build" });
+      assertEquals(result.outputDir, "build");
     });
 
-    it("supports preset flag for embedded builds", () => {
-      const args: BuildCommandArgs = {
-        _: ["build"],
-        preset: "embedded",
-      };
-      assertEquals(args.preset, "embedded");
+    it("prefers --output over -o", () => {
+      const result = extractBuildArgs({ _: ["build"], output: "a", o: "b" });
+      assertEquals(result.outputDir, "a");
     });
 
-    it("supports feature flags", () => {
-      const args: BuildCommandArgs = {
-        _: ["build"],
-        split: true,
-        compress: true,
-        prefetch: false,
-        ssg: true,
-      };
-      assertEquals(args.split, true);
-      assertEquals(args.compress, true);
-      assertEquals(args.prefetch, false);
-      assertEquals(args.ssg, true);
+    it("returns undefined outputDir when not provided", () => {
+      const result = extractBuildArgs({ _: ["build"] });
+      assertEquals(result.outputDir, undefined);
     });
 
-    it("supports no-ssg flag", () => {
-      const args: BuildCommandArgs = {
-        _: ["build"],
-        "no-ssg": true,
-      };
-      assertEquals(args["no-ssg"], true);
+    it("extracts --preset flag", () => {
+      const result = extractBuildArgs({ _: ["build"], preset: "embedded" });
+      assertEquals(result.preset, "embedded");
     });
 
-    it("supports include and exclude patterns", () => {
-      const args: BuildCommandArgs = {
-        _: ["build"],
-        include: "pages/**,app/**",
-        exclude: "**/*.test.ts",
-      };
-      assertEquals(args.include, "pages/**,app/**");
-      assertEquals(args.exclude, "**/*.test.ts");
+    it("defaults splitting to true", () => {
+      assertEquals(extractBuildArgs({ _: ["build"] }).splitting, true);
     });
 
-    it("supports dry-run flags", () => {
-      const args1: BuildCommandArgs = {
-        _: ["build"],
-        "dry-run": true,
-      };
-      const args2: BuildCommandArgs = {
-        _: ["build"],
-        dryrun: true,
-      };
-      assertEquals(args1["dry-run"], true);
-      assertEquals(args2.dryrun, true);
+    it("disables splitting when --split false", () => {
+      assertEquals(extractBuildArgs({ _: ["build"], split: false }).splitting, false);
+    });
+
+    it("defaults compress to true", () => {
+      assertEquals(extractBuildArgs({ _: ["build"] }).compress, true);
+    });
+
+    it("disables compress when --compress false", () => {
+      assertEquals(extractBuildArgs({ _: ["build"], compress: false }).compress, false);
+    });
+
+    it("defaults prefetch to true", () => {
+      assertEquals(extractBuildArgs({ _: ["build"] }).prefetch, true);
+    });
+
+    it("disables prefetch when --prefetch false", () => {
+      assertEquals(extractBuildArgs({ _: ["build"], prefetch: false }).prefetch, false);
+    });
+
+    it("defaults ssg to true", () => {
+      assertEquals(extractBuildArgs({ _: ["build"] }).ssg, true);
+    });
+
+    it("disables ssg when --ssg false", () => {
+      assertEquals(extractBuildArgs({ _: ["build"], ssg: false }).ssg, false);
+    });
+
+    it("disables ssg when --no-ssg is true", () => {
+      assertEquals(extractBuildArgs({ _: ["build"], "no-ssg": true }).ssg, false);
+    });
+
+    it("wraps --include string into array", () => {
+      const result = extractBuildArgs({ _: ["build"], include: "pages/**,app/**" });
+      assertEquals(result.include, ["pages/**,app/**"]);
+    });
+
+    it("wraps --exclude string into array", () => {
+      const result = extractBuildArgs({ _: ["build"], exclude: "**/*.test.ts" });
+      assertEquals(result.exclude, ["**/*.test.ts"]);
+    });
+
+    it("returns undefined for include/exclude when not provided", () => {
+      const result = extractBuildArgs({ _: ["build"] });
+      assertEquals(result.include, undefined);
+      assertEquals(result.exclude, undefined);
+    });
+
+    it("parses --dry-run flag", () => {
+      assertEquals(extractBuildArgs({ _: ["build"], "dry-run": true }).dryRun, true);
+    });
+
+    it("parses --dryrun alias", () => {
+      assertEquals(extractBuildArgs({ _: ["build"], dryrun: true }).dryRun, true);
+    });
+
+    it("defaults dryRun to false", () => {
+      assertEquals(extractBuildArgs({ _: ["build"] }).dryRun, false);
     });
   });
 });
