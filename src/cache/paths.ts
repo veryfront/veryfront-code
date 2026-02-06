@@ -10,6 +10,7 @@
  */
 
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
+import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors/error-registry.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
 
 /** Portable cache directory token */
@@ -119,8 +120,6 @@ export function tokenizeAllCachePaths(code: string): string {
 export function detokenizeAllCachePaths(code: string): string {
   return detokenizeCachePaths(code, getCacheBaseDir());
 }
-
-import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors/error-registry.ts";
 
 export { CACHE_INVARIANT_VIOLATION };
 

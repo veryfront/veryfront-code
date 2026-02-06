@@ -28,6 +28,7 @@ export const CONFIG_PARSE_ERROR = defineError({
   suggestion: "Ensure your configuration file is valid TypeScript/JSON",
 });
 
+/** Schema-level config validation (e.g. Zod schema mismatch at runtime) */
 export const CONFIG_VALIDATION_ERROR = defineError({
   slug: "config-validation-error",
   category: "CONFIG",
