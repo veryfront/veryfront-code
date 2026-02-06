@@ -26,3 +26,6 @@ export const MAX_PATH_LENGTH_CHARS = 4096;
 export const MAX_PORT_NUMBER = 65535;
 export const MIN_PORT_NUMBER = 1;
 export const MAX_URL_LENGTH_FOR_VALIDATION = 2048;
+
+/******** Batch limits ********/
+export const MAX_BATCH_SIZE = 100;

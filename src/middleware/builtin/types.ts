@@ -1,4 +1,5 @@
-export type Next = () => Promise<Response | undefined> | Response;
+import type { Next } from "../core/types.ts";
+export type { Next };
 
 export interface MiddlewareContext {
   request: Request;

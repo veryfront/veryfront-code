@@ -5,9 +5,9 @@ import {
   type EnvironmentConfig,
   getEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
+import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
 
 const DEFAULT_TIMEOUT_MS = 60000;
-const HTTP_GATEWAY_TIMEOUT = 504;
 const TIMEOUT_SENTINEL = Symbol("timeout");
 
 export interface TimeoutOptions {

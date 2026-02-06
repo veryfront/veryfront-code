@@ -9,6 +9,7 @@ export {
   computeCodeHash,
   computeContentHash,
   computeHash,
+  fnv1aHash,
   getContentHash,
   shortHash,
   simpleHash,

@@ -8,7 +8,7 @@
 import type { Plugin, PluginBuild } from "esbuild";
 import { isDeno, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
+import * as pathHelper from "#veryfront/compat/path";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileDiscoveryContext } from "./types.ts";

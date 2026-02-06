@@ -1,4 +1,4 @@
-import { join } from "#veryfront/platform/compat/path-helper.ts";
+import { join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, LayoutItem, MdxBundle } from "#veryfront/types";

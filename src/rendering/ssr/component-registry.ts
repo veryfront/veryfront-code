@@ -1,4 +1,4 @@
-import { dirname, join } from "../../platform/compat/path-helper.ts";
+import { dirname, join } from "#veryfront/compat/path";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "#veryfront/utils";
 import * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";

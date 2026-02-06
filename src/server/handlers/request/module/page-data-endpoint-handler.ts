@@ -4,6 +4,7 @@ import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { getRendererForProject } from "../../../shared/renderer-factory.ts";
 import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
 
 const PAGE_DATA_TIMEOUT_MS = 25000;
 
@@ -55,12 +56,12 @@ export function handlePageDataEndpoint(
         if (e instanceof TimeoutError) {
           return respond(
             ResponseBuilder.json(
-              { error: `Page data request timed out: ${e.message}`, status: 504 },
+              { error: `Page data request timed out: ${e.message}`, status: HTTP_GATEWAY_TIMEOUT },
               req,
               {
                 securityConfig: ctx.securityConfig,
                 corsConfig: ctx.securityConfig?.cors,
-                status: 504,
+                status: HTTP_GATEWAY_TIMEOUT,
               },
             ),
           );

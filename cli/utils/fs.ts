@@ -14,8 +14,8 @@ export function getFs(): FileSystem {
 export async function ensureDir(path: string): Promise<void> {
   try {
     await getFs().mkdir(path, { recursive: true });
-  } catch {
-    // directory already exists or other non-critical error
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
 }
 

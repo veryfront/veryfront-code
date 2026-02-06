@@ -1,4 +1,4 @@
-import { dirname, join } from "#veryfront/platform/compat/path-helper.ts";
+import { dirname, join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";

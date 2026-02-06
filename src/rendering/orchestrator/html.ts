@@ -1,4 +1,4 @@
-import { join } from "#veryfront/platform/compat/path-helper.ts";
+import { join } from "#veryfront/compat/path";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { HTMLGenerationOptions } from "#veryfront/html";

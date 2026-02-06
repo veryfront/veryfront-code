@@ -1,4 +1,4 @@
-import { join } from "#veryfront/platform/compat/path-helper.ts";
+import { join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { VeryfrontError } from "#veryfront/errors/index.ts";
 import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";

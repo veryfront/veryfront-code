@@ -1,4 +1,4 @@
-import { join } from "#veryfront/platform/compat/path-helper.ts";
+import { join } from "#veryfront/compat/path";
 import { isCompiledBinary, rendererLogger as logger } from "#veryfront/utils";
 import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";

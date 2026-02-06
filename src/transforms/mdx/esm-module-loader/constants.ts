@@ -26,4 +26,4 @@ export const ESBUILD_JSX_FRAGMENT = "React.Fragment";
 export const DIRECTORY_PREFIXES = ["", "src/"];
 export const PREFIXES_TO_STRIP = ["components/", "pages/", "lib/", "app/"];
 
-export const HASH_SEED_FNV1A = 2166136261;
+export { HASH_SEED_FNV1A } from "#veryfront/utils/constants/hash.ts";

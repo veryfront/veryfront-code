@@ -1,6 +1,8 @@
-import * as stdPath from "./shims/std-path.ts";
-
-export const {
+/**
+ * @deprecated Use `#veryfront/compat/path` instead.
+ * This module is kept for backward compatibility only.
+ */
+export {
   basename,
   dirname,
   extname,
@@ -10,4 +12,4 @@ export const {
   relative,
   resolve,
   sep,
-} = stdPath;
+} from "./path/index.ts";

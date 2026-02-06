@@ -1,5 +1,5 @@
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
+import * as pathHelper from "#veryfront/compat/path";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
 const fs = createFileSystem();

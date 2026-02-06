@@ -41,6 +41,7 @@ export const HTTP_SERVER_ERROR = HTTP_INTERNAL_SERVER_ERROR; // Alias for conven
 export const HTTP_NOT_IMPLEMENTED = 501;
 export const HTTP_BAD_GATEWAY = 502;
 export const HTTP_UNAVAILABLE = 503;
+export const HTTP_GATEWAY_TIMEOUT = 504;
 export const HTTP_NETWORK_CONNECT_TIMEOUT = 599;
 
 export const HTTP_STATUS_SUCCESS_MIN = 200;

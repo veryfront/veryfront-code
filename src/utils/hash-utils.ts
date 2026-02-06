@@ -1,3 +1,5 @@
+import { HASH_SEED_FNV1A } from "./constants/hash.ts";
+
 export async function computeHash(content: string): Promise<string> {
   const data = new TextEncoder().encode(content);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
@@ -40,4 +42,16 @@ export function hashCodeHex(str: string): string {
 export async function shortHash(content: string): Promise<string> {
   const fullHash = await computeHash(content);
   return fullHash.slice(0, 8);
+}
+
+/** FNV-1a hash for strings - returns hex string */
+export function fnv1aHash(input: string): string {
+  let hash = HASH_SEED_FNV1A >>> 0;
+
+  for (const char of input) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0).toString(16);
 }
