@@ -156,11 +156,11 @@ Content-Type: application/problem+json
 
 ## Complete Error Registry
 
-This is the single source of truth for all errors. The `Legacy` column shows the old VF### code or schema name for migration reference.
+This is the single source of truth for all errors. The `Replaces` column shows the VF### code or schema name being removed.
 
 ### CONFIG — Configuration & environment errors
 
-| Legacy | Slug                      | Title                                 | Status |
+| Replaces | Slug                      | Title                                 | Status |
 |--------|---------------------------|---------------------------------------|--------|
 | VF001  | `config-not-found`        | Configuration file not found          | 404    |
 | VF002  | `config-invalid`          | Invalid configuration format          | 400    |
@@ -172,7 +172,7 @@ This is the single source of truth for all errors. The `Legacy` column shows the
 
 ### BUILD — Build & compilation errors
 
-| Legacy | Slug                       | Title                                | Status |
+| Replaces | Slug                       | Title                                | Status |
 |--------|----------------------------|--------------------------------------|--------|
 | VF100  | `build-failed`             | Build process failed                 | 500    |
 | VF101  | `bundle-error`             | Bundle generation failed             | 500    |
@@ -185,7 +185,7 @@ This is the single source of truth for all errors. The `Legacy` column shows the
 
 ### RUNTIME — Runtime execution & rendering errors
 
-| Legacy | Slug                 | Title                                | Status |
+| Replaces | Slug                 | Title                                | Status |
 |--------|----------------------|--------------------------------------|--------|
 | VF200  | `hydration-mismatch` | Client/server hydration mismatch     | 500    |
 | VF201  | `render-error`       | Component render failed              | 500    |
@@ -197,7 +197,7 @@ This is the single source of truth for all errors. The `Legacy` column shows the
 
 ### ROUTE — Route definition & resolution errors
 
-| Legacy | Slug                    | Title                                | Status |
+| Replaces | Slug                    | Title                                | Status |
 |--------|-------------------------|--------------------------------------|--------|
 | VF300  | `route-conflict`        | Conflicting route definitions        | 409    |
 | VF301  | `invalid-route-file`    | Invalid route file structure         | 400    |
@@ -208,7 +208,7 @@ This is the single source of truth for all errors. The `Legacy` column shows the
 
 ### MODULE — Module & import resolution errors
 
-| Legacy | Slug                      | Title                                | Status |
+| Replaces | Slug                      | Title                                | Status |
 |--------|---------------------------|--------------------------------------|--------|
 | VF400  | `module-not-found`        | Module could not be resolved         | 404    |
 | VF401  | `import-resolution-error` | Import path resolution failed        | 500    |
@@ -219,7 +219,7 @@ This is the single source of truth for all errors. The `Legacy` column shows the
 
 ### SERVER — Server, infrastructure & network errors
 
-| Legacy | Slug                  | Title                                | Status |
+| Replaces | Slug                  | Title                                | Status |
 |--------|-----------------------|--------------------------------------|--------|
 | VF500  | `port-in-use`         | Server port already in use           | 409    |
 | VF501  | `server-start-error`  | Server failed to start               | 500    |
@@ -232,7 +232,7 @@ This is the single source of truth for all errors. The `Legacy` column shows the
 
 ### BOUNDARY — RSC/client boundary violations
 
-| Legacy | Slug                        | Title                                | Status |
+| Replaces | Slug                        | Title                                | Status |
 |--------|-----------------------------|--------------------------------------|--------|
 | VF600  | `client-boundary-violation` | Client boundary rule violation       | 400    |
 | VF601  | `server-only-in-client`     | Server-only code in client component | 400    |
@@ -243,7 +243,7 @@ This is the single source of truth for all errors. The `Legacy` column shows the
 
 ### DEV — Development-only tooling errors
 
-| Legacy | Slug                  | Title                                | Status |
+| Replaces | Slug                  | Title                                | Status |
 |--------|-----------------------|--------------------------------------|--------|
 | VF502  | `hmr-error`           | Hot module replacement error         | 500    |
 | VF700  | `dev-server-error`    | Development server error             | 500    |
@@ -253,7 +253,7 @@ This is the single source of truth for all errors. The `Legacy` column shows the
 
 ### DEPLOY — Deployment & release errors
 
-| Legacy | Slug                        | Title                                 | Status |
+| Replaces | Slug                        | Title                                 | Status |
 |--------|-----------------------------|---------------------------------------|--------|
 | VF800  | `deployment-error`          | Deployment process failed             | 500    |
 | VF801  | `platform-error`            | Platform-specific error               | 500    |
@@ -262,7 +262,7 @@ This is the single source of truth for all errors. The `Legacy` column shows the
 
 ### AGENT — AI agent & orchestration errors
 
-| Legacy | Slug                  | Title                          | Status |
+| Replaces | Slug                  | Title                          | Status |
 |--------|-----------------------|--------------------------------|--------|
 | schema | `agent-error`         | Agent operation error          | 500    |
 | schema | `agent-not-found`     | Agent not found                | 404    |
@@ -274,7 +274,7 @@ This is the single source of truth for all errors. The `Legacy` column shows the
 
 Errors that aren't specific to a single domain. Consumers should rely on HTTP status codes for handling logic (e.g., 403 → show permission error, 408 → retry).
 
-| Legacy | Slug                    | Title                                 | Status |
+| Replaces | Slug                    | Title                                 | Status |
 |--------|-------------------------|---------------------------------------|--------|
 | VF900  | `unknown-error`         | Unknown/unclassified error            | 500    |
 | VF901  | `permission-denied`     | File/resource permission denied       | 403    |
@@ -286,18 +286,18 @@ Errors that aren't specific to a single domain. Consumers should rely on HTTP st
 
 ### Schema Overlap Resolution
 
-These schema-based error codes overlap with VF### codes and will be **merged** — the schema name becomes an alias that maps to the canonical slug. Existing code using schema names will continue to work during the deprecation period.
+These schema-based error codes overlap with VF### codes and will be **merged** into the slug registry. Both the schema name and VF### code will be removed — the slug is the only identifier.
 
-| Schema Name        | Canonical Slug     | Legacy VF Code | Resolution |
-|--------------------|--------------------|----------------|------------|
-| FILE_NOT_FOUND     | `file-not-found`   | VF902          | Schema name becomes alias |
-| BUILD_ERROR        | `build-failed`     | VF100          | Schema name becomes alias |
-| CONFIG_ERROR       | `config-invalid`   | VF002          | Schema name becomes alias |
-| PERMISSION_ERROR   | `permission-denied`| VF901          | Schema name becomes alias |
-| RENDER_ERROR       | `render-error`     | VF201          | Schema name becomes alias |
-| SERVICE_OVERLOADED | `service-overloaded`| VF506         | Schema name becomes alias |
+| Schema Name        | Canonical Slug     | Replaces VF Code |
+|--------------------|--------------------|------------------|
+| FILE_NOT_FOUND     | `file-not-found`   | VF902            |
+| BUILD_ERROR        | `build-failed`     | VF100            |
+| CONFIG_ERROR       | `config-invalid`   | VF002            |
+| PERMISSION_ERROR   | `permission-denied`| VF901            |
+| RENDER_ERROR       | `render-error`     | VF201            |
+| SERVICE_OVERLOADED | `service-overloaded`| VF506           |
 
-**Migration mechanism:** A `schemaNameToSlug` mapping will be provided so that `if (error.code === "BUILD_ERROR")` can be migrated to `if (error.slug === "build-failed")`. During the transition, both lookups will work.
+**Migration:** `if (error.code === "BUILD_ERROR")` → `if (error.slug === "build-failed")`. No aliases, no compatibility layer — all references are updated in-place.
 
 ---
 
@@ -407,48 +407,56 @@ app.onError((err, c) => {
 
 ## Implementation Plan
 
-### Phase 1: Foundation + Tests (non-breaking)
+### Target State
 
-Add the slug registry, error types, RFC 9457 serialization, and tests — without changing any existing error codes.
+After all phases are complete:
+
+- `error-codes.ts` (VF### constants) — **deleted**
+- `error.schema.ts` enum — **deleted**
+- All error references use slugs — no numeric codes anywhere in the codebase
+- All HTTP error responses use `application/problem+json` with RFC 9457 shape
+- All error docs live at `https://veryfront.com/docs/errors/{slug}`
+- Single `error-registry.ts` is the only source of error definitions
+
+### Phase 1: Slug registry + RFC 9457 response shape + tests
 
 - [ ] Define `ErrorDefinition` type with slug, category, status, title, suggestion
 - [ ] Define `ErrorCategory` union type from the category table
-- [ ] Create slug registry (`error-registry.ts`) mapping all 69 errors
-- [ ] Add `slug`, `category`, and `toRFC9457()` to `VeryfrontError` class
+- [ ] Create slug registry (`error-registry.ts`) with all 69 error definitions
+- [ ] Add `slug`, `category`, `cause`, and `toRFC9457()` to `VeryfrontError` class
 - [ ] Update HTTP error response serialization to use `application/problem+json`
-- [ ] Keep existing VF### codes and schema names working — slug is additive
 - [ ] Add unit tests for slug uniqueness (no duplicate slugs)
 - [ ] Add unit tests for RFC 9457 response shape
-- [ ] Add unit tests for schema-to-slug mapping
 
-**Result:** All errors gain a slug and RFC 9457 response shape. Zero breaking changes.
+### Phase 2: Migrate all error references to slugs
 
-### Phase 2: Consolidate dual error systems (low risk)
+Replace every VF### code and schema enum reference in the codebase with slug lookups.
 
-Merge the schema-based and VF### error systems into the slug registry.
+- [ ] Update all `error.code === "VF###"` checks to use `error.slug === "..."`
+- [ ] Update all `error.code === "BUILD_ERROR"` (schema) checks to use slugs
+- [ ] Migrate `src/errors/catalog/*.ts` to use slug registry
+- [ ] Migrate `src/errors/agent-errors.ts` to use slug registry
+- [ ] Migrate `src/errors/build-errors.ts` to use slug registry
+- [ ] Migrate `src/errors/runtime-errors.ts` to use slug registry
+- [ ] Migrate `src/errors/system-errors.ts` to use slug registry
+- [ ] Update error constructors to require slug
+- [ ] Update all error tests to use slugs
 
-- [ ] Create `schemaNameToSlug` mapping for the 6 overlapping errors
-- [ ] Add deprecation warnings on `error.schema.ts` enum usage
-- [ ] Update Zod schema validation to accept slugs
-- [ ] Update error constructors to use slug internally, keep old names as aliases
-- [ ] Update existing error tests to assert slug presence
+### Phase 3: Delete legacy code
 
-**Result:** One error system instead of two. Old names still work as aliases.
+- [ ] Delete `src/errors/error-codes.ts` (VF### constants)
+- [ ] Delete error code enum from `src/errors/schemas/error.schema.ts`
+- [ ] Remove all VF### references from codebase (grep to verify zero matches)
+- [ ] Remove all schema enum references from codebase (grep to verify zero matches)
+- [ ] Update `src/errors/index.ts` exports (remove legacy, export registry only)
 
-### Phase 3: Documentation + URL setup
+### Phase 4: Documentation
 
 - [ ] Set up `https://veryfront.com/docs/errors/{slug}` pages
 - [ ] Each page: title, description, category, suggestion, related errors
-- [ ] Add redirects from old `/docs/errors/VF001` → `/docs/errors/config-not-found`
+- [ ] Redirect old `/docs/errors/VF001` URLs to `/docs/errors/config-not-found`
 - [ ] Generate error docs from the slug registry (single source of truth)
 - [ ] Add integration tests for error documentation URLs
-
-### Phase 4: Deprecate legacy identifiers
-
-- [ ] Add deprecation warnings when VF### codes are used programmatically
-- [ ] Update log formatters to use slug as primary identifier
-- [ ] Communicate migration timeline to users
-- [ ] Remove VF### codes and schema enum from public API after deprecation period
 
 ---
 
@@ -471,18 +479,18 @@ No ranges to check, no numbers to allocate, no gaps to worry about.
 
 | File                                    | Phase | Changes                                    |
 |-----------------------------------------|-------|--------------------------------------------|
-| `src/errors/error-registry.ts`          | 1     | New: slug registry with all error definitions |
+| `src/errors/error-registry.ts`          | 1     | **New:** slug registry with all error definitions |
 | `src/errors/types.ts`                   | 1     | Add ErrorDefinition, ErrorCategory types   |
 | `src/errors/veryfront-error.ts`         | 1     | Add slug, category, toRFC9457(), cause     |
-| `src/errors/error-registry.test.ts`     | 1     | New: slug uniqueness + RFC 9457 shape tests |
-| `src/errors/schemas/error.schema.ts`    | 2     | Add schemaNameToSlug mapping, deprecate enum |
-| `src/errors/error-codes.ts`             | 4     | Deprecate VF### constants                  |
-| `src/errors/catalog/*.ts`               | 2     | Use slug registry                          |
-| `src/errors/agent-errors.ts`            | 2     | Use slug registry                          |
-| `src/errors/build-errors.ts`            | 2     | Use slug registry                          |
-| `src/errors/runtime-errors.ts`          | 2     | Use slug registry                          |
-| `src/errors/system-errors.ts`           | 2     | Use slug registry                          |
-| `src/errors/index.ts`                   | 1     | Export new types and registry              |
+| `src/errors/error-registry.test.ts`     | 1     | **New:** slug uniqueness + RFC 9457 shape tests |
+| `src/errors/catalog/*.ts`               | 2     | Migrate to slug registry                   |
+| `src/errors/agent-errors.ts`            | 2     | Migrate to slug registry                   |
+| `src/errors/build-errors.ts`            | 2     | Migrate to slug registry                   |
+| `src/errors/runtime-errors.ts`          | 2     | Migrate to slug registry                   |
+| `src/errors/system-errors.ts`           | 2     | Migrate to slug registry                   |
+| `src/errors/error-codes.ts`             | 3     | **Delete** (VF### constants removed)       |
+| `src/errors/schemas/error.schema.ts`    | 3     | **Delete** error code enum                 |
+| `src/errors/index.ts`                   | 3     | Remove legacy exports, export registry only |
 
 ---
 
