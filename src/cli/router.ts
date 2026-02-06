@@ -36,6 +36,46 @@ import { exitProcess, setQuietMode, setVerboseMode } from "./utils/index.ts";
 import type { ParsedArgs } from "./shared/types.ts";
 
 /**
+ * Command registry mapping command names to their handlers.
+ * Aliases (e.g. "preview" → serve, "g" → generate) are duplicate entries.
+ */
+const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
+  "init": handleInitCommand,
+  "dev": handleDevCommand,
+  "build": handleBuildCommand,
+  "preview": handleServeCommand,
+  "serve": handleServeCommand,
+  "doctor": handleDoctorCommand,
+  "clean": handleCleanCommand,
+  "analyze-chunks": handleAnalyzeChunksCommand,
+  "routes": handleRoutesCommand,
+  "studio": handleStudioCommand,
+  "lock": handleLockCommand,
+  "generate": handleGenerateCommand,
+  "g": handleGenerateCommand,
+  "pull": handlePullCommand,
+  "push": handlePushCommand,
+  "merge": handleMergeCommand,
+  "deploy": handleDeployCommand,
+  "up": handleUpCommand,
+  "new": handleNewCommand,
+  "login": async (args) => {
+    await login(parseLoginMethod(args));
+  },
+  "logout": async () => {
+    await logout();
+  },
+  "whoami": async () => {
+    await whoami();
+  },
+  "install": handleInstallCommand,
+  "uninstall": handleUninstallCommand,
+  "demo": handleDemoCommand,
+  "mcp": handleMCPCommand,
+  "issues": handleIssuesCommand,
+};
+
+/**
  * Show help for a specific command or main help
  */
 function showHelp(command?: string): void {
@@ -74,124 +114,22 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
   }
 
   try {
-    switch (command) {
-      case "init":
-        await handleInitCommand(args);
-        break;
-
-      case "dev":
-        await handleDevCommand(args);
-        break;
-
-      case "build":
-        await handleBuildCommand(args);
-        break;
-
-      case "preview":
-      case "serve":
-        await handleServeCommand(args);
-        break;
-
-      case "doctor":
-        await handleDoctorCommand(args);
-        break;
-
-      case "clean":
-        await handleCleanCommand(args);
-        break;
-
-      case "analyze-chunks":
-        await handleAnalyzeChunksCommand(args);
-        break;
-
-      case "routes":
-        await handleRoutesCommand(args);
-        break;
-
-      case "studio":
-        await handleStudioCommand(args);
-        break;
-
-      case "lock":
-        await handleLockCommand(args);
-        break;
-
-      case "generate":
-      case "g":
-        await handleGenerateCommand(args);
-        break;
-
-      case "pull":
-        await handlePullCommand(args);
-        break;
-
-      case "push":
-        await handlePushCommand(args);
-        break;
-
-      case "merge":
-        await handleMergeCommand(args);
-        break;
-
-      case "deploy":
-        await handleDeployCommand(args);
-        break;
-
-      case "up":
-        await handleUpCommand(args);
-        break;
-
-      case "new":
-        await handleNewCommand(args);
-        break;
-
-      case "login":
-        await login(parseLoginMethod(args));
-        break;
-
-      case "logout":
-        await logout();
-        break;
-
-      case "whoami":
-        await whoami();
-        break;
-
-      case "install":
-        await handleInstallCommand(args);
-        break;
-
-      case "uninstall":
-        await handleUninstallCommand(args);
-        break;
-
-      case "demo":
-        await handleDemoCommand(args);
-        break;
-
-      case "mcp":
-        await handleMCPCommand(args);
-        break;
-
-      case "issues":
-        await handleIssuesCommand(args);
-        break;
-
-      case "help":
-        showHelp();
-        exitProcess(0);
-        return;
-
-      case undefined:
-        await handleStartCommand(args);
-        break;
-
-      default:
-        cliLogger.error(`Unknown command: ${command}\n`);
-        showHelp();
-        exitProcess(1);
-        return;
+    if (command === "help") {
+      showHelp();
+      exitProcess(0);
+      return;
     }
+
+    const handler = command ? commands[command] : undefined;
+
+    if (command && !handler) {
+      cliLogger.error(`Unknown command: ${command}\n`);
+      showHelp();
+      exitProcess(1);
+      return;
+    }
+
+    await (handler ?? handleStartCommand)(args);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.log();

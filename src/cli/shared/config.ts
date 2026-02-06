@@ -5,6 +5,7 @@
  * @module cli/shared/config
  */
 
+import { z } from "zod";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -17,19 +18,21 @@ import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
 import { DEFAULT_API_URL } from "./constants.ts";
 
-export interface VeryfrontConfig {
-  projectSlug?: string;
+export const VeryfrontConfigSchema = z.object({
+  projectSlug: z.string().optional(),
   /** List of project slugs for multi-project pull */
-  projects?: string[];
-  apiToken?: string;
-  apiUrl?: string;
-}
+  projects: z.array(z.string()).optional(),
+  apiToken: z.string().optional(),
+  apiUrl: z.string().optional(),
+});
+export type VeryfrontConfig = z.infer<typeof VeryfrontConfigSchema>;
 
-export interface ResolvedConfig {
-  apiUrl: string;
-  apiToken: string;
-  projectSlug: string;
-}
+export const ResolvedConfigSchema = z.object({
+  apiUrl: z.string(),
+  apiToken: z.string(),
+  projectSlug: z.string(),
+});
+export type ResolvedConfig = z.infer<typeof ResolvedConfigSchema>;
 
 export async function readConfigFile(projectDir: string): Promise<VeryfrontConfig | null> {
   const fs = createFileSystem();
@@ -54,7 +57,8 @@ export async function readConfigFile(projectDir: string): Promise<VeryfrontConfi
   try {
     if (!(await fs.exists(rcPath))) return null;
     const content = await fs.readTextFile(rcPath);
-    return JSON.parse(content) as VeryfrontConfig;
+    const parsed = VeryfrontConfigSchema.safeParse(JSON.parse(content));
+    return parsed.success ? parsed.data : null;
   } catch (error) {
     cliLogger.debug(`Failed to read .veryfrontrc:`, error);
     return null;
@@ -147,11 +151,12 @@ export interface ApiClient {
   delete<T>(path: string): Promise<T>;
 }
 
-export interface ApiError {
-  error: string;
-  message?: string;
-  code?: string;
-}
+export const ApiErrorSchema = z.object({
+  error: z.string(),
+  message: z.string().optional(),
+  code: z.string().optional(),
+});
+export type ApiError = z.infer<typeof ApiErrorSchema>;
 
 export function createApiClient(config: ResolvedConfig): ApiClient {
   const { apiUrl, apiToken } = config;
@@ -182,8 +187,10 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
       let errorMessage = `API request failed: ${response.status} ${response.statusText}`;
 
       try {
-        const errorBody = (await response.json()) as ApiError;
-        errorMessage = errorBody.message || errorBody.error || errorMessage;
+        const parsed = ApiErrorSchema.safeParse(await response.json());
+        if (parsed.success) {
+          errorMessage = parsed.data.message || parsed.data.error || errorMessage;
+        }
       } catch {
         // Keep default error message if JSON parsing fails
       }

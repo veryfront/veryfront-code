@@ -19,7 +19,7 @@ cli/
 ├── router.ts            # Routes parsed args to commands
 ├── index.ts             # Public exports
 │
-├── shared/              # Types, constants, config, arg utilities
+├── shared/              # Types (Zod schemas), constants, config, arg utilities
 ├── commands/            # Command implementations (dev, build, deploy, etc.)
 │
 ├── app/                 # TUI dashboard

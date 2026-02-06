@@ -1,5 +1,4 @@
 import type { ParsedArgs } from "./types.ts";
-import { DEFAULT_PORT } from "#veryfront/config/defaults.ts";
 
 const ARRAY_FLAGS = new Set(["with"]);
 
@@ -100,6 +99,5 @@ export function parseCliArgs(args: string[]): ParsedArgs {
       w: "with",
       m: "mode",
     },
-    default: { port: DEFAULT_PORT },
   }) as ParsedArgs;
 }

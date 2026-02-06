@@ -7,7 +7,7 @@ import {
   getIntegrationSelectOptionsWithHeaders,
   getTemplateSelectOptions,
   TEMPLATES,
-} from "../../shared/catalog.ts";
+} from "./catalog.ts";
 import type { IntegrationName } from "../../templates/types.ts";
 import type { InitTemplate } from "./types.ts";
 

@@ -5,8 +5,7 @@ import { DEFAULT_MCP_PORT } from "../../shared/constants.ts";
 const DEFAULT_START_PORT = 8080;
 
 export async function handleStartCommand(args: ParsedArgs): Promise<void> {
-  const hasExplicitPort = args.__explicit?.port === true;
-  const port = hasExplicitPort && typeof args.port === "number" ? args.port : DEFAULT_START_PORT;
+  const port = typeof args.port === "number" ? args.port : DEFAULT_START_PORT;
   const mcpPort = typeof args["mcp-port"] === "number" ? args["mcp-port"] : DEFAULT_MCP_PORT;
 
   await startCommand({

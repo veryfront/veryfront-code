@@ -4,7 +4,7 @@
  */
 
 import { multiSelect, select } from "../../utils/terminal-select.ts";
-import { getPopularIntegrations, getTemplateSelectOptions } from "../../shared/catalog.ts";
+import { getPopularIntegrations, getTemplateSelectOptions } from "../init/catalog.ts";
 import { brand } from "../../ui/colors.ts";
 import type { InitTemplate } from "../init/types.ts";
 import type { IntegrationName } from "../../templates/types.ts";

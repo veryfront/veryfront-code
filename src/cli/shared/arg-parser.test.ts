@@ -35,8 +35,8 @@ describe("cli/shared/arg-parser", () => {
       ]);
     });
 
-    it("should set default port", () => {
-      assertEquals(typeof parseCliArgs([]).port, "number");
+    it("should not set default port", () => {
+      assertEquals(parseCliArgs([]).port, undefined);
     });
 
     it("should convert numeric string values", () => {

@@ -1,24 +1,7 @@
-export interface BuildCommandArgs {
-  _: (string | number)[];
-  output?: string;
-  o?: string;
-  preset?: string;
-  split?: boolean;
-  compress?: boolean;
-  prefetch?: boolean;
-  ssg?: boolean;
-  "no-ssg"?: boolean;
-  include?: string | string[];
-  exclude?: string | string[];
-  "dry-run"?: boolean;
-  dryrun?: boolean;
-}
+import { z } from "zod";
 
-export interface GenerateCommandArgs {
-  _: (string | number)[];
-}
-
-export type ServerMode = "combined" | "proxy" | "renderer";
+export const ServerModeSchema = z.enum(["combined", "proxy", "renderer"]);
+export type ServerMode = z.infer<typeof ServerModeSchema>;
 
 export interface ParsedArgs {
   _: (string | number)[];

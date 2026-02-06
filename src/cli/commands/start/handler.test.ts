@@ -20,28 +20,15 @@ describe("commands/start/handler", () => {
   });
 
   describe("port parsing via DEFAULT_START_PORT (8080)", () => {
-    it("uses default port 8080 when __explicit.port is not set", () => {
+    it("uses default port 8080 when port is not specified", () => {
       const args: ParsedArgs = { _: ["start"] };
-      const hasExplicitPort = args.__explicit?.port === true;
-      const port = hasExplicitPort && typeof args.port === "number" ? args.port : 8080;
+      const port = typeof args.port === "number" ? args.port : 8080;
       assertEquals(port, 8080);
     });
 
-    it("uses default port 8080 even when port value is present but not explicit", () => {
-      const args: ParsedArgs = { _: ["start"], port: 3000 };
-      const hasExplicitPort = args.__explicit?.port === true;
-      const port = hasExplicitPort && typeof args.port === "number" ? args.port : 8080;
-      assertEquals(port, 8080);
-    });
-
-    it("uses explicit port when __explicit.port is true", () => {
-      const args: ParsedArgs = {
-        _: ["start"],
-        port: 4000,
-        __explicit: { port: true },
-      };
-      const hasExplicitPort = args.__explicit?.port === true;
-      const port = hasExplicitPort && typeof args.port === "number" ? args.port : 8080;
+    it("uses explicit port when provided as number", () => {
+      const args: ParsedArgs = { _: ["start"], port: 4000 };
+      const port = typeof args.port === "number" ? args.port : 8080;
       assertEquals(port, 4000);
     });
   });
