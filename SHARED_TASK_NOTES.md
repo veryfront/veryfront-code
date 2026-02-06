@@ -1,39 +1,27 @@
 # CLI Refactoring: Zod createArgParser Migration
 
-## Goal
-Migrate all CLI command handlers from manual argument parsing to Zod-based `createArgParser` pattern.
+## Status: Complete
+
+All CLI command handlers now use the `createArgParser` pattern from `cli/shared/args.ts`.
 
 ## Pattern Reference
-See `src/cli/commands/deploy/handler.ts` + `command.ts` for the canonical pattern:
+See any handler file (e.g., `cli/commands/deploy/handler.ts`) for the canonical pattern:
 - Schema + parser defined in handler.ts (or command.ts for complex commands)
 - Use `CommonArgs` from `shared/args.ts` for reusable arg specs
 - Handler validates with `parseFooArgs(args)`, throws on failure, calls command with `result.data`
 
-## Migration Status
+## What Was Done
+- Added `"array"` type to `ArgSpec` for CSV/repeated flag args (pull's `--projects`, build's `--include`/`--exclude`)
+- Migrated pull and push from manual `getStringArg`/`resolveProjectDir` extraction to `createArgParser`
+- Migrated install/uninstall from manual `args.foo` access to `createArgParser`
+- Moved build's `include`/`exclude` from legacy `parseArrayArg` into Zod schema + argMap
+- Removed dead code: `getStringArg()` and `resolveProjectDir()` from `shared/args.ts`, unused `cwd` import
 
-### Migrated (10 handlers)
-- lock, clean, init, studio, generate (earlier iterations)
-- doctor, routes, analyze-chunks, mcp, demo (this iteration)
+## Cleanup Opportunities (Next Steps)
+1. **Remove `parseArrayArg` from `shared/arg-parser.ts`** — no longer used by any production code (only its test file imports it). Can remove the function + its tests.
+2. **Consider removing `shared/arg-parser.ts` entirely** — only `parseCliArgs` (top-level arg parser used in `cli/main.ts`) and `parseArrayArg` (dead) remain. Could move `parseCliArgs` to `shared/args.ts` to consolidate into one module.
+3. **Deduplicate install/uninstall multiSelect UI code** — ~100 lines duplicated between `install.ts` and `uninstall.ts`
 
-### Still Need Migration (7 handlers)
-Priority order (simpler first):
-1. **install** - Manual `args.target`, `args.global`, `args.force` access. Also has 100+ lines of duplicated multiSelect UI code between install.ts and uninstall.ts
-2. **start** - Uses `args.__explicit?.port` for explicit flag detection, complex port handling
-3. **serve** - Manual parsing with multiple key variations (`args.mode`, `args.m`, `args.host`, `args.hostname`)
-4. **build** - Uses `parseArrayArg` from legacy `shared/arg-parser.ts` for include/exclude arrays. Has `exitProcess(0)` call
-5. **dev** - Complex project resolution logic, manual `args.project`, `args.port`, `args.hmr`
-6. **pull** - Has Zod schema but uses custom safeParse, not createArgParser
-7. **push** - Same as pull, has Zod schema but uses custom safeParse
-
-### Not Migrating
-- **new** - Has `exitProcess(0)` for user cancellation in interactive TUI, acceptable
-- **mcp** note: The CLI framework injects `DEFAULT_PORT=3000` as default for `--port`. MCP server needs its own default (8080). Handler has a filter for this.
-
-## Known Issues
-- `shared/arg-parser.ts` (legacy) coexists with `shared/args.ts` (new). Once all handlers migrate, the legacy module can be removed (except `parseArrayArg` used by build)
-- `CommonArgs.projectDir` uses `--project-dir`, `--dir`, `-d` — some old commands used `--project`. Migration standardizes this.
-
-## After All Handlers Are Migrated
-- Remove/reduce `shared/arg-parser.ts` (keep `parseArrayArg` if needed)
-- Consider extracting `parseArrayArg` into `shared/args.ts` as array support
-- Deduplicate install/uninstall multiSelect UI code
+## Other Code Quality Ideas
+- CLI code review (#S1456-S1458) identified various improvements — see memory observations for details
+- Error centralization PR (#247) merged — 7 scattered error classes replaced with `VeryfrontError` + slug registry

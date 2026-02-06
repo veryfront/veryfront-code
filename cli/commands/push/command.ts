@@ -24,8 +24,7 @@ import { createNoopSpinner, createSpinner } from "#cli/ui";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import { listAllFiles } from "../pull/index.ts";
-import { getStringArg, resolveProjectDir } from "#cli/shared/args";
-import type { ParsedArgs } from "#cli/shared/types";
+import { CommonArgs, createArgParser } from "#cli/shared/args";
 
 /**
  * Zod schema for push command arguments
@@ -44,16 +43,14 @@ export type PushArgs = z.infer<typeof PushArgsSchema>;
 /**
  * Parse push command arguments from CLI args
  */
-export function parsePushArgs(args: ParsedArgs): z.SafeParseReturnType<unknown, PushArgs> {
-  return PushArgsSchema.safeParse({
-    projectSlug: args._.length > 1 ? String(args._[1]) : undefined,
-    projectDir: resolveProjectDir(args, ["dir", "d"]),
-    branch: getStringArg(args, "branch", "b"),
-    force: Boolean(args.force || args.f),
-    dryRun: Boolean(args["dry-run"]),
-    quiet: Boolean(args.quiet || args.q),
-  });
-}
+export const parsePushArgs = createArgParser(PushArgsSchema, {
+  projectSlug: { ...CommonArgs.projectSlug, positional: 0 },
+  projectDir: CommonArgs.projectDir,
+  branch: CommonArgs.branch,
+  force: CommonArgs.force,
+  dryRun: CommonArgs.dryRun,
+  quiet: CommonArgs.quiet,
+});
 
 /**
  * Push command options

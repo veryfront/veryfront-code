@@ -7,7 +7,6 @@
  */
 
 import { z } from "zod";
-import { cwd } from "#veryfront/platform/compat/process.ts";
 import type { ParsedArgs } from "./types.ts";
 
 /**
@@ -16,8 +15,8 @@ import type { ParsedArgs } from "./types.ts";
 export interface ArgSpec {
   /** Possible argument keys to check (e.g., ["project-slug", "p"]) */
   keys: string[];
-  /** Type of the argument */
-  type: "string" | "boolean" | "number";
+  /** Type of the argument: "array" handles CSV strings and repeated flags */
+  type: "string" | "boolean" | "number" | "array";
   /** Positional argument index (0 = first arg after command) */
   positional?: number;
 }
@@ -32,10 +31,16 @@ export type ArgMap<T> = {
 function coerceValue(
   value: unknown,
   type: ArgSpec["type"],
-): string | boolean | number {
+): string | boolean | number | string[] {
   if (type === "boolean") return Boolean(value);
   if (type === "number") {
     return typeof value === "number" ? value : parseInt(String(value), 10);
+  }
+  if (type === "array") {
+    if (Array.isArray(value)) return value.map(String).filter(Boolean);
+    if (typeof value === "string") return value.split(",").map((s) => s.trim()).filter(Boolean);
+    if (value) return [String(value)];
+    return [];
   }
   return String(value);
 }
@@ -46,7 +51,7 @@ function coerceValue(
 export function extractArg(
   args: ParsedArgs,
   spec: ArgSpec,
-): string | boolean | number | undefined {
+): string | boolean | number | string[] | undefined {
   const { keys, type, positional } = spec;
 
   for (const key of keys) {
@@ -113,28 +118,6 @@ export function createArgParser<T extends z.ZodRawShape>(
   ): z.SafeParseReturnType<unknown, z.infer<z.ZodObject<T>>> {
     return schema.safeParse(extractArgs(args, argMap));
   };
-}
-
-/**
- * Get the first non-empty string value from parsed args for any of the given keys
- */
-export function getStringArg(args: ParsedArgs, ...keys: string[]): string | undefined {
-  for (const key of keys) {
-    const val = args[key];
-    if (typeof val === "string" && val) return val;
-  }
-  return undefined;
-}
-
-/**
- * Resolve a project directory from parsed args, falling back to cwd()
- */
-export function resolveProjectDir(args: ParsedArgs, keys: string[]): string {
-  for (const key of keys) {
-    const val = args[key];
-    if (typeof val === "string" && val) return val;
-  }
-  return cwd();
 }
 
 /**
