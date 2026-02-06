@@ -3,7 +3,8 @@
  */
 
 import { compileAllMDX, watchMDX } from "#veryfront/build/compiler/mdx-compiler/index.ts";
-import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
+import { VeryfrontError } from "#veryfront/errors/index.ts";
+import { CONFIG_NOT_FOUND, INITIALIZATION_ERROR } from "#veryfront/errors/error-registry.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { getConfig } from "#veryfront/config";
@@ -59,8 +60,13 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         config = await getConfig(projectDir, adapter);
       } catch (error) {
         if (error instanceof Error && error.message.includes("not found")) {
-          throw new VeryfrontError("No veryfront.config.js found", ErrorCode.CONFIG_ERROR, {
-            projectDir,
+          throw new VeryfrontError("No veryfront.config.js found", {
+            slug: CONFIG_NOT_FOUND.slug,
+            category: CONFIG_NOT_FOUND.category,
+            status: CONFIG_NOT_FOUND.status,
+            title: CONFIG_NOT_FOUND.title,
+            suggestion: CONFIG_NOT_FOUND.suggestion,
+            context: { projectDir },
           });
         }
         throw error;
@@ -114,11 +120,14 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         if (error instanceof Error) {
           const msg = error.message.toLowerCase();
           if (msg.includes("eaddrinuse") || msg.includes("address already in use")) {
-            throw new VeryfrontError(
-              `Port ${finalPort} is already in use`,
-              ErrorCode.INITIALIZATION_ERROR,
-              { port: finalPort },
-            );
+            throw new VeryfrontError(`Port ${finalPort} is already in use`, {
+              slug: INITIALIZATION_ERROR.slug,
+              category: INITIALIZATION_ERROR.category,
+              status: INITIALIZATION_ERROR.status,
+              title: INITIALIZATION_ERROR.title,
+              suggestion: INITIALIZATION_ERROR.suggestion,
+              context: { port: finalPort },
+            });
           }
         }
         throw error;

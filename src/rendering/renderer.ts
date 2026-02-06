@@ -33,7 +33,8 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
-import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
+import { VeryfrontError } from "#veryfront/errors/index.ts";
+import { SERVICE_OVERLOADED } from "#veryfront/errors/error-registry.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { buildQueryAwareCacheKey, type QueryParamCacheOptions } from "#veryfront/cache/keys.ts";
 import {
@@ -333,12 +334,18 @@ export class Renderer {
           });
           throw new VeryfrontError(
             `Per-project render limit reached (${activeCount}/${RENDER_PER_PROJECT_LIMIT} active). Try again shortly.`,
-            ErrorCode.SERVICE_OVERLOADED,
             {
-              slug,
-              projectId: ctx.projectId,
-              activeRenders: activeCount,
-              limit: RENDER_PER_PROJECT_LIMIT,
+              slug: SERVICE_OVERLOADED.slug,
+              category: SERVICE_OVERLOADED.category,
+              status: SERVICE_OVERLOADED.status,
+              title: SERVICE_OVERLOADED.title,
+              suggestion: SERVICE_OVERLOADED.suggestion,
+              context: {
+                slug,
+                projectId: ctx.projectId,
+                activeRenders: activeCount,
+                limit: RENDER_PER_PROJECT_LIMIT,
+              },
             },
           );
         }
@@ -354,8 +361,14 @@ export class Renderer {
           });
           throw new VeryfrontError(
             `Render capacity exceeded (${renderSemaphore.waiting} waiting). Service is overloaded.`,
-            ErrorCode.SERVICE_OVERLOADED,
-            { slug, projectId: ctx.projectId, waiting: renderSemaphore.waiting },
+            {
+              slug: SERVICE_OVERLOADED.slug,
+              category: SERVICE_OVERLOADED.category,
+              status: SERVICE_OVERLOADED.status,
+              title: SERVICE_OVERLOADED.title,
+              suggestion: SERVICE_OVERLOADED.suggestion,
+              context: { slug, projectId: ctx.projectId, waiting: renderSemaphore.waiting },
+            },
           );
         }
 

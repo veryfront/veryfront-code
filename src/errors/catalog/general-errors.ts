@@ -1,10 +1,9 @@
-import { ErrorCode } from "../error-codes.ts";
 import type { PartialErrorCatalog } from "./types.ts";
 import { createSimpleError } from "./factory.ts";
 
 export const GENERAL_ERROR_CATALOG: PartialErrorCatalog = {
-  [ErrorCode.UNKNOWN_ERROR]: createSimpleError(
-    ErrorCode.UNKNOWN_ERROR,
+  "unknown-error": createSimpleError(
+    "unknown-error",
     "Unknown error",
     "An unexpected error occurred.",
     [
@@ -14,8 +13,9 @@ export const GENERAL_ERROR_CATALOG: PartialErrorCatalog = {
       "Check GitHub issues for similar problems",
     ],
   ),
-  [ErrorCode.PERMISSION_DENIED]: createSimpleError(
-    ErrorCode.PERMISSION_DENIED,
+
+  "permission-denied": createSimpleError(
+    "permission-denied",
     "Permission denied",
     "Insufficient permissions to perform operation.",
     [
@@ -24,8 +24,9 @@ export const GENERAL_ERROR_CATALOG: PartialErrorCatalog = {
       "Verify user has write access",
     ],
   ),
-  [ErrorCode.FILE_NOT_FOUND]: createSimpleError(
-    ErrorCode.FILE_NOT_FOUND,
+
+  "file-not-found": createSimpleError(
+    "file-not-found",
     "File not found",
     "Required file does not exist.",
     [
@@ -34,8 +35,9 @@ export const GENERAL_ERROR_CATALOG: PartialErrorCatalog = {
       "Check for typos in file name",
     ],
   ),
-  [ErrorCode.INVALID_ARGUMENT]: createSimpleError(
-    ErrorCode.INVALID_ARGUMENT,
+
+  "invalid-argument": createSimpleError(
+    "invalid-argument",
     "Invalid argument",
     "Command received invalid argument.",
     [
@@ -44,8 +46,9 @@ export const GENERAL_ERROR_CATALOG: PartialErrorCatalog = {
       "Run 'veryfront help <command>' for usage",
     ],
   ),
-  [ErrorCode.TIMEOUT_ERROR]: createSimpleError(
-    ErrorCode.TIMEOUT_ERROR,
+
+  "timeout-error": createSimpleError(
+    "timeout-error",
     "Operation timed out",
     "Operation took too long to complete.",
     [

@@ -8,7 +8,7 @@ import {
   retryWithBackoff,
   wrapError,
 } from "./error-handlers.ts";
-import { ErrorCode, VeryfrontError } from "./types.ts";
+import { VeryfrontError } from "./types.ts";
 
 describe("error-handlers", () => {
   describe("wrapError", () => {
@@ -17,15 +17,20 @@ describe("error-handlers", () => {
       const wrapped = wrapError(original, "Wrapper message", { key: "value" });
 
       assertEquals(wrapped.message, "Wrapper message: Original error");
-      assertEquals(wrapped.code, ErrorCode.RENDER_ERROR);
+      assertEquals(wrapped.slug, "render-error");
       assertEquals((wrapped.context as { key?: string } | undefined)?.key, "value");
     });
 
-    it("should preserve error code from VeryfrontError", () => {
-      const original = new VeryfrontError("Original", ErrorCode.BUILD_ERROR);
+    it("should preserve slug from VeryfrontError", () => {
+      const original = new VeryfrontError("Original", {
+        slug: "build-failed",
+        category: "BUILD",
+        status: 500,
+        title: "Build failed",
+      });
       const wrapped = wrapError(original, "Wrapped");
 
-      assertEquals(wrapped.code, ErrorCode.BUILD_ERROR);
+      assertEquals(wrapped.slug, "build-failed");
     });
 
     it("should convert non-Error to Error", () => {
@@ -41,7 +46,15 @@ describe("error-handlers", () => {
     });
 
     it("should not throw when handling VeryfrontError with context", () => {
-      handleError(new VeryfrontError("Test", ErrorCode.BUILD_ERROR, { test: true }));
+      handleError(
+        new VeryfrontError("Test", {
+          slug: "build-failed",
+          category: "BUILD",
+          status: 500,
+          title: "Build failed",
+          context: { test: true },
+        }),
+      );
     });
   });
 

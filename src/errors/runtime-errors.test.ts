@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ErrorCode, VeryfrontError } from "./types.ts";
+import { VeryfrontError } from "./types.ts";
 import { RenderError, RuntimeError } from "./runtime-errors.ts";
 
 function assertBaseError(
@@ -8,18 +8,18 @@ function assertBaseError(
   {
     message,
     name,
-    code,
+    slug,
     context,
   }: {
     message: string;
     name: string;
-    code: ErrorCode;
+    slug: string;
     context?: unknown;
   },
 ): void {
   assertEquals(err.message, message);
   assertEquals(err.name, name);
-  assertEquals(err.code, code);
+  assertEquals(err.slug, slug);
 
   if (context !== undefined) {
     assertEquals(err.context, context);
@@ -36,13 +36,13 @@ describe("errors/runtime-errors", () => {
       assertBaseError(err, {
         message: "something broke",
         name: "RuntimeError",
-        code: ErrorCode.RENDER_ERROR,
+        slug: "render-error",
       });
     });
 
-    it("should use RENDER_ERROR code", () => {
+    it("should use render-error slug", () => {
       const err = new RuntimeError("fail");
-      assertEquals(err.code, ErrorCode.RENDER_ERROR);
+      assertEquals(err.slug, "render-error");
     });
 
     it("should accept context", () => {
@@ -64,13 +64,13 @@ describe("errors/runtime-errors", () => {
       assertBaseError(err, {
         message: "render failed",
         name: "RenderError",
-        code: ErrorCode.RENDER_ERROR,
+        slug: "render-error",
       });
     });
 
-    it("should use RENDER_ERROR code", () => {
+    it("should use render-error slug", () => {
       const err = new RenderError("fail");
-      assertEquals(err.code, ErrorCode.RENDER_ERROR);
+      assertEquals(err.slug, "render-error");
     });
 
     it("should accept context", () => {

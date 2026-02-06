@@ -8,7 +8,8 @@
 import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "#veryfront/utils";
 import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
+import { VeryfrontError } from "#veryfront/errors/index.ts";
+import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
 import { createError, toError } from "../errors/veryfront-error.ts";
 import type {
   ComponentProps,
@@ -210,8 +211,14 @@ export async function handleScriptPage(
   } catch (error) {
     throw new VeryfrontError(
       `Failed to render TS/JS page: ${error instanceof Error ? error.message : String(error)}`,
-      ErrorCode.RENDER_ERROR,
-      { slug, error },
+      {
+        slug: RENDER_ERROR.slug,
+        category: RENDER_ERROR.category,
+        status: RENDER_ERROR.status,
+        title: RENDER_ERROR.title,
+        suggestion: RENDER_ERROR.suggestion,
+        context: { slug, error },
+      },
     );
   }
 }

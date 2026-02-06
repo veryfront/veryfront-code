@@ -2,13 +2,14 @@
 
 ## Purpose
 
-The error-handling module provides a structured error management system for Veryfront, including error codes, categorization, user-friendly messages, and developer debugging tools.
+The error-handling module provides a structured error management system for Veryfront, including slug-based error identity, RFC 9457 compliance, categorization, user-friendly messages, and developer debugging tools.
 
 ## Scope
 
 ### What this module does:
 
-- Error code registry and lookup
+- Slug-based error registry and lookup
+- RFC 9457 (Problem Details for HTTP APIs) compliance
 - Error categorization (config, build, runtime, etc.)
 - User-friendly error messages
 - Error solutions and troubleshooting guides
@@ -24,124 +25,157 @@ The error-handling module provides a structured error management system for Very
 ## Architecture
 
 ```
-error-handling/
+errors/
 ├── catalog/                # Error catalog and solutions
 │   ├── factory.ts         # Error solution creation
 │   ├── types.ts           # Catalog type definitions
-│   └── index.ts          # Error code → solution mapping
+│   └── index.ts          # Slug → solution mapping
 ├── user-friendly/         # User-facing error messages
 │   ├── formatter.ts       # Message formatting
 │   └── suggestions.ts     # Contextual suggestions
-├── error-codes.ts         # VF### error code registry
-├── stack-parser.ts        # Stack trace parsing
+├── error-registry.ts      # Slug-based error registry (source of truth)
+├── types.ts               # Core types and VeryfrontError class
+├── http-error.ts          # RFC 9457 HTTP response utilities
 └── index.ts              # Module exports
 ```
 
-## Error Code System
+## Slug-Based Error System
 
-Veryfront uses structured error codes in the format `VF###`:
+Veryfront uses slug-based error identity for stable, human-readable error identification:
 
-- **VF001-099**: Configuration errors
-- **VF100-199**: Build errors
-- **VF200-299**: Runtime errors
-- **VF300-399**: Route errors
-- **VF400-499**: Import/Module errors
-- **VF500-599**: Server errors
-- **VF600-699**: RSC/Client boundary errors
-- **VF700-799**: Development errors
-- **VF800-899**: Deployment errors
-- **VF900-999**: General errors
+### Error Categories
+
+- **CONFIG**: Configuration errors (e.g., `config-not-found`, `config-invalid`)
+- **BUILD**: Build errors (e.g., `build-failed`, `bundle-error`)
+- **RUNTIME**: Runtime errors (e.g., `hydration-mismatch`, `render-error`)
+- **ROUTE**: Route errors (e.g., `route-not-found`, `invalid-route`)
+- **MODULE**: Import/Module errors (e.g., `module-not-found`, `import-error`)
+- **SERVER**: Server errors (e.g., `port-in-use`, `server-start-error`)
+- **BOUNDARY**: RSC/Client boundary errors (e.g., `rsc-payload-error`)
+- **DEV**: Development errors (e.g., `hmr-error`, `hot-reload-failed`)
+- **DEPLOY**: Deployment errors (e.g., `deploy-failed`, `asset-upload-error`)
+- **AGENT**: AI agent errors (e.g., `agent-error`, `agent-timeout`)
+- **GENERAL**: General errors (e.g., `unknown-error`, `internal-error`)
 
 ## Key Exports
 
-### Error Creation
-
-- `createErrorSolution(code, config)` - Create complete error solution
-- `createSimpleError(code, title, message, steps)` - Quick error creation
-- `VError` - Base error class with metadata
-
-### Error Lookup
-
-- `getErrorSolution(code)` - Get solution for error code
-- `inferErrorCode(error)` - Infer code from error message
-- `getErrorDocsUrl(code)` - Get documentation URL
-
-### Formatting
-
-- `formatUserFriendlyError(error)` - Format for end users
-- `formatDeveloperError(error)` - Format for developers
-- `parseStackTrace(stack)` - Parse stack frames
-
-## Dependencies
-
-### Internal
-
-- `shared/` - Utilities
-- `observability/` - Logging integration
-
-### External
-
-- None (zero dependencies)
-
-## Usage Examples
-
-### Creating Errors
+### Error Registry
 
 ```typescript
-import { createErrorSolution, ErrorCode } from "./error-handling";
+import { CONFIG_NOT_FOUND, RENDER_ERROR } from "#veryfront/errors";
 
-// Detailed error with solution
-const error = createErrorSolution(ErrorCode.CONFIG_NOT_FOUND, {
-  title: "Configuration file not found",
-  message: "Veryfront could not find veryfront.config.js in your project root",
-  steps: [
-    "Create veryfront.config.js in your project root",
-    'Run "veryfront init" to generate a default configuration',
-    "Or specify a custom config path with --config flag",
-  ],
-  example: 'export default { port: 3000, mode: "development" }',
-  tips: [
-    "Make sure you are in the correct directory",
-    "Check file permissions",
-  ],
+// Create an error instance
+const error = CONFIG_NOT_FOUND.create({
+  detail: "Could not find veryfront.config.js in /path/to/project",
+  context: { projectDir: "/path/to/project" },
 });
 
-// Simple error
-const simpleError = createSimpleError(
-  ErrorCode.BUILD_FAILED,
-  "Build failed",
-  "The build process encountered errors",
-  ["Check error messages", "Fix TypeScript errors"],
-);
+// Access error properties
+console.log(error.slug); // "config-not-found"
+console.log(error.category); // "CONFIG"
+console.log(error.status); // 500
+console.log(error.title); // "Configuration not found"
+console.log(error.suggestion); // "Create veryfront.config.js..."
 ```
 
-### Error Solutions Catalog
+### VeryfrontError Class
 
 ```typescript
-import { ErrorCatalog } from "./error-handling/catalog";
+import { VeryfrontError } from "#veryfront/errors";
 
-// Get all available solutions
-const catalog: ErrorCatalog = {
-  [ErrorCode.CONFIG_NOT_FOUND]: {
-    code: "VF001",
-    title: "Configuration file not found",
-    message: "Veryfront could not find veryfront.config.js",
-    steps: ["Create config file", "Run veryfront init"],
-    docs: "https://veryfront.com/docs/errors/VF001",
-  },
-  // ... more solutions
-};
+const error = new VeryfrontError("Configuration not found", {
+  slug: "config-not-found",
+  category: "CONFIG",
+  status: 500,
+  title: "Configuration not found",
+  suggestion: "Create veryfront.config.js in your project root",
+  detail: "Could not find config file",
+  context: { projectDir: "/path/to/project" },
+});
+
+// Convert to RFC 9457 format
+const response = error.toRFC9457();
+// {
+//   type: "https://veryfront.com/docs/errors/config-not-found",
+//   title: "Configuration not found",
+//   status: 500,
+//   detail: "Could not find config file",
+//   category: "CONFIG",
+//   suggestion: "Create veryfront.config.js..."
+// }
+
+// Get documentation URL
+console.log(error.getDocsUrl());
+// "https://veryfront.com/docs/errors/config-not-found"
 ```
 
-### User-Friendly Formatting
+### Defining New Errors
 
 ```typescript
-import { formatUserFriendlyError } from "./error-handling/user-friendly";
+import { defineError } from "#veryfront/errors";
+
+export const MY_NEW_ERROR = defineError({
+  slug: "my-new-error",
+  category: "RUNTIME",
+  status: 500,
+  title: "My new error occurred",
+  suggestion: "Try doing X instead of Y",
+});
+
+// Use it
+throw MY_NEW_ERROR.create({
+  detail: "Specific details about what went wrong",
+  context: { additionalInfo: "value" },
+});
+```
+
+### RFC 9457 HTTP Responses
+
+```typescript
+import { createErrorResponse, createProblemResponse } from "#veryfront/errors";
+
+// From a VeryfrontError
+const response = createErrorResponse(error);
+
+// Direct problem response
+const problemResponse = createProblemResponse({
+  slug: "validation-error",
+  status: 400,
+  title: "Validation failed",
+  detail: "Email field is required",
+});
+```
+
+## Error Catalog
+
+The error catalog provides solutions and troubleshooting guidance:
+
+```typescript
+import { getErrorSolution, ERROR_CATALOG } from "#veryfront/errors";
+
+// Get solution by slug
+const solution = getErrorSolution("config-not-found");
+if (solution) {
+  console.log(solution.title);
+  console.log(solution.message);
+  console.log(solution.steps); // Array of fix steps
+  console.log(solution.docs); // Documentation URL
+}
+
+// Search for errors
+import { searchErrors } from "#veryfront/errors";
+const results = searchErrors("config");
+```
+
+## User-Friendly Formatting
+
+```typescript
+import { formatUserError, identifyError } from "#veryfront/errors";
 
 try {
   await buildProject();
 } catch (error) {
-  const friendly = formatUserFriendlyError(error);
+  const friendly = formatUserError(error);
 
   console.error(friendly.title);
   console.error(friendly.message);
@@ -159,122 +193,54 @@ try {
 }
 ```
 
-### Developer Error Format
-
-```typescript
-import { formatDeveloperError } from "./error-handling/user-friendly";
-
-const devError = formatDeveloperError(error);
-
-console.error(devError.title);
-console.error(devError.stack); // Formatted stack trace
-console.error("Context:", devError.context); // Additional debug info
-```
-
-### Stack Trace Parsing
-
-```typescript
-import { parseStackTrace } from "./error-handling";
-
-const parsed = parseStackTrace(error.stack);
-
-parsed.frames.forEach((frame) => {
-  console.log(`${frame.function} at ${frame.file}:${frame.line}:${frame.column}`);
-});
-```
-
-### Error Code Inference
-
-```typescript
-import { inferErrorCode } from "./error-handling";
-
-const error = new Error("Module not found: react");
-const code = inferErrorCode(error);
-
-console.log(code); // 'VF400' (MODULE_NOT_FOUND)
-```
-
-## Error Categories
-
-### Configuration Errors (VF001-099)
-
-```typescript
-ErrorCode.CONFIG_NOT_FOUND; // VF001
-ErrorCode.CONFIG_INVALID; // VF002
-ErrorCode.CONFIG_PARSE_ERROR; // VF003
-ErrorCode.CONFIG_VALIDATION_ERROR; // VF004
-```
-
-### Build Errors (VF100-199)
-
-```typescript
-ErrorCode.BUILD_FAILED; // VF100
-ErrorCode.BUNDLE_ERROR; // VF101
-ErrorCode.TYPESCRIPT_ERROR; // VF102
-ErrorCode.MDX_COMPILE_ERROR; // VF103
-```
-
-### Runtime Errors (VF200-299)
-
-```typescript
-ErrorCode.HYDRATION_MISMATCH; // VF200
-ErrorCode.RENDER_ERROR; // VF201
-ErrorCode.COMPONENT_ERROR; // VF202
-ErrorCode.PAGE_NOT_FOUND; // VF204
-```
-
-### Server Errors (VF500-599)
-
-```typescript
-ErrorCode.PORT_IN_USE; // VF500
-ErrorCode.SERVER_START_ERROR; // VF501
-ErrorCode.HMR_ERROR; // VF502
-```
-
 ## Best Practices
 
-### 1. Always Use Error Codes
+### 1. Use the Error Registry
 
 ```typescript
-// Good
-throw new VError(ErrorCode.CONFIG_NOT_FOUND, "Config file missing");
+// Good - uses registry for consistent error identity
+import { CONFIG_NOT_FOUND } from "#veryfront/errors";
+throw CONFIG_NOT_FOUND.create({ detail: "Config file missing" });
 
-// Bad
+// Bad - raw Error without structure
 throw new Error("Config file missing");
 ```
 
-### 2. Provide Actionable Steps
+### 2. Provide Context
 
 ```typescript
-createErrorSolution(ErrorCode.PORT_IN_USE, {
-  title: "Port already in use",
-  message: "The specified port 3000 is already in use",
-  steps: [
-    "Stop the other process using port 3000",
-    "Or use a different port with --port flag",
-    "Find the process: lsof -ti:3000 | xargs kill",
-  ],
+import { BUILD_FAILED } from "#veryfront/errors";
+
+throw BUILD_FAILED.create({
+  detail: "TypeScript compilation failed",
+  context: {
+    file: "/path/to/problematic/file.tsx",
+    line: 42,
+    column: 10,
+  },
 });
 ```
 
-### 3. Include Context
+### 3. Check Error Types by Slug
 
 ```typescript
-throw new VError(ErrorCode.BUILD_FAILED, "Build failed", {
-  file: "/path/to/problematic/file.tsx",
-  line: 42,
-  column: 10,
-});
+import { VeryfrontError } from "#veryfront/errors";
+
+if (error instanceof VeryfrontError && error.slug === "file-not-found") {
+  // Handle file not found specifically
+}
 ```
 
-### 4. Link to Documentation
+### 4. Use RFC 9457 for HTTP Responses
 
 ```typescript
-// Automatically generates docs URL
-const error = createErrorSolution(ErrorCode.RSC_PAYLOAD_ERROR, {
-  title: "RSC Payload Error",
-  message: "Failed to serialize React Server Component",
-  // docs: 'https://veryfront.com/docs/errors/VF605' (auto-generated)
+import { createErrorHandler } from "#veryfront/errors";
+
+const handler = createErrorHandler({ isDev: true });
+
+app.use((error, req, res, next) => {
+  const response = handler(error);
+  res.status(response.status).json(response);
 });
 ```
 
@@ -282,38 +248,39 @@ const error = createErrorSolution(ErrorCode.RSC_PAYLOAD_ERROR, {
 
 ```bash
 # Run error handling tests
-deno task test src/error-handling/
+deno task test src/errors/
 
-# Test factory functions
-deno task test src/error-handling/catalog/factory.test.ts
+# Test registry
+deno task test src/errors/error-registry.test.ts
 
-# Test formatting
-deno task test src/error-handling/user-friendly/
+# Test catalog
+deno task test src/errors/catalog/
 ```
 
-## Error Solution Template
+## Adding New Errors
+
+1. Add to `error-registry.ts` using `defineError()`
+2. Create solution in appropriate `catalog/*.ts` file
+3. Add tests
+4. Document in error guide
 
 ```typescript
-import { createErrorSolution, ErrorCode } from "./error-handling";
-
-const solution = createErrorSolution(ErrorCode.MY_ERROR, {
-  title: "Short descriptive title",
-  message: "Detailed explanation of what went wrong",
-  steps: [
-    "First step to resolve",
-    "Second step to resolve",
-    "Third step if needed",
-  ],
-  example: `
-    // Code example showing correct usage
-    const correct = doSomethingRight()
-  `,
-  tips: [
-    "Additional helpful tip",
-    "Another consideration",
-  ],
-  relatedErrors: [ErrorCode.RELATED_ERROR_1, ErrorCode.RELATED_ERROR_2],
+// In error-registry.ts
+export const MY_ERROR = defineError({
+  slug: "my-error",
+  category: "RUNTIME",
+  status: 500,
+  title: "My error title",
+  suggestion: "How to fix this error",
 });
+
+// In catalog/runtime-errors.ts
+"my-error": createErrorSolution({
+  slug: "my-error",
+  title: "My Error Title",
+  message: "Detailed explanation",
+  steps: ["Step 1", "Step 2"],
+}),
 ```
 
 ## Maintainer
@@ -326,33 +293,8 @@ const solution = createErrorSolution(ErrorCode.MY_ERROR, {
 - [`observability/`](../../observability/README.md) - Error logging and tracing
 - [`server/`](../../server/README.md) - HTTP error responses
 
-## Migration Guide
-
-### From throw Error() to VError
-
-```typescript
-// Before
-throw new Error("Something went wrong");
-
-// After
-import { ErrorCode, VError } from "./error-handling";
-throw new VError(ErrorCode.UNKNOWN_ERROR, "Something went wrong", {
-  context: {/* additional info */},
-});
-```
-
-### Adding New Error Codes
-
-1. Add to `ErrorCode` enum in `error-codes.ts`
-2. Create solution in `catalog/index.ts`
-3. Add tests in `tests/`
-4. Document in error guide
-
 ## References
 
-- [Error Handling Best Practices](https://veryfr
-
-ont.dev/docs/errors)
-
-- [Error Code Registry](https://veryfront.com/docs/errors/codes)
+- [RFC 9457 - Problem Details for HTTP APIs](https://www.rfc-editor.org/rfc/rfc9457)
+- [Error Handling Best Practices](https://veryfront.dev/docs/errors)
 - [Troubleshooting Guide](https://veryfront.com/docs/troubleshooting)

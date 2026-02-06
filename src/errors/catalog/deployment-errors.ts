@@ -1,10 +1,9 @@
-import { ErrorCode } from "../error-codes.ts";
 import type { PartialErrorCatalog } from "./types.ts";
 import { createSimpleError } from "./factory.ts";
 
 export const DEPLOYMENT_ERROR_CATALOG: PartialErrorCatalog = {
-  [ErrorCode.DEPLOYMENT_ERROR]: createSimpleError(
-    ErrorCode.DEPLOYMENT_ERROR,
+  "deployment-error": createSimpleError(
+    "deployment-error",
     "Deployment failed",
     "Failed to deploy application.",
     [
@@ -13,14 +12,16 @@ export const DEPLOYMENT_ERROR_CATALOG: PartialErrorCatalog = {
       "Ensure build succeeded first",
     ],
   ),
-  [ErrorCode.PLATFORM_ERROR]: createSimpleError(
-    ErrorCode.PLATFORM_ERROR,
+
+  "platform-error": createSimpleError(
+    "platform-error",
     "Platform error",
     "Deployment platform returned an error.",
     ["Check platform status page", "Verify API keys and credentials", "Try deploying again"],
   ),
-  [ErrorCode.ENV_VAR_MISSING]: createSimpleError(
-    ErrorCode.ENV_VAR_MISSING,
+
+  "env-var-missing": createSimpleError(
+    "env-var-missing",
     "Environment variable missing",
     "Required environment variable is not set.",
     [
@@ -29,8 +30,9 @@ export const DEPLOYMENT_ERROR_CATALOG: PartialErrorCatalog = {
       "Check variable name is correct",
     ],
   ),
-  [ErrorCode.PRODUCTION_BUILD_REQUIRED]: createSimpleError(
-    ErrorCode.PRODUCTION_BUILD_REQUIRED,
+
+  "production-build-required": createSimpleError(
+    "production-build-required",
     "Production build required",
     "Must build project before deploying.",
     [

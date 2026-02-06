@@ -1,9 +1,8 @@
-import { ErrorCode } from "../error-codes.ts";
 import type { PartialErrorCatalog } from "./types.ts";
 import { createErrorSolution, createSimpleError } from "./factory.ts";
 
 export const CONFIG_ERROR_CATALOG: PartialErrorCatalog = {
-  [ErrorCode.CONFIG_NOT_FOUND]: createErrorSolution(ErrorCode.CONFIG_NOT_FOUND, {
+  "config-not-found": createErrorSolution("config-not-found", {
     title: "Configuration file not found",
     message: "Veryfront could not find veryfront.config.js in your project root.",
     steps: [
@@ -19,7 +18,7 @@ export default {
     tips: ["You can use .ts or .mjs extensions too", "Config is optional for simple projects"],
   }),
 
-  [ErrorCode.CONFIG_INVALID]: createErrorSolution(ErrorCode.CONFIG_INVALID, {
+  "config-invalid": createErrorSolution("config-invalid", {
     title: "Invalid configuration",
     message: "Your configuration file has invalid values or structure.",
     steps: [
@@ -38,8 +37,8 @@ export default {
 }`,
   }),
 
-  [ErrorCode.CONFIG_PARSE_ERROR]: createSimpleError(
-    ErrorCode.CONFIG_PARSE_ERROR,
+  "config-parse-error": createSimpleError(
+    "config-parse-error",
     "Configuration parse error",
     "Failed to parse your configuration file.",
     [
@@ -49,8 +48,8 @@ export default {
     ],
   ),
 
-  [ErrorCode.CONFIG_VALIDATION_ERROR]: createSimpleError(
-    ErrorCode.CONFIG_VALIDATION_ERROR,
+  "config-validation-error": createSimpleError(
+    "config-validation-error",
     "Configuration validation failed",
     "Configuration values do not pass validation.",
     [
@@ -61,8 +60,8 @@ export default {
     ],
   ),
 
-  [ErrorCode.CONFIG_TYPE_ERROR]: createSimpleError(
-    ErrorCode.CONFIG_TYPE_ERROR,
+  "config-type-error": createSimpleError(
+    "config-type-error",
     "Configuration type error",
     "A configuration value has the wrong type.",
     [
@@ -73,7 +72,7 @@ export default {
     ],
   ),
 
-  [ErrorCode.IMPORT_MAP_INVALID]: createErrorSolution(ErrorCode.IMPORT_MAP_INVALID, {
+  "import-map-invalid": createErrorSolution("import-map-invalid", {
     title: "Invalid import map",
     message: "The import map in your configuration is invalid.",
     steps: [
@@ -91,7 +90,7 @@ export default {
 }`,
   }),
 
-  [ErrorCode.CORS_CONFIG_INVALID]: createErrorSolution(ErrorCode.CORS_CONFIG_INVALID, {
+  "cors-config-invalid": createErrorSolution("cors-config-invalid", {
     title: "Invalid CORS configuration",
     message: "The CORS configuration is invalid.",
     steps: [

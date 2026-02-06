@@ -1,6 +1,7 @@
 import { join } from "#veryfront/platform/compat/path-helper.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
-import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
+import { VeryfrontError } from "#veryfront/errors/index.ts";
+import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -86,11 +87,14 @@ export class PageResolver {
         pageInfo ??= await getEntityBySlug(this.projectDir, slug, this.adapter);
 
         if (!pageInfo) {
-          throw new VeryfrontError(
-            `Page not found: ${slug}`,
-            ErrorCode.FILE_NOT_FOUND,
-            { slug, useAppRouter },
-          );
+          throw new VeryfrontError(`Page not found: ${slug}`, {
+            slug: FILE_NOT_FOUND.slug,
+            category: FILE_NOT_FOUND.category,
+            status: FILE_NOT_FOUND.status,
+            title: FILE_NOT_FOUND.title,
+            suggestion: FILE_NOT_FOUND.suggestion,
+            context: { slug, useAppRouter },
+          });
         }
 
         return pageInfo;
@@ -195,7 +199,7 @@ export class PageResolver {
       await this.resolvePage(slug);
       return true;
     } catch (error: unknown) {
-      if (error instanceof VeryfrontError && error.code === ErrorCode.FILE_NOT_FOUND) {
+      if (error instanceof VeryfrontError && error.slug === "file-not-found") {
         return false;
       }
       throw error;

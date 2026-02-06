@@ -1,9 +1,8 @@
-import { ErrorCode } from "../error-codes.ts";
 import type { PartialErrorCatalog } from "./types.ts";
 import { createErrorSolution, createSimpleError } from "./factory.ts";
 
 export const MODULE_ERROR_CATALOG: PartialErrorCatalog = {
-  [ErrorCode.CACHE_PATH_MISMATCH]: createErrorSolution(ErrorCode.CACHE_PATH_MISMATCH, {
+  "cache-path-mismatch": createErrorSolution("cache-path-mismatch", {
     title: "Cache path mismatch",
     message: "Cached code contains file paths from a different environment.",
     steps: [
@@ -23,7 +22,7 @@ kubectl rollout restart deployment/veryfront-renderer -n veryfront-production
 VERYFRONT_API_BASE_URL=https://api.veryfront.com PROXY_MODE=1 deno task start`,
   }),
 
-  [ErrorCode.MODULE_NOT_FOUND]: createErrorSolution(ErrorCode.MODULE_NOT_FOUND, {
+  "module-not-found": createErrorSolution("module-not-found", {
     title: "Module not found",
     message: "Cannot find the imported module.",
     steps: [
@@ -42,8 +41,8 @@ resolve: {
 }`,
   }),
 
-  [ErrorCode.IMPORT_RESOLUTION_ERROR]: createSimpleError(
-    ErrorCode.IMPORT_RESOLUTION_ERROR,
+  "import-resolution-error": createSimpleError(
+    "import-resolution-error",
     "Import resolution failed",
     "Failed to resolve import specifier.",
     [
@@ -53,8 +52,8 @@ resolve: {
     ],
   ),
 
-  [ErrorCode.CIRCULAR_DEPENDENCY]: createSimpleError(
-    ErrorCode.CIRCULAR_DEPENDENCY,
+  "circular-dependency": createSimpleError(
+    "circular-dependency",
     "Circular dependency detected",
     "Files are importing each other in a circle.",
     [
@@ -64,8 +63,8 @@ resolve: {
     ],
   ),
 
-  [ErrorCode.INVALID_IMPORT]: createSimpleError(
-    ErrorCode.INVALID_IMPORT,
+  "invalid-import": createSimpleError(
+    "invalid-import",
     "Invalid import statement",
     "Import statement has invalid syntax.",
     [
@@ -75,7 +74,7 @@ resolve: {
     ],
   ),
 
-  [ErrorCode.DEPENDENCY_MISSING]: createErrorSolution(ErrorCode.DEPENDENCY_MISSING, {
+  "dependency-missing": createErrorSolution("dependency-missing", {
     title: "Required dependency not found",
     message: "A required dependency is missing.",
     steps: [
@@ -94,8 +93,8 @@ resolve: {
 }`,
   }),
 
-  [ErrorCode.VERSION_MISMATCH]: createSimpleError(
-    ErrorCode.VERSION_MISMATCH,
+  "version-mismatch": createSimpleError(
+    "version-mismatch",
     "Dependency version mismatch",
     "Incompatible versions of dependencies detected.",
     [

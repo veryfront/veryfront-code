@@ -1,6 +1,6 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ErrorCode } from "../error-codes.ts";
+import type { ErrorSlug } from "../error-registry.ts";
 import { ERROR_CATALOG, getErrorSolution, searchErrors } from "./index.ts";
 
 describe("errors/catalog/index", () => {
@@ -12,14 +12,14 @@ describe("errors/catalog/index", () => {
   });
 
   describe("getErrorSolution", () => {
-    it("should return null for unknown code", () => {
-      assertEquals(getErrorSolution("VF999" as typeof ErrorCode.UNKNOWN_ERROR), null);
+    it("should return null for unknown slug", () => {
+      assertEquals(getErrorSolution("unknown-nonexistent-slug" as ErrorSlug), null);
     });
 
-    it("should return solution for known code", () => {
-      const solution = getErrorSolution(ErrorCode.CONFIG_NOT_FOUND);
+    it("should return solution for known slug", () => {
+      const solution = getErrorSolution("config-not-found");
       assertExists(solution);
-      assertEquals(solution.code, ErrorCode.CONFIG_NOT_FOUND);
+      assertEquals(solution.slug, "config-not-found");
       assertEquals(typeof solution.title, "string");
       assertEquals(typeof solution.message, "string");
     });

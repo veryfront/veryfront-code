@@ -19,7 +19,8 @@ import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import { createBuildVersion } from "#veryfront/utils/version.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
+import { VeryfrontError } from "#veryfront/errors/index.ts";
+import { FILE_NOT_FOUND, RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
 import { buildQueryAwareCacheKey } from "#veryfront/cache/keys.ts";
 import {
   extractRelativePath as extractRelativePathShared,
@@ -165,11 +166,17 @@ export class RenderPipeline {
         .join("\n");
       throw new VeryfrontError(
         `Critical page module(s) failed to load:\n${failedDetails}`,
-        ErrorCode.RENDER_ERROR,
         {
-          criticalFailures,
-          loadedCount: loaded.length,
-          totalModules: modules.length,
+          slug: RENDER_ERROR.slug,
+          category: RENDER_ERROR.category,
+          status: RENDER_ERROR.status,
+          title: RENDER_ERROR.title,
+          suggestion: RENDER_ERROR.suggestion,
+          context: {
+            criticalFailures,
+            loadedCount: loaded.length,
+            totalModules: modules.length,
+          },
         },
       );
     }
@@ -317,22 +324,28 @@ export class RenderPipeline {
                   if (!result) continue;
 
                   if (result.notFound) {
-                    throw new VeryfrontError(
-                      "Page/Layout returned notFound",
-                      ErrorCode.FILE_NOT_FOUND,
-                      {
+                    throw new VeryfrontError("Page/Layout returned notFound", {
+                      slug: FILE_NOT_FOUND.slug,
+                      category: FILE_NOT_FOUND.category,
+                      status: FILE_NOT_FOUND.status,
+                      title: FILE_NOT_FOUND.title,
+                      suggestion: FILE_NOT_FOUND.suggestion,
+                      context: {
                         slug,
                         component: id,
                       },
-                    );
+                    });
                   }
 
                   if (result.redirect) {
-                    throw new VeryfrontError(
-                      `Redirect to ${result.redirect.destination}`,
-                      ErrorCode.RENDER_ERROR,
-                      { slug, redirect: result.redirect },
-                    );
+                    throw new VeryfrontError(`Redirect to ${result.redirect.destination}`, {
+                      slug: RENDER_ERROR.slug,
+                      category: RENDER_ERROR.category,
+                      status: RENDER_ERROR.status,
+                      title: RENDER_ERROR.title,
+                      suggestion: RENDER_ERROR.suggestion,
+                      context: { slug, redirect: result.redirect },
+                    });
                   }
 
                   if (!result.props) continue;
@@ -379,8 +392,13 @@ export class RenderPipeline {
         if (pageBundleResult.scriptResult) return pageBundleResult.scriptResult;
 
         if (!pageBundleResult.pageElement || !pageBundleResult.pageBundle) {
-          throw new VeryfrontError("Failed to prepare page bundle", ErrorCode.RENDER_ERROR, {
-            slug,
+          throw new VeryfrontError("Failed to prepare page bundle", {
+            slug: RENDER_ERROR.slug,
+            category: RENDER_ERROR.category,
+            status: RENDER_ERROR.status,
+            title: RENDER_ERROR.title,
+            suggestion: RENDER_ERROR.suggestion,
+            context: { slug },
           });
         }
 

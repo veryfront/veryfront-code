@@ -1,49 +1,53 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ErrorCode } from "../error-codes.ts";
 import { BUILD_ERROR_CATALOG } from "./build-errors.ts";
 
 describe("errors/catalog/build-errors", () => {
   describe("BUILD_ERROR_CATALOG", () => {
-    it("should contain all build error codes", () => {
-      const expectedCodes = [
-        ErrorCode.BUILD_FAILED,
-        ErrorCode.BUNDLE_ERROR,
-        ErrorCode.TYPESCRIPT_ERROR,
-        ErrorCode.MDX_COMPILE_ERROR,
-        ErrorCode.ASSET_OPTIMIZATION_ERROR,
-        ErrorCode.SSG_GENERATION_ERROR,
-        ErrorCode.SOURCEMAP_ERROR,
+    it("should contain all build error slugs", () => {
+      const expectedSlugs = [
+        "build-failed",
+        "bundle-error",
+        "typescript-error",
+        "mdx-compile-error",
+        "asset-optimization-error",
+        "ssg-generation-error",
+        "sourcemap-error",
+        "compilation-error",
       ];
 
-      for (const code of expectedCodes) {
-        assertEquals(code in BUILD_ERROR_CATALOG, true, `Missing error code: ${code}`);
+      for (const slug of expectedSlugs) {
+        assertEquals(slug in BUILD_ERROR_CATALOG, true, `Missing error slug: ${slug}`);
       }
     });
 
     it("should have correct structure for each entry", () => {
-      for (const [code, solution] of Object.entries(BUILD_ERROR_CATALOG)) {
-        assertEquals(solution.code, code, `code mismatch for ${code}`);
-        assertEquals(typeof solution.title, "string", `title should be string for ${code}`);
-        assertEquals(typeof solution.message, "string", `message should be string for ${code}`);
-        assertEquals(typeof solution.docs, "string", `docs should be string for ${code}`);
-        assertEquals(Array.isArray(solution.steps), true, `steps should be array for ${code}`);
-        assertEquals(solution.steps.length > 0, true, `steps should not be empty for ${code}`);
+      for (const [slug, solution] of Object.entries(BUILD_ERROR_CATALOG)) {
+        assertEquals(solution.slug, slug, `slug mismatch for ${slug}`);
+        assertEquals(typeof solution.title, "string", `title should be string for ${slug}`);
+        assertEquals(typeof solution.message, "string", `message should be string for ${slug}`);
+        assertEquals(typeof solution.docs, "string", `docs should be string for ${slug}`);
+        assertEquals(Array.isArray(solution.steps), true, `steps should be array for ${slug}`);
+        assertEquals(
+          (solution.steps?.length ?? 0) > 0,
+          true,
+          `steps should not be empty for ${slug}`,
+        );
       }
     });
 
-    it("should have 7 entries", () => {
-      assertEquals(Object.keys(BUILD_ERROR_CATALOG).length, 7);
+    it("should have 8 entries", () => {
+      assertEquals(Object.keys(BUILD_ERROR_CATALOG).length, 8);
     });
 
-    it("BUILD_FAILED should have tips", () => {
-      const solution = BUILD_ERROR_CATALOG[ErrorCode.BUILD_FAILED]!;
+    it("build-failed should have tips", () => {
+      const solution = BUILD_ERROR_CATALOG["build-failed"]!;
       assertEquals(Array.isArray(solution.tips), true);
-      assertEquals(solution.tips.length > 0, true);
+      assertEquals((solution.tips?.length ?? 0) > 0, true);
     });
 
-    it("MDX_COMPILE_ERROR should have an example", () => {
-      const solution = BUILD_ERROR_CATALOG[ErrorCode.MDX_COMPILE_ERROR]!;
+    it("mdx-compile-error should have an example", () => {
+      const solution = BUILD_ERROR_CATALOG["mdx-compile-error"]!;
       assertEquals(typeof solution.example, "string");
     });
   });

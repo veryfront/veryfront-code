@@ -1,9 +1,8 @@
-import { ErrorCode } from "../error-codes.ts";
 import type { PartialErrorCatalog } from "./types.ts";
 import { createErrorSolution, createSimpleError } from "./factory.ts";
 
 export const BUILD_ERROR_CATALOG: PartialErrorCatalog = {
-  [ErrorCode.BUILD_FAILED]: createErrorSolution(ErrorCode.BUILD_FAILED, {
+  "build-failed": createErrorSolution("build-failed", {
     title: "Build failed",
     message: "The build process encountered errors.",
     steps: [
@@ -15,8 +14,8 @@ export const BUILD_ERROR_CATALOG: PartialErrorCatalog = {
     tips: ["Try running with --verbose for more details", "Check build logs for warnings"],
   }),
 
-  [ErrorCode.BUNDLE_ERROR]: createSimpleError(
-    ErrorCode.BUNDLE_ERROR,
+  "bundle-error": createSimpleError(
+    "bundle-error",
     "Bundle generation failed",
     "Failed to generate JavaScript bundles.",
     [
@@ -26,8 +25,8 @@ export const BUILD_ERROR_CATALOG: PartialErrorCatalog = {
     ],
   ),
 
-  [ErrorCode.TYPESCRIPT_ERROR]: createSimpleError(
-    ErrorCode.TYPESCRIPT_ERROR,
+  "typescript-error": createSimpleError(
+    "typescript-error",
     "TypeScript compilation error",
     "TypeScript found errors in your code.",
     [
@@ -37,7 +36,7 @@ export const BUILD_ERROR_CATALOG: PartialErrorCatalog = {
     ],
   ),
 
-  [ErrorCode.MDX_COMPILE_ERROR]: createErrorSolution(ErrorCode.MDX_COMPILE_ERROR, {
+  "mdx-compile-error": createErrorSolution("mdx-compile-error", {
     title: "MDX compilation failed",
     message: "Failed to compile MDX file.",
     steps: [
@@ -57,8 +56,8 @@ import Button from './components/Button.jsx'
 <Button>Click me</Button>`,
   }),
 
-  [ErrorCode.ASSET_OPTIMIZATION_ERROR]: createSimpleError(
-    ErrorCode.ASSET_OPTIMIZATION_ERROR,
+  "asset-optimization-error": createSimpleError(
+    "asset-optimization-error",
     "Asset optimization failed",
     "Failed to optimize assets (images, CSS, etc.).",
     [
@@ -68,8 +67,8 @@ import Button from './components/Button.jsx'
     ],
   ),
 
-  [ErrorCode.SSG_GENERATION_ERROR]: createSimpleError(
-    ErrorCode.SSG_GENERATION_ERROR,
+  "ssg-generation-error": createSimpleError(
+    "ssg-generation-error",
     "Static site generation failed",
     "Failed to generate static pages.",
     [
@@ -79,10 +78,21 @@ import Button from './components/Button.jsx'
     ],
   ),
 
-  [ErrorCode.SOURCEMAP_ERROR]: createSimpleError(
-    ErrorCode.SOURCEMAP_ERROR,
+  "sourcemap-error": createSimpleError(
+    "sourcemap-error",
     "Source map generation failed",
     "Failed to generate source maps.",
     ["Try disabling source maps temporarily", "Check for very large files that might cause issues"],
+  ),
+
+  "compilation-error": createSimpleError(
+    "compilation-error",
+    "Compilation failed",
+    "Failed to compile source code.",
+    [
+      "Check for syntax errors in the output",
+      "Ensure all dependencies are installed",
+      "Verify TypeScript configuration",
+    ],
   ),
 };

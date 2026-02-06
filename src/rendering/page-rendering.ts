@@ -1,5 +1,6 @@
 import { rendererLogger as logger } from "#veryfront/utils";
-import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
+import { VeryfrontError } from "#veryfront/errors/index.ts";
+import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
 import type * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, MdxBundle, MDXComponents, MDXModule, PageBundle } from "#veryfront/types";
@@ -76,7 +77,13 @@ export function handleMDXPage(
         if (!clientModuleCode) {
           throw new VeryfrontError(
             "MDX compilation produced no client module code",
-            ErrorCode.RENDER_ERROR,
+            {
+              slug: RENDER_ERROR.slug,
+              category: RENDER_ERROR.category,
+              status: RENDER_ERROR.status,
+              title: RENDER_ERROR.title,
+              suggestion: RENDER_ERROR.suggestion,
+            },
           );
         }
 
@@ -93,7 +100,13 @@ export function handleMDXPage(
         if (!MDXComp) {
           throw new VeryfrontError(
             "Compiled MDX module has no content export",
-            ErrorCode.RENDER_ERROR,
+            {
+              slug: RENDER_ERROR.slug,
+              category: RENDER_ERROR.category,
+              status: RENDER_ERROR.status,
+              title: RENDER_ERROR.title,
+              suggestion: RENDER_ERROR.suggestion,
+            },
           );
         }
 
@@ -141,8 +154,14 @@ export function handleMDXPage(
       } catch (error) {
         throw new VeryfrontError(
           `Failed to import MDX page via ESM: ${getErrorMessage(error)}`,
-          ErrorCode.RENDER_ERROR,
-          { slug, error },
+          {
+            slug: RENDER_ERROR.slug,
+            category: RENDER_ERROR.category,
+            status: RENDER_ERROR.status,
+            title: RENDER_ERROR.title,
+            suggestion: RENDER_ERROR.suggestion,
+            context: { slug, error },
+          },
         );
       }
     },

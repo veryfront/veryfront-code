@@ -1,10 +1,9 @@
-import { ErrorCode } from "../error-codes.ts";
 import type { PartialErrorCatalog } from "./types.ts";
 import { createErrorSolution, createSimpleError } from "./factory.ts";
 
 export const ROUTE_ERROR_CATALOG: PartialErrorCatalog = {
-  [ErrorCode.ROUTE_CONFLICT]: createSimpleError(
-    ErrorCode.ROUTE_CONFLICT,
+  "route-conflict": createSimpleError(
+    "route-conflict",
     "Route conflict",
     "Multiple files are trying to handle the same route.",
     [
@@ -14,25 +13,22 @@ export const ROUTE_ERROR_CATALOG: PartialErrorCatalog = {
     ],
   ),
 
-  [ErrorCode.INVALID_ROUTE_FILE]: createErrorSolution(
-    ErrorCode.INVALID_ROUTE_FILE,
-    {
-      title: "Invalid route file",
-      message: "Route file has invalid structure or exports.",
-      steps: [
-        "API routes must export GET, POST, etc. functions",
-        "Page routes must export default component",
-        "Check for syntax errors",
-      ],
-      example: `// app/api/users/route.ts
+  "invalid-route-file": createErrorSolution("invalid-route-file", {
+    title: "Invalid route file",
+    message: "Route file has invalid structure or exports.",
+    steps: [
+      "API routes must export GET, POST, etc. functions",
+      "Page routes must export default component",
+      "Check for syntax errors",
+    ],
+    example: `// app/api/users/route.ts
 export async function GET() {
   return Response.json({ users: [] })
 }`,
-    },
-  ),
+  }),
 
-  [ErrorCode.ROUTE_HANDLER_INVALID]: createSimpleError(
-    ErrorCode.ROUTE_HANDLER_INVALID,
+  "route-handler-invalid": createSimpleError(
+    "route-handler-invalid",
     "Invalid route handler",
     "Route handler does not return Response.",
     [
@@ -42,8 +38,8 @@ export async function GET() {
     ],
   ),
 
-  [ErrorCode.DYNAMIC_ROUTE_ERROR]: createSimpleError(
-    ErrorCode.DYNAMIC_ROUTE_ERROR,
+  "dynamic-route-error": createSimpleError(
+    "dynamic-route-error",
     "Dynamic route error",
     "Error in dynamic route handling.",
     [
@@ -53,8 +49,8 @@ export async function GET() {
     ],
   ),
 
-  [ErrorCode.ROUTE_PARAMS_ERROR]: createSimpleError(
-    ErrorCode.ROUTE_PARAMS_ERROR,
+  "route-params-error": createSimpleError(
+    "route-params-error",
     "Route parameters error",
     "Error accessing route parameters.",
     [
@@ -64,8 +60,8 @@ export async function GET() {
     ],
   ),
 
-  [ErrorCode.API_ROUTE_ERROR]: createSimpleError(
-    ErrorCode.API_ROUTE_ERROR,
+  "api-route-error": createSimpleError(
+    "api-route-error",
     "API route error",
     "Error in API route execution.",
     ["Check API handler code", "Ensure proper error handling", "Verify request parsing"],

@@ -1,9 +1,8 @@
-import { ErrorCode } from "../error-codes.ts";
 import type { PartialErrorCatalog } from "./types.ts";
 import { createErrorSolution, createSimpleError } from "./factory.ts";
 
 export const RUNTIME_ERROR_CATALOG: PartialErrorCatalog = {
-  [ErrorCode.HYDRATION_MISMATCH]: createErrorSolution(ErrorCode.HYDRATION_MISMATCH, {
+  "hydration-mismatch": createErrorSolution("hydration-mismatch", {
     title: "Hydration mismatch",
     message: "Client-side HTML does not match server-rendered HTML.",
     steps: [
@@ -18,11 +17,11 @@ export const RUNTIME_ERROR_CATALOG: PartialErrorCatalog = {
 const [random, setRandom] = useState(0)
 useEffect(() => setRandom(Math.random()), [])
 <div>{random}</div>`,
-    relatedErrors: [ErrorCode.RENDER_ERROR],
+    relatedErrors: ["render-error"],
   }),
 
-  [ErrorCode.RENDER_ERROR]: createSimpleError(
-    ErrorCode.RENDER_ERROR,
+  "render-error": createSimpleError(
+    "render-error",
     "Render error",
     "Failed to render component.",
     [
@@ -33,8 +32,8 @@ useEffect(() => setRandom(Math.random()), [])
     ],
   ),
 
-  [ErrorCode.COMPONENT_ERROR]: createSimpleError(
-    ErrorCode.COMPONENT_ERROR,
+  "component-error": createSimpleError(
+    "component-error",
     "Component error",
     "Error in component lifecycle or render.",
     [
@@ -44,7 +43,7 @@ useEffect(() => setRandom(Math.random()), [])
     ],
   ),
 
-  [ErrorCode.LAYOUT_NOT_FOUND]: createErrorSolution(ErrorCode.LAYOUT_NOT_FOUND, {
+  "layout-not-found": createErrorSolution("layout-not-found", {
     title: "Layout file not found",
     message: "Required layout file is missing.",
     steps: [
@@ -62,8 +61,8 @@ export default function RootLayout({ children }) {
 }`,
   }),
 
-  [ErrorCode.PAGE_NOT_FOUND]: createSimpleError(
-    ErrorCode.PAGE_NOT_FOUND,
+  "page-not-found": createSimpleError(
+    "page-not-found",
     "Page not found",
     "The requested page does not exist.",
     [
@@ -73,8 +72,8 @@ export default function RootLayout({ children }) {
     ],
   ),
 
-  [ErrorCode.API_ERROR]: createSimpleError(
-    ErrorCode.API_ERROR,
+  "api-error": createSimpleError(
+    "api-error",
     "API handler error",
     "Error in API route handler.",
     [
@@ -84,8 +83,8 @@ export default function RootLayout({ children }) {
     ],
   ),
 
-  [ErrorCode.MIDDLEWARE_ERROR]: createSimpleError(
-    ErrorCode.MIDDLEWARE_ERROR,
+  "middleware-error": createSimpleError(
+    "middleware-error",
     "Middleware error",
     "Error in middleware execution.",
     [
