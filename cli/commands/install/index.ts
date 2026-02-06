@@ -23,7 +23,6 @@ export type {
   AIToolId,
   DetectOptions,
   InstallOptions,
-  MultiSelectOption,
   UninstallOptions,
 } from "./types.ts";
 export { findInstalledTools, uninstallCommand, uninstallTargets } from "./uninstall.ts";

@@ -78,7 +78,6 @@
     "#veryfront/build": "./src/build/index.ts",
     "#veryfront/cache": "./src/cache/index.ts",
     "#cli/shared/args": "./cli/shared/args.ts",
-    "#cli/shared/arg-parser": "./cli/shared/arg-parser.ts",
     "#cli/shared/types": "./cli/shared/types.ts",
     "#cli/shared/constants": "./cli/shared/constants.ts",
     "#cli/shared/config": "./cli/shared/config.ts",

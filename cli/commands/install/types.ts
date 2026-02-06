@@ -40,9 +40,4 @@ export const DetectOptionsSchema = z.object({
 
 export type DetectOptions = z.infer<typeof DetectOptionsSchema>;
 
-export interface MultiSelectOption {
-  label: string;
-  value: AIToolId;
-  description: string;
-  selected: boolean;
-}
+
