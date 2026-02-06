@@ -27,7 +27,7 @@ export async function generateCommand(
   type: string,
   name: string,
 ): Promise<void> {
-  fs = createFileSystem();
+  const fs = createFileSystem();
 
   const preferred = await getPreferredRouter(projectDir);
   const slug = toSlug(name);

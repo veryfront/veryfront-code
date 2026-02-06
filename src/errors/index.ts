@@ -23,16 +23,6 @@ export {
   PROBLEM_JSON_CONTENT_TYPE,
 } from "./http-error.ts";
 
-export { RenderError, RuntimeError } from "./runtime-errors.ts";
-
-export {
-  ConfigError,
-  FileSystemError,
-  NetworkError,
-  NotSupportedError,
-  PermissionError,
-} from "./system-errors.ts";
-
 export {
   handleError,
   handleErrorWithFallback,

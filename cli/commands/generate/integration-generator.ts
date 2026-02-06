@@ -8,11 +8,8 @@
 import { join } from "#std/path.ts";
 import { cyan, dim, green } from "#veryfront/compat/console";
 import { cliLogger } from "#veryfront/utils";
-import {
-  createFileSystem,
-  type FileSystem,
-  isAlreadyExistsError,
-} from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { ensureDir } from "../../utils/fs.ts";
 import {
   isInteractive as checkIsInteractive,
   promptSync,
@@ -604,13 +601,5 @@ ${config.envVarPrefix}_API_KEY=your_api_key
   } catch {
     await fs.writeTextFile(envExamplePath, `# Environment Variables${envContent}`);
     cliLogger.debug("Created .env.example");
-  }
-}
-
-async function ensureDir(path: string): Promise<void> {
-  try {
-    await fs.mkdir(path, { recursive: true });
-  } catch (error) {
-    if (!isAlreadyExistsError(error)) throw error;
   }
 }

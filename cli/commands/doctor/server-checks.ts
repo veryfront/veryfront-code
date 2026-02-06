@@ -1,5 +1,6 @@
 import type { DiagnosticResult } from "./types.ts";
 import { cliLogger } from "#veryfront/utils";
+import { formatError } from "../../utils/string.ts";
 
 const FETCH_TIMEOUT_MS = 2000;
 
@@ -25,10 +26,6 @@ async function fetchWithTimeout(
   } finally {
     clearTimeout(timeoutId);
   }
-}
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function getHashFromManifest(json: unknown): string | null {

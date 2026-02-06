@@ -8,6 +8,7 @@
 import { openBrowser } from "../auth/browser.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getOsType, runCommand } from "#veryfront/platform/compat/process.ts";
+import { formatError } from "../utils/string.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import type { ProjectInfo } from "./state.ts";
 import {
@@ -41,10 +42,6 @@ const IDE_NAMES: Record<IDE, string> = {
 const IDE_DETECTION_ORDER: IDE[] = ["cursor", "code", "zed", "idea", "webstorm"];
 
 const PROJECT_CACHE_DIRS = [".cache", "node_modules/.cache"];
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 async function commandExists(cmd: string): Promise<boolean> {
   const whichCmd = getOsType() === "windows" ? "where" : "which";

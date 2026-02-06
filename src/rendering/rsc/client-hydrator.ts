@@ -1,7 +1,12 @@
 import * as React from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { rscLogger } from "../client/browser-logger.ts";
-import { COMPILATION_ERROR, FileSystemError, isVeryfrontError, NetworkError } from "#veryfront/errors/index.ts";
+import {
+  COMPILATION_ERROR,
+  isVeryfrontError,
+  MODULE_NOT_FOUND,
+  NETWORK_ERROR,
+} from "#veryfront/errors/index.ts";
 import { createErrorDisplay } from "#veryfront/security/client/html-sanitizer.ts";
 import type { RSCHydratorOptions } from "./types.ts";
 
@@ -92,9 +97,9 @@ export class RSCHydrator {
 
     const componentPath = await this.getComponentPath(name);
     if (!componentPath) {
-      throw new FileSystemError("Client component not found in manifest", {
-        name,
-        manifest: this.manifest,
+      throw MODULE_NOT_FOUND.create({
+        detail: "Client component not found in manifest",
+        context: { name, manifest: this.manifest },
       });
     }
 
@@ -121,7 +126,13 @@ export class RSCHydrator {
       return Component;
     } catch (error) {
       rscLogger.error(`Failed to load component ${name}:`, error);
-      if ((isVeryfrontError(error) && error.slug === "compilation-error") || error instanceof FileSystemError) {
+      if (
+        isVeryfrontError(error) && (
+          error.slug === "compilation-error" ||
+          error.slug === "module-not-found" ||
+          error.slug === "network-error"
+        )
+      ) {
         throw error;
       }
       throw COMPILATION_ERROR.create({
@@ -144,9 +155,10 @@ export class RSCHydrator {
       const response = await fetch(this.manifestUrl);
 
       if (!response.ok) {
-        throw new NetworkError("Failed to load manifest", {
+        throw NETWORK_ERROR.create({
+          detail: "Failed to load manifest",
           status: response.status,
-          url: this.manifestUrl,
+          context: { url: this.manifestUrl },
         });
       }
 
