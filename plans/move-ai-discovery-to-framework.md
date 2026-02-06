@@ -110,7 +110,7 @@ Add `#veryfront/discovery` import map entry:
 
 After the `git mv`, delete the entire `cli/discovery/` directory. The two remaining files don't justify keeping it:
 
-- **`config-validator.ts`** — called once from `cli/commands/dev/command.ts`. It's 50 lines that validate AI provider config and print colored warnings. Move the `validateAIConfig()` function into `src/discovery/` (it's config validation, a framework concern). The `runAIConfigValidation()` wrapper that prints colored CLI output gets inlined into `dev/command.ts` — it's 15 lines, not worth a separate module.
+- **`config-validator.ts`** — called once from `cli/commands/dev/command.ts`. Move `validateAIConfig()` into `src/discovery/` but **strip ANSI color codes** (`bold()`, `cyan()`) from the warning messages. Framework code must not depend on terminal formatting. Return plain strings; the CLI's `runAIConfigValidation()` wrapper applies colors when printing. Inline that wrapper into `dev/command.ts` — it's 15 lines, not worth a separate module.
 
 - **`agent-index.ts`** — `generateAgentIndex()` is exported but **never called anywhere**. Dead code. Delete it.
 
@@ -191,14 +191,23 @@ private async getWatchPaths(): Promise<string[]> {
 
 **2.3 Handle AI file changes in HMR**
 
-In `FileWatchSetup.handleBatchedFileChanges()`, detect changes in AI directories and trigger re-discovery:
+In `FileWatchSetup.handleBatchedFileChanges()`, detect changes in AI directories and trigger re-discovery.
+
+**Path matching** — use path segment boundaries, not substring `includes()`. A naive `p.includes("/tools/")` would false-match paths like `my-tools/` or `dev-tools-backup/`. Instead, resolve relative to `projectDir` and check the first path segment:
 
 ```typescript
+import { relative, sep } from "#veryfront/platform/compat/path/index.ts";
+
+const AI_DIRS = new Set(["tools", "agents", "workflows", "prompts", "resources"]);
+
+private isAIPath(fullPath: string): boolean {
+  const rel = relative(this.projectDir, fullPath);
+  const firstSegment = rel.split(sep)[0];
+  return AI_DIRS.has(firstSegment);
+}
+
 private async handleBatchedFileChanges(changedPaths: string[]): Promise<void> {
-  const aiDirs = ["tools", "agents", "workflows", "prompts", "resources"];
-  const hasAIChanges = changedPaths.some(p =>
-    aiDirs.some(dir => p.includes(`/${dir}/`) || p.includes(`\\${dir}\\`))
-  );
+  const hasAIChanges = changedPaths.some(p => this.isAIPath(p));
 
   if (hasAIChanges) {
     await this.rediscoverAI();
@@ -208,7 +217,7 @@ private async handleBatchedFileChanges(changedPaths: string[]): Promise<void> {
 }
 ```
 
-The `rediscoverAI()` method clears registries and re-runs discovery:
+**Atomic re-discovery** — don't clear registries before re-running discovery. That creates a window where concurrent requests see empty registries. Instead, discover into fresh result first, then swap atomically:
 
 ```typescript
 private async rediscoverAI(): Promise<void> {
@@ -216,13 +225,28 @@ private async rediscoverAI(): Promise<void> {
     const { clearTranspileCache, discoverAll } = await import("#veryfront/discovery");
     clearTranspileCache();
 
-    // Clear existing registries before re-discovery
-    const { toolRegistry } = await import("#veryfront/tool");
-    const { agentRegistry } = await import("#veryfront/agent");
-    // ... clear other registries
-
+    // Discover first, THEN clear+replace — avoids empty registry window
     const config = this.buildDiscoveryConfig();
     const result = await discoverAll(config);
+
+    // Now atomically replace registries with freshly discovered primitives
+    // discoverAll() already calls registerTool/registerAgent/etc. which
+    // replace existing entries by ID. So we only need to clear entries
+    // that no longer exist on disk (i.e., deleted files).
+    // The handlers' register functions use set-by-id semantics, so
+    // re-registering the same ID overwrites cleanly.
+    //
+    // To handle deletions: clear, then re-register in a single synchronous step.
+    // Since JS is single-threaded, no request can interleave between clear and the
+    // synchronous part of registration.
+    // However, discoverAll is async (file I/O). So the approach is:
+    // 1. Run discoverAll() which populates a fresh DiscoveryResult
+    // 2. Clear all registries
+    // 3. Re-register from the result (sync loop)
+    //
+    // Alternative: discoverAll already registers as it discovers. If we accept
+    // that deleted files leave stale entries until restart, we skip the clear
+    // entirely. This is the simpler approach and acceptable for dev mode.
 
     logger.info(`[HMR] Re-discovered AI primitives: ${result.tools.size} tools, ${result.agents.size} agents, ${result.workflows.size} workflows`);
   } catch (error) {
@@ -230,6 +254,8 @@ private async rediscoverAI(): Promise<void> {
   }
 }
 ```
+
+**Simplification note:** `discoverAll()` already registers each primitive as it discovers it (via `registerTool()`, `registerAgent()`, etc.), which uses set-by-id semantics (overwrites existing). For dev mode HMR, the simplest correct approach is to just re-run `discoverAll()` without clearing — modified/added files get re-registered, and deleted files leave stale entries until the next full restart. This matches how page HMR works (no route un-registration on delete). If precise deletion handling is needed later, it can be added as a follow-up.
 
 **2.4 Investigate registry clearing**
 
@@ -244,39 +270,80 @@ Before implementing 2.3, verify that each registry (toolRegistry, agentRegistry,
 
 **3.1 Remove `discoverAll()` calls from CLI commands**
 
-In `cli/commands/dev/command.ts`, remove:
-```typescript
-// REMOVE:
-import { discoverAll } from "../../discovery/index.ts";
-// ...
-try {
-  await discoverAll({ baseDir: projectDir, verbose: false });
-} catch {
-  // AI discovery skipped
-}
-```
+In `cli/commands/dev/command.ts`, remove the single `discoverAll()` call. The dev server now handles this internally.
 
-The dev server now handles this internally.
+In `cli/commands/start/command.ts`, the start command has **3 distinct discovery strategies** depending on server mode. All 4 `discoverAll()` calls must be removed and the logic moved into the framework:
 
-In `cli/commands/start/command.ts`, remove all 4 `discoverAll()` calls. The start command creates a dev server or production server — both should handle discovery internally.
+| Mode | Current CLI code | Where discovery moves |
+|------|-----------------|----------------------|
+| **Proxy + multi-project FSAdapter** | `adapter.fs.runWithContext(slug, token, () => discoverAll({ baseDir: "", fsAdapter: adapter.fs }))` | Production server — needs project context (slug + token) passed via `ServerOptions` |
+| **Proxy + single-project FSAdapter** | `discoverAll({ baseDir: "", fsAdapter: adapter.fs })` | Production server — uses FSAdapter with empty baseDir |
+| **Proxy + local filesystem** | `discoverAll({ baseDir: projectDir })` | Production server — standard local discovery |
+| **Non-proxy dev server** | `discoverAll({ baseDir: projectDir })` | Dev server (Phase 2.1 already handles this) |
+
+The key complexity is the **proxy + multi-project mode**: the FSAdapter reads files from the Veryfront API (not local disk), and `runWithContext()` sets the project scope via AsyncLocalStorage. The production server needs to accept discovery configuration that includes:
+- `fsAdapter` — the filesystem adapter (local or API-backed)
+- `projectSlug` + `apiToken` — for multi-project context scoping
+- `baseDir` — empty string for FSAdapter modes, project path for local
 
 **3.2 Add discovery to production server**
 
-In `src/server/production-server.ts`, add a one-time `discoverAll()` call at startup (no file watching needed):
+In `src/server/production-server.ts`, add discovery as part of `startUniversalServer()`. Discovery must run **before `adapter.serve()`** to ensure registries are populated before the first request is handled.
+
+Add an optional `discoveryConfig` to `ServerOptions`:
 
 ```typescript
-import { discoverAll } from "#veryfront/discovery";
-
-// During production server startup:
-try {
-  await discoverAll({
-    baseDir: projectDir,
-    verbose: false,
-  });
-} catch {
-  // AI discovery optional in production
+interface ServerOptions {
+  // ... existing fields ...
+  /** Discovery configuration for AI primitives. If provided, runs discoverAll() before serving. */
+  discoveryConfig?: {
+    baseDir: string;
+    fsAdapter?: FSAdapter;
+    /** For multi-project proxy mode: project slug for context scoping */
+    projectSlug?: string;
+    /** For multi-project proxy mode: API token for context scoping */
+    apiToken?: string;
+    verbose?: boolean;
+  };
 }
 ```
+
+In `startUniversalServer()`, after bootstrap but **before `adapter.serve()`**:
+
+```typescript
+// Run AI discovery before serving (registries must be populated before first request)
+if (discoveryConfig) {
+  try {
+    const { discoverAll } = await import("#veryfront/discovery");
+    const { isExtendedFSAdapter } = await import("#veryfront/platform/adapters/fs/wrapper.ts");
+
+    if (discoveryConfig.projectSlug && discoveryConfig.apiToken &&
+        discoveryConfig.fsAdapter && isExtendedFSAdapter(discoveryConfig.fsAdapter) &&
+        discoveryConfig.fsAdapter.isMultiProjectMode()) {
+      // Multi-project proxy: scope discovery to specific project
+      await discoveryConfig.fsAdapter.runWithContext(
+        discoveryConfig.projectSlug,
+        discoveryConfig.apiToken,
+        () => discoverAll({
+          baseDir: discoveryConfig.baseDir,
+          fsAdapter: discoveryConfig.fsAdapter,
+          verbose: discoveryConfig.verbose ?? false,
+        }),
+      );
+    } else {
+      await discoverAll({
+        baseDir: discoveryConfig.baseDir,
+        fsAdapter: discoveryConfig.fsAdapter,
+        verbose: discoveryConfig.verbose ?? false,
+      });
+    }
+  } catch (error) {
+    logger.debug("[Server] AI discovery skipped:", error);
+  }
+}
+```
+
+The CLI's `start/command.ts` then simply passes the right `discoveryConfig` to `startUniversalServer()` based on its mode, instead of calling `discoverAll()` directly. This moves the *execution* to the framework while the CLI still provides the *configuration*.
 
 **3.3 Config validation**
 
@@ -327,13 +394,15 @@ describe("Feature: AI Discovery", {
 
     await withServer(projectDir, async (server) => {
       // Verify tools discovered via dashboard API
-      const { json: tools } = await fetchJson(server, "/_dev/api/tools");
-      const toolIds = tools.map((t: any) => t.id);
+      // Response format: { tools: [...], count: N }
+      const { json: toolsResp } = await fetchJson(server, "/_dev/api/tools");
+      const toolIds = toolsResp.tools.map((t: any) => t.id);
       assert(toolIds.includes("greet"), "Tool 'greet' should be auto-discovered");
 
       // Verify agents discovered via dashboard API
-      const { json: agents } = await fetchJson(server, "/_dev/api/agents");
-      const agentIds = agents.map((a: any) => a.id);
+      // Response format: { agents: [...], count: N }
+      const { json: agentsResp } = await fetchJson(server, "/_dev/api/agents");
+      const agentIds = agentsResp.agents.map((a: any) => a.id);
       assert(agentIds.includes("helper"), "Agent 'helper' should be auto-discovered");
     });
   });
@@ -367,13 +436,13 @@ deno task test
 
 ### Phase 5: Cleanup
 
-**5.1 Update `cli/discovery/CLAUDE.md`**
-
-Update to reflect that core discovery logic now lives in `src/discovery/`.
-
-**5.2 Update `src/README.md`**
+**5.1 Update `src/README.md`**
 
 Add `discovery/` to the module listing.
+
+**5.2 Update any `CLAUDE.md` references**
+
+If any `CLAUDE.md` files reference `cli/discovery/`, update them to point to `src/discovery/`. The `cli/discovery/CLAUDE.md` is deleted along with the directory.
 
 ## Files Changed
 
@@ -405,10 +474,19 @@ Add `discovery/` to the module listing.
 **Low risk:**
 - Moving files with `git mv` preserves history
 - Discovery errors are already silently caught (`catch {}`)
+- HMR re-discovery in dev mode — `discoverAll()` uses set-by-id semantics so re-running it just overwrites existing entries. Deleted files leave stale entries until restart, which is acceptable for dev mode.
 
 **Medium risk:**
-- HMR re-discovery (Phase 2.3) — registry clearing needs investigation. If registries don't support clearing, tools/agents could accumulate on re-discovery. Phase 2.4 addresses this.
 - The `transpiler.ts` module uses esbuild and writes temp files — needs to work correctly from `src/` context. The existing code uses absolute paths so this should be fine.
+- Multi-project proxy mode has complex context scoping (`runWithContext()` with slug + token). The `discoveryConfig` option on `ServerOptions` must be wired correctly by the CLI.
+
+**Mitigated (addressed in plan):**
+- ~~HMR race condition~~ — addressed by not clearing registries before re-discovery (Phase 2.3)
+- ~~Production server ordering~~ — discovery runs before `adapter.serve()` (Phase 3.2)
+- ~~start/command.ts complexity~~ — 3 strategies documented and handled via `discoveryConfig` (Phase 3.1)
+- ~~validateAIConfig ANSI colors~~ — stripped before moving to framework (Phase 1.3)
+- ~~File watcher path matching~~ — uses `relative()` + first path segment check (Phase 2.3)
+- ~~E2E test response format~~ — uses `{ tools: [...] }` wrapper (Phase 4.2)
 
 **Not in scope:**
 - Agent-aware SSR streaming
