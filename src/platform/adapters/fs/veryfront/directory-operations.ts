@@ -1,9 +1,7 @@
 import { logger } from "#veryfront/utils";
 import type { DirectoryEntry } from "./types.ts";
-import type { ProjectFile, VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
-import { FileCache } from "../cache/file-cache.ts";
-import { PathNormalizer } from "./path-normalizer.ts";
-import type { ContentContextProvider } from "./read-operations.ts";
+import type { ProjectFile } from "../../veryfront-api-client/index.ts";
+import { VeryfrontOperationsBase } from "./base-operations.ts";
 import {
   buildDirCacheKeyPrefix,
   buildFileCacheKeyPrefix,
@@ -16,16 +14,9 @@ interface DirNode {
   dirs: Set<string>;
 }
 
-export class DirectoryOperations {
+export class DirectoryOperations extends VeryfrontOperationsBase {
   private dirTree: Map<string, DirNode> | null = null;
   private buildingTree: Promise<void> | null = null;
-
-  constructor(
-    private readonly client: VeryfrontAPIClient,
-    private readonly cache: FileCache,
-    private readonly normalizer: PathNormalizer,
-    private readonly contextProvider?: ContentContextProvider,
-  ) {}
 
   readdir(path: string): Promise<DirectoryEntry[]> {
     return withSpan(

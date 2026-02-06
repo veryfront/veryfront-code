@@ -4,11 +4,13 @@
  * Duplicate function detector:
  * 1) Exact clones (identifier/literal-normalized token hash)
  * 2) Near clones (Jaccard similarity on normalized token shingles)
+ * 3) Semantic clones (AST node/operator structure similarity via --semantic)
  *
  * Usage:
  *   deno task dupes
  *   deno task dupes -- --path src --path cli --threshold 0.88
  *   deno task dupes -- --ext ts --ext tsx
+ *   deno task dupes -- --semantic --threshold 0.8
  *   deno task dupes -- --json
  */
 
@@ -74,6 +76,10 @@ interface FunctionCandidate {
   exactHash: string;
   normalizedTokens: string[];
   shingleHashes: number[];
+  semanticNodeSequence: string[];
+  semanticShingleHashes: number[];
+  semanticNodeCounts: Map<string, number>;
+  semanticOperatorCounts: Map<string, number>;
 }
 
 interface NearEdge {
@@ -84,10 +90,12 @@ interface NearEdge {
 
 interface DuplicateGroup {
   id: string;
-  kind: "exact" | "near";
+  kind: "exact" | "near" | "semantic";
   members: FunctionCandidate[];
   impact: number;
   similarity: number;
+  confidence: number;
+  hints: string[];
 }
 
 interface CliOptions {
@@ -102,8 +110,15 @@ interface CliOptions {
   shingleSize: number;
   maxGroups: number;
   maxShingleFrequency: number;
+  semantic: boolean;
   failOnFindings: boolean;
   json: boolean;
+}
+
+interface SemanticPairMetrics {
+  similarity: number;
+  confidence: number;
+  hints: string[];
 }
 
 interface ScanStats {
@@ -143,6 +158,23 @@ const DEFAULT_EXCLUDES = [
   "scripts/rlm-ts/output/",
 ];
 
+const SEMANTIC_IDENTIFIER_NODE_TYPES = new Set([
+  "Identifier",
+  "JSXIdentifier",
+  "PrivateName",
+]);
+
+const SEMANTIC_LITERAL_NODE_TYPES = new Set([
+  "StringLiteral",
+  "NumericLiteral",
+  "BooleanLiteral",
+  "NullLiteral",
+  "RegExpLiteral",
+  "BigIntLiteral",
+  "DecimalLiteral",
+  "TemplateElement",
+]);
+
 function printHelp(): void {
   console.log(`Duplicate function detector
 
@@ -161,6 +193,7 @@ Options:
   --shingle-size <n>         Token shingle size for near matching (default: 3)
   --max-shingle-frequency <n> Skip very common shingles (default: 200)
   --max-groups <n>           Maximum groups shown (default: 30)
+  --semantic                 Use AST structure matching for near duplicates
   --fail-on-findings         Exit non-zero when duplicates are found
   --json                     Print JSON instead of text
   --help                     Show this help
@@ -213,7 +246,14 @@ function parseCliOptions(): CliOptions {
   const inputArgs = rawArgs[0] === "--" ? rawArgs.slice(1) : rawArgs;
 
   const args = parseArgs(inputArgs, {
-    boolean: ["include-tests", "include-callbacks", "fail-on-findings", "json", "help"],
+    boolean: [
+      "include-tests",
+      "include-callbacks",
+      "semantic",
+      "fail-on-findings",
+      "json",
+      "help",
+    ],
     string: [
       "path",
       "exclude",
@@ -229,6 +269,7 @@ function parseCliOptions(): CliOptions {
     default: {
       "include-tests": false,
       "include-callbacks": false,
+      "semantic": false,
       "fail-on-findings": false,
       "json": false,
       "min-tokens": "30",
@@ -260,6 +301,7 @@ function parseCliOptions(): CliOptions {
     shingleSize: parsePositiveInt(args["shingle-size"], 3),
     maxGroups: parsePositiveInt(args["max-groups"], 30),
     maxShingleFrequency: parsePositiveInt(args["max-shingle-frequency"], 200),
+    semantic: Boolean(args.semantic),
     failOnFindings: Boolean(args["fail-on-findings"]),
     json: Boolean(args.json),
   };
@@ -298,7 +340,9 @@ function shouldSkipFile(relativePath: string, options: CliOptions): boolean {
   if (!options.includeTests && isTestPath(normalized)) return true;
 
   const skipPrefixes = [...DEFAULT_EXCLUDES, ...options.excludes];
-  return skipPrefixes.some((prefix) => normalized.startsWith(normalizePath(prefix)));
+  return skipPrefixes.some((prefix) =>
+    normalized.startsWith(normalizePath(prefix))
+  );
 }
 
 function isNode(value: unknown): value is AstNode {
@@ -351,18 +395,24 @@ function formatMemberExpressionName(node: AstNode): string {
   }
   if (node.type === "ThisExpression") return "this";
   if (node.type === "Super") return "super";
-  if (node.type === "MemberExpression" || node.type === "OptionalMemberExpression") {
+  if (
+    node.type === "MemberExpression" || node.type === "OptionalMemberExpression"
+  ) {
     const object = (node as UnknownRecord).object;
     const property = (node as UnknownRecord).property;
     const computed = Boolean((node as UnknownRecord).computed);
-    const objectName = isNode(object) ? formatMemberExpressionName(object) : "<expr>";
+    const objectName = isNode(object)
+      ? formatMemberExpressionName(object)
+      : "<expr>";
     if (!isNode(property)) return `${objectName}.[expr]`;
     const propertyName = property.type === "Identifier"
       ? String((property as UnknownRecord).name ?? "<prop>")
       : computed
       ? "[expr]"
       : formatMemberExpressionName(property);
-    return computed ? `${objectName}[${propertyName}]` : `${objectName}.${propertyName}`;
+    return computed
+      ? `${objectName}[${propertyName}]`
+      : `${objectName}.${propertyName}`;
   }
   return "<expr>";
 }
@@ -371,9 +421,15 @@ function getPropertyKeyName(node: AstNode): string {
   const key = (node as UnknownRecord).key;
   if (!isNode(key)) return "<anonymous>";
 
-  if (key.type === "Identifier") return String((key as UnknownRecord).name ?? "<anonymous>");
-  if (key.type === "StringLiteral") return String((key as UnknownRecord).value ?? "<anonymous>");
-  if (key.type === "NumericLiteral") return String((key as UnknownRecord).value ?? "<anonymous>");
+  if (key.type === "Identifier") {
+    return String((key as UnknownRecord).name ?? "<anonymous>");
+  }
+  if (key.type === "StringLiteral") {
+    return String((key as UnknownRecord).value ?? "<anonymous>");
+  }
+  if (key.type === "NumericLiteral") {
+    return String((key as UnknownRecord).value ?? "<anonymous>");
+  }
   if (key.type === "PrivateName") {
     const id = (key as UnknownRecord).id;
     if (isNode(id) && id.type === "Identifier") {
@@ -386,7 +442,9 @@ function getPropertyKeyName(node: AstNode): string {
 function getNodeName(node: AstNode, parent: ParentRef | null): string {
   if (node.type === "FunctionDeclaration") {
     const id = (node as UnknownRecord).id;
-    if (isIdentifierNode(id)) return String((id as UnknownRecord).name ?? "<anonymous>");
+    if (isIdentifierNode(id)) {
+      return String((id as UnknownRecord).name ?? "<anonymous>");
+    }
     return "<anonymous>";
   }
 
@@ -397,9 +455,14 @@ function getNodeName(node: AstNode, parent: ParentRef | null): string {
     return getPropertyKeyName(node);
   }
 
-  if (node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression") {
+  if (
+    node.type === "FunctionExpression" ||
+    node.type === "ArrowFunctionExpression"
+  ) {
     const id = (node as UnknownRecord).id;
-    if (isIdentifierNode(id)) return String((id as UnknownRecord).name ?? "<anonymous>");
+    if (isIdentifierNode(id)) {
+      return String((id as UnknownRecord).name ?? "<anonymous>");
+    }
 
     if (!parent) return "<anonymous>";
     const p = parent.node;
@@ -444,7 +507,8 @@ function isInlineCallback(node: AstNode, parent: ParentRef | null): boolean {
   }
 
   if (
-    (p.type === "ArrayExpression" || p.type === "ObjectExpression") && parent.key === "elements"
+    (p.type === "ArrayExpression" || p.type === "ObjectExpression") &&
+    parent.key === "elements"
   ) {
     return true;
   }
@@ -468,14 +532,20 @@ function binarySearchStart(tokens: BabelToken[], start: number): number {
   return low;
 }
 
-function tokensInRange(tokens: BabelToken[], start: number, end: number): BabelToken[] {
+function tokensInRange(
+  tokens: BabelToken[],
+  start: number,
+  end: number,
+): BabelToken[] {
   const result: BabelToken[] = [];
   let index = binarySearchStart(tokens, start);
 
   while (index < tokens.length) {
     const token = tokens[index];
     if (token.start > end) break;
-    if (token.start >= start && token.end <= end && token.type.label !== "eof") {
+    if (
+      token.start >= start && token.end <= end && token.type.label !== "eof"
+    ) {
       result.push(token);
     }
     index++;
@@ -495,7 +565,10 @@ function rawTokenSymbol(token: BabelToken): string {
   return label;
 }
 
-function shouldPreserveIdentifier(index: number, tokens: BabelToken[]): boolean {
+function shouldPreserveIdentifier(
+  index: number,
+  tokens: BabelToken[],
+): boolean {
   const prev = tokens[index - 1];
   const next = tokens[index + 1];
 
@@ -575,6 +648,89 @@ function normalizeFunctionTokens(
   }
 
   return { strictTokens, structuralTokens };
+}
+
+function shouldSkipSemanticNode(nodeType: string): boolean {
+  return nodeType.startsWith("TS") || nodeType.startsWith("Flow");
+}
+
+function normalizeSemanticNodeType(nodeType: string): string {
+  if (SEMANTIC_IDENTIFIER_NODE_TYPES.has(nodeType)) return "Identifier";
+  if (SEMANTIC_LITERAL_NODE_TYPES.has(nodeType)) return "Literal";
+  return nodeType;
+}
+
+function getNodeOperator(node: AstNode): string | null {
+  const op = (node as UnknownRecord).operator;
+  return typeof op === "string" && op.length > 0 ? op : null;
+}
+
+function classifyCalleeShape(node: unknown): string {
+  if (!isNode(node)) return "expr";
+  if (node.type === "Identifier") return "id";
+  if (
+    node.type === "MemberExpression" || node.type === "OptionalMemberExpression"
+  ) {
+    return "member";
+  }
+  if (node.type === "Super") return "super";
+  return "expr";
+}
+
+function incrementCounter(counter: Map<string, number>, key: string): void {
+  counter.set(key, (counter.get(key) ?? 0) + 1);
+}
+
+function buildSemanticProfile(
+  root: AstNode,
+  shingleSize: number,
+): {
+  sequence: string[];
+  shingleHashes: number[];
+  nodeCounts: Map<string, number>;
+  operatorCounts: Map<string, number>;
+} {
+  const sequence: string[] = [];
+  const nodeCounts = new Map<string, number>();
+  const operatorCounts = new Map<string, number>();
+
+  traverseAst(root, (node) => {
+    if (shouldSkipSemanticNode(node.type)) return;
+
+    const normalizedType = normalizeSemanticNodeType(node.type);
+    sequence.push(`node:${normalizedType}`);
+    incrementCounter(nodeCounts, normalizedType);
+
+    const operator = getNodeOperator(node);
+    if (operator) {
+      sequence.push(`op:${operator}`);
+      incrementCounter(operatorCounts, operator);
+    }
+
+    if (
+      node.type === "CallExpression" ||
+      node.type === "OptionalCallExpression" ||
+      node.type === "NewExpression"
+    ) {
+      const calleeShape = classifyCalleeShape((node as UnknownRecord).callee);
+      sequence.push(`call:${calleeShape}`);
+    }
+
+    if (
+      node.type === "MemberExpression" ||
+      node.type === "OptionalMemberExpression"
+    ) {
+      const isComputed = Boolean((node as UnknownRecord).computed);
+      sequence.push(isComputed ? "member:computed" : "member:direct");
+    }
+  });
+
+  return {
+    sequence,
+    shingleHashes: makeShingles(sequence, shingleSize),
+    nodeCounts,
+    operatorCounts,
+  };
 }
 
 function hashFNV1a(value: string): string {
@@ -663,8 +819,10 @@ function edgeKey(a: number, b: number): string {
 
 function isNestedPair(a: FunctionCandidate, b: FunctionCandidate): boolean {
   if (a.relativePath !== b.relativePath) return false;
-  const aContainsB = a.startOffset <= b.startOffset && a.endOffset >= b.endOffset;
-  const bContainsA = b.startOffset <= a.startOffset && b.endOffset >= a.endOffset;
+  const aContainsB = a.startOffset <= b.startOffset &&
+    a.endOffset >= b.endOffset;
+  const bContainsA = b.startOffset <= a.startOffset &&
+    b.endOffset >= a.endOffset;
   return aContainsB || bContainsA;
 }
 
@@ -767,14 +925,20 @@ async function extractCandidates(
 
     traverseAst(parsed.program, (node, parent) => {
       if (!isFunctionNode(node)) return;
-      if (options.includeCallbacks === false && isInlineCallback(node, parent)) return;
-      if (typeof node.start !== "number" || typeof node.end !== "number") return;
+      if (
+        options.includeCallbacks === false && isInlineCallback(node, parent)
+      ) return;
+      if (typeof node.start !== "number" || typeof node.end !== "number") {
+        return;
+      }
       if (!node.loc?.start || !node.loc?.end) return;
 
       const rangeTokens = tokensInRange(tokens, node.start, node.end);
       if (rangeTokens.length === 0) return;
 
-      const { strictTokens, structuralTokens } = normalizeFunctionTokens(rangeTokens);
+      const { strictTokens, structuralTokens } = normalizeFunctionTokens(
+        rangeTokens,
+      );
       if (structuralTokens.length < options.minTokens) {
         stats.skippedFunctions++;
         return;
@@ -785,6 +949,7 @@ async function extractCandidates(
       const locLines = Math.max(1, endLine - startLine + 1);
       if (locLines < options.minLines) return;
 
+      const semanticProfile = buildSemanticProfile(node, options.shingleSize);
       const exactHash = hashFNV1a(structuralTokens.join(" "));
       const shingleHashes = makeShingles(strictTokens, options.shingleSize);
 
@@ -803,6 +968,10 @@ async function extractCandidates(
         exactHash,
         normalizedTokens: strictTokens,
         shingleHashes,
+        semanticNodeSequence: semanticProfile.sequence,
+        semanticShingleHashes: semanticProfile.shingleHashes,
+        semanticNodeCounts: semanticProfile.nodeCounts,
+        semanticOperatorCounts: semanticProfile.operatorCounts,
       });
       stats.analyzedFunctions++;
     });
@@ -828,7 +997,9 @@ function buildExactGroups(candidates: FunctionCandidate[]): DuplicateGroup[] {
     if (members.length < 2) continue;
 
     const sorted = [...members].sort((a, b) => {
-      if (a.relativePath !== b.relativePath) return a.relativePath.localeCompare(b.relativePath);
+      if (a.relativePath !== b.relativePath) {
+        return a.relativePath.localeCompare(b.relativePath);
+      }
       return a.startLine - b.startLine;
     });
 
@@ -838,6 +1009,8 @@ function buildExactGroups(candidates: FunctionCandidate[]): DuplicateGroup[] {
       members: sorted,
       impact: scoreGroupImpact(sorted),
       similarity: 1,
+      confidence: 1,
+      hints: ["Identifier/literal-normalized token hash is identical."],
     });
     counter++;
   }
@@ -927,7 +1100,9 @@ function buildNearGroups(
       .map((idx) => candidates[idx])
       .filter((candidate) => !exactMemberIds.has(candidate.id))
       .sort((a, b) => {
-        if (a.relativePath !== b.relativePath) return a.relativePath.localeCompare(b.relativePath);
+        if (a.relativePath !== b.relativePath) {
+          return a.relativePath.localeCompare(b.relativePath);
+        }
         return a.startLine - b.startLine;
       });
 
@@ -952,6 +1127,271 @@ function buildNearGroups(
       members,
       impact: scoreGroupImpact(members),
       similarity: averageSimilarity,
+      confidence: averageSimilarity,
+      hints: [`Shared normalized token ${options.shingleSize}-gram patterns.`],
+    });
+    counter++;
+  }
+
+  return groups;
+}
+
+function multisetDiceCoefficient(
+  a: Map<string, number>,
+  b: Map<string, number>,
+): number {
+  let sumA = 0;
+  let sumB = 0;
+  let overlap = 0;
+
+  for (const value of a.values()) sumA += value;
+  for (const value of b.values()) sumB += value;
+
+  if (sumA === 0 && sumB === 0) return 1;
+  if (sumA === 0 || sumB === 0) return 0;
+
+  for (const [key, valueA] of a.entries()) {
+    const valueB = b.get(key) ?? 0;
+    overlap += Math.min(valueA, valueB);
+  }
+
+  return (2 * overlap) / (sumA + sumB);
+}
+
+function collectTopSharedLabels(
+  a: Map<string, number>,
+  b: Map<string, number>,
+  limit: number,
+): string[] {
+  const shared: Array<{ key: string; overlap: number }> = [];
+
+  for (const [key, valueA] of a.entries()) {
+    const valueB = b.get(key) ?? 0;
+    const overlap = Math.min(valueA, valueB);
+    if (overlap > 0) {
+      shared.push({ key, overlap });
+    }
+  }
+
+  shared.sort((x, y) => {
+    if (x.overlap !== y.overlap) return y.overlap - x.overlap;
+    return x.key.localeCompare(y.key);
+  });
+
+  return shared.slice(0, limit).map((item) => item.key);
+}
+
+function clamp01(value: number): number {
+  if (value <= 0) return 0;
+  if (value >= 1) return 1;
+  return value;
+}
+
+function buildSemanticPairMetrics(
+  a: FunctionCandidate,
+  b: FunctionCandidate,
+  sharedShingles: number,
+): SemanticPairMetrics {
+  const unionShingles = a.semanticShingleHashes.length +
+    b.semanticShingleHashes.length - sharedShingles;
+  const shingleSimilarity = unionShingles > 0
+    ? sharedShingles / unionShingles
+    : 0;
+  const nodeSimilarity = multisetDiceCoefficient(
+    a.semanticNodeCounts,
+    b.semanticNodeCounts,
+  );
+  const operatorSimilarity = multisetDiceCoefficient(
+    a.semanticOperatorCounts,
+    b.semanticOperatorCounts,
+  );
+
+  const maxSize = Math.max(
+    a.semanticNodeSequence.length,
+    b.semanticNodeSequence.length,
+  );
+  const minSize = Math.min(
+    a.semanticNodeSequence.length,
+    b.semanticNodeSequence.length,
+  );
+  const lengthSimilarity = maxSize > 0 ? minSize / maxSize : 1;
+
+  const confidence = clamp01(
+    shingleSimilarity * 0.55 +
+      nodeSimilarity * 0.2 +
+      operatorSimilarity * 0.15 +
+      lengthSimilarity * 0.1,
+  );
+
+  const hints: string[] = [];
+  if (shingleSimilarity >= 0.85) {
+    hints.push("Long AST node/operator subsequences match closely.");
+  } else if (shingleSimilarity >= 0.7) {
+    hints.push("Multiple AST subsequences align.");
+  }
+
+  const sharedNodeTypes = collectTopSharedLabels(
+    a.semanticNodeCounts,
+    b.semanticNodeCounts,
+    3,
+  );
+  if (sharedNodeTypes.length > 0) {
+    hints.push(`Shared node patterns: ${sharedNodeTypes.join(", ")}.`);
+  }
+
+  const sharedOperators = collectTopSharedLabels(
+    a.semanticOperatorCounts,
+    b.semanticOperatorCounts,
+    4,
+  );
+  if (sharedOperators.length > 0) {
+    hints.push(`Shared operators: ${sharedOperators.join(", ")}.`);
+  }
+
+  if (lengthSimilarity >= 0.9) {
+    hints.push("Function AST sizes are almost identical.");
+  }
+
+  if (hints.length === 0) {
+    hints.push("Overall AST control/data-flow shape is similar.");
+  }
+
+  return {
+    similarity: shingleSimilarity,
+    confidence,
+    hints,
+  };
+}
+
+function buildSemanticGroups(
+  candidates: FunctionCandidate[],
+  exactGroups: DuplicateGroup[],
+  options: CliOptions,
+): DuplicateGroup[] {
+  if (candidates.length < 2) return [];
+
+  const exactMemberIds = new Set<number>();
+  for (const group of exactGroups) {
+    for (const member of group.members) {
+      exactMemberIds.add(member.id);
+    }
+  }
+
+  const shingleFrequency = new Map<number, number>();
+  for (const candidate of candidates) {
+    for (const shingle of candidate.semanticShingleHashes) {
+      shingleFrequency.set(shingle, (shingleFrequency.get(shingle) ?? 0) + 1);
+    }
+  }
+
+  const index = new Map<number, number[]>();
+  for (let idx = 0; idx < candidates.length; idx++) {
+    const candidate = candidates[idx];
+    for (const shingle of candidate.semanticShingleHashes) {
+      const freq = shingleFrequency.get(shingle) ?? 0;
+      if (freq > options.maxShingleFrequency) continue;
+      const posting = index.get(shingle);
+      if (posting) {
+        posting.push(idx);
+      } else {
+        index.set(shingle, [idx]);
+      }
+    }
+  }
+
+  const edges: NearEdge[] = [];
+  const edgeMetrics = new Map<string, SemanticPairMetrics>();
+
+  for (let idx = 0; idx < candidates.length; idx++) {
+    const a = candidates[idx];
+    if (exactMemberIds.has(a.id)) continue;
+
+    const sharedCounts = new Map<number, number>();
+    for (const shingle of a.semanticShingleHashes) {
+      const posting = index.get(shingle);
+      if (!posting) continue;
+
+      for (const otherIdx of posting) {
+        if (otherIdx <= idx) continue;
+        const b = candidates[otherIdx];
+        if (exactMemberIds.has(b.id)) continue;
+        if (a.exactHash === b.exactHash) continue;
+        if (isNestedPair(a, b)) continue;
+        sharedCounts.set(otherIdx, (sharedCounts.get(otherIdx) ?? 0) + 1);
+      }
+    }
+
+    for (const [otherIdx, sharedShingles] of sharedCounts) {
+      const b = candidates[otherIdx];
+      const metrics = buildSemanticPairMetrics(a, b, sharedShingles);
+      if (metrics.confidence < options.threshold) continue;
+
+      edges.push({ a: idx, b: otherIdx, similarity: metrics.confidence });
+      edgeMetrics.set(edgeKey(idx, otherIdx), metrics);
+    }
+  }
+
+  if (edges.length === 0) return [];
+  const components = findComponents(candidates.length, edges);
+
+  const groups: DuplicateGroup[] = [];
+  let counter = 1;
+
+  for (const component of components) {
+    const members = component
+      .map((idx) => candidates[idx])
+      .filter((candidate) => !exactMemberIds.has(candidate.id))
+      .sort((a, b) => {
+        if (a.relativePath !== b.relativePath) {
+          return a.relativePath.localeCompare(b.relativePath);
+        }
+        return a.startLine - b.startLine;
+      });
+
+    if (members.length < 2) continue;
+
+    let confidenceTotal = 0;
+    let similarityTotal = 0;
+    let pairCount = 0;
+    const hintCounts = new Map<string, number>();
+
+    for (let i = 0; i < component.length; i++) {
+      for (let j = i + 1; j < component.length; j++) {
+        const metrics = edgeMetrics.get(edgeKey(component[i], component[j]));
+        if (!metrics) continue;
+        confidenceTotal += metrics.confidence;
+        similarityTotal += metrics.similarity;
+        pairCount++;
+        for (const hint of metrics.hints) {
+          hintCounts.set(hint, (hintCounts.get(hint) ?? 0) + 1);
+        }
+      }
+    }
+
+    const confidence = pairCount > 0
+      ? confidenceTotal / pairCount
+      : options.threshold;
+    const similarity = pairCount > 0
+      ? similarityTotal / pairCount
+      : options.threshold;
+    const hints = [...hintCounts.entries()]
+      .sort((a, b) => {
+        if (a[1] !== b[1]) return b[1] - a[1];
+        return a[0].localeCompare(b[0]);
+      })
+      .slice(0, 3)
+      .map(([hint]) => hint);
+
+    groups.push({
+      id: `S${String(counter).padStart(3, "0")}`,
+      kind: "semantic",
+      members,
+      impact: scoreGroupImpact(members),
+      similarity,
+      confidence,
+      hints: hints.length > 0
+        ? hints
+        : ["Overall AST control/data-flow shape is similar."],
     });
     counter++;
   }
@@ -962,13 +1402,20 @@ function buildNearGroups(
 function sortGroups(groups: DuplicateGroup[]): DuplicateGroup[] {
   return [...groups].sort((a, b) => {
     if (a.impact !== b.impact) return b.impact - a.impact;
-    if (a.members.length !== b.members.length) return b.members.length - a.members.length;
+    if (a.members.length !== b.members.length) {
+      return b.members.length - a.members.length;
+    }
+    if (a.confidence !== b.confidence) return b.confidence - a.confidence;
     if (a.similarity !== b.similarity) return b.similarity - a.similarity;
     return a.id.localeCompare(b.id);
   });
 }
 
-function toJson(stats: ScanStats, options: CliOptions, groups: DuplicateGroup[]): string {
+function toJson(
+  stats: ScanStats,
+  options: CliOptions,
+  groups: DuplicateGroup[],
+): string {
   return JSON.stringify(
     {
       options: {
@@ -983,6 +1430,7 @@ function toJson(stats: ScanStats, options: CliOptions, groups: DuplicateGroup[])
         shingleSize: options.shingleSize,
         maxGroups: options.maxGroups,
         maxShingleFrequency: options.maxShingleFrequency,
+        semantic: options.semantic,
       },
       stats,
       groupCount: groups.length,
@@ -991,6 +1439,8 @@ function toJson(stats: ScanStats, options: CliOptions, groups: DuplicateGroup[])
         kind: group.kind,
         impact: group.impact,
         similarity: Number(group.similarity.toFixed(4)),
+        confidence: Number(group.confidence.toFixed(4)),
+        hints: group.hints,
         members: group.members.map((member) => ({
           file: member.relativePath,
           name: member.name,
@@ -1015,6 +1465,8 @@ function printTextReport(
 ): void {
   const exactCount = groups.filter((group) => group.kind === "exact").length;
   const nearCount = groups.filter((group) => group.kind === "near").length;
+  const semanticCount =
+    groups.filter((group) => group.kind === "semantic").length;
   const display = groups.slice(0, options.maxGroups);
 
   console.log("Duplicate Function Report");
@@ -1023,14 +1475,18 @@ function printTextReport(
   console.log(`Parsed files: ${stats.parsedFiles}`);
   console.log(`Parse errors: ${stats.parseErrors}`);
   console.log(`Functions analyzed: ${stats.analyzedFunctions}`);
-  console.log(`Groups found: ${groups.length} (exact=${exactCount}, near=${nearCount})`);
   console.log(
-    `Near threshold: ${
+    `Groups found: ${groups.length} (exact=${exactCount}, near=${nearCount}, semantic=${semanticCount})`,
+  );
+  console.log(
+    `${options.semantic ? "Semantic" : "Near"} threshold: ${
       options.threshold.toFixed(2)
     } | Min tokens: ${options.minTokens} | Min lines: ${options.minLines}`,
   );
   console.log(
-    `Extensions: ${[...options.extensions].sort((a, b) => a.localeCompare(b)).join(", ")}`,
+    `Extensions: ${
+      [...options.extensions].sort((a, b) => a.localeCompare(b)).join(", ")
+    }`,
   );
   console.log("");
 
@@ -1041,10 +1497,13 @@ function printTextReport(
 
   for (const group of display) {
     const header =
-      `${group.id} [${group.kind.toUpperCase()}] impact=${group.impact} members=${group.members.length} similarity=${
-        group.similarity.toFixed(3)
-      }`;
+      `${group.id} [${group.kind.toUpperCase()}] impact=${group.impact} members=${group.members.length} confidence=${
+        group.confidence.toFixed(3)
+      } similarity=${group.similarity.toFixed(3)}`;
     console.log(header);
+    if (group.hints.length > 0) {
+      console.log(`  why: ${group.hints.join(" | ")}`);
+    }
     for (const member of group.members) {
       console.log(
         `  - ${
@@ -1068,8 +1527,10 @@ async function main(): Promise<void> {
   const { stats, candidates } = await extractCandidates(files, options);
 
   const exactGroups = buildExactGroups(candidates);
-  const nearGroups = buildNearGroups(candidates, exactGroups, options);
-  const groups = sortGroups([...exactGroups, ...nearGroups]);
+  const similarityGroups = options.semantic
+    ? buildSemanticGroups(candidates, exactGroups, options)
+    : buildNearGroups(candidates, exactGroups, options);
+  const groups = sortGroups([...exactGroups, ...similarityGroups]);
 
   if (options.json) {
     console.log(toJson(stats, options, groups.slice(0, options.maxGroups)));

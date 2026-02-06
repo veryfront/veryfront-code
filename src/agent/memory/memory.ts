@@ -65,10 +65,38 @@ function getBasicStatsWithTrace<M extends MinimalMessage>(
   );
 }
 
-export class ConversationMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
-  private messages: M[] = [];
+abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
+  protected messages: M[] = [];
+  protected abstract readonly memoryType: BasicMemoryType;
+  protected abstract readonly spanPrefix: string;
 
-  constructor(private config: MemoryConfigBase) {}
+  abstract add(message: M): Promise<void>;
+
+  getMessages(): Promise<M[]> {
+    return getMessagesWithTrace(this.messages, `${this.spanPrefix}.getMessages`, this.memoryType);
+  }
+
+  clear(): Promise<void> {
+    return clearMessagesWithTrace(
+      () => (this.messages = []),
+      `${this.spanPrefix}.clear`,
+      this.memoryType,
+    );
+  }
+
+  getStats(): Promise<MemoryStats> {
+    return getBasicStatsWithTrace(this.messages, `${this.spanPrefix}.getStats`, this.memoryType);
+  }
+}
+
+export class ConversationMemory<M extends MinimalMessage = MinimalMessage>
+  extends BasicMemoryStore<M> {
+  protected readonly memoryType = "conversation" as const;
+  protected readonly spanPrefix = "agent.memory.conversation";
+
+  constructor(private config: MemoryConfigBase) {
+    super();
+  }
 
   add(message: M): Promise<void> {
     return withSpan(
@@ -89,30 +117,6 @@ export class ConversationMemory<M extends MinimalMessage = MinimalMessage> imple
     );
   }
 
-  getMessages(): Promise<M[]> {
-    return getMessagesWithTrace(
-      this.messages,
-      "agent.memory.conversation.getMessages",
-      "conversation",
-    );
-  }
-
-  clear(): Promise<void> {
-    return clearMessagesWithTrace(
-      () => (this.messages = []),
-      "agent.memory.conversation.clear",
-      "conversation",
-    );
-  }
-
-  getStats(): Promise<MemoryStats> {
-    return getBasicStatsWithTrace(
-      this.messages,
-      "agent.memory.conversation.getStats",
-      "conversation",
-    );
-  }
-
   private trimToTokenLimit(): Promise<void> {
     const maxTokens = this.config.maxTokens;
     if (!maxTokens) return Promise.resolve();
@@ -128,11 +132,13 @@ export class ConversationMemory<M extends MinimalMessage = MinimalMessage> imple
   }
 }
 
-export class BufferMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
-  private messages: M[] = [];
+export class BufferMemory<M extends MinimalMessage = MinimalMessage> extends BasicMemoryStore<M> {
+  protected readonly memoryType = "buffer" as const;
+  protected readonly spanPrefix = "agent.memory.buffer";
   private bufferSize: number;
 
-  constructor(private config: MemoryConfigBase) {
+  constructor(config: MemoryConfigBase) {
+    super();
     this.bufferSize = config.maxMessages || 10;
   }
 
@@ -150,22 +156,6 @@ export class BufferMemory<M extends MinimalMessage = MinimalMessage> implements 
         { "memory.type": "buffer", "memory.buffer_size": this.bufferSize },
       ),
     );
-  }
-
-  getMessages(): Promise<M[]> {
-    return getMessagesWithTrace(this.messages, "agent.memory.buffer.getMessages", "buffer");
-  }
-
-  clear(): Promise<void> {
-    return clearMessagesWithTrace(
-      () => (this.messages = []),
-      "agent.memory.buffer.clear",
-      "buffer",
-    );
-  }
-
-  getStats(): Promise<MemoryStats> {
-    return getBasicStatsWithTrace(this.messages, "agent.memory.buffer.getStats", "buffer");
   }
 }
 

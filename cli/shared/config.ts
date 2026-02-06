@@ -123,12 +123,12 @@ async function resolveConfigBase(
   return { apiUrl, apiToken, projectSlug };
 }
 
-export function resolveConfig(
-  projectDir?: string,
-  env?: EnvironmentConfig,
-): Promise<ResolvedConfig> {
-  return resolveConfigByMode(projectDir, env, false);
+function createConfigResolver(interactive: boolean) {
+  return (projectDir?: string, env?: EnvironmentConfig): Promise<ResolvedConfig> =>
+    resolveConfigByMode(projectDir, env, interactive);
 }
+
+export const resolveConfig = createConfigResolver(false);
 
 /**
  * Resolve config with interactive authentication.
@@ -136,12 +136,7 @@ export function resolveConfig(
  * If no token is available, prompts the user to login interactively.
  * Use this for commands that require authentication (push, pull, deploy).
  */
-export function resolveConfigWithAuth(
-  projectDir?: string,
-  env?: EnvironmentConfig,
-): Promise<ResolvedConfig> {
-  return resolveConfigByMode(projectDir, env, true);
-}
+export const resolveConfigWithAuth = createConfigResolver(true);
 
 function resolveConfigByMode(
   projectDir: string | undefined,

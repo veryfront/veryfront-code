@@ -239,6 +239,12 @@ export function createApp(config: AppConfig): App {
     projectName: string,
   ) => Promise<AppState>;
 
+  type ProjectCreationWithSource<T> = (
+    ctx: { state: AppState; render: () => void },
+    projectName: string,
+    source: T,
+  ) => Promise<AppState>;
+
   function promptForProject(creator: ProjectCreationHandler, onCancel: () => void): void {
     const suggested = generateRandomSlug();
     state = startInput(
@@ -259,18 +265,23 @@ export function createApp(config: AppConfig): App {
   }
 
   // Project creation prompts using extracted module
-  function promptForProjectName(template: InitTemplate, onCancel: () => void): void {
+  function promptForProjectWithSource<T>(
+    source: T,
+    creator: ProjectCreationWithSource<T>,
+    onCancel: () => void,
+  ): void {
     return promptForProject(
-      (ctx, projectName) => createProject(ctx, projectName, template),
+      (ctx, projectName) => creator(ctx, projectName, source),
       onCancel,
     );
   }
 
+  function promptForProjectName(template: InitTemplate, onCancel: () => void): void {
+    return promptForProjectWithSource(template, createProject, onCancel);
+  }
+
   function promptForExampleProject(example: ProjectInfo, onCancel: () => void): void {
-    return promptForProject(
-      (ctx, projectName) => createProjectFromExample(ctx, projectName, example),
-      onCancel,
-    );
+    return promptForProjectWithSource(example, createProjectFromExample, onCancel);
   }
 
   // View handler context for delegating to extracted handlers

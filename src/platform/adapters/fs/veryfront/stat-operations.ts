@@ -1,11 +1,9 @@
 import { logger } from "#veryfront/utils";
 import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
 import type { FileInfo } from "../../base.ts";
-import type { ProjectFile, VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
-import { FileCache } from "../cache/file-cache.ts";
-import { PathNormalizer } from "./path-normalizer.ts";
+import type { ProjectFile } from "../../veryfront-api-client/index.ts";
+import { VeryfrontOperationsBase } from "./base-operations.ts";
 import { createError, toError } from "#veryfront/errors";
-import type { ContentContextProvider } from "./read-operations.ts";
 import {
   buildFileCacheKeyPrefix,
   buildFileListCacheKey,
@@ -16,7 +14,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 const EXTENSION_PRIORITY = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"] as const;
 const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
 
-export class StatOperations {
+export class StatOperations extends VeryfrontOperationsBase {
   private fileIndex: Map<string, ProjectFile> | null = null;
   private directoryIndex: Set<string> | null = null;
   private buildingIndex: Promise<void> | null = null;
@@ -28,13 +26,6 @@ export class StatOperations {
 
   private apiSearchFailures = 0;
   private apiSearchDisabledUntil = 0;
-
-  constructor(
-    private readonly client: VeryfrontAPIClient,
-    private readonly cache: FileCache,
-    private readonly normalizer: PathNormalizer,
-    private readonly contextProvider?: ContentContextProvider,
-  ) {}
 
   stat(path: string): Promise<FileInfo> {
     return withSpan(
