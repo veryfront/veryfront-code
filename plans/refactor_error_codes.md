@@ -54,15 +54,15 @@ The codebase currently uses **two parallel error code systems**:
 
 ### Runtime Errors (VF200-VF299)
 
-| Code   | Name               | Description                          |
-|--------|--------------------|--------------------------------------|
-| VF200  | HYDRATION_MISMATCH | Client/server hydration mismatch     |
-| VF201  | RENDER_ERROR       | Component render failed              |
-| VF202  | COMPONENT_ERROR    | Component execution error            |
-| VF203  | LAYOUT_NOT_FOUND   | Layout component not found           |
-| VF204  | PAGE_NOT_FOUND     | Page component not found             |
-| VF205  | API_ERROR          | API route handler error              |
-| VF206  | MIDDLEWARE_ERROR   | Middleware execution error           |
+| Code   | Name              | Description                          |
+|--------|-------------------|--------------------------------------|
+| VF200  | HYDRATION_MISMATCH| Client/server hydration mismatch     |
+| VF201  | RENDER_ERROR      | Component render failed              |
+| VF202  | COMPONENT_ERROR   | Component execution error            |
+| VF203  | LAYOUT_NOT_FOUND  | Layout component not found           |
+| VF204  | PAGE_NOT_FOUND    | Page component not found             |
+| VF205  | API_ERROR         | API route handler error              |
+| VF206  | MIDDLEWARE_ERROR  | Middleware execution error           |
 
 ### Route Errors (VF300-VF399)
 
@@ -101,14 +101,14 @@ The codebase currently uses **two parallel error code systems**:
 
 ### RSC/Client Boundary Errors (VF600-VF699)
 
-| Code   | Name                      | Description                          |
-|--------|---------------------------|--------------------------------------|
-| VF600  | CLIENT_BOUNDARY_VIOLATION | Client boundary rule violation       |
-| VF601  | SERVER_ONLY_IN_CLIENT     | Server-only code in client component |
-| VF602  | CLIENT_ONLY_IN_SERVER     | Client-only code in server component |
-| VF603  | INVALID_USE_CLIENT        | Invalid 'use client' directive       |
-| VF604  | INVALID_USE_SERVER        | Invalid 'use server' directive       |
-| VF605  | RSC_PAYLOAD_ERROR         | RSC payload serialization error      |
+| Code   | Name                     | Description                          |
+|--------|--------------------------|--------------------------------------|
+| VF600  | CLIENT_BOUNDARY_VIOLATION| Client boundary rule violation       |
+| VF601  | SERVER_ONLY_IN_CLIENT    | Server-only code in client component |
+| VF602  | CLIENT_ONLY_IN_SERVER    | Client-only code in server component |
+| VF603  | INVALID_USE_CLIENT       | Invalid 'use client' directive       |
+| VF604  | INVALID_USE_SERVER       | Invalid 'use server' directive       |
+| VF605  | RSC_PAYLOAD_ERROR        | RSC payload serialization error      |
 
 ### Development Errors (VF700-VF799)
 
@@ -121,12 +121,12 @@ The codebase currently uses **two parallel error code systems**:
 
 ### Deployment Errors (VF800-VF899)
 
-| Code   | Name                      | Description                           |
-|--------|---------------------------|---------------------------------------|
-| VF800  | DEPLOYMENT_ERROR          | Deployment process failed             |
-| VF801  | PLATFORM_ERROR            | Platform-specific error               |
-| VF802  | ENV_VAR_MISSING           | Required environment variable missing |
-| VF803  | PRODUCTION_BUILD_REQUIRED | Production build required             |
+| Code   | Name                     | Description                          |
+|--------|--------------------------|--------------------------------------|
+| VF800  | DEPLOYMENT_ERROR         | Deployment process failed            |
+| VF801  | PLATFORM_ERROR           | Platform-specific error              |
+| VF802  | ENV_VAR_MISSING          | Required environment variable missing|
+| VF803  | PRODUCTION_BUILD_REQUIRED| Production build required            |
 
 ### General Errors (VF900-VF999)
 
@@ -160,332 +160,183 @@ The codebase currently uses **two parallel error code systems**:
 
 ---
 
-## Schema Consolidation Strategy
-
-The two error code systems must be unified. Strategy:
-
-### Primary System: VF### Codes
-- VF### codes become the **single source of truth**
-- Schema-based codes in `error.schema.ts` will be **deprecated and removed**
-- All schema code references migrate to their VF### equivalents
-
-### Migration Mapping
-
-| Schema Code          | Migrates To        | New Code   |
-|----------------------|--------------------|------------|
-| FILE_NOT_FOUND       | FILE_NOT_FOUND     | VFNOT003   |
-| BUILD_ERROR          | BUILD_FAILED       | VFBLD001   |
-| CONFIG_ERROR         | CONFIG_INVALID     | VFCFG001   |
-| COMPILATION_ERROR    | TYPESCRIPT_ERROR   | VFBLD003   |
-| NETWORK_ERROR        | REQUEST_ERROR      | VFNET001   |
-| PERMISSION_ERROR     | PERMISSION_DENIED  | VFPRM001   |
-| RENDER_ERROR         | RENDER_ERROR       | VFRUN002   |
-| INITIALIZATION_ERROR | SERVER_START_ERROR | VFINT002   |
-| AGENT_ERROR          | AGENT_ERROR        | VFAGT001   |
-| AGENT_NOT_FOUND      | AGENT_NOT_FOUND    | VFNOT005   |
-| AGENT_TIMEOUT        | AGENT_TIMEOUT      | VFTMO002   |
-| AGENT_INTENT_ERROR   | AGENT_INTENT_ERROR | VFAGT002   |
-| ORCHESTRATION_ERROR  | ORCHESTRATION_ERROR| VFAGT003   |
-| NOT_SUPPORTED        | NOT_SUPPORTED      | VFAGT004   |
-| SERVICE_OVERLOADED   | SERVICE_OVERLOADED | VFNET004   |
-
-### Consolidation Steps
-1. Add missing error codes to VF### system
-2. Update all imports from `error.schema.ts` to use VF### codes
-3. Remove `error.schema.ts` enum (keep Zod validation using VF### codes)
-4. Update tests to use new codes
-
----
-
-## Three-Layer Error Identity Model
-
-Each error has three identifiers for different purposes:
-
-| Layer    | Purpose                  | Example                | Stability  |
-|----------|--------------------------|------------------------|------------|
-| Slug     | External API, docs URLs  | `config-not-found`     | **Stable** |
-| Code     | Logging, debugging       | `VFNOT001`             | May change |
-| Category | Filtering, handling      | `NOT_FOUND`            | Stable     |
-
-### Slug as Primary Identifier
-
-The **slug** is the canonical, stable identifier:
-- Derived from error name: `CONFIG_NOT_FOUND` → `config-not-found`
-- Used in RFC 9457 `type` URI: `https://veryfront.com/docs/errors/config-not-found`
-- Never changes, even if internal code changes
-
-This resolves breaking changes: consumers match on slugs, not codes.
-
-### Example Error Identity
-
-```typescript
-{
-  slug: "config-not-found",      // Stable, used in type URI
-  code: "VFNOT001",              // Internal, may change
-  category: "NOT_FOUND",         // Grouping
-  name: "CONFIG_NOT_FOUND"       // Constant name
-}
-```
-
----
-
-## RFC 9457 Compliance
-
-Adopt [RFC 9457 (Problem Details for HTTP APIs)](https://www.rfc-editor.org/rfc/rfc9457) for error responses.
-
-### Response Shape
-
-```json
-{
-  "type": "https://veryfront.com/docs/errors/config-not-found",
-  "title": "Configuration file not found",
-  "status": 404,
-  "detail": "Could not find veryfront.config.ts in /app/my-project",
-  "code": "VFNOT001",
-  "category": "NOT_FOUND",
-  "suggestion": "Run 'vf init' to create a configuration file"
-}
-```
-
-### Field Definitions
-
-| Field      | RFC 9457    | Description                                      |
-|------------|-------------|--------------------------------------------------|
-| type       | Standard    | URI reference identifying the problem type       |
-| title      | Standard    | Short, human-readable summary                    |
-| status     | Standard    | HTTP status code                                 |
-| detail     | Standard    | Human-readable explanation specific to this case |
-| code       | Extension   | Internal error code (VFXXX###)                   |
-| category   | Extension   | Error category for filtering                     |
-| suggestion | Extension   | Actionable fix suggestion                        |
-
-### Benefits
-- The `type` URI doubles as documentation URL
-- Slug-based URLs survive code renumbering
-- Standard format for API consumers
-- Extension fields preserve Veryfront-specific context
-
----
-
 ## Proposed Category System
 
 ### New Error Categories
 
-| Category   | Prefix   | HTTP Status | Description                         |
-|------------|----------|-------------|-------------------------------------|
-| VALIDATION | VFVAL    | 400 / 422   | Input/data validation failures      |
-| NOT_FOUND  | VFNOT    | 404         | Resource not found errors           |
-| PERMISSION | VFPRM    | 403         | Permission & access control errors  |
-| NETWORK    | VFNET    | 502 / 503   | Network & connectivity errors       |
-| TIMEOUT    | VFTMO    | 408 / 504   | Timeout & deadline exceeded errors  |
-| CONFLICT   | VFCON    | 409         | Resource conflict & concurrency     |
-| INTERNAL   | VFINT    | 500         | Internal server/system errors       |
-| BUILD      | VFBLD    | N/A         | Build & compilation errors          |
-| RUNTIME    | VFRUN    | 500         | Runtime execution errors            |
-| CONFIG     | VFCFG    | N/A         | Configuration errors                |
-| DEV        | VFDEV    | N/A         | Development-only errors             |
-| AGENT      | VFAGT    | 500         | AI agent-related errors             |
+The following semantic categories will provide a clearer classification across all error codes:
 
-### Reserved / Future Categories
+| Category       | Code Range | Description                                      |
+|----------------|------------|--------------------------------------------------|
+| VALIDATION     | VFV###     | Input/data validation failures                   |
+| AUTH           | VFA###     | Authentication & authorization errors            |
+| NOT_FOUND      | VFN###     | Resource not found errors                        |
+| PERMISSION     | VFP###     | Permission & access control errors               |
+| NETWORK        | VFW###     | Network & connectivity errors                    |
+| TIMEOUT        | VFT###     | Timeout & deadline exceeded errors               |
+| CONFLICT       | VFC###     | Resource conflict & concurrency errors           |
+| INTERNAL       | VFI###     | Internal server/system errors                    |
+| BUILD          | VFB###     | Build & compilation errors                       |
+| RUNTIME        | VFR###     | Runtime execution errors                         |
+| CONFIG         | VFG###     | Configuration errors                             |
+| AGENT          | VFE###     | AI agent-related errors                          |
 
-| Category   | Prefix   | HTTP Status | Description                         |
-|------------|----------|-------------|-------------------------------------|
-| AUTH       | VFATH    | 401 / 403   | Authentication & authorization      |
+### Category Mapping
 
-> **Note:** AUTH category is reserved for future OAuth/API key flows. Codes will be added when authentication features are implemented.
-
-### Prefix Rationale
-
-All prefixes use readable 3-letter abbreviations:
-
-| Prefix | Derived From | Mnemonic           |
-|--------|--------------|-------------------|
-| VFVAL  | VALidation   | Validate input    |
-| VFNOT  | NOT found    | Not there         |
-| VFPRM  | PeRMission   | Permission denied |
-| VFNET  | NETwork      | Network issues    |
-| VFTMO  | TiMeOut      | Timed out         |
-| VFCON  | CONflict     | Conflict detected |
-| VFINT  | INTernal     | Internal error    |
-| VFBLD  | BuiLD        | Build failed      |
-| VFRUN  | RUNtime      | Runtime error     |
-| VFCFG  | ConFiG       | Config problem    |
-| VFDEV  | DEVelopment  | Dev-only          |
-| VFAGT  | AGentT       | Agent error       |
-| VFATH  | AuTHenticate | Auth required     |
-
----
-
-## Category Mapping
-
-### VALIDATION (VFVAL###)
+#### VALIDATION (VFV###)
 Errors related to invalid input, malformed data, or schema violations.
 
-| New Code  | Name                    | Old Code | Slug                      |
-|-----------|-------------------------|----------|---------------------------|
-| VFVAL001  | CONFIG_VALIDATION_ERROR | VF004    | config-validation-error   |
-| VFVAL002  | CONFIG_TYPE_ERROR       | VF005    | config-type-error         |
-| VFVAL003  | INVALID_ROUTE_FILE      | VF301    | invalid-route-file        |
-| VFVAL004  | ROUTE_HANDLER_INVALID   | VF302    | route-handler-invalid     |
-| VFVAL005  | ROUTE_PARAMS_ERROR      | VF304    | route-params-error        |
-| VFVAL006  | INVALID_IMPORT          | VF403    | invalid-import            |
-| VFVAL007  | INVALID_USE_CLIENT      | VF603    | invalid-use-client        |
-| VFVAL008  | INVALID_USE_SERVER      | VF604    | invalid-use-server        |
-| VFVAL009  | INVALID_ARGUMENT        | VF903    | invalid-argument          |
-| VFVAL010  | CONFIG_PARSE_ERROR      | VF003    | config-parse-error        |
-| VFVAL011  | IMPORT_MAP_INVALID      | VF006    | import-map-invalid        |
-| VFVAL012  | CORS_CONFIG_INVALID     | VF007    | cors-config-invalid       |
+```
+VFV001 - CONFIG_VALIDATION_ERROR    (was VF004)
+VFV002 - CONFIG_TYPE_ERROR          (was VF005)
+VFV003 - INVALID_ROUTE_FILE         (was VF301)
+VFV004 - ROUTE_HANDLER_INVALID      (was VF302)
+VFV005 - ROUTE_PARAMS_ERROR         (was VF304)
+VFV006 - INVALID_IMPORT             (was VF403)
+VFV007 - INVALID_USE_CLIENT         (was VF603)
+VFV008 - INVALID_USE_SERVER         (was VF604)
+VFV009 - INVALID_ARGUMENT           (was VF903)
+VFV010 - CONFIG_PARSE_ERROR         (was VF003)
+VFV011 - IMPORT_MAP_INVALID         (was VF006)
+VFV012 - CORS_CONFIG_INVALID        (was VF007)
+```
 
-### NOT_FOUND (VFNOT###)
+#### AUTH (VFA###)
+Authentication and authorization errors (currently not present, reserved for future use).
+
+```
+VFA001 - AUTH_REQUIRED              (new)
+VFA002 - AUTH_INVALID_TOKEN         (new)
+VFA003 - AUTH_TOKEN_EXPIRED         (new)
+VFA004 - AUTH_INSUFFICIENT_SCOPE    (new)
+VFA005 - AUTH_PROVIDER_ERROR        (new)
+VFA006 - OAUTH_CALLBACK_ERROR       (new)
+VFA007 - SESSION_EXPIRED            (new)
+VFA008 - API_KEY_INVALID            (new)
+```
+
+#### NOT_FOUND (VFN###)
 Resource, file, or entity not found errors.
 
-| New Code  | Name              | Old Code | Slug               |
-|-----------|-------------------|----------|--------------------|
-| VFNOT001  | CONFIG_NOT_FOUND  | VF001    | config-not-found   |
-| VFNOT002  | MODULE_NOT_FOUND  | VF400    | module-not-found   |
-| VFNOT003  | FILE_NOT_FOUND    | VF902    | file-not-found     |
-| VFNOT004  | LAYOUT_NOT_FOUND  | VF203    | layout-not-found   |
-| VFNOT005  | PAGE_NOT_FOUND    | VF204    | page-not-found     |
-| VFNOT006  | DEPENDENCY_MISSING| VF404    | dependency-missing |
-| VFNOT007  | AGENT_NOT_FOUND   | schema   | agent-not-found    |
+```
+VFN001 - CONFIG_NOT_FOUND           (was VF001)
+VFN002 - MODULE_NOT_FOUND           (was VF400)
+VFN003 - LAYOUT_NOT_FOUND           (was VF203)
+VFN004 - PAGE_NOT_FOUND             (was VF204)
+VFN005 - FILE_NOT_FOUND             (was VF902)
+VFN006 - DEPENDENCY_MISSING         (was VF404)
+VFN007 - AGENT_NOT_FOUND            (schema)
+```
 
-### PERMISSION (VFPRM###)
+#### PERMISSION (VFP###)
 Permission and access control errors.
 
-| New Code  | Name                      | Old Code | Slug                       |
-|-----------|---------------------------|----------|----------------------------|
-| VFPRM001  | PERMISSION_DENIED         | VF901    | permission-denied          |
-| VFPRM002  | CLIENT_BOUNDARY_VIOLATION | VF600    | client-boundary-violation  |
-| VFPRM003  | SERVER_ONLY_IN_CLIENT     | VF601    | server-only-in-client      |
-| VFPRM004  | CLIENT_ONLY_IN_SERVER     | VF602    | client-only-in-server      |
+```
+VFP001 - PERMISSION_DENIED          (was VF901)
+VFP002 - CLIENT_BOUNDARY_VIOLATION  (was VF600)
+VFP003 - SERVER_ONLY_IN_CLIENT      (was VF601)
+VFP004 - CLIENT_ONLY_IN_SERVER      (was VF602)
+```
 
-### NETWORK (VFNET###)
+#### NETWORK (VFW###)
 Network, connectivity, and HTTP errors.
 
-| New Code  | Name              | Old Code | Slug               |
-|-----------|-------------------|----------|--------------------|
-| VFNET001  | REQUEST_ERROR     | VF505    | request-error      |
-| VFNET002  | API_ERROR         | VF205    | api-error          |
-| VFNET003  | NETWORK_ERROR     | schema   | network-error      |
-| VFNET004  | SERVICE_OVERLOADED| VF506    | service-overloaded |
+```
+VFW001 - REQUEST_ERROR              (was VF505)
+VFW002 - API_ERROR                  (was VF205)
+VFW003 - NETWORK_ERROR              (schema)
+VFW004 - SERVICE_OVERLOADED         (was VF506)
+```
 
-### TIMEOUT (VFTMO###)
+#### TIMEOUT (VFT###)
 Timeout and deadline exceeded errors.
 
-| New Code  | Name          | Old Code | Slug          |
-|-----------|---------------|----------|---------------|
-| VFTMO001  | TIMEOUT_ERROR | VF904    | timeout-error |
-| VFTMO002  | AGENT_TIMEOUT | schema   | agent-timeout |
+```
+VFT001 - TIMEOUT_ERROR              (was VF904)
+VFT002 - AGENT_TIMEOUT              (schema)
+```
 
-### CONFLICT (VFCON###)
+#### CONFLICT (VFC###)
 Resource conflict and concurrency errors.
 
-| New Code  | Name                | Old Code | Slug                |
-|-----------|---------------------|----------|---------------------|
-| VFCON001  | ROUTE_CONFLICT      | VF300    | route-conflict      |
-| VFCON002  | CIRCULAR_DEPENDENCY | VF402    | circular-dependency |
-| VFCON003  | VERSION_MISMATCH    | VF405    | version-mismatch    |
-| VFCON004  | PORT_IN_USE         | VF500    | port-in-use         |
-| VFCON005  | CACHE_PATH_MISMATCH | VF507    | cache-path-mismatch |
+```
+VFC001 - ROUTE_CONFLICT             (was VF300)
+VFC002 - CIRCULAR_DEPENDENCY        (was VF402)
+VFC003 - VERSION_MISMATCH           (was VF405)
+VFC004 - PORT_IN_USE                (was VF500)
+VFC005 - CACHE_PATH_MISMATCH        (was VF507)
+```
 
-### INTERNAL (VFINT###)
+#### INTERNAL (VFI###)
 Internal system and server errors.
 
-| New Code  | Name                 | Old Code | Slug                 |
-|-----------|----------------------|----------|----------------------|
-| VFINT001  | UNKNOWN_ERROR        | VF900    | unknown-error        |
-| VFINT002  | SERVER_START_ERROR   | VF501    | server-start-error   |
-| VFINT003  | MIDDLEWARE_ERROR     | VF206    | middleware-error     |
-| VFINT004  | PLATFORM_ERROR       | VF801    | platform-error       |
-| VFINT005  | INITIALIZATION_ERROR | schema   | initialization-error |
-| VFINT006  | CACHE_ERROR          | VF503    | cache-error          |
-| VFINT007  | DEPLOYMENT_ERROR     | VF800    | deployment-error     |
+```
+VFI001 - UNKNOWN_ERROR              (was VF900)
+VFI002 - SERVER_START_ERROR         (was VF501)
+VFI003 - MIDDLEWARE_ERROR           (was VF206)
+VFI004 - PLATFORM_ERROR             (was VF801)
+VFI005 - DEV_SERVER_ERROR           (was VF700)
+VFI006 - INITIALIZATION_ERROR       (schema)
+```
 
-### BUILD (VFBLD###)
+#### BUILD (VFB###)
 Build, compilation, and bundling errors.
 
-| New Code  | Name                     | Old Code | Slug                     |
-|-----------|--------------------------|----------|--------------------------|
-| VFBLD001  | BUILD_FAILED             | VF100    | build-failed             |
-| VFBLD002  | BUNDLE_ERROR             | VF101    | bundle-error             |
-| VFBLD003  | TYPESCRIPT_ERROR         | VF102    | typescript-error         |
-| VFBLD004  | MDX_COMPILE_ERROR        | VF103    | mdx-compile-error        |
-| VFBLD005  | ASSET_OPTIMIZATION_ERROR | VF104    | asset-optimization-error |
-| VFBLD006  | SSG_GENERATION_ERROR     | VF105    | ssg-generation-error     |
-| VFBLD007  | SOURCEMAP_ERROR          | VF106    | sourcemap-error          |
-| VFBLD008  | COMPILATION_ERROR        | schema   | compilation-error        |
-| VFBLD009  | DYNAMIC_ROUTE_ERROR      | VF303    | dynamic-route-error      |
-| VFBLD010  | API_ROUTE_ERROR          | VF305    | api-route-error          |
-| VFBLD011  | IMPORT_RESOLUTION_ERROR  | VF401    | import-resolution-error  |
+```
+VFB001 - BUILD_FAILED               (was VF100)
+VFB002 - BUNDLE_ERROR               (was VF101)
+VFB003 - TYPESCRIPT_ERROR           (was VF102)
+VFB004 - MDX_COMPILE_ERROR          (was VF103)
+VFB005 - ASSET_OPTIMIZATION_ERROR   (was VF104)
+VFB006 - SSG_GENERATION_ERROR       (was VF105)
+VFB007 - SOURCEMAP_ERROR            (was VF106)
+VFB008 - COMPILATION_ERROR          (schema)
+VFB009 - SOURCE_MAP_ERROR           (was VF703)
+```
 
-### RUNTIME (VFRUN###)
-Runtime execution and rendering errors (production).
+#### RUNTIME (VFR###)
+Runtime execution and rendering errors.
 
-| New Code  | Name               | Old Code | Slug               |
-|-----------|--------------------|----------|--------------------|
-| VFRUN001  | HYDRATION_MISMATCH | VF200    | hydration-mismatch |
-| VFRUN002  | RENDER_ERROR       | VF201    | render-error       |
-| VFRUN003  | COMPONENT_ERROR    | VF202    | component-error    |
-| VFRUN004  | RSC_PAYLOAD_ERROR  | VF605    | rsc-payload-error  |
+```
+VFR001 - HYDRATION_MISMATCH         (was VF200)
+VFR002 - RENDER_ERROR               (was VF201)
+VFR003 - COMPONENT_ERROR            (was VF202)
+VFR004 - DYNAMIC_ROUTE_ERROR        (was VF303)
+VFR005 - API_ROUTE_ERROR            (was VF305)
+VFR006 - RSC_PAYLOAD_ERROR          (was VF605)
+VFR007 - HMR_ERROR                  (was VF502)
+VFR008 - FAST_REFRESH_ERROR         (was VF701)
+VFR009 - ERROR_OVERLAY_ERROR        (was VF702)
+```
 
-### DEV (VFDEV###)
-Development-only errors (not production).
-
-| New Code  | Name                | Old Code | Slug                |
-|-----------|---------------------|----------|---------------------|
-| VFDEV001  | DEV_SERVER_ERROR    | VF700    | dev-server-error    |
-| VFDEV002  | FAST_REFRESH_ERROR  | VF701    | fast-refresh-error  |
-| VFDEV003  | ERROR_OVERLAY_ERROR | VF702    | error-overlay-error |
-| VFDEV004  | SOURCE_MAP_ERROR    | VF703    | source-map-error    |
-| VFDEV005  | HMR_ERROR           | VF502    | hmr-error           |
-| VFDEV006  | FILE_WATCH_ERROR    | VF504    | file-watch-error    |
-
-### CONFIG (VFCFG###)
+#### CONFIG (VFG###)
 Configuration and environment errors.
 
-| New Code  | Name                      | Old Code | Slug                      |
-|-----------|---------------------------|----------|---------------------------|
-| VFCFG001  | CONFIG_INVALID            | VF002    | config-invalid            |
-| VFCFG002  | ENV_VAR_MISSING           | VF802    | env-var-missing           |
-| VFCFG003  | PRODUCTION_BUILD_REQUIRED | VF803    | production-build-required |
+```
+VFG001 - CONFIG_INVALID             (was VF002)
+VFG002 - ENV_VAR_MISSING            (was VF802)
+VFG003 - PRODUCTION_BUILD_REQUIRED  (was VF803)
+VFG004 - IMPORT_RESOLUTION_ERROR    (was VF401)
+```
 
-### AGENT (VFAGT###)
+#### AGENT (VFE###)
 AI agent and orchestration errors.
 
-| New Code  | Name                | Old Code | Slug                |
-|-----------|---------------------|----------|---------------------|
-| VFAGT001  | AGENT_ERROR         | schema   | agent-error         |
-| VFAGT002  | AGENT_INTENT_ERROR  | schema   | agent-intent-error  |
-| VFAGT003  | ORCHESTRATION_ERROR | schema   | orchestration-error |
-| VFAGT004  | NOT_SUPPORTED       | schema   | not-supported       |
+```
+VFE001 - AGENT_ERROR                (schema)
+VFE002 - AGENT_INTENT_ERROR         (schema)
+VFE003 - ORCHESTRATION_ERROR        (schema)
+VFE004 - NOT_SUPPORTED              (schema)
+```
 
----
+#### OTHER
+Errors that don't fit other categories or require special handling.
 
-## Error Code Lifecycle
-
-### Adding a New Error Code
-
-1. **Determine category** — Which category does this error belong to?
-2. **Assign code** — Use next available number in category (e.g., VFBLD012)
-3. **Create slug** — Derive from name: `NEW_ERROR_NAME` → `new-error-name`
-4. **Add to registry** — Update `src/errors/error-codes.ts`
-5. **Add solution** — Create entry in appropriate catalog file
-6. **Add documentation** — Create docs page at `/docs/errors/{slug}`
-7. **Add tests** — Unit test for error creation and handling
-
-### Deprecating an Error Code
-
-1. Mark as deprecated in registry with replacement code
-2. Log deprecation warning when error is thrown
-3. Update documentation with migration guidance
-4. Remove after 2 major versions
-
-### Renumbering Codes
-
-Since slugs are the stable identifier:
-1. Update internal code number
-2. Update old→new mapping table
-3. No changes needed for consumers using slug-based `type` URIs
+```
+VFX001 - CACHE_ERROR                (was VF503)
+VFX002 - FILE_WATCH_ERROR           (was VF504)
+VFX003 - DEPLOYMENT_ERROR           (was VF800)
+```
 
 ---
 
@@ -493,39 +344,31 @@ Since slugs are the stable identifier:
 
 ### Phase 1: Schema Definition
 - [ ] Create `ErrorCategory` enum in `src/errors/schemas/error.schema.ts`
-- [ ] Add `slug` field to `VeryfrontError` class
-- [ ] Add `category` field to `VeryfrontError` class
-- [ ] Update Zod schema to include category and slug validation
-- [ ] Add slug generation utility: `generateSlug(name: string): string`
+- [ ] Add category field to `VeryfrontError` class
+- [ ] Update Zod schema to include category validation
 
 ### Phase 2: Code Migration
-- [ ] Update `src/errors/error-codes.ts` with new VFXXX### format
-- [ ] Add slug to each error code definition
+- [ ] Update `src/errors/error-codes.ts` with new code format
 - [ ] Replace all old VF### codes with new category-prefixed codes
 - [ ] Update all references throughout the codebase
-- [ ] Remove deprecated schema-based error codes
 
 ### Phase 3: Error Class Updates
-- [ ] Add category and slug properties to all error classes
-- [ ] Update error constructors to derive slug from name
+- [ ] Add category property to all error classes
+- [ ] Update error constructors to accept category
 - [ ] Add helper functions for category-based error filtering
-- [ ] Implement RFC 9457 `toProblemDetails()` method
 
 ### Phase 4: Catalog Updates
 - [ ] Reorganize error catalogs by category
-- [ ] Update error solution lookup to use slugs
+- [ ] Update error solution lookup to use categories
 - [ ] Add category-based search functionality
 
 ### Phase 5: Documentation
-- [ ] Update error docs URL generator to use slugs
-- [ ] Set up redirects: `/docs/errors/VF001` → `/docs/errors/config-not-found`
+- [ ] Update error docs URL generator for new codes
 - [ ] Create category-based error documentation
-- [ ] Document RFC 9457 response format for API consumers
+- [ ] Add migration guide for existing users
 
 ### Phase 6: Testing
 - [ ] Add unit tests for category validation
-- [ ] Add unit tests for slug generation
-- [ ] Add unit tests for RFC 9457 serialization
 - [ ] Update existing error tests
 - [ ] Add integration tests for new error codes
 
@@ -533,18 +376,18 @@ Since slugs are the stable identifier:
 
 ## File Changes Required
 
-| File                                    | Changes                                         |
-|-----------------------------------------|-------------------------------------------------|
-| `src/errors/schemas/error.schema.ts`    | Add ErrorCategory enum, slug field, update codes|
-| `src/errors/error-codes.ts`             | New VFXXX### codes with slugs                   |
-| `src/errors/types.ts`                   | Add category, slug to VeryfrontError            |
-| `src/errors/veryfront-error.ts`         | Add toProblemDetails(), update VeryfrontErrorData|
-| `src/errors/catalog/*.ts`               | Reorganize by category                          |
-| `src/errors/agent-errors.ts`            | Add AGENT category                              |
-| `src/errors/build-errors.ts`            | Add BUILD category                              |
-| `src/errors/runtime-errors.ts`          | Add RUNTIME category                            |
-| `src/errors/system-errors.ts`           | Add appropriate categories                      |
-| `src/errors/index.ts`                   | Export new category types, slug utilities       |
+| File                                    | Changes                                    |
+|-----------------------------------------|--------------------------------------------|
+| `src/errors/schemas/error.schema.ts`    | Add ErrorCategory enum, update ErrorCode   |
+| `src/errors/error-codes.ts`             | New category-based code structure          |
+| `src/errors/types.ts`                   | Add category to VeryfrontError             |
+| `src/errors/veryfront-error.ts`         | Update VeryfrontErrorData                  |
+| `src/errors/catalog/*.ts`               | Reorganize by category                     |
+| `src/errors/agent-errors.ts`            | Add AGENT category                         |
+| `src/errors/build-errors.ts`            | Add BUILD category                         |
+| `src/errors/runtime-errors.ts`          | Add RUNTIME category                       |
+| `src/errors/system-errors.ts`           | Add appropriate categories                 |
+| `src/errors/index.ts`                   | Export new category types                  |
 
 ---
 
@@ -555,7 +398,6 @@ Since slugs are the stable identifier:
 3. **Explicit Over Implicit**: Throw explicit errors rather than returning default values or empty states
 4. **Clear Root Cause**: Error messages should identify the exact cause, not symptoms
 5. **Actionable Errors**: Every error should tell the developer what went wrong and how to fix it
-6. **Standards Compliant**: Follow RFC 9457 for HTTP error responses
 
 ---
 
@@ -566,6 +408,12 @@ Since slugs are the stable identifier:
 3. **Consistent Handling**: Similar errors handled uniformly
 4. **Future-Proof**: Room for new error codes within each category
 5. **Developer Experience**: Clearer error messages and debugging
-6. **API Design**: HTTP status code alignment per RFC 9457
-7. **Stable URLs**: Slug-based documentation URLs survive code changes
-8. **Standards Compliance**: RFC 9457 compatibility for API consumers
+6. **API Design**: HTTP status code alignment (NOT_FOUND → 404, AUTH → 401/403)
+
+---
+
+## Notes
+
+- Current schema error codes (15) should be consolidated with VF### system
+- AUTH category is new and should be implemented for OAuth/API key flows
+- Consider adding HTTP status code mapping for each category
