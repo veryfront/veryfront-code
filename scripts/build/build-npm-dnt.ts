@@ -21,7 +21,7 @@ console.log(`\n📦 Building Veryfront v${version} for npm using dnt...\n`);
 // Generate templates manifest before build
 console.log("📝 Generating templates manifest...");
 const genManifest = new Deno.Command("deno", {
-	args: ["run", "-A", "scripts/generate-templates-manifest.ts"],
+	args: ["run", "-A", "scripts/build/generate-templates-manifest.ts"],
 	stdout: "inherit",
 	stderr: "inherit",
 });

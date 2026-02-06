@@ -11,8 +11,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const distDir = join(__dirname, "..", "dist");
-const packageJsonPath = join(__dirname, "..", "package.json");
+const distDir = join(__dirname, "../..", "dist");
+const packageJsonPath = join(__dirname, "../..", "package.json");
 const version = JSON.parse(readFileSync(packageJsonPath, "utf-8")).version;
 
 // Ensure dist directory exists
@@ -25,8 +25,8 @@ console.log(`   Version: ${version}\n`);
 
 // Generate manifests before building
 console.log("📝 Generating manifests...");
-execSync("deno run -A scripts/generate-templates-manifest.ts", { stdio: "inherit" });
-execSync("deno run -A scripts/generate-dev-ui-manifest.ts", { stdio: "inherit" });
+execSync("deno run -A scripts/build/generate-templates-manifest.ts", { stdio: "inherit" });
+execSync("deno run -A scripts/build/generate-dev-ui-manifest.ts", { stdio: "inherit" });
 console.log("");
 
 const targets = [

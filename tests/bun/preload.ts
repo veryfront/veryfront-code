@@ -16,7 +16,7 @@ import { existsSync, readFileSync, statSync } from "fs";
 import { dirname, extname, resolve } from "path";
 import { fileURLToPath } from "url";
 
-const projectRoot = resolve(dirname(import.meta.dir), "..");
+const projectRoot = resolve(dirname(import.meta.dir), "../..");
 
 // Import map for @std/* aliases (Deno std compat)
 const importMap: Record<string, string> = {

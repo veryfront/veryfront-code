@@ -1,68 +1,53 @@
 # Veryfront Scripts
 
-Utility scripts for development, testing, and maintenance.
+Utility scripts for build, release, quality, and development.
 
-## Testing Scripts
+## Directory Structure
 
-| Script | Purpose |
-|--------|---------|
-| **`run-bun-tests.mjs`** | Runs Bun tests with concurrency defaults |
-| **`run-node-tests.mjs`** | Runs Node tests with concurrency defaults |
-| **`run-concurrent-tests.mjs`** | Runs Bun + Node tests in parallel with split defaults |
-| **`run-affected-tests.mjs`** | Runs tests that match changed files (tight feedback loop) |
-| **`test-batches.ts`** | Worker-based test runner with memory isolation and concurrency control |
-| **`run-tests-isolated.ts`** | Runs tests in complete isolation (one at a time) |
-| **`check-test-isolation.ts`** | Validates test isolation and detects shared state issues |
-| **`analyze-test-timings.ts`** | Analyzes test execution times to identify slow tests |
+```
+scripts/
+  build/          # Build & packaging
+  lint/           # Code quality & architecture checks
+  hooks/          # Git hooks
+  split-mode/     # Local split-mode debug config
+  batch-simplify/ # Batch AI simplification tooling
+  rlm-ts/         # RLM tooling
+```
 
-## Code Quality Scripts
+Cross-runtime (Node/Bun) test infrastructure lives in `tests/node/` and `tests/bun/`.
 
-## Test Performance Tips
+## build/
 
-- `VF_TEST_CONCURRENCY` / `BUN_TEST_CONCURRENCY` / `NODE_TEST_CONCURRENCY` control intra-runner parallelism.
-- `VF_TEST_CONCURRENCY_TOTAL` caps total CPU usage when running Bun + Node in parallel.
-- `VF_TEST_SHARDS` (or `BUN_TEST_SHARDS` / `NODE_TEST_SHARDS`) splits test files across multiple processes.
-- `run-concurrent-tests.mjs` auto-sets shard counts when not provided.
-- `run-bun-tests.mjs` and `run-node-tests.mjs` auto-shard when no shard env is set.
-- `--fast` on the concurrent runner skips heavy integration/AI/rendering suites via excludes.
-- `VF_TEST_TIME_SCALE` scales test delays (e.g., `0.25` runs timer-based waits ~4x faster). `run-bun-tests.mjs` and `run-node-tests.mjs` default this to `0.25` unless overridden; `--fast` also sets it.
-- `VF_TEST_INCLUDE` lets you run only specific globs (comma-separated). `test:smoke` uses this for sub-1 minute loops.
-- `VF_TEST_FAIL_FAST=1` stops sibling runners when one fails (useful for CI).
-- `test:loop` uses git status/diff to run affected tests, falling back to `--fast` if none are found.
+| Script | Task | Purpose |
+|--------|------|---------|
+| `generate-templates-manifest.ts` | `build` | Generates template manifest for CLI scaffolding |
+| `generate-dev-ui-manifest.ts` | `build` | Generates dev UI asset manifest |
+| `prepare-framework-sources.ts` | `build` | Prepares framework `.src` files for SSR transforms |
+| `build-all.js` | — | Cross-compiles CLI binary for all platforms |
+| `build-npm-dnt.ts` | `build:npm` | Builds npm package via dnt (Deno-to-Node transform) |
 
-| Script | Purpose |
-|--------|---------|
-| **`ban-console.ts`** | Lints for inappropriate console usage in production code |
-| **`ban-deep-imports.ts`** | Prevents deep imports from internal modules |
-| **`ban-internal-root-imports.ts`** | Prevents imports from src/ root in internal modules |
-| **`check-unawaited-promises.ts`** | Detects unawaited promises that could cause issues |
+## lint/
 
-## Test Maintenance Scripts
+| Script | Task | Purpose |
+|--------|------|---------|
+| `ban-console.ts` | `lint:ban-console` | Lints for inappropriate console usage |
+| `ban-deep-imports.ts` | `lint:ban-deep-imports` | Prevents deep imports from internal modules |
+| `ban-internal-root-imports.ts` | `lint:ban-internal-root-imports` | Prevents root-level imports in internal modules |
+| `check-unawaited-promises.ts` | `lint:check-awaits` | Detects unawaited async cleanup calls |
+| `lint-platform-agnostic.ts` | `lint:platform` | Checks platform-agnostic code boundaries |
+| `validate-architecture.ts` | `validate:architecture` | Validates module dependency boundaries |
+| `check-doc-links.ts` | `docs:check-links` | Validates documentation links |
+| `check-coverage.ts` | `coverage:report` | Validates test coverage thresholds |
 
-| Script | Purpose |
-|--------|---------|
-| **`audit-sanitizers.ts`** | Audits tests for missing resource/ops sanitizers |
-| **`fix-sanitizers.ts`** | Automatically fixes sanitizer issues in tests |
-| **`rename-test-files.ts`** | Renames test files to follow naming conventions |
-| **`consolidate-renderer-tests.ts`** | Consolidates renderer tests into organized structure |
+## Root-level scripts
 
-## Documentation & Coverage Scripts
-
-| Script | Purpose |
-|--------|---------|
-| **`check-doc-links.ts`** | Validates documentation links are not broken |
-| **`check-coverage.ts`** | Validates test coverage meets minimum thresholds |
-| **`coverage-thresholds.config.ts`** | Coverage threshold configuration |
-
-## Setup Scripts
-
-| Script | Purpose |
-|--------|---------|
-| **`setup.ts`** | Project setup and initialization |
-
-## Shell Scripts
-
-| Script | Purpose |
-|--------|---------|
-| **`prepare-release.sh`** | Prepares a new release (version bumping, changelog, etc.) |
-| **`build-all.js`** | Builds all project components |
+| Script | Task | Purpose |
+|--------|------|---------|
+| `release.ts` | `release` | Automated release workflow |
+| `setup.ts` | `setup` | Project setup and initialization |
+| `server.ts` | `typecheck` | Entry point for typecheck |
+| `install.sh` / `install.ps1` | — | Binary installer (curl/PowerShell) |
+| `postinstall.js` | — | npm postinstall hook (copied into npm package) |
+| `update-homebrew-formula.sh` | — | Updates Homebrew formula after release |
+| `debug-production.sh` | — | Quick production debugging helper |
+| `test-production-fix.ts` | — | Tests production fixes locally |

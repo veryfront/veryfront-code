@@ -126,8 +126,8 @@ function spawnRunner(label, runnerPath, args, env) {
 }
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
-const bunRunner = resolve(scriptDir, "run-bun-tests.mjs");
-const nodeRunner = resolve(scriptDir, "run-node-tests.mjs");
+const bunRunner = resolve(scriptDir, "bun", "run-tests.mjs");
+const nodeRunner = resolve(scriptDir, "node", "run-tests.mjs");
 
 const baseFlagIndex = process.argv.findIndex((arg) => arg === "--base");
 const baseRef = baseFlagIndex >= 0 ? process.argv[baseFlagIndex + 1] : null;

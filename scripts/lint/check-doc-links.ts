@@ -2,7 +2,7 @@
 import { walk } from "@std/fs";
 import { existsSync } from "@std/fs";
 
-const repoRoot = new URL("../", import.meta.url).pathname;
+const repoRoot = new URL("../../", import.meta.url).pathname;
 
 // Check markdown files in these directories
 const dirsToCheck = [

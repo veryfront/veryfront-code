@@ -2,7 +2,7 @@
 
 import { spawn } from "node:child_process";
 import os from "node:os";
-import { filterTestFiles, listTestFiles, splitIntoShards } from "./test-file-utils.mjs";
+import { filterTestFiles, listTestFiles, splitIntoShards } from "../test-file-utils.mjs";
 
 function resolveConcurrency(envKeys) {
   for (const key of envKeys) {
@@ -51,7 +51,7 @@ const hasFilters = includePatterns.length > 0 || envExcludePatterns.length > 0;
 
 function buildNodeArgs(files, perShardConcurrency) {
   return [
-    "--import", "./scripts/node-resolver.mjs",
+    "--import", "./tests/node/resolver.mjs",
     "--test",
     "--test-concurrency",
     String(perShardConcurrency),

@@ -9,4 +9,4 @@ import { register } from 'node:module';
 
 // Register our resolver hooks
 // The second argument must be a URL string, not a URL object
-register('./node-resolver-hooks.mjs', import.meta.url);
+register('./resolver-hooks.mjs', import.meta.url);

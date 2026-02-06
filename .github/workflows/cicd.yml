@@ -176,7 +176,7 @@ jobs:
         with:
           deno-version: lts
 
-      - run: deno run -A scripts/generate-templates-manifest.ts
+      - run: deno run -A scripts/build/generate-templates-manifest.ts
 
       - name: Compile binary
         shell: bash

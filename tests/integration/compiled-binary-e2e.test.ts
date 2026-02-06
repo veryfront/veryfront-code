@@ -105,7 +105,7 @@ async function ensureBinaryCompiled(): Promise<void> {
   // Prepare framework sources for embedding in binary
   console.log("📦 Preparing framework sources...");
   const prepareResult = await new Deno.Command("deno", {
-    args: ["run", "--allow-all", "scripts/prepare-framework-sources.ts"],
+    args: ["run", "--allow-all", "scripts/build/prepare-framework-sources.ts"],
     stdout: "inherit",
     stderr: "inherit",
   }).output();

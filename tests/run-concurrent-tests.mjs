@@ -64,8 +64,8 @@ const { bunArgs, nodeArgs, profile } = splitArgs(args);
 const hasExplicitArgs = args.length > 0;
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
-const bunRunner = resolve(scriptDir, "run-bun-tests.mjs");
-const nodeRunner = resolve(scriptDir, "run-node-tests.mjs");
+const bunRunner = resolve(scriptDir, "bun", "run-tests.mjs");
+const nodeRunner = resolve(scriptDir, "node", "run-tests.mjs");
 
 const availableCores = getAvailableCores();
 const totalConcurrency =

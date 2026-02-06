@@ -14,7 +14,7 @@ import { resolve as pathResolve, dirname } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const projectRoot = pathResolve(__dirname, '..');
+const projectRoot = pathResolve(__dirname, '../..');
 
 // Build import map from deno.json and package.json
 const fileImportMap = {};

@@ -175,8 +175,8 @@ cd test-app
 ### 1. Prepare Release
 
 ```bash
-# Use the automated script
-./scripts/prepare-release.sh 0.1.0
+# Use the release script
+deno task release 0.1.0
 
 # Or manually update:
 # - npm/package.json (version)

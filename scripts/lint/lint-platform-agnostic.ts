@@ -159,7 +159,7 @@ async function scanFile(filePath: string, relativePath: string): Promise<Violati
 }
 
 async function main() {
-  const srcDir = new URL("../src", import.meta.url).pathname;
+  const srcDir = new URL("../../src", import.meta.url).pathname;
   const violations: Violation[] = [];
 
   console.log("Scanning for platform-specific code violations...\n");

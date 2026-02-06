@@ -2,7 +2,7 @@
 
 import { spawn } from "node:child_process";
 import os from "node:os";
-import { filterTestFiles, listTestFiles, splitIntoShards } from "./test-file-utils.mjs";
+import { filterTestFiles, listTestFiles, splitIntoShards } from "../test-file-utils.mjs";
 
 function resolveConcurrency(envKeys) {
   for (const key of envKeys) {

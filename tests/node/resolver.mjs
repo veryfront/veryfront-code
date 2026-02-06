@@ -10,4 +10,4 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Register the custom loader hooks
-register('./node-resolver-hooks.mjs', pathToFileURL(pathResolve(__dirname, '.')).href + '/');
+register('./resolver-hooks.mjs', pathToFileURL(pathResolve(__dirname, '.')).href + '/');
