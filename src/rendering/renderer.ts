@@ -33,7 +33,7 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
-import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
+import { SERVICE_OVERLOADED } from "#veryfront/errors/error-registry.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { buildQueryAwareCacheKey, type QueryParamCacheOptions } from "#veryfront/cache/keys.ts";
 import {
@@ -331,16 +331,16 @@ export class Renderer {
             activeRenders: activeCount,
             limit: RENDER_PER_PROJECT_LIMIT,
           });
-          throw new VeryfrontError(
-            `Per-project render limit reached (${activeCount}/${RENDER_PER_PROJECT_LIMIT} active). Try again shortly.`,
-            ErrorCode.SERVICE_OVERLOADED,
-            {
+          throw SERVICE_OVERLOADED.create({
+            detail:
+              `Per-project render limit reached (${activeCount}/${RENDER_PER_PROJECT_LIMIT} active). Try again shortly.`,
+            context: {
               slug,
               projectId: ctx.projectId,
               activeRenders: activeCount,
               limit: RENDER_PER_PROJECT_LIMIT,
             },
-          );
+          });
         }
 
         const acquired = await renderSemaphore.tryAcquire(RENDER_ACQUIRE_TIMEOUT_MS);
@@ -352,11 +352,11 @@ export class Renderer {
             waiting: renderSemaphore.waiting,
             available: renderSemaphore.available,
           });
-          throw new VeryfrontError(
-            `Render capacity exceeded (${renderSemaphore.waiting} waiting). Service is overloaded.`,
-            ErrorCode.SERVICE_OVERLOADED,
-            { slug, projectId: ctx.projectId, waiting: renderSemaphore.waiting },
-          );
+          throw SERVICE_OVERLOADED.create({
+            detail:
+              `Render capacity exceeded (${renderSemaphore.waiting} waiting). Service is overloaded.`,
+            context: { slug, projectId: ctx.projectId, waiting: renderSemaphore.waiting },
+          });
         }
 
         try {

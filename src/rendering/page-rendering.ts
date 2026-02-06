@@ -1,5 +1,5 @@
 import { rendererLogger as logger } from "#veryfront/utils";
-import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
+import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
 import type * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, MdxBundle, MDXComponents, MDXModule, PageBundle } from "#veryfront/types";
@@ -74,10 +74,9 @@ export function handleMDXPage(
 
         const clientModuleCode = pageBundle.clientModuleCode;
         if (!clientModuleCode) {
-          throw new VeryfrontError(
-            "MDX compilation produced no client module code",
-            ErrorCode.RENDER_ERROR,
-          );
+          throw RENDER_ERROR.create({
+            detail: "MDX compilation produced no client module code",
+          });
         }
 
         const mod = (await mdxRenderer.loadModuleESM(
@@ -91,10 +90,9 @@ export function handleMDXPage(
 
         const MDXComp = mod.MDXContent || mod.default;
         if (!MDXComp) {
-          throw new VeryfrontError(
-            "Compiled MDX module has no content export",
-            ErrorCode.RENDER_ERROR,
-          );
+          throw RENDER_ERROR.create({
+            detail: "Compiled MDX module has no content export",
+          });
         }
 
         if (mod.metadata && typeof mod.metadata === "object") {
@@ -139,11 +137,10 @@ export function handleMDXPage(
 
         return { pageElement, pageBundle, collectedMetadata };
       } catch (error) {
-        throw new VeryfrontError(
-          `Failed to import MDX page via ESM: ${getErrorMessage(error)}`,
-          ErrorCode.RENDER_ERROR,
-          { slug, error },
-        );
+        throw RENDER_ERROR.create({
+          detail: `Failed to import MDX page via ESM: ${getErrorMessage(error)}`,
+          context: { slug, error },
+        });
       }
     },
     { "rendering.slug": slug, "rendering.pagePath": pageInfo.entity.path },

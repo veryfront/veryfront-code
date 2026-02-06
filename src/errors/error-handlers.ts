@@ -1,5 +1,6 @@
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
-import { ErrorCode, VeryfrontError } from "./types.ts";
+import { VeryfrontError } from "./types.ts";
+import { RENDER_ERROR } from "./error-registry.ts";
 
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_INITIAL_DELAY_MS = 100;
@@ -47,9 +48,26 @@ export function wrapError(
     ...(context as Record<string, unknown> | undefined),
   };
 
-  const errorCode = error instanceof VeryfrontError ? error.code : ErrorCode.RENDER_ERROR;
+  // Preserve slug/code from original error, or use render-error as default
+  if (error instanceof VeryfrontError) {
+    return new VeryfrontError(errorMessage, {
+      slug: error.slug,
+      category: error.category,
+      status: error.status,
+      title: error.title,
+      suggestion: error.suggestion,
+      context: wrappedContext,
+    });
+  }
 
-  return new VeryfrontError(errorMessage, errorCode, wrappedContext);
+  return new VeryfrontError(errorMessage, {
+    slug: RENDER_ERROR.slug,
+    category: RENDER_ERROR.category,
+    status: RENDER_ERROR.status,
+    title: RENDER_ERROR.title,
+    suggestion: RENDER_ERROR.suggestion,
+    context: wrappedContext,
+  });
 }
 
 export function logAndThrow(

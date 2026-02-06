@@ -1,4 +1,4 @@
-import type { ErrorCodeType } from "../error-codes.ts";
+import type { ErrorSlug } from "../error-registry.ts";
 import type { ErrorSolution, PartialErrorCatalog } from "./types.ts";
 
 import { BUILD_ERROR_CATALOG } from "./build-errors.ts";
@@ -25,8 +25,8 @@ export const ERROR_CATALOG: PartialErrorCatalog = {
   ...GENERAL_ERROR_CATALOG,
 };
 
-export function getErrorSolution(code: ErrorCodeType): ErrorSolution | null {
-  return ERROR_CATALOG[code] ?? null;
+export function getErrorSolution(slug: ErrorSlug): ErrorSolution | null {
+  return ERROR_CATALOG[slug] ?? null;
 }
 
 export function searchErrors(query: string): ErrorSolution[] {

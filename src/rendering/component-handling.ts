@@ -3,7 +3,7 @@
  */
 
 import { rendererLogger as logger } from "#veryfront/utils";
-import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
+import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
 import type * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, PageBundle } from "#veryfront/types";
@@ -120,11 +120,10 @@ export async function handleComponentPage(
     return { pageElement, pageBundle };
   } catch (error) {
     logger.error(`Failed to import TSX/JSX file: ${pageInfo.entity.path}`, error);
-    throw new VeryfrontError(
-      `Failed to load TSX/JSX component: ${(error as Error).message}`,
-      ErrorCode.RENDER_ERROR,
-      { slug, error },
-    );
+    throw RENDER_ERROR.create({
+      detail: `Failed to load TSX/JSX component: ${(error as Error).message}`,
+      context: { slug, error },
+    });
   }
 }
 

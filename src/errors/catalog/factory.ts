@@ -1,25 +1,24 @@
-import type { ErrorCodeType } from "../error-codes.ts";
-import { getErrorDocsUrl } from "../error-codes.ts";
+import type { ErrorSlug } from "../error-registry.ts";
 import type { ErrorSolution } from "./types.ts";
 
-type ErrorSolutionConfig = Omit<ErrorSolution, "code" | "docs"> & { docs?: string };
+type ErrorSolutionConfig = Omit<ErrorSolution, "slug" | "docs"> & { docs?: string };
 
 export function createErrorSolution(
-  code: ErrorCodeType,
+  slug: ErrorSlug,
   config: ErrorSolutionConfig,
 ): ErrorSolution {
   return {
     ...config,
-    code,
-    docs: config.docs ?? getErrorDocsUrl(code),
+    slug,
+    docs: config.docs ?? `https://veryfront.com/docs/errors/${slug}`,
   };
 }
 
 export function createSimpleError(
-  code: ErrorCodeType,
+  slug: ErrorSlug,
   title: string,
   message: string,
   steps: string[],
 ): ErrorSolution {
-  return createErrorSolution(code, { title, message, steps });
+  return createErrorSolution(slug, { title, message, steps });
 }

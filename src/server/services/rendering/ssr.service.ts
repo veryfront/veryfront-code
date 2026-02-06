@@ -7,7 +7,7 @@ import {
 import { getHeapStats } from "#veryfront/utils/memory/index.ts";
 import { serverLogger as logger, timeAsync } from "#veryfront/utils";
 import { computeSSRETag } from "../../handlers/request/ssr/etag-handler.ts";
-import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
+import { VeryfrontError } from "#veryfront/errors/index.ts";
 import { getColorSchemeFromRequest } from "#veryfront/security/http/client-hints.ts";
 import {
   endRenderSession,
@@ -180,7 +180,7 @@ export class SSRService {
     const errorObj = error instanceof Error ? error : new Error(String(error));
     const isDev = ctx.requestContext?.isLocalDev || ctx.requestContext?.mode === "preview";
 
-    if (error instanceof VeryfrontError && error.code === ErrorCode.FILE_NOT_FOUND) {
+    if (error instanceof VeryfrontError && error.slug === "file-not-found") {
       logger.debug("[SSRService] Page not found", { slug, error: errorObj.message });
       return {
         status: HTTP_NOT_FOUND,

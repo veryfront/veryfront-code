@@ -1,15 +1,15 @@
-import type { ErrorCodeType } from "../error-codes.ts";
+import type { ErrorSlug } from "../error-registry.ts";
 
 export interface ErrorSolution {
-  code: ErrorCodeType;
+  slug: ErrorSlug;
   title: string;
   message: string;
   steps?: string[];
   example?: string;
   docs?: string;
-  relatedErrors?: ErrorCodeType[];
+  relatedErrors?: ErrorSlug[];
   tips?: string[];
 }
 
-export type ErrorCatalog = Record<ErrorCodeType, ErrorSolution>;
+export type ErrorCatalog = Record<ErrorSlug, ErrorSolution>;
 export type PartialErrorCatalog = Partial<ErrorCatalog>;

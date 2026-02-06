@@ -1,17 +1,16 @@
-import { ErrorCode } from "../error-codes.ts";
 import type { PartialErrorCatalog } from "./types.ts";
 import { createSimpleError } from "./factory.ts";
 
 export const DEV_ERROR_CATALOG: PartialErrorCatalog = {
-  [ErrorCode.DEV_SERVER_ERROR]: createSimpleError(
-    ErrorCode.DEV_SERVER_ERROR,
+  "dev-server-error": createSimpleError(
+    "dev-server-error",
     "Development server error",
     "Error in development server.",
     ["Check server logs for details", "Try restarting dev server", "Clear cache and restart"],
   ),
 
-  [ErrorCode.FAST_REFRESH_ERROR]: createSimpleError(
-    ErrorCode.FAST_REFRESH_ERROR,
+  "fast-refresh-error": createSimpleError(
+    "fast-refresh-error",
     "Fast Refresh error",
     "React Fast Refresh failed.",
     [
@@ -21,15 +20,15 @@ export const DEV_ERROR_CATALOG: PartialErrorCatalog = {
     ],
   ),
 
-  [ErrorCode.ERROR_OVERLAY_ERROR]: createSimpleError(
-    ErrorCode.ERROR_OVERLAY_ERROR,
+  "error-overlay-error": createSimpleError(
+    "error-overlay-error",
     "Error overlay failed",
     "Could not display error overlay.",
     ["Check browser console for details", "Try disabling browser extensions", "Refresh the page"],
   ),
 
-  [ErrorCode.SOURCE_MAP_ERROR]: createSimpleError(
-    ErrorCode.SOURCE_MAP_ERROR,
+  "source-map-error": createSimpleError(
+    "source-map-error",
     "Source map error",
     "Error loading or parsing source map.",
     [

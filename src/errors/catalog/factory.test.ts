@@ -1,86 +1,86 @@
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { createErrorSolution, createSimpleError } from "./factory.ts";
-import { ErrorCode, type ErrorCodeType } from "../error-codes.ts";
+import type { ErrorSlug } from "../error-registry.ts";
 
 describe("factory", () => {
   describe("createErrorSolution", () => {
     it("should create error solution with all required fields", () => {
-      const solution = createErrorSolution(ErrorCode.CONFIG_NOT_FOUND, {
+      const solution = createErrorSolution("config-not-found", {
         title: "Configuration file not found",
         message: "Veryfront could not find veryfront.config.js",
       });
 
       expect(solution).toMatchObject({
-        code: ErrorCode.CONFIG_NOT_FOUND,
+        slug: "config-not-found",
         title: "Configuration file not found",
         message: "Veryfront could not find veryfront.config.js",
-        docs: "https://veryfront.com/docs/errors/VF001",
+        docs: "https://veryfront.com/docs/errors/config-not-found",
       });
     });
 
     it("should create error solution with steps", () => {
-      const solution = createErrorSolution(ErrorCode.BUILD_FAILED, {
+      const solution = createErrorSolution("build-failed", {
         title: "Build failed",
         message: "The build process encountered errors",
         steps: ["Check error messages", "Fix TypeScript errors", "Run build again"],
       });
 
-      expect(solution.code).toBe(ErrorCode.BUILD_FAILED);
+      expect(solution.slug).toBe("build-failed");
       expect(solution.steps).toEqual([
         "Check error messages",
         "Fix TypeScript errors",
         "Run build again",
       ]);
-      expect(solution.docs).toBe("https://veryfront.com/docs/errors/VF100");
+      expect(solution.docs).toBe("https://veryfront.com/docs/errors/build-failed");
     });
 
     it("should create error solution with example", () => {
       const example = "export default { port: 3000 }";
-      const solution = createErrorSolution(ErrorCode.CONFIG_INVALID, {
+      const solution = createErrorSolution("config-invalid", {
         title: "Invalid config",
         message: "Configuration is invalid",
         example,
       });
 
       expect(solution.example).toBe(example);
-      expect(solution.docs).toBe("https://veryfront.com/docs/errors/VF002");
+      expect(solution.docs).toBe("https://veryfront.com/docs/errors/config-invalid");
     });
 
     it("should create error solution with tips", () => {
-      const solution = createErrorSolution(ErrorCode.PORT_IN_USE, {
+      const solution = createErrorSolution("port-in-use", {
         title: "Port already in use",
         message: "The specified port is already in use",
         tips: ["Use a different port", "Stop the other process"],
       });
 
       expect(solution.tips).toEqual(["Use a different port", "Stop the other process"]);
-      expect(solution.docs).toBe("https://veryfront.com/docs/errors/VF500");
+      expect(solution.docs).toBe("https://veryfront.com/docs/errors/port-in-use");
     });
 
     it("should create error solution with relatedErrors", () => {
-      const solution = createErrorSolution(ErrorCode.HYDRATION_MISMATCH, {
+      const solution = createErrorSolution("hydration-mismatch", {
         title: "Hydration mismatch",
         message: "Client and server HTML do not match",
-        relatedErrors: [ErrorCode.RENDER_ERROR, ErrorCode.COMPONENT_ERROR],
+        relatedErrors: ["render-error", "component-error"],
       });
 
-      expect(solution.relatedErrors).toEqual([ErrorCode.RENDER_ERROR, ErrorCode.COMPONENT_ERROR]);
-      expect(solution.docs).toBe("https://veryfront.com/docs/errors/VF200");
+      expect(solution.relatedErrors).toEqual(["render-error", "component-error"]);
+      expect(solution.docs).toBe("https://veryfront.com/docs/errors/hydration-mismatch");
     });
 
-    it("should auto-generate docs URL from error code", () => {
-      const solution = createErrorSolution(ErrorCode.MODULE_NOT_FOUND, {
+    it("should auto-generate docs URL from error slug", () => {
+      const solution = createErrorSolution("module-not-found", {
         title: "Module not found",
         message: "The requested module could not be found",
       });
 
-      expect(solution.docs).toBe("https://veryfront.com/docs/errors/VF400");
+      expect(solution.docs).toBe("https://veryfront.com/docs/errors/module-not-found");
     });
 
     it("should allow custom docs URL override", () => {
       const customUrl = "https://custom-docs.example.com/errors/custom";
-      const solution = createErrorSolution(ErrorCode.UNKNOWN_ERROR, {
+      const solution = createErrorSolution("unknown-error", {
         title: "Unknown error",
         message: "An unknown error occurred",
         docs: customUrl,
@@ -90,29 +90,29 @@ describe("factory", () => {
     });
 
     it("should preserve all optional fields when provided", () => {
-      const solution = createErrorSolution(ErrorCode.API_ERROR, {
+      const solution = createErrorSolution("api-error", {
         title: "API Error",
         message: "API request failed",
         steps: ["Check API endpoint", "Verify authentication"],
         example: 'fetch("/api/data")',
         tips: ["Use correct HTTP method"],
-        relatedErrors: [ErrorCode.REQUEST_ERROR],
+        relatedErrors: ["request-error"],
       });
 
       expect(solution).toMatchObject({
-        code: ErrorCode.API_ERROR,
+        slug: "api-error",
         title: "API Error",
         message: "API request failed",
         steps: ["Check API endpoint", "Verify authentication"],
         example: 'fetch("/api/data")',
         tips: ["Use correct HTTP method"],
-        relatedErrors: [ErrorCode.REQUEST_ERROR],
-        docs: "https://veryfront.com/docs/errors/VF205",
+        relatedErrors: ["request-error"],
+        docs: "https://veryfront.com/docs/errors/api-error",
       });
     });
 
     it("should handle empty steps array", () => {
-      const solution = createErrorSolution(ErrorCode.TIMEOUT_ERROR, {
+      const solution = createErrorSolution("timeout-error", {
         title: "Timeout error",
         message: "Operation timed out",
         steps: [],
@@ -122,7 +122,7 @@ describe("factory", () => {
     });
 
     it("should handle empty tips array", () => {
-      const solution = createErrorSolution(ErrorCode.PERMISSION_DENIED, {
+      const solution = createErrorSolution("permission-denied", {
         title: "Permission denied",
         message: "Access to resource denied",
         tips: [],
@@ -132,7 +132,7 @@ describe("factory", () => {
     });
 
     it("should handle empty relatedErrors array", () => {
-      const solution = createErrorSolution(ErrorCode.FILE_NOT_FOUND, {
+      const solution = createErrorSolution("file-not-found", {
         title: "File not found",
         message: "The requested file does not exist",
         relatedErrors: [],
@@ -141,27 +141,30 @@ describe("factory", () => {
       expect(solution.relatedErrors).toEqual([]);
     });
 
-    it("should work with different error code categories", () => {
-      const cases: Array<[ErrorCodeType, string]> = [
-        [ErrorCode.CONFIG_NOT_FOUND, "https://veryfront.com/docs/errors/VF001"],
-        [ErrorCode.BUILD_FAILED, "https://veryfront.com/docs/errors/VF100"],
-        [ErrorCode.RENDER_ERROR, "https://veryfront.com/docs/errors/VF201"],
-        [ErrorCode.ROUTE_CONFLICT, "https://veryfront.com/docs/errors/VF300"],
-        [ErrorCode.MODULE_NOT_FOUND, "https://veryfront.com/docs/errors/VF400"],
-        [ErrorCode.PORT_IN_USE, "https://veryfront.com/docs/errors/VF500"],
-        [ErrorCode.CLIENT_BOUNDARY_VIOLATION, "https://veryfront.com/docs/errors/VF600"],
-        [ErrorCode.DEV_SERVER_ERROR, "https://veryfront.com/docs/errors/VF700"],
-        [ErrorCode.DEPLOYMENT_ERROR, "https://veryfront.com/docs/errors/VF800"],
-        [ErrorCode.UNKNOWN_ERROR, "https://veryfront.com/docs/errors/VF900"],
+    it("should work with different error slug categories", () => {
+      const cases: Array<[ErrorSlug, string]> = [
+        ["config-not-found", "https://veryfront.com/docs/errors/config-not-found"],
+        ["build-failed", "https://veryfront.com/docs/errors/build-failed"],
+        ["render-error", "https://veryfront.com/docs/errors/render-error"],
+        ["route-conflict", "https://veryfront.com/docs/errors/route-conflict"],
+        ["module-not-found", "https://veryfront.com/docs/errors/module-not-found"],
+        ["port-in-use", "https://veryfront.com/docs/errors/port-in-use"],
+        [
+          "client-boundary-violation",
+          "https://veryfront.com/docs/errors/client-boundary-violation",
+        ],
+        ["dev-server-error", "https://veryfront.com/docs/errors/dev-server-error"],
+        ["deployment-error", "https://veryfront.com/docs/errors/deployment-error"],
+        ["unknown-error", "https://veryfront.com/docs/errors/unknown-error"],
       ];
 
-      for (const [code, docs] of cases) {
-        expect(createErrorSolution(code, { title: "Title", message: "Message" }).docs).toBe(docs);
+      for (const [slug, docs] of cases) {
+        expect(createErrorSolution(slug, { title: "Title", message: "Message" }).docs).toBe(docs);
       }
     });
 
     it("should handle multiline messages", () => {
-      const solution = createErrorSolution(ErrorCode.TYPESCRIPT_ERROR, {
+      const solution = createErrorSolution("typescript-error", {
         title: "TypeScript error",
         message:
           "TypeScript compilation failed:\n- Type mismatch at line 10\n- Missing return type at line 20",
@@ -176,7 +179,7 @@ describe("factory", () => {
   port: 3000,
   mode: 'development'
 }`;
-      const solution = createErrorSolution(ErrorCode.CONFIG_VALIDATION_ERROR, {
+      const solution = createErrorSolution("config-validation-error", {
         title: "Config validation error",
         message: "Configuration failed validation",
         example,
@@ -190,47 +193,47 @@ describe("factory", () => {
   describe("createSimpleError", () => {
     it("should create simple error with minimal config", () => {
       const solution = createSimpleError(
-        ErrorCode.BUILD_FAILED,
+        "build-failed",
         "Build failed",
         "The build process encountered errors",
         ["Check error messages", "Fix TypeScript errors"],
       );
 
       expect(solution).toMatchObject({
-        code: ErrorCode.BUILD_FAILED,
+        slug: "build-failed",
         title: "Build failed",
         message: "The build process encountered errors",
         steps: ["Check error messages", "Fix TypeScript errors"],
-        docs: "https://veryfront.com/docs/errors/VF100",
+        docs: "https://veryfront.com/docs/errors/build-failed",
       });
     });
 
     it("should auto-generate docs URL", () => {
       const solution = createSimpleError(
-        ErrorCode.CONFIG_NOT_FOUND,
+        "config-not-found",
         "Config not found",
         "Configuration file missing",
         ["Create config file"],
       );
 
-      expect(solution.docs).toBe("https://veryfront.com/docs/errors/VF001");
+      expect(solution.docs).toBe("https://veryfront.com/docs/errors/config-not-found");
     });
 
     it("should handle empty steps array", () => {
       const solution = createSimpleError(
-        ErrorCode.UNKNOWN_ERROR,
+        "unknown-error",
         "Unknown error",
         "An unknown error occurred",
         [],
       );
 
       expect(solution.steps).toEqual([]);
-      expect(solution.code).toBe(ErrorCode.UNKNOWN_ERROR);
+      expect(solution.slug).toBe("unknown-error");
     });
 
     it("should handle single step", () => {
       const solution = createSimpleError(
-        ErrorCode.PORT_IN_USE,
+        "port-in-use",
         "Port in use",
         "The specified port is already in use",
         ["Use a different port"],
@@ -248,7 +251,7 @@ describe("factory", () => {
         "Step 5: Check logs",
       ];
       const solution = createSimpleError(
-        ErrorCode.SERVER_START_ERROR,
+        "server-start-error",
         "Server start error",
         "Server failed to start",
         steps,
@@ -258,28 +261,28 @@ describe("factory", () => {
       expect(solution.steps?.length).toBe(5);
     });
 
-    it("should work with all error code categories", () => {
-      const cases: Array<[ErrorCodeType, string]> = [
-        [ErrorCode.CONFIG_INVALID, "https://veryfront.com/docs/errors/VF002"],
-        [ErrorCode.BUNDLE_ERROR, "https://veryfront.com/docs/errors/VF101"],
-        [ErrorCode.HYDRATION_MISMATCH, "https://veryfront.com/docs/errors/VF200"],
-        [ErrorCode.INVALID_ROUTE_FILE, "https://veryfront.com/docs/errors/VF301"],
-        [ErrorCode.IMPORT_RESOLUTION_ERROR, "https://veryfront.com/docs/errors/VF401"],
-        [ErrorCode.HMR_ERROR, "https://veryfront.com/docs/errors/VF502"],
-        [ErrorCode.SERVER_ONLY_IN_CLIENT, "https://veryfront.com/docs/errors/VF601"],
-        [ErrorCode.FAST_REFRESH_ERROR, "https://veryfront.com/docs/errors/VF701"],
-        [ErrorCode.PLATFORM_ERROR, "https://veryfront.com/docs/errors/VF801"],
-        [ErrorCode.INVALID_ARGUMENT, "https://veryfront.com/docs/errors/VF903"],
+    it("should work with all error slug categories", () => {
+      const cases: Array<[ErrorSlug, string]> = [
+        ["config-invalid", "https://veryfront.com/docs/errors/config-invalid"],
+        ["bundle-error", "https://veryfront.com/docs/errors/bundle-error"],
+        ["hydration-mismatch", "https://veryfront.com/docs/errors/hydration-mismatch"],
+        ["invalid-route-file", "https://veryfront.com/docs/errors/invalid-route-file"],
+        ["import-resolution-error", "https://veryfront.com/docs/errors/import-resolution-error"],
+        ["hmr-error", "https://veryfront.com/docs/errors/hmr-error"],
+        ["server-only-in-client", "https://veryfront.com/docs/errors/server-only-in-client"],
+        ["fast-refresh-error", "https://veryfront.com/docs/errors/fast-refresh-error"],
+        ["platform-error", "https://veryfront.com/docs/errors/platform-error"],
+        ["invalid-argument", "https://veryfront.com/docs/errors/invalid-argument"],
       ];
 
-      for (const [code, docs] of cases) {
-        expect(createSimpleError(code, "Title", "Message", ["Step"]).docs).toBe(docs);
+      for (const [slug, docs] of cases) {
+        expect(createSimpleError(slug, "Title", "Message", ["Step"]).docs).toBe(docs);
       }
     });
 
     it("should handle special characters in title", () => {
       const solution = createSimpleError(
-        ErrorCode.API_ERROR,
+        "api-error",
         'API Error: "Unauthorized"',
         "Authentication failed",
         ["Check credentials"],
@@ -290,7 +293,7 @@ describe("factory", () => {
 
     it("should handle special characters in message", () => {
       const solution = createSimpleError(
-        ErrorCode.FILE_NOT_FOUND,
+        "file-not-found",
         "File not found",
         "Cannot find file at path: /home/user/project/file.tsx",
         ["Check file path"],
@@ -301,7 +304,7 @@ describe("factory", () => {
 
     it("should handle special characters in steps", () => {
       const solution = createSimpleError(
-        ErrorCode.ROUTE_HANDLER_INVALID,
+        "route-handler-invalid",
         "Route handler invalid",
         "Route handler is not valid",
         ["Export default function", "Use correct signature: (req, res) => {}"],
@@ -316,20 +319,20 @@ describe("factory", () => {
       const steps = ["Check error messages", "Fix errors"];
 
       const simple = createSimpleError(
-        ErrorCode.BUILD_FAILED,
+        "build-failed",
         "Build failed",
         "The build process encountered errors",
         steps,
       );
 
-      const full = createErrorSolution(ErrorCode.BUILD_FAILED, {
+      const full = createErrorSolution("build-failed", {
         title: "Build failed",
         message: "The build process encountered errors",
         steps,
       });
 
       expect(simple).toMatchObject({
-        code: full.code,
+        slug: full.slug,
         title: full.title,
         message: full.message,
         steps: full.steps,
@@ -339,36 +342,36 @@ describe("factory", () => {
 
     it("should createSimpleError use createErrorSolution internally", () => {
       const simple = createSimpleError(
-        ErrorCode.MODULE_NOT_FOUND,
+        "module-not-found",
         "Module not found",
         "Cannot find module",
         ["Check import path"],
       );
 
-      for (const key of ["code", "title", "message", "steps", "docs"] as const) {
+      for (const key of ["slug", "title", "message", "steps", "docs"] as const) {
         expect(simple).toHaveProperty(key);
       }
     });
 
     it("should both functions generate correct docs URLs", () => {
       const simple = createSimpleError(
-        ErrorCode.CONFIG_NOT_FOUND,
+        "config-not-found",
         "Config not found",
         "Config missing",
         ["Create config"],
       );
-      const full = createErrorSolution(ErrorCode.CONFIG_NOT_FOUND, {
+      const full = createErrorSolution("config-not-found", {
         title: "Config not found",
         message: "Config missing",
       });
 
-      expect(simple.docs).toBe("https://veryfront.com/docs/errors/VF001");
-      expect(full.docs).toBe("https://veryfront.com/docs/errors/VF001");
+      expect(simple.docs).toBe("https://veryfront.com/docs/errors/config-not-found");
+      expect(full.docs).toBe("https://veryfront.com/docs/errors/config-not-found");
       expect(simple.docs).toBe(full.docs);
     });
 
     it("should handle real-world error scenarios", () => {
-      const configError = createErrorSolution(ErrorCode.CONFIG_NOT_FOUND, {
+      const configError = createErrorSolution("config-not-found", {
         title: "Configuration file not found",
         message: "Veryfront could not find veryfront.config.js in your project root",
         steps: [
@@ -380,21 +383,21 @@ describe("factory", () => {
         tips: ["Make sure you are in the correct directory", "Check file permissions"],
       });
 
-      expect(configError.code).toBe(ErrorCode.CONFIG_NOT_FOUND);
+      expect(configError.slug).toBe("config-not-found");
       expect(configError.steps?.length).toBe(3);
       expect(configError.tips?.length).toBe(2);
 
       const buildError = createSimpleError(
-        ErrorCode.TYPESCRIPT_ERROR,
+        "typescript-error",
         "TypeScript compilation failed",
         "Found 5 type errors in your code",
         ["Fix type errors shown below", 'Run "tsc --noEmit" to check types'],
       );
 
-      expect(buildError.code).toBe(ErrorCode.TYPESCRIPT_ERROR);
+      expect(buildError.slug).toBe("typescript-error");
       expect(buildError.steps?.length).toBe(2);
 
-      const runtimeError = createErrorSolution(ErrorCode.HYDRATION_MISMATCH, {
+      const runtimeError = createErrorSolution("hydration-mismatch", {
         title: "Hydration mismatch detected",
         message: "The HTML rendered on the server does not match the client",
         steps: [
@@ -402,12 +405,14 @@ describe("factory", () => {
           "Ensure Date.now() or Math.random() are not used directly",
           "Use useEffect for client-only code",
         ],
-        relatedErrors: [ErrorCode.RENDER_ERROR, ErrorCode.COMPONENT_ERROR],
-        docs: "https://veryfront.com/docs/errors/VF200#hydration",
+        relatedErrors: ["render-error", "component-error"],
+        docs: "https://veryfront.com/docs/errors/hydration-mismatch#hydration",
       });
 
       expect(runtimeError.relatedErrors?.length).toBe(2);
-      expect(runtimeError.docs).toBe("https://veryfront.com/docs/errors/VF200#hydration");
+      expect(runtimeError.docs).toBe(
+        "https://veryfront.com/docs/errors/hydration-mismatch#hydration",
+      );
     });
   });
 });

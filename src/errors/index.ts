@@ -1,4 +1,27 @@
-export { ErrorCode, VeryfrontError } from "./types.ts";
+export { defineError, VeryfrontError } from "./types.ts";
+export type {
+  ErrorCategory,
+  ErrorCreateOptions,
+  ErrorDefinition,
+  RegisteredError,
+  RFC9457Response,
+  VeryfrontErrorOptions,
+} from "./types.ts";
+
+// Slug-based error registry (single source of truth)
+export * from "./error-registry.ts";
+
+// RFC 9457 HTTP error utilities
+export {
+  createErrorHandler,
+  createErrorResponse,
+  createErrorResponseFromDefinition,
+  createProblemResponse,
+  errorToResponse,
+  formatErrorLog,
+  isVeryfrontError,
+  PROBLEM_JSON_CONTENT_TYPE,
+} from "./http-error.ts";
 
 export {
   AgentError,
@@ -68,8 +91,6 @@ export {
 } from "./user-friendly/index.ts";
 
 export type { ErrorSolution as UserFriendlyErrorSolution } from "./user-friendly/index.ts";
-
-export type { ErrorCodeType } from "./error-codes.ts";
 
 export { createError, ensureError, getErrorMessage, toError } from "./veryfront-error.ts";
 export type { VeryfrontErrorData } from "./veryfront-error.ts";

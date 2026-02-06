@@ -7,15 +7,15 @@ import {
   NotSupportedError,
   PermissionError,
 } from "./system-errors.ts";
-import { ErrorCode, VeryfrontError } from "./types.ts";
+import { VeryfrontError } from "./types.ts";
 
 describe("system-errors", () => {
   describe("FileSystemError", () => {
-    it("should create error with correct code", () => {
+    it("should create error with correct slug", () => {
       const error = new FileSystemError("File not found");
       assertInstanceOf(error, VeryfrontError);
       assertEquals(error.name, "FileSystemError");
-      assertEquals(error.code, ErrorCode.FILE_NOT_FOUND);
+      assertEquals(error.slug, "file-not-found");
     });
 
     it("should include context", () => {
@@ -25,34 +25,34 @@ describe("system-errors", () => {
   });
 
   describe("ConfigError", () => {
-    it("should create error with correct code", () => {
+    it("should create error with correct slug", () => {
       const error = new ConfigError("Invalid config");
       assertEquals(error.name, "ConfigError");
-      assertEquals(error.code, ErrorCode.CONFIG_ERROR);
+      assertEquals(error.slug, "config-invalid");
     });
   });
 
   describe("NetworkError", () => {
-    it("should create error with correct code", () => {
+    it("should create error with correct slug", () => {
       const error = new NetworkError("Connection refused");
       assertEquals(error.name, "NetworkError");
-      assertEquals(error.code, ErrorCode.NETWORK_ERROR);
+      assertEquals(error.slug, "network-error");
     });
   });
 
   describe("PermissionError", () => {
-    it("should create error with correct code", () => {
+    it("should create error with correct slug", () => {
       const error = new PermissionError("Access denied");
       assertEquals(error.name, "PermissionError");
-      assertEquals(error.code, ErrorCode.PERMISSION_ERROR);
+      assertEquals(error.slug, "permission-denied");
     });
   });
 
   describe("NotSupportedError", () => {
-    it("should create error with correct code", () => {
+    it("should create error with correct slug", () => {
       const error = new NotSupportedError("Feature not supported");
       assertEquals(error.name, "NotSupportedError");
-      assertEquals(error.code, ErrorCode.NOT_SUPPORTED);
+      assertEquals(error.slug, "not-supported");
     });
   });
 });

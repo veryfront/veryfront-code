@@ -115,7 +115,7 @@ describe("veryfront-error", () => {
       };
       const error = toError(veryfrontError);
 
-      assertEquals((error as { context: VeryfrontErrorData }).context, veryfrontError);
+      assertEquals((error as unknown as { context: VeryfrontErrorData }).context, veryfrontError);
     });
   });
 
