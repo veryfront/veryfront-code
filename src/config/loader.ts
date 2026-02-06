@@ -11,6 +11,8 @@ import { buildConfigCacheKey } from "../cache/keys.ts";
 import { DEFAULT_PORT } from "./defaults.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getErrorMessage } from "../errors/veryfront-error.ts";
+import { CONFIG_VALIDATION_FAILED } from "../errors/error-registry.ts";
+import { VeryfrontError } from "../errors/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
@@ -132,13 +134,6 @@ registerLRUCache("config-cache", configCacheByProject);
 
 let cacheRevision = 0;
 
-class ConfigValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ConfigValidationError";
-  }
-}
-
 function validateCorsConfig(userConfig: unknown): void {
   if (!userConfig || typeof userConfig !== "object") return;
 
@@ -150,9 +145,9 @@ function validateCorsConfig(userConfig: unknown): void {
 
   const origin = (cors as Record<string, unknown>).origin;
   if (origin !== undefined && typeof origin !== "string") {
-    throw new ConfigValidationError(
-      "security.cors.origin must be a string. Expected boolean or { origin?: string }",
-    );
+    throw CONFIG_VALIDATION_FAILED.create({
+      detail: "security.cors.origin must be a string. Expected boolean or { origin?: string }",
+    });
   }
 }
 
@@ -162,9 +157,9 @@ function validateConfigShape(userConfig: unknown): void {
 
   const unknown = findUnknownTopLevelKeys(userConfig as Record<string, unknown>);
   if (unknown.length > 0) {
-    throw new ConfigValidationError(
-      `Unknown config keys: ${unknown.join(", ")}. Check for typos in veryfront.config.`,
-    );
+    throw CONFIG_VALIDATION_FAILED.create({
+      detail: `Unknown config keys: ${unknown.join(", ")}. Check for typos in veryfront.config.`,
+    });
   }
 }
 
@@ -233,9 +228,9 @@ function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontConfig {
 
 function validateAndCacheConfig(userConfig: unknown, cacheKey: string): VeryfrontConfig {
   if (!userConfig || typeof userConfig !== "object" || Array.isArray(userConfig)) {
-    throw new ConfigValidationError(
-      `Expected object, received ${userConfig === null ? "null" : typeof userConfig}`,
-    );
+    throw CONFIG_VALIDATION_FAILED.create({
+      detail: `Expected object, received ${userConfig === null ? "null" : typeof userConfig}`,
+    });
   }
 
   validateCorsConfig(userConfig);
@@ -252,7 +247,7 @@ function validateAndCacheConfig(userConfig: unknown, cacheKey: string): Veryfron
 }
 
 function isConfigError(error: unknown): boolean {
-  if (error instanceof ConfigValidationError) return true;
+  if (error instanceof VeryfrontError && error.slug === "config-validation-failed") return true;
   return error instanceof Error && error.message.startsWith("Invalid veryfront.config");
 }
 

@@ -1,7 +1,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { requestWithRetry } from "./retry-handler.ts";
-import { VeryfrontAPIError } from "./types.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 
 const originalFetch = globalThis.fetch;
 
@@ -13,11 +13,11 @@ function setFetch(
 
 async function captureVeryfrontError(
   fn: () => Promise<unknown>,
-): Promise<VeryfrontAPIError> {
+): Promise<VeryfrontError> {
   try {
     await fn();
   } catch (e) {
-    return e as VeryfrontAPIError;
+    return e as VeryfrontError;
   }
   throw new Error("Expected function to throw");
 }

@@ -1,6 +1,8 @@
 import { logger } from "#veryfront/utils";
 import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { TokenStorageError, type VeryfrontTokenConfig } from "./types.ts";
+import { type VeryfrontTokenConfig } from "./types.ts";
+import { TOKEN_STORAGE_ERROR } from "#veryfront/errors/error-registry.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 
 /** Default timeout for token storage API requests (30 seconds) */
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -26,10 +28,10 @@ export class TokenStorageAPIClient {
       }
 
       if (!response.ok) {
-        throw new TokenStorageError(
-          `Failed to get token: ${response.statusText}`,
-          response.status,
-        );
+        throw TOKEN_STORAGE_ERROR.create({
+          detail: `Failed to get token: ${response.statusText}`,
+          status: response.status,
+        });
       }
 
       const data: { value: string } = await response.json();
@@ -53,10 +55,10 @@ export class TokenStorageAPIClient {
       });
 
       if (!response.ok) {
-        throw new TokenStorageError(
-          `Failed to set token: ${response.statusText}`,
-          response.status,
-        );
+        throw TOKEN_STORAGE_ERROR.create({
+          detail: `Failed to set token: ${response.statusText}`,
+          status: response.status,
+        });
       }
     } catch (error) {
       throw this.wrapError(error, "Set", key, `Failed to set token`);
@@ -76,10 +78,10 @@ export class TokenStorageAPIClient {
         return;
       }
 
-      throw new TokenStorageError(
-        `Failed to delete token: ${response.statusText}`,
-        response.status,
-      );
+      throw TOKEN_STORAGE_ERROR.create({
+        detail: `Failed to delete token: ${response.statusText}`,
+        status: response.status,
+      });
     } catch (error) {
       throw this.wrapError(error, "Delete", key, `Failed to delete token`);
     }
@@ -102,16 +104,16 @@ export class TokenStorageAPIClient {
       });
 
       if (!response.ok) {
-        throw new TokenStorageError(
-          `Failed to list tokens: ${response.statusText}`,
-          response.status,
-        );
+        throw TOKEN_STORAGE_ERROR.create({
+          detail: `Failed to list tokens: ${response.statusText}`,
+          status: response.status,
+        });
       }
 
       const data: { keys?: string[] } = await response.json();
       return data.keys ?? [];
     } catch (error) {
-      if (error instanceof TokenStorageError) {
+      if (error instanceof VeryfrontError && error.slug === "token-storage-error") {
         throw error;
       }
 
@@ -122,7 +124,7 @@ export class TokenStorageAPIClient {
         error: message,
       });
 
-      throw new TokenStorageError(`Failed to list tokens: ${message}`);
+      throw TOKEN_STORAGE_ERROR.create({ detail: `Failed to list tokens: ${message}` });
     }
   }
 
@@ -155,8 +157,8 @@ export class TokenStorageAPIClient {
     action: "Get" | "Set" | "Delete",
     key: string,
     prefixMessage: string,
-  ): TokenStorageError {
-    if (error instanceof TokenStorageError) {
+  ): VeryfrontError {
+    if (error instanceof VeryfrontError && error.slug === "token-storage-error") {
       return error;
     }
 
@@ -164,7 +166,7 @@ export class TokenStorageAPIClient {
 
     logger.error(`[TokenStorageAPIClient] ${action} failed`, { key, error: message });
 
-    return new TokenStorageError(`${prefixMessage}: ${message}`);
+    return TOKEN_STORAGE_ERROR.create({ detail: `${prefixMessage}: ${message}` });
   }
 
   private async fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
@@ -227,8 +229,8 @@ export class TokenStorageAPIClient {
       }
     }
 
-    throw new TokenStorageError(
-      `Request failed after ${maxRetries} retries: ${lastError?.message}`,
-    );
+    throw TOKEN_STORAGE_ERROR.create({
+      detail: `Request failed after ${maxRetries} retries: ${lastError?.message}`,
+    });
   }
 }

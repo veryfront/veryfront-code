@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ValidationError } from "./errors.ts";
+import { VeryfrontError } from "./errors.ts";
 import { parseJsonBody, parseQueryParams } from "./parsers.ts";
 import { type RequestLimits, type ValidatedData } from "./types.ts";
 
@@ -33,12 +33,13 @@ export function createValidatedHandler<TBody = unknown, TQuery = unknown>(
 
       return await handler(request, validated);
     } catch (error) {
-      if (!(error instanceof ValidationError)) {
+      if (!(error instanceof VeryfrontError && error.slug === "input-validation-failed")) {
         throw error;
       }
 
+      const details = (error.context as { details?: unknown } | undefined)?.details;
       return new Response(
-        JSON.stringify({ error: error.message, details: error.details }),
+        JSON.stringify({ error: error.message, details }),
         { status: 400, headers: { "Content-Type": "application/json" } },
       );
     }

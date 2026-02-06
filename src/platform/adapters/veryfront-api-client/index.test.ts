@@ -9,7 +9,8 @@ describe("veryfront-api-client/index.ts exports", () => {
       ["VeryfrontAPIClient", "function"],
       ["VeryfrontAPIOperations", "function"],
       ["requestWithRetry", "function"],
-      ["VeryfrontAPIError", "function"],
+      ["API_CLIENT_ERROR", "object"],
+      ["VeryfrontError", "function"],
       ["API_ENDPOINTS", "object"],
     ];
 

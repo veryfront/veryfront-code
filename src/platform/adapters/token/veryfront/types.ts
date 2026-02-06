@@ -128,17 +128,4 @@ export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontT
   };
 }
 
-/**
- * Error thrown by token storage operations
- */
-export class TokenStorageError extends Error {
-  public readonly statusCode?: number;
-  public readonly details?: Record<string, unknown>;
-
-  constructor(message: string, statusCode?: number, details?: Record<string, unknown>) {
-    super(message);
-    this.name = "TokenStorageError";
-    this.statusCode = statusCode;
-    this.details = details;
-  }
-}
+export { TOKEN_STORAGE_ERROR } from "#veryfront/errors/error-registry.ts";

@@ -60,6 +60,15 @@ export const CORS_CONFIG_INVALID = defineError({
   suggestion: "Review CORS settings in your configuration",
 });
 
+/** Config file validation failures (replaces ConfigValidationError) */
+export const CONFIG_VALIDATION_FAILED = defineError({
+  slug: "config-validation-failed",
+  category: "CONFIG",
+  status: 400,
+  title: "Configuration validation failed",
+  suggestion: "Check configuration values against requirements",
+});
+
 // =============================================================================
 // BUILD - Build & compilation errors
 // =============================================================================
@@ -360,6 +369,42 @@ export const NETWORK_ERROR = defineError({
   suggestion: "Check network connectivity and retry",
 });
 
+/** API client request/response errors (replaces VeryfrontAPIError) */
+export const API_CLIENT_ERROR = defineError({
+  slug: "api-client-error",
+  category: "SERVER",
+  status: 500,
+  title: "API client request failed",
+  suggestion: "Check API connectivity and authentication",
+});
+
+/** Token storage adapter failures (replaces TokenStorageError) */
+export const TOKEN_STORAGE_ERROR = defineError({
+  slug: "token-storage-error",
+  category: "SERVER",
+  status: 500,
+  title: "Token storage operation failed",
+  suggestion: "Check token storage backend and credentials",
+});
+
+/** Cache path invariant violations (replaces CacheInvariantError) */
+export const CACHE_INVARIANT_VIOLATION = defineError({
+  slug: "cache-invariant-violation",
+  category: "SERVER",
+  status: 500,
+  title: "Cache path invariant violated",
+  suggestion: "Clear the cache and rebuild",
+});
+
+/** Both primary and fallback operations failed (replaces FallbackExecutionError) */
+export const FALLBACK_EXHAUSTED = defineError({
+  slug: "fallback-exhausted",
+  category: "SERVER",
+  status: 500,
+  title: "Primary and fallback operations both failed",
+  suggestion: "Check service availability and connectivity",
+});
+
 // =============================================================================
 // BOUNDARY - RSC/client boundary violations
 // =============================================================================
@@ -596,6 +641,24 @@ export const NOT_SUPPORTED = defineError({
   suggestion: "Check documentation for supported features",
 });
 
+/** Path traversal / secure-fs violations (replaces SecurityError) */
+export const SECURITY_VIOLATION = defineError({
+  slug: "security-violation",
+  category: "GENERAL",
+  status: 403,
+  title: "Security violation detected",
+  suggestion: "Check for path traversal or unauthorized access attempts",
+});
+
+/** HTTP request input validation failures (replaces ValidationError) */
+export const INPUT_VALIDATION_FAILED = defineError({
+  slug: "input-validation-failed",
+  category: "GENERAL",
+  status: 400,
+  title: "Input validation failed",
+  suggestion: "Check request input against validation rules",
+});
+
 // =============================================================================
 // Registry exports
 // =============================================================================
@@ -612,6 +675,7 @@ export const ERROR_REGISTRY = {
   "config-type-error": CONFIG_TYPE_ERROR,
   "import-map-invalid": IMPORT_MAP_INVALID,
   "cors-config-invalid": CORS_CONFIG_INVALID,
+  "config-validation-failed": CONFIG_VALIDATION_FAILED,
 
   // BUILD
   "build-failed": BUILD_FAILED,
@@ -657,6 +721,10 @@ export const ERROR_REGISTRY = {
   "service-overloaded": SERVICE_OVERLOADED,
   "cache-path-mismatch": CACHE_PATH_MISMATCH,
   "network-error": NETWORK_ERROR,
+  "api-client-error": API_CLIENT_ERROR,
+  "token-storage-error": TOKEN_STORAGE_ERROR,
+  "cache-invariant-violation": CACHE_INVARIANT_VIOLATION,
+  "fallback-exhausted": FALLBACK_EXHAUSTED,
 
   // BOUNDARY
   "client-boundary-violation": CLIENT_BOUNDARY_VIOLATION,
@@ -694,6 +762,8 @@ export const ERROR_REGISTRY = {
   "timeout-error": TIMEOUT_ERROR,
   "initialization-error": INITIALIZATION_ERROR,
   "not-supported": NOT_SUPPORTED,
+  "security-violation": SECURITY_VIOLATION,
+  "input-validation-failed": INPUT_VALIDATION_FAILED,
 } as const;
 
 export type ErrorSlug = keyof typeof ERROR_REGISTRY;

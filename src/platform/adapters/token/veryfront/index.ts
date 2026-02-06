@@ -3,8 +3,8 @@ export { VeryfrontTokenAdapter } from "./adapter.ts";
 export { MemoryTokenAdapter } from "./memory-adapter.ts";
 export {
   createTokenConfig,
+  TOKEN_STORAGE_ERROR,
   type TokenStorageAdapter,
   type TokenStorageAdapterConfig,
-  TokenStorageError,
   type VeryfrontTokenConfig,
 } from "./types.ts";

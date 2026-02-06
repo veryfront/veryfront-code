@@ -6,7 +6,7 @@ import {
   type TokenProvider,
   VeryfrontAPIOperations,
 } from "./operations.ts";
-import { type VeryfrontAPIConfig, VeryfrontAPIError } from "./types.ts";
+import { API_CLIENT_ERROR, type VeryfrontAPIConfig } from "./types.ts";
 
 /**
  * File context for API operations.
@@ -45,7 +45,7 @@ export class VeryfrontAPIClient {
     const tokenProvider: TokenProvider = () => {
       if (this.requestToken) return this.requestToken;
       if (this.config.apiToken) return this.config.apiToken;
-      throw new VeryfrontAPIError("No API token available", 401);
+      throw API_CLIENT_ERROR.create({ detail: "No API token available", status: 401 });
     };
 
     this.operations = new VeryfrontAPIOperations(
@@ -166,7 +166,10 @@ export class VeryfrontAPIClient {
     logger.debug("[VeryfrontAPIClient] doInitialize START", { slug });
 
     if (!slug) {
-      throw new VeryfrontAPIError("No project slug available for initialization", 400);
+      throw API_CLIENT_ERROR.create({
+        detail: "No project slug available for initialization",
+        status: 400,
+      });
     }
 
     if (this.config.projectId) {
@@ -445,10 +448,10 @@ export class VeryfrontAPIClient {
       return this.operations.listAllEnvironmentFiles(projectRef, environmentName);
     }
 
-    throw new VeryfrontAPIError(
-      "Cannot list published files without releaseId or environmentName",
-      400,
-    );
+    throw API_CLIENT_ERROR.create({
+      detail: "Cannot list published files without releaseId or environmentName",
+      status: 400,
+    });
   }
 
   async getPublishedFileContent(
@@ -468,9 +471,9 @@ export class VeryfrontAPIClient {
       return result.content;
     }
 
-    throw new VeryfrontAPIError(
-      "Cannot fetch published file without releaseId or environmentName",
-      400,
-    );
+    throw API_CLIENT_ERROR.create({
+      detail: "Cannot fetch published file without releaseId or environmentName",
+      status: 400,
+    });
   }
 }

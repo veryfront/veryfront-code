@@ -7,13 +7,14 @@ export {
 } from "./operations.ts";
 export { type RequestOptions, requestWithRetry, type RetryConfig } from "./retry-handler.ts";
 export {
+  API_CLIENT_ERROR,
   type Environment,
   type LookupDomainResponse,
   type PageInfo,
   type Project,
   type ProjectFile,
   type VeryfrontAPIConfig,
-  VeryfrontAPIError,
+  VeryfrontError,
 } from "./types.ts";
 export {
   API_ENDPOINTS,

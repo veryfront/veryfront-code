@@ -44,9 +44,11 @@ export interface ErrorDefinition {
  */
 export interface ErrorCreateOptions {
   detail?: string;
-  cause?: string;
+  cause?: unknown;
   instance?: string;
   context?: unknown;
+  /** Override the definition's default HTTP status (e.g., for per-request status codes) */
+  status?: number;
 }
 
 /**
@@ -63,10 +65,10 @@ export function defineError(definition: ErrorDefinition): RegisteredError {
   return {
     ...definition,
     create(options?: ErrorCreateOptions): VeryfrontError {
-      return new VeryfrontError(definition.title, {
+      return new VeryfrontError(options?.detail || definition.title, {
         slug: definition.slug,
         category: definition.category,
-        status: definition.status,
+        status: options?.status ?? definition.status,
         title: definition.title,
         suggestion: definition.suggestion,
         detail: options?.detail,
@@ -93,14 +95,13 @@ export interface VeryfrontErrorOptions extends ErrorCreateOptions {
  * Veryfront Error class with slug-based error identity
  */
 export class VeryfrontError extends Error {
-  // Slug-based properties
   public slug: string;
   public category: ErrorCategory;
   public status: number;
   public title: string;
   public suggestion?: string;
   public detail?: string;
-  public override cause?: string;
+  public override cause?: unknown;
   public instance?: string;
   public context?: unknown;
 
@@ -131,7 +132,7 @@ export class VeryfrontError extends Error {
       instance: this.instance,
       category: this.category,
       suggestion: this.suggestion,
-      cause: this.cause,
+      cause: typeof this.cause === "string" ? this.cause : undefined,
     };
   }
 

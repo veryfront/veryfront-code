@@ -29,14 +29,5 @@ export interface VeryfrontAPIConfig {
   };
 }
 
-export class VeryfrontAPIError extends Error {
-  public status?: number;
-  public details?: unknown;
-
-  constructor(message: string, status?: number, details?: unknown) {
-    super(message);
-    this.name = "VeryfrontAPIError";
-    this.status = status;
-    this.details = details;
-  }
-}
+export { API_CLIENT_ERROR } from "#veryfront/errors/error-registry.ts";
+export { VeryfrontError } from "#veryfront/errors/types.ts";

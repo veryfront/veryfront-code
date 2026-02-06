@@ -14,6 +14,7 @@ import {
   type ValidationResult,
 } from "./path-validation.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SECURITY_VIOLATION } from "#veryfront/errors/error-registry.ts";
 
 export type SecurityContext =
   | "user-input"
@@ -140,11 +141,10 @@ export class SecureFs {
   ): void {
     if (result.valid || !this.config.throwOnError) return;
 
-    throw new SecurityError(
-      `Path validation failed for ${operation}: ${result.error}`,
-      result.code,
-      path,
-    );
+    throw SECURITY_VIOLATION.create({
+      detail: `Path validation failed for ${operation}: ${result.error}`,
+      context: { code: result.code, path },
+    });
   }
 
   private async validatePathForOperation(
@@ -172,7 +172,10 @@ export class SecureFs {
     path: string,
   ): string {
     if (validation.valid && validation.canonicalPath) return validation.canonicalPath;
-    throw new SecurityError("Invalid path", validation.code, path);
+    throw SECURITY_VIOLATION.create({
+      detail: "Invalid path",
+      context: { code: validation.code, path },
+    });
   }
 
   readFile(path: string): Promise<string> {
@@ -260,11 +263,10 @@ export class SecureFs {
 
     if (validatedPaths.length === 0) {
       if (this.config.throwOnError) {
-        throw new SecurityError(
-          "No valid paths to watch",
-          "NO_VALID_PATHS",
-          paths.toString(),
-        );
+        throw SECURITY_VIOLATION.create({
+          detail: "No valid paths to watch",
+          context: { code: "NO_VALID_PATHS", path: paths.toString() },
+        });
       }
 
       return this.config.adapter.fs.watch([], options);
@@ -292,16 +294,7 @@ export class SecureFs {
   }
 }
 
-export class SecurityError extends Error {
-  constructor(
-    message: string,
-    public code?: string,
-    public path?: string,
-  ) {
-    super(message);
-    this.name = "SecurityError";
-  }
-}
+export { SECURITY_VIOLATION } from "#veryfront/errors/error-registry.ts";
 
 export function createSecureFs(config: SecureFsConfig): SecureFs {
   return new SecureFs(config);

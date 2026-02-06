@@ -1,20 +1,12 @@
 import { logger } from "#veryfront/utils";
+import { FALLBACK_EXHAUSTED } from "#veryfront/errors/error-registry.ts";
+
+export { FALLBACK_EXHAUSTED } from "#veryfront/errors/error-registry.ts";
 
 export interface FallbackOptions {
   operationName: string;
   logError?: boolean;
   rethrowOnFallbackFailure?: boolean;
-}
-
-export class FallbackExecutionError extends Error {
-  constructor(
-    message: string,
-    public readonly primaryError: unknown,
-    public readonly fallbackError?: unknown,
-  ) {
-    super(message);
-    this.name = "FallbackExecutionError";
-  }
 }
 
 function logPrimaryFailure(operationName: string, error: unknown): void {
@@ -43,11 +35,11 @@ function handleFallbackFailure(
   }
 
   if (rethrowOnFallbackFailure) {
-    throw new FallbackExecutionError(
-      `Both primary and fallback operations failed for ${operationName}`,
-      primaryError,
-      fallbackError,
-    );
+    throw FALLBACK_EXHAUSTED.create({
+      detail: `Both primary and fallback operations failed for ${operationName}`,
+      cause: primaryError,
+      context: { operationName, primaryError, fallbackError },
+    });
   }
 
   throw fallbackError;

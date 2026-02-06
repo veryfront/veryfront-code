@@ -4,14 +4,15 @@ export type { HandlerHelpers } from "./http/base-handler.ts";
 export {
   CommonSchemas,
   createValidatedHandler,
+  createValidationError,
   DEFAULT_LIMITS,
+  INPUT_VALIDATION_FAILED,
   parseFormData,
   parseJsonBody,
   parseQueryParams,
   readBodyWithLimit,
   sanitizeData,
   validateRequestLimits,
-  ValidationError,
 } from "./input-validation/index.ts";
 export type {
   ParseFormOptions,
@@ -76,5 +77,10 @@ export {
 } from "./path-validation.ts";
 export type { ValidationLevel, ValidationOptions, ValidationResult } from "./path-validation.ts";
 
-export { createSecureFs, SecureFs, SecurityError, wrapAdapterWithSecurity } from "./secure-fs.ts";
+export {
+  createSecureFs,
+  SecureFs,
+  SECURITY_VIOLATION,
+  wrapAdapterWithSecurity,
+} from "./secure-fs.ts";
 export type { SecureFsConfig, SecurityContext, SecurityEvent } from "./secure-fs.ts";

@@ -31,11 +31,12 @@ export type { APIContext, APIHandler, APIResponse, APIRoute } from "#veryfront/r
 export {
   CommonSchemas,
   createValidatedHandler,
+  createValidationError,
+  INPUT_VALIDATION_FAILED,
   parseFormData,
   parseJsonBody,
   parseQueryParams,
   sanitizeData,
-  ValidationError,
 } from "#veryfront/security";
 export type { ValidatedHandlerConfig, ValidatedHandlerFunction } from "#veryfront/security";
 

@@ -1,7 +1,7 @@
 import { logger } from "#veryfront/utils";
 import { z } from "zod";
 import { requestWithRetry, type RetryConfig } from "./retry-handler.ts";
-import { VeryfrontAPIError } from "./types.ts";
+import { API_CLIENT_ERROR } from "./types.ts";
 import {
   BranchFileDetailSchema,
   EnvironmentFileDetailSchema,
@@ -120,9 +120,9 @@ export class VeryfrontAPIOperations {
   getProjectId(): string {
     if (this.projectId) return this.projectId;
 
-    throw new VeryfrontAPIError(
-      "Veryfront API client not initialized. Call initialize() with a project ID first.",
-    );
+    throw API_CLIENT_ERROR.create({
+      detail: "Veryfront API client not initialized. Call initialize() with a project ID first.",
+    });
   }
 
   async listProjects(options?: {

@@ -29,7 +29,7 @@ import {
   assertLocal,
   assertPortable,
   CACHE_DIR_TOKEN,
-  CacheInvariantError,
+  VeryfrontError,
 } from "./http-cache-invariants.ts";
 
 /** Maximum number of keys per batch request to distributed cache API */
@@ -208,7 +208,9 @@ export class HttpBundleCache {
 
       return { code: localCode, wasGzipped: decoded.wasGzipped };
     } catch (error) {
-      if (error instanceof CacheInvariantError) throw error;
+      if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
+        throw error;
+      }
       logger.debug("[HTTP-CACHE-WRAPPER] Get code failed", { hash: hashStr, error });
       return { code: null, wasGzipped: false, failReason: "error" };
     }
@@ -250,7 +252,9 @@ export class HttpBundleCache {
 
       return { code: localCode, wasGzipped: decoded.wasGzipped };
     } catch (error) {
-      if (error instanceof CacheInvariantError) throw error;
+      if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
+        throw error;
+      }
       logger.debug("[HTTP-CACHE-WRAPPER] Get code by URL failed", { hash: hashStr, error });
       return { code: null, wasGzipped: false, failReason: "error" };
     }
@@ -294,7 +298,9 @@ export class HttpBundleCache {
 
       logger.debug("[HTTP-CACHE-WRAPPER] Stored code in distributed cache", { hash: hashStr });
     } catch (error) {
-      if (error instanceof CacheInvariantError) throw error;
+      if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
+        throw error;
+      }
       logger.debug("[HTTP-CACHE-WRAPPER] Set code failed", { hash: hashStr, error });
     }
   }
