@@ -3,65 +3,15 @@ import { isNotFoundError, makeTempDir, mkdir, remove } from "../../src/platform/
 import { createDevServer } from "../../src/server/dev-server.ts";
 import { startProductionServer } from "../../src/server/production-server.ts";
 import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";
-import { getFreePort } from "./utils.ts";
 import { testDelay } from "#veryfront/testing";
-
-async function sleep(ms: number): Promise<void> {
-  await testDelay(ms);
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeout: number, label: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-
-  try {
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`${label} timeout after ${timeout}ms`)), timeout);
-    });
-
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetch(url, { signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function closeResponse(res: Response | undefined | null): Promise<void> {
-  if (!res) return;
-
-  try {
-    await res.body?.cancel?.();
-  } catch {
-    // ignore cancellation errors in tests
-  }
-
-  try {
-    // fallback read in case cancel is a no-op
-    await res.arrayBuffer();
-  } catch {
-    // body may already be consumed
-  }
-}
-
-function getServerUrl(
-  server: TestServer,
-  checkPath: string,
-  defaultPort: number,
-  defaultHostname: string,
-): string {
-  const port = server.port ?? server.addr?.port ?? defaultPort;
-  const hostname = server.hostname ?? server.addr?.hostname ?? defaultHostname;
-  return `http://${hostname}:${port}${checkPath}`;
-}
+import { CLEANUP_CONFIG, SERVER_CONFIG, TEST_TIMEOUTS } from "./constants.ts";
+import {
+  getHttpServerUrl,
+  pollHttpReadyByTimeout,
+  pollHttpStoppedByTimeout,
+  waitForHttpServerReadySignal,
+} from "./http-polling.ts";
+import { getFreePort } from "./utils.ts";
 
 export interface TestServer {
   ready: Promise<void>;
@@ -85,42 +35,33 @@ export async function waitForServerReady(
   server: TestServer,
   options: { timeout?: number; checkPath?: string; retryDelay?: number } = {},
 ): Promise<void> {
-  const { timeout = 10000, checkPath = "/", retryDelay = 50 } = options;
-  const url = getServerUrl(server, checkPath, 3000, "localhost");
+  const {
+    timeout = TEST_TIMEOUTS.SERVER_STARTUP,
+    checkPath = "/",
+    retryDelay = CLEANUP_CONFIG.CLEANUP_RETRY_DELAY,
+  } = options;
+  const url = getHttpServerUrl(server, {
+    checkPath,
+    defaultPort: 3000,
+    defaultHostname: "localhost",
+  });
 
-  if (typeof server.ready?.then === "function") {
-    await withTimeout(server.ready, timeout, "Server ready");
-  }
+  await waitForHttpServerReadySignal(server, {
+    timeoutMs: timeout,
+    timeoutMessage: `Server ready timeout after ${timeout}ms`,
+  });
 
-  const startTime = Date.now();
-  let lastError: Error | null = null;
-  let attempts = 0;
+  const result = await pollHttpReadyByTimeout(url, {
+    timeoutMs: timeout,
+    retryDelayMs: retryDelay,
+    requestTimeoutMs: SERVER_CONFIG.FETCH_TIMEOUT,
+    delay: testDelay,
+  });
 
-  while (Date.now() - startTime < timeout) {
-    attempts++;
-
-    try {
-      const response = await fetchWithTimeout(url, 2000);
-      try {
-        if (response.status < 200 || response.status >= 600) continue;
-
-        const verifyResponse = await fetchWithTimeout(url, 2000);
-        try {
-          if (verifyResponse.status >= 200 && verifyResponse.status < 600) return;
-        } finally {
-          await closeResponse(verifyResponse);
-        }
-      } finally {
-        await closeResponse(response);
-      }
-    } catch (error) {
-      lastError = error as Error;
-      if (Date.now() - startTime < timeout) await sleep(retryDelay);
-    }
-  }
+  if (result.ready) return;
 
   throw new Error(
-    `Server not ready after ${timeout}ms (${attempts} attempts). Last error: ${lastError?.message}`,
+    `Server not ready after ${timeout}ms (${result.attempts} attempts). Last error: ${result.lastError?.message}`,
   );
 }
 
@@ -131,23 +72,21 @@ export async function waitForServerStopped(
   server: TestServer,
   options: { timeout?: number; checkPath?: string } = {},
 ): Promise<void> {
-  const { timeout = 5000, checkPath = "/" } = options;
-  const url = getServerUrl(server, checkPath, 3000, "localhost");
+  const { timeout = CLEANUP_CONFIG.GRACEFUL_TIMEOUT, checkPath = "/" } = options;
+  const url = getHttpServerUrl(server, {
+    checkPath,
+    defaultPort: 3000,
+    defaultHostname: "localhost",
+  });
 
-  const startTime = Date.now();
+  const stopped = await pollHttpStoppedByTimeout(url, {
+    timeoutMs: timeout,
+    retryDelayMs: CLEANUP_CONFIG.CLEANUP_RETRY_DELAY,
+    requestTimeoutMs: 100,
+    delay: testDelay,
+  });
 
-  while (Date.now() - startTime < timeout) {
-    try {
-      const res = await fetchWithTimeout(url, 100);
-      try {
-        await sleep(50);
-      } finally {
-        await closeResponse(res);
-      }
-    } catch {
-      return;
-    }
-  }
+  if (stopped) return;
 
   throw new Error(`Server still running after ${timeout}ms`);
 }

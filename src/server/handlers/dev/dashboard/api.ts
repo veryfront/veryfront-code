@@ -12,6 +12,7 @@ import {
   getHeapStats,
 } from "#veryfront/utils/memory/profiler.ts";
 import { ERROR_CATALOG } from "#veryfront/errors/catalog/index.ts";
+import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { TransformStage } from "#veryfront/transforms/pipeline/types.ts";
 import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
@@ -49,10 +50,6 @@ function jsonResponse(data: unknown, status = 200): Response {
 
 function errorResponse(message: string, status = 500): Response {
   return jsonResponse({ error: message }, status);
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export function handleDashboardAPI(

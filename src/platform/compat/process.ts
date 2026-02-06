@@ -58,6 +58,68 @@ export function getEnv(key: string): string | undefined {
   return undefined;
 }
 
+const DEFAULT_ENV_TRUE_VALUES = ["1", "true", "yes"] as const;
+const DEFAULT_ENV_FALSE_VALUES = ["0", "false", "no"] as const;
+
+export interface EnvBooleanOptions {
+  trueValues?: readonly string[];
+  falseValues?: readonly string[];
+  trim?: boolean;
+  caseSensitive?: boolean;
+}
+
+function normalizeEnvToken(
+  value: string,
+  options: { trim: boolean; caseSensitive: boolean },
+): string {
+  const normalized = options.trim ? value.trim() : value;
+  return options.caseSensitive ? normalized : normalized.toLowerCase();
+}
+
+export function getEnvString(key: string): string | undefined;
+export function getEnvString(key: string, fallback: string): string;
+export function getEnvString(key: string, fallback?: string): string | undefined {
+  const value = getEnv(key);
+  if (value === undefined) return fallback;
+  return value;
+}
+
+export function getEnvNumber(key: string): number | undefined;
+export function getEnvNumber(key: string, fallback: number): number;
+export function getEnvNumber(key: string, fallback?: number): number | undefined {
+  const value = getEnvString(key);
+  if (value === undefined) return fallback;
+
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed)) return fallback ?? Number.NaN;
+  return parsed;
+}
+
+export function getEnvBoolean(
+  key: string,
+  fallback = false,
+  options: EnvBooleanOptions = {},
+): boolean {
+  const value = getEnvString(key);
+  if (value === undefined) return fallback;
+
+  const trim = options.trim ?? true;
+  const caseSensitive = options.caseSensitive ?? false;
+  const normalized = normalizeEnvToken(value, { trim, caseSensitive });
+
+  const trueValues = options.trueValues ?? DEFAULT_ENV_TRUE_VALUES;
+  for (const trueValue of trueValues) {
+    if (normalized === normalizeEnvToken(trueValue, { trim, caseSensitive })) return true;
+  }
+
+  const falseValues = options.falseValues ?? DEFAULT_ENV_FALSE_VALUES;
+  for (const falseValue of falseValues) {
+    if (normalized === normalizeEnvToken(falseValue, { trim, caseSensitive })) return false;
+  }
+
+  return fallback;
+}
+
 /**
  * Get an environment variable or throw if not set
  * @throws Error if the environment variable is not set

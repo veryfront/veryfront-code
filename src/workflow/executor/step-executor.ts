@@ -1,5 +1,6 @@
 import type { Agent, AgentResponse } from "#veryfront/agent";
 import type { Tool } from "#veryfront/tool";
+import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import type {
   NodeState,
   RetryConfig,
@@ -92,7 +93,7 @@ export class StepExecutor {
           executionTime: Date.now() - startTime,
         };
       } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
+        lastError = ensureError(error);
 
         if (attempt < maxAttempts && this.isRetryableError(lastError, retryConfig)) {
           await this.sleep(this.calculateRetryDelay(attempt, retryConfig));

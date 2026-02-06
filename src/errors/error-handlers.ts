@@ -1,6 +1,7 @@
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { VeryfrontError } from "./types.ts";
 import { RENDER_ERROR } from "./error-registry.ts";
+import { ensureError } from "./veryfront-error.ts";
 
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_INITIAL_DELAY_MS = 100;
@@ -36,7 +37,7 @@ export function wrapError(
   message: string,
   context?: unknown,
 ): VeryfrontError {
-  const originalError = error instanceof Error ? error : new Error(String(error));
+  const originalError = ensureError(error);
   const errorMessage = `${message}: ${originalError.message}`;
 
   const wrappedContext = {
@@ -75,12 +76,12 @@ export function logAndThrow(
   message?: string,
   logger: typeof serverLogger = serverLogger,
 ): never {
-  const errorObj = error instanceof Error ? error : new Error(String(error));
+  const errorObj = ensureError(error);
   const logMessage = message ? `${message}: ${errorObj.message}` : errorObj.message;
 
   safeLog(() => logger.error(logMessage, error));
 
-  throw error instanceof Error ? error : errorObj;
+  throw errorObj;
 }
 
 export async function handleErrorWithFallback<T>(

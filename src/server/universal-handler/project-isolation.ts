@@ -1,5 +1,5 @@
 import { serverLogger as logger } from "#veryfront/utils";
-import { getEnv } from "#veryfront/compat/process.ts";
+import { getEnvNumber } from "#veryfront/compat/process.ts";
 
 export interface ProjectIsolationConfig {
   maxConcurrentPerProject: number;
@@ -190,16 +190,8 @@ export class ProjectIsolationManager {
   }
 }
 
-function parseEnvInt(name: string, fallback: number): number {
-  const value = getEnv(name);
-  if (!value) return fallback;
-
-  const parsed = Number.parseInt(value, 10);
-  return Number.isNaN(parsed) ? fallback : parsed;
-}
-
 export const projectIsolation = new ProjectIsolationManager({
-  maxConcurrentPerProject: parseEnvInt("PROJECT_MAX_CONCURRENT", 20),
-  circuitBreakerThreshold: parseEnvInt("PROJECT_CIRCUIT_THRESHOLD", 5),
-  circuitResetTimeMs: parseEnvInt("PROJECT_CIRCUIT_RESET_MS", 30_000),
+  maxConcurrentPerProject: getEnvNumber("PROJECT_MAX_CONCURRENT", 20),
+  circuitBreakerThreshold: getEnvNumber("PROJECT_CIRCUIT_THRESHOLD", 5),
+  circuitResetTimeMs: getEnvNumber("PROJECT_CIRCUIT_RESET_MS", 30_000),
 });

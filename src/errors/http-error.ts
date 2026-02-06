@@ -8,6 +8,7 @@
  */
 
 import { type ErrorCategory, type RFC9457Response, VeryfrontError } from "./types.ts";
+import { getErrorMessage } from "./veryfront-error.ts";
 import type { RegisteredError } from "./types.ts";
 
 /**
@@ -98,7 +99,7 @@ export function errorToResponse(error: unknown, instance?: string): Response {
   }
 
   // Wrap unknown errors
-  const message = error instanceof Error ? error.message : String(error);
+  const message = getErrorMessage(error);
 
   return createProblemResponse({
     slug: "unknown-error",

@@ -14,7 +14,10 @@ import {
   execPath,
   getArgs,
   getEnv,
+  getEnvBoolean,
+  getEnvNumber,
   getEnvOverlayStorage,
+  getEnvString,
   getOsType,
   getRuntimeVersion,
   getStdout,
@@ -78,6 +81,123 @@ describe("Process Compat", () => {
       const specialValue = "hello=world&foo=bar;baz";
       setEnv(testKey, specialValue);
       assertEquals(getEnv(testKey), specialValue);
+    });
+  });
+
+  describe("getEnvString", () => {
+    const testKey = "__TEST_GET_ENV_STRING__";
+
+    afterEach(() => {
+      try {
+        deleteEnv(testKey);
+      } catch {
+        // Ignore if not supported
+      }
+    });
+
+    it("should return undefined when env var is not set", () => {
+      assertEquals(getEnvString(testKey), undefined);
+    });
+
+    it("should return fallback when env var is not set", () => {
+      assertEquals(getEnvString(testKey, "fallback"), "fallback");
+    });
+
+    it("should not replace empty strings with fallback", () => {
+      setEnv(testKey, "");
+      assertEquals(getEnvString(testKey, "fallback"), "");
+    });
+  });
+
+  describe("getEnvNumber", () => {
+    const testKey = "__TEST_GET_ENV_NUMBER__";
+
+    afterEach(() => {
+      try {
+        deleteEnv(testKey);
+      } catch {
+        // Ignore if not supported
+      }
+    });
+
+    it("should return undefined for missing env var when fallback is not provided", () => {
+      assertEquals(getEnvNumber(testKey), undefined);
+    });
+
+    it("should return NaN for invalid env var when fallback is not provided", () => {
+      setEnv(testKey, "invalid");
+      assertEquals(Number.isNaN(getEnvNumber(testKey) ?? Number.NaN), true);
+    });
+
+    it("should return parsed number for valid values", () => {
+      setEnv(testKey, "42");
+      assertEquals(getEnvNumber(testKey), 42);
+    });
+
+    it("should use fallback for missing env var", () => {
+      assertEquals(getEnvNumber(testKey, 99), 99);
+    });
+
+    it("should use fallback for invalid env var", () => {
+      setEnv(testKey, "invalid");
+      assertEquals(getEnvNumber(testKey, 99), 99);
+    });
+  });
+
+  describe("getEnvBoolean", () => {
+    const testKey = "__TEST_GET_ENV_BOOLEAN__";
+
+    afterEach(() => {
+      try {
+        deleteEnv(testKey);
+      } catch {
+        // Ignore if not supported
+      }
+    });
+
+    it("should return fallback for missing env var", () => {
+      assertEquals(getEnvBoolean(testKey, true), true);
+      assertEquals(getEnvBoolean(testKey, false), false);
+    });
+
+    it("should parse default truthy values", () => {
+      setEnv(testKey, "true");
+      assertEquals(getEnvBoolean(testKey), true);
+      setEnv(testKey, "1");
+      assertEquals(getEnvBoolean(testKey), true);
+      setEnv(testKey, "yes");
+      assertEquals(getEnvBoolean(testKey), true);
+    });
+
+    it("should parse default falsy values", () => {
+      setEnv(testKey, "false");
+      assertEquals(getEnvBoolean(testKey, true), false);
+      setEnv(testKey, "0");
+      assertEquals(getEnvBoolean(testKey, true), false);
+      setEnv(testKey, "no");
+      assertEquals(getEnvBoolean(testKey, true), false);
+    });
+
+    it("should support strict PROXY_MODE-style matching", () => {
+      setEnv(testKey, "true");
+      assertEquals(
+        getEnvBoolean(testKey, false, {
+          trueValues: ["1"],
+          trim: false,
+          caseSensitive: true,
+        }),
+        false,
+      );
+
+      setEnv(testKey, "1");
+      assertEquals(
+        getEnvBoolean(testKey, false, {
+          trueValues: ["1"],
+          trim: false,
+          caseSensitive: true,
+        }),
+        true,
+      );
     });
   });
 

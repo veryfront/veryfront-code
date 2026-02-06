@@ -5,6 +5,7 @@
  **************************/
 
 import { logger } from "#veryfront/utils";
+import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import type {
   BlobResolver,
   NodeState,
@@ -284,7 +285,7 @@ export class WorkflowExecutor {
       await workflow.onError?.(error, result.context);
       this.config.onError?.(run, error);
     } catch (error) {
-      const normalizedError = error instanceof Error ? error : new Error(String(error));
+      const normalizedError = ensureError(error);
       await this.failRun(runId, normalizedError, run.context, run.nodeStates);
 
       await workflow.onError?.(normalizedError, run.context);

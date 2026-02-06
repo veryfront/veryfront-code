@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import { logger } from "#veryfront/utils";
 import type { CacheBackend } from "./backend.ts";
 
@@ -110,7 +111,7 @@ async function flushBatch(ctx: RequestCacheContext, backend: CacheBackend): Prom
       request.resolve(value);
     }
   } catch (error) {
-    const normalizedError = error instanceof Error ? error : new Error(String(error));
+    const normalizedError = ensureError(error);
     for (const request of requests) request.reject(normalizedError);
   }
 }

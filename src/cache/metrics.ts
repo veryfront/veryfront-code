@@ -9,6 +9,7 @@
  */
 
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import type { Span } from "@opentelemetry/api";
 
 /**
@@ -316,11 +317,7 @@ export function instrumentCache<T>(
         }
         return value;
       } catch (error) {
-        cacheMetrics.recordError(
-          domain,
-          "get",
-          error instanceof Error ? error : new Error(String(error)),
-        );
+        cacheMetrics.recordError(domain, "get", ensureError(error));
         throw error;
       }
     },
@@ -331,11 +328,7 @@ export function instrumentCache<T>(
         await cache.set(key, value, ttl);
         cacheMetrics.recordSet(domain, key, performance.now() - start);
       } catch (error) {
-        cacheMetrics.recordError(
-          domain,
-          "set",
-          error instanceof Error ? error : new Error(String(error)),
-        );
+        cacheMetrics.recordError(domain, "set", ensureError(error));
         throw error;
       }
     },
@@ -345,11 +338,7 @@ export function instrumentCache<T>(
         await cache.delete?.(key);
         cacheMetrics.recordDelete(domain, key);
       } catch (error) {
-        cacheMetrics.recordError(
-          domain,
-          "delete",
-          error instanceof Error ? error : new Error(String(error)),
-        );
+        cacheMetrics.recordError(domain, "delete", ensureError(error));
         throw error;
       }
     },
