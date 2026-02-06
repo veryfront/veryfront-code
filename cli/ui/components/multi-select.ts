@@ -78,7 +78,9 @@ export async function multiSelect<T extends string>(
       const pointer = isCurrent ? brand("❯") : " ";
       const checkbox = isSelected ? checkboxStyle("[✓]") : dim("[ ]");
       const label = isCurrent ? focusLabelStyle(opt.label) : blurLabelStyle(opt.label);
-      console.log(`  ${pointer} ${checkbox} ${label.padEnd(24)} ${descriptionStyle(opt.description)}`);
+      console.log(
+        `  ${pointer} ${checkbox} ${label.padEnd(24)} ${descriptionStyle(opt.description)}`,
+      );
       lines++;
     }
 

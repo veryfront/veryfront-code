@@ -39,5 +39,3 @@ export const DetectOptionsSchema = z.object({
 });
 
 export type DetectOptions = z.infer<typeof DetectOptionsSchema>;
-
-

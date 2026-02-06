@@ -10,7 +10,7 @@ import {
   type EnvironmentConfig,
   getEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
-import { bold, brand, type MultiSelectOption, multiSelect, muted, success, warning } from "#cli/ui";
+import { bold, brand, multiSelect, type MultiSelectOption, muted, success, warning } from "#cli/ui";
 import { AI_TOOLS, getToolById } from "./registry.ts";
 import { parseTargetFlag } from "./install.ts";
 import {
