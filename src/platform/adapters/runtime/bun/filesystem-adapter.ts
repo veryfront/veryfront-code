@@ -1,4 +1,4 @@
-import { createError, FileSystemError, toError } from "#veryfront/errors";
+import { createError, FILE_NOT_FOUND, toError } from "#veryfront/errors";
 import type {
   DirEntry,
   FileChangeEvent,
@@ -69,7 +69,7 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
         mtime: stats.mtime,
       };
     } catch {
-      throw new FileSystemError(`File not found: ${path}`, { path });
+      throw FILE_NOT_FOUND.create({ detail: `File not found: ${path}`, context: { path } });
     }
   }
 
