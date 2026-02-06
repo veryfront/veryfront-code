@@ -1,4 +1,5 @@
 import { join, relative } from "#veryfront/platform/compat/path/index.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { serverLogger } from "#veryfront/utils";
 import { toBase64Url } from "#veryfront/utils/path-utils.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
@@ -146,11 +147,4 @@ function shouldSkipDirectory(parentDir: string, name: string): boolean {
   if (!parentDir.includes(".veryfront")) return false;
 
   return ["cache", "compiled", "tmp", "temp", "output", "optimized-images", "css"].includes(name);
-}
-
-function isNotFoundError(error: unknown): boolean {
-  if ((error as { code?: string } | undefined)?.code === "ENOENT") return true;
-
-  const message = String((error as Error | undefined)?.message ?? "").toLowerCase();
-  return message.includes("not found") || message.includes("no such file");
 }

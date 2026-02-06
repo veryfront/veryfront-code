@@ -311,7 +311,14 @@ export async function symlink(target: string, path: string): Promise<void> {
 
 export function isNotFoundError(error: unknown): boolean {
   if (isDeno && error instanceof (globalThis as any).Deno.errors.NotFound) return true;
-  return (error as NodeJS.ErrnoException)?.code === "ENOENT";
+  if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return true;
+  if (
+    error instanceof Error && error.name === "VeryfrontError" &&
+    (error as any).slug === "file-not-found"
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function isAlreadyExistsError(error: unknown): boolean {
