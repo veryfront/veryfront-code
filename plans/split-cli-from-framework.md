@@ -70,7 +70,7 @@ These relative imports in `src/cli/` reach outside the CLI boundary. They must b
 | `cli/mcp/tools/dev-tools.ts` | `../../../server/reload-notifier.ts` | `#veryfront/server/reload-notifier.ts` |
 | `cli/commands/start/command.ts` | `../../../transforms/mdx/esm-module-loader/cache/index.ts` | `#veryfront/transforms/mdx/esm-module-loader/cache/index.ts` |
 | `cli/commands/dev/handler.ts` | `../../../transforms/mdx/esm-module-loader/cache/index.ts` | `#veryfront/transforms/mdx/esm-module-loader/cache/index.ts` |
-| `cli/commands/init/init-command.ts` | `../../../../lib/token-store` | Investigate (outside src/) |
+| `cli/commands/init/init-command.ts` | `../../../../lib/token-store` | No action — this is a string template written to user projects, not a compile-time import. `lib/` does not exist in the repo. |
 
 ### Framework -> CLI (1 reverse dependency)
 
@@ -96,9 +96,10 @@ Resolution: keep the import, update the `#veryfront/cli/ui` alias in deno.json t
 
 Convert cross-boundary imports and fix the reverse dependency while everything is still in `src/cli/`. This lets us verify these changes work before the move.
 
-1. **Convert 10 relative imports to `#veryfront/*` aliases** (8 files)
-   - Add `#veryfront/issues` alias to deno.json if not present
+1. **Convert 9 relative imports to `#veryfront/*` aliases** (7 files)
+   - The `#veryfront/` catch-all alias (`"#veryfront/": "./src/"`) already resolves `#veryfront/issues/*`, `#veryfront/platform/*`, etc. No new aliases needed.
    - Replace each `../../` / `../../../` import with the corresponding alias
+   - The `init-command.ts` `../../../../lib/token-store` import is a string template (generated code for user projects), not a real import — no action needed.
    - Run `deno task verify:quick` to confirm
 
 2. **Fix reverse dependency** in `error-formatter.ts`
@@ -128,7 +129,7 @@ These are independent and can be done in parallel:
    - `scripts/generate-templates-manifest.ts` — template dir paths
    - `scripts/release.ts` — import path + config-generator reference
    - `scripts/test-production-fix.ts` — CLI main path
-   - `scripts/build-npm-dnt.ts` — npm build output path
+   - `scripts/build-npm-dnt.ts` — **CRITICAL:** the `postBuild()` bin wrapper hardcodes `await import('../esm/src/cli/index.js')`. After the move, dnt outputs CLI to `npm/esm/cli/` (not `npm/esm/src/cli/`). Must update to `await import('../esm/cli/main.js')`.
    - `scripts/build-all.js` — compile target
    - `scripts/lint-platform-agnostic.ts` — exception path
    - `scripts/validate-architecture.ts` — layer definitions
@@ -163,8 +164,7 @@ These are independent and can be done in parallel:
 | Risk | Likelihood | Mitigation |
 |------|-----------|------------|
 | Missed import reference | Low | Full grep audit completed; verification suite catches remaining |
-| npm build path breakage | Medium | `build-npm-dnt.ts` needs careful inspection — output structure may differ |
-| `lib/token-store` import in init command | Low | Investigate whether `lib/` is a separate concern or stale reference |
+| npm build bin wrapper breakage | **High** | `build-npm-dnt.ts` `postBuild()` hardcodes `'../esm/src/cli/index.js'` in bin wrapper — must change to `'../esm/cli/main.js'` after the move. dnt auto-generates `npm/package.json` exports from `deno.json`, so those self-correct, but the bin wrapper is manual. |
 | Git history fragmentation | None | `git mv` preserves history |
 
 ## Not In Scope
