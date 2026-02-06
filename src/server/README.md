@@ -1,25 +1,25 @@
 # Server Module
 
-The Server module provides development and production server implementations with HMR, file watching, and universal request handling.
+The Server module provides development and production server implementations with HMR, file watching, and core request handling.
 
 ## Import Map Alias
 
 ```typescript
 // Using import map alias (recommended)
-import { createDevServer, createVeryfrontHandler, startUniversalServer } from "#server";
+import { createVeryfrontHandler, startDevServer, startProductionServer } from "#server";
 
 // Using barrel file
-import { createDevServer, createVeryfrontHandler, startUniversalServer } from "./server/index.ts";
+import { createVeryfrontHandler, startDevServer, startProductionServer } from "./server/index.ts";
 ```
 
 ## Public API Overview
 
 The Server module exports:
 
-- **`createDevServer()`** - Creates a development server with HMR and file watching
+- **`startDevServer()`** - Creates a development server with HMR and file watching
 - **`DevServer`** - Development server class
-- **`startUniversalServer()`** - Starts a production server
-- **`createVeryfrontHandler()`** - Creates a universal request handler for any runtime
+- **`startProductionServer()`** - Starts a production server
+- **`createVeryfrontHandler()`** - Creates a runtime-agnostic request handler for any runtime
 
 ## File Structure
 
@@ -37,7 +37,7 @@ server/
 │   ├── route-discovery.ts
 │   └── server.ts
 ├── production-server.ts          # Production server
-├── universal-handler/            # Runtime-agnostic handler
+├── runtime-handler/            # Runtime-agnostic handler
 │   ├── index.ts
 │   └── handler.ts
 ├── build/                        # Build system
@@ -72,12 +72,12 @@ server/
 ### Development Server
 
 ```ts
-import { createDevServer } from "#server";
+import { startDevServer } from "#server";
 import { getConfig } from "#config";
 import { cwd } from "../../platform/compat/process.ts"; // Assuming cwd is available from compat
 
 const config = await getConfig(cwd());
-const server = await createDevServer({
+const server = await startDevServer({
   projectDir: cwd(),
   config,
   port: 3000,
@@ -90,10 +90,10 @@ console.log("Dev server running on http://localhost:3000");
 ### Production Server
 
 ```ts
-import { startUniversalServer } from "#server";
+import { startProductionServer } from "#server";
 import { cwd } from "../../platform/compat/process.ts"; // Assuming cwd is available from compat
 
-await startUniversalServer({
+await startProductionServer({
   projectDir: cwd(),
   port: 8000,
   hostname: "0.0.0.0",
@@ -102,7 +102,7 @@ await startUniversalServer({
 console.log("Production server running on http://0.0.0.0:8000");
 ```
 
-### Universal Handler (for custom runtimes)
+### Runtime Handler (for custom runtimes)
 
 ```ts
 import { createVeryfrontHandler } from "#server";
@@ -137,7 +137,7 @@ const server = Deno.serve(handler);
 ### Production Server
 
 - **Optimized Performance**: Pre-bundled assets and server-side rendering
-- **Universal Handler**: Works with Deno, Node, Bun, Cloudflare Workers
+- **Runtime Handler**: Works with Deno, Node, Bun, Cloudflare Workers
 - **Static Generation**: Pre-renders pages at build time (SSG)
 - **Incremental Static Regeneration (ISR)**: Updates static pages on-demand
 - **API Routes**: Serverless API endpoints
@@ -177,10 +177,10 @@ interface ProductionServerOptions {
 }
 ```
 
-### Universal Handler Options
+### Runtime Handler Options
 
 ```ts
-interface UniversalHandlerOptions {
+interface RuntimeHandlerOptions {
   projectDir: string;
   config: VeryfrontConfig;
   adapter: RuntimeAdapter;
@@ -206,7 +206,7 @@ Server-side modules:
 
 ## Best Practices
 
-1. **Use the universal handler** for deployment flexibility
+1. **Use the runtime handler** for deployment flexibility
 2. **Enable HMR in development** for faster iteration
 3. **Pre-render static pages** in production for better performance
 4. **Configure rate limiting** for API routes to prevent abuse

@@ -4,7 +4,7 @@
  * Handles the local projects discovery UI at root path when no project is selected.
  * Shows a list of discovered projects in standard directories.
  *
- * @module server/universal-handler/projects-handler
+ * @module server/runtime-handler/projects-handler
  */
 
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";

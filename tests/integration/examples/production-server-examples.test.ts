@@ -177,7 +177,7 @@ describe(
 
         await writeTextFile(`${context.projectDir}/pages/test.mdx`, mdxContent);
 
-        const server = await context.createDevServer();
+        const server = await context.startDevServer();
 
         const response = await fetch(`http://127.0.0.1:${server.port}/test`);
         const html = await response.text();

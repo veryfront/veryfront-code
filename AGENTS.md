@@ -38,7 +38,7 @@ PRODUCTION_MODE=1              # Production mode
 ```typescript
 // Use withTestContext for automatic cleanup
 await withTestContext("my-test", async (ctx) => {
-  const server = await ctx.createDevServer({ port });
+  const server = await ctx.startDevServer({ port });
 });
 ```
 

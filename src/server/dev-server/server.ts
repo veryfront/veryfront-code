@@ -123,8 +123,8 @@ export class DevServer {
 
       // Subscribe to immediate invalidation for cache clearing (fires immediately)
       this.invalidateUnsubscribe = ReloadNotifier.subscribeInvalidate(() => {
-        logger.debug("[DevServer] INVALIDATE callback triggered - clearing universal handler");
-        this.requestHandler?.invalidateUniversalHandler();
+        logger.debug("[DevServer] INVALIDATE callback triggered - clearing runtime handler");
+        this.requestHandler?.invalidateCoreHandler();
       });
 
       // Subscribe to debounced reload for browser refresh (batches rapid changes)
@@ -292,7 +292,7 @@ export class DevServer {
       this.hmrServer,
       routeDiscovery,
       debounceMs,
-      () => this.requestHandler?.invalidateUniversalHandler(),
+      () => this.requestHandler?.invalidateCoreHandler(),
       this,
       aiDirNames,
     );

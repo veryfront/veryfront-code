@@ -4,7 +4,7 @@
  * Manages request tracking, performance timing, and metrics.
  * Handles the start/end lifecycle of request processing.
  *
- * @module server/universal-handler/request-lifecycle
+ * @module server/runtime-handler/request-lifecycle
  */
 
 import {

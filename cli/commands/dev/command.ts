@@ -8,7 +8,7 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { getConfig } from "#veryfront/config";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { createDevServer } from "#veryfront/server/dev-server.ts";
+import { startDevServer } from "#veryfront/server/dev-server.ts";
 import { validateAIConfig } from "#veryfront/discovery";
 import { yellow } from "#veryfront/compat/console";
 import { exitProcess, registerTerminationSignals } from "#cli/utils";
@@ -95,7 +95,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       }
 
       const shutdownController = new AbortController();
-      let devServer: Awaited<ReturnType<typeof createDevServer>> | null = null;
+      let devServer: Awaited<ReturnType<typeof startDevServer>> | null = null;
       let mcpServer: MCPDevServer | null = null;
 
       // Sync state
@@ -104,7 +104,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       let selectedProject: RemoteProject | null = null;
 
       try {
-        devServer = await createDevServer({
+        devServer = await startDevServer({
           port: finalPort,
           projectDir,
           hmrPort: finalPort + 1,

@@ -170,7 +170,7 @@
 
 - Dev server with Hot Module Replacement (HMR)
 - Production server with optimizations
-- Universal request handler (platform-agnostic)
+- Runtime request handler (platform-agnostic)
 - Request handlers (static, SSR, API, RSC, modules, CSS)
 - Error overlay in development
 
@@ -182,7 +182,7 @@
   - `preview/` - Preview mode HMR
   - `monitoring/` - Health and metrics endpoints
   - `dev/` - Development-only handlers
-- `universal-handler/` - Platform-agnostic request handling
+- `runtime-handler/` - Platform-agnostic request handling
 - `services/` - Static file serving
 
 ---

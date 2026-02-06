@@ -1,10 +1,10 @@
 /**
- * Universal Veryfront HTTP Handler - Composition Root
+ * Veryfront Core HTTP Handler - Composition Root
  *
  * Runtime-agnostic HTTP handler using modular architecture.
  * This file orchestrates the extracted modules for request handling.
  *
- * @module server/universal-handler
+ * @module server/runtime-handler
  */
 
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
@@ -96,7 +96,7 @@ export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environmen
 
 const logger = getBaseLogger("SERVER");
 
-export interface UniversalHandlerOptions {
+export interface RuntimeHandlerOptions {
   projectDir: string;
   /** When true, expose additional debug logging. */
   debug?: boolean;
@@ -119,7 +119,7 @@ export interface UniversalHandlerOptions {
 export function createVeryfrontHandler(
   projectDir: string,
   adapter: RuntimeAdapter,
-  opts: UniversalHandlerOptions = { projectDir },
+  opts: RuntimeHandlerOptions = { projectDir },
 ): ((req: Request) => Promise<Response>) & { ready?: Promise<void> } {
   const isDebugEnabled = !!(opts.debug || adapter.env.get("VERYFRONT_DEBUG"));
 
@@ -132,7 +132,7 @@ export function createVeryfrontHandler(
     logger.debug(message);
   }
 
-  logDebug("[universal] handler initialized", { projectDir });
+  logDebug("[runtime-handler] handler initialized", { projectDir });
 
   const securityLoader = new SecurityConfigLoader(projectDir, adapter, opts.config);
 
@@ -144,7 +144,7 @@ export function createVeryfrontHandler(
         return c;
       })
       .catch((error) => {
-        logger.warn("[universal] Failed to load config, using defaults", {
+        logger.warn("[runtime-handler] Failed to load config, using defaults", {
           error: getErrorMessage(error),
         });
         return undefined;
@@ -189,7 +189,7 @@ export function createVeryfrontHandler(
   const isProxyMode = opts.config?.fs?.veryfront?.proxyMode === true;
 
   const readyPromise = isProxyMode ? Promise.resolve() : apiHandler.initialize().catch((error) => {
-    logger.error("[universal] API handler initialization failed", {
+    logger.error("[runtime-handler] API handler initialization failed", {
       error: getErrorMessage(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
@@ -197,7 +197,7 @@ export function createVeryfrontHandler(
   });
 
   if (isProxyMode) {
-    logger.debug("[universal] Running in proxy mode - lazy initialization enabled");
+    logger.debug("[runtime-handler] Running in proxy mode - lazy initialization enabled");
   }
 
   const handler = async (req: Request): Promise<Response> => {
@@ -399,7 +399,9 @@ export function createVeryfrontHandler(
 
           if (response) return response;
 
-          logDebug("[universal] No handler produced response (unexpected)", { path: url.pathname });
+          logDebug("[runtime-handler] No handler produced response (unexpected)", {
+            path: url.pathname,
+          });
           return new Response(ErrorPages.serverError(), {
             status: 500,
             headers: { "Content-Type": "text/html; charset=utf-8" },
@@ -419,7 +421,7 @@ export function createVeryfrontHandler(
           ]);
         } catch (e) {
           if (e === TIMEOUT_SENTINEL) {
-            logger.warn("[universal] Request timed out", {
+            logger.warn("[runtime-handler] Request timed out", {
               path: url.pathname,
               method: req.method,
               timeoutMs: getRequestTimeout(),

@@ -5,8 +5,8 @@
  * Use this as a template for tests that require server setup.
  *******************************************************/
 
-import { assertEquals, assertExists } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import { TEST_TIMEOUTS } from "../_helpers/constants.ts";
 import { withTestContext } from "../_helpers/context.ts";
 
@@ -23,7 +23,7 @@ describe("Example Integration Test - Dev Server", () => {
           `export default function Home() { return <div>Hello World</div>; }`,
         );
 
-        const server = await context.createDevServer({ enableHMR: false });
+        const server = await context.startDevServer({ enableHMR: false });
         assertExists(server.port, "Server should have a port assigned");
 
         const response = await fetch(`http://localhost:${server.port}/`);
@@ -46,7 +46,7 @@ describe("Example Integration Test - Dev Server", () => {
     { timeout: TEST_TIMEOUTS.INTEGRATION },
     async () => {
       await withTestContext("dev-server-404", async (context) => {
-        const server = await context.createDevServer();
+        const server = await context.startDevServer();
 
         const response = await fetch(
           `http://localhost:${server.port}/nonexistent`,
@@ -114,7 +114,7 @@ describe("Example Integration Test - Environment Variables", () => {
           "Environment variable should be set",
         );
 
-        const server = await context.createDevServer();
+        const server = await context.startDevServer();
         assertExists(server, "Server should start with custom env vars");
       });
 
@@ -142,7 +142,7 @@ describe("Example Integration Test - Concurrent Requests", () => {
           `export default () => <div>Page 2</div>`,
         );
 
-        const server = await context.createDevServer();
+        const server = await context.startDevServer();
         const baseUrl = `http://localhost:${server.port}`;
 
         const responses = await Promise.all([
@@ -185,7 +185,7 @@ describe("Example Integration Test - Error Handling", () => {
     { timeout: TEST_TIMEOUTS.INTEGRATION },
     async () => {
       await withTestContext("error-handling", async (context) => {
-        const server = await context.createDevServer();
+        const server = await context.startDevServer();
 
         const response = await fetch(`http://localhost:${server.port}/`, {
           headers: { "Content-Type": "invalid/type" },
@@ -215,7 +215,7 @@ describe("Example Integration Test - Custom Cleanup", () => {
           await Deno.writeTextFile("/tmp/cleanup-test.txt", "cleaned up");
         });
 
-        const server = await context.createDevServer();
+        const server = await context.startDevServer();
         assertExists(server, "Server should start");
       });
 

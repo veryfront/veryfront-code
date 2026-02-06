@@ -56,7 +56,7 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
         await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Test Page");
 
         const customDebounceMs = scaleMs(200);
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: true,
           fileWatcherDebounceMs: customDebounceMs,
         });
@@ -79,7 +79,7 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
         await writeTextFile(join(context.projectDir, "pages", "about.mdx"), "# About");
         await writeTextFile(join(context.projectDir, "pages", "contact.mdx"), "# Contact");
 
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: true,
           fileWatcherDebounceMs: scaleMs(150),
         });
@@ -115,7 +115,7 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
 
         const debounceBaseMs = 100;
         const debounceMs = scaleMs(debounceBaseMs);
-        await context.createDevServer({
+        await context.startDevServer({
           enableHMR: true,
           fileWatcherDebounceMs: debounceMs,
         });
@@ -140,7 +140,7 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
       await withTestContext("dev-watcher-cleanup", async (context: TestContext) => {
         await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Test");
 
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: true,
           fileWatcherDebounceMs: scaleMs(100),
         });
@@ -158,7 +158,7 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
       await withTestContext("dev-watcher-metrics", async (context) => {
         await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
 
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: true,
           fileWatcherDebounceMs: scaleMs(100),
         });
@@ -210,7 +210,7 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
           await writeTextFile(join(context.projectDir, file), getFixtureContent(file, "initial"));
         }
 
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: true,
           fileWatcherDebounceMs: scaleMs(100),
         });

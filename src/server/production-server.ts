@@ -1,8 +1,8 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
-import { createVeryfrontHandler } from "./universal-handler/index.ts";
-import { requestTracker } from "./universal-handler/request-tracker.ts";
+import { createVeryfrontHandler } from "./runtime-handler/index.ts";
+import { requestTracker } from "./runtime-handler/request-tracker.ts";
 import { bootstrapProd, type BootstrapResult } from "./bootstrap.ts";
 import { cwd, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
@@ -52,7 +52,7 @@ interface ServerOptions {
   defaultEnvironment?: "preview" | "production";
   /**
    * Optional request interceptor for combined mode.
-   * Transforms requests before they're processed by the universal handler.
+   * Transforms requests before they're processed by the core request handler.
    * Used by proxy middleware to inject context headers in combined mode.
    */
   requestInterceptor?: (req: Request) => Request | Promise<Request>;
@@ -65,16 +65,18 @@ export interface ServerHandle {
   stop: () => Promise<void>;
 }
 
-export function startUniversalServer(
-  options: ServerOptions & {
-    debug?: boolean;
-    adapter?: RuntimeAdapter;
-    /** Pre-computed bootstrap result to skip internal bootstrap (avoids double initialization) */
-    bootstrapResult?: BootstrapResult;
-  },
+export interface StartProductionServerOptions extends ServerOptions {
+  debug?: boolean;
+  adapter?: RuntimeAdapter;
+  /** Pre-computed bootstrap result to skip internal bootstrap (avoids double initialization) */
+  bootstrapResult?: BootstrapResult;
+}
+
+export function startProductionServer(
+  options: StartProductionServerOptions,
 ): Promise<ServerHandle> {
   return withSpan(
-    "server.startUniversalServer",
+    "server.startProductionServer",
     async () => {
       const {
         projectDir,
@@ -147,7 +149,7 @@ export function startUniversalServer(
         }
       }
 
-      logger.info("Starting universal production server", { projectDir, port, bindAddress });
+      logger.info("Starting production server", { projectDir, port, bindAddress });
 
       const baseHandler = createVeryfrontHandler(projectDir, adapter, {
         projectDir,
@@ -191,7 +193,7 @@ export function startUniversalServer(
         signal,
         onListen: (params) => {
           resolveListenReady?.();
-          logger.info("Universal server listening", params);
+          logger.info("Production server listening", params);
         },
       });
 
@@ -209,10 +211,6 @@ export function startUniversalServer(
     },
     { "server.port": options.port, "server.bindAddress": options.bindAddress ?? "0.0.0.0" },
   );
-}
-
-export function startProductionServer(options: ServerOptions): Promise<ServerHandle> {
-  return startUniversalServer({ ...options });
 }
 
 if (import.meta.main) {
@@ -291,7 +289,7 @@ if (import.meta.main) {
     // Note: Don't use HOSTNAME - K8s sets it to pod name which resolves to pod IP
     const bindAddress = adapter.env.get("BIND_ADDRESS") ?? "0.0.0.0";
 
-    const server = await startUniversalServer({
+    const server = await startProductionServer({
       projectDir,
       port,
       bindAddress,

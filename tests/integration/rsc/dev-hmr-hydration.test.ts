@@ -33,7 +33,7 @@ describe(
 
         await writeClient("V1");
 
-        const server = await context.createDevServer({ enableHMR: true });
+        const server = await context.startDevServer({ enableHMR: true });
         await delay(500);
 
         const fetchPage = async (): Promise<void> => {

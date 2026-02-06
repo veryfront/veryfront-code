@@ -182,7 +182,7 @@ export async function startCommand(options: StartOptions): Promise<void> {
     setEnv("PROXY_MODE", "1");
     setEnv("NODE_ENV", "development");
 
-    const { startUniversalServer } = await import("#veryfront/server/production-server.ts");
+    const { startProductionServer } = await import("#veryfront/server/production-server.ts");
     const { bootstrapProd } = await import("#veryfront/server/bootstrap.ts");
     const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
     const baseAdapter = await runtime.get();
@@ -209,7 +209,7 @@ export async function startCommand(options: StartOptions): Promise<void> {
       discoveryConfig = { baseDir: projectDir, verbose: false };
     }
 
-    server = await startUniversalServer({
+    server = await startProductionServer({
       port,
       projectDir: cwd(),
       mode: "development",
@@ -222,9 +222,9 @@ export async function startCommand(options: StartOptions): Promise<void> {
       discoveryConfig,
     });
   } else {
-    const { createDevServer } = await import("#veryfront/server/dev-server.ts");
+    const { startDevServer } = await import("#veryfront/server/dev-server.ts");
     // Dev server handles AI discovery internally (Phase 2)
-    server = await createDevServer({
+    server = await startDevServer({
       port,
       projectDir: cwd(),
       hmrPort: port + 1,

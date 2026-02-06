@@ -6,10 +6,10 @@ import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 
-// Tests the universal /_veryfront/fs/<b64>.js bundling endpoint
+// Tests the production /_veryfront/fs/<b64>.js bundling endpoint
 
 describe(
-  "Universal FS bundling endpoint",
+  "Production FS bundling endpoint",
   {
     sanitizeResources: false,
     sanitizeOps: false,
@@ -21,7 +21,7 @@ describe(
     });
 
     it("bundles TSX to ESM and sets no-cache", async () => {
-      await withTestContext("universal-fs-bundle", async (context) => {
+      await withTestContext("production-fs-bundle", async (context) => {
         const file = join(context.projectDir, "components", "Widget.tsx");
 
         await writeTextFile(
@@ -34,11 +34,11 @@ describe(
         );
 
         const port = await context.allocatePort();
-        const { startUniversalServer } = await import(
+        const { startProductionServer } = await import(
           "../../../../src/server/production-server.ts"
         );
 
-        const server = await startUniversalServer({
+        const server = await startProductionServer({
           projectDir: context.projectDir,
           port,
           bindAddress: "127.0.0.1",

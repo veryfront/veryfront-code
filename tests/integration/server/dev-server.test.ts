@@ -21,7 +21,7 @@ import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { TestDataFactory } from "../../fixtures/test-data-factory.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { drainEventLoop } from "../../_helpers/utils.ts";
-import { createDevServer } from "../../../src/server/dev-server.ts";
+import { startDevServer } from "../../../src/server/dev-server.ts";
 
 describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
   // Clean up renderer intervals to prevent resource leaks
@@ -31,8 +31,8 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
 
   describe("Dev Server - Core Functionality", {}, () => {
     it("exports are available", () => {
-      assertExists(createDevServer, "createDevServer should be exported");
-      assertEquals(typeof createDevServer, "function", "Should be a function");
+      assertExists(startDevServer, "startDevServer should be exported");
+      assertEquals(typeof startDevServer, "function", "Should be a function");
     });
 
     it("starts and serves basic MDX page", async () => {
@@ -49,7 +49,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
         );
 
         const controller = new AbortController();
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: false,
           signal: controller.signal,
         });
@@ -73,7 +73,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
     it("handles 404 for non-existent routes", async () => {
       await withTestContext("dev-404-handling", async (context) => {
         const controller = new AbortController();
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: false,
           signal: controller.signal,
         });
@@ -126,7 +126,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
         );
 
         const controller = new AbortController();
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: false,
           signal: controller.signal,
         });
@@ -160,7 +160,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
        */
       await withTestContext("dev-hmr-runtime", async (context) => {
         const controller = new AbortController();
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: true,
           signal: controller.signal,
         });
@@ -199,7 +199,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
         );
 
         const controller = new AbortController();
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: false,
           signal: controller.signal,
         });
@@ -243,7 +243,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
         );
 
         const controller = new AbortController();
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: false,
           signal: controller.signal,
         });
@@ -275,7 +275,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
         await writeTextFile(join(context.projectDir, "app", "page.mdx"), "# Home");
 
         const controller = new AbortController();
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: false,
           signal: controller.signal,
         });
@@ -304,7 +304,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
         );
 
         const controller = new AbortController();
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: false,
           signal: controller.signal,
         });
@@ -347,7 +347,7 @@ This is a test page for the Pages Router.
         );
 
         const controller = new AbortController();
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: false,
           signal: controller.signal,
         });
@@ -377,7 +377,7 @@ This is a test page for the Pages Router.
         );
 
         const controller = new AbortController();
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: false,
           signal: controller.signal,
         });
@@ -421,7 +421,7 @@ This is a test page for the Pages Router.
         );
 
         const controller = new AbortController();
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: false,
           signal: controller.signal,
         });
@@ -460,7 +460,7 @@ This is a test page for the Pages Router.
         );
 
         const controller = new AbortController();
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: false,
           signal: controller.signal,
         });
@@ -504,7 +504,7 @@ This is a test page for the Pages Router.
         );
 
         const controller = new AbortController();
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: false,
           signal: controller.signal,
         });
@@ -560,7 +560,7 @@ This is a test page for the Pages Router.
         );
 
         const controller = new AbortController();
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: false,
           signal: controller.signal,
         });
@@ -600,7 +600,7 @@ This is a test page for the Pages Router.
         );
 
         const controller = new AbortController();
-        const server = await context.createDevServer({
+        const server = await context.startDevServer({
           enableHMR: false,
           signal: controller.signal,
         });

@@ -6,7 +6,7 @@ import "../../../_helpers/log-guard.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
 describe(
-  "Universal Server - Static Files",
+  "Production Server - Static Files",
   { sanitizeOps: false, sanitizeResources: false },
   () => {
     // Clean up renderer intervals to prevent resource leaks
@@ -16,7 +16,7 @@ describe(
 
     it("serves static files from public/ and exposes metrics and CORS", async () => {
       await withTestContext(
-        "universal-server-static",
+        "production-server-static",
         async (context: TestContext) => {
           await writeTextFile(`${context.projectDir}/public/hello.txt`, "hi");
           const server = await context.createProductionServer();

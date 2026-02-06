@@ -51,7 +51,7 @@ describe("RSC Actions Dev Tests", { sanitizeOps: false, sanitizeResources: false
         "export default async function echo(x){ return `ok:${x}` }\n",
       );
 
-      const { port } = await context.createDevServer({ enableHMR: false });
+      const { port } = await context.startDevServer({ enableHMR: false });
       const url = `http://127.0.0.1:${port}/_veryfront/rsc/action`;
       const headers = { "content-type": "application/json" };
 

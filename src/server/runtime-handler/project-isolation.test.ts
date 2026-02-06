@@ -2,7 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ProjectIsolationManager } from "./project-isolation.ts";
 
-describe("server/universal-handler/project-isolation", () => {
+describe("server/runtime-handler/project-isolation", () => {
   function createManager(
     overrides: Partial<{
       maxConcurrentPerProject: number;

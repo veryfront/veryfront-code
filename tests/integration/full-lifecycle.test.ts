@@ -20,13 +20,14 @@ async function writeDenoConfig(projectDir: string): Promise<void> {
 
 async function startServer(context: {
   allocatePort: () => Promise<number>;
-  createDevServer: (opts: { port: number; enableHMR: boolean }) => Promise<{ port: number }>;
-  trackResource: (resource: unknown) => void;
+  startDevServer: (opts: { port: number; enableHMR: boolean }) => Promise<{ port?: number }>;
 }): Promise<{ port: number }> {
   const port = await context.allocatePort();
-  const server = await context.createDevServer({ port, enableHMR: false });
-  context.trackResource(server);
-  return server;
+  const server = await context.startDevServer({ port, enableHMR: false });
+  if (server.port === undefined) {
+    throw new Error("Dev server did not expose a port");
+  }
+  return { port: server.port };
 }
 
 const rootLayout =

@@ -4,7 +4,7 @@
  * Utility functions for request classification, monitoring path detection,
  * and timeout configuration.
  *
- * @module server/universal-handler/request-utils
+ * @module server/runtime-handler/request-utils
  */
 
 import { getTimeoutFromEnv } from "../../middleware/builtin/timeout.ts";

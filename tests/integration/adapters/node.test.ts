@@ -2,7 +2,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { NodeAdapter, nodeAdapter } from "#veryfront/platform/adapters/runtime/node/index.ts";
-import { startUniversalServer } from "../../../src/server/production-server.ts";
+import { startProductionServer } from "../../../src/server/production-server.ts";
 import { getFreePort } from "../../_helpers/utils.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
 
@@ -167,11 +167,11 @@ describe(
     });
 
     describe(
-      "Universal server integration",
+      "Production server integration",
       { sanitizeOps: false, sanitizeResources: false },
       () => {
-        it("should run with universal server", async () => {
-          const dir = await makeTempDir({ prefix: "vf_node_universal_" });
+        it("should run with production server", async () => {
+          const dir = await makeTempDir({ prefix: "vf_node_production_" });
 
           try {
             await mkdir(join(dir, "public"), { recursive: true });
@@ -187,7 +187,7 @@ describe(
             const port = await getFreePort();
             const adapter = new NodeAdapter();
             const testProjectId = `test_node_${Date.now().toString(36)}`;
-            const server = await startUniversalServer({
+            const server = await startProductionServer({
               projectDir: dir,
               port,
               bindAddress: "127.0.0.1",
@@ -237,7 +237,7 @@ describe(
         });
 
         it("should work with thin server wrapper", async () => {
-          const { startUniversalServer: startNode } = await import(
+          const { startProductionServer: startNode } = await import(
             "../../../src/server/production-server.ts"
           );
           const dir = await makeTempDir({ prefix: "vf_node_wrap_" });

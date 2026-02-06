@@ -110,7 +110,7 @@ const allowedWarnings: string[] = [
   "VERYFRONT  ▲",
 
   // Custom domain lookup without API token (expected in local/test environments)
-  "[universal] Cannot look up custom domain - no API token available",
+  "[runtime-handler] Cannot look up custom domain - no API token available",
 
   // Node.js experimental feature warnings (expected when using --experimental-transform-types)
   "ExperimentalWarning: Transform Types is an experimental feature",
@@ -203,7 +203,7 @@ const allowedWarnings: string[] = [
   "CSS manifest not found",
   "Failed to parse CSS manifest",
 
-  // Universal server warnings
+  // Production server warnings
   "not-found.tsx",
   "loading.tsx",
   "error.tsx",
@@ -222,7 +222,7 @@ const allowedWarnings: string[] = [
 
   // Request timeout warnings (expected in tests that simulate slow operations)
   "Request timed out",
-  "[universal] Request timed out",
+  "[runtime-handler] Request timed out",
   "Server error:",
 
   // Root element not found (expected in prefetch tests without DOM)
