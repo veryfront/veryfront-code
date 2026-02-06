@@ -22,8 +22,7 @@ import { confirmPrompt, logInfo, logSuccess, logWarning } from "#cli/utils";
 import { createNoopSpinner, createSpinner } from "#cli/ui";
 import { getApiTokenEnv } from "#veryfront/config/env.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { getStringArg, resolveProjectDir } from "#cli/shared/args";
-import type { ParsedArgs } from "#cli/shared/types";
+import { CommonArgs, createArgParser } from "#cli/shared/args";
 
 /**
  * Zod schema for pull command arguments
@@ -43,34 +42,19 @@ export const PullArgsSchema = z.object({
 export type PullArgs = z.infer<typeof PullArgsSchema>;
 
 /**
- * Helper to parse CSV argument (--projects=a,b,c)
- */
-function parseCsvArg(value: unknown): string[] | undefined {
-  if (typeof value === "string") {
-    return value.split(",").map((s) => s.trim()).filter(Boolean);
-  }
-  if (Array.isArray(value)) {
-    return value.map(String).filter(Boolean);
-  }
-  return undefined;
-}
-
-/**
  * Parse pull command arguments from CLI args
  */
-export function parsePullArgs(args: ParsedArgs): z.SafeParseReturnType<unknown, PullArgs> {
-  return PullArgsSchema.safeParse({
-    projectSlug: args._.length > 1 ? String(args._[1]) : undefined,
-    projects: parseCsvArg(args.projects),
-    projectDir: resolveProjectDir(args, ["project-dir", "dir", "d"]),
-    branch: getStringArg(args, "branch", "b"),
-    env: getStringArg(args, "env"),
-    release: getStringArg(args, "release"),
-    force: Boolean(args.force || args.f),
-    dryRun: Boolean(args["dry-run"]),
-    quiet: Boolean(args.quiet || args.q),
-  });
-}
+export const parsePullArgs = createArgParser(PullArgsSchema, {
+  projectSlug: { ...CommonArgs.projectSlug, positional: 0 },
+  projects: { keys: ["projects"], type: "array" },
+  projectDir: CommonArgs.projectDir,
+  branch: CommonArgs.branch,
+  env: CommonArgs.env,
+  release: CommonArgs.release,
+  force: CommonArgs.force,
+  dryRun: CommonArgs.dryRun,
+  quiet: CommonArgs.quiet,
+});
 
 /**
  * Pull source type - determines which API endpoint to use

@@ -5,7 +5,6 @@ import { cliLogger } from "#veryfront/utils";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { buildCommand } from "./command.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
-import { parseArrayArg } from "#cli/shared/arg-parser";
 import { exitProcess, showLogo } from "#cli/utils";
 import type { ParsedArgs } from "#cli/shared/types";
 
@@ -20,6 +19,8 @@ export const BuildArgsSchema = z.object({
   prefetch: z.boolean().default(true),
   ssg: z.boolean().default(true),
   noSsg: z.boolean().default(false),
+  include: z.array(z.string()).optional(),
+  exclude: z.array(z.string()).optional(),
   dryRun: z.boolean().default(false),
 });
 
@@ -39,6 +40,8 @@ export const parseBuildArgs = createArgParser(BuildArgsSchema, {
   prefetch: { keys: ["prefetch"], type: "boolean" },
   ssg: { keys: ["ssg"], type: "boolean" },
   noSsg: { keys: ["no-ssg"], type: "boolean" },
+  include: { keys: ["include"], type: "array" },
+  exclude: { keys: ["exclude"], type: "array" },
   dryRun: CommonArgs.dryRun,
 });
 
@@ -64,8 +67,8 @@ export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
     compress: opts.compress,
     prefetch: opts.prefetch,
     ssg: opts.ssg && !opts.noSsg,
-    include: parseArrayArg(args.include),
-    exclude: parseArrayArg(args.exclude),
+    include: opts.include,
+    exclude: opts.exclude,
     dryRun: opts.dryRun,
   });
 
