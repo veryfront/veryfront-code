@@ -1,7 +1,7 @@
 import * as React from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { rscLogger } from "../client/browser-logger.ts";
-import { CompilationError, FileSystemError, NetworkError } from "#veryfront/errors/index.ts";
+import { COMPILATION_ERROR, FileSystemError, isVeryfrontError, NetworkError } from "#veryfront/errors/index.ts";
 import { createErrorDisplay } from "#veryfront/security/client/html-sanitizer.ts";
 import type { RSCHydratorOptions } from "./types.ts";
 
@@ -104,16 +104,16 @@ export class RSCHydrator {
       const Component = module.default || module[name];
 
       if (!Component) {
-        throw new CompilationError(`Component ${name} not found in module`, {
-          componentPath,
-          name,
+        throw COMPILATION_ERROR.create({
+          detail: `Component ${name} not found in module`,
+          context: { componentPath, name },
         });
       }
 
       if (typeof Component !== "function" && typeof Component !== "object") {
-        throw new CompilationError(`Invalid component type for ${name}`, {
-          type: typeof Component,
-          name,
+        throw COMPILATION_ERROR.create({
+          detail: `Invalid component type for ${name}`,
+          context: { type: typeof Component, name },
         });
       }
 
@@ -121,8 +121,14 @@ export class RSCHydrator {
       return Component;
     } catch (error) {
       rscLogger.error(`Failed to load component ${name}:`, error);
-      if (error instanceof CompilationError || error instanceof FileSystemError) throw error;
-      throw new CompilationError(`Failed to load client component ${name}`, { cause: error, name });
+      if ((isVeryfrontError(error) && error.slug === "compilation-error") || error instanceof FileSystemError) {
+        throw error;
+      }
+      throw COMPILATION_ERROR.create({
+        detail: `Failed to load client component ${name}`,
+        cause: error,
+        context: { name },
+      });
     }
   }
 

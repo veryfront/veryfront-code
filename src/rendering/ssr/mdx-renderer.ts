@@ -1,4 +1,4 @@
-import { CompilationError } from "#veryfront/errors/index.ts";
+import { COMPILATION_ERROR } from "#veryfront/errors/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import * as React from "react";
@@ -18,7 +18,7 @@ export function renderMDXToReactAsync(
 
         const MDXContent = module.default ?? module.MDXContent;
         if (!MDXContent) {
-          throw new CompilationError("No MDXContent found in compiled module");
+          throw COMPILATION_ERROR.create({ detail: "No MDXContent found in compiled module" });
         }
 
         if (React.isValidElement(MDXContent)) {

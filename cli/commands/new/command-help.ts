@@ -16,8 +16,8 @@ export const newHelp: CommandHelp = {
       default: "3000",
     },
     {
-      flag: "--skip-deploy",
-      description: "Just scaffold, don't start server or deploy",
+      flag: "--deploy",
+      description: "Deploy to cloud after scaffolding (requires auth)",
     },
     {
       flag: "--no-open",
@@ -31,7 +31,7 @@ export const newHelp: CommandHelp = {
   examples: [
     "veryfront new my-agent",
     "veryfront new my-blog -t blog",
-    "veryfront new my-app --skip-deploy",
+    "veryfront new my-app --deploy",
     "veryfront new my-app --port 8080",
   ],
   notes: [

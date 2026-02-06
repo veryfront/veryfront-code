@@ -38,8 +38,6 @@ export const NewArgsSchema = z.object({
   template: z.enum(["ai", "app", "blog", "docs", "minimal"]).optional(),
   integrations: z.string().optional(),
   port: z.number().default(3000),
-  /** @deprecated No longer needed - local is now the default. Use --deploy to opt-in. */
-  skipDeploy: z.boolean().default(false),
   /** Opt-in to cloud deployment (requires authentication) */
   deploy: z.boolean().default(false),
   open: z.boolean().default(true),
@@ -54,7 +52,6 @@ export const parseNewArgs = createArgParser(NewArgsSchema, {
   template: { keys: ["template", "t"], type: "string" },
   integrations: { keys: ["integrations", "i"], type: "string" },
   port: { keys: ["port", "p"], type: "number" },
-  skipDeploy: { keys: ["skip-deploy"], type: "boolean" },
   deploy: { keys: ["deploy", "d"], type: "boolean" },
   open: { keys: ["open", "o"], type: "boolean" },
   force: CommonArgs.force,

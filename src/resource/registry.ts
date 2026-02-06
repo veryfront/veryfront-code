@@ -9,27 +9,13 @@
 
 import type { Resource } from "./types.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/ai/registry-manager.ts";
+import { ScopedRegistryFacade } from "#veryfront/ai/registry-facade.ts";
 
 const resourceManager = new ProjectScopedRegistryManager<Resource>("resource");
 
-class ResourceRegistryClass {
-  register(id: string, resourceInstance: Resource): void {
-    resourceManager.register(id, resourceInstance);
-  }
-
-  /**
-   * Register a framework-provided resource available to all projects.
-   */
-  registerShared(id: string, resourceInstance: Resource): void {
-    resourceManager.registerShared(id, resourceInstance);
-  }
-
-  get(id: string): Resource | undefined {
-    return resourceManager.get(id);
-  }
-
+class ResourceRegistryClass extends ScopedRegistryFacade<Resource> {
   findByPattern(uri: string): Resource | undefined {
-    for (const resource of resourceManager.getAll().values()) {
+    for (const resource of this.getAll().values()) {
       if (this.matchesPattern(uri, resource.pattern)) return resource;
     }
     return undefined;
@@ -47,32 +33,9 @@ class ResourceRegistryClass {
     return uri.match(this.patternToRegex(pattern))?.groups ?? {};
   }
 
-  getAll(): Map<string, Resource> {
-    return resourceManager.getAll();
-  }
-
   list(): string[] {
-    return resourceManager.getAllIds();
-  }
-
-  has(id: string): boolean {
-    return resourceManager.has(id);
-  }
-
-  clear(): void {
-    resourceManager.clear();
-  }
-
-  /**
-   * Clear everything (for testing).
-   */
-  clearAll(): void {
-    resourceManager.clearAll();
-  }
-
-  getStats(): ReturnType<typeof resourceManager.getStats> {
-    return resourceManager.getStats();
+    return this.getAllIds();
   }
 }
 
-export const resourceRegistry = new ResourceRegistryClass();
+export const resourceRegistry = new ResourceRegistryClass(resourceManager);

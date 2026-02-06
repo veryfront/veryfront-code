@@ -6,7 +6,7 @@
  *************************************************/
 
 import { getTerminalSize, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
-import { ANSI_REGEX, RESET } from "./ansi.ts";
+import { ANSI_REGEX, RESET, stripAnsi } from "./ansi.ts";
 
 /**
  * Get terminal width, with fallback for non-TTY environments
@@ -135,12 +135,8 @@ export function repeat(char: string, count: number): string {
   return count <= 0 ? "" : char.repeat(count);
 }
 
-/**
- * Strip ANSI escape codes from text
- */
-export function stripAnsi(text: string): string {
-  return text.replace(ANSI_REGEX, "");
-}
+// Re-export stripAnsi from ansi.ts for consumers that expect it from layout
+export { stripAnsi } from "./ansi.ts";
 
 /**
  * Split text into lines

@@ -23,6 +23,66 @@ import { ProjectScopedRegistryManager } from "#veryfront/ai/registry-manager.ts"
 const providerManager = new ProjectScopedRegistryManager<Provider>("provider");
 let defaultProviderName = "openai";
 
+interface ProviderConfigFactory {
+  name: "openai" | "anthropic" | "google";
+  fromConfig: (config: ProvidersConfig) => (() => Provider) | undefined;
+  fromEnv: () => (() => Provider) | undefined;
+}
+
+const providerConfigFactories: ProviderConfigFactory[] = [
+  {
+    name: "openai",
+    fromConfig(config) {
+      const openaiConfig = config.openai;
+      if (!openaiConfig) return undefined;
+      return () => new OpenAIProvider(openaiConfig);
+    },
+    fromEnv() {
+      const openaiEnv = getOpenAIEnvConfig();
+      if (!openaiEnv.apiKey) return undefined;
+      const apiKey = openaiEnv.apiKey;
+      return () =>
+        new OpenAIProvider({
+          apiKey,
+          baseURL: openaiEnv.baseURL,
+          organizationId: openaiEnv.organizationId,
+        });
+    },
+  },
+  {
+    name: "anthropic",
+    fromConfig(config) {
+      const anthropicConfig = config.anthropic;
+      if (!anthropicConfig) return undefined;
+      return () => new AnthropicProvider(anthropicConfig);
+    },
+    fromEnv() {
+      const anthropicEnv = getAnthropicEnvConfig();
+      if (!anthropicEnv.apiKey) return undefined;
+      const apiKey = anthropicEnv.apiKey;
+      return () =>
+        new AnthropicProvider({
+          apiKey,
+          baseURL: anthropicEnv.baseURL,
+        });
+    },
+  },
+  {
+    name: "google",
+    fromConfig(config) {
+      const googleConfig = config.google;
+      if (!googleConfig) return undefined;
+      return () => new GoogleProvider(googleConfig);
+    },
+    fromEnv() {
+      const googleEnv = getGoogleGenAIEnvConfig();
+      if (!googleEnv.apiKey) return undefined;
+      const apiKey = googleEnv.apiKey;
+      return () => new GoogleProvider({ apiKey });
+    },
+  },
+];
+
 class ProviderRegistry {
   private registerProvider(
     name: string,
@@ -53,65 +113,24 @@ class ProviderRegistry {
   }
 
   private autoInitializeFromEnv(): void {
-    const openaiEnv = getOpenAIEnvConfig();
-    if (openaiEnv.apiKey && !providerManager.has("openai")) {
-      const apiKey = openaiEnv.apiKey;
-      this.registerProvider(
-        "openai",
-        () =>
-          new OpenAIProvider({
-            apiKey,
-            baseURL: openaiEnv.baseURL,
-            organizationId: openaiEnv.organizationId,
-          }),
-        true,
-      );
-    }
+    for (const factory of providerConfigFactories) {
+      if (providerManager.has(factory.name)) continue;
 
-    const anthropicEnv = getAnthropicEnvConfig();
-    if (anthropicEnv.apiKey && !providerManager.has("anthropic")) {
-      const apiKey = anthropicEnv.apiKey;
-      this.registerProvider(
-        "anthropic",
-        () =>
-          new AnthropicProvider({
-            apiKey,
-            baseURL: anthropicEnv.baseURL,
-          }),
-        true,
-      );
-    }
-
-    const googleEnv = getGoogleGenAIEnvConfig();
-    if (googleEnv.apiKey && !providerManager.has("google")) {
-      const apiKey = googleEnv.apiKey;
-      this.registerProvider(
-        "google",
-        () => new GoogleProvider({ apiKey }),
-        true,
-      );
+      const createProvider = factory.fromEnv();
+      if (createProvider) {
+        this.registerProvider(factory.name, createProvider, true);
+      }
     }
   }
 
   initialize(config: ProvidersConfig): void {
     if (config.default) defaultProviderName = config.default;
 
-    if (config.openai) {
-      const openaiConfig = config.openai;
-      this.registerProvider("openai", () => new OpenAIProvider(openaiConfig));
-    }
-
-    if (config.anthropic) {
-      const anthropicConfig = config.anthropic;
-      this.registerProvider(
-        "anthropic",
-        () => new AnthropicProvider(anthropicConfig),
-      );
-    }
-
-    if (config.google) {
-      const googleConfig = config.google;
-      this.registerProvider("google", () => new GoogleProvider(googleConfig));
+    for (const factory of providerConfigFactories) {
+      const createProvider = factory.fromConfig(config);
+      if (createProvider) {
+        this.registerProvider(factory.name, createProvider);
+      }
     }
   }
 
@@ -120,40 +139,11 @@ class ProviderRegistry {
    * These will be available to all projects as fallback.
    */
   initializeSharedFromEnv(): void {
-    const openaiEnv = getOpenAIEnvConfig();
-    if (openaiEnv.apiKey) {
-      const apiKey = openaiEnv.apiKey;
-      this.registerProviderShared(
-        "openai",
-        () =>
-          new OpenAIProvider({
-            apiKey,
-            baseURL: openaiEnv.baseURL,
-            organizationId: openaiEnv.organizationId,
-          }),
-      );
-    }
-
-    const anthropicEnv = getAnthropicEnvConfig();
-    if (anthropicEnv.apiKey) {
-      const apiKey = anthropicEnv.apiKey;
-      this.registerProviderShared(
-        "anthropic",
-        () =>
-          new AnthropicProvider({
-            apiKey,
-            baseURL: anthropicEnv.baseURL,
-          }),
-      );
-    }
-
-    const googleEnv = getGoogleGenAIEnvConfig();
-    if (googleEnv.apiKey) {
-      const apiKey = googleEnv.apiKey;
-      this.registerProviderShared(
-        "google",
-        () => new GoogleProvider({ apiKey }),
-      );
+    for (const factory of providerConfigFactories) {
+      const createProvider = factory.fromEnv();
+      if (createProvider) {
+        this.registerProviderShared(factory.name, createProvider);
+      }
     }
   }
 

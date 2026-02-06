@@ -6,7 +6,7 @@ import { z } from "zod";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { cleanCommand } from "./command.ts";
 import { showLogo } from "#cli/utils";
-import { CommonArgs, createArgParser } from "#cli/shared/args";
+import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
 const CleanArgsSchema = z.object({
@@ -27,12 +27,9 @@ const parseCleanArgs = createArgParser(CleanArgsSchema, {
 
 export async function handleCleanCommand(args: ParsedArgs): Promise<void> {
   showLogo();
-  const result = parseCleanArgs(args);
-  if (!result.success) {
-    throw new Error(`Invalid clean arguments: ${result.error.message}`);
-  }
+  const data = parseArgsOrThrow(parseCleanArgs, "clean", args);
   await cleanCommand({
-    ...result.data,
-    projectDir: result.data.projectDir || cwd(),
+    ...data,
+    projectDir: data.projectDir || cwd(),
   });
 }

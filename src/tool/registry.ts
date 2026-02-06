@@ -2,58 +2,17 @@ import type { Tool, ToolDefinition } from "./types.ts";
 import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/ai/registry-manager.ts";
+import { ScopedRegistryFacade } from "#veryfront/ai/registry-facade.ts";
 
 const toolManager = new ProjectScopedRegistryManager<Tool>("tool");
 
-class ToolRegistryClass {
-  register(id: string, toolInstance: Tool): void {
-    toolManager.register(id, toolInstance);
-  }
-
-  /**
-   * Register a framework-provided tool available to all projects.
-   */
-  registerShared(id: string, toolInstance: Tool): void {
-    toolManager.registerShared(id, toolInstance);
-  }
-
-  get(id: string): Tool | undefined {
-    return toolManager.get(id);
-  }
-
-  has(id: string): boolean {
-    return toolManager.has(id);
-  }
-
-  getAllIds(): string[] {
-    return toolManager.getAllIds();
-  }
-
-  getAll(): Map<string, Tool> {
-    return toolManager.getAll();
-  }
-
-  clear(): void {
-    toolManager.clear();
-  }
-
-  /**
-   * Clear everything (for testing).
-   */
-  clearAll(): void {
-    toolManager.clearAll();
-  }
-
+class ToolRegistryClass extends ScopedRegistryFacade<Tool> {
   getToolsForProvider(): ToolDefinition[] {
-    return [...toolManager.getAll().values()].map(toolToProviderDefinition);
-  }
-
-  getStats(): ReturnType<typeof toolManager.getStats> {
-    return toolManager.getStats();
+    return [...this.getAll().values()].map(toolToProviderDefinition);
   }
 }
 
-export const toolRegistry = new ToolRegistryClass();
+export const toolRegistry = new ToolRegistryClass(toolManager);
 
 export function toolToProviderDefinition(tool: Tool): ToolDefinition {
   const hasPreConvertedSchema = tool.inputSchemaJson != null;

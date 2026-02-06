@@ -3,7 +3,7 @@
  */
 
 import { z } from "zod";
-import { createArgParser } from "#cli/shared/args";
+import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
 const MCPArgsSchema = z.object({
@@ -15,12 +15,9 @@ export const parseMCPArgs = createArgParser(MCPArgsSchema, {
 });
 
 export async function handleMCPCommand(args: ParsedArgs): Promise<void> {
-  const result = parseMCPArgs(args);
-  if (!result.success) {
-    throw new Error(`Invalid MCP arguments: ${result.error.message}`);
-  }
+  const data = parseArgsOrThrow(parseMCPArgs, "MCP", args);
   const { createStandaloneMCPServer } = await import("../../mcp/standalone.ts");
-  const mcpServer = createStandaloneMCPServer({ port: result.data.port });
+  const mcpServer = createStandaloneMCPServer({ port: data.port });
 
   // Keep process alive until interrupted, then shut down gracefully
   const { promise, resolve } = Promise.withResolvers<void>();

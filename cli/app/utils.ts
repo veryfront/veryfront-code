@@ -75,10 +75,13 @@ export async function createRemoteProject(
 export function getLocalProjectsFromState(
   appState: AppState,
 ): Array<{ slug: string; path: string }> {
-  return appState.projects.items.map((item) => ({
-    slug: item.data!.slug,
-    path: item.data!.path,
-  }));
+  const result: Array<{ slug: string; path: string }> = [];
+  for (const item of appState.projects.items) {
+    if (item.data) {
+      result.push({ slug: item.data.slug, path: item.data.path });
+    }
+  }
+  return result;
 }
 
 export async function pullRemoteProject(

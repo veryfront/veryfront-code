@@ -121,6 +121,24 @@ export function createArgParser<T extends z.ZodRawShape>(
 }
 
 /**
+ * Parse args with a parser function and throw on failure.
+ * Eliminates the repeated parse-validate-throw boilerplate in handlers.
+ */
+export function parseArgsOrThrow<T>(
+  parser: (args: ParsedArgs) => z.SafeParseReturnType<unknown, T>,
+  commandName: string,
+  args: ParsedArgs,
+): T {
+  const result = parser(args);
+  if (!result.success) {
+    throw new Error(
+      `Invalid ${commandName} arguments: ${result.error.message}`,
+    );
+  }
+  return result.data;
+}
+
+/**
  * Common arg specs for reuse across commands
  */
 export const CommonArgs = {

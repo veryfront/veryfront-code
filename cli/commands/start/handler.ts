@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { startCommand } from "./command.ts";
-import { createArgParser } from "#cli/shared/args";
+import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 import { DEFAULT_MCP_PORT } from "#cli/shared/constants";
 
@@ -21,11 +21,7 @@ export const parseStartArgs = createArgParser(StartArgsSchema, {
 });
 
 export async function handleStartCommand(args: ParsedArgs): Promise<void> {
-  const result = parseStartArgs(args);
-  if (!result.success) {
-    throw new Error(`Invalid start arguments: ${result.error.message}`);
-  }
-  const opts = result.data;
+  const opts = parseArgsOrThrow(parseStartArgs, "start", args);
   await startCommand({
     port: opts.port,
     mcpPort: opts.mcpPort,

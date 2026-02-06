@@ -6,7 +6,7 @@ import { z } from "zod";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { routesCommand } from "./command.ts";
 import { showLogo } from "#cli/utils";
-import { CommonArgs, createArgParser } from "#cli/shared/args";
+import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
 const RoutesArgsSchema = z.object({
@@ -21,10 +21,7 @@ export const parseRoutesArgs = createArgParser(RoutesArgsSchema, {
 
 export async function handleRoutesCommand(args: ParsedArgs): Promise<void> {
   showLogo();
-  const result = parseRoutesArgs(args);
-  if (!result.success) {
-    throw new Error(`Invalid routes arguments: ${result.error.message}`);
-  }
-  const projectDir = result.data.projectDir || cwd();
-  await routesCommand(projectDir, { json: result.data.json });
+  const data = parseArgsOrThrow(parseRoutesArgs, "routes", args);
+  const projectDir = data.projectDir || cwd();
+  await routesCommand(projectDir, { json: data.json });
 }

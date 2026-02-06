@@ -8,23 +8,6 @@ export type {
   MDXModule,
 } from "./types.ts";
 
-// Loaders (stay in this module - different signatures from esm-module-loader)
+// Loaders only.
 export { loadMDXModule } from "./loader.ts";
 export { isESMModule, loadESMModule } from "./esm-loader.ts";
-
-// Re-exports from new consolidated locations (backwards compatibility)
-export {
-  extractComponentImports,
-  resolveComponents,
-} from "../esm-module-loader/components/resolver.ts";
-export {
-  extractFrontmatter,
-  extractMetadata,
-  mergeFrontmatter,
-} from "../esm-module-loader/metadata/index.ts";
-export { loadJSXRuntime } from "../esm-module-loader/jsx/runtime-loader.ts";
-export {
-  cleanModuleCode,
-  extractBalancedBlock,
-  parseJsonish,
-} from "../esm-module-loader/metadata/string-parser.ts";

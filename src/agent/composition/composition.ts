@@ -11,6 +11,7 @@ import type { Agent } from "../types.ts";
 import type { Tool } from "#veryfront/tool";
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/ai/registry-manager.ts";
+import { ScopedRegistryFacade } from "#veryfront/ai/registry-facade.ts";
 import { AgentToolInputSchema } from "../schemas/index.ts";
 
 export function agentAsTool(agent: Agent, description: string): Tool {
@@ -124,52 +125,10 @@ export function createWorkflow(
 
 const agentManager = new ProjectScopedRegistryManager<Agent>("agent");
 
-class AgentRegistryClass {
-  register(id: string, agent: Agent): void {
-    agentManager.register(id, agent);
-  }
-
-  /**
-   * Register a framework-provided agent available to all projects.
-   */
-  registerShared(id: string, agent: Agent): void {
-    agentManager.registerShared(id, agent);
-  }
-
-  get(id: string): Agent | undefined {
-    return agentManager.get(id);
-  }
-
-  has(id: string): boolean {
-    return agentManager.has(id);
-  }
-
-  getAllIds(): string[] {
-    return agentManager.getAllIds();
-  }
-
-  getAll(): Map<string, Agent> {
-    return agentManager.getAll();
-  }
-
-  clear(): void {
-    agentManager.clear();
-  }
-
-  /**
-   * Clear everything (for testing).
-   */
-  clearAll(): void {
-    agentManager.clearAll();
-  }
-
-  getStats(): ReturnType<typeof agentManager.getStats> {
-    return agentManager.getStats();
-  }
-}
+class AgentRegistryClass extends ScopedRegistryFacade<Agent> {}
 
 // Singleton instance - maintains same interface but now project-scoped internally
-export const agentRegistry = new AgentRegistryClass();
+export const agentRegistry = new AgentRegistryClass(agentManager);
 
 export { AgentRegistryClass };
 

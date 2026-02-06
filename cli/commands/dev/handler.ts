@@ -9,7 +9,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT } from "#veryfront/utils";
 import { devCommand } from "./index.ts";
 import { clearAllLocalCaches } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
-import { createArgParser } from "#cli/shared/args";
+import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
 const DevArgsSchema = z.object({
@@ -47,11 +47,7 @@ async function resolveProjectDir(projectArg: string | undefined): Promise<string
 }
 
 export async function handleDevCommand(args: ParsedArgs): Promise<void> {
-  const result = parseDevArgs(args);
-  if (!result.success) {
-    throw new Error(`Invalid dev arguments: ${result.error.message}`);
-  }
-  const opts = result.data;
+  const opts = parseArgsOrThrow(parseDevArgs, "dev", args);
   const projectDir = await resolveProjectDir(opts.project);
 
   // Clear stale ESM caches to prevent module resolution issues from previous runs

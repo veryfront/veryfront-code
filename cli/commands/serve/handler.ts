@@ -2,7 +2,7 @@ import { z } from "zod";
 import { DEFAULT_DEV_SERVER_PORT } from "#veryfront/utils";
 import { serveCommand } from "./command.ts";
 import { ServerModeSchema } from "#cli/shared/types";
-import { createArgParser } from "#cli/shared/args";
+import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
 const ServeArgsSchema = z.object({
@@ -26,11 +26,7 @@ export const parseServeArgs = createArgParser(ServeArgsSchema, {
 });
 
 export async function handleServeCommand(args: ParsedArgs): Promise<void> {
-  const result = parseServeArgs(args);
-  if (!result.success) {
-    throw new Error(`Invalid serve arguments: ${result.error.message}`);
-  }
-  const opts = result.data;
+  const opts = parseArgsOrThrow(parseServeArgs, "serve", args);
   await serveCommand({
     mode: opts.mode,
     port: opts.port,

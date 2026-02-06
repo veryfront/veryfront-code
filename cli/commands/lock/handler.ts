@@ -6,7 +6,7 @@ import { z } from "zod";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { lockCommand } from "./command.ts";
 import { showLogo } from "#cli/utils";
-import { createArgParser } from "#cli/shared/args";
+import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
 const LockArgsSchema = z.object({
@@ -29,12 +29,9 @@ const parseLockArgs = createArgParser(LockArgsSchema, {
 
 export async function handleLockCommand(args: ParsedArgs): Promise<void> {
   showLogo();
-  const result = parseLockArgs(args);
-  if (!result.success) {
-    throw new Error(`Invalid lock arguments: ${result.error.message}`);
-  }
+  const data = parseArgsOrThrow(parseLockArgs, "lock", args);
   await lockCommand({
-    ...result.data,
-    projectDir: result.data.projectDir || cwd(),
+    ...data,
+    projectDir: data.projectDir || cwd(),
   });
 }

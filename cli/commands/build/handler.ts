@@ -4,7 +4,7 @@ import { join } from "#veryfront/platform/compat/path/index.ts";
 import { cliLogger } from "#veryfront/utils";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { buildCommand } from "./command.ts";
-import { CommonArgs, createArgParser } from "#cli/shared/args";
+import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { exitProcess, showLogo } from "#cli/utils";
 import type { ParsedArgs } from "#cli/shared/types";
 
@@ -47,11 +47,7 @@ export const parseBuildArgs = createArgParser(BuildArgsSchema, {
 
 export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
   showLogo();
-  const result = parseBuildArgs(args);
-  if (!result.success) {
-    throw new Error(`Invalid build arguments: ${result.error.message}`);
-  }
-  const opts = result.data;
+  const opts = parseArgsOrThrow(parseBuildArgs, "build", args);
   const projectDir = cwd();
   const preset = opts.preset?.toLowerCase();
 

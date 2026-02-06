@@ -106,26 +106,6 @@ describe("new command integration", () => {
     });
   });
 
-  describe("--skip-deploy mode (deprecated but still supported)", () => {
-    it("should scaffold a project without API calls", async () => {
-      const result = await runNewCommand(projectName, ["--skip-deploy"]);
-      const output = (result.stdout ?? "") + (result.stderr ?? "");
-
-      assertExists(output.includes("Veryfront") || output.includes("Created"));
-
-      const statResult = await stat(projectDir);
-      assertEquals(statResult.isDirectory, true);
-
-      const configContent = await readTextFile(
-        join(projectDir, "veryfront.config.ts"),
-      );
-      assertExists(configContent.includes(`projectSlug: "${projectName}-`));
-
-      assertEquals(await exists(join(projectDir, ".env")), true);
-      assertEquals(await exists(join(projectDir, "veryfront.config.ts")), true);
-    });
-  });
-
   describe("validation", () => {
     it("should reject invalid project names", async () => {
       const result = await runCommand("deno", {
@@ -135,7 +115,6 @@ describe("new command integration", () => {
           getCliPath(),
           "new",
           "Invalid Name With Spaces",
-          "--skip-deploy",
         ],
         cwd: TEST_DIR,
         capture: true,
@@ -147,7 +126,7 @@ describe("new command integration", () => {
     it("should reject existing directories without --force", async () => {
       await mkdir(projectDir);
 
-      const result = await runNewCommand(projectName, ["--skip-deploy"]);
+      const result = await runNewCommand(projectName, []);
       assertEquals(result.code, 1);
     });
 
@@ -155,7 +134,7 @@ describe("new command integration", () => {
       await mkdir(projectDir);
       await writeTextFile(join(projectDir, "existing.txt"), "old content");
 
-      const result = await runNewCommand(projectName, ["--skip-deploy", "--force"]);
+      const result = await runNewCommand(projectName, ["--force"]);
       assertEquals(result.code, 0);
 
       const configContent = await readTextFile(
@@ -168,7 +147,6 @@ describe("new command integration", () => {
   describe("--integrations flag", () => {
     it("should scaffold project with single integration", async () => {
       const result = await runNewCommand(projectName, [
-        "--skip-deploy",
         "-t",
         "ai",
         "--integrations",
@@ -189,7 +167,6 @@ describe("new command integration", () => {
 
     it("should scaffold project with multiple integrations (comma-separated)", async () => {
       const result = await runNewCommand(projectName, [
-        "--skip-deploy",
         "-t",
         "ai",
         "--integrations",
@@ -204,7 +181,6 @@ describe("new command integration", () => {
 
     it("should include integration env vars in .env", async () => {
       const result = await runNewCommand(projectName, [
-        "--skip-deploy",
         "-t",
         "ai",
         "--integrations",
@@ -221,7 +197,6 @@ describe("new command integration", () => {
 
     it("should include integration env vars in .env.example", async () => {
       const result = await runNewCommand(projectName, [
-        "--skip-deploy",
         "-t",
         "ai",
         "--integrations",
@@ -241,7 +216,7 @@ describe("new command integration", () => {
     it("should skip wizard when --template flag is provided", async () => {
       const result = await runNewCommand(
         projectName,
-        ["--skip-deploy", "-t", "minimal"],
+        ["-t", "minimal"],
         {
           env: {
             ...env(),
@@ -260,7 +235,7 @@ describe("new command integration", () => {
     it("should skip wizard when --integrations flag is provided", async () => {
       const result = await runNewCommand(
         projectName,
-        ["--skip-deploy", "--integrations", "github"],
+        ["--integrations", "github"],
         {
           env: {
             ...env(),
@@ -277,7 +252,7 @@ describe("new command integration", () => {
     });
 
     it("should skip wizard in non-TTY environment", async () => {
-      const result = await runNewCommand(projectName, ["--skip-deploy"]);
+      const result = await runNewCommand(projectName, []);
 
       assertEquals(result.code, 0);
       assertEquals(await pathIsDirectory(join(projectDir, "agents")), true);

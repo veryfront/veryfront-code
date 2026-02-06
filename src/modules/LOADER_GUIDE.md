@@ -125,9 +125,12 @@ import {
 
 ## Migration Notes
 
-### Consolidated Functions
+Legacy helper files under `module-loader/` were removed.
+Use `esm-module-loader/` imports directly.
 
-The following functions were consolidated into `esm-module-loader`:
+### Removed Legacy Paths
+
+The following old imports were removed and must be replaced:
 
 | Function                  | Old Location                          | New Location                                  |
 | ------------------------- | ------------------------------------- | --------------------------------------------- |
@@ -141,14 +144,6 @@ The following functions were consolidated into `esm-module-loader`:
 | `resolveComponents`       | `module-loader/component-resolver.ts` | `esm-module-loader/components/resolver.ts`    |
 | `loadJSXRuntime`          | `module-loader/jsx-runtime-loader.ts` | `esm-module-loader/jsx/runtime-loader.ts`     |
 
-### Backwards Compatibility
-
-Old imports from `module-loader/` continue to work via re-exports:
-
 ```typescript
-// Still works (re-exports from new locations)
-import { extractFrontmatter } from "./module-loader/metadata-extractor.ts";
-
-// Preferred (direct import from new location)
 import { extractFrontmatter } from "./esm-module-loader/metadata/index.ts";
 ```
