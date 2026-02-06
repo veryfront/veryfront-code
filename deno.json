@@ -86,6 +86,7 @@
     "#cli/utils": "./cli/utils/index.ts",
     "#veryfront/cli/ui": "./cli/ui/index.ts",
     "#veryfront/config": "./src/config/index.ts",
+    "#veryfront/discovery": "./src/discovery/index.ts",
     "#veryfront/data": "./src/data/index.ts",
     "#veryfront/errors": "./src/errors/index.ts",
     "#veryfront/html": "./src/html/index.ts",

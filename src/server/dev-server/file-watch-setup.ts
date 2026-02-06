@@ -1,13 +1,19 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import { handleErrorWithFallback } from "#veryfront/errors/index.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join, relative, sep } from "#veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { HMRServer } from "./hmr-server.ts";
 import { OptimizedFileWatcher } from "./file-watcher.ts";
 import type { RouteDiscovery } from "./route-discovery.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
+import type { DevServer } from "./server.ts";
 
 const METRICS_LOG_INTERVAL = 10;
+
+/**
+ * AI primitive directories that trigger re-discovery on file changes.
+ */
+const AI_DIRS = new Set(["tools", "agents", "workflows", "prompts", "resources"]);
 
 /**
  * Patterns for paths that should NOT trigger HMR updates.
@@ -45,6 +51,7 @@ export class FileWatchSetup {
     private routeDiscovery: RouteDiscovery,
     private debounceMs: number,
     private invalidateHandler: () => void = () => {},
+    private devServer?: DevServer,
   ) {}
 
   async setup(): Promise<void> {
@@ -85,6 +92,12 @@ export class FileWatchSetup {
       join(this.projectDir, "styles"),
       join(this.projectDir, "public"),
       join(this.projectDir, "app"),
+      // AI primitive directories
+      join(this.projectDir, "tools"),
+      join(this.projectDir, "agents"),
+      join(this.projectDir, "workflows"),
+      join(this.projectDir, "prompts"),
+      join(this.projectDir, "resources"),
     ];
 
     const watchPaths: string[] = [];
@@ -146,8 +159,24 @@ export class FileWatchSetup {
     ReloadNotifier.triggerReload(paths);
   }
 
+  /**
+   * Check if a path is inside an AI primitive directory (tools/, agents/, etc.)
+   * Uses path segment matching to avoid false positives from substrings.
+   */
+  private isAIPath(fullPath: string): boolean {
+    const rel = relative(this.projectDir, fullPath);
+    const firstSegment = rel.split(sep)[0] ?? "";
+    return AI_DIRS.has(firstSegment);
+  }
+
   private async handleBatchedFileChanges(changes: string[]): Promise<void> {
     const startTime = performance.now();
+
+    // Check for AI file changes and trigger re-discovery
+    const hasAIChanges = changes.some((p) => this.isAIPath(p));
+    if (hasAIChanges && this.devServer) {
+      await this.devServer.rediscoverAI();
+    }
 
     await this.refreshAndReload(changes, "");
 

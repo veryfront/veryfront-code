@@ -9,8 +9,8 @@ import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { getConfig } from "#veryfront/config";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { createDevServer } from "#veryfront/server/dev-server.ts";
-import { runAIConfigValidation } from "../../discovery/config-validator.ts";
-import { discoverAll } from "../../discovery/index.ts";
+import { validateAIConfig } from "#veryfront/discovery";
+import { yellow } from "#veryfront/compat/console";
 import { exitProcess, registerTerminationSignals } from "#cli/utils";
 import { banner, brand, dim, error as errorColor, success } from "#cli/ui";
 import { createKeyboardHandler, type KeyboardHandler } from "../../ui/keyboard.ts";
@@ -74,12 +74,14 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       const isProxyMode = config?.fs?.veryfront?.proxyMode === true;
       const projectSlug = config?.fs?.veryfront?.projectSlug ?? env.projectSlug;
 
-      runAIConfigValidation(config);
-
-      try {
-        await discoverAll({ baseDir: projectDir, verbose: false });
-      } catch {
-        // AI discovery skipped
+      // Validate AI config and print warnings (framework returns plain text, CLI adds colors)
+      const aiValidation = validateAIConfig(config);
+      if (aiValidation.warnings.length > 0) {
+        console.log("");
+        for (const warning of aiValidation.warnings) {
+          console.log(`  ${yellow("!")} ${warning.replace(/\n/g, "\n    ")}`);
+        }
+        console.log("");
       }
 
       if (config?.experimental?.precompileMDX) {
