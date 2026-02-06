@@ -2,8 +2,8 @@ import { assertStringIncludes } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
-import { routesCommand } from "../../../../cli/commands/routes/index.ts";
-import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
+import { routesCommand } from "./index.ts";
+import { type TestContext, withTestContext } from "../../../tests/_helpers/context.ts";
 
 async function setupPagesRouter(context: TestContext): Promise<void> {
   await remove(join(context.projectDir, "app"), { recursive: true });

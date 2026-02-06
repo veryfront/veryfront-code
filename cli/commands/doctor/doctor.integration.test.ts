@@ -2,8 +2,8 @@ import { assert } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
-import { doctorCommand } from "../../../../cli/commands/doctor/index.ts";
-import { withTestContext } from "../../../_helpers/context.ts";
+import { doctorCommand } from "./index.ts";
+import { withTestContext } from "../../../tests/_helpers/context.ts";
 
 describe("CLI doctor command", () => {
   it("runs without throwing", async () => {

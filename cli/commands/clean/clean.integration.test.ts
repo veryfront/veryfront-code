@@ -3,8 +3,8 @@ import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
 import { setEnv } from "#veryfront/compat/process.ts";
-import { cleanCommand } from "../../../../cli/commands/clean/index.ts";
-import { withTestContext } from "../../../_helpers/context.ts";
+import { cleanCommand } from "./index.ts";
+import { withTestContext } from "../../../tests/_helpers/context.ts";
 
 describe("CLI clean command", () => {
   it("runs without throwing", { sanitizeOps: false, sanitizeResources: false }, async () => {
