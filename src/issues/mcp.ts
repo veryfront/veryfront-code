@@ -11,27 +11,43 @@ import { cwd } from "#veryfront/platform/compat/process.ts";
 import type { MCPTool } from "#veryfront/mcp/types.ts";
 import { createIssuesManager } from "./core.ts";
 import type { Issue } from "./schemas/index.ts";
-import { ISSUE_PREFIXES, parseState } from "./schemas/index.ts";
+import {
+  createIssueSchema,
+  issueIdSchema,
+  issuePrefixSchema,
+  issueStateSchema,
+  labelSchema,
+  listIssuesSchema,
+  parseState,
+  updateIssueSchema,
+} from "./schemas/index.ts";
 
 function getManager(projectDir?: string) {
   return createIssuesManager(projectDir ?? cwd());
 }
 
 // ============================================================================
+// Shared schema extension for projectDir
+// ============================================================================
+
+const projectDirSchema = z.object({
+  projectDir: z.string().optional().describe("Project directory (defaults to cwd)"),
+});
+
+// ============================================================================
 // Tool: issues_create
 // ============================================================================
 
-const issuesCreateInput = z.object({
+const issuesCreateInput = createIssueSchema.extend({
   title: z.string().describe("Issue title"),
   body: z.string().optional().describe("Issue description in markdown"),
-  labels: z.array(z.string()).optional().describe(
+  labels: z.array(labelSchema).optional().describe(
     "Labels to apply (e.g., ['bug', 'priority:high'])",
   ),
   milestone: z.string().optional().describe("Milestone to assign"),
   assignees: z.array(z.string()).optional().describe("Users to assign"),
-  prefix: z.enum(ISSUE_PREFIXES).optional().describe("ID prefix: ISSUE, TASK, or PLAN"),
-  projectDir: z.string().optional().describe("Project directory (defaults to cwd)"),
-});
+  prefix: issuePrefixSchema.optional().describe("ID prefix: ISSUE, TASK, or PLAN"),
+}).merge(projectDirSchema);
 
 type IssuesCreateInput = z.infer<typeof issuesCreateInput>;
 
@@ -57,9 +73,8 @@ const issuesCreate: MCPTool<IssuesCreateInput, Issue> = {
 // Tool: issues_get
 // ============================================================================
 
-const issuesGetInput = z.object({
-  id: z.string().describe("Issue ID (e.g., ISSUE-001, TASK-042)"),
-  projectDir: z.string().optional().describe("Project directory (defaults to cwd)"),
+const issuesGetInput = projectDirSchema.extend({
+  id: issueIdSchema.describe("Issue ID (e.g., ISSUE-001, TASK-042)"),
 });
 
 type IssuesGetInput = z.infer<typeof issuesGetInput>;
@@ -78,16 +93,15 @@ const issuesGet: MCPTool<IssuesGetInput, Issue | null> = {
 // Tool: issues_update
 // ============================================================================
 
-const issuesUpdateInput = z.object({
-  id: z.string().describe("Issue ID to update"),
+const issuesUpdateInput = updateIssueSchema.extend({
+  id: issueIdSchema.describe("Issue ID to update"),
   title: z.string().optional().describe("New title"),
   body: z.string().optional().describe("New body content"),
   state: z.string().optional().describe("New state: 'open' or 'closed' (aliases: done, resolved)"),
-  labels: z.array(z.string()).optional().describe("Labels to set (replaces existing)"),
+  labels: z.array(labelSchema).optional().describe("Labels to set (replaces existing)"),
   milestone: z.string().nullable().optional().describe("Milestone (set to null to remove)"),
   assignees: z.array(z.string()).optional().describe("Assignees to set (replaces existing)"),
-  projectDir: z.string().optional().describe("Project directory (defaults to cwd)"),
-});
+}).merge(projectDirSchema);
 
 type IssuesUpdateInput = z.infer<typeof issuesUpdateInput>;
 
@@ -119,17 +133,16 @@ const issuesUpdate: MCPTool<IssuesUpdateInput, Issue | null> = {
 // Tool: issues_list
 // ============================================================================
 
-const issuesListInput = z.object({
-  state: z.enum(["open", "closed"]).optional().describe("Filter by state"),
-  labels: z.array(z.string()).optional().describe("Filter by labels (must have ALL)"),
+const issuesListInput = listIssuesSchema.extend({
+  state: issueStateSchema.optional().describe("Filter by state"),
+  labels: z.array(labelSchema).optional().describe("Filter by labels (must have ALL)"),
   milestone: z.string().optional().describe("Filter by milestone"),
   assignee: z.string().optional().describe("Filter by assignee"),
-  prefix: z.enum(ISSUE_PREFIXES).optional().describe("Filter by prefix (ISSUE, TASK, PLAN)"),
+  prefix: issuePrefixSchema.optional().describe("Filter by prefix (ISSUE, TASK, PLAN)"),
   sortBy: z.enum(["created_at", "updated_at", "id"]).optional().describe("Sort field"),
   sortDirection: z.enum(["asc", "desc"]).optional().describe("Sort direction"),
   limit: z.number().optional().describe("Maximum results"),
-  projectDir: z.string().optional().describe("Project directory (defaults to cwd)"),
-});
+}).merge(projectDirSchema);
 
 type IssuesListInput = z.infer<typeof issuesListInput>;
 
@@ -162,9 +175,8 @@ const issuesList: MCPTool<IssuesListInput, IssuesListOutput> = {
 // Tool: issues_close
 // ============================================================================
 
-const issuesCloseInput = z.object({
-  id: z.string().describe("Issue ID to close"),
-  projectDir: z.string().optional().describe("Project directory (defaults to cwd)"),
+const issuesCloseInput = projectDirSchema.extend({
+  id: issueIdSchema.describe("Issue ID to close"),
 });
 
 type IssuesCloseInput = z.infer<typeof issuesCloseInput>;
@@ -183,9 +195,8 @@ const issuesClose: MCPTool<IssuesCloseInput, Issue | null> = {
 // Tool: issues_delete
 // ============================================================================
 
-const issuesDeleteInput = z.object({
-  id: z.string().describe("Issue ID to delete"),
-  projectDir: z.string().optional().describe("Project directory (defaults to cwd)"),
+const issuesDeleteInput = projectDirSchema.extend({
+  id: issueIdSchema.describe("Issue ID to delete"),
 });
 
 type IssuesDeleteInput = z.infer<typeof issuesDeleteInput>;
