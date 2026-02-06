@@ -6,7 +6,7 @@
  */
 
 import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "#veryfront/utils";
-import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
+import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
 import { createError, toError } from "../errors/veryfront-error.ts";

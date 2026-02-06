@@ -35,6 +35,13 @@ import { startProductionServer } from "../../src/server/production-server.ts";
 import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";
 import { runWithCacheDir } from "../../src/utils/cache-dir.ts";
 import { resetAllTestState } from "../../src/testing/isolation.ts";
+import { SERVER_CONFIG, TEST_TIMEOUTS } from "./constants.ts";
+import {
+  getHttpServerUrl,
+  pollHttpReadyByAttempts,
+  pollHttpStoppedByAttempts,
+  waitForHttpServerReadySignal,
+} from "./http-polling.ts";
 import type { TestServer } from "./server.ts";
 import { getFreePort } from "./utils.ts";
 
@@ -436,51 +443,24 @@ export class TestContext {
    * Waits for a server to be ready with exponential backoff
    */
   private async waitForServerReady(server: TestServer): Promise<void> {
-    const maxAttempts = 20;
-    const baseDelay = 100;
-    const maxDelay = 2000;
+    const maxAttempts = SERVER_CONFIG.MAX_READY_ATTEMPTS;
+    const url = getHttpServerUrl(server, { defaultPort: 3000, defaultHostname: "localhost" });
 
-    if (server.ready && typeof server.ready.then === "function") {
-      let timeoutId: number | undefined;
+    await waitForHttpServerReadySignal(server, {
+      timeoutMs: TEST_TIMEOUTS.SERVER_STARTUP,
+      timeoutMessage: "Server ready timeout",
+    });
 
-      const timeout = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error("Server ready timeout")), 10000);
-      });
+    const ready = await pollHttpReadyByAttempts(url, {
+      maxAttempts,
+      baseDelayMs: SERVER_CONFIG.READY_CHECK_DELAY,
+      maxDelayMs: SERVER_CONFIG.MAX_READY_DELAY,
+      backoffFactor: 1.5,
+      jitterMs: 100,
+      requestTimeoutMs: SERVER_CONFIG.FETCH_TIMEOUT,
+    });
 
-      try {
-        await Promise.race([server.ready, timeout]);
-      } finally {
-        if (timeoutId !== undefined) clearTimeout(timeoutId);
-      }
-    }
-
-    const port = server.port || 3000;
-    const hostname = server.hostname || "localhost";
-    const url = `http://${hostname}:${port}/`;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      try {
-        const response = await fetch(url, { signal: AbortSignal.timeout(2000) });
-        await response.body?.cancel();
-
-        if (response.status >= 200 && response.status < 600) {
-          try {
-            const verify = await fetch(url, { signal: AbortSignal.timeout(2000) });
-            await verify.body?.cancel();
-
-            if (verify.status >= 200 && verify.status < 600) return;
-          } catch {
-            // ignore; will retry
-          }
-        }
-      } catch {
-        // ignore; will retry
-      }
-
-      const delay = Math.min(baseDelay * 1.5 ** attempt + Math.random() * 100, maxDelay);
-      await new Promise<void>((resolve) => setTimeout(resolve, delay));
-    }
-
+    if (ready) return;
     throw new Error(`Server at ${url} not ready after ${maxAttempts} attempts`);
   }
 
@@ -488,20 +468,13 @@ export class TestContext {
    * Waits for a server to stop
    */
   private async waitForServerStopped(server: TestServer): Promise<void> {
-    const port = server.port || 3000;
-    const hostname = server.hostname || "localhost";
-    const url = `http://${hostname}:${port}/`;
+    const url = getHttpServerUrl(server, { defaultPort: 3000, defaultHostname: "localhost" });
 
-    const maxAttempts = 10;
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      try {
-        const response = await fetch(url, { signal: AbortSignal.timeout(100) });
-        await response.body?.cancel();
-        await new Promise<void>((resolve) => setTimeout(resolve, 100));
-      } catch {
-        return;
-      }
-    }
+    await pollHttpStoppedByAttempts(url, {
+      maxAttempts: 10,
+      retryDelayMs: 100,
+      requestTimeoutMs: 100,
+    });
   }
 }
 

@@ -6,7 +6,8 @@
  *************************************************/
 
 import { getTerminalSize, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
-import { ANSI_REGEX, RESET } from "./ansi.ts";
+import { pad as sharedPad } from "#veryfront/utils/box.ts";
+import { ANSI_REGEX, RESET, stripAnsi } from "./ansi.ts";
 
 /**
  * Get terminal width, with fallback for non-TTY environments
@@ -82,19 +83,7 @@ export function pad(
   width: number,
   align: "left" | "center" | "right" = "left",
 ): string {
-  const visible = visibleLength(text);
-  if (visible >= width) return text;
-
-  const padding = width - visible;
-
-  if (align === "right") return " ".repeat(padding) + text;
-
-  if (align === "center") {
-    const left = Math.floor(padding / 2);
-    return " ".repeat(left) + text + " ".repeat(padding - left);
-  }
-
-  return text + " ".repeat(padding);
+  return sharedPad(text, width, align);
 }
 
 /**
@@ -135,12 +124,8 @@ export function repeat(char: string, count: number): string {
   return count <= 0 ? "" : char.repeat(count);
 }
 
-/**
- * Strip ANSI escape codes from text
- */
-export function stripAnsi(text: string): string {
-  return text.replace(ANSI_REGEX, "");
-}
+// Re-export stripAnsi from ansi.ts for consumers that expect it from layout
+export { stripAnsi } from "./ansi.ts";
 
 /**
  * Split text into lines

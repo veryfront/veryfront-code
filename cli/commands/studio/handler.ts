@@ -3,7 +3,7 @@
  */
 
 import { z } from "zod";
-import { createArgParser } from "#cli/shared/args";
+import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 import { studioCommand } from "./index.ts";
 
@@ -20,9 +20,5 @@ export const parseStudioArgs = createArgParser(StudioArgsSchema, {
 });
 
 export async function handleStudioCommand(args: ParsedArgs): Promise<void> {
-  const result = parseStudioArgs(args);
-  if (!result.success) {
-    throw new Error(`Invalid studio arguments: ${result.error.message}`);
-  }
-  await studioCommand(result.data);
+  await studioCommand(parseArgsOrThrow(parseStudioArgs, "studio", args));
 }

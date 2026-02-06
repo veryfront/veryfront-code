@@ -38,13 +38,21 @@ export function extractBalancedBlock(
   return "";
 }
 
+const MODULE_CODE_CLEANUP_RULES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/export\s+\{[\s\S]*?\};?$/gm, ""],
+  [/export\s+default\s+/gm, ""],
+  [/export\s+const\s+/gm, "const "],
+  [/export\s+function\s+/gm, "function "],
+];
+
 export function cleanModuleCode(moduleCode: string): string {
-  return moduleCode
-    .replace(/import\s+.*?from\s+['"][^'"]+['"];?\s*/gm, "")
-    .replace(/export\s+\{[\s\S]*?\};?$/gm, "")
-    .replace(/export\s+default\s+/gm, "")
-    .replace(/export\s+const\s+/gm, "const ")
-    .replace(/export\s+function\s+/gm, "function ");
+  let cleaned = moduleCode.replace(/import\s+.*?from\s+['"][^'"]+['"];?\s*/gm, "");
+
+  for (const [pattern, replacement] of MODULE_CODE_CLEANUP_RULES) {
+    cleaned = cleaned.replace(pattern, replacement);
+  }
+
+  return cleaned;
 }
 
 export function parseJsonish(value: string): unknown {

@@ -31,7 +31,7 @@ export {
 } from "./http/handlers-index.ts";
 export type { CORSConfig, CSPDirectives, SecurityConfig } from "./http/handlers-index.ts";
 
-export { computeEtag, CONTENT_TYPES, isValidSecurityConfig } from "./http/middleware/index.ts";
+export { isValidSecurityConfig } from "./http/middleware/index.ts";
 
 export {
   applyCORSHeaders,

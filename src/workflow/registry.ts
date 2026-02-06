@@ -2,6 +2,7 @@ import type { Workflow, WorkflowDefinition, WorkflowNode } from "./types.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema";
 import { agentLogger as logger } from "#veryfront/utils";
 import { ProjectScopedRegistryManager } from "#veryfront/ai/registry-manager.ts";
+import { ScopedRegistryFacade } from "#veryfront/ai/registry-facade.ts";
 
 export interface NodeInfo {
   id: string;
@@ -196,41 +197,50 @@ const workflowDefinitionManager = new ProjectScopedRegistryManager<WorkflowDefin
   "workflow-definition",
 );
 
+const workflowMetadataRegistry = new ScopedRegistryFacade(workflowMetadataManager);
+const workflowDefinitionRegistry = new ScopedRegistryFacade(workflowDefinitionManager);
+
 class WorkflowRegistryClass {
-  register(workflow: Workflow | WorkflowDefinition): void {
+  private storeWorkflow(workflow: Workflow | WorkflowDefinition, shared: boolean): void {
     const definition = getWorkflowDefinition(workflow);
     const metadata = extractMetadata(definition);
 
-    workflowMetadataManager.register(definition.id, metadata);
-    workflowDefinitionManager.register(definition.id, definition);
+    if (shared) {
+      workflowMetadataRegistry.registerShared(definition.id, metadata);
+      workflowDefinitionRegistry.registerShared(definition.id, definition);
+      return;
+    }
+
+    workflowMetadataRegistry.register(definition.id, metadata);
+    workflowDefinitionRegistry.register(definition.id, definition);
+  }
+
+  register(workflow: Workflow | WorkflowDefinition): void {
+    this.storeWorkflow(workflow, false);
   }
 
   registerShared(workflow: Workflow | WorkflowDefinition): void {
-    const definition = getWorkflowDefinition(workflow);
-    const metadata = extractMetadata(definition);
-
-    workflowMetadataManager.registerShared(definition.id, metadata);
-    workflowDefinitionManager.registerShared(definition.id, definition);
+    this.storeWorkflow(workflow, true);
   }
 
   get(id: string): WorkflowMetadata | undefined {
-    return workflowMetadataManager.get(id);
+    return workflowMetadataRegistry.get(id);
   }
 
   getDefinition(id: string): WorkflowDefinition | undefined {
-    return workflowDefinitionManager.get(id);
+    return workflowDefinitionRegistry.get(id);
   }
 
   has(id: string): boolean {
-    return workflowMetadataManager.has(id);
+    return workflowMetadataRegistry.has(id);
   }
 
   getAllIds(): string[] {
-    return workflowMetadataManager.getAllIds();
+    return workflowMetadataRegistry.getAllIds();
   }
 
   getAll(): Map<string, WorkflowMetadata> {
-    return workflowMetadataManager.getAll();
+    return workflowMetadataRegistry.getAll();
   }
 
   getAllAsArray(): WorkflowMetadata[] {
@@ -264,23 +274,23 @@ class WorkflowRegistryClass {
   }
 
   unregister(id: string): boolean {
-    const metaDeleted = workflowMetadataManager.delete(id);
-    const defDeleted = workflowDefinitionManager.delete(id);
+    const metaDeleted = workflowMetadataRegistry.delete(id);
+    const defDeleted = workflowDefinitionRegistry.delete(id);
     return metaDeleted || defDeleted;
   }
 
   clear(): void {
-    workflowMetadataManager.clear();
-    workflowDefinitionManager.clear();
+    workflowMetadataRegistry.clear();
+    workflowDefinitionRegistry.clear();
   }
 
   clearAll(): void {
-    workflowMetadataManager.clearAll();
-    workflowDefinitionManager.clearAll();
+    workflowMetadataRegistry.clearAll();
+    workflowDefinitionRegistry.clearAll();
   }
 
-  getRegistryStats(): ReturnType<typeof workflowMetadataManager.getStats> {
-    return workflowMetadataManager.getStats();
+  getRegistryStats(): ReturnType<typeof workflowMetadataRegistry.getStats> {
+    return workflowMetadataRegistry.getStats();
   }
 }
 

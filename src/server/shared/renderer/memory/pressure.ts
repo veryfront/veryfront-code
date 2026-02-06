@@ -16,16 +16,18 @@
 
 import { rendererLogger } from "#veryfront/utils";
 import { getHeapStats } from "#veryfront/utils/memory/index.ts";
-import { getEnv } from "#veryfront/compat/process.ts";
+import { getEnvNumber, getEnvString } from "#veryfront/compat/process.ts";
 
 export type MemoryPressureLevel = "normal" | "warning" | "high" | "critical";
 
 function parseEnvThreshold(name: string, fallback: number): number {
-  const value = getEnv(name);
+  const value = getEnvString(name);
   if (!value) return fallback;
 
-  const parsed = parseInt(value, 10);
-  if (!Number.isNaN(parsed) && parsed >= 0 && parsed <= 100) return parsed;
+  const parsed = getEnvNumber(name);
+  if (parsed !== undefined && !Number.isNaN(parsed) && parsed >= 0 && parsed <= 100) {
+    return parsed;
+  }
 
   rendererLogger.warn(`[MemoryPressure] Invalid ${name}=${value}, using default ${fallback}`);
   return fallback;

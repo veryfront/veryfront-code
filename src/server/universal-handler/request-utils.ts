@@ -8,6 +8,7 @@
  */
 
 import { getTimeoutFromEnv } from "../../middleware/builtin/timeout.ts";
+import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
 
 /** Check if host is a private/internal IP address */
 export function isInternalHost(host: string): boolean {
@@ -44,8 +45,7 @@ export function getRequestTimeout(): number {
   return _requestTimeoutMs;
 }
 
-/** HTTP 504 Gateway Timeout status code */
-export const HTTP_GATEWAY_TIMEOUT = 504;
+export { HTTP_GATEWAY_TIMEOUT };
 
 /** Sentinel value for timeout detection (avoids string comparison) */
 export const TIMEOUT_SENTINEL = Symbol("request_timeout");

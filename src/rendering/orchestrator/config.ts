@@ -1,4 +1,4 @@
-import { isAbsolute, join } from "#veryfront/platform/compat/path-helper.ts";
+import { isAbsolute, join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { handleErrorWithFallback } from "#veryfront/errors/index.ts";

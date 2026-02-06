@@ -8,7 +8,7 @@
  * - Component imports and dependencies
  */
 
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 
 export interface ProjectOptions {
   /** Additional files to create in the project */

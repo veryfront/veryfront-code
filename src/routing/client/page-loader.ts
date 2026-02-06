@@ -1,5 +1,5 @@
 import { rendererLogger as logger } from "#veryfront/utils";
-import { NetworkError } from "#veryfront/errors/index.ts";
+import { NETWORK_ERROR } from "#veryfront/errors/index.ts";
 import { parsePageDataFromHTML } from "./dom-utils.ts";
 
 export type {
@@ -84,7 +84,11 @@ export class PageLoader {
     });
 
     if (!response.ok) {
-      throw new NetworkError(`Failed to fetch ${path}`, { status: response.status, path });
+      throw NETWORK_ERROR.create({
+        detail: `Failed to fetch ${path}`,
+        status: response.status,
+        context: { path },
+      });
     }
 
     const html = await response.text();
@@ -142,9 +146,10 @@ export class PageLoader {
     });
 
     if (!response.ok) {
-      throw new NetworkError(`Failed to fetch SPA page data for ${path}`, {
+      throw NETWORK_ERROR.create({
+        detail: `Failed to fetch SPA page data for ${path}`,
         status: response.status,
-        path,
+        context: { path },
       });
     }
 

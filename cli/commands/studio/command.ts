@@ -6,7 +6,7 @@
 import { canOpenBrowser, openBrowser } from "../../auth/browser.ts";
 import { readConfigFile } from "#cli/shared/config";
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { brand, dim, muted, success } from "#cli/ui";
 import {

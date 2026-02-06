@@ -379,15 +379,91 @@ export function hashCSS(css: string): string {
   return hashString(css).slice(0, 8);
 }
 
-function storeInLocalCache(hash: string, entry: CSSCacheEntry): void {
-  if (localCssCache.has(hash)) return;
+function storeInBoundedLocalCache<T>(
+  cache: Map<string, T>,
+  maxSize: number,
+  key: string,
+  entry: T,
+): void {
+  if (cache.has(key)) return;
 
-  if (localCssCache.size >= LOCAL_CACHE_MAX_SIZE) {
-    const firstKey = localCssCache.keys().next().value as string | undefined;
-    if (firstKey) localCssCache.delete(firstKey);
+  if (cache.size >= maxSize) {
+    const firstKey = cache.keys().next().value as string | undefined;
+    if (firstKey) cache.delete(firstKey);
   }
 
-  localCssCache.set(hash, entry);
+  cache.set(key, entry);
+}
+
+interface DistributedCacheInitOptions {
+  getCache: () => CacheBackend | null;
+  getCacheInitPromise: () => Promise<CacheBackend> | null;
+  setCache: (cache: CacheBackend) => void;
+  setCacheInitPromise: (promise: Promise<CacheBackend>) => void;
+  keyPrefix: string;
+  localFallbackSize: number;
+  initializedLog: string;
+  initFailureLog: string;
+}
+
+function getOrInitializeDistributedCache(
+  options: DistributedCacheInitOptions,
+): Promise<CacheBackend> {
+  const existing = options.getCache();
+  if (existing) return Promise.resolve(existing);
+
+  const pending = options.getCacheInitPromise();
+  if (pending) return pending;
+
+  const initPromise = createCacheBackend({ keyPrefix: options.keyPrefix })
+    .then((backend) => {
+      options.setCache(backend);
+      logger.debug(options.initializedLog, { type: backend.type });
+      return backend;
+    })
+    .catch((error) => {
+      logger.warn(options.initFailureLog, { error });
+      const fallback = new MemoryCacheBackend(options.localFallbackSize);
+      options.setCache(fallback);
+      return fallback;
+    });
+
+  options.setCacheInitPromise(initPromise);
+  return initPromise;
+}
+
+const cssCacheOptions: DistributedCacheInitOptions = {
+  getCache: () => cssCache,
+  getCacheInitPromise: () => cssCacheInitPromise,
+  setCache: (cache) => {
+    cssCache = cache;
+  },
+  setCacheInitPromise: (promise) => {
+    cssCacheInitPromise = promise;
+  },
+  keyPrefix: "css",
+  localFallbackSize: LOCAL_CACHE_MAX_SIZE,
+  initializedLog: "[tailwind] CSS cache initialized",
+  initFailureLog: "[tailwind] Failed to initialize distributed CSS cache, using memory",
+};
+
+const cssInputsCacheOptions: DistributedCacheInitOptions = {
+  getCache: () => cssInputsCache,
+  getCacheInitPromise: () => cssInputsCacheInitPromise,
+  setCache: (cache) => {
+    cssInputsCache = cache;
+  },
+  setCacheInitPromise: (promise) => {
+    cssInputsCacheInitPromise = promise;
+  },
+  keyPrefix: "css-inputs",
+  localFallbackSize: LOCAL_CSS_INPUTS_CACHE_MAX,
+  initializedLog: "[tailwind] CSS inputs cache initialized",
+  initFailureLog: "[tailwind] Failed to initialize CSS inputs cache, using memory",
+};
+
+function storeInLocalCache(hash: string, entry: CSSCacheEntry): void {
+  storeInBoundedLocalCache(localCssCache, LOCAL_CACHE_MAX_SIZE, hash, entry);
 }
 
 function touchLocalCache(hash: string, entry: CSSCacheEntry): void {
@@ -396,22 +472,7 @@ function touchLocalCache(hash: string, entry: CSSCacheEntry): void {
 }
 
 function getCssCache(): Promise<CacheBackend> {
-  if (cssCache) return Promise.resolve(cssCache);
-  if (cssCacheInitPromise) return cssCacheInitPromise;
-
-  cssCacheInitPromise = createCacheBackend({ keyPrefix: "css" })
-    .then((backend) => {
-      cssCache = backend;
-      logger.debug("[tailwind] CSS cache initialized", { type: backend.type });
-      return backend;
-    })
-    .catch((error) => {
-      logger.warn("[tailwind] Failed to initialize distributed CSS cache, using memory", { error });
-      cssCache = new MemoryCacheBackend(LOCAL_CACHE_MAX_SIZE);
-      return cssCache;
-    });
-
-  return cssCacheInitPromise;
+  return getOrInitializeDistributedCache(cssCacheOptions);
 }
 
 /**
@@ -557,33 +618,11 @@ async function getCSSCacheEntry(hash: string): Promise<CSSCacheEntry | undefined
 // ============================================================================
 
 function getCssInputsCache(): Promise<CacheBackend> {
-  if (cssInputsCache) return Promise.resolve(cssInputsCache);
-  if (cssInputsCacheInitPromise) return cssInputsCacheInitPromise;
-
-  cssInputsCacheInitPromise = createCacheBackend({ keyPrefix: "css-inputs" })
-    .then((backend) => {
-      cssInputsCache = backend;
-      logger.debug("[tailwind] CSS inputs cache initialized", { type: backend.type });
-      return backend;
-    })
-    .catch((error) => {
-      logger.warn("[tailwind] Failed to initialize CSS inputs cache, using memory", { error });
-      cssInputsCache = new MemoryCacheBackend(LOCAL_CSS_INPUTS_CACHE_MAX);
-      return cssInputsCache;
-    });
-
-  return cssInputsCacheInitPromise;
+  return getOrInitializeDistributedCache(cssInputsCacheOptions);
 }
 
 function storeInLocalCssInputsCache(hash: string, entry: CSSInputsCacheEntry): void {
-  if (localCssInputsCache.has(hash)) return;
-
-  if (localCssInputsCache.size >= LOCAL_CSS_INPUTS_CACHE_MAX) {
-    const firstKey = localCssInputsCache.keys().next().value as string | undefined;
-    if (firstKey) localCssInputsCache.delete(firstKey);
-  }
-
-  localCssInputsCache.set(hash, entry);
+  storeInBoundedLocalCache(localCssInputsCache, LOCAL_CSS_INPUTS_CACHE_MAX, hash, entry);
 }
 
 /**

@@ -1,22 +1,9 @@
 import { serverLogger as logger } from "./logger/index.ts";
 import { cwd as getCwd, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { isNotFoundError, readTextFile } from "#veryfront/platform/compat/fs.ts";
 
-let _fs: FileSystem | null = null;
 const envSources = new Map<string, string>();
 let envLoaded = false;
-
-function getFs(): FileSystem {
-  _fs ??= createFileSystem();
-  return _fs;
-}
-
-async function isNotFoundError(error: unknown, path: string): Promise<boolean> {
-  const nodeError = error as NodeJS.ErrnoException | undefined;
-  if (nodeError?.code === "ENOENT") return true;
-  if (error instanceof Error && error.name === "NotFound") return true;
-  return !(await getFs().exists(path));
-}
 
 export async function loadEnv(
   options: {
@@ -33,11 +20,10 @@ export async function loadEnv(
 
   let loadedCount = 0;
   let totalVars = 0;
-  const fs = getFs();
 
   for (const file of envFiles) {
     try {
-      const content = await fs.readTextFile(file);
+      const content = await readTextFile(file);
       const vars = parseEnvFile(content);
 
       for (const [key, value] of Object.entries(vars)) {
@@ -61,7 +47,7 @@ export async function loadEnv(
       loadedCount++;
       if (debug) logger.debug(`[env] Loaded ${file}`);
     } catch (error) {
-      if (await isNotFoundError(error, file)) continue;
+      if (isNotFoundError(error)) continue;
       logger.warn(`[env] Failed to load ${file}:`, error);
     }
   }
@@ -148,8 +134,7 @@ function expandVariables(value: string, vars: Record<string, string>): string {
 }
 
 export function supportsEnvFiles(): boolean {
-  const fs = getFs();
-  return typeof fs.readTextFile === "function";
+  return typeof readTextFile === "function";
 }
 
 export function markEnvLoaded(): void {

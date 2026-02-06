@@ -5,8 +5,9 @@
  */
 
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { capitalizeSeparatedWords } from "#veryfront/utils/case-utils.ts";
 import { readToken } from "../auth/token-store.ts";
 import { pullCommand } from "../commands/pull/index.ts";
 import { addLog, type AppState, type StateUpdater } from "./state.ts";
@@ -14,7 +15,7 @@ import { ADJECTIVES, NOUNS } from "./data/slug-words.ts";
 
 export async function copyDirectory(src: string, dest: string): Promise<void> {
   const fs = await import("#veryfront/platform/compat/fs.ts");
-  const pathMod = await import("#veryfront/platform/compat/path/index.ts");
+  const pathMod = await import("#veryfront/compat/path/index.ts");
   const filesystem = fs.createFileSystem();
 
   await filesystem.mkdir(dest, { recursive: true });
@@ -44,10 +45,7 @@ export function normalizeSlug(projectName: string): string {
 }
 
 export function slugToName(slug: string): string {
-  return slug
-    .split("-")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
+  return capitalizeSeparatedWords(slug, "-", " ");
 }
 
 export async function createRemoteProject(
@@ -75,10 +73,13 @@ export async function createRemoteProject(
 export function getLocalProjectsFromState(
   appState: AppState,
 ): Array<{ slug: string; path: string }> {
-  return appState.projects.items.map((item) => ({
-    slug: item.data!.slug,
-    path: item.data!.path,
-  }));
+  const result: Array<{ slug: string; path: string }> = [];
+  for (const item of appState.projects.items) {
+    if (item.data) {
+      result.push({ slug: item.data.slug, path: item.data.path });
+    }
+  }
+  return result;
 }
 
 export async function pullRemoteProject(

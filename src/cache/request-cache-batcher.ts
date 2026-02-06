@@ -1,5 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import { logger } from "#veryfront/utils";
+import { MAX_BATCH_SIZE } from "#veryfront/utils/constants/limits.ts";
 import type { CacheBackend } from "./backend.ts";
 
 interface PendingRequest {
@@ -18,7 +20,6 @@ interface RequestCacheContext {
 const asyncLocalStorage = new AsyncLocalStorage<RequestCacheContext>();
 
 const BATCH_DELAY_MS = 1;
-const MAX_BATCH_SIZE = 100;
 
 export function runWithCacheBatching<T>(fn: () => Promise<T>): Promise<T> {
   const context: RequestCacheContext = {
@@ -110,7 +111,7 @@ async function flushBatch(ctx: RequestCacheContext, backend: CacheBackend): Prom
       request.resolve(value);
     }
   } catch (error) {
-    const normalizedError = error instanceof Error ? error : new Error(String(error));
+    const normalizedError = ensureError(error);
     for (const request of requests) request.reject(normalizedError);
   }
 }

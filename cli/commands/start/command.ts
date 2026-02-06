@@ -1,6 +1,6 @@
 import { cwd, getEnv, onGlobalError, setEnv } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { isAbsolute, join, resolve } from "#veryfront/platform/compat/path/index.ts";
+import { isAbsolute, join, resolve } from "#veryfront/compat/path/index.ts";
 import { cliLogger } from "#veryfront/utils";
 import { exitProcess, registerTerminationSignals } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";

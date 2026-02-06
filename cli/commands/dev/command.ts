@@ -4,7 +4,7 @@
 
 import { compileAllMDX, watchMDX } from "#veryfront/build/compiler/mdx-compiler/index.ts";
 import { CONFIG_NOT_FOUND, INITIALIZATION_ERROR } from "#veryfront/errors/error-registry.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { getConfig } from "#veryfront/config";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";

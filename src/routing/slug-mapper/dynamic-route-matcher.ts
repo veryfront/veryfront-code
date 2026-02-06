@@ -1,8 +1,5 @@
 import type { RouteParams } from "./types.ts";
-
-export function isDynamicRoute(pattern: string): boolean {
-  return /\[[\w.]+\]/.test(pattern);
-}
+export { isDynamicRoute } from "#veryfront/utils/route-path-utils.ts";
 
 function isSpreadParam(part: string): boolean {
   return part.startsWith("[...") && part.endsWith("]");

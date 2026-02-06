@@ -270,6 +270,7 @@
     "lint:ban-internal-root-imports": "deno run --allow-read scripts/lint/ban-internal-root-imports.ts",
     "validate:architecture": "deno run --allow-read scripts/lint/validate-architecture.ts",
     "lint:check-awaits": "deno run --allow-read scripts/lint/check-unawaited-promises.ts",
+    "dupes": "deno run --allow-read scripts/lint/find-duplicate-functions.ts",
     "lint:platform": "deno run --allow-read scripts/lint/lint-platform-agnostic.ts",
     "test:smoke": "deno run --allow-all src/platform/compat/smoke-test.ts",
     "test:cross-runtime": "deno run --allow-all src/platform/compat/cross-runtime.test.ts",

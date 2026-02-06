@@ -1,4 +1,4 @@
-import { relative } from "#veryfront/platform/compat/path/index.ts";
+import { relative } from "#veryfront/compat/path/index.ts";
 import { DEFAULT_BUILD_CONCURRENCY, logger } from "#veryfront/utils";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";

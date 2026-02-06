@@ -14,6 +14,7 @@ import {
   XCircleIcon,
 } from "../../icons/index.ts";
 import type { DynamicToolUIPart, ToolUIPart } from "#veryfront/agent/react";
+import { escapeHtml } from "#veryfront/utils/html-escape.ts";
 
 /** Tool status configuration mapping state to label and icon */
 const TOOL_STATUS_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {
@@ -49,18 +50,6 @@ export function ToolStatusBadge({ state }: { state: string }): React.JSX.Element
       {config?.label ?? state}
     </span>
   );
-}
-
-/**
- * Escape HTML special characters to prevent XSS
- */
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
 }
 
 /**

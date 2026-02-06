@@ -7,17 +7,4 @@ export type {
   MDXModule,
 } from "./module-loader/index.ts";
 
-export {
-  cleanModuleCode,
-  extractBalancedBlock,
-  extractComponentImports,
-  extractFrontmatter,
-  extractMetadata,
-  isESMModule,
-  loadESMModule,
-  loadJSXRuntime,
-  loadMDXModule,
-  mergeFrontmatter,
-  parseJsonish,
-  resolveComponents,
-} from "./module-loader/index.ts";
+export { isESMModule, loadESMModule, loadMDXModule } from "./module-loader/index.ts";

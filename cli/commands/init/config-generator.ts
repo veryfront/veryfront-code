@@ -1,5 +1,5 @@
 import { cliLogger as logger, VERSION } from "#veryfront/utils";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
 export async function createPackageJson(

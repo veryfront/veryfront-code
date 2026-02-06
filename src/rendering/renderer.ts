@@ -36,6 +36,7 @@ import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/con
 import { SERVICE_OVERLOADED } from "#veryfront/errors/error-registry.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { buildQueryAwareCacheKey, type QueryParamCacheOptions } from "#veryfront/cache/keys.ts";
+import { getEnvNumber } from "#veryfront/compat/process.ts";
 import {
   createRenderContext,
   createRenderContextFromEnriched,
@@ -74,27 +75,18 @@ import { TimeoutError, withTimeoutThrow } from "./utils/stream-utils.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 
 /**
- * Get environment variable (cross-platform: Deno, Node, Bun).
- */
-function getEnv(name: string): string | undefined {
-  // deno-lint-ignore no-explicit-any
-  const g = globalThis as any;
-  return g.Deno?.env?.get(name) ?? g.process?.env?.[name];
-}
-
-/**
  * Master timeout for entire render pipeline (must be less than REQUEST_TIMEOUT_MS).
  * Configurable via RENDER_TIMEOUT_MS env var for cold-start scenarios.
  * Default increased to 60s to handle cold-start module transforms.
  */
-const RENDER_PIPELINE_TIMEOUT_MS = parseInt(getEnv("RENDER_TIMEOUT_MS") ?? "60000", 10);
+const RENDER_PIPELINE_TIMEOUT_MS = getEnvNumber("RENDER_TIMEOUT_MS") ?? 60000;
 
 /**
  * Maximum concurrent renders per pod.
  * Configurable via RENDER_MAX_CONCURRENT env var.
  * Prevents one pod from being overwhelmed when multiple projects have issues.
  */
-const RENDER_MAX_CONCURRENT = parseInt(getEnv("RENDER_MAX_CONCURRENT") ?? "30", 10);
+const RENDER_MAX_CONCURRENT = getEnvNumber("RENDER_MAX_CONCURRENT") ?? 30;
 
 /**
  * Maximum concurrent renders per project (noisy-neighbor protection).
@@ -102,10 +94,8 @@ const RENDER_MAX_CONCURRENT = parseInt(getEnv("RENDER_MAX_CONCURRENT") ?? "30", 
  * more than ~1/3 of pod capacity. Set to 0 to disable per-project limits.
  * Configurable via RENDER_PER_PROJECT_LIMIT env var.
  */
-const RENDER_PER_PROJECT_LIMIT = parseInt(
-  getEnv("RENDER_PER_PROJECT_LIMIT") ?? String(Math.ceil(RENDER_MAX_CONCURRENT / 3)),
-  10,
-);
+const RENDER_PER_PROJECT_LIMIT = getEnvNumber("RENDER_PER_PROJECT_LIMIT") ??
+  Math.ceil(RENDER_MAX_CONCURRENT / 3);
 
 /**
  * Timeout for acquiring render permit (ms).

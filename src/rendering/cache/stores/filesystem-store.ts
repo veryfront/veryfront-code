@@ -1,4 +1,4 @@
-import { dirname, join } from "#veryfront/platform/compat/path-helper.ts";
+import { dirname, join } from "#veryfront/compat/path";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";

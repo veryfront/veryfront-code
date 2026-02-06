@@ -1,4 +1,4 @@
-import { rendererLogger as logger } from "#veryfront/utils";
+import { computeHash, rendererLogger as logger } from "#veryfront/utils";
 import type { RenderMetadata } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { wrapInHTMLShell } from "../html/html-shell-generator.ts";
@@ -157,21 +157,6 @@ export function clearSnippetCacheForProject(projectSlug: string): void {
     });
 }
 
-const HEX_CHARS = "0123456789abcdef";
-
-async function hashContent(content: string): Promise<string> {
-  const data = new TextEncoder().encode(content);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const bytes = new Uint8Array(hashBuffer);
-
-  let hex = "";
-  for (let i = 0; i < 8; i++) {
-    const byte = bytes[i]!;
-    hex += HEX_CHARS.charAt(byte >> 4) + HEX_CHARS.charAt(byte & 0xf);
-  }
-  return hex;
-}
-
 function getModuleServerBase(moduleServerUrl?: string): string {
   if (!moduleServerUrl) return "http://localhost:3002";
 
@@ -222,7 +207,7 @@ export function renderSnippet(
           hasFrontmatter: !!bundle.frontmatter,
         });
 
-        const hash = await hashContent(mdxContent + (options.projectSlug ?? ""));
+        const hash = (await computeHash(mdxContent + (options.projectSlug ?? ""))).slice(0, 16);
         const frontmatter = bundle.frontmatter ?? {};
         const cacheEntry: SnippetCacheEntry = {
           code: bundle.compiledCode,

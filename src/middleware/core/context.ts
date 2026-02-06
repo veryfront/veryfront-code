@@ -25,24 +25,22 @@ export class MiddlewareContext implements Context {
     return Response.json(object, init);
   }
 
-  text(text: string, init?: ResponseInit): Response {
-    return new Response(text, {
+  private respondWithContent(body: string, contentType: string, init?: ResponseInit): Response {
+    return new Response(body, {
       ...init,
       headers: {
-        "content-type": "text/plain; charset=utf-8",
+        "content-type": contentType,
         ...init?.headers,
       },
     });
   }
 
+  text(text: string, init?: ResponseInit): Response {
+    return this.respondWithContent(text, "text/plain; charset=utf-8", init);
+  }
+
   html(html: string, init?: ResponseInit): Response {
-    return new Response(html, {
-      ...init,
-      headers: {
-        "content-type": "text/html; charset=utf-8",
-        ...init?.headers,
-      },
-    });
+    return this.respondWithContent(html, "text/html; charset=utf-8", init);
   }
 
   redirect(location: string, status: number = HTTP_REDIRECT_FOUND): Response {

@@ -23,7 +23,7 @@ interface ModuleResult {
 }
 
 const MODULES_TO_TEST = [
-  "#veryfront/platform/compat/path/index.ts",
+  "#veryfront/compat/path/index.ts",
   "#veryfront/platform/compat/process.ts",
   "#veryfront/platform/compat/fs.ts",
   "#veryfront/platform/compat/runtime.ts",

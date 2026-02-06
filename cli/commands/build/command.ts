@@ -1,4 +1,4 @@
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { runtime } from "#veryfront/platform/adapters/registry.ts";
 import { getConfig } from "#veryfront/config";
 import { buildProduction } from "#veryfront/build/production-build/index.ts";

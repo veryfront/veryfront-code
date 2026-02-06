@@ -1,7 +1,12 @@
 import * as React from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { rscLogger } from "../client/browser-logger.ts";
-import { CompilationError, FileSystemError, NetworkError } from "#veryfront/errors/index.ts";
+import {
+  COMPILATION_ERROR,
+  isVeryfrontError,
+  MODULE_NOT_FOUND,
+  NETWORK_ERROR,
+} from "#veryfront/errors/index.ts";
 import { createErrorDisplay } from "#veryfront/security/client/html-sanitizer.ts";
 import type { RSCHydratorOptions } from "./types.ts";
 
@@ -92,9 +97,9 @@ export class RSCHydrator {
 
     const componentPath = await this.getComponentPath(name);
     if (!componentPath) {
-      throw new FileSystemError("Client component not found in manifest", {
-        name,
-        manifest: this.manifest,
+      throw MODULE_NOT_FOUND.create({
+        detail: "Client component not found in manifest",
+        context: { name, manifest: this.manifest },
       });
     }
 
@@ -104,16 +109,16 @@ export class RSCHydrator {
       const Component = module.default || module[name];
 
       if (!Component) {
-        throw new CompilationError(`Component ${name} not found in module`, {
-          componentPath,
-          name,
+        throw COMPILATION_ERROR.create({
+          detail: `Component ${name} not found in module`,
+          context: { componentPath, name },
         });
       }
 
       if (typeof Component !== "function" && typeof Component !== "object") {
-        throw new CompilationError(`Invalid component type for ${name}`, {
-          type: typeof Component,
-          name,
+        throw COMPILATION_ERROR.create({
+          detail: `Invalid component type for ${name}`,
+          context: { type: typeof Component, name },
         });
       }
 
@@ -121,8 +126,20 @@ export class RSCHydrator {
       return Component;
     } catch (error) {
       rscLogger.error(`Failed to load component ${name}:`, error);
-      if (error instanceof CompilationError || error instanceof FileSystemError) throw error;
-      throw new CompilationError(`Failed to load client component ${name}`, { cause: error, name });
+      if (
+        isVeryfrontError(error) && (
+          error.slug === "compilation-error" ||
+          error.slug === "module-not-found" ||
+          error.slug === "network-error"
+        )
+      ) {
+        throw error;
+      }
+      throw COMPILATION_ERROR.create({
+        detail: `Failed to load client component ${name}`,
+        cause: error,
+        context: { name },
+      });
     }
   }
 
@@ -138,9 +155,10 @@ export class RSCHydrator {
       const response = await fetch(this.manifestUrl);
 
       if (!response.ok) {
-        throw new NetworkError("Failed to load manifest", {
+        throw NETWORK_ERROR.create({
+          detail: "Failed to load manifest",
           status: response.status,
-          url: this.manifestUrl,
+          context: { url: this.manifestUrl },
         });
       }
 

@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { getCacheDirEnv } from "#veryfront/config/env.ts";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";

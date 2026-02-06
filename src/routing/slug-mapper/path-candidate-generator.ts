@@ -1,4 +1,4 @@
-import { join } from "#veryfront/platform/compat/path-helper.ts";
+import { join } from "#veryfront/compat/path";
 import type { PathCandidates } from "./types.ts";
 
 const SUPPORTED_EXTENSIONS = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"];

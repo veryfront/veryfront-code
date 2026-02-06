@@ -63,6 +63,16 @@ function createNodeExpect(): ExpectFn {
       return isNot ? negative : positive;
     }
 
+    function assertDeepEquality(expected: T, comparison: "equal" | "strictly equal"): void {
+      check(
+        deepEquals(actual, expected),
+        getMessage(
+          `Expected ${safeStringify(actual)} to ${comparison} ${safeStringify(expected)}`,
+          `Expected ${safeStringify(actual)} not to ${comparison} ${safeStringify(expected)}`,
+        ),
+      );
+    }
+
     function getRejection(): Promise<{ rejected: boolean; error: unknown }> {
       return (async () => {
         try {
@@ -86,23 +96,11 @@ function createNodeExpect(): ExpectFn {
       },
 
       toEqual(expected: T) {
-        check(
-          deepEquals(actual, expected),
-          getMessage(
-            `Expected ${safeStringify(actual)} to equal ${safeStringify(expected)}`,
-            `Expected ${safeStringify(actual)} not to equal ${safeStringify(expected)}`,
-          ),
-        );
+        assertDeepEquality(expected, "equal");
       },
 
       toStrictEqual(expected: T) {
-        check(
-          deepEquals(actual, expected),
-          getMessage(
-            `Expected ${safeStringify(actual)} to strictly equal ${safeStringify(expected)}`,
-            `Expected ${safeStringify(actual)} not to strictly equal ${safeStringify(expected)}`,
-          ),
-        );
+        assertDeepEquality(expected, "strictly equal");
       },
 
       toBeTruthy() {

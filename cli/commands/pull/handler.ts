@@ -5,12 +5,9 @@
 import { parsePullArgs, pullCommand } from "./command.ts";
 import { showLogo } from "#cli/utils";
 import type { ParsedArgs } from "#cli/shared/types";
+import { parseArgsOrThrow } from "#cli/shared/args";
 
 export async function handlePullCommand(args: ParsedArgs): Promise<void> {
   showLogo();
-  const result = parsePullArgs(args);
-  if (!result.success) {
-    throw new Error(`Invalid pull arguments: ${result.error.message}`);
-  }
-  await pullCommand(result.data);
+  await pullCommand(parseArgsOrThrow(parsePullArgs, "pull", args));
 }

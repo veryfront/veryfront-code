@@ -1,22 +1,16 @@
 import type {
   NodeState,
-  NodeStatus,
   ParallelNodeConfig,
   WorkflowNode,
   WorkflowNodeConfig,
 } from "../../types.ts";
 import type { IDAGSubExecutor } from "./dag-executor-interface.ts";
+import { deriveNodeStatus } from "../dag/utils.ts";
 import {
   BaseNodeHandler,
   type NodeExecutionResult,
   type NodeHandlerContext,
 } from "./node-handler.ts";
-
-function deriveNodeStatus(completed: boolean, waiting: boolean): NodeStatus {
-  if (completed) return "completed";
-  if (waiting) return "running";
-  return "failed";
-}
 
 export interface ParallelNodeCallbacks {
   onNodeComplete?: (nodeId: string, state: NodeState) => void;

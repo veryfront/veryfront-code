@@ -3,7 +3,7 @@
  */
 
 import { z } from "zod";
-import { createArgParser } from "#cli/shared/args";
+import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
 const DemoArgsSchema = z.object({
@@ -19,10 +19,7 @@ export const parseDemoArgs = createArgParser(DemoArgsSchema, {
 });
 
 export async function handleDemoCommand(args: ParsedArgs): Promise<void> {
-  const result = parseDemoArgs(args);
-  if (!result.success) {
-    throw new Error(`Invalid demo arguments: ${result.error.message}`);
-  }
+  const data = parseArgsOrThrow(parseDemoArgs, "demo", args);
   const { demoCommand } = await import("./index.ts");
-  await demoCommand(result.data);
+  await demoCommand(data);
 }

@@ -5,7 +5,7 @@ import { DynamicRouter } from "#veryfront/routing/api/api-route-matcher.ts";
 import { discoverAppRoutes, discoverPagesRoutes } from "#veryfront/routing/api/route-discovery.ts";
 import { generateOpenAPISpec, specToYaml } from "#veryfront/routing/api/openapi/spec-generator.ts";
 import type { OpenAPISpec } from "#veryfront/routing/api/openapi/types.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { logger } from "#veryfront/utils";
 
 const DEFAULT_JSON_PATH = "/_openapi.json";

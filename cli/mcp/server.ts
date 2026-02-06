@@ -8,13 +8,14 @@
 
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { createHttpServer, type HttpServer } from "#veryfront/platform/compat/http/index.ts";
-import { cwd, writeStdoutAsync } from "#veryfront/platform/compat/process.ts";
-import { getStdinReader, type StdinReader } from "#veryfront/platform/compat/stdin.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
+import type { StdinReader } from "#veryfront/platform/compat/stdin.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { createIssuesManager } from "#veryfront/issues/core.ts";
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import { allTools, getTool, setServerStartTime } from "./tools.ts";
+import { startStdioJsonRpc } from "./stdio.ts";
 import {
   errorResponse,
   type JSONRPCRequest,
@@ -59,7 +60,14 @@ export class MCPDevServer {
     if (this.running) return;
     this.running = true;
 
-    if (this.config.stdio) this.startStdio();
+    if (this.config.stdio) {
+      this.stdinReader = startStdioJsonRpc<JSONRPCRequest, JSONRPCResponse>({
+        isRunning: () => this.running,
+        parseRequest: (payload) => JSONRPCRequestSchema.parse(payload),
+        handleRequest: (request) => this.handleRequest(request),
+        toErrorResponse: (error) => parseError(error),
+      });
+    }
     if (this.config.httpPort) this.startHTTP(this.config.httpPort);
   }
 
@@ -72,52 +80,6 @@ export class MCPDevServer {
     if (!this.httpServer) return;
     await this.httpServer.close();
     this.httpServer = null;
-  }
-
-  private startStdio(): void {
-    const decoder = new TextDecoder();
-    const encoder = new TextEncoder();
-    this.stdinReader = getStdinReader();
-
-    const writeResponse = async (response: JSONRPCResponse): Promise<void> => {
-      await writeStdoutAsync(encoder.encode(`${JSON.stringify(response)}\n`));
-    };
-
-    const readLoop = async (): Promise<void> => {
-      let buffer = "";
-
-      while (this.running) {
-        try {
-          const { value, done } = await this.stdinReader!.read();
-          if (done) break;
-          if (!value) continue;
-
-          buffer += decoder.decode(value, { stream: true });
-
-          while (true) {
-            const newlineIndex = buffer.indexOf("\n");
-            if (newlineIndex === -1) break;
-
-            const line = buffer.slice(0, newlineIndex).trim();
-            buffer = buffer.slice(newlineIndex + 1);
-
-            if (!line) continue;
-
-            try {
-              const parsed = JSONRPCRequestSchema.parse(JSON.parse(line));
-              const response = await this.handleRequest(parsed);
-              await writeResponse(response);
-            } catch (e) {
-              await writeResponse(parseError(e));
-            }
-          }
-        } catch {
-          break;
-        }
-      }
-    };
-
-    void readLoop();
   }
 
   private startHTTP(port: number): void {

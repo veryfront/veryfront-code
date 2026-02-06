@@ -5,6 +5,7 @@ import type {
   RewriteResult,
 } from "../types.ts";
 import { buildModuleServerUrl } from "../url-builder.ts";
+import { sanitizeVendorExportName } from "#veryfront/transforms/shared/vendor-export-name.ts";
 
 const REACT_PACKAGES = new Set([
   "react",
@@ -14,14 +15,6 @@ const REACT_PACKAGES = new Set([
   "react/jsx-runtime",
   "react/jsx-dev-runtime",
 ]);
-
-function sanitizeVendorExportName(pkg: string): string {
-  return pkg
-    .replace(/^@/, "")
-    .replace(/[/-]/g, "_")
-    .replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase())
-    .replace(/^_/, "");
-}
 
 export class VendorStrategy implements ImportRewriteStrategy {
   readonly name = "vendor";

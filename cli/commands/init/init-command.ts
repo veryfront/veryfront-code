@@ -4,10 +4,10 @@
  *******************************/
 
 import { cliLogger as logger } from "#veryfront/utils";
-import { FileSystemError } from "#veryfront/errors";
+import { FILE_NOT_FOUND } from "#veryfront/errors";
 import { cyan } from "#veryfront/compat/console";
 import { ensureDir } from "#std/fs.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { createPackageJson } from "./config-generator.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type { InitOptions, InitTemplate } from "./types.ts";
@@ -206,7 +206,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
   );
 
   if (name && (await fs.exists(projectDir))) {
-    throw new FileSystemError(`Directory ${name} already exists`);
+    throw FILE_NOT_FOUND.create({ detail: `Directory ${name} already exists` });
   }
 
   const { getTemplate, getTemplateConfig } = await import("../../templates/index.ts");

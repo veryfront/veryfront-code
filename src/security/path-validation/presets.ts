@@ -18,46 +18,56 @@ const USER_INPUT_ALLOWED_DIRS = [
   "api",
 ] as const;
 
+function createPreset(
+  baseDir: string,
+  options: Omit<ValidationOptions, "baseDir">,
+): ValidationOptions {
+  return {
+    baseDir,
+    ...options,
+  };
+}
+
+const INTERNAL_PRESET: Omit<ValidationOptions, "baseDir"> = {
+  level: "normal",
+  followSymlinks: false,
+  checkExists: false,
+  allowAbsolute: false,
+};
+
+const BUILD_PRESET: Omit<ValidationOptions, "baseDir"> = {
+  level: "permissive",
+  followSymlinks: true,
+  checkExists: false,
+  allowAbsolute: true,
+};
+
 export const ValidationPresets = {
   userInput(baseDir: string): ValidationOptions {
-    return {
-      baseDir,
+    return createPreset(baseDir, {
       level: "strict",
       allowedDirs: [...USER_INPUT_ALLOWED_DIRS],
       followSymlinks: false,
       checkExists: true,
       allowAbsolute: false,
-    };
+    });
   },
 
   internal(baseDir: string): ValidationOptions {
-    return {
-      baseDir,
-      level: "normal",
-      followSymlinks: false,
-      checkExists: false,
-      allowAbsolute: false,
-    };
+    return createPreset(baseDir, INTERNAL_PRESET);
   },
 
   build(baseDir: string): ValidationOptions {
-    return {
-      baseDir,
-      level: "permissive",
-      followSymlinks: true,
-      checkExists: false,
-      allowAbsolute: true,
-    };
+    return createPreset(baseDir, BUILD_PRESET);
   },
 
   static(baseDir: string): ValidationOptions {
-    return {
-      baseDir,
+    return createPreset(baseDir, {
       level: "normal",
       allowedDirs: ["dist", "public"],
       followSymlinks: false,
       checkExists: true,
       allowAbsolute: false,
-    };
+    });
   },
 };

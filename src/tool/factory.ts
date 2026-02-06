@@ -3,7 +3,7 @@ import type { JsonSchema } from "./schema/json-schema.ts";
 import type { z } from "zod";
 import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, getErrorMessage, toError } from "#veryfront/errors/veryfront-error.ts";
 
 interface ZodLikeSchema {
   _def?: {
@@ -11,10 +11,6 @@ interface ZodLikeSchema {
     shape?: (() => Record<string, unknown>) | Record<string, unknown>;
   };
   parse?: (input: unknown) => void;
-}
-
-function formatErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function hasValidZodTypeName(schema: unknown): schema is ZodLikeSchema {
@@ -77,7 +73,7 @@ function convertSchemaToJson(
       throw toError(
         createError({
           type: "agent",
-          message: `Tool "${toolId}" input schema conversion failed: ${formatErrorMessage(error)}`,
+          message: `Tool "${toolId}" input schema conversion failed: ${getErrorMessage(error)}`,
         }),
       );
     }
@@ -101,7 +97,7 @@ function convertSchemaToJson(
       throw toError(
         createError({
           type: "agent",
-          message: `Tool "${toolId}" schema introspection failed: ${formatErrorMessage(error)}`,
+          message: `Tool "${toolId}" schema introspection failed: ${getErrorMessage(error)}`,
         }),
       );
     }
@@ -154,7 +150,7 @@ export function tool<TInput = unknown, TOutput = unknown>(
           throw toError(
             createError({
               type: "agent",
-              message: `Tool "${id}" input validation failed: ${formatErrorMessage(error)}`,
+              message: `Tool "${id}" input validation failed: ${getErrorMessage(error)}`,
             }),
           );
         }

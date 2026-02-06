@@ -1,7 +1,7 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
+import * as pathHelper from "#veryfront/compat/path";
 import { serverLogger as logger } from "#veryfront/utils";
 
 const compatFs = createFileSystem();

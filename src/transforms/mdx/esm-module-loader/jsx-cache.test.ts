@@ -8,7 +8,7 @@ import {
   remove,
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
-import { join } from "#std/path.ts";
+import { join } from "#veryfront/compat/path";
 import { FRAMEWORK_ROOT } from "./constants.ts";
 import { ensureCachedJsxModulePatched } from "./jsx-cache.ts";
 

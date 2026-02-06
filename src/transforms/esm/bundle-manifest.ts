@@ -17,7 +17,7 @@ import {
 } from "#veryfront/utils/constants/cache.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { CacheBackends, createDistributedCacheAccessor } from "../../cache/backend.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
 import { ensureHttpBundlesExist } from "./http-cache.ts";
 

@@ -1,5 +1,5 @@
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
+import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { getTemplate } from "../../templates/index.ts";
 import {
   loadIntegrationBaseFilesFromDirectory,

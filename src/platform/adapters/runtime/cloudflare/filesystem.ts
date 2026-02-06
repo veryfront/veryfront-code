@@ -1,4 +1,4 @@
-import { ConfigError, FileSystemError, NotSupportedError } from "#veryfront/errors";
+import { CONFIG_INVALID, FILE_NOT_FOUND, NOT_SUPPORTED } from "#veryfront/errors";
 import type {
   DirEntry,
   FileInfo,
@@ -14,7 +14,10 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
   private getKV(path: string): KVNamespace {
     const kv = this.kvNamespace;
     if (!kv) {
-      throw new ConfigError("KV namespace required for file operations in Workers", { path });
+      throw CONFIG_INVALID.create({
+        detail: "KV namespace required for file operations in Workers",
+        context: { path },
+      });
     }
     return kv;
   }
@@ -22,7 +25,9 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
   async readFile(path: string): Promise<string> {
     const kv = this.getKV(path);
     const content = await kv.get(path);
-    if (content === null) throw new FileSystemError(`File not found: ${path}`, { path });
+    if (content === null) {
+      throw FILE_NOT_FOUND.create({ detail: `File not found: ${path}`, context: { path } });
+    }
     return content;
   }
 
@@ -93,7 +98,7 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
       };
     }
 
-    throw new FileSystemError(`File not found: ${path}`, { path });
+    throw FILE_NOT_FOUND.create({ detail: `File not found: ${path}`, context: { path } });
   }
 
   mkdir(_path: string, _options?: { recursive?: boolean }): Promise<void> {
@@ -105,16 +110,16 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
   }
 
   makeTempDir(_prefix: string): Promise<string> {
-    throw new NotSupportedError("Temporary directories not supported in Cloudflare Workers", {
-      platform: "cloudflare",
-      operation: "makeTempDir",
+    throw NOT_SUPPORTED.create({
+      detail: "Temporary directories not supported in Cloudflare Workers",
+      context: { platform: "cloudflare", operation: "makeTempDir" },
     });
   }
 
   watch(_paths: string | string[], _options?: WatchOptions): FileWatcher {
-    throw new NotSupportedError("File watching not supported in Cloudflare Workers", {
-      platform: "cloudflare",
-      operation: "watch",
+    throw NOT_SUPPORTED.create({
+      detail: "File watching not supported in Cloudflare Workers",
+      context: { platform: "cloudflare", operation: "watch" },
     });
   }
 }

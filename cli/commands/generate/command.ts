@@ -2,45 +2,10 @@ import { join } from "#std/path.ts";
 import { getConfig } from "#veryfront/config";
 import { cliLogger } from "#veryfront/utils";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import {
-  createFileSystem,
-  type FileSystem,
-  isAlreadyExistsError,
-} from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { generateIntegration } from "./integration-generator.ts";
-
-let fs: FileSystem;
-
-function getFs(): FileSystem {
-  if (!fs) fs = createFileSystem();
-  return fs;
-}
-
-async function ensureDir(path: string): Promise<void> {
-  const fileSystem = getFs();
-  try {
-    await fileSystem.mkdir(path, { recursive: true });
-  } catch (error) {
-    if (!isAlreadyExistsError(error)) throw error;
-  }
-}
-
-function toSlug(name: string): string {
-  return name
-    .replace(/\s+/g, "-")
-    .replace(/[^a-zA-Z0-9_\-[\]/]/g, "")
-    .replace(/\/+/g, "/");
-}
-
-function toComponentName(slug: string): string {
-  const base = slug.split("/").pop() || slug;
-  return base
-    .replace(/\W+/g, " ")
-    .split(" ")
-    .filter(Boolean)
-    .map((part) => part[0]!.toUpperCase() + part.slice(1))
-    .join("");
-}
+import { ensureDir } from "../../utils/fs.ts";
+import { toComponentName, toSlug } from "../../utils/string.ts";
 
 async function getPreferredRouter(
   projectDir: string,
@@ -62,7 +27,7 @@ export async function generateCommand(
   type: string,
   name: string,
 ): Promise<void> {
-  fs = createFileSystem();
+  const fs = createFileSystem();
 
   const preferred = await getPreferredRouter(projectDir);
   const slug = toSlug(name);

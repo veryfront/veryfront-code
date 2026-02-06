@@ -8,9 +8,7 @@
 import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import type { LogMeta, StateUpdater } from "../state.ts";
 import { addLog } from "../state.ts";
-
-// deno-lint-ignore no-control-regex
-const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
+import { ANSI_REGEX } from "../../ui/ansi.ts";
 
 /**
  * Parse HTTP request log format into structured metadata
@@ -56,7 +54,7 @@ export function createCapture(
     const msg = args
       .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
       .join(" ")
-      .replace(ANSI_PATTERN, "");
+      .replace(ANSI_REGEX, "");
 
     if (!msg.trim()) return;
 

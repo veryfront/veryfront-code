@@ -1,6 +1,6 @@
-import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { transformUiModule } from "../shared/ui-module-transform.ts";
 import { logger } from "#veryfront/utils";
 
 const moduleCache = new Map<string, { code: string; timestamp: number }>();
@@ -14,48 +14,6 @@ const JS_HEADERS = {
 function getUiDirectory(): string {
   const currentFile = new URL(import.meta.url).pathname;
   return currentFile.replace(/\/handlers\/dev\/projects\/ui-handler\.ts$/, "/dev-ui/projects");
-}
-
-function resolveRelativeImport(currentDir: string, importPath: string): string {
-  const parts = currentDir ? currentDir.split("/") : [];
-
-  for (const part of importPath.split("/")) {
-    if (part === "..") {
-      parts.pop();
-      continue;
-    }
-    if (part === ".") continue;
-    parts.push(part);
-  }
-
-  return parts.join("/");
-}
-
-function transformModule(filePath: string, source: string, relativePath: string): Promise<string> {
-  return withSpan(
-    "server.dev.projectsUI.transformModule",
-    async () => {
-      const esbuild = await getEsbuild();
-      const result = await esbuild.transform(source, {
-        loader: filePath.endsWith(".tsx") ? "tsx" : "ts",
-        format: "esm",
-        target: "es2022",
-        jsx: "automatic",
-        jsxImportSource: "react",
-        sourcemap: false,
-        minify: false,
-      });
-
-      const currentDir = relativePath.split("/").slice(0, -1).join("/");
-
-      return result.code.replace(
-        /from\s+["'](\.\.?\/[^"']+)\.tsx?["']/g,
-        (_match, importPath) =>
-          `from "/_projects/ui/${resolveRelativeImport(currentDir, importPath)}.js"`,
-      );
-    },
-    { "module.filePath": filePath, "module.relativePath": relativePath },
-  );
 }
 
 async function readUiSource(
@@ -111,7 +69,10 @@ export function handleProjectsUI(req: Request): Promise<Response | null> {
       }
 
       try {
-        const code = await transformModule(filePath, source, relativePath);
+        const code = await transformUiModule(filePath, source, relativePath, {
+          spanName: "server.dev.projectsUI.transformModule",
+          importBasePath: "/_projects/ui",
+        });
         moduleCache.set(filePath, { code, timestamp: now });
         return new Response(code, { headers: JS_HEADERS });
       } catch (error) {

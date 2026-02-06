@@ -1,5 +1,5 @@
 import { getCacheNamespace } from "#veryfront/utils/cache/keys/namespace.ts";
-import { CompilationError, wrapError } from "#veryfront/errors/index.ts";
+import { COMPILATION_ERROR, wrapError } from "#veryfront/errors/index.ts";
 // Direct import from registry.ts to avoid circular dependency through barrel
 import { getLocalAdapter, runtime } from "#veryfront/platform/adapters/registry.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
@@ -28,7 +28,10 @@ export function clearMDXModuleCache(): void {
 function validateMDXModule(module: MDXModule, context: Record<string, unknown>): void {
   const MDXContent = module.default || module.MDXContent;
   if (MDXContent) return;
-  throw new CompilationError("No default export found in MDX module", context);
+  throw COMPILATION_ERROR.create({
+    detail: "No default export found in MDX module",
+    context,
+  });
 }
 
 function getNamespacedKey(suffix: string): string {

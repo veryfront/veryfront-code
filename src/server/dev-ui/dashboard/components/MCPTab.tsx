@@ -13,7 +13,7 @@ interface MCPTabProps {
 }
 
 function getItemId(item: Tool | Resource | Prompt): string {
-  return "id" in item ? item.id : item.pattern;
+  return "pattern" in item ? item.pattern : item.id;
 }
 
 function isTool(item: Tool | Resource | Prompt): item is Tool {

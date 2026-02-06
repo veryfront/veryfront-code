@@ -7,9 +7,9 @@
  */
 
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
-import { writeStdoutAsync } from "#veryfront/platform/compat/process.ts";
-import { getStdinReader, type StdinReader } from "#veryfront/platform/compat/stdin.ts";
+import type { StdinReader } from "#veryfront/platform/compat/stdin.ts";
 import { DevServerClient } from "./dev-server-client.ts";
+import { startStdioJsonRpc } from "./stdio.ts";
 import {
   errorResponse,
   type JSONRPCRequest,
@@ -50,59 +50,18 @@ export class StandaloneMCPServer {
   start(): void {
     if (this.running) return;
     this.running = true;
-    this.startStdio();
+    this.stdinReader = startStdioJsonRpc<JSONRPCRequest, JSONRPCResponse>({
+      isRunning: () => this.running,
+      parseRequest: (payload) => JSONRPCRequestSchema.parse(payload),
+      handleRequest: (request) => this.handleRequest(request),
+      toErrorResponse: (error) => parseError(error),
+    });
   }
 
   stop(): void {
     this.running = false;
     this.stdinReader?.releaseLock();
     this.stdinReader = null;
-  }
-
-  private startStdio(): void {
-    const decoder = new TextDecoder();
-    const encoder = new TextEncoder();
-    this.stdinReader = getStdinReader();
-
-    const writeResponse = async (response: JSONRPCResponse): Promise<void> => {
-      await writeStdoutAsync(encoder.encode(`${JSON.stringify(response)}\n`));
-    };
-
-    const readLoop = async (): Promise<void> => {
-      let buffer = "";
-
-      while (this.running) {
-        try {
-          const { value, done } = await this.stdinReader!.read();
-          if (done) break;
-          if (!value) continue;
-
-          buffer += decoder.decode(value, { stream: true });
-
-          while (true) {
-            const newlineIndex = buffer.indexOf("\n");
-            if (newlineIndex === -1) break;
-
-            const line = buffer.slice(0, newlineIndex).trim();
-            buffer = buffer.slice(newlineIndex + 1);
-
-            if (!line) continue;
-
-            try {
-              const request = JSONRPCRequestSchema.parse(JSON.parse(line));
-              const response = await this.handleRequest(request);
-              await writeResponse(response);
-            } catch (e) {
-              await writeResponse(parseError(e));
-            }
-          }
-        } catch {
-          break;
-        }
-      }
-    };
-
-    void readLoop();
   }
 
   private async handleRequest(request: JSONRPCRequest): Promise<JSONRPCResponse> {

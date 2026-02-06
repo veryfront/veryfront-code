@@ -10,7 +10,7 @@ import {
   isAbsolute,
   join,
   resolve,
-} from "#veryfront/platform/compat/path/index.ts";
+} from "#veryfront/compat/path/index.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import type { OnResolveArgs, Plugin } from "esbuild";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -94,17 +94,29 @@ export const hydrate = window.hydrate;
  * Uses pre-bundled version for npm builds, or bundles from source for Deno
  */
 export async function generateClientModule(): Promise<string> {
-  if (CLIENT_ROUTER_BUNDLE) {
-    logger.debug("Using pre-bundled client router script");
-    return CLIENT_ROUTER_BUNDLE;
-  }
-
   try {
-    return await bundleClientEntry("../../rendering/client/router.ts");
+    return await loadClientScript(
+      CLIENT_ROUTER_BUNDLE,
+      "router",
+      "../../rendering/client/router.ts",
+    );
   } catch (error) {
     logger.error("Failed to generate client runtime bundle", error);
     throw error;
   }
+}
+
+function loadClientScript(
+  preBundledScript: string | undefined,
+  scriptName: string,
+  sourceEntry: string,
+): Promise<string> {
+  if (preBundledScript) {
+    logger.debug(`Using pre-bundled client ${scriptName} script`);
+    return Promise.resolve(preBundledScript);
+  }
+
+  return bundleClientEntry(sourceEntry);
 }
 
 /**
@@ -112,12 +124,11 @@ export async function generateClientModule(): Promise<string> {
  * Uses pre-bundled version for npm builds, or bundles from source for Deno
  */
 export async function generateRouterScript(_adapter: RuntimeAdapter): Promise<string> {
-  if (CLIENT_ROUTER_BUNDLE) {
-    logger.debug("Using pre-bundled client router script");
-    return CLIENT_ROUTER_BUNDLE;
-  }
-
-  return bundleClientEntry("../../rendering/client/router.ts");
+  return loadClientScript(
+    CLIENT_ROUTER_BUNDLE,
+    "router",
+    "../../rendering/client/router.ts",
+  );
 }
 
 /**
@@ -125,12 +136,11 @@ export async function generateRouterScript(_adapter: RuntimeAdapter): Promise<st
  * Uses pre-bundled version for npm builds, or bundles from source for Deno
  */
 export async function generatePrefetchScript(_adapter: RuntimeAdapter): Promise<string> {
-  if (CLIENT_PREFETCH_BUNDLE) {
-    logger.debug("Using pre-bundled client prefetch script");
-    return CLIENT_PREFETCH_BUNDLE;
-  }
-
-  return bundleClientEntry("../../rendering/client/prefetch.ts");
+  return loadClientScript(
+    CLIENT_PREFETCH_BUNDLE,
+    "prefetch",
+    "../../rendering/client/prefetch.ts",
+  );
 }
 
 /**

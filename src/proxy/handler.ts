@@ -3,7 +3,7 @@ import { type ParsedDomain, parseProjectDomain } from "#veryfront/server/utils/d
 import type { TokenCache } from "./cache/types.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 

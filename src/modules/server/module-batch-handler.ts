@@ -20,13 +20,14 @@ import {
   HTTP_BAD_REQUEST,
   HTTP_NOT_FOUND,
   HTTP_OK,
+  MAX_BATCH_SIZE,
   serverLogger as logger,
 } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSecureFs } from "#veryfront/security";
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
 import { buildModuleTransformCacheKey } from "../../cache/keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -39,9 +40,6 @@ import { registerLRUCache } from "#veryfront/cache";
 const SLOW_REQUEST_THRESHOLD_MS = 500;
 /** Slow module transform threshold in milliseconds */
 const SLOW_TRANSFORM_THRESHOLD_MS = 100;
-
-/** Maximum number of modules that can be batched in one request */
-const MAX_BATCH_SIZE = 100;
 
 /** Cache for transformed modules (path -> code) */
 const transformCache = new LRUCache<string, string>({

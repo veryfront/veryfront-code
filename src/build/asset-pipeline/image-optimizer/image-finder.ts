@@ -1,5 +1,5 @@
 import { walk } from "#std/fs.ts";
-import { extname } from "#veryfront/platform/compat/path/index.ts";
+import { extname } from "#veryfront/compat/path/index.ts";
 import { logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SUPPORTED_EXTENSIONS } from "./constants.ts";

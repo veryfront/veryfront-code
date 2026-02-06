@@ -4,7 +4,7 @@ import {
   REACT_DEFAULT_VERSION,
 } from "#veryfront/utils";
 import type { OnResolveArgs, Plugin, PluginBuild } from "esbuild";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 
 export function createSplitterPlugin(projectDir: string): Plugin {
   return {

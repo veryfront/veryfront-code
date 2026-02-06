@@ -38,6 +38,39 @@ interface WorkflowsTabProps {
   onNavigateToTool?: (toolId: string) => void;
 }
 
+interface NodeTypeStyle {
+  badge: string;
+  node: string;
+}
+
+const DEFAULT_NODE_TYPE_STYLE: NodeTypeStyle = {
+  badge: "bg-gray-100 text-gray-600",
+  node: "bg-gray-50 border-gray-200 text-gray-700",
+};
+
+const NODE_TYPE_STYLES: Record<string, NodeTypeStyle> = {
+  step: {
+    badge: "bg-blue-50 text-blue-600",
+    node: "bg-blue-50 border-blue-200 text-blue-700",
+  },
+  parallel: {
+    badge: "bg-green-50 text-green-600",
+    node: "bg-green-50 border-green-200 text-green-700",
+  },
+  branch: {
+    badge: "bg-yellow-50 text-yellow-700",
+    node: "bg-yellow-50 border-yellow-200 text-yellow-700",
+  },
+  wait: {
+    badge: "bg-orange-50 text-orange-600",
+    node: "bg-orange-50 border-orange-200 text-orange-700",
+  },
+};
+
+function getNodeTypeStyle(type: string): NodeTypeStyle {
+  return NODE_TYPE_STYLES[type] ?? DEFAULT_NODE_TYPE_STYLE;
+}
+
 export function WorkflowsTab({
   workflows,
   agents,
@@ -101,18 +134,7 @@ function WorkflowDetail({
   const toolMap = new Map(tools.map((t) => [t.id, t]));
 
   function getNodeTypeBadgeClass(type: string): string {
-    switch (type) {
-      case "step":
-        return "bg-blue-50 text-blue-600";
-      case "parallel":
-        return "bg-green-50 text-green-600";
-      case "branch":
-        return "bg-yellow-50 text-yellow-700";
-      case "wait":
-        return "bg-orange-50 text-orange-600";
-      default:
-        return "bg-gray-100 text-gray-600";
-    }
+    return getNodeTypeStyle(type).badge;
   }
 
   return (
@@ -159,97 +181,102 @@ function WorkflowDetail({
         {workflow.nodes.length > 0
           ? (
             <div className="divide-y">
-              {workflow.nodes.map((node, index) => (
-                <div key={node.id} className="p-4">
-                  <div className="flex items-start gap-4">
-                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-sky-100 text-sky-700 flex items-center justify-center text-sm font-medium">
-                      {index + 1}
-                    </div>
+              {workflow.nodes.map((node, index) => {
+                const agentId = node.agent;
+                const toolId = node.tool;
 
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <code className="text-sm font-medium text-gray-900">{node.id}</code>
-                        <span
-                          className={`px-1.5 py-0.5 text-[10px] font-semibold uppercase rounded ${
-                            getNodeTypeBadgeClass(
-                              node.type,
-                            )
-                          }`}
-                        >
-                          {node.type}
-                        </span>
+                return (
+                  <div key={node.id} className="p-4">
+                    <div className="flex items-start gap-4">
+                      <div className="flex-shrink-0 w-8 h-8 rounded-full bg-sky-100 text-sky-700 flex items-center justify-center text-sm font-medium">
+                        {index + 1}
                       </div>
 
-                      <div className="text-sm text-gray-600 space-y-1">
-                        {node.agent
-                          ? (
-                            <div className="flex items-center gap-2">
-                              <span className="text-gray-400">Agent:</span>
-                              {agentMap.has(node.agent)
-                                ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => onNavigateToAgent?.(node.agent)}
-                                    className="text-sky-600 hover:underline"
-                                  >
-                                    {node.agent}
-                                  </button>
-                                )
-                                : <span className="text-red-500">{node.agent} (not found)</span>}
-                            </div>
-                          )
-                          : null}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <code className="text-sm font-medium text-gray-900">{node.id}</code>
+                          <span
+                            className={`px-1.5 py-0.5 text-[10px] font-semibold uppercase rounded ${
+                              getNodeTypeBadgeClass(
+                                node.type,
+                              )
+                            }`}
+                          >
+                            {node.type}
+                          </span>
+                        </div>
 
-                        {node.tool
-                          ? (
-                            <div className="flex items-center gap-2">
-                              <span className="text-gray-400">Tool:</span>
-                              {toolMap.has(node.tool)
-                                ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => onNavigateToTool?.(node.tool)}
-                                    className="text-sky-600 hover:underline"
-                                  >
-                                    {node.tool}
-                                  </button>
-                                )
-                                : <span className="text-red-500">{node.tool} (not found)</span>}
-                            </div>
-                          )
-                          : null}
+                        <div className="text-sm text-gray-600 space-y-1">
+                          {agentId
+                            ? (
+                              <div className="flex items-center gap-2">
+                                <span className="text-gray-400">Agent:</span>
+                                {agentMap.has(agentId)
+                                  ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => onNavigateToAgent?.(agentId)}
+                                      className="text-sky-600 hover:underline"
+                                    >
+                                      {agentId}
+                                    </button>
+                                  )
+                                  : <span className="text-red-500">{agentId} (not found)</span>}
+                              </div>
+                            )
+                            : null}
 
-                        {node.dependsOn?.length
-                          ? (
-                            <div className="flex items-center gap-2">
-                              <span className="text-gray-400">Depends on:</span>
-                              <span className="text-gray-600">{node.dependsOn.join(", ")}</span>
-                            </div>
-                          )
-                          : null}
+                          {toolId
+                            ? (
+                              <div className="flex items-center gap-2">
+                                <span className="text-gray-400">Tool:</span>
+                                {toolMap.has(toolId)
+                                  ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => onNavigateToTool?.(toolId)}
+                                      className="text-sky-600 hover:underline"
+                                    >
+                                      {toolId}
+                                    </button>
+                                  )
+                                  : <span className="text-red-500">{toolId} (not found)</span>}
+                              </div>
+                            )
+                            : null}
 
-                        {node.children?.length
-                          ? (
-                            <div className="flex items-center gap-2">
-                              <span className="text-gray-400">Contains:</span>
-                              <span className="text-gray-600">{node.children.join(", ")}</span>
-                            </div>
-                          )
-                          : null}
+                          {node.dependsOn?.length
+                            ? (
+                              <div className="flex items-center gap-2">
+                                <span className="text-gray-400">Depends on:</span>
+                                <span className="text-gray-600">{node.dependsOn.join(", ")}</span>
+                              </div>
+                            )
+                            : null}
 
-                        {node.message
-                          ? (
-                            <div className="flex items-start gap-2">
-                              <span className="text-gray-400">Message:</span>
-                              <span className="text-gray-600 italic">"{node.message}"</span>
-                            </div>
-                          )
-                          : null}
+                          {node.children?.length
+                            ? (
+                              <div className="flex items-center gap-2">
+                                <span className="text-gray-400">Contains:</span>
+                                <span className="text-gray-600">{node.children.join(", ")}</span>
+                              </div>
+                            )
+                            : null}
+
+                          {node.message
+                            ? (
+                              <div className="flex items-start gap-2">
+                                <span className="text-gray-400">Message:</span>
+                                <span className="text-gray-600 italic">"{node.message}"</span>
+                              </div>
+                            )
+                            : null}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )
           : (
@@ -598,18 +625,7 @@ function WorkflowDAG({ nodes }: { nodes: NodeInfo[] }): React.ReactElement {
   const maxLevel = Math.max(...Array.from(levels.values()), 0);
 
   function getNodeStyle(type: string): string {
-    switch (type) {
-      case "step":
-        return "bg-blue-50 border-blue-200 text-blue-700";
-      case "parallel":
-        return "bg-green-50 border-green-200 text-green-700";
-      case "branch":
-        return "bg-yellow-50 border-yellow-200 text-yellow-700";
-      case "wait":
-        return "bg-orange-50 border-orange-200 text-orange-700";
-      default:
-        return "bg-gray-50 border-gray-200 text-gray-700";
-    }
+    return getNodeTypeStyle(type).node;
   }
 
   return (

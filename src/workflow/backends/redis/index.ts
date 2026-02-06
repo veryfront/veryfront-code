@@ -18,6 +18,7 @@ import type {
 } from "../../types.ts";
 import type { WorkflowBackend } from "../types.ts";
 import { agentLogger as logger } from "#veryfront/utils";
+import { requeueRun } from "../shared/requeue-run.ts";
 
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import {
@@ -503,15 +504,7 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   async nack(runId: string): Promise<void> {
-    const run = await this.getRun(runId);
-    if (!run) return;
-
-    await this.enqueue({
-      runId: run.id,
-      workflowId: run.workflowId,
-      input: run.input,
-      createdAt: new Date(),
-    });
+    await requeueRun(this, runId);
   }
 
   async acquireLock(runId: string, duration: number): Promise<boolean> {

@@ -1,9 +1,6 @@
-export interface ErrorSolution {
-  message: string;
-  steps?: string[];
-  example?: string;
-  docs?: string;
-}
+import type { ErrorSolution as CatalogErrorSolution } from "../catalog/types.ts";
+
+export type ErrorSolution = Pick<CatalogErrorSolution, "message" | "steps" | "example" | "docs">;
 
 export const ERROR_SOLUTIONS: Record<string, ErrorSolution> = {
   "missing-config": {

@@ -44,24 +44,19 @@ interface AnthropicResponse {
 
 export class AnthropicProvider extends BaseProvider {
   name = "anthropic";
-  private apiKey: string;
-  private baseURL: string;
-
-  constructor(config: AnthropicConfig) {
-    super(config);
-    this.apiKey = config.apiKey;
-    this.baseURL = config.baseURL ?? "https://api.anthropic.com";
-  }
 
   protected getHeaders(): Record<string, string> {
+    const { apiKey } = this.config as AnthropicConfig;
+
     return {
-      "x-api-key": this.apiKey,
+      "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
     };
   }
 
   protected getEndpoint(_path: string): string {
-    return `${this.baseURL}/v1/messages`;
+    const { baseURL } = this.config as AnthropicConfig;
+    return `${baseURL ?? "https://api.anthropic.com"}/v1/messages`;
   }
 
   protected transformRequest(request: CompletionRequest): Record<string, unknown> {

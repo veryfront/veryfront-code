@@ -30,7 +30,10 @@ export function resolve(...paths: string[]): string {
 
 export function isAbsolute(path: string): boolean {
   if (useNodePath()) return nodePath!.isAbsolute(path);
-  return path.startsWith("/");
+  // Deno fallback: Unix, Windows drive letters, and UNC paths
+  if (path.startsWith("/")) return true;
+  if (/^[A-Za-z]:[\/\\]/.test(path)) return true;
+  return /^\\\\[^\\]+\\[^\\]+/.test(path);
 }
 
 export function relative(from: string, to: string): string {

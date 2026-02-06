@@ -1,16 +1,6 @@
-// Inline cross-runtime getEnv to avoid dependency on src/platform/compat (not copied in Docker)
-function getEnv(key: string): string | undefined {
-  // Deno
-  if (typeof Deno !== "undefined" && Deno.env?.get) {
-    return Deno.env.get(key);
-  }
-  // Node.js / Bun
-  const nodeProcess = (globalThis as { process?: { env?: Record<string, string> } }).process;
-  return nodeProcess?.env?.[key];
-}
-
 // Import version from root deno.json (the source of truth)
 import denoConfig from "../../deno.json" with { type: "json" };
+import { getEnv } from "./env.ts";
 import { getTraceContext } from "./tracing.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -159,16 +149,24 @@ interface SerializedError {
 }
 
 function formatErrorText(error: SerializedError | undefined): string {
-  if (!error) return "";
-  const text = `${error.name}: ${error.message}`;
-  return truncateText(normalizeText(text), 120);
+  if (error == null) return "";
+
+  const message = [error.name, error.message].join(": ");
+  return truncateText(normalizeText(message), 120);
 }
 
 function serializeError(error: unknown): SerializedError | undefined {
-  if (error instanceof Error) {
-    return { name: error.name, message: error.message, stack: error.stack };
-  }
   if (error == null) return undefined;
+
+  if (error instanceof Error) {
+    const serialized: SerializedError = {
+      name: error.name,
+      message: error.message,
+    };
+    if (error.stack) serialized.stack = error.stack;
+    return serialized;
+  }
+
   return { name: "UnknownError", message: String(error) };
 }
 
@@ -177,12 +175,17 @@ function formatContextText(
   error: SerializedError | undefined,
   enableColor: boolean,
 ): string {
-  const entries = Object.entries(context).map(([key, value]) => `${key}=${formatValue(value)}`);
-  if (error) entries.push(`err=${formatErrorText(error)}`);
+  const entries: string[] = [];
+  for (const [key, value] of Object.entries(context)) {
+    entries.push(`${key}=${formatValue(value)}`);
+  }
+
+  const errorText = formatErrorText(error);
+  if (errorText) entries.push(`err=${errorText}`);
   if (entries.length === 0) return "";
 
-  const indent = " ".repeat(PREFIX_WIDTH);
-  return `\n${indent}${colorize(entries.join(" "), ANSI.dim, enableColor)}`;
+  const coloredText = colorize(entries.join(" "), ANSI.dim, enableColor);
+  return `\n${" ".repeat(PREFIX_WIDTH)}${coloredText}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -207,15 +210,17 @@ function isTty(): boolean {
 }
 
 function shouldUseColor(): boolean {
-  const noColor = getEnv("NO_COLOR");
-  const forceColor = getEnv("FORCE_COLOR");
-  const logColor = getEnv("LOG_COLOR");
+  const env = {
+    noColor: getEnv("NO_COLOR"),
+    forceColor: getEnv("FORCE_COLOR"),
+    logColor: getEnv("LOG_COLOR"),
+    ci: getEnv("CI"),
+  };
 
-  if (forceColor === "0" || logColor === "0") return false;
-  if (noColor !== undefined) return false;
-  if (getEnv("CI") !== undefined) return false;
-  if (forceColor || logColor === "1" || logColor === "true") return true;
-
+  if (env.forceColor === "0" || env.logColor === "0") return false;
+  if (env.noColor !== undefined || env.ci !== undefined) return false;
+  if (env.forceColor) return true;
+  if (env.logColor === "1" || env.logColor === "true") return true;
   return isTty();
 }
 

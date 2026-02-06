@@ -12,7 +12,7 @@
  * @module cache/hash
  **************************/
 
-import { simpleHash } from "#veryfront/utils/hash-utils.ts";
+import { computeHash, simpleHash } from "#veryfront/utils/hash-utils.ts";
 
 export type CacheKeyType =
   | "http"
@@ -73,12 +73,7 @@ export function parseCacheKey(
   return { type, hash: rest.join(":") };
 }
 
-export async function sha256Hash(input: string): Promise<string> {
-  const data = new TextEncoder().encode(input);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-
-  return Array.from(new Uint8Array(hashBuffer), (b) => b.toString(16).padStart(2, "0")).join("");
-}
+export const sha256Hash = computeHash;
 
 export async function sha256Short(input: string): Promise<string> {
   return (await sha256Hash(input)).slice(0, 8);

@@ -8,6 +8,7 @@ import {
 import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubAPIClient } from "./github-api-client.ts";
 import type { FileIndexEntry, FileInfo, GitHubTreeEntry, ResolvedGitHubConfig } from "./types.ts";
+import { normalizeGitHubPath } from "./path-utils.ts";
 
 const LOG_PREFIX = "[GitHubStatOperations]";
 const RESOLVE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"];
@@ -113,7 +114,7 @@ export class GitHubStatOperations {
   async stat(path: string): Promise<FileInfo> {
     await this.ensureIndex();
 
-    const normalizedPath = this.normalizePath(path);
+    const normalizedPath = normalizeGitHubPath(path, this.projectDir);
 
     logger.debug(`${LOG_PREFIX} stat called`, {
       inputPath: path,
@@ -177,7 +178,7 @@ export class GitHubStatOperations {
   async resolveFile(basePath: string): Promise<string | null> {
     await this.ensureIndex();
 
-    const normalizedPath = this.normalizePath(basePath);
+    const normalizedPath = normalizeGitHubPath(basePath, this.projectDir);
     const cacheKey = buildGitHubResolveCacheKey(this.config.ref, normalizedPath);
     const cached = this.cache.get<string | null>(cacheKey);
     if (cached !== undefined) return cached;
@@ -211,11 +212,11 @@ export class GitHubStatOperations {
   }
 
   getFileEntry(path: string): FileIndexEntry | undefined {
-    return this.fileIndex.get(this.normalizePath(path));
+    return this.fileIndex.get(normalizeGitHubPath(path, this.projectDir));
   }
 
   getFilesInDirectory(dirPath: string): FileIndexEntry[] {
-    const normalizedDir = this.normalizePath(dirPath);
+    const normalizedDir = normalizeGitHubPath(dirPath, this.projectDir);
     const prefix = normalizedDir ? `${normalizedDir}/` : "";
     const files: FileIndexEntry[] = [];
 
@@ -230,7 +231,7 @@ export class GitHubStatOperations {
   }
 
   getSubdirectories(dirPath: string): string[] {
-    const normalizedDir = this.normalizePath(dirPath);
+    const normalizedDir = normalizeGitHubPath(dirPath, this.projectDir);
     const prefix = normalizedDir ? `${normalizedDir}/` : "";
     const subdirs = new Set<string>();
 
@@ -246,7 +247,7 @@ export class GitHubStatOperations {
   }
 
   isDirectory(path: string): boolean {
-    return this.directoryIndex.has(this.normalizePath(path));
+    return this.directoryIndex.has(normalizeGitHubPath(path, this.projectDir));
   }
 
   clearIndex(): void {
@@ -259,15 +260,5 @@ export class GitHubStatOperations {
   private async ensureIndex(): Promise<void> {
     if (this.indexBuilt) return;
     await this.buildIndex();
-  }
-
-  private normalizePath(path: string): string {
-    let normalized = path;
-
-    if (this.projectDir && normalized.startsWith(this.projectDir)) {
-      normalized = normalized.slice(this.projectDir.length);
-    }
-
-    return normalized.replace(/^\/+/, "").replace(/\/+$/, "").replace(/\/+/g, "/");
   }
 }

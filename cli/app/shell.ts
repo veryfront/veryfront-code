@@ -12,7 +12,7 @@ import {
   isStdoutTTY,
   writeStdout,
 } from "#veryfront/platform/compat/process.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import {
   createEscapeBuffer,
   getStdinReader,
@@ -234,15 +234,26 @@ export function createApp(config: AppConfig): App {
     spinnerInterval = null;
   }
 
-  // Project creation prompts using extracted module
-  function promptForProjectName(template: InitTemplate, onCancel: () => void): void {
+  type ProjectCreationHandler = (
+    ctx: { state: AppState; render: () => void },
+    projectName: string,
+  ) => Promise<AppState>;
+
+  type ProjectCreationWithSource<T> = (
+    ctx: { state: AppState; render: () => void },
+    projectName: string,
+    source: T,
+  ) => Promise<AppState>;
+
+  function promptForProject(creator: ProjectCreationHandler, onCancel: () => void): void {
     const suggested = generateRandomSlug();
     state = startInput(
       "Project name",
       async (name: string) => {
-        if (name.trim()) {
+        const projectName = name.trim();
+        if (projectName) {
           const ctx = { state, render };
-          state = await createProject(ctx, name.trim(), template);
+          state = await creator(ctx, projectName);
         }
         state = navigateTo("dashboard")(state);
         render();
@@ -253,22 +264,24 @@ export function createApp(config: AppConfig): App {
     render();
   }
 
-  function promptForExampleProject(example: ProjectInfo, onCancel: () => void): void {
-    const suggested = generateRandomSlug();
-    state = startInput(
-      "Project name",
-      async (name: string) => {
-        if (name.trim()) {
-          const ctx = { state, render };
-          state = await createProjectFromExample(ctx, name.trim(), example);
-        }
-        state = navigateTo("dashboard")(state);
-        render();
-      },
+  // Project creation prompts using extracted module
+  function promptForProjectWithSource<T>(
+    source: T,
+    creator: ProjectCreationWithSource<T>,
+    onCancel: () => void,
+  ): void {
+    return promptForProject(
+      (ctx, projectName) => creator(ctx, projectName, source),
       onCancel,
-      suggested,
-    )(state);
-    render();
+    );
+  }
+
+  function promptForProjectName(template: InitTemplate, onCancel: () => void): void {
+    return promptForProjectWithSource(template, createProject, onCancel);
+  }
+
+  function promptForExampleProject(example: ProjectInfo, onCancel: () => void): void {
+    return promptForProjectWithSource(example, createProjectFromExample, onCancel);
   }
 
   // View handler context for delegating to extracted handlers

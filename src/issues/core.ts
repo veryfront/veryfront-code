@@ -6,7 +6,7 @@
  * @module issues/core
  */
 
-import { join } from "#std/path.ts";
+import { join } from "#veryfront/compat/path";
 import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type {
   CreateIssueOptions,

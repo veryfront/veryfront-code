@@ -8,11 +8,8 @@
 import { join } from "#std/path.ts";
 import { cyan, dim, green } from "#veryfront/compat/console";
 import { cliLogger } from "#veryfront/utils";
-import {
-  createFileSystem,
-  type FileSystem,
-  isAlreadyExistsError,
-} from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { ensureDir } from "../../utils/fs.ts";
 import {
   isInteractive as checkIsInteractive,
   promptSync,
@@ -481,23 +478,18 @@ export async function searchItems(query: string): Promise<unknown[]> {
 }
 
 function getToolInputSchema(toolFile: string): string {
-  switch (toolFile) {
-    case "list-items.ts":
-      return `limit: z.number().optional().describe("Maximum number of items to return"),
-    offset: z.number().optional().describe("Number of items to skip"),`;
-    case "get-item.ts":
-      return `id: z.string().describe("The ID of the item to retrieve"),`;
-    case "search.ts":
-      return `query: z.string().describe("Search query"),`;
-    default:
-      return "";
-  }
+  return TOOL_FILE_CONTENTS[toolFile]?.inputSchema ?? "";
 }
 
 function getToolExecuteBody(toolFile: string): string {
-  switch (toolFile) {
-    case "list-items.ts":
-      return `const items = await listItems({
+  return TOOL_FILE_CONTENTS[toolFile]?.executeBody ?? "";
+}
+
+const TOOL_FILE_CONTENTS: Record<string, { inputSchema: string; executeBody: string }> = {
+  "list-items.ts": {
+    inputSchema: `limit: z.number().optional().describe("Maximum number of items to return"),
+    offset: z.number().optional().describe("Number of items to skip"),`,
+    executeBody: `const items = await listItems({
         limit: input.limit,
         offset: input.offset,
       });
@@ -505,24 +497,26 @@ function getToolExecuteBody(toolFile: string): string {
         success: true,
         items,
         count: items.length,
-      };`;
-    case "get-item.ts":
-      return `const item = await getItem(input.id);
+      };`,
+  },
+  "get-item.ts": {
+    inputSchema: `id: z.string().describe("The ID of the item to retrieve"),`,
+    executeBody: `const item = await getItem(input.id);
       return {
         success: true,
         item,
-      };`;
-    case "search.ts":
-      return `const results = await searchItems(input.query);
+      };`,
+  },
+  "search.ts": {
+    inputSchema: `query: z.string().describe("Search query"),`,
+    executeBody: `const results = await searchItems(input.query);
       return {
         success: true,
         results,
         count: results.length,
-      };`;
-    default:
-      return "";
-  }
-}
+      };`,
+  },
+};
 
 async function createToolSkeletons(baseDir: string, config: IntegrationConfig): Promise<void> {
   const tools = [
@@ -604,13 +598,5 @@ ${config.envVarPrefix}_API_KEY=your_api_key
   } catch {
     await fs.writeTextFile(envExamplePath, `# Environment Variables${envContent}`);
     cliLogger.debug("Created .env.example");
-  }
-}
-
-async function ensureDir(path: string): Promise<void> {
-  try {
-    await fs.mkdir(path, { recursive: true });
-  } catch (error) {
-    if (!isAlreadyExistsError(error)) throw error;
   }
 }

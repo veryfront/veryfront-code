@@ -7,7 +7,7 @@
  * - Route file presence detection
  **************************/
 
-import { join } from "../platform/compat/path-helper.ts";
+import { join } from "#veryfront/compat/path";
 import { createFileSystem } from "../platform/compat/fs.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";

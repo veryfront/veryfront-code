@@ -6,7 +6,7 @@
 
 import { chdir, cwd, promptSync, writeStdout } from "#veryfront/platform/compat/process.ts";
 import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import {
   AnimatedDotMatrix,
   bold,
@@ -324,7 +324,7 @@ async function executeStepAction(
     }
 
     case "create": {
-      await newCommand(projectName, { template: "ai", skipDeploy: true, force: true });
+      await newCommand(projectName, { template: "ai", force: true });
 
       const projectDir = join(cwd(), projectName);
       const actualSlug = (await readConfigFile(projectDir))?.projectSlug;

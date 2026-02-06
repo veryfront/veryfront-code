@@ -3,11 +3,11 @@
  */
 
 import { serverLogger as logger } from "#veryfront/utils";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getProjectReact, renderToStringAdapter } from "#veryfront/react";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/index.ts";
-import { CompilationError } from "#veryfront/errors/index.ts";
+import { COMPILATION_ERROR } from "#veryfront/errors/index.ts";
 import { DEFAULT_REACT_VERSION, getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
 
 type ReactComponentLike = import("react").ComponentType<{ children?: import("react").ReactNode }>;
@@ -77,7 +77,10 @@ export async function renderAppRouteToHTML(args: {
 
   const Page = await loadComponent(adapter, pageFile, projectDir, contentSourceId);
   if (typeof Page !== "function") {
-    throw new CompilationError("Invalid page component", { pageFile, type: typeof Page });
+    throw COMPILATION_ERROR.create({
+      detail: "Invalid page component",
+      context: { pageFile, type: typeof Page },
+    });
   }
 
   let element: import("react").ReactNode = React.createElement(Page as ReactComponentLike);

@@ -22,6 +22,7 @@ import {
   createWatcherIterator,
   enqueueWatchEvent,
 } from "../shared/watcher-queue.ts";
+import { stopManagedServer } from "../shared/server-lifecycle.ts";
 
 /** Default server port. Defined locally to keep adapters module isolated. */
 const DEFAULT_PORT = 3000;
@@ -31,6 +32,12 @@ type FileSnapshotEntry = {
   mtimeMs: number;
   size: number;
 };
+
+function assertDenoRuntime(adapterName: string, method: string): void {
+  if (typeof Deno === "undefined") {
+    throw new Error(`${adapterName}.${method}() can only be used in Deno runtime`);
+  }
+}
 
 function toSnapshotEntry(info: Deno.FileInfo): FileSnapshotEntry {
   return {
@@ -119,24 +126,18 @@ function diffSnapshots(
 }
 
 class DenoFileSystemAdapter implements FileSystemAdapter {
-  private assertDeno(method: string): void {
-    if (typeof Deno === "undefined") {
-      throw new Error(`DenoFileSystemAdapter.${method}() can only be used in Deno runtime`);
-    }
-  }
-
   async readFile(path: string): Promise<string> {
-    this.assertDeno("readFile");
+    assertDenoRuntime("DenoFileSystemAdapter", "readFile");
     return Deno.readTextFile(path);
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
-    this.assertDeno("readFileBytes");
+    assertDenoRuntime("DenoFileSystemAdapter", "readFileBytes");
     return Deno.readFile(path);
   }
 
   async writeFile(path: string, content: string): Promise<void> {
-    this.assertDeno("writeFile");
+    assertDenoRuntime("DenoFileSystemAdapter", "writeFile");
     await Deno.writeTextFile(path, content);
   }
 
@@ -151,7 +152,7 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
   }
 
   async *readDir(path: string): AsyncIterable<DirEntry> {
-    this.assertDeno("readDir");
+    assertDenoRuntime("DenoFileSystemAdapter", "readDir");
     for await (const entry of Deno.readDir(path)) {
       yield {
         name: entry.name,
@@ -163,7 +164,7 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
   }
 
   async stat(path: string): Promise<FileInfo> {
-    this.assertDeno("stat");
+    assertDenoRuntime("DenoFileSystemAdapter", "stat");
     const stat = await Deno.stat(path);
     return {
       size: stat.size,
@@ -175,22 +176,22 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
   }
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
-    this.assertDeno("mkdir");
+    assertDenoRuntime("DenoFileSystemAdapter", "mkdir");
     await Deno.mkdir(path, options);
   }
 
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
-    this.assertDeno("remove");
+    assertDenoRuntime("DenoFileSystemAdapter", "remove");
     await Deno.remove(path, options);
   }
 
   async makeTempDir(prefix: string): Promise<string> {
-    this.assertDeno("makeTempDir");
+    assertDenoRuntime("DenoFileSystemAdapter", "makeTempDir");
     return Deno.makeTempDir({ prefix });
   }
 
   watch(paths: string | string[], options?: WatchOptions): FileWatcher {
-    this.assertDeno("watch");
+    assertDenoRuntime("DenoFileSystemAdapter", "watch");
 
     const pathArray = Array.isArray(paths) ? paths : [paths];
     const recursive = options?.recursive ?? true;
@@ -291,14 +292,8 @@ class DenoServerAdapter implements ServerAdapter {
 }
 
 class DenoShellAdapter implements ShellAdapter {
-  private assertDeno(method: string): void {
-    if (typeof Deno === "undefined") {
-      throw new Error(`DenoShellAdapter.${method}() can only be used in Deno runtime`);
-    }
-  }
-
   statSync(path: string): { isFile: boolean; isDirectory: boolean } {
-    this.assertDeno("statSync");
+    assertDenoRuntime("DenoShellAdapter", "statSync");
     try {
       const stat = Deno.statSync(path);
       return { isFile: stat.isFile, isDirectory: stat.isDirectory };
@@ -313,7 +308,7 @@ class DenoShellAdapter implements ShellAdapter {
   }
 
   readFileSync(path: string): string {
-    this.assertDeno("readFileSync");
+    assertDenoRuntime("DenoShellAdapter", "readFileSync");
     try {
       return Deno.readTextFileSync(path);
     } catch (error) {
@@ -422,9 +417,7 @@ export class DenoAdapter implements RuntimeAdapter {
   }
 
   async shutdown(): Promise<void> {
-    if (!this.activeServer) return;
-    await this.activeServer.stop();
-    this.activeServer = null;
+    this.activeServer = await stopManagedServer(this.activeServer);
   }
 }
 

@@ -31,6 +31,7 @@ import {
   CACHE_DIR_TOKEN,
   VeryfrontError,
 } from "./http-cache-invariants.ts";
+import { looksLikeHtmlContent as looksLikeHtml } from "./html-content.ts";
 
 /** Maximum number of keys per batch request to distributed cache API */
 const BATCH_FETCH_CHUNK_SIZE = 100;
@@ -122,19 +123,6 @@ function decodeGzip(content: string): DecodeResult {
     logger.debug("[HTTP-CACHE-WRAPPER] Failed to decode gzip content", { error });
     return { code: content, wasGzipped: false, decodeFailed: true };
   }
-}
-
-/**
- * Check if content appears to be HTML instead of JavaScript.
- */
-function looksLikeHtml(content: string): boolean {
-  const trimmed = content.trimStart();
-  return (
-    trimmed.startsWith("<!DOCTYPE") ||
-    trimmed.startsWith("<html") ||
-    trimmed.startsWith("<HTML") ||
-    /<title>ESM[^<]*<\/title>/i.test(content.slice(0, 500))
-  );
 }
 
 /**

@@ -24,7 +24,7 @@ import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.
 import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
 import { validateBundleGroup } from "#veryfront/transforms/esm/bundle-manifest.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
-import { dirname, join, normalize } from "#veryfront/platform/compat/path/index.ts";
+import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import {

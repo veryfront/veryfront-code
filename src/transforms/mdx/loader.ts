@@ -1,5 +1,5 @@
 import { rendererLogger as logger } from "#veryfront/utils";
-import { join } from "#std/path.ts";
+import { join } from "#veryfront/compat/path";
 import * as React from "react";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";

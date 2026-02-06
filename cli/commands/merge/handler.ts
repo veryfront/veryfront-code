@@ -5,12 +5,9 @@
 import { mergeCommand, parseMergeArgs } from "./command.ts";
 import { showLogo } from "#cli/utils";
 import type { ParsedArgs } from "#cli/shared/types";
+import { parseArgsOrThrow } from "#cli/shared/args";
 
 export async function handleMergeCommand(args: ParsedArgs): Promise<void> {
   showLogo();
-  const result = parseMergeArgs(args);
-  if (!result.success) {
-    throw new Error(`Invalid merge arguments: ${result.error.message}`);
-  }
-  await mergeCommand(result.data);
+  await mergeCommand(parseArgsOrThrow(parseMergeArgs, "merge", args));
 }

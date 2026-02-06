@@ -36,21 +36,15 @@ const GoogleResponseSchema = z.object({
 
 export class GoogleProvider extends BaseProvider {
   name = "google";
-  private apiKey: string;
-  private baseURL: string;
-
-  constructor(config: GoogleConfig) {
-    super(config);
-    this.apiKey = config.apiKey;
-    this.baseURL = config.baseURL ?? "https://generativelanguage.googleapis.com/v1beta";
-  }
 
   protected getHeaders(): Record<string, string> {
-    return { "x-goog-api-key": this.apiKey };
+    const { apiKey } = this.config as GoogleConfig;
+    return { "x-goog-api-key": apiKey };
   }
 
   protected getEndpoint(_path: string): string {
-    return `${this.baseURL}/chat/completions`;
+    const { baseURL } = this.config as GoogleConfig;
+    return `${baseURL ?? "https://generativelanguage.googleapis.com/v1beta"}/chat/completions`;
   }
 
   protected transformRequest(request: CompletionRequest): Record<string, unknown> {

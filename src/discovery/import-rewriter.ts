@@ -7,7 +7,7 @@
 
 import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
+import * as pathHelper from "#veryfront/compat/path";
 
 /**
  * Rewrite imports for Deno runtime

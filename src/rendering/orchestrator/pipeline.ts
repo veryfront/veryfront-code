@@ -26,7 +26,7 @@ import {
   extractRelativePath as extractRelativePathShared,
   extractRouteParams as extractRouteParamsShared,
 } from "#veryfront/utils/route-path-utils.ts";
-import { join } from "#veryfront/platform/compat/path-helper.ts";
+import { join } from "#veryfront/compat/path";
 import type { MdxBundle, PageBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";

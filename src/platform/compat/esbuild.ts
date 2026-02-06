@@ -9,8 +9,7 @@ export type { BuildOptions, BuildResult, TransformOptions, TransformResult } fro
 import nodeProcess from "node:process";
 import { getEnv, setEnv } from "./process.ts";
 import { isDenoCompiled } from "./runtime.ts";
-
-const ESBUILD_VERSION = "0.20.2";
+import { ESBUILD_VERSION, getEsbuildBinaryName, getVFSBasePath } from "./esbuild-shared.ts";
 
 function getTempDir(): string {
   return getEnv("TMPDIR") ?? getEnv("TEMP") ?? getEnv("TMP") ?? "/tmp";
@@ -24,28 +23,6 @@ let esbuildModule: typeof import("esbuild") | null = null;
 let setupComplete = false;
 let setupPromise: Promise<void> | null = null;
 
-function getEsbuildBinaryName(): string {
-  const archMap: Record<string, string> = {
-    x86_64: "x64",
-    aarch64: "arm64",
-  };
-  const esbuildArch = archMap[Deno.build.arch] ?? Deno.build.arch;
-  return `@esbuild/${Deno.build.os}-${esbuildArch}`;
-}
-
-function getVFSBasePath(): string {
-  const filePath = new URL(import.meta.url).pathname;
-
-  const denoCompileMatch = filePath.match(/^(.*\/deno-compile-[^/]+)\//);
-  if (denoCompileMatch?.[1]) return denoCompileMatch[1];
-
-  const parts = filePath.split("/");
-  const srcIndex = parts.lastIndexOf("src");
-  if (srcIndex > 0) return parts.slice(0, srcIndex).join("/");
-
-  return `${getTempDir()}/deno-compile-veryfront`;
-}
-
 async function isFile(path: string): Promise<boolean> {
   try {
     const stat = await Deno.stat(path);
@@ -57,7 +34,7 @@ async function isFile(path: string): Promise<boolean> {
 
 async function findEsbuildInVFS(): Promise<string | null> {
   const binaryName = getEsbuildBinaryName();
-  const vfsBase = getVFSBasePath();
+  const vfsBase = getVFSBasePath(new URL(import.meta.url).pathname, getTempDir());
 
   const possiblePaths = [
     `${vfsBase}/node_modules/${binaryName}/bin/esbuild`,
@@ -100,7 +77,7 @@ async function extractEsbuildBinary(): Promise<string> {
 
   const vfsPath = await findEsbuildInVFS();
   if (!vfsPath) {
-    const vfsBase = getVFSBasePath();
+    const vfsBase = getVFSBasePath(new URL(import.meta.url).pathname, getTempDir());
     throw new Error(
       `Could not find esbuild binary in deno compile VFS.\n` +
         `  Platform: ${getEsbuildBinaryName()}\n` +

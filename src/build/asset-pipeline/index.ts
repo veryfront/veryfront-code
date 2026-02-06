@@ -6,6 +6,7 @@ import {
   processTailwindCSSInDirectory,
   type TailwindProcessResult,
 } from "./tailwind-processor/index.ts";
+import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { logger } from "#veryfront/utils";
 
 export interface TailwindBatchOptions {
@@ -41,10 +42,6 @@ export interface AssetPipelineResult {
     enabled: boolean;
   };
   duration: number;
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export async function runAssetPipeline(

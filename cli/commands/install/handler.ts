@@ -5,7 +5,7 @@
 import { z } from "zod";
 import { installCommand } from "./install.ts";
 import { uninstallCommand } from "./uninstall.ts";
-import { CommonArgs, createArgParser } from "#cli/shared/args";
+import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
 const InstallArgsSchema = z.object({
@@ -21,17 +21,9 @@ export const parseInstallArgs = createArgParser(InstallArgsSchema, {
 });
 
 export async function handleInstallCommand(args: ParsedArgs): Promise<void> {
-  const result = parseInstallArgs(args);
-  if (!result.success) {
-    throw new Error(`Invalid install arguments: ${result.error.message}`);
-  }
-  await installCommand(result.data);
+  await installCommand(parseArgsOrThrow(parseInstallArgs, "install", args));
 }
 
 export async function handleUninstallCommand(args: ParsedArgs): Promise<void> {
-  const result = parseInstallArgs(args);
-  if (!result.success) {
-    throw new Error(`Invalid uninstall arguments: ${result.error.message}`);
-  }
-  await uninstallCommand(result.data);
+  await uninstallCommand(parseArgsOrThrow(parseInstallArgs, "uninstall", args));
 }

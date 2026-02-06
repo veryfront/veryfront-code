@@ -28,40 +28,63 @@ interface ModuleCacheStats {
   };
 }
 
+interface PodCacheOptions {
+  getExisting: () => LRUCache<string, string> | null;
+  assign: (cache: LRUCache<string, string>) => void;
+  maxEntries: number;
+  ttlMs: number;
+  registryName: string;
+  logMessage: string;
+}
+
+function getOrInitPodCache(options: PodCacheOptions): LRUCache<string, string> {
+  const existing = options.getExisting();
+  if (existing) return existing;
+
+  const cache = new LRUCache<string, string>({
+    maxEntries: options.maxEntries,
+    ttlMs: options.ttlMs,
+  });
+
+  options.assign(cache);
+  registerLRUCache(options.registryName, cache);
+
+  logger.info(options.logMessage, {
+    maxEntries: options.maxEntries,
+    ttlMs: options.ttlMs,
+  });
+
+  return cache;
+}
+
+const modulePodCacheOptions: PodCacheOptions = {
+  getExisting: () => moduleCache,
+  assign: (cache) => {
+    moduleCache = cache;
+  },
+  maxEntries: MODULE_CACHE_MAX_ENTRIES,
+  ttlMs: MODULE_CACHE_TTL_MS,
+  registryName: "pod-module-cache",
+  logMessage: "[ModuleCache] Pod-level module cache initialized",
+};
+
+const esmPodCacheOptions: PodCacheOptions = {
+  getExisting: () => esmCache,
+  assign: (cache) => {
+    esmCache = cache;
+  },
+  maxEntries: ESM_CACHE_MAX_ENTRIES,
+  ttlMs: ESM_CACHE_TTL_MS,
+  registryName: "pod-esm-cache",
+  logMessage: "[ModuleCache] Pod-level ESM cache initialized",
+};
+
 export function getModuleCache(): LRUCache<string, string> {
-  if (moduleCache) return moduleCache;
-
-  moduleCache = new LRUCache<string, string>({
-    maxEntries: MODULE_CACHE_MAX_ENTRIES,
-    ttlMs: MODULE_CACHE_TTL_MS,
-  });
-
-  registerLRUCache("pod-module-cache", moduleCache);
-
-  logger.info("[ModuleCache] Pod-level module cache initialized", {
-    maxEntries: MODULE_CACHE_MAX_ENTRIES,
-    ttlMs: MODULE_CACHE_TTL_MS,
-  });
-
-  return moduleCache;
+  return getOrInitPodCache(modulePodCacheOptions);
 }
 
 export function getEsmCache(): LRUCache<string, string> {
-  if (esmCache) return esmCache;
-
-  esmCache = new LRUCache<string, string>({
-    maxEntries: ESM_CACHE_MAX_ENTRIES,
-    ttlMs: ESM_CACHE_TTL_MS,
-  });
-
-  registerLRUCache("pod-esm-cache", esmCache);
-
-  logger.info("[ModuleCache] Pod-level ESM cache initialized", {
-    maxEntries: ESM_CACHE_MAX_ENTRIES,
-    ttlMs: ESM_CACHE_TTL_MS,
-  });
-
-  return esmCache;
+  return getOrInitPodCache(esmPodCacheOptions);
 }
 
 export function createModuleCache(): Map<string, string> {

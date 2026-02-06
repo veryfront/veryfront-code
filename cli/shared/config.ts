@@ -6,7 +6,7 @@
  */
 
 import { z } from "zod";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
@@ -123,12 +123,12 @@ async function resolveConfigBase(
   return { apiUrl, apiToken, projectSlug };
 }
 
-export function resolveConfig(
-  projectDir?: string,
-  env: EnvironmentConfig = getEnvironmentConfig(),
-): Promise<ResolvedConfig> {
-  return resolveConfigBase(projectDir, env, false);
+function createConfigResolver(interactive: boolean) {
+  return (projectDir?: string, env?: EnvironmentConfig): Promise<ResolvedConfig> =>
+    resolveConfigByMode(projectDir, env, interactive);
 }
+
+export const resolveConfig = createConfigResolver(false);
 
 /**
  * Resolve config with interactive authentication.
@@ -136,11 +136,14 @@ export function resolveConfig(
  * If no token is available, prompts the user to login interactively.
  * Use this for commands that require authentication (push, pull, deploy).
  */
-export function resolveConfigWithAuth(
-  projectDir?: string,
-  env: EnvironmentConfig = getEnvironmentConfig(),
+export const resolveConfigWithAuth = createConfigResolver(true);
+
+function resolveConfigByMode(
+  projectDir: string | undefined,
+  env: EnvironmentConfig | undefined,
+  interactive: boolean,
 ): Promise<ResolvedConfig> {
-  return resolveConfigBase(projectDir, env, true);
+  return resolveConfigBase(projectDir, env ?? getEnvironmentConfig(), interactive);
 }
 
 export interface ApiClient {

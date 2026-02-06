@@ -219,32 +219,28 @@ export class ApprovalManager {
     });
   }
 
-  /** Approve an approval request */
-  approve(
+  private submitDecision(
     runId: string,
     approvalId: string,
     approver: string,
+    approved: boolean,
     comment?: string,
   ): Promise<void> {
     return this.processDecision(runId, approvalId, {
-      approved: true,
+      approved,
       approver,
       comment,
     });
   }
 
+  /** Approve an approval request */
+  approve(runId: string, approvalId: string, approver: string, comment?: string): Promise<void> {
+    return this.submitDecision(runId, approvalId, approver, true, comment);
+  }
+
   /** Reject an approval request */
-  reject(
-    runId: string,
-    approvalId: string,
-    approver: string,
-    comment?: string,
-  ): Promise<void> {
-    return this.processDecision(runId, approvalId, {
-      approved: false,
-      approver,
-      comment,
-    });
+  reject(runId: string, approvalId: string, approver: string, comment?: string): Promise<void> {
+    return this.submitDecision(runId, approvalId, approver, false, comment);
   }
 
   /** List all pending approvals across workflows */

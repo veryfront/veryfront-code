@@ -22,6 +22,13 @@ export interface BundleCode {
   css?: string;
 }
 
+export interface BundleManifestStats {
+  totalBundles: number;
+  totalSize: number;
+  oldestBundle?: number;
+  newestBundle?: number;
+}
+
 export interface BundleManifestStore {
   getBundleMetadata(key: string): Promise<BundleMetadata | undefined>;
   setBundleMetadata(key: string, metadata: BundleMetadata, ttlMs?: number): Promise<void>;
@@ -31,12 +38,7 @@ export interface BundleManifestStore {
   invalidateSource(source: string): Promise<number>;
   clear(): Promise<void>;
   isAvailable(): Promise<boolean>;
-  getStats(): Promise<{
-    totalBundles: number;
-    totalSize: number;
-    oldestBundle?: number;
-    newestBundle?: number;
-  }>;
+  getStats(): Promise<BundleManifestStats>;
 }
 
 export class InMemoryBundleManifestStore implements BundleManifestStore {
@@ -117,12 +119,7 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
     return true;
   }
 
-  async getStats(): Promise<{
-    totalBundles: number;
-    totalSize: number;
-    oldestBundle?: number;
-    newestBundle?: number;
-  }> {
+  async getStats(): Promise<BundleManifestStats> {
     let totalSize = 0;
     let oldestBundle: number | undefined;
     let newestBundle: number | undefined;

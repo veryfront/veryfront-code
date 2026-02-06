@@ -2,9 +2,19 @@
  * Shared helpers for MCP advanced tools.
  */
 
-import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { type FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
+import { directoryExists, ensureDir, fileExists, getFs } from "../../utils/fs.ts";
+import { formatError, toComponentName, toSlug as toSlugBase } from "../../utils/string.ts";
+
+// Re-export utilities so existing MCP tool imports keep working
+export { directoryExists, ensureDir, fileExists, formatError, getFs, toComponentName };
+
+/** Lowercase variant of toSlug used by MCP tools. */
+export function toSlug(name: string): string {
+  return toSlugBase(name).toLowerCase();
+}
 
 // ============================================================================
 // Types
@@ -45,58 +55,8 @@ export interface ScaffoldResult {
 // Utilities
 // ============================================================================
 
-let cachedFs: FileSystem | null = null;
-
-export function getFs(): FileSystem {
-  cachedFs ??= createFileSystem();
-  return cachedFs;
-}
-
 export function getProjectDir(projectPath?: string): string {
   return projectPath ?? cwd();
-}
-
-export async function ensureDir(path: string): Promise<void> {
-  try {
-    await getFs().mkdir(path, { recursive: true });
-  } catch {
-    // Directory already exists
-  }
-}
-
-export async function directoryExists(path: string): Promise<boolean> {
-  try {
-    const stat = await getFs().stat(path);
-    return stat.isDirectory;
-  } catch {
-    return false;
-  }
-}
-
-export async function fileExists(path: string): Promise<boolean> {
-  return getFs().exists(path);
-}
-
-export function toComponentName(slug: string): string {
-  const base = slug.split("/").pop() || slug;
-  return base
-    .replace(/\W+/g, " ")
-    .split(" ")
-    .filter(Boolean)
-    .map((part) => part[0]!.toUpperCase() + part.slice(1))
-    .join("");
-}
-
-export function toSlug(name: string): string {
-  return name
-    .replace(/\s+/g, "-")
-    .replace(/[^a-zA-Z0-9_\-[\]/]/g, "")
-    .replace(/\/+/g, "/")
-    .toLowerCase();
-}
-
-export function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 // ============================================================================

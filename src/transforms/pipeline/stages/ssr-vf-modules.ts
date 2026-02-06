@@ -13,7 +13,7 @@ import type { TransformPlugin } from "../types.ts";
 import { TransformStage } from "../types.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { replaceSpecifiers } from "../../esm/lexer.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";

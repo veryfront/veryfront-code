@@ -1,6 +1,6 @@
 import type { HandlerContext } from "../../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
-import { join as joinPath } from "#veryfront/platform/compat/path/index.ts";
+import { join as joinPath } from "#veryfront/compat/path/index.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 
 export async function tryNotFoundFallback(

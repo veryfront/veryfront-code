@@ -1,27 +1,13 @@
 import type { Prompt } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/ai/registry-manager.ts";
+import { ScopedRegistryFacade } from "#veryfront/ai/registry-facade.ts";
 
 const promptManager = new ProjectScopedRegistryManager<Prompt>("prompt");
 
-class PromptRegistryClass {
-  register(id: string, promptInstance: Prompt): void {
-    promptManager.register(id, promptInstance);
-  }
-
-  /**
-   * Register a framework-provided prompt available to all projects.
-   */
-  registerShared(id: string, promptInstance: Prompt): void {
-    promptManager.registerShared(id, promptInstance);
-  }
-
-  get(id: string): Prompt | undefined {
-    return promptManager.get(id);
-  }
-
+class PromptRegistryClass extends ScopedRegistryFacade<Prompt> {
   getContent(id: string, variables?: Record<string, unknown>): Promise<string> {
-    const promptInstance = promptManager.get(id);
+    const promptInstance = this.get(id);
     if (!promptInstance) {
       throw toError(
         createError({
@@ -34,32 +20,9 @@ class PromptRegistryClass {
     return promptInstance.getContent(variables);
   }
 
-  getAll(): Map<string, Prompt> {
-    return promptManager.getAll();
-  }
-
   list(): string[] {
-    return promptManager.getAllIds();
-  }
-
-  has(id: string): boolean {
-    return promptManager.has(id);
-  }
-
-  clear(): void {
-    promptManager.clear();
-  }
-
-  /**
-   * Clear everything (for testing).
-   */
-  clearAll(): void {
-    promptManager.clearAll();
-  }
-
-  getStats(): ReturnType<typeof promptManager.getStats> {
-    return promptManager.getStats();
+    return this.getAllIds();
   }
 }
 
-export const promptRegistry = new PromptRegistryClass();
+export const promptRegistry = new PromptRegistryClass(promptManager);

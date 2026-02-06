@@ -1,4 +1,5 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { requireApiKey } from "#veryfront/utils/api-key-validation.ts";
 import type {
   EmbeddingDimension,
   EmbeddingProvider,
@@ -20,14 +21,7 @@ export abstract class BaseEmbeddingProvider implements EmbeddingProvider {
   }
 
   protected validateConfig(): void {
-    if (this.config.apiKey) return;
-
-    throw toError(
-      createError({
-        type: "config",
-        message: `${this.name}: API key is required`,
-      }),
-    );
+    requireApiKey(this.name, this.config.apiKey, "config");
   }
 
   protected abstract getHeaders(): Record<string, string>;

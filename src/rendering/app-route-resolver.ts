@@ -10,7 +10,7 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, Frontmatter } from "#veryfront/types";
 import { isDynamicSegment } from "#veryfront/utils/route-path-utils.ts";
-import { join } from "../platform/compat/path-helper.ts";
+import { join } from "#veryfront/compat/path";
 import { extract } from "#std/front-matter/yaml.ts";
 
 export async function getAppRouteEntity(

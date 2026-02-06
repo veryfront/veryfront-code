@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { HandlerContext } from "../types/server.ts";
 import { type CacheKeyContext, CacheKeyContextSchema } from "./schemas/index.ts";
+import { buildContentHashCacheKey } from "./keys.ts";
 
 type MultiProjectRequestContextType = {
   projectSlug: string;
@@ -28,8 +29,7 @@ export function getContentHashKey(
   contentHash: string,
   suffix?: string,
 ): string {
-  const base = `${prefix}:${filePath}:${contentHash}`;
-  return suffix ? `${base}:${suffix}` : base;
+  return buildContentHashCacheKey(prefix, filePath, contentHash, suffix);
 }
 
 export function runWithCacheKeyContext<T>(ctx: CacheKeyContext, fn: () => T): T {

@@ -6,7 +6,7 @@
  * @module build/transforms/mdx/esm-module-loader/cache
  */
 
-import { join } from "#std/path.ts";
+import { join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import {
   getCacheBaseDir,

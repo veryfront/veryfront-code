@@ -1,12 +1,12 @@
-import { NotSupportedError } from "#veryfront/errors";
+import { NOT_SUPPORTED } from "#veryfront/errors";
 import type { ShellAdapter } from "../../base.ts";
 
 export class CloudflareShellAdapter implements ShellAdapter {
   private throwNotSupported(operation: "statSync" | "readFileSync"): never {
-    throw new NotSupportedError(
-      "Synchronous file operations not supported in Cloudflare Workers",
-      { platform: "cloudflare", operation },
-    );
+    throw NOT_SUPPORTED.create({
+      detail: "Synchronous file operations not supported in Cloudflare Workers",
+      context: { platform: "cloudflare", operation },
+    });
   }
 
   statSync(_path: string): { isFile: boolean; isDirectory: boolean } {

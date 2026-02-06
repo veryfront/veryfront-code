@@ -5,18 +5,7 @@
 
 import type { Context, Span, Tracer } from "@opentelemetry/api";
 import denoConfig from "../../deno.json" with { type: "json" };
-
-// Inline cross-runtime getEnv to avoid dependency on src/platform/compat (not copied in Docker)
-function getEnv(key: string): string | undefined {
-  // Deno
-  if (typeof Deno !== "undefined" && Deno.env?.get) {
-    return Deno.env.get(key);
-  }
-
-  // Node.js / Bun
-  const nodeProcess = (globalThis as { process?: { env?: Record<string, string> } }).process;
-  return nodeProcess?.env?.[key];
-}
+import { getEnv } from "./env.ts";
 
 // Get version from environment variable or root deno.json
 const VERYFRONT_VERSION: string = getEnv("VERYFRONT_VERSION") ??
@@ -229,14 +218,19 @@ export function withContext<T>(spanContext: Context, fn: () => Promise<T>): Prom
   return traceApi.context.with(spanContext, fn);
 }
 
+function getActiveSpanContext():
+  | import("@opentelemetry/api").SpanContext
+  | null {
+  if (!traceApi) return null;
+
+  const activeSpan = traceApi.trace.getSpan(traceApi.context.active());
+  return activeSpan ? activeSpan.spanContext() : null;
+}
+
 export function getTraceContext(): { traceId?: string; spanId?: string } {
-  if (!traceApi) return {};
-
-  const span = traceApi.trace.getSpan(traceApi.context.active());
-  if (!span) return {};
-
-  const ctx = span.spanContext();
-  return { traceId: ctx.traceId, spanId: ctx.spanId };
+  const spanContext = getActiveSpanContext();
+  if (!spanContext) return {};
+  return { traceId: spanContext.traceId, spanId: spanContext.spanId };
 }
 
 /**

@@ -1,6 +1,6 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import type { Plugin } from "esbuild";
-import { dirname, join, resolve as pathResolve } from "#veryfront/platform/compat/path/index.ts";
+import { dirname, join, resolve as pathResolve } from "#veryfront/compat/path/index.ts";
 import type { ShellAdapter } from "#veryfront/platform/adapters/base.ts";
 
 export class Bundler {

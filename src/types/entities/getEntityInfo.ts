@@ -1,6 +1,6 @@
 import { extract } from "#std/front-matter/yaml.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
+import * as pathHelper from "#veryfront/compat/path";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { detectEntityType } from "../entities.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";

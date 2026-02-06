@@ -1,6 +1,6 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import { handleErrorWithFallback } from "#veryfront/errors/index.ts";
-import { join, relative, sep } from "#veryfront/platform/compat/path/index.ts";
+import { join, relative, sep } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { HMRServer } from "./hmr-server.ts";
 import { OptimizedFileWatcher } from "./file-watcher.ts";

@@ -639,24 +639,33 @@ function createTimerTracker(): { install: () => void; clear: () => void } {
     cancelIdleCallback?: typeof cancelIdleCallback;
   }).cancelIdleCallback;
 
+  const trackScheduledId = <
+    TId,
+    TFn extends (fn: TimerHandler, ms?: number, ...args: unknown[]) => TId,
+  >(
+    schedule: TFn,
+    bucket: Set<TId>,
+  ): TFn => {
+    return ((fn: TimerHandler, ms?: number, ...args: unknown[]) => {
+      const id = schedule(fn, ms, ...args);
+      bucket.add(id);
+      return id;
+    }) as TFn;
+  };
+
   return {
     install() {
-      globalThis.setTimeout = ((fn: TimerHandler, ms?: number, ...args: unknown[]) => {
-        const id = originalSetTimeout(fn, ms, ...args);
-        timeouts.add(id);
-        return id;
-      }) as typeof setTimeout;
+      globalThis.setTimeout = trackScheduledId(originalSetTimeout, timeouts) as typeof setTimeout;
 
       globalThis.clearTimeout = ((id?: ReturnType<typeof setTimeout>) => {
         if (id !== undefined) timeouts.delete(id);
         return originalClearTimeout(id as never);
       }) as typeof clearTimeout;
 
-      globalThis.setInterval = ((fn: TimerHandler, ms?: number, ...args: unknown[]) => {
-        const id = originalSetInterval(fn, ms, ...args);
-        intervals.add(id);
-        return id;
-      }) as typeof setInterval;
+      globalThis.setInterval = trackScheduledId(
+        originalSetInterval,
+        intervals,
+      ) as typeof setInterval;
 
       globalThis.clearInterval = ((id?: ReturnType<typeof setInterval>) => {
         if (id !== undefined) intervals.delete(id);
