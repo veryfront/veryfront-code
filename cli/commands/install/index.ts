@@ -18,12 +18,5 @@ export {
   InstallOptionsSchema,
   UninstallOptionsSchema,
 } from "./types.ts";
-export type {
-  AITool,
-  AIToolId,
-  DetectOptions,
-  InstallOptions,
-  MultiSelectOption,
-  UninstallOptions,
-} from "./types.ts";
+export type { AITool, AIToolId, DetectOptions, InstallOptions, UninstallOptions } from "./types.ts";
 export { findInstalledTools, uninstallCommand, uninstallTargets } from "./uninstall.ts";

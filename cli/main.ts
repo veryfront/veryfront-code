@@ -30,6 +30,6 @@ async function ensureEnvLoaded(): Promise<void> {
 
 await ensureEnvLoaded();
 const args = getArgs();
-const { parseCliArgs } = await import("./shared/arg-parser.ts");
+const { parseCliArgs } = await import("./shared/args.ts");
 const { routeCommand } = await import("./router.ts");
 await routeCommand(parseCliArgs(args));

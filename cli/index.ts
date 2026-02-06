@@ -1,7 +1,7 @@
 // Core
 export type { ParsedArgs, ServerMode } from "./shared/types.ts";
 export { ServerModeSchema } from "./shared/types.ts";
-export { parseCliArgs } from "./shared/arg-parser.ts";
+export { parseCliArgs } from "./shared/args.ts";
 export { routeCommand } from "./router.ts";
 
 // Command-specific schemas

@@ -3,16 +3,14 @@
  */
 
 import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
-import { cwd as getCwd, writeStdout } from "#veryfront/platform/compat/process.ts";
+import { cwd as getCwd } from "#veryfront/platform/compat/process.ts";
 import { exists, mkdir, writeTextFile } from "#veryfront/platform/compat/fs.ts";
-import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
 import { z } from "zod";
 import {
   type EnvironmentConfig,
   getEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
-import { bold, brand, dim, muted, success, warning } from "#cli/ui";
-import { isTTY } from "#cli/utils";
+import { bold, dim, multiSelect, type MultiSelectOption, muted, success, warning } from "#cli/ui";
 import { detectAITools, formatDetectionHint } from "./detect.ts";
 import { AI_TOOLS, getTemplateContent, getToolById, isValidToolId } from "./registry.ts";
 import {
@@ -20,133 +18,7 @@ import {
   AIToolIdSchema,
   type InstallOptions,
   InstallOptionsSchema,
-  type MultiSelectOption,
 } from "./types.ts";
-
-const ESC = "\x1b";
-const HIDE_CURSOR = `${ESC}[?25l`;
-const SHOW_CURSOR = `${ESC}[?25h`;
-const CLEAR_LINE = `${ESC}[2K`;
-const COL_1 = `${ESC}[1G`;
-const moveUp = (n = 1) => `${ESC}[${n}A`;
-
-function write(s: string): void {
-  writeStdout(s);
-}
-
-function clearLines(n: number): void {
-  for (let i = 0; i < n; i++) write(moveUp() + CLEAR_LINE);
-  write(COL_1);
-}
-
-async function multiSelect(
-  options: MultiSelectOption[],
-  hint?: string,
-): Promise<AIToolId[] | null> {
-  if (!isTTY()) return options.filter((o) => o.selected).map((o) => o.value);
-
-  let idx = 0;
-  let lines = 0;
-  const selected = new Set<AIToolId>(options.filter((o) => o.selected).map((o) => o.value));
-
-  function draw(): void {
-    if (lines > 0) clearLines(lines);
-
-    console.log();
-    console.log(
-      "  " + bold("Select AI Coding Tools") + " " + dim("(space to toggle, enter to confirm)"),
-    );
-    console.log("  " + dim("Install integrations for your AI assistants."));
-    console.log();
-    lines = 4;
-
-    for (let i = 0; i < options.length; i++) {
-      const opt = options[i]!;
-      const isCurrent = i === idx;
-      const isSelected = selected.has(opt.value);
-      const pointer = isCurrent ? brand("❯") : " ";
-      const checkbox = isSelected ? brand("[✓]") : dim("[ ]");
-      const label = isCurrent ? opt.label : muted(opt.label);
-      console.log(`  ${pointer} ${checkbox} ${label.padEnd(24)} ${dim(opt.description)}`);
-      lines++;
-    }
-
-    if (hint) {
-      console.log();
-      console.log("  " + dim("Tip: " + hint));
-      lines += 2;
-    }
-
-    console.log();
-    console.log("  " + dim("↑↓ navigate · space toggle · enter confirm · a all · n none"));
-    lines += 2;
-  }
-
-  write(HIDE_CURSOR);
-  draw();
-
-  setRawMode(true);
-  const reader = getStdinReader();
-  const dec = new TextDecoder();
-  let result: AIToolId[] | null = null;
-
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-
-      const key = dec.decode(value);
-
-      if (key === "\x03" || key === "q" || key === "Q") {
-        result = null;
-        break;
-      }
-
-      if (key === "\r" || key === "\n") {
-        result = Array.from(selected);
-        break;
-      }
-
-      if (key === " ") {
-        const value = options[idx]!.value;
-        if (selected.has(value)) selected.delete(value);
-        else selected.add(value);
-        draw();
-        continue;
-      }
-
-      if (key === "\x1b[A" || key === "k") {
-        idx = idx > 0 ? idx - 1 : options.length - 1;
-        draw();
-        continue;
-      }
-
-      if (key === "\x1b[B" || key === "j") {
-        idx = idx < options.length - 1 ? idx + 1 : 0;
-        draw();
-        continue;
-      }
-
-      if (key === "a" || key === "A") {
-        for (const o of options) selected.add(o.value);
-        draw();
-        continue;
-      }
-
-      if (key === "n" || key === "N") {
-        selected.clear();
-        draw();
-      }
-    }
-  } finally {
-    reader.releaseLock();
-    setRawMode(false);
-  }
-
-  write(SHOW_CURSOR);
-  clearLines(lines);
-  return result;
-}
 
 const TargetFlagSchema = z
   .string()
@@ -212,14 +84,18 @@ export async function installCommand(options: InstallOptions = {}): Promise<void
   const detected = await detectAITools({ cwd });
   const hint = formatDetectionHint(detected);
 
-  const selectOptions: MultiSelectOption[] = AI_TOOLS.map((tool) => ({
+  const selectOptions: MultiSelectOption<AIToolId>[] = AI_TOOLS.map((tool) => ({
     label: tool.label,
     value: tool.id,
     description: tool.description,
     selected: detected.includes(tool.id),
   }));
 
-  const selected = await multiSelect(selectOptions, hint);
+  const selected = await multiSelect(selectOptions, {
+    title: "Select AI Coding Tools",
+    subtitle: "Install integrations for your AI assistants.",
+    hint,
+  });
   if (!selected?.length) {
     console.log();
     console.log("  " + muted("No tools selected."));
@@ -227,5 +103,5 @@ export async function installCommand(options: InstallOptions = {}): Promise<void
     return;
   }
 
-  await installTargets(selected, { ...validated, cwd });
+  await installTargets(selected as AIToolId[], { ...validated, cwd });
 }
