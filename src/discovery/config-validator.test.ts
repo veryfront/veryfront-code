@@ -3,7 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { validateAIConfig } from "./config-validator.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 
-describe("cli/discovery/config-validator", () => {
+describe("src/discovery/config-validator", () => {
   describe("validateAIConfig", () => {
     it("should return valid with no providers configured", () => {
       const config = {} as VeryfrontConfig;

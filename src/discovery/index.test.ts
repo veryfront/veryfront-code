@@ -3,7 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { clearTrackedAgents, clearTranspileCache } from "./index.ts";
 import type { DiscoveryConfig, DiscoveryResult } from "./index.ts";
 
-describe("cli/discovery/index", () => {
+describe("src/discovery/index", () => {
   describe("clearTranspileCache", () => {
     it("should not throw when clearing empty cache", () => {
       clearTranspileCache();

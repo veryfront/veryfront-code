@@ -1,13 +1,17 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import { handleErrorWithFallback } from "#veryfront/errors/index.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join, relative, sep } from "#veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { HMRServer } from "./hmr-server.ts";
 import { OptimizedFileWatcher } from "./file-watcher.ts";
 import type { RouteDiscovery } from "./route-discovery.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
+import type { DevServer } from "./server.ts";
 
 const METRICS_LOG_INTERVAL = 10;
+
+/** Default AI primitive directories (used when no custom paths configured) */
+const DEFAULT_AI_DIRS = ["tools", "agents", "workflows", "prompts", "resources"];
 
 /**
  * Patterns for paths that should NOT trigger HMR updates.
@@ -37,6 +41,7 @@ export class FileWatchSetup {
   private watcherController?: AbortController;
   private optimizedWatcher?: OptimizedFileWatcher;
   private batchCount = 0;
+  private aiDirs: Set<string>;
 
   constructor(
     private projectDir: string,
@@ -45,7 +50,11 @@ export class FileWatchSetup {
     private routeDiscovery: RouteDiscovery,
     private debounceMs: number,
     private invalidateHandler: () => void = () => {},
-  ) {}
+    private devServer?: DevServer,
+    aiDirNames?: string[],
+  ) {
+    this.aiDirs = new Set(aiDirNames ?? DEFAULT_AI_DIRS);
+  }
 
   async setup(): Promise<void> {
     try {
@@ -85,6 +94,8 @@ export class FileWatchSetup {
       join(this.projectDir, "styles"),
       join(this.projectDir, "public"),
       join(this.projectDir, "app"),
+      // AI primitive directories (from config or defaults)
+      ...Array.from(this.aiDirs).map((dir) => join(this.projectDir, dir)),
     ];
 
     const watchPaths: string[] = [];
@@ -146,8 +157,24 @@ export class FileWatchSetup {
     ReloadNotifier.triggerReload(paths);
   }
 
+  /**
+   * Check if a path is inside an AI primitive directory (tools/, agents/, etc.)
+   * Uses path segment matching to avoid false positives from substrings.
+   */
+  private isAIPath(fullPath: string): boolean {
+    const rel = relative(this.projectDir, fullPath);
+    const firstSegment = rel.split(sep)[0] ?? "";
+    return this.aiDirs.has(firstSegment);
+  }
+
   private async handleBatchedFileChanges(changes: string[]): Promise<void> {
     const startTime = performance.now();
+
+    // Check for AI file changes and trigger re-discovery
+    const hasAIChanges = changes.some((p) => this.isAIPath(p));
+    if (hasAIChanges && this.devServer) {
+      await this.devServer.rediscoverAI();
+    }
 
     await this.refreshAndReload(changes, "");
 

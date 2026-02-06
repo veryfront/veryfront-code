@@ -23,6 +23,18 @@ import {
   enableSSRFetchInterception,
   setSSRServerPort,
 } from "../rendering/ssr-globals.ts";
+import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+
+/** Configuration for AI primitives discovery during server startup */
+export interface DiscoveryOptions {
+  baseDir: string;
+  fsAdapter?: FileSystemAdapter;
+  /** For multi-project proxy mode: project slug for context scoping */
+  projectSlug?: string;
+  /** For multi-project proxy mode: API token for context scoping */
+  apiToken?: string;
+  verbose?: boolean;
+}
 
 interface ServerOptions {
   projectDir: string;
@@ -44,6 +56,8 @@ interface ServerOptions {
    * Used by proxy middleware to inject context headers in combined mode.
    */
   requestInterceptor?: (req: Request) => Request | Promise<Request>;
+  /** Discovery configuration for AI primitives. Runs discoverAll() before serving. */
+  discoveryConfig?: DiscoveryOptions;
 }
 
 export interface ServerHandle {
@@ -74,6 +88,7 @@ export function startUniversalServer(
         defaultEnvironment,
         requestInterceptor,
         bootstrapResult,
+        discoveryConfig,
       } = options;
 
       const baseAdapter = options.adapter ?? (await runtime.get());
@@ -95,6 +110,42 @@ export function startUniversalServer(
       // "Invalid URL" or "Connection refused"). React Query will refetch
       // the actual data client-side after hydration.
       enableSSRClientOnlyFetching();
+
+      // Run AI discovery before serving (registries must be populated before first request)
+      if (discoveryConfig) {
+        try {
+          const { discoverAll } = await import("#veryfront/discovery");
+          const { isExtendedFSAdapter } = await import(
+            "#veryfront/platform/adapters/fs/wrapper.ts"
+          );
+
+          if (
+            discoveryConfig.projectSlug && discoveryConfig.apiToken &&
+            discoveryConfig.fsAdapter && isExtendedFSAdapter(discoveryConfig.fsAdapter) &&
+            discoveryConfig.fsAdapter.isMultiProjectMode()
+          ) {
+            // Multi-project proxy: scope discovery to specific project
+            await discoveryConfig.fsAdapter.runWithContext(
+              discoveryConfig.projectSlug,
+              discoveryConfig.apiToken,
+              () =>
+                discoverAll({
+                  baseDir: discoveryConfig.baseDir,
+                  fsAdapter: discoveryConfig.fsAdapter,
+                  verbose: discoveryConfig.verbose ?? false,
+                }),
+            );
+          } else {
+            await discoverAll({
+              baseDir: discoveryConfig.baseDir,
+              fsAdapter: discoveryConfig.fsAdapter,
+              verbose: discoveryConfig.verbose ?? false,
+            });
+          }
+        } catch (error) {
+          logger.debug("[Server] AI discovery skipped:", error);
+        }
+      }
 
       logger.info("Starting universal production server", { projectDir, port, bindAddress });
 

@@ -5,7 +5,7 @@ import { cliLogger } from "#veryfront/utils";
 import { exitProcess, registerTerminationSignals } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
 import { clearAllLocalCaches } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
-import { discoverAll } from "../../discovery/index.ts";
+import type { DiscoveryOptions } from "#veryfront/server/production-server.ts";
 
 export interface StartOptions {
   port: number;
@@ -185,13 +185,29 @@ export async function startCommand(options: StartOptions): Promise<void> {
     const { startUniversalServer } = await import("#veryfront/server/production-server.ts");
     const { bootstrapProd } = await import("#veryfront/server/bootstrap.ts");
     const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
-    const { isExtendedFSAdapter } = await import("#veryfront/platform/adapters/fs/wrapper.ts");
     const baseAdapter = await runtime.get();
 
     const bootstrap = await bootstrapProd(cwd(), baseAdapter);
     const adapter = bootstrap.adapter;
 
     const defaultProjectId = generateDefaultProjectId(cwd());
+
+    // Build discovery config based on adapter mode
+    // The production server handles execution; CLI provides configuration
+    let discoveryConfig: DiscoveryOptions | undefined;
+    if (bootstrap.usingFSAdapter) {
+      const token = getEnv("VERYFRONT_API_TOKEN") ?? "";
+      const slug = getEnv("VERYFRONT_PROJECT_SLUG") ?? discovered.defaultProject ?? "";
+      discoveryConfig = {
+        baseDir: "",
+        fsAdapter: adapter.fs,
+        projectSlug: slug || undefined,
+        apiToken: token || undefined,
+        verbose: false,
+      };
+    } else {
+      discoveryConfig = { baseDir: projectDir, verbose: false };
+    }
 
     server = await startUniversalServer({
       port,
@@ -203,33 +219,11 @@ export async function startCommand(options: StartOptions): Promise<void> {
       requestInterceptor: proxy.interceptor,
       defaultProjectSlug: defaultProjectId,
       defaultProjectId,
+      discoveryConfig,
     });
-
-    try {
-      if (isExtendedFSAdapter(adapter.fs) && adapter.fs.isMultiProjectMode()) {
-        const token = getEnv("VERYFRONT_API_TOKEN") ?? "";
-        // Prefer VERYFRONT_PROJECT_SLUG env var over discovered project to ensure
-        // remote slug matches (local folder names may differ from API slugs)
-        const slug = getEnv("VERYFRONT_PROJECT_SLUG") ?? discovered.defaultProject ?? "";
-        if (slug && token) {
-          await adapter.fs.runWithContext(slug, token, async () => {
-            // Use "" as baseDir since API adapter works with relative paths
-            // Note: "." would create paths like "./tools" which PathNormalizer doesn't handle
-            await discoverAll({ baseDir: "", fsAdapter: adapter.fs, verbose: false });
-          });
-        } else {
-          cliLogger.debug("AI discovery skipped: no project slug or token for proxy mode");
-        }
-      } else if (bootstrap.usingFSAdapter) {
-        await discoverAll({ baseDir: "", fsAdapter: adapter.fs, verbose: false });
-      } else {
-        await discoverAll({ baseDir: projectDir, verbose: false });
-      }
-    } catch (error) {
-      cliLogger.debug("AI discovery error (proxy mode):", error);
-    }
   } else {
     const { createDevServer } = await import("#veryfront/server/dev-server.ts");
+    // Dev server handles AI discovery internally (Phase 2)
     server = await createDevServer({
       port,
       projectDir: cwd(),
@@ -238,12 +232,6 @@ export async function startCommand(options: StartOptions): Promise<void> {
       enableFastRefresh: true,
       signal: shutdownController.signal,
     });
-
-    try {
-      await discoverAll({ baseDir: projectDir, verbose: false });
-    } catch (error) {
-      cliLogger.debug("AI discovery error:", error);
-    }
   }
 
   await server.ready;

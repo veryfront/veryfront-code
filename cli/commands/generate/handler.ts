@@ -26,7 +26,9 @@ export async function handleGenerateCommand(args: ParsedArgs): Promise<void> {
   const result = parseGenerateArgs(args);
   if (!result.success) {
     throw new Error(
-      `Invalid arguments. Usage: veryfront generate <type> <name>\n\nValid types: ${VALID_TYPES.join(", ")}`,
+      `Invalid arguments. Usage: veryfront generate <type> <name>\n\nValid types: ${
+        VALID_TYPES.join(", ")
+      }`,
     );
   }
   const { type, name } = result.data;
@@ -39,7 +41,9 @@ export async function handleGenerateCommand(args: ParsedArgs): Promise<void> {
 
   if (!type || !name) {
     throw new Error(
-      `Invalid arguments. Usage: veryfront generate <type> <name>\n\nValid types: ${VALID_TYPES.join(", ")}`,
+      `Invalid arguments. Usage: veryfront generate <type> <name>\n\nValid types: ${
+        VALID_TYPES.join(", ")
+      }`,
     );
   }
 

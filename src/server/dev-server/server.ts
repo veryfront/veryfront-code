@@ -20,6 +20,8 @@ import {
   setSSRServerPort,
 } from "#veryfront/rendering/ssr-globals.ts";
 import { setEnv } from "#veryfront/platform/compat/process.ts";
+import { clearTranspileCache, discoverAll } from "#veryfront/discovery";
+import type { DiscoveryConfig } from "#veryfront/discovery";
 
 export class DevServer {
   private router: DynamicRouter;
@@ -104,6 +106,9 @@ export class DevServer {
     enableSSRClientOnlyFetching();
 
     await this.logRSCStatus();
+
+    // Auto-discover AI primitives (tools, agents, workflows, prompts, resources)
+    await this.runAIDiscovery();
 
     if (this.options.enableHMR) {
       this.hmrServer = new HMRServer({
@@ -212,6 +217,50 @@ export class DevServer {
     this._isReady = true;
   }
 
+  private buildDiscoveryConfig(): DiscoveryConfig {
+    const ai = this.appConfig?.ai;
+    return {
+      baseDir: this.options.projectDir,
+      toolDirs: ai?.tools?.discovery?.paths ?? ["tools"],
+      agentDirs: ai?.agents?.discovery?.paths ?? ["agents"],
+      resourceDirs: ["resources"],
+      promptDirs: ["prompts"],
+      workflowDirs: ["workflows"],
+      fsAdapter: this.adapter.fs,
+      verbose: this.isDebug(),
+    };
+  }
+
+  private async runAIDiscovery(): Promise<void> {
+    try {
+      const config = this.buildDiscoveryConfig();
+      const result = await discoverAll(config);
+      const total = result.tools.size + result.agents.size + result.workflows.size +
+        result.prompts.size + result.resources.size;
+      if (total > 0) {
+        logger.debug(
+          `[Discovery] Registered ${result.tools.size} tools, ${result.agents.size} agents, ` +
+            `${result.workflows.size} workflows, ${result.prompts.size} prompts, ${result.resources.size} resources`,
+        );
+      }
+    } catch (error) {
+      logger.debug("[DevServer] AI discovery skipped:", error);
+    }
+  }
+
+  async rediscoverAI(): Promise<void> {
+    try {
+      clearTranspileCache();
+      const config = this.buildDiscoveryConfig();
+      const result = await discoverAll(config);
+      logger.info(
+        `[HMR] Re-discovered AI primitives: ${result.tools.size} tools, ${result.agents.size} agents, ${result.workflows.size} workflows`,
+      );
+    } catch (error) {
+      logger.warn("[HMR] AI re-discovery failed:", error);
+    }
+  }
+
   private async setupFileWatchers(): Promise<void> {
     if (!this.hmrServer) return;
 
@@ -229,6 +278,14 @@ export class DevServer {
     );
 
     const debounceMs = this.options.fileWatcherDebounceMs ?? 100;
+    const ai = this.appConfig?.ai;
+    const aiDirNames = [
+      ...(ai?.tools?.discovery?.paths ?? ["tools"]),
+      ...(ai?.agents?.discovery?.paths ?? ["agents"]),
+      "resources",
+      "prompts",
+      "workflows",
+    ];
     this.fileWatchSetup = new FileWatchSetup(
       this.options.projectDir,
       this.adapter,
@@ -236,6 +293,8 @@ export class DevServer {
       routeDiscovery,
       debounceMs,
       () => this.requestHandler?.invalidateUniversalHandler(),
+      this,
+      aiDirNames,
     );
 
     await this.fileWatchSetup.setup();
