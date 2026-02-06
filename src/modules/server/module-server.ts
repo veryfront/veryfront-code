@@ -1,6 +1,6 @@
 /** Module Server - serves transformed ESM modules at /_vf_modules/* URLs */
 
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { type TransformOptions, transformToESM } from "#veryfront/transforms/esm-transform.ts";

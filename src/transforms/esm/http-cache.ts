@@ -10,7 +10,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { gunzipSync } from "node:zlib";
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
-import { basename, isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
+import { basename, isAbsolute, join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
@@ -51,6 +51,7 @@ import {
   tokenizeAllCachePaths,
   tokenizeCachePaths,
 } from "#veryfront/cache";
+import { looksLikeHtmlContent as looksLikeHtmlNotJs } from "./html-content.ts";
 
 // Re-export for backwards compatibility
 export {
@@ -88,20 +89,6 @@ function decodeGzipContent(content: string): string | null {
     logger.debug("[HTTP-CACHE] Failed to decode gzip content", { error });
     return null;
   }
-}
-
-/**
- * Check if content appears to be HTML instead of JavaScript.
- * esm.sh can return HTTP 200 with HTML error pages when packages fail to build.
- */
-function looksLikeHtmlNotJs(content: string): boolean {
-  const trimmed = content.trimStart();
-  return (
-    trimmed.startsWith("<!DOCTYPE") ||
-    trimmed.startsWith("<html") ||
-    trimmed.startsWith("<HTML") ||
-    /<title>ESM[^<]*<\/title>/i.test(content.slice(0, 500))
-  );
 }
 
 // ============================================================================

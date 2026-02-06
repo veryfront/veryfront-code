@@ -5,7 +5,7 @@
  */
 
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 
 /**
  * Resolve a path relative to cwd if not absolute

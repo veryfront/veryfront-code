@@ -2,7 +2,7 @@
  * Component Page Handling (TSX/JSX files)
  */
 
-import { rendererLogger as logger } from "#veryfront/utils";
+import { computeHash, rendererLogger as logger } from "#veryfront/utils";
 import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
 import type * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -127,21 +127,6 @@ export async function handleComponentPage(
   }
 }
 
-const HEX_CHARS = "0123456789abcdef";
-
-async function generateContentHash(str: string): Promise<string> {
-  const data = new TextEncoder().encode(str);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const bytes = new Uint8Array(hashBuffer);
-
-  let hex = "";
-  for (let i = 0; i < 8; i++) {
-    const byte = bytes[i]!;
-    hex += HEX_CHARS.charAt(byte >> 4) + HEX_CHARS.charAt(byte & 0xf);
-  }
-  return hex;
-}
-
 async function bundleComponentForClient(
   source: string,
   filePath: string,
@@ -152,7 +137,7 @@ async function bundleComponentForClient(
   reactVersion?: string,
 ): Promise<string | null> {
   try {
-    const contentHash = await generateContentHash(source);
+    const contentHash = (await computeHash(source)).slice(0, 16);
     const cacheKey = buildComponentCacheKey(projectId ?? projectDir, filePath, contentHash);
     const cached = componentHydrationCache.get(cacheKey);
     if (cached) return cached;

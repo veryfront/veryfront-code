@@ -3,11 +3,10 @@
  */
 
 import { z } from "zod";
-import { cwd } from "#veryfront/platform/compat/process.ts";
 import { lockCommand } from "./command.ts";
-import { showLogo } from "#cli/utils";
-import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
+import { createArgParser } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
+import { handleProjectDirCommand } from "../../shared/handler-utils.ts";
 
 const LockArgsSchema = z.object({
   projectDir: z.string().default(""),
@@ -28,10 +27,5 @@ const parseLockArgs = createArgParser(LockArgsSchema, {
 });
 
 export async function handleLockCommand(args: ParsedArgs): Promise<void> {
-  showLogo();
-  const data = parseArgsOrThrow(parseLockArgs, "lock", args);
-  await lockCommand({
-    ...data,
-    projectDir: data.projectDir || cwd(),
-  });
+  await handleProjectDirCommand(args, parseLockArgs, "lock", lockCommand);
 }

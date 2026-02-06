@@ -75,45 +75,37 @@ export class ErrorCollector {
     return fullError;
   }
 
+  private addTypedError(
+    type: ErrorType,
+    message: string,
+    details: Partial<Pick<DevError, "file" | "line" | "column" | "stack" | "context">> = {},
+  ): DevError {
+    return this.add({ type, message, ...details });
+  }
+
   addCompileError(
     message: string,
     file?: string,
     line?: number,
     column?: number,
   ): DevError {
-    return this.add({ type: "compile", message, file, line, column });
+    return this.addTypedError("compile", message, { file, line, column });
   }
 
-  addRuntimeError(
-    message: string,
-    stack?: string,
-    context?: Record<string, unknown>,
-  ): DevError {
-    return this.add({ type: "runtime", message, stack, context });
+  addRuntimeError(message: string, stack?: string, context?: Record<string, unknown>): DevError {
+    return this.addTypedError("runtime", message, { stack, context });
   }
 
-  addBundleError(
-    message: string,
-    file?: string,
-    context?: Record<string, unknown>,
-  ): DevError {
-    return this.add({ type: "bundle", message, file, context });
+  addBundleError(message: string, file?: string, context?: Record<string, unknown>): DevError {
+    return this.addTypedError("bundle", message, { file, context });
   }
 
-  addHMRError(
-    message: string,
-    file?: string,
-    context?: Record<string, unknown>,
-  ): DevError {
-    return this.add({ type: "hmr", message, file, context });
+  addHMRError(message: string, file?: string, context?: Record<string, unknown>): DevError {
+    return this.addTypedError("hmr", message, { file, context });
   }
 
-  addModuleError(
-    message: string,
-    file?: string,
-    context?: Record<string, unknown>,
-  ): DevError {
-    return this.add({ type: "module", message, file, context });
+  addModuleError(message: string, file?: string, context?: Record<string, unknown>): DevError {
+    return this.addTypedError("module", message, { file, context });
   }
 
   getAll(filter?: ErrorFilter): DevError[] {

@@ -6,6 +6,7 @@ import {
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { sanitizeVendorExportName } from "../shared/vendor-export-name.ts";
 
 export function addHMRTimestamps(code: string, timestamp: string | number): Promise<string> {
   return withSpan(
@@ -188,12 +189,4 @@ export function rewriteVendorImports(
     },
     { "transforms.code_length": code.length, "transforms.vendor_hash": vendorBundleHash },
   );
-}
-
-function sanitizeVendorExportName(pkg: string): string {
-  return pkg
-    .replace(/^@/, "")
-    .replace(/[\/\-]/g, "_")
-    .replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase())
-    .replace(/^_/, "");
 }

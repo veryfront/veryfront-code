@@ -37,10 +37,17 @@ export interface PathParam {
  * ```
  */
 export function toOpenAPIPath(pattern: string): string {
-  return pattern
-    .replace(/\[\[\.\.\.([^\]]+)\]\]/g, "{$1}")
-    .replace(/\[\.\.\.([^\]]+)\]/g, "{$1}")
-    .replace(/\[([^\]]+)\]/g, "{$1}");
+  return pattern.replace(
+    /\[\[\.\.\.([^\]]+)\]\]|\[\.\.\.([^\]]+)\]|\[([^\]]+)\]/g,
+    (
+      _match,
+      optionalCatchAll: string | undefined,
+      catchAll: string | undefined,
+      segment: string | undefined,
+    ) => {
+      return `{${optionalCatchAll ?? catchAll ?? segment ?? ""}}`;
+    },
+  );
 }
 
 /**

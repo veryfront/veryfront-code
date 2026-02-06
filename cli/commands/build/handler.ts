@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { bold, cyan, dim, green, yellow } from "#veryfront/compat/console";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { cliLogger } from "#veryfront/utils";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { buildCommand } from "./command.ts";

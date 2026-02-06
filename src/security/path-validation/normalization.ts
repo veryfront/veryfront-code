@@ -15,7 +15,7 @@ export function normalizeSeparators(path: string): string {
  * Check if path is absolute
  * Supports Unix (/path) and Windows (C:\path, \\UNC\path)
  */
-export { isAbsolute as isAbsolutePath } from "#veryfront/platform/compat/path/index.ts";
+export { isAbsolute as isAbsolutePath } from "#veryfront/compat/path/index.ts";
 
 /**
  * Resolve .. and . in path without filesystem access

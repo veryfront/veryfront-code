@@ -9,6 +9,7 @@ import { HTTP_OK, PRIORITY_HIGH } from "#veryfront/utils/constants/index.ts";
 import { PROJECTS_SHELL_HTML } from "./html-shell.ts";
 import { handleProjectsAPI } from "./api.ts";
 import { handleProjectsUI } from "./ui-handler.ts";
+import { createDevNotFoundResponse } from "../shared/not-found-response.ts";
 
 export class ProjectsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -53,24 +54,15 @@ export class ProjectsHandler extends BaseHandler {
     if (pathname.startsWith("/_projects/ui/")) {
       const response = await handleProjectsUI(req);
       if (response) return this.respond(response);
-      return this.notFound();
+      return this.respond(createDevNotFoundResponse());
     }
 
     if (pathname.startsWith("/_projects/api/")) {
       const response = await handleProjectsAPI(req, ctx);
       if (response) return this.respond(response);
-      return this.notFound();
+      return this.respond(createDevNotFoundResponse());
     }
 
-    return this.notFound();
-  }
-
-  private notFound(): HandlerResult {
-    return this.respond(
-      new Response(JSON.stringify({ error: "Not found" }), {
-        status: 404,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+    return this.respond(createDevNotFoundResponse());
   }
 }

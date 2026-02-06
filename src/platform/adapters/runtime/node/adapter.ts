@@ -1,9 +1,10 @@
-import type { RuntimeAdapter, RuntimeCapabilities, ServeOptions, Server } from "../../base.ts";
+import type { RuntimeAdapter, RuntimeCapabilities, Server } from "../../base.ts";
 import { NodeFileSystemAdapter } from "./filesystem-adapter.ts";
 import { NodeEnvironmentAdapter } from "./environment-adapter.ts";
 import { NodeServerAdapter } from "./websocket-adapter.ts";
 import { createNodeServer } from "./http-server.ts";
 import { NodeBasedShellAdapter } from "../shared/node-based-shell-adapter.ts";
+import { createServeHandler, stopManagedServer } from "../shared/server-lifecycle.ts";
 
 export class NodeAdapter implements RuntimeAdapter {
   readonly id = "node" as const;
@@ -26,22 +27,15 @@ export class NodeAdapter implements RuntimeAdapter {
   };
 
   private activeServer: Server | null = null;
-
-  async serve(
-    handler: (request: Request) => Promise<Response> | Response,
-    options: ServeOptions = {},
-  ): Promise<Server> {
-    const server = await createNodeServer(handler, options);
-    this.activeServer = server;
-    return server;
-  }
+  readonly serve = createServeHandler(
+    createNodeServer,
+    (server) => {
+      this.activeServer = server;
+    },
+  );
 
   async shutdown(): Promise<void> {
-    if (!this.activeServer) return;
-
-    const server = this.activeServer;
-    this.activeServer = null;
-    await server.stop();
+    this.activeServer = await stopManagedServer(this.activeServer);
   }
 }
 

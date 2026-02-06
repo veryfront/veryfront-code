@@ -4,7 +4,7 @@
  */
 
 import { type BuildContext, context } from "esbuild";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils";
 import { createSplitterPlugin } from "./esbuild-plugin.ts";

@@ -4,7 +4,7 @@
  */
 
 import { serverLogger as logger } from "#veryfront/utils";
-import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
+import { dirname, join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontRenderer } from "../../rendering/orchestrator/ssr.ts";
 import type { VeryfrontConfig } from "#veryfront/config";

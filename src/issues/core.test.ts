@@ -5,7 +5,7 @@
  */
 
 import { assertEquals, assertExists } from "#std/assert.ts";
-import { join } from "#std/path.ts";
+import { join } from "#veryfront/compat/path";
 import {
   createIssuesManager,
   parseFrontmatter,

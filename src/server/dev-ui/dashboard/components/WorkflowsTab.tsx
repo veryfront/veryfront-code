@@ -38,6 +38,39 @@ interface WorkflowsTabProps {
   onNavigateToTool?: (toolId: string) => void;
 }
 
+interface NodeTypeStyle {
+  badge: string;
+  node: string;
+}
+
+const DEFAULT_NODE_TYPE_STYLE: NodeTypeStyle = {
+  badge: "bg-gray-100 text-gray-600",
+  node: "bg-gray-50 border-gray-200 text-gray-700",
+};
+
+const NODE_TYPE_STYLES: Record<string, NodeTypeStyle> = {
+  step: {
+    badge: "bg-blue-50 text-blue-600",
+    node: "bg-blue-50 border-blue-200 text-blue-700",
+  },
+  parallel: {
+    badge: "bg-green-50 text-green-600",
+    node: "bg-green-50 border-green-200 text-green-700",
+  },
+  branch: {
+    badge: "bg-yellow-50 text-yellow-700",
+    node: "bg-yellow-50 border-yellow-200 text-yellow-700",
+  },
+  wait: {
+    badge: "bg-orange-50 text-orange-600",
+    node: "bg-orange-50 border-orange-200 text-orange-700",
+  },
+};
+
+function getNodeTypeStyle(type: string): NodeTypeStyle {
+  return NODE_TYPE_STYLES[type] ?? DEFAULT_NODE_TYPE_STYLE;
+}
+
 export function WorkflowsTab({
   workflows,
   agents,
@@ -101,18 +134,7 @@ function WorkflowDetail({
   const toolMap = new Map(tools.map((t) => [t.id, t]));
 
   function getNodeTypeBadgeClass(type: string): string {
-    switch (type) {
-      case "step":
-        return "bg-blue-50 text-blue-600";
-      case "parallel":
-        return "bg-green-50 text-green-600";
-      case "branch":
-        return "bg-yellow-50 text-yellow-700";
-      case "wait":
-        return "bg-orange-50 text-orange-600";
-      default:
-        return "bg-gray-100 text-gray-600";
-    }
+    return getNodeTypeStyle(type).badge;
   }
 
   return (
@@ -603,18 +625,7 @@ function WorkflowDAG({ nodes }: { nodes: NodeInfo[] }): React.ReactElement {
   const maxLevel = Math.max(...Array.from(levels.values()), 0);
 
   function getNodeStyle(type: string): string {
-    switch (type) {
-      case "step":
-        return "bg-blue-50 border-blue-200 text-blue-700";
-      case "parallel":
-        return "bg-green-50 border-green-200 text-green-700";
-      case "branch":
-        return "bg-yellow-50 border-yellow-200 text-yellow-700";
-      case "wait":
-        return "bg-orange-50 border-orange-200 text-orange-700";
-      default:
-        return "bg-gray-50 border-gray-200 text-gray-700";
-    }
+    return getNodeTypeStyle(type).node;
   }
 
   return (

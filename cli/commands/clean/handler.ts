@@ -3,11 +3,10 @@
  */
 
 import { z } from "zod";
-import { cwd } from "#veryfront/platform/compat/process.ts";
 import { cleanCommand } from "./command.ts";
-import { showLogo } from "#cli/utils";
-import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
+import { CommonArgs, createArgParser } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
+import { handleProjectDirCommand } from "../../shared/handler-utils.ts";
 
 const CleanArgsSchema = z.object({
   projectDir: z.string().default(""),
@@ -26,10 +25,5 @@ const parseCleanArgs = createArgParser(CleanArgsSchema, {
 });
 
 export async function handleCleanCommand(args: ParsedArgs): Promise<void> {
-  showLogo();
-  const data = parseArgsOrThrow(parseCleanArgs, "clean", args);
-  await cleanCommand({
-    ...data,
-    projectDir: data.projectDir || cwd(),
-  });
+  await handleProjectDirCommand(args, parseCleanArgs, "clean", cleanCommand);
 }

@@ -17,6 +17,54 @@ export {
   type MinimalMessage,
 };
 
+type BasicMemoryType = "conversation" | "buffer";
+
+function getMessagesWithTrace<M extends MinimalMessage>(
+  messages: M[],
+  spanName: string,
+  memoryType: BasicMemoryType,
+): Promise<M[]> {
+  return Promise.resolve(
+    withSpanSync(
+      spanName,
+      () => [...messages],
+      { "memory.type": memoryType, "memory.message_count": messages.length },
+    ),
+  );
+}
+
+function clearMessagesWithTrace(
+  clearMessages: () => void,
+  spanName: string,
+  memoryType: BasicMemoryType,
+): Promise<void> {
+  return Promise.resolve(
+    withSpanSync(
+      spanName,
+      clearMessages,
+      { "memory.type": memoryType },
+    ),
+  );
+}
+
+function getBasicStatsWithTrace<M extends MinimalMessage>(
+  messages: M[],
+  spanName: string,
+  memoryType: BasicMemoryType,
+): Promise<MemoryStats> {
+  return Promise.resolve(
+    withSpanSync(
+      spanName,
+      () => ({
+        totalMessages: messages.length,
+        estimatedTokens: estimateTokens(messages),
+        type: memoryType,
+      }),
+      { "memory.type": memoryType },
+    ),
+  );
+}
+
 export class ConversationMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
   private messages: M[] = [];
 
@@ -42,38 +90,26 @@ export class ConversationMemory<M extends MinimalMessage = MinimalMessage> imple
   }
 
   getMessages(): Promise<M[]> {
-    return Promise.resolve(
-      withSpanSync(
-        "agent.memory.conversation.getMessages",
-        () => [...this.messages],
-        { "memory.type": "conversation", "memory.message_count": this.messages.length },
-      ),
+    return getMessagesWithTrace(
+      this.messages,
+      "agent.memory.conversation.getMessages",
+      "conversation",
     );
   }
 
   clear(): Promise<void> {
-    return Promise.resolve(
-      withSpanSync(
-        "agent.memory.conversation.clear",
-        () => {
-          this.messages = [];
-        },
-        { "memory.type": "conversation" },
-      ),
+    return clearMessagesWithTrace(
+      () => (this.messages = []),
+      "agent.memory.conversation.clear",
+      "conversation",
     );
   }
 
   getStats(): Promise<MemoryStats> {
-    return Promise.resolve(
-      withSpanSync(
-        "agent.memory.conversation.getStats",
-        () => ({
-          totalMessages: this.messages.length,
-          estimatedTokens: estimateTokens(this.messages),
-          type: "conversation",
-        }),
-        { "memory.type": "conversation" },
-      ),
+    return getBasicStatsWithTrace(
+      this.messages,
+      "agent.memory.conversation.getStats",
+      "conversation",
     );
   }
 
@@ -117,39 +153,19 @@ export class BufferMemory<M extends MinimalMessage = MinimalMessage> implements 
   }
 
   getMessages(): Promise<M[]> {
-    return Promise.resolve(
-      withSpanSync(
-        "agent.memory.buffer.getMessages",
-        () => [...this.messages],
-        { "memory.type": "buffer", "memory.message_count": this.messages.length },
-      ),
-    );
+    return getMessagesWithTrace(this.messages, "agent.memory.buffer.getMessages", "buffer");
   }
 
   clear(): Promise<void> {
-    return Promise.resolve(
-      withSpanSync(
-        "agent.memory.buffer.clear",
-        () => {
-          this.messages = [];
-        },
-        { "memory.type": "buffer" },
-      ),
+    return clearMessagesWithTrace(
+      () => (this.messages = []),
+      "agent.memory.buffer.clear",
+      "buffer",
     );
   }
 
   getStats(): Promise<MemoryStats> {
-    return Promise.resolve(
-      withSpanSync(
-        "agent.memory.buffer.getStats",
-        () => ({
-          totalMessages: this.messages.length,
-          estimatedTokens: estimateTokens(this.messages),
-          type: "buffer",
-        }),
-        { "memory.type": "buffer" },
-      ),
-    );
+    return getBasicStatsWithTrace(this.messages, "agent.memory.buffer.getStats", "buffer");
   }
 }
 

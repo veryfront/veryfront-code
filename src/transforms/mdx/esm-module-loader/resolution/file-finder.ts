@@ -1,4 +1,4 @@
-import { join } from "#std/path.ts";
+import { join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {

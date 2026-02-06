@@ -3,7 +3,7 @@
  */
 
 import { type FileSystem } from "#veryfront/platform/compat/fs.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { directoryExists, ensureDir, fileExists, getFs } from "../../utils/fs.ts";
 import { formatError, toComponentName, toSlug as toSlugBase } from "../../utils/string.ts";

@@ -1,4 +1,5 @@
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { escapeHtml } from "#veryfront/utils/html-escape.ts";
 import {
   DEFAULT_CALLBACK_PORT,
   DEFAULT_LOGIN_TIMEOUT_MS,
@@ -14,15 +15,6 @@ export interface CallbackServer {
   port: number;
   waitForCallback(timeoutMs?: number): Promise<CallbackResult>;
   stop(): Promise<void>;
-}
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 function renderSuccessPage(): string {

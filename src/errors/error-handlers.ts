@@ -1,11 +1,12 @@
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import {
+  DEFAULT_RETRY_INITIAL_DELAY_MS,
+  DEFAULT_RETRY_MAX_ATTEMPTS,
+  DEFAULT_RETRY_MAX_DELAY_MS,
+} from "#veryfront/utils/constants/retry.ts";
 import { VeryfrontError } from "./types.ts";
 import { RENDER_ERROR } from "./error-registry.ts";
 import { ensureError } from "./veryfront-error.ts";
-
-const DEFAULT_MAX_RETRIES = 3;
-const DEFAULT_INITIAL_DELAY_MS = 100;
-const DEFAULT_MAX_DELAY_MS = 5000;
 
 function safeLog(logFn: () => void): void {
   try {
@@ -120,9 +121,9 @@ export async function retryWithBackoff<T>(
   } = {},
 ): Promise<T> {
   const {
-    maxRetries = DEFAULT_MAX_RETRIES,
-    initialDelay = DEFAULT_INITIAL_DELAY_MS,
-    maxDelay = DEFAULT_MAX_DELAY_MS,
+    maxRetries = DEFAULT_RETRY_MAX_ATTEMPTS,
+    initialDelay = DEFAULT_RETRY_INITIAL_DELAY_MS,
+    maxDelay = DEFAULT_RETRY_MAX_DELAY_MS,
     logger: log = serverLogger,
   } = options;
 

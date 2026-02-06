@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { cliLogger } from "#veryfront/utils";
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cyan, dim, green, red, yellow } from "#veryfront/compat/console";
 import { ensureAuthenticated, readToken } from "../../auth/index.ts";

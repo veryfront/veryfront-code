@@ -34,6 +34,7 @@ Cross-runtime (Node/Bun) test infrastructure lives in `tests/node/` and `tests/b
 | `ban-deep-imports.ts` | `lint:ban-deep-imports` | Prevents deep imports from internal modules |
 | `ban-internal-root-imports.ts` | `lint:ban-internal-root-imports` | Prevents root-level imports in internal modules |
 | `check-unawaited-promises.ts` | `lint:check-awaits` | Detects unawaited async cleanup calls |
+| `find-duplicate-functions.ts` | `dupes` | Finds exact and near-duplicate functions for consolidation |
 | `lint-platform-agnostic.ts` | `lint:platform` | Checks platform-agnostic code boundaries |
 | `validate-architecture.ts` | `validate:architecture` | Validates module dependency boundaries |
 | `check-doc-links.ts` | `docs:check-links` | Validates documentation links |

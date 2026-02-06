@@ -1,6 +1,7 @@
-import { join, relative } from "#veryfront/platform/compat/path/index.ts";
+import { join, relative } from "#veryfront/compat/path/index.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { serverLogger } from "#veryfront/utils";
+import { capitalizeSeparatedWords } from "#veryfront/utils/case-utils.ts";
 import { toBase64Url } from "#veryfront/utils/path-utils.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { ClientComponentMeta, ComponentAnalysis, ComponentType } from "./types.ts";
@@ -48,10 +49,7 @@ function generateComponentId(filePath: string): string {
 }
 
 function toPascalCase(str: string): string {
-  return str
-    .split(/[-_\s]+/)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join("");
+  return capitalizeSeparatedWords(str, /[-_\s]+/, "");
 }
 
 export async function buildClientManifest(

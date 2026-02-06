@@ -6,7 +6,7 @@
  */
 
 import { z } from "zod";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
@@ -125,9 +125,9 @@ async function resolveConfigBase(
 
 export function resolveConfig(
   projectDir?: string,
-  env: EnvironmentConfig = getEnvironmentConfig(),
+  env?: EnvironmentConfig,
 ): Promise<ResolvedConfig> {
-  return resolveConfigBase(projectDir, env, false);
+  return resolveConfigByMode(projectDir, env, false);
 }
 
 /**
@@ -138,9 +138,17 @@ export function resolveConfig(
  */
 export function resolveConfigWithAuth(
   projectDir?: string,
-  env: EnvironmentConfig = getEnvironmentConfig(),
+  env?: EnvironmentConfig,
 ): Promise<ResolvedConfig> {
-  return resolveConfigBase(projectDir, env, true);
+  return resolveConfigByMode(projectDir, env, true);
+}
+
+function resolveConfigByMode(
+  projectDir: string | undefined,
+  env: EnvironmentConfig | undefined,
+  interactive: boolean,
+): Promise<ResolvedConfig> {
+  return resolveConfigBase(projectDir, env ?? getEnvironmentConfig(), interactive);
 }
 
 export interface ApiClient {

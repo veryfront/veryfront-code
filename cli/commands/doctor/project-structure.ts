@@ -1,5 +1,5 @@
 import { exists } from "#std/fs.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { getConfig } from "#veryfront/config";
 import type { DiagnosticResult } from "./types.ts";
 

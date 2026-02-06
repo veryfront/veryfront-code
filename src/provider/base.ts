@@ -1,5 +1,6 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { requireApiKey } from "#veryfront/utils/api-key-validation.ts";
 import { z } from "zod";
 import type { CompletionRequest, CompletionResponse, Provider, ProviderConfig } from "./types.ts";
 
@@ -87,14 +88,7 @@ export abstract class BaseProvider implements Provider {
   }
 
   protected validateConfig(): void {
-    if (this.config.apiKey) return;
-
-    throw toError(
-      createError({
-        type: "agent",
-        message: `${this.name}: API key is required`,
-      }),
-    );
+    requireApiKey(this.name, this.config.apiKey, "agent");
   }
 
   protected abstract getHeaders(): Record<string, string>;

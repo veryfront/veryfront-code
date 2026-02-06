@@ -1,4 +1,4 @@
-import { join } from "#std/path.ts";
+import { join } from "#veryfront/compat/path";
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getLocalFs } from "../cache/index.ts";

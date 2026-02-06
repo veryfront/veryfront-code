@@ -23,6 +23,44 @@ function Svg({ className, children }: SvgProps): React.ReactElement {
   );
 }
 
+function renderSinglePathIcon(className: string | undefined, d: string): React.ReactElement {
+  return React.createElement(
+    Svg,
+    { className },
+    React.createElement("path", { d }),
+  );
+}
+
+function renderSinglePolylineIcon(
+  className: string | undefined,
+  points: string,
+): React.ReactElement {
+  return React.createElement(
+    Svg,
+    { className },
+    React.createElement("polyline", { points }),
+  );
+}
+
+function renderLineAndShapeIcon(
+  className: string | undefined,
+  lineProps: Record<string, string>,
+  shapeType: "polyline" | "polygon",
+  shapeProps: Record<string, string>,
+): React.ReactElement {
+  return React.createElement(
+    Svg,
+    { className },
+    React.createElement("line", lineProps),
+    React.createElement(shapeType, shapeProps),
+  );
+}
+
+const ARROW_DOWN_LINE: Record<string, string> = { x1: "12", y1: "5", x2: "12", y2: "19" };
+const ARROW_DOWN_SHAPE: Record<string, string> = { points: "19 12 12 19 5 12" };
+const SEND_LINE: Record<string, string> = { x1: "22", y1: "2", x2: "11", y2: "13" };
+const SEND_SHAPE: Record<string, string> = { points: "22 2 15 22 11 13 2 9 22 2" };
+
 export function CircleIcon({ className }: IconProps): React.ReactElement {
   return React.createElement(
     Svg,
@@ -60,21 +98,14 @@ export function XCircleIcon({ className }: IconProps): React.ReactElement {
 }
 
 export function WrenchIcon({ className }: IconProps): React.ReactElement {
-  return React.createElement(
-    Svg,
-    { className },
-    React.createElement("path", {
-      d: "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z",
-    }),
+  return renderSinglePathIcon(
+    className,
+    "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z",
   );
 }
 
 export function ChevronDownIcon({ className }: IconProps): React.ReactElement {
-  return React.createElement(
-    Svg,
-    { className },
-    React.createElement("polyline", { points: "6 9 12 15 18 9" }),
-  );
+  return renderSinglePolylineIcon(className, "6 9 12 15 18 9");
 }
 
 export function BrainIcon({ className }: IconProps): React.ReactElement {
@@ -98,31 +129,18 @@ export function BrainIcon({ className }: IconProps): React.ReactElement {
 }
 
 export function MessageSquareIcon({ className }: IconProps): React.ReactElement {
-  return React.createElement(
-    Svg,
-    { className },
-    React.createElement("path", {
-      d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
-    }),
+  return renderSinglePathIcon(
+    className,
+    "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
   );
 }
 
 export function ArrowDownIcon({ className }: IconProps): React.ReactElement {
-  return React.createElement(
-    Svg,
-    { className },
-    React.createElement("line", { x1: "12", y1: "5", x2: "12", y2: "19" }),
-    React.createElement("polyline", { points: "19 12 12 19 5 12" }),
-  );
+  return renderLineAndShapeIcon(className, ARROW_DOWN_LINE, "polyline", ARROW_DOWN_SHAPE);
 }
 
 export function SendIcon({ className }: IconProps): React.ReactElement {
-  return React.createElement(
-    Svg,
-    { className },
-    React.createElement("line", { x1: "22", y1: "2", x2: "11", y2: "13" }),
-    React.createElement("polygon", { points: "22 2 15 22 11 13 2 9 22 2" }),
-  );
+  return renderLineAndShapeIcon(className, SEND_LINE, "polygon", SEND_SHAPE);
 }
 
 export function StopIcon({ className }: IconProps): React.ReactElement {
@@ -154,9 +172,5 @@ export function CopyIcon({ className }: IconProps): React.ReactElement {
 }
 
 export function CheckIcon({ className }: IconProps): React.ReactElement {
-  return React.createElement(
-    Svg,
-    { className },
-    React.createElement("polyline", { points: "20 6 9 17 4 12" }),
-  );
+  return renderSinglePolylineIcon(className, "20 6 9 17 4 12");
 }

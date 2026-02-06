@@ -27,7 +27,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSecureFs } from "#veryfront/security";
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
 import { buildModuleTransformCacheKey } from "../../cache/keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";

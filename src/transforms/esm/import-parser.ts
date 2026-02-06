@@ -1,5 +1,5 @@
 import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
-import { join } from "#std/path.ts";
+import { join } from "#veryfront/compat/path";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isCrossProjectImport, parseCrossProjectImport } from "./path-resolver.ts";

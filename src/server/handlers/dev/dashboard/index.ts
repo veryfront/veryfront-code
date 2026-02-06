@@ -5,6 +5,7 @@ import type { HandlerPriority } from "#veryfront/types";
 import { DASHBOARD_SHELL_HTML } from "./html-shell.ts";
 import { handleDashboardAPI } from "./api.ts";
 import { handleDashboardUI } from "./ui-handler.ts";
+import { createDevNotFoundResponse } from "../shared/not-found-response.ts";
 
 export class DevDashboardHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -37,24 +38,15 @@ export class DevDashboardHandler extends BaseHandler {
     if (pathname.startsWith("/_dev/ui/")) {
       const response = await handleDashboardUI(req);
       if (response) return this.respond(response);
-      return this.respondNotFound();
+      return this.respond(createDevNotFoundResponse());
     }
 
     if (pathname.startsWith("/_dev/api/")) {
       const response = await handleDashboardAPI(req, ctx);
       if (response) return this.respond(response);
-      return this.respondNotFound();
+      return this.respond(createDevNotFoundResponse());
     }
 
-    return this.respondNotFound();
-  }
-
-  private respondNotFound(): HandlerResult {
-    return this.respond(
-      new Response(JSON.stringify({ error: "Not found" }), {
-        status: 404,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+    return this.respond(createDevNotFoundResponse());
   }
 }

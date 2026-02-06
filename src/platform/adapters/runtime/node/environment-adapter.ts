@@ -1,5 +1,6 @@
 import process from "node:process";
 import type { EnvironmentAdapter } from "../../base.ts";
+import { envToObject } from "../shared/env-to-object.ts";
 
 export class NodeEnvironmentAdapter implements EnvironmentAdapter {
   get(key: string): string | undefined {
@@ -11,13 +12,6 @@ export class NodeEnvironmentAdapter implements EnvironmentAdapter {
   }
 
   toObject(): Record<string, string> {
-    const result: Record<string, string> = {};
-
-    for (const [key, value] of Object.entries(process.env)) {
-      if (value == null) continue;
-      result[key] = value;
-    }
-
-    return result;
+    return envToObject(process.env);
   }
 }

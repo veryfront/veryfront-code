@@ -14,7 +14,7 @@ import {
   createPagesRouteMethodNotAllowed,
 } from "./method-validator.ts";
 import { handleAPIError } from "./error-handler.ts";
-import { isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
+import { isAbsolute, join } from "#veryfront/compat/path/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 function createProjectScopedFs(fs: FileSystemAdapter, projectDir: string): FileSystemAdapter {

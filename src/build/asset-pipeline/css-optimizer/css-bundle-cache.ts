@@ -1,4 +1,4 @@
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { BYTES_PER_KB, logger } from "#veryfront/utils";
 import type { CSSBundle } from "#veryfront/types";

@@ -1,4 +1,9 @@
-import type { BundleCode, BundleManifestStore, BundleMetadata } from "./bundle-manifest.ts";
+import type {
+  BundleCode,
+  BundleManifestStats,
+  BundleManifestStore,
+  BundleMetadata,
+} from "./bundle-manifest.ts";
 
 export interface KVBundleManifestStoreOptions {
   keyPrefix?: string;
@@ -47,12 +52,7 @@ export class KVBundleManifestStore implements BundleManifestStore {
     return notImplemented();
   }
 
-  getStats(): Promise<{
-    totalBundles: number;
-    totalSize: number;
-    oldestBundle?: number;
-    newestBundle?: number;
-  }> {
+  getStats(): Promise<BundleManifestStats> {
     return notImplemented();
   }
 }

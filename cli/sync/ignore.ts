@@ -2,7 +2,7 @@
  * Ignore patterns for sync - similar to .gitignore
  */
 
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cliLogger } from "#veryfront/utils";
 

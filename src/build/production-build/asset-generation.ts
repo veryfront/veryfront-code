@@ -4,7 +4,7 @@
  */
 
 import { serverLogger as logger } from "#veryfront/utils";
-import { dirname, join, relative } from "#veryfront/platform/compat/path/index.ts";
+import { dirname, join, relative } from "#veryfront/compat/path/index.ts";
 import { walk } from "#std/fs.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { CLIENT_STYLES } from "./templates.ts";

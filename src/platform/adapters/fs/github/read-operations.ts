@@ -5,6 +5,7 @@ import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubAPIClient } from "./github-api-client.ts";
 import type { GitHubStatOperations } from "./stat-operations.ts";
 import type { GitHubContentItem, ResolvedGitHubConfig } from "./types.ts";
+import { normalizeGitHubPath } from "./path-utils.ts";
 
 const LOG_PREFIX = "[GitHubReadOperations]";
 
@@ -33,7 +34,7 @@ export class GitHubReadOperations {
   }
 
   async readTextFile(path: string): Promise<string> {
-    const normalizedPath = this.normalizePath(path);
+    const normalizedPath = normalizeGitHubPath(path, this.projectDir);
     const cacheKey = buildGitHubContentCacheKey(this.config.ref, normalizedPath);
     const cached = this.cache.get<string>(cacheKey);
     if (cached !== undefined) return cached;
@@ -50,7 +51,7 @@ export class GitHubReadOperations {
   }
 
   async readFile(path: string): Promise<Uint8Array> {
-    const normalizedPath = this.normalizePath(path);
+    const normalizedPath = normalizeGitHubPath(path, this.projectDir);
     const cacheKey = buildGitHubBytesCacheKey(this.config.ref, normalizedPath);
     const cached = this.cache.get<Uint8Array>(cacheKey);
     if (cached !== undefined) return cached;
@@ -170,15 +171,5 @@ export class GitHubReadOperations {
 
   private decodeBase64(content: string): string {
     return new TextDecoder().decode(this.decodeBase64ToBytes(content));
-  }
-
-  private normalizePath(path: string): string {
-    let normalized = path;
-
-    if (this.projectDir && normalized.startsWith(this.projectDir)) {
-      normalized = normalized.slice(this.projectDir.length);
-    }
-
-    return normalized.replace(/^\/+/, "").replace(/\/+$/, "").replace(/\/+/g, "/");
   }
 }

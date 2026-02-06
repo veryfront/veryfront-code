@@ -1,4 +1,4 @@
-import { dirname, relative } from "#veryfront/platform/compat/path/index.ts";
+import { dirname, relative } from "#veryfront/compat/path/index.ts";
 import { logger } from "#veryfront/utils";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";

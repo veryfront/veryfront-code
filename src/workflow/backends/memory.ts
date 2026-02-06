@@ -15,6 +15,7 @@ import type {
   WorkflowRun,
 } from "../types.ts";
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
+import { requeueRun } from "./shared/requeue-run.ts";
 
 /**
  * Memory backend configuration
@@ -284,15 +285,7 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   async nack(runId: string): Promise<void> {
-    const run = await this.getRun(runId);
-    if (!run) return;
-
-    await this.enqueue({
-      runId: run.id,
-      workflowId: run.workflowId,
-      input: run.input,
-      createdAt: new Date(),
-    });
+    await requeueRun(this, runId);
   }
 
   // =========================================================================

@@ -3,7 +3,7 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
-import { join } from "#std/path.ts";
+import { join } from "#veryfront/compat/path";
 import {
   createModuleFetcherContext,
   endRenderSession,

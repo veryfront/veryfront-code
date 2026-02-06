@@ -8,7 +8,7 @@
  * @module build/transforms/mdx/esm-module-loader/transforms/alias-imports
  */
 
-import { join } from "#std/path.ts";
+import { join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import {
   ESBUILD_JSX_FACTORY,
@@ -163,26 +163,20 @@ async function transformAliasImports(
   return result;
 }
 
+type AliasImportTransformer = (code: string, fs: FSAdapter, esmCacheDir: string) => Promise<string>;
+
+function createAliasImportTransformer(type: ImportType): AliasImportTransformer {
+  return (code, fs, esmCacheDir) => transformAliasImports(code, fs, esmCacheDir, type);
+}
+
 /**
  * Transform @/ aliased imports to file:// paths.
  * @/ is a project-relative alias that maps to the project root.
  */
-export async function transformProjectAliasImports(
-  code: string,
-  fs: FSAdapter,
-  esmCacheDir: string,
-): Promise<string> {
-  return transformAliasImports(code, fs, esmCacheDir, "project-alias");
-}
+export const transformProjectAliasImports = createAliasImportTransformer("project-alias");
 
 /**
  * Transform /_vf_modules/ imports to file:// paths.
  * These are browser-style module URLs that need to be resolved for server-side execution.
  */
-export async function transformModuleServerImports(
-  code: string,
-  fs: FSAdapter,
-  esmCacheDir: string,
-): Promise<string> {
-  return transformAliasImports(code, fs, esmCacheDir, "vf-modules");
-}
+export const transformModuleServerImports = createAliasImportTransformer("vf-modules");

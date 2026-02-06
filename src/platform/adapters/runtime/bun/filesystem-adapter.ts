@@ -13,6 +13,7 @@ import {
   createWatcherIterator,
   enqueueWatchEvent,
 } from "../shared/shared-watcher.ts";
+import { makeNodeTempDir } from "../shared/temp-dir.ts";
 import type { BunFSWatcher, BunWatchEvent } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 
@@ -84,10 +85,7 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
   }
 
   async makeTempDir(prefix: string): Promise<string> {
-    const { mkdtemp } = await import("node:fs/promises");
-    const { join } = await import("node:path");
-    const { tmpdir } = await import("node:os");
-    return mkdtemp(join(tmpdir(), prefix));
+    return makeNodeTempDir(prefix);
   }
 
   watch(paths: string | string[], options?: WatchOptions): FileWatcher {

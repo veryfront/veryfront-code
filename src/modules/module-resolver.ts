@@ -1,11 +1,5 @@
 import { serverLogger as logger } from "#veryfront/utils";
-import {
-  dirname,
-  isAbsolute,
-  join,
-  normalize,
-  relative,
-} from "#veryfront/platform/compat/path/index.ts";
+import { dirname, isAbsolute, join, normalize, relative } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { buildModuleResolveCacheKey } from "../cache/keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";

@@ -2,7 +2,7 @@
  * Install Command - AI assistant integration installer
  */
 
-import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
+import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { cwd as getCwd } from "#veryfront/platform/compat/process.ts";
 import { exists, mkdir, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import { z } from "zod";

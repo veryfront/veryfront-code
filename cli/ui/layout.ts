@@ -6,6 +6,7 @@
  *************************************************/
 
 import { getTerminalSize, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
+import { pad as sharedPad } from "#veryfront/utils/box.ts";
 import { ANSI_REGEX, RESET, stripAnsi } from "./ansi.ts";
 
 /**
@@ -82,19 +83,7 @@ export function pad(
   width: number,
   align: "left" | "center" | "right" = "left",
 ): string {
-  const visible = visibleLength(text);
-  if (visible >= width) return text;
-
-  const padding = width - visible;
-
-  if (align === "right") return " ".repeat(padding) + text;
-
-  if (align === "center") {
-    const left = Math.floor(padding / 2);
-    return " ".repeat(left) + text + " ".repeat(padding - left);
-  }
-
-  return text + " ".repeat(padding);
+  return sharedPad(text, width, align);
 }
 
 /**

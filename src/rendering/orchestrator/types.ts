@@ -1,7 +1,9 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import type { MDXFrontmatter } from "#veryfront/types";
+import type { RenderResult } from "#veryfront/types";
 import type { BuildVersion } from "#veryfront/utils/version.ts";
+
+export type { RenderResult };
 
 export interface RendererOptions {
   projectDir: string;
@@ -24,21 +26,6 @@ export interface RendererOptions {
     pages?: string;
     components?: string[];
   };
-}
-
-export interface RenderResult {
-  html: string;
-  css?: string;
-  frontmatter: MDXFrontmatter;
-  headings?: Array<{ id: string; text: string; level: number }>;
-  nodeMap?: Map<number, unknown>;
-  stream?: ReadableStream | null;
-  pageModule?: {
-    slug: string;
-    code: string;
-    type: "mdx" | "component";
-  };
-  ssrHash?: string;
 }
 
 export interface RenderOptions {

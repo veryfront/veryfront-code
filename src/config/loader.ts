@@ -1,6 +1,6 @@
 import type { VeryfrontConfig } from "./schemas/index.ts";
 import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./schemas/index.ts";
-import { extname, join, resolve } from "#veryfront/platform/compat/path/index.ts";
+import { extname, join, resolve } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { isBun, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";

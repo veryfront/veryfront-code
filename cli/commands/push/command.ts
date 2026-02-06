@@ -8,7 +8,7 @@
  */
 
 import { z } from "zod";
-import { join, relative } from "#veryfront/platform/compat/path/index.ts";
+import { join, relative } from "#veryfront/compat/path/index.ts";
 import { cliLogger } from "#veryfront/utils";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -201,18 +201,29 @@ function formatParts(parts: string[]): string {
   return parts.join(", ");
 }
 
-function buildSummaryParts(ops: UploadOp[], toDelete: string[]): string[] {
+function buildOpParts(
+  ops: UploadOp[],
+  toDelete: string[],
+  uploadLabel: (count: number) => string,
+  deleteLabel: (count: number) => string,
+): string[] {
   const parts: string[] = [];
-  if (ops.length > 0) parts.push(`${ops.length} to upload`);
-  if (toDelete.length > 0) parts.push(`${toDelete.length} to delete`);
+  if (ops.length > 0) parts.push(uploadLabel(ops.length));
+  if (toDelete.length > 0) parts.push(deleteLabel(toDelete.length));
   return parts;
 }
 
+function buildSummaryParts(ops: UploadOp[], toDelete: string[]): string[] {
+  return buildOpParts(
+    ops,
+    toDelete,
+    (count) => `${count} to upload`,
+    (count) => `${count} to delete`,
+  );
+}
+
 function buildConfirmParts(ops: UploadOp[], toDelete: string[]): string[] {
-  const parts: string[] = [];
-  if (ops.length > 0) parts.push(`upload ${ops.length}`);
-  if (toDelete.length > 0) parts.push(`delete ${toDelete.length}`);
-  return parts;
+  return buildOpParts(ops, toDelete, (count) => `upload ${count}`, (count) => `delete ${count}`);
 }
 
 export function pushCommand(options: PushOptions = {}): Promise<void> {

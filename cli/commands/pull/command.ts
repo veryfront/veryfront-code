@@ -8,7 +8,7 @@
  */
 
 import { z } from "zod";
-import { dirname, join, normalize, resolve } from "#veryfront/platform/compat/path/index.ts";
+import { dirname, join, normalize, resolve } from "#veryfront/compat/path/index.ts";
 import { cliLogger } from "#veryfront/utils";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";

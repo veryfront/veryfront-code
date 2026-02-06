@@ -29,7 +29,7 @@ function maxLineWidth(textLines: string[]): number {
   return Math.max(0, ...textLines.map(visibleLength));
 }
 
-function pad(
+export function pad(
   text: string,
   width: number,
   align: "left" | "center" | "right" = "left",

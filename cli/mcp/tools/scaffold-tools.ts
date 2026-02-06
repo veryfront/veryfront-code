@@ -3,7 +3,7 @@
  */
 
 import { z } from "zod";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { MCPTool } from "../tools.ts";
 import {

@@ -1,9 +1,10 @@
-import type { RuntimeAdapter, RuntimeCapabilities, ServeOptions, Server } from "../../base.ts";
+import type { RuntimeAdapter, RuntimeCapabilities, Server } from "../../base.ts";
 import { BunEnvironmentAdapter } from "./environment-adapter.ts";
 import { BunFileSystemAdapter } from "./filesystem-adapter.ts";
 import { createBunServer } from "./http-server.ts";
 import { BunServerAdapter } from "./websocket-adapter.ts";
 import { NodeBasedShellAdapter } from "../shared/node-based-shell-adapter.ts";
+import { createServeHandler, stopManagedServer } from "../shared/server-lifecycle.ts";
 
 export class BunAdapter implements RuntimeAdapter {
   readonly id = "bun" as const;
@@ -26,21 +27,15 @@ export class BunAdapter implements RuntimeAdapter {
   };
 
   private activeServer: Server | null = null;
-
-  async serve(
-    handler: (request: Request) => Promise<Response> | Response,
-    options: ServeOptions = {},
-  ): Promise<Server> {
-    const server = await createBunServer(handler, options);
-    this.activeServer = server;
-    return server;
-  }
+  readonly serve = createServeHandler(
+    createBunServer,
+    (server) => {
+      this.activeServer = server;
+    },
+  );
 
   async shutdown(): Promise<void> {
-    if (!this.activeServer) return;
-
-    await this.activeServer.stop();
-    this.activeServer = null;
+    this.activeServer = await stopManagedServer(this.activeServer);
   }
 }
 

@@ -1,5 +1,5 @@
 import { bundlerLogger as logger } from "#veryfront/utils";
-import { join } from "#veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { discoverFiles } from "#veryfront/utils/file-discovery.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { compileMDXFile } from "./compiler.ts";

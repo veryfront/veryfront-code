@@ -3,6 +3,7 @@ import { logger } from "#veryfront/utils";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubStatOperations } from "./stat-operations.ts";
 import type { DirectoryEntry, ResolvedGitHubConfig } from "./types.ts";
+import { normalizeGitHubPath } from "./path-utils.ts";
 
 const LOG_PREFIX = "[GitHubDirectoryOperations]";
 
@@ -15,7 +16,7 @@ export class GitHubDirectoryOperations {
   ) {}
 
   readdir(path: string): DirectoryEntry[] {
-    const normalizedPath = this.normalizePath(path);
+    const normalizedPath = normalizeGitHubPath(path, this.projectDir);
     const cacheKey = buildGitHubDirCacheKey(this.config.ref, normalizedPath);
 
     const cached = this.cache.get<DirectoryEntry[]>(cacheKey);
@@ -56,19 +57,5 @@ export class GitHubDirectoryOperations {
 
   async *readDir(path: string): AsyncIterable<DirectoryEntry> {
     for (const entry of this.readdir(path)) yield entry;
-  }
-
-  private normalizePath(path: string): string {
-    let normalized = path;
-
-    // Strip projectDir prefix if present (handles absolute paths from renderer)
-    if (this.projectDir && normalized.startsWith(this.projectDir)) {
-      normalized = normalized.slice(this.projectDir.length);
-    }
-
-    return normalized
-      .replace(/^\/+/, "")
-      .replace(/\/+$/, "")
-      .replace(/\/+/g, "/");
   }
 }

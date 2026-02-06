@@ -68,7 +68,7 @@ export function getEsbuildLoader(filePath: string): "tsx" | "jsx" | "ts" | "js" 
   return EXTENSION_TO_LOADER[ext] ?? "js";
 }
 
-export { isAbsolute as isAbsolutePath } from "#veryfront/platform/compat/path/index.ts";
+export { isAbsolute as isAbsolutePath } from "#veryfront/compat/path/index.ts";
 
 export function toBase64Url(s: string): string {
   return btoa(s).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
