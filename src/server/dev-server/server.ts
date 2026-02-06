@@ -20,7 +20,7 @@ import {
   setSSRServerPort,
 } from "#veryfront/rendering/ssr-globals.ts";
 import { setEnv } from "#veryfront/platform/compat/process.ts";
-import { discoverAll, clearTranspileCache } from "#veryfront/discovery";
+import { clearTranspileCache, discoverAll } from "#veryfront/discovery";
 import type { DiscoveryConfig } from "#veryfront/discovery";
 
 export class DevServer {
