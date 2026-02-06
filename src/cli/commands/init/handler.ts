@@ -6,7 +6,6 @@
 
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cliLogger } from "#veryfront/utils";
-import { exitProcess } from "../../utils/index.ts";
 import { resolvePath } from "../../shared/path-utils.ts";
 import { initCommand } from "./init-command.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
@@ -51,12 +50,10 @@ export async function handleInitCommand(args: ParsedArgs): Promise<void> {
 
       cliLogger.debug(`Loaded config from ${resolvedPath}`);
     } catch (error) {
-      cliLogger.error(`Failed to read config file: ${resolvedPath}`);
-      if (error instanceof SyntaxError) {
-        cliLogger.error("Invalid JSON syntax in config file");
-      }
-      exitProcess(1);
-      return;
+      const detail = error instanceof SyntaxError
+        ? "Invalid JSON syntax in config file"
+        : "Could not read file";
+      throw new Error(`Failed to read config file: ${resolvedPath} (${detail})`);
     }
   }
 

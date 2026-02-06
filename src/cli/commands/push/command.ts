@@ -24,6 +24,7 @@ import { createNoopSpinner, createSpinner } from "../../ui/progress.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import { listAllFiles } from "../pull/index.ts";
+import { getStringArg, resolveProjectDir } from "../../shared/args.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
 
 /**
@@ -39,28 +40,6 @@ export const PushArgsSchema = z.object({
 });
 
 export type PushArgs = z.infer<typeof PushArgsSchema>;
-
-/**
- * Helper to get string arg with fallbacks
- */
-function getStringArg(args: ParsedArgs, ...keys: string[]): string | undefined {
-  for (const key of keys) {
-    const val = args[key];
-    if (typeof val === "string" && val) return val;
-  }
-  return undefined;
-}
-
-/**
- * Resolve project directory from args
- */
-function resolveProjectDir(args: ParsedArgs, keys: string[]): string {
-  for (const key of keys) {
-    const val = args[key];
-    if (typeof val === "string" && val) return val;
-  }
-  return cwd();
-}
 
 /**
  * Parse push command arguments from CLI args

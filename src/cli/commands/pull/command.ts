@@ -22,6 +22,7 @@ import { confirmPrompt, logInfo, logSuccess, logWarning } from "../../utils/inde
 import { createNoopSpinner, createSpinner } from "../../ui/progress.ts";
 import { getApiTokenEnv } from "#veryfront/config/env.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { getStringArg, resolveProjectDir } from "../../shared/args.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
 
 /**
@@ -52,28 +53,6 @@ function parseCsvArg(value: unknown): string[] | undefined {
     return value.map(String).filter(Boolean);
   }
   return undefined;
-}
-
-/**
- * Helper to get string arg with fallbacks
- */
-function getStringArg(args: ParsedArgs, ...keys: string[]): string | undefined {
-  for (const key of keys) {
-    const val = args[key];
-    if (typeof val === "string" && val) return val;
-  }
-  return undefined;
-}
-
-/**
- * Resolve project directory from args
- */
-function resolveProjectDir(args: ParsedArgs, keys: string[]): string {
-  for (const key of keys) {
-    const val = args[key];
-    if (typeof val === "string" && val) return val;
-  }
-  return cwd();
 }
 
 /**

@@ -2,15 +2,27 @@
  * Demo command handler
  */
 
+import { z } from "zod";
+import { createArgParser } from "../../shared/args.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
 
+const DemoArgsSchema = z.object({
+  projectName: z.string().optional(),
+  auto: z.boolean().default(false),
+  loginMethod: z.enum(["google", "github", "microsoft", "token"]).optional(),
+});
+
+export const parseDemoArgs = createArgParser(DemoArgsSchema, {
+  projectName: { keys: ["project-name"], type: "string", positional: 0 },
+  auto: { keys: ["auto"], type: "boolean" },
+  loginMethod: { keys: ["login"], type: "string" },
+});
+
 export async function handleDemoCommand(args: ParsedArgs): Promise<void> {
+  const result = parseDemoArgs(args);
+  if (!result.success) {
+    throw new Error(`Invalid demo arguments: ${result.error.message}`);
+  }
   const { demoCommand } = await import("./index.ts");
-  await demoCommand({
-    projectName: args._[1] ? String(args._[1]) : undefined,
-    auto: Boolean(args.auto),
-    loginMethod: args.login
-      ? (String(args.login) as "google" | "github" | "microsoft" | "token")
-      : undefined,
-  });
+  await demoCommand(result.data);
 }

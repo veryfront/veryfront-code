@@ -1,16 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { handleAnalyzeChunksCommand } from "./handler.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
-
-function extractAnalyzeChunksArgs(args: ParsedArgs, cwdVal: string) {
-  const projectDir = typeof args.project === "string" ? args.project : cwdVal;
-  const output = typeof args.output === "string" ? args.output : undefined;
-  return {
-    projectDir,
-    output,
-  };
-}
+import { handleAnalyzeChunksCommand, parseAnalyzeChunksArgs } from "./handler.ts";
 
 describe("commands/analyze-chunks/handler", () => {
   describe("handleAnalyzeChunksCommand", () => {
@@ -24,56 +14,62 @@ describe("commands/analyze-chunks/handler", () => {
     });
   });
 
-  describe("argument extraction", () => {
-    const CWD = "/home/user/project";
-
-    it("uses cwd when no --project flag provided", () => {
-      const result = extractAnalyzeChunksArgs({ _: ["analyze-chunks"] }, CWD);
-      assertEquals(result.projectDir, CWD);
+  describe("parseAnalyzeChunksArgs", () => {
+    it("defaults projectDir to empty string when not provided", () => {
+      const result = parseAnalyzeChunksArgs({ _: ["analyze-chunks"] });
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.projectDir, "");
     });
 
-    it("uses --project string value when provided", () => {
-      const result = extractAnalyzeChunksArgs(
-        { _: ["analyze-chunks"], project: "/custom/path" },
-        CWD,
-      );
-      assertEquals(result.projectDir, "/custom/path");
+    it("uses --project-dir string value when provided", () => {
+      const result = parseAnalyzeChunksArgs({
+        _: ["analyze-chunks"],
+        "project-dir": "/custom/path",
+      });
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.projectDir, "/custom/path");
     });
 
-    it("falls back to cwd when --project is non-string (boolean true)", () => {
-      const result = extractAnalyzeChunksArgs({ _: ["analyze-chunks"], project: true }, CWD);
-      assertEquals(result.projectDir, CWD);
+    it("uses -d alias for project dir", () => {
+      const result = parseAnalyzeChunksArgs({
+        _: ["analyze-chunks"],
+        d: "/custom/path",
+      });
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.projectDir, "/custom/path");
     });
 
     it("parses --output as string value", () => {
-      const result = extractAnalyzeChunksArgs(
-        { _: ["analyze-chunks"], output: "report.json" },
-        CWD,
-      );
-      assertEquals(result.output, "report.json");
+      const result = parseAnalyzeChunksArgs({
+        _: ["analyze-chunks"],
+        output: "report.json",
+      });
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.output, "report.json");
     });
 
     it("returns undefined for --output when not provided", () => {
-      const result = extractAnalyzeChunksArgs({ _: ["analyze-chunks"] }, CWD);
-      assertEquals(result.output, undefined);
+      const result = parseAnalyzeChunksArgs({ _: ["analyze-chunks"] });
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.output, undefined);
     });
 
-    it("returns undefined for --output when value is boolean (flag without value)", () => {
-      const result = extractAnalyzeChunksArgs({ _: ["analyze-chunks"], output: true }, CWD);
-      assertEquals(result.output, undefined);
-    });
-
-    it("returns undefined for --output when value is a number", () => {
-      const result = extractAnalyzeChunksArgs({ _: ["analyze-chunks"], output: 42 }, CWD);
-      assertEquals(result.output, undefined);
+    it("uses -o alias for output", () => {
+      const result = parseAnalyzeChunksArgs({
+        _: ["analyze-chunks"],
+        o: "report.json",
+      });
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.output, "report.json");
     });
 
     it("accepts output path with directory separators", () => {
-      const result = extractAnalyzeChunksArgs(
-        { _: ["analyze-chunks"], output: "./reports/chunks.json" },
-        CWD,
-      );
-      assertEquals(result.output, "./reports/chunks.json");
+      const result = parseAnalyzeChunksArgs({
+        _: ["analyze-chunks"],
+        output: "./reports/chunks.json",
+      });
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.output, "./reports/chunks.json");
     });
   });
 });

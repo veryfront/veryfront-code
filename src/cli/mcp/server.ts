@@ -156,7 +156,6 @@ export class MCPDevServer {
       const isAllowedOrigin = origin === "" ||
         origin.startsWith("http://localhost") ||
         origin.startsWith("http://127.0.0.1") ||
-        origin.startsWith("http://veryfront.me") ||
         origin.startsWith("http://veryfront.me");
 
       const headers: Record<string, string> = {
