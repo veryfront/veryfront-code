@@ -3,8 +3,8 @@
  */
 
 import { z } from "zod";
-import { createArgParser } from "../../shared/args.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
+import { createArgParser } from "#cli/shared/args";
+import type { ParsedArgs } from "#cli/shared/types";
 
 const MCPArgsSchema = z.object({
   port: z.number().optional(),
@@ -21,6 +21,14 @@ export async function handleMCPCommand(args: ParsedArgs): Promise<void> {
   }
   const { createStandaloneMCPServer } = await import("../../mcp/standalone.ts");
   const mcpServer = createStandaloneMCPServer({ port: result.data.port });
-  await new Promise(() => {});
-  mcpServer.stop();
+
+  // Keep process alive until interrupted, then shut down gracefully
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const onSignal = () => {
+    mcpServer.stop();
+    resolve();
+  };
+  Deno.addSignalListener("SIGINT", onSignal);
+  Deno.addSignalListener("SIGTERM", onSignal);
+  await promise;
 }

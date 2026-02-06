@@ -4,8 +4,8 @@
 
 import { writeStdout } from "#veryfront/platform/compat/process.ts";
 import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
-import { isTTY } from "../../utils/index.ts";
-import { bold, brand, muted } from "../../ui/colors.ts";
+import { isTTY } from "#cli/utils";
+import { bold, brand, muted } from "#cli/ui";
 
 // ============================================================================
 // Terminal Control

@@ -6,7 +6,7 @@
 import { assertEquals, assertMatch } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createBranch, generateBranchName, uploadFiles, type UploadOp } from "./command.ts";
-import type { ApiClient } from "../../shared/config.ts";
+import type { ApiClient } from "#cli/shared/config";
 
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;

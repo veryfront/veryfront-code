@@ -6,7 +6,7 @@
  */
 
 import { cliLogger } from "#veryfront/utils";
-import { exitProcess } from "../../utils/index.ts";
+import { exitProcess } from "#cli/utils";
 
 interface SplitModeOptions {
   rendererPort: number;

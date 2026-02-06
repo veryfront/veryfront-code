@@ -15,6 +15,17 @@ import { createIssuesManager } from "#veryfront/issues/core.ts";
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import { allTools, getTool, setServerStartTime } from "./tools.ts";
+import {
+  errorResponse,
+  type JSONRPCRequest,
+  JSONRPCRequestSchema,
+  type JSONRPCResponse,
+  parseError,
+  PromptsGetParamsSchema,
+  ResourcesReadParamsSchema,
+  successResponse,
+  ToolsCallParamsSchema,
+} from "./jsonrpc.ts";
 
 export interface MCPServerConfig {
   /** Enable stdio transport (for Claude Code, Cursor, etc.) */
@@ -25,24 +36,6 @@ export interface MCPServerConfig {
   serverName?: string;
   /** Server version */
   serverVersion?: string;
-}
-
-interface JSONRPCRequest {
-  jsonrpc: "2.0";
-  id?: string | number;
-  method: string;
-  params?: unknown;
-}
-
-interface JSONRPCResponse {
-  jsonrpc: "2.0";
-  id?: string | number;
-  result?: unknown;
-  error?: {
-    code: number;
-    message: string;
-    data?: unknown;
-  };
 }
 
 export class MCPDevServer {
@@ -90,15 +83,6 @@ export class MCPDevServer {
       await writeStdoutAsync(encoder.encode(`${JSON.stringify(response)}\n`));
     };
 
-    const parseError = (e: unknown): JSONRPCResponse => ({
-      jsonrpc: "2.0",
-      error: {
-        code: -32700,
-        message: "Parse error",
-        data: e instanceof Error ? e.message : String(e),
-      },
-    });
-
     const readLoop = async (): Promise<void> => {
       let buffer = "";
 
@@ -120,8 +104,8 @@ export class MCPDevServer {
             if (!line) continue;
 
             try {
-              const request = JSON.parse(line) as JSONRPCRequest;
-              const response = await this.handleRequest(request);
+              const parsed = JSONRPCRequestSchema.parse(JSON.parse(line));
+              const response = await this.handleRequest(parsed);
               await writeResponse(response);
             } catch (e) {
               await writeResponse(parseError(e));
@@ -138,15 +122,6 @@ export class MCPDevServer {
 
   private startHTTP(port: number): void {
     this.httpServer = createHttpServer();
-
-    const parseError = (e: unknown): JSONRPCResponse => ({
-      jsonrpc: "2.0",
-      error: {
-        code: -32700,
-        message: "Parse error",
-        data: e instanceof Error ? e.message : String(e),
-      },
-    });
 
     const handler = async (req: Request): Promise<Response> => {
       const url = new URL(req.url);
@@ -184,7 +159,7 @@ export class MCPDevServer {
       }
 
       try {
-        const body = (await req.json()) as JSONRPCRequest;
+        const body = JSONRPCRequestSchema.parse(await req.json());
         const response = await this.handleRequest(body);
         return new Response(JSON.stringify(response), { headers });
       } catch (e) {
@@ -203,16 +178,9 @@ export class MCPDevServer {
       async () => {
         try {
           const result = await this.dispatchMethod(method, params);
-          return { jsonrpc: "2.0", id, result };
+          return successResponse(id, result);
         } catch (e) {
-          return {
-            jsonrpc: "2.0",
-            id,
-            error: {
-              code: -32603,
-              message: e instanceof Error ? e.message : String(e),
-            },
-          };
+          return errorResponse(id, e);
         }
       },
       { "mcp.method": method },
@@ -266,10 +234,7 @@ export class MCPDevServer {
   }
 
   private handleToolsCall(params: unknown): Promise<unknown> {
-    const { name, arguments: args } = params as {
-      name: string;
-      arguments?: Record<string, unknown>;
-    };
+    const { name, arguments: args } = ToolsCallParamsSchema.parse(params);
 
     return withSpan(
       "cli.mcp.handleToolsCall",
@@ -325,7 +290,7 @@ export class MCPDevServer {
   }
 
   private handleResourcesRead(params: unknown): Promise<unknown> {
-    const { uri } = params as { uri: string };
+    const { uri } = ResourcesReadParamsSchema.parse(params);
 
     return withSpan(
       "cli.mcp.handleResourcesRead",
@@ -443,7 +408,7 @@ export class MCPDevServer {
   }
 
   private handlePromptsGet(params: unknown): Promise<unknown> {
-    const { name } = params as { name: string };
+    const { name } = PromptsGetParamsSchema.parse(params);
 
     return withSpan(
       "cli.mcp.handlePromptsGet",
@@ -483,16 +448,14 @@ export class MCPDevServer {
     );
   }
 
-  private zodToJsonSchema(schema: unknown): unknown {
-    // deno-lint-ignore no-explicit-any
-    const zodSchema = schema as any;
-    if (!zodSchema?._def) return { type: "object", properties: {} };
+  // deno-lint-ignore no-explicit-any
+  private zodToJsonSchema(schema: any): Record<string, unknown> {
+    const def = schema?._def;
+    if (!def) return { type: "object", properties: {} };
 
-    // deno-lint-ignore no-explicit-any
-    const def = zodSchema._def as any;
-    const typeName = def.typeName;
+    const desc = def.description ? { description: def.description } : {};
 
-    switch (typeName) {
+    switch (def.typeName) {
       case "ZodObject": {
         const shape = def.shape?.() ?? {};
         const properties: Record<string, unknown> = {};
@@ -500,14 +463,10 @@ export class MCPDevServer {
 
         for (const [key, value] of Object.entries(shape)) {
           // deno-lint-ignore no-explicit-any
-          const fieldDef = (value as any)?._def as any;
+          const fieldDef = (value as any)?._def;
           const fieldSchema = this.zodToJsonSchema(value);
 
-          if (fieldDef?.description) {
-            // deno-lint-ignore no-explicit-any
-            (fieldSchema as any).description = fieldDef.description;
-          }
-
+          if (fieldDef?.description) fieldSchema.description = fieldDef.description;
           properties[key] = fieldSchema;
 
           if (fieldDef?.typeName !== "ZodOptional" && fieldDef?.typeName !== "ZodDefault") {
@@ -515,46 +474,41 @@ export class MCPDevServer {
           }
         }
 
-        return {
-          type: "object",
-          properties,
-          ...(required.length ? { required } : {}),
-        };
+        return { type: "object", properties, ...(required.length ? { required } : {}) };
       }
-
       case "ZodString":
-        return { type: "string", ...(def.description ? { description: def.description } : {}) };
-
+        return { type: "string", ...desc };
       case "ZodNumber":
-        return { type: "number", ...(def.description ? { description: def.description } : {}) };
-
+        return { type: "number", ...desc };
       case "ZodBoolean":
-        return { type: "boolean", ...(def.description ? { description: def.description } : {}) };
-
+        return { type: "boolean", ...desc };
       case "ZodArray":
-        return {
-          type: "array",
-          items: this.zodToJsonSchema(def.type),
-          ...(def.description ? { description: def.description } : {}),
-        };
-
+        return { type: "array", items: this.zodToJsonSchema(def.type), ...desc };
       case "ZodEnum":
-        return {
-          type: "string",
-          enum: def.values,
-          ...(def.description ? { description: def.description } : {}),
-        };
-
+        return { type: "string", enum: def.values, ...desc };
       case "ZodOptional":
         return this.zodToJsonSchema(def.innerType);
-
       case "ZodDefault": {
-        const innerSchema = this.zodToJsonSchema(def.innerType);
-        // deno-lint-ignore no-explicit-any
-        (innerSchema as any).default = def.defaultValue?.();
-        return innerSchema;
+        const inner = this.zodToJsonSchema(def.innerType);
+        inner.default = def.defaultValue?.();
+        return inner;
       }
-
+      case "ZodNullable": {
+        const inner = this.zodToJsonSchema(def.innerType);
+        return { ...inner, nullable: true };
+      }
+      case "ZodLiteral":
+        return { const: def.value, ...desc };
+      case "ZodUnion": {
+        const options = (def.options ?? []).map((o: unknown) => this.zodToJsonSchema(o));
+        return { anyOf: options, ...desc };
+      }
+      case "ZodRecord":
+        return {
+          type: "object",
+          additionalProperties: this.zodToJsonSchema(def.valueType),
+          ...desc,
+        };
       default:
         return { type: "object" };
     }

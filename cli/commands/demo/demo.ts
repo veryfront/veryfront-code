@@ -7,22 +7,32 @@
 import { chdir, cwd, promptSync, writeStdout } from "#veryfront/platform/compat/process.ts";
 import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
-import { bold, brand, dim, error, muted, success } from "../../ui/colors.ts";
-import { AnimatedDotMatrix } from "../../ui/dot-matrix.ts";
-import { HIDE_CURSOR, SHOW_CURSOR, typeCommand, typeLine } from "../../ui/animated-text.ts";
-import { successBanner } from "../../ui/components/banner.ts";
-import { formatDuration } from "../../ui/progress.ts";
-import { exitProcess, isTTY } from "../../utils/index.ts";
+import {
+  AnimatedDotMatrix,
+  bold,
+  brand,
+  dim,
+  error,
+  formatDuration,
+  HIDE_CURSOR,
+  muted,
+  SHOW_CURSOR,
+  success,
+  successBanner,
+  typeCommand,
+  typeLine,
+} from "#cli/ui";
+import { exitProcess, isTTY } from "#cli/utils";
 import { readToken, saveToken, validateToken } from "../../auth/index.ts";
 import { canOpenBrowser, openBrowser } from "../../auth/browser.ts";
 import { getCallbackUrl, startCallbackServer } from "../../auth/callback-server.ts";
-import { DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "../../shared/constants.ts";
+import { DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "#cli/shared/constants";
 import { newCommand } from "../new/index.ts";
 import { deployCommand } from "../deploy/index.ts";
 import { pushCommand } from "../push/index.ts";
 import { devCommand } from "../dev/index.ts";
 import { reserveProjectSlug } from "../new/reserve-slug.ts";
-import { readConfigFile } from "../../shared/config.ts";
+import { readConfigFile } from "#cli/shared/config";
 import { DEMO_STEPS, type DemoStep } from "./steps.ts";
 
 // ANSI escape codes

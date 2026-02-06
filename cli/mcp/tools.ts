@@ -18,7 +18,7 @@ import type { MCPTool } from "#veryfront/mcp/types.ts";
 import { advancedTools } from "./advanced-tools.ts";
 import { remoteFileTools } from "./remote-file-tools.ts";
 import { issuesMcpTools } from "#veryfront/issues/mcp.ts";
-import { DEFAULT_MCP_PORT } from "../shared/constants.ts";
+import { DEFAULT_MCP_PORT } from "#cli/shared/constants";
 
 export type { MCPTool };
 

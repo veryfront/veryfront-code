@@ -3,8 +3,8 @@
  */
 
 import { mergeCommand, parseMergeArgs } from "./command.ts";
-import { showLogo } from "../../utils/index.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
+import { showLogo } from "#cli/utils";
+import type { ParsedArgs } from "#cli/shared/types";
 
 export async function handleMergeCommand(args: ParsedArgs): Promise<void> {
   showLogo();

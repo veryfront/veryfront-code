@@ -9,11 +9,10 @@
 
 import { z } from "zod";
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { type ApiClient, createApiClient, resolveConfigWithAuth } from "../../shared/config.ts";
-import { CommonArgs, createArgParser } from "../../shared/args.ts";
-import { confirmPrompt, logInfo, logSuccess } from "../../utils/index.ts";
-import { createNoopSpinner, createSpinner } from "../../ui/progress.ts";
-import { muted } from "../../ui/colors.ts";
+import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
+import { CommonArgs, createArgParser } from "#cli/shared/args";
+import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
+import { createNoopSpinner, createSpinner, muted } from "#cli/ui";
 
 /**
  * Zod schema for deploy command arguments

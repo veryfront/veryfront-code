@@ -1,7 +1,14 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { COMMANDS } from "./help/command-definitions.ts";
+import { parseLoginMethod } from "./auth/utils.ts";
+import type { ParsedArgs } from "./shared/types.ts";
 
+/**
+ * Test-only helpers for patterns that don't have importable counterparts.
+ * resolveProjectDir in shared/args.ts calls cwd() internally, so we use a
+ * pure version here to test the resolution logic in isolation.
+ */
 function resolveProjectDir(
   args: Record<string, unknown>,
   keys: string[],
@@ -23,16 +30,6 @@ function parseCsvArg(value: unknown): string[] | undefined {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-}
-
-function parseLoginMethod(
-  args: Record<string, boolean | undefined>,
-): "google" | "github" | "microsoft" | "token" | undefined {
-  if (args.google) return "google";
-  if (args.github) return "github";
-  if (args.microsoft) return "microsoft";
-  if (args.token) return "token";
-  return undefined;
 }
 
 function formatIssues(issues: Array<{ path: string[]; message: string }>): string {
@@ -191,38 +188,41 @@ describe("cli/router helpers", () => {
     });
   });
 
-  describe("parseLoginMethod pattern", () => {
+  describe("parseLoginMethod (real implementation)", () => {
+    const args = (overrides: Record<string, unknown>): ParsedArgs =>
+      ({ _: [], ...overrides }) as ParsedArgs;
+
     it("should return undefined when no method specified", () => {
-      assertEquals(parseLoginMethod({}), undefined);
+      assertEquals(parseLoginMethod(args({})), undefined);
     });
 
     it("should detect google", () => {
-      assertEquals(parseLoginMethod({ google: true }), "google");
+      assertEquals(parseLoginMethod(args({ google: true })), "google");
     });
 
     it("should detect github", () => {
-      assertEquals(parseLoginMethod({ github: true }), "github");
+      assertEquals(parseLoginMethod(args({ github: true })), "github");
     });
 
     it("should detect microsoft", () => {
-      assertEquals(parseLoginMethod({ microsoft: true }), "microsoft");
+      assertEquals(parseLoginMethod(args({ microsoft: true })), "microsoft");
     });
 
     it("should detect token", () => {
-      assertEquals(parseLoginMethod({ token: true }), "token");
+      assertEquals(parseLoginMethod(args({ token: true })), "token");
     });
 
     it("should prioritize google over others", () => {
-      assertEquals(parseLoginMethod({ google: true, github: true }), "google");
+      assertEquals(parseLoginMethod(args({ google: true, github: true })), "google");
     });
 
     it("should prioritize github over microsoft", () => {
-      assertEquals(parseLoginMethod({ github: true, microsoft: true }), "github");
+      assertEquals(parseLoginMethod(args({ github: true, microsoft: true })), "github");
     });
 
     it("should skip false values", () => {
       assertEquals(
-        parseLoginMethod({ google: false, github: false, token: true }),
+        parseLoginMethod(args({ google: false, github: false, token: true })),
         "token",
       );
     });

@@ -1,6 +1,6 @@
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { cliLogger } from "#veryfront/utils";
-import { exitProcess, registerTerminationSignals, showLogo } from "../../utils/index.ts";
+import { exitProcess, registerTerminationSignals, showLogo } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
 
 export interface ServeOptions {

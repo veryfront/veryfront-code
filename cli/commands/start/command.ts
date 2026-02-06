@@ -2,7 +2,7 @@ import { cwd, getEnv, onGlobalError, setEnv } from "#veryfront/platform/compat/p
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { isAbsolute, join, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { cliLogger } from "#veryfront/utils";
-import { exitProcess, registerTerminationSignals } from "../../utils/index.ts";
+import { exitProcess, registerTerminationSignals } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
 import { clearAllLocalCaches } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { discoverAll } from "../../discovery/index.ts";

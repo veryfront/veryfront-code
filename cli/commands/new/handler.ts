@@ -4,8 +4,8 @@
 
 import { newCommand, parseNewArgs } from "./command.ts";
 import { promptProjectName } from "./menu.ts";
-import { exitProcess } from "../../utils/index.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
+import { exitProcess } from "#cli/utils";
+import type { ParsedArgs } from "#cli/shared/types";
 
 export async function handleNewCommand(args: ParsedArgs): Promise<void> {
   let name = args._[1] as string;

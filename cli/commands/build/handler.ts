@@ -4,9 +4,10 @@ import { join } from "#veryfront/platform/compat/path/index.ts";
 import { cliLogger } from "#veryfront/utils";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { buildCommand } from "./command.ts";
-import { CommonArgs, createArgParser } from "../../shared/args.ts";
-import { exitProcess, showLogo } from "../../utils/index.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
+import { CommonArgs, createArgParser } from "#cli/shared/args";
+import { parseArrayArg } from "#cli/shared/arg-parser";
+import { exitProcess, showLogo } from "#cli/utils";
+import type { ParsedArgs } from "#cli/shared/types";
 
 /**
  * Zod schema for build command arguments
@@ -40,12 +41,6 @@ export const parseBuildArgs = createArgParser(BuildArgsSchema, {
   noSsg: { keys: ["no-ssg"], type: "boolean" },
   dryRun: CommonArgs.dryRun,
 });
-
-function parseArrayArg(arg: unknown): string[] | undefined {
-  if (Array.isArray(arg)) return arg;
-  if (arg) return [String(arg)];
-  return undefined;
-}
 
 export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
   showLogo();

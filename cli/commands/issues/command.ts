@@ -12,36 +12,31 @@ import {
   type IssuePrefix,
   parseState,
 } from "#veryfront/issues/index.ts";
-import { bold, muted, success } from "../../ui/colors.ts";
+import { bold, muted, success } from "#cli/ui";
 
-/**
- * Issues command arguments type
- */
-export interface IssuesArgs {
-  _: (string | number)[];
-  title?: string;
-  t?: string;
-  body?: string;
-  b?: string;
-  labels?: string;
-  l?: string;
-  milestone?: string;
-  m?: string;
-  assignees?: string;
-  a?: string;
-  prefix?: string;
-  state?: string;
-  assignee?: string;
-  json?: boolean;
-  j?: boolean;
-  verbose?: boolean;
-  v?: boolean;
-  delete?: boolean;
-  d?: boolean;
-  limit?: number;
-  sort?: string;
-  dir?: string;
-  [key: string]: unknown;
+import type { ParsedArgs } from "#cli/shared/types";
+
+/** Extract a string value from parsed args by checking multiple keys */
+function str(args: ParsedArgs, ...keys: string[]): string | undefined {
+  for (const k of keys) {
+    const v = args[k];
+    if (typeof v === "string" && v) return v;
+  }
+  return undefined;
+}
+
+/** Extract a boolean value from parsed args by checking multiple keys */
+function bool(args: ParsedArgs, ...keys: string[]): boolean {
+  for (const k of keys) {
+    if (args[k]) return true;
+  }
+  return false;
+}
+
+/** Extract a number value from parsed args */
+function num(args: ParsedArgs, key: string): number | undefined {
+  const v = args[key];
+  return typeof v === "number" ? v : undefined;
 }
 
 /**
@@ -107,11 +102,11 @@ function parseLabels(arg: string | undefined): string[] | undefined {
   return values.length ? values : undefined;
 }
 
-function getJsonFlag(args: { json?: boolean; j?: boolean }): boolean {
+function getJsonFlag(args: ParsedArgs): boolean {
   return Boolean(args.json || args.j);
 }
 
-function getId(args: { _: (string | number)[] }, index: number): string | undefined {
+function getId(args: ParsedArgs, index: number): string | undefined {
   const value = args._[index];
   return typeof value === "string" ? value : undefined;
 }
@@ -125,7 +120,7 @@ function getPrefix(prefix: string | undefined, fallback?: IssuePrefix): IssuePre
   return value ?? fallback;
 }
 
-export async function issuesCommand(args: IssuesArgs): Promise<void> {
+export async function issuesCommand(args: ParsedArgs): Promise<void> {
   const subcommand = getId(args, 1);
   const manager = createIssuesManager(cwd());
   const json = getJsonFlag(args);
@@ -133,19 +128,18 @@ export async function issuesCommand(args: IssuesArgs): Promise<void> {
 
   switch (subcommand) {
     case "create": {
-      const title = args.title || args.t || getId(args, 2);
+      const title = str(args, "title", "t") || getId(args, 2);
       if (!title) {
-        cliLogger.error("Title is required. Usage: veryfront issues create --title 'My issue'");
-        return;
+        throw new Error("Title is required. Usage: veryfront issues create --title 'My issue'");
       }
 
       const issue = await manager.create({
         title,
-        body: args.body || args.b,
-        labels: parseLabels(args.labels || args.l),
-        milestone: args.milestone || args.m,
-        assignees: parseLabels(args.assignees || args.a),
-        prefix: getPrefix(args.prefix, "ISSUE")!,
+        body: str(args, "body", "b"),
+        labels: parseLabels(str(args, "labels", "l")),
+        milestone: str(args, "milestone", "m"),
+        assignees: parseLabels(str(args, "assignees", "a")),
+        prefix: getPrefix(str(args, "prefix"), "ISSUE")!,
       });
 
       if (json) {
@@ -160,15 +154,16 @@ export async function issuesCommand(args: IssuesArgs): Promise<void> {
 
     case "list":
     case "ls": {
+      const stateArg = str(args, "state");
       const result = await manager.list({
-        state: args.state ? parseState(args.state) ?? undefined : undefined,
-        labels: parseLabels(args.labels || args.l),
-        milestone: args.milestone || args.m,
-        assignee: args.assignee,
-        prefix: getPrefix(args.prefix),
-        sortBy: (args.sort as "created_at" | "updated_at" | "id") || "created_at",
-        sortDirection: (args.dir as "asc" | "desc") || "desc",
-        limit: args.limit,
+        state: stateArg ? parseState(stateArg) ?? undefined : undefined,
+        labels: parseLabels(str(args, "labels", "l")),
+        milestone: str(args, "milestone", "m"),
+        assignee: str(args, "assignee"),
+        prefix: getPrefix(str(args, "prefix")),
+        sortBy: (str(args, "sort") as "created_at" | "updated_at" | "id") || "created_at",
+        sortDirection: (str(args, "dir") as "asc" | "desc") || "desc",
+        limit: num(args, "limit"),
       });
 
       if (json) {
@@ -196,14 +191,12 @@ export async function issuesCommand(args: IssuesArgs): Promise<void> {
     case "get": {
       const id = getId(args, 2);
       if (!id) {
-        cliLogger.error("Issue ID is required. Usage: veryfront issues view ISSUE-001");
-        return;
+        throw new Error("Issue ID is required. Usage: veryfront issues view ISSUE-001");
       }
 
       const issue = await manager.get(id);
       if (!issue) {
-        cliLogger.error(`Issue not found: ${id}`);
-        return;
+        throw new Error(`Issue not found: ${id}`);
       }
 
       if (json) {
@@ -219,50 +212,48 @@ export async function issuesCommand(args: IssuesArgs): Promise<void> {
     case "update": {
       const id = getId(args, 2);
       if (!id) {
-        cliLogger.error(
+        throw new Error(
           "Issue ID is required. Usage: veryfront issues edit ISSUE-001 --state closed",
         );
-        return;
       }
 
-      if (args.delete || args.d) {
+      if (bool(args, "delete", "d")) {
         const deleted = await manager.delete(id);
-        if (deleted) cliLogger.info(`Deleted ${id}`);
-        else cliLogger.error(`Failed to delete ${id}`);
+        if (!deleted) throw new Error(`Failed to delete ${id}`);
+        cliLogger.info(`Deleted ${id}`);
         return;
       }
 
       const updates: Parameters<typeof manager.update>[1] = {};
 
-      const title = args.title || args.t;
+      const title = str(args, "title", "t");
       if (title) updates.title = title;
 
-      const body = args.body || args.b;
+      const body = str(args, "body", "b");
       if (body) updates.body = body;
 
-      if (args.state) {
-        const state = parseState(args.state);
+      const stateArg = str(args, "state");
+      if (stateArg) {
+        const state = parseState(stateArg);
         if (state) updates.state = state;
       }
 
-      const labels = parseLabels(args.labels || args.l);
+      const labels = parseLabels(str(args, "labels", "l"));
       if (labels) updates.labels = labels;
 
-      const assignees = parseLabels(args.assignees || args.a);
+      const assignees = parseLabels(str(args, "assignees", "a"));
       if (assignees) updates.assignees = assignees;
 
-      const milestone = args.milestone || args.m;
+      const milestone = str(args, "milestone", "m");
       if (milestone) updates.milestone = milestone;
 
       if (!Object.keys(updates).length) {
-        cliLogger.error("No updates provided. Use --title, --state, --labels, etc.");
-        return;
+        throw new Error("No updates provided. Use --title, --state, --labels, etc.");
       }
 
       const issue = await manager.update(id, updates);
       if (!issue) {
-        cliLogger.error(`Issue not found: ${id}`);
-        return;
+        throw new Error(`Issue not found: ${id}`);
       }
 
       if (json) {
@@ -278,14 +269,12 @@ export async function issuesCommand(args: IssuesArgs): Promise<void> {
     case "close": {
       const id = getId(args, 2);
       if (!id) {
-        cliLogger.error("Issue ID is required. Usage: veryfront issues close ISSUE-001");
-        return;
+        throw new Error("Issue ID is required. Usage: veryfront issues close ISSUE-001");
       }
 
       const issue = await manager.close(id);
       if (!issue) {
-        cliLogger.error(`Issue not found: ${id}`);
-        return;
+        throw new Error(`Issue not found: ${id}`);
       }
 
       if (json) {
@@ -300,14 +289,12 @@ export async function issuesCommand(args: IssuesArgs): Promise<void> {
     case "reopen": {
       const id = getId(args, 2);
       if (!id) {
-        cliLogger.error("Issue ID is required. Usage: veryfront issues reopen ISSUE-001");
-        return;
+        throw new Error("Issue ID is required. Usage: veryfront issues reopen ISSUE-001");
       }
 
       const issue = await manager.reopen(id);
       if (!issue) {
-        cliLogger.error(`Issue not found: ${id}`);
-        return;
+        throw new Error(`Issue not found: ${id}`);
       }
 
       if (json) {
@@ -323,13 +310,12 @@ export async function issuesCommand(args: IssuesArgs): Promise<void> {
     case "rm": {
       const id = getId(args, 2);
       if (!id) {
-        cliLogger.error("Issue ID is required. Usage: veryfront issues delete ISSUE-001");
-        return;
+        throw new Error("Issue ID is required. Usage: veryfront issues delete ISSUE-001");
       }
 
       const deleted = await manager.delete(id);
-      if (deleted) cliLogger.info(`Deleted ${id}`);
-      else cliLogger.error(`Issue not found: ${id}`);
+      if (!deleted) throw new Error(`Issue not found: ${id}`);
+      cliLogger.info(`Deleted ${id}`);
       return;
     }
 

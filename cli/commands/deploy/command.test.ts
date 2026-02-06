@@ -12,8 +12,8 @@ import {
   getEnvironmentByName,
   parseDeployArgs,
 } from "./index.ts";
-import type { ApiClient } from "../../shared/config.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
+import type { ApiClient } from "#cli/shared/config";
+import type { ParsedArgs } from "#cli/shared/types";
 
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;

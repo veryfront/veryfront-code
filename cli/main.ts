@@ -14,8 +14,11 @@ async function ensureEnvLoaded(): Promise<void> {
   if (supportsEnvFiles()) {
     try {
       await loadEnv();
-    } catch {
-      // .env file doesn't exist or couldn't be loaded - that's fine
+    } catch (e) {
+      // Missing .env is fine; log other errors for debuggability
+      if (e instanceof Deno.errors.NotFound === false) {
+        console.error(`Warning: failed to load .env: ${e instanceof Error ? e.message : e}`);
+      }
     }
   }
 

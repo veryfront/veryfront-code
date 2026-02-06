@@ -11,8 +11,8 @@ import {
   type EnvironmentConfig,
   getEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
-import { bold, brand, dim, muted, success, warning } from "../../ui/colors.ts";
-import { isTTY } from "../../utils/index.ts";
+import { bold, brand, dim, muted, success, warning } from "#cli/ui";
+import { isTTY } from "#cli/utils";
 import { detectAITools, formatDetectionHint } from "./detect.ts";
 import { AI_TOOLS, getTemplateContent, getToolById, isValidToolId } from "./registry.ts";
 import {

@@ -10,10 +10,10 @@
 import { z } from "zod";
 import { cliLogger } from "#veryfront/utils";
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { type ApiClient, createApiClient, resolveConfigWithAuth } from "../../shared/config.ts";
-import { CommonArgs, createArgParser } from "../../shared/args.ts";
-import { confirmPrompt, logInfo, logSuccess } from "../../utils/index.ts";
-import { createSpinner } from "../../ui/progress.ts";
+import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
+import { CommonArgs, createArgParser } from "#cli/shared/args";
+import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
+import { createSpinner } from "#cli/ui";
 
 /**
  * Zod schema for merge command arguments

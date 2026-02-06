@@ -8,7 +8,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cliLogger } from "#veryfront/utils";
 import { resolvePath } from "./path-utils.ts";
 import { initCommand } from "./init-command.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
+import type { ParsedArgs } from "#cli/shared/types";
 import type { InitTemplate } from "./types.ts";
 import type { IntegrationName } from "../../templates/types.ts";
 

@@ -5,9 +5,9 @@
 import { z } from "zod";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { doctorCommand } from "./index.ts";
-import { showLogo } from "../../utils/index.ts";
-import { createArgParser } from "../../shared/args.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
+import { showLogo } from "#cli/utils";
+import { createArgParser } from "#cli/shared/args";
+import type { ParsedArgs } from "#cli/shared/types";
 
 const DoctorArgsSchema = z.object({
   strict: z.boolean().default(false),

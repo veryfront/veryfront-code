@@ -1,7 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleCleanCommand } from "./handler.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
+import type { ParsedArgs } from "#cli/shared/types";
 
 function extractCleanArgs(args: ParsedArgs, cwdVal: string) {
   const projectDir = typeof args.project === "string" ? args.project : cwdVal;

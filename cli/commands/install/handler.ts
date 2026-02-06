@@ -4,7 +4,7 @@
 
 import { installCommand } from "./install.ts";
 import { uninstallCommand } from "./uninstall.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
+import type { ParsedArgs } from "#cli/shared/types";
 
 export async function handleInstallCommand(args: ParsedArgs): Promise<void> {
   const target = typeof args.target === "string" ? args.target : undefined;

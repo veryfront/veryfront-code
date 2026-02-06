@@ -2,13 +2,27 @@
  * Studio command handler
  */
 
-import type { ParsedArgs } from "../../shared/types.ts";
+import { z } from "zod";
+import { createArgParser } from "#cli/shared/args";
+import type { ParsedArgs } from "#cli/shared/types";
 import { studioCommand } from "./index.ts";
 
-export async function handleStudioCommand(args: ParsedArgs): Promise<void> {
-  const project = typeof args._[1] === "string" ? args._[1] : undefined;
-  const branch = typeof args.branch === "string" ? args.branch : undefined;
-  const file = typeof args.file === "string" ? args.file : undefined;
+const StudioArgsSchema = z.object({
+  project: z.string().optional(),
+  branch: z.string().optional(),
+  file: z.string().optional(),
+});
 
-  await studioCommand({ project, branch, file });
+export const parseStudioArgs = createArgParser(StudioArgsSchema, {
+  project: { keys: ["project"], type: "string", positional: 0 },
+  branch: { keys: ["branch", "b"], type: "string" },
+  file: { keys: ["file"], type: "string" },
+});
+
+export async function handleStudioCommand(args: ParsedArgs): Promise<void> {
+  const result = parseStudioArgs(args);
+  if (!result.success) {
+    throw new Error(`Invalid studio arguments: ${result.error.message}`);
+  }
+  await studioCommand(result.data);
 }

@@ -14,7 +14,7 @@ import type { MCPTool } from "./tools.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-import { DEFAULT_LOCAL_API_URL } from "../shared/constants.ts";
+import { DEFAULT_LOCAL_API_URL } from "#cli/shared/constants";
 
 function getApiBaseUrl(): string {
   return getEnvironmentConfig().apiBaseUrl || DEFAULT_LOCAL_API_URL;

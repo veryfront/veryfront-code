@@ -17,15 +17,15 @@ import {
   createApiClient,
   resolveConfigWithAuth,
   type ResolvedConfig,
-} from "../../shared/config.ts";
+} from "#cli/shared/config";
 import { reserveProjectSlug } from "../new/reserve-slug.ts";
-import { confirmPrompt, logError, logInfo, logSuccess, logWarning } from "../../utils/index.ts";
-import { createNoopSpinner, createSpinner } from "../../ui/progress.ts";
+import { confirmPrompt, logError, logInfo, logSuccess, logWarning } from "#cli/utils";
+import { createNoopSpinner, createSpinner } from "#cli/ui";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import { listAllFiles } from "../pull/index.ts";
-import { getStringArg, resolveProjectDir } from "../../shared/args.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
+import { getStringArg, resolveProjectDir } from "#cli/shared/args";
+import type { ParsedArgs } from "#cli/shared/types";
 
 /**
  * Zod schema for push command arguments

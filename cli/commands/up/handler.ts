@@ -3,7 +3,7 @@
  */
 
 import { parseUpArgs, upCommand } from "./command.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
+import type { ParsedArgs } from "#cli/shared/types";
 
 export async function handleUpCommand(args: ParsedArgs): Promise<void> {
   const result = parseUpArgs(args);

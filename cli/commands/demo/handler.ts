@@ -3,8 +3,8 @@
  */
 
 import { z } from "zod";
-import { createArgParser } from "../../shared/args.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
+import { createArgParser } from "#cli/shared/args";
+import type { ParsedArgs } from "#cli/shared/types";
 
 const DemoArgsSchema = z.object({
   projectName: z.string().optional(),

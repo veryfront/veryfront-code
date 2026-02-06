@@ -1,7 +1,7 @@
 import { cliLogger } from "#veryfront/utils";
 import { createLockfileManager } from "#veryfront/utils/import-lockfile.ts";
-import { confirmPrompt, logSuccess, logWarning } from "../../utils/index.ts";
-import { createSpinner } from "../../ui/progress.ts";
+import { confirmPrompt, logSuccess, logWarning } from "#cli/utils";
+import { createSpinner } from "#cli/ui";
 
 export interface LockOptions {
   projectDir: string;

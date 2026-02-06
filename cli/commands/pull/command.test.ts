@@ -14,7 +14,7 @@ import {
   type PullSource,
   resolvePullSource,
 } from "./command.ts";
-import type { ApiClient } from "../../shared/config.ts";
+import type { ApiClient } from "#cli/shared/config";
 
 function createMockClient(overrides: {
   get?: (url: string, params?: unknown) => Promise<unknown>;

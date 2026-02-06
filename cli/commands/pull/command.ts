@@ -17,13 +17,13 @@ import {
   readConfigFile,
   resolveConfigWithAuth,
   type ResolvedConfig,
-} from "../../shared/config.ts";
-import { confirmPrompt, logInfo, logSuccess, logWarning } from "../../utils/index.ts";
-import { createNoopSpinner, createSpinner } from "../../ui/progress.ts";
+} from "#cli/shared/config";
+import { confirmPrompt, logInfo, logSuccess, logWarning } from "#cli/utils";
+import { createNoopSpinner, createSpinner } from "#cli/ui";
 import { getApiTokenEnv } from "#veryfront/config/env.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { getStringArg, resolveProjectDir } from "../../shared/args.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
+import { getStringArg, resolveProjectDir } from "#cli/shared/args";
+import type { ParsedArgs } from "#cli/shared/types";
 
 /**
  * Zod schema for pull command arguments

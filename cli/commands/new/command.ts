@@ -13,8 +13,8 @@ import {
 
 import { ensureAuthenticated, readToken, validateToken } from "../../auth/index.ts";
 import { canOpenBrowser, openBrowser } from "../../auth/browser.ts";
-import { exitProcess, isTTY } from "../../utils/index.ts";
-import { CommonArgs, createArgParser } from "../../shared/args.ts";
+import { exitProcess, isTTY } from "#cli/utils";
+import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { scaffoldProjectFast } from "./fast-scaffold.ts";
 import { reserveProjectSlug } from "./reserve-slug.ts";
 import { runNewTui } from "./tui.ts";
@@ -26,7 +26,7 @@ import {
   handleInput,
   interceptConsole,
   success,
-} from "../../ui/index.ts";
+} from "#cli/ui";
 import type { InitTemplate } from "../init/types.ts";
 import type { IntegrationName } from "../../templates/types.ts";
 

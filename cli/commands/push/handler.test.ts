@@ -2,7 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handlePushCommand } from "./handler.ts";
 import { parsePushArgs } from "./command.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
+import type { ParsedArgs } from "#cli/shared/types";
 
 function createArgs(flags: Record<string, unknown> = {}): ParsedArgs {
   return { _: ["push"], ...flags };

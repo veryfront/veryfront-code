@@ -9,11 +9,10 @@ import {
   type EnvironmentConfig,
   getEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
-import { shouldUseColor } from "../../ui/colors.ts";
-import { isTTY, promptUser } from "../../utils/index.ts";
-import { createSpinner } from "../../ui/progress.ts";
-import { CommonArgs, createArgParser } from "../../shared/args.ts";
-import { readConfigFile, type VeryfrontConfig } from "../../shared/config.ts";
+import { createSpinner, shouldUseColor } from "#cli/ui";
+import { isTTY, promptUser } from "#cli/utils";
+import { CommonArgs, createArgParser } from "#cli/shared/args";
+import { readConfigFile, type VeryfrontConfig } from "#cli/shared/config";
 import { pushCommand } from "../push/index.ts";
 import { deployCommand } from "../deploy/index.ts";
 

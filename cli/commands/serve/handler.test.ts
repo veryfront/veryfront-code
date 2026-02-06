@@ -1,7 +1,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleServeCommand } from "./handler.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
+import type { ParsedArgs } from "#cli/shared/types";
 
 describe("commands/serve/handler", () => {
   describe("handleServeCommand", () => {

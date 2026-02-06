@@ -12,8 +12,8 @@ import {
 } from "#veryfront/rendering/cache/stores/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { confirmPrompt, logSuccess, logWarning } from "../../utils/index.ts";
-import { createSpinner } from "../../ui/progress.ts";
+import { confirmPrompt, logSuccess, logWarning } from "#cli/utils";
+import { createSpinner } from "#cli/ui";
 
 interface RenderCacheConfig {
   type?: "memory" | "filesystem" | "kv" | "redis";

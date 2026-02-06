@@ -2,8 +2,9 @@
  * Issues command handler
  */
 
-import { type IssuesArgs, issuesCommand } from "./command.ts";
+import { issuesCommand } from "./command.ts";
+import type { ParsedArgs } from "#cli/shared/types";
 
-export async function handleIssuesCommand(args: IssuesArgs): Promise<void> {
+export async function handleIssuesCommand(args: ParsedArgs): Promise<void> {
   await issuesCommand(args);
 }

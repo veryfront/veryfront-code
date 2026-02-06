@@ -10,27 +10,19 @@ import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { writeStdoutAsync } from "#veryfront/platform/compat/process.ts";
 import { getStdinReader, type StdinReader } from "#veryfront/platform/compat/stdin.ts";
 import { DevServerClient } from "./dev-server-client.ts";
+import {
+  errorResponse,
+  type JSONRPCRequest,
+  JSONRPCRequestSchema,
+  type JSONRPCResponse,
+  parseError,
+  PromptsGetParamsSchema,
+  successResponse,
+  ToolsCallParamsSchema,
+} from "./jsonrpc.ts";
 
 const DEFAULT_DEV_PORT = 8080;
 const NOT_RUNNING_MSG = "Dev server not running. Start with: veryfront";
-
-interface JSONRPCRequest {
-  jsonrpc: "2.0";
-  id?: string | number;
-  method: string;
-  params?: unknown;
-}
-
-interface JSONRPCResponse {
-  jsonrpc: "2.0";
-  id?: string | number;
-  result?: unknown;
-  error?: {
-    code: number;
-    message: string;
-    data?: unknown;
-  };
-}
 
 interface StandaloneTool {
   name: string;
@@ -72,6 +64,10 @@ export class StandaloneMCPServer {
     const encoder = new TextEncoder();
     this.stdinReader = getStdinReader();
 
+    const writeResponse = async (response: JSONRPCResponse): Promise<void> => {
+      await writeStdoutAsync(encoder.encode(`${JSON.stringify(response)}\n`));
+    };
+
     const readLoop = async (): Promise<void> => {
       let buffer = "";
 
@@ -93,19 +89,11 @@ export class StandaloneMCPServer {
             if (!line) continue;
 
             try {
-              const request = JSON.parse(line) as JSONRPCRequest;
+              const request = JSONRPCRequestSchema.parse(JSON.parse(line));
               const response = await this.handleRequest(request);
-              await writeStdoutAsync(encoder.encode(`${JSON.stringify(response)}\n`));
+              await writeResponse(response);
             } catch (e) {
-              const errorResponse: JSONRPCResponse = {
-                jsonrpc: "2.0",
-                error: {
-                  code: -32700,
-                  message: "Parse error",
-                  data: e instanceof Error ? e.message : String(e),
-                },
-              };
-              await writeStdoutAsync(encoder.encode(`${JSON.stringify(errorResponse)}\n`));
+              await writeResponse(parseError(e));
             }
           }
         } catch {
@@ -122,16 +110,9 @@ export class StandaloneMCPServer {
 
     try {
       const result = await this.dispatchMethod(method, params);
-      return { jsonrpc: "2.0", id, result };
+      return successResponse(id, result);
     } catch (e) {
-      return {
-        jsonrpc: "2.0",
-        id,
-        error: {
-          code: -32603,
-          message: e instanceof Error ? e.message : String(e),
-        },
-      };
+      return errorResponse(id, e);
     }
   }
 
@@ -165,10 +146,7 @@ export class StandaloneMCPServer {
   }
 
   private async handleToolsCall(params: unknown): Promise<unknown> {
-    const { name, arguments: args } = params as {
-      name: string;
-      arguments?: Record<string, unknown>;
-    };
+    const { name, arguments: args } = ToolsCallParamsSchema.parse(params);
 
     const tool = this.tools.find((t) => t.name === name);
     if (!tool) throw new Error(`Unknown tool: ${name}`);
@@ -196,7 +174,7 @@ export class StandaloneMCPServer {
   }
 
   private async handlePromptsGet(params: unknown): Promise<unknown> {
-    const { name } = params as { name: string };
+    const { name } = PromptsGetParamsSchema.parse(params);
 
     const filePath = name === "veryfront"
       ? "./skills/veryfront/SKILL.md"

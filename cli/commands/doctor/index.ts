@@ -8,8 +8,7 @@ import {
 } from "./project-structure.ts";
 import { checkRSCCounters, checkRSCEndpoints, checkRSCFlag } from "./server-checks.ts";
 import { checkAIConfig } from "./ai-checks.ts";
-import { checkList } from "../../ui/components/table.ts";
-import { bold, error, success, warning } from "../../ui/colors.ts";
+import { bold, checkList, error, success, warning } from "#cli/ui";
 
 function summarizeResults(
   results: DiagnosticResult[],

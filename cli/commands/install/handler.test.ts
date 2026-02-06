@@ -1,7 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleInstallCommand, handleUninstallCommand } from "./handler.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
+import type { ParsedArgs } from "#cli/shared/types";
 
 function extractInstallArgs(args: ParsedArgs) {
   const target = typeof args.target === "string" ? args.target : undefined;

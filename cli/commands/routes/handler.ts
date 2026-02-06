@@ -5,9 +5,9 @@
 import { z } from "zod";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { routesCommand } from "./command.ts";
-import { showLogo } from "../../utils/index.ts";
-import { CommonArgs, createArgParser } from "../../shared/args.ts";
-import type { ParsedArgs } from "../../shared/types.ts";
+import { showLogo } from "#cli/utils";
+import { CommonArgs, createArgParser } from "#cli/shared/args";
+import type { ParsedArgs } from "#cli/shared/types";
 
 const RoutesArgsSchema = z.object({
   projectDir: z.string().default(""),
