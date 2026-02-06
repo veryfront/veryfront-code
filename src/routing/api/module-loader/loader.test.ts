@@ -109,7 +109,8 @@ describe("loadHandlerModule", () => {
       ].join("\n"),
     );
 
-    const virtualBase = `/tmp/vf-nonexistent-${Date.now()}`;
+    const tempRoot = await makeTempDir();
+    const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
     const toReal = (path: string): string => path.replace(virtualBase, realDir);
 
     const virtualAdapter: RuntimeAdapter = {
