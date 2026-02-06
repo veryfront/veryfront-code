@@ -17,6 +17,18 @@ import { isCompiledBinary } from "#veryfront/utils";
 
 const FILE_EXTENSIONS: string[] = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs"];
 
+const EXT_TO_LOADER: Record<string, "tsx" | "jsx" | "ts" | "js" | "json"> = {
+  tsx: "tsx",
+  jsx: "jsx",
+  ts: "ts",
+  json: "json",
+};
+
+function getLoaderForFile(filePath: string): "tsx" | "jsx" | "ts" | "js" | "json" {
+  const ext = filePath.split(".").pop() ?? "";
+  return EXT_TO_LOADER[ext] ?? "js";
+}
+
 export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute | null> {
   return withSpan(
     "api.loadHandlerModule",
@@ -160,17 +172,9 @@ function createImportMapPlugin(
             FILE_EXTENSIONS,
           );
 
-          const ext = filePath.split(".").pop() ?? "";
-          const loaderMap: Record<string, "tsx" | "jsx" | "ts" | "js" | "json"> = {
-            tsx: "tsx",
-            jsx: "jsx",
-            ts: "ts",
-            json: "json",
-          };
-
           return {
             contents,
-            loader: loaderMap[ext] ?? "js",
+            loader: getLoaderForFile(filePath),
             resolveDir: pathHelper.dirname(filePath),
           };
         } catch (error) {
@@ -213,7 +217,7 @@ function createAdapterResolvePlugin(adapter: RuntimeAdapter): Plugin {
 
           return {
             contents,
-            loader: getEsbuildLoader(filePath),
+            loader: getLoaderForFile(filePath),
             resolveDir: pathHelper.dirname(filePath),
           };
         } catch (error) {
