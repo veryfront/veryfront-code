@@ -76,7 +76,7 @@ export async function ensureBinaryCompiled(): Promise<void> {
 
   console.log("📦 Compiling binary...");
   const result = await new Deno.Command("deno", {
-    args: ["compile", "--allow-all", "--unstable-net", "--output", BINARY_PATH, "src/cli/main.ts"],
+    args: ["compile", "--allow-all", "--unstable-net", "--output", BINARY_PATH, "cli/main.ts"],
     stdout: "inherit",
     stderr: "inherit",
   }).output();

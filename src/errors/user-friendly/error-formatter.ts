@@ -1,5 +1,5 @@
 import { bold, cyan, dim, red, yellow } from "#veryfront/compat/console";
-import { box } from "#veryfront/cli/ui";
+import { box } from "#veryfront/utils/box.ts";
 import { ERROR_SOLUTIONS } from "./error-catalog.ts";
 import { identifyError } from "./error-identifier.ts";
 

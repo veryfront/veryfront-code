@@ -69,7 +69,7 @@ const EXCEPTIONS: Record<string, string[]> = {
   "src/build/bundler/code-splitter/build-context.ts": ["process.env"],
   "src/build/renderer/services/script-bundler.ts": ["process.env"],
   // package-manager.ts uses proper isDeno guards for platform code
-  "src/cli/utils/package-manager.ts": ["Deno.Command()", "Deno.build"],
+  "cli/utils/package-manager.ts": ["Deno.Command()", "Deno.build"],
   // production-build files use node:path intentionally for Node.js npm package runtime
   // These files are only executed in npm package context where node:path is available
   "src/build/production-build/asset-generation.ts": ["node: import"],

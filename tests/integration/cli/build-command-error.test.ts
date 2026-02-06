@@ -1,7 +1,7 @@
 import { assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { writeTextFile } from "#veryfront/compat/fs.ts";
-import { buildCommand } from "../../../src/cli/commands/build/command.ts";
+import { buildCommand } from "../../../cli/commands/build/command.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
 describe("cli build", () => {

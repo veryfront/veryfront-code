@@ -45,8 +45,8 @@ function mapFileName(path: string): string {
 }
 
 async function generateManifest(): Promise<TemplateManifest> {
-	const templatesDir = "./src/cli/templates/files";
-	const integrationsDir = "./src/cli/templates/integrations";
+	const templatesDir = "./cli/templates/files";
+	const integrationsDir = "./cli/templates/integrations";
 	const manifest: TemplateManifest = {
 		version: 1,
 		templates: {},
@@ -100,7 +100,7 @@ async function generateManifest(): Promise<TemplateManifest> {
 }
 
 const manifest = await generateManifest();
-const outputPath = "./src/cli/templates/manifest.json";
+const outputPath = "./cli/templates/manifest.json";
 await Deno.writeTextFile(outputPath, JSON.stringify(manifest, null, 2));
 
 const templateCount = Object.keys(manifest.templates).length;

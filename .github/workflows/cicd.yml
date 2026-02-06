@@ -189,7 +189,7 @@ jobs:
             --include "https://esm.sh/@tailwindcss/forms@0.5.11" \
             --include "https://esm.sh/tailwind-scrollbar-hide@2.0.0" \
             --include "https://esm.sh/daisyui@5.5.14" \
-            --target ${{ matrix.target }} --output ${{ matrix.name }} src/cli/main.ts
+            --target ${{ matrix.target }} --output ${{ matrix.name }} cli/main.ts
 
       - uses: actions/upload-artifact@v4
         with:
