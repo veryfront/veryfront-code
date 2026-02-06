@@ -29,7 +29,7 @@ veryfront-renderer/
     router.ts
     commands/              <- 26 commands (dev, build, deploy, etc.)
     shared/                <- CLI-specific types, arg parsers, constants
-    ui/                    <- Colors, box drawing, progress, TUI
+    ui/                    <- Colors, progress, TUI
     auth/                  <- OAuth login flow, token storage
     sync/                  <- Project sync, ignore patterns
     discovery/             <- AI entity discovery (agents, tools, prompts)
@@ -49,6 +49,9 @@ veryfront-renderer/
     agent/
     config/
     platform/
+    utils/
+      box.ts               <- Box drawing (moved from cli/ui/)
+      ...
     ... (30+ framework modules)
   deno.json                <- Single config, exports from both
 ```
@@ -72,13 +75,13 @@ These relative imports in `src/cli/` reach outside the CLI boundary. They must b
 | `cli/commands/dev/handler.ts` | `../../../transforms/mdx/esm-module-loader/cache/index.ts` | `#veryfront/transforms/mdx/esm-module-loader/cache/index.ts` |
 | `cli/commands/init/init-command.ts` | `../../../../lib/token-store` | No action — this is a string template written to user projects, not a compile-time import. `lib/` does not exist in the repo. |
 
-### Framework -> CLI (1 reverse dependency)
+### Framework -> CLI (1 reverse dependency — eliminated in Phase 1)
 
 Only one framework file imports from CLI:
 
 - `src/errors/user-friendly/error-formatter.ts` imports `box` from `#veryfront/cli/ui`
 
-Resolution: keep the import, update the `#veryfront/cli/ui` alias in deno.json to point to `./cli/ui/index.ts`.
+Resolution: move `box.ts` from `cli/ui/` to `src/utils/` before the split, inverting the dependency. After this, `error-formatter.ts` imports from the framework (`#veryfront/utils/box.ts`), and CLI consumers import from the framework too — correct direction. **Zero reverse dependencies remain.**
 
 ### External References
 
@@ -102,8 +105,17 @@ Convert cross-boundary imports and fix the reverse dependency while everything i
    - The `init-command.ts` `../../../../lib/token-store` import is a string template (generated code for user projects), not a real import — no action needed.
    - Run `deno task verify:quick` to confirm
 
-2. **Fix reverse dependency** in `error-formatter.ts`
-   - No code change needed now — the alias update happens in Phase 3
+2. **Move `box.ts` to the framework** to eliminate the reverse dependency
+   - `git mv src/cli/ui/box.ts src/utils/box.ts`
+   - `git mv src/cli/ui/box.test.ts src/utils/box.test.ts`
+   - `box.ts` imports 6 helpers from `cli/ui/layout.ts` and `cli/ui/ansi.ts` (`lines`, `maxLineWidth`, `pad`, `repeat`, `visibleLength`, `RESET`, `ANSI_REGEX`, `stripAnsi`). These are ~30 lines of pure string functions. Inline them directly in `box.ts` to make it self-contained — no new dependency chain.
+   - Update `error-formatter.ts`: `import { box } from "#veryfront/utils/box.ts"`
+   - Update CLI consumers to use alias instead of relative imports:
+     - `cli/ui/components/banner.ts` → `import { BORDER_STYLES, box } from "#veryfront/utils/box.ts"`
+     - `cli/app/views/dashboard.ts` → `import { box } from "#veryfront/utils/box.ts"`
+     - `cli/app/views/startup.ts` → `import { box } from "#veryfront/utils/box.ts"`
+   - Remove `export * from "./box.ts"` from `cli/ui/index.ts`
+   - Run `deno task verify:quick` to confirm
 
 ### Phase 2: The move
 
@@ -115,7 +127,6 @@ These are independent and can be done in parallel:
 
 4. **Update `deno.json`**
    - `exports`: `"./cli": "./cli/main.ts"`
-   - `imports`: `"#veryfront/cli/ui": "./cli/ui/index.ts"`
    - `exclude`: `cli/templates/files/`, `cli/templates/integrations/`
    - `tasks`: all 10+ tasks referencing `src/cli/main.ts` -> `cli/main.ts`
    - `lint.include` / `fmt.include`: add `cli/**/*.ts`, `cli/**/*.tsx`
