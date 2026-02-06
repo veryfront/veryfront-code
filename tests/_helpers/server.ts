@@ -1,6 +1,6 @@
 import { join } from "#veryfront/compat/path";
 import { isNotFoundError, makeTempDir, mkdir, remove } from "../../src/platform/compat/fs.ts";
-import { createDevServer } from "../../src/server/dev-server.ts";
+import { startDevServer } from "../../src/server/dev-server.ts";
 import { startProductionServer } from "../../src/server/production-server.ts";
 import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";
 import { testDelay } from "#veryfront/testing";
@@ -133,7 +133,7 @@ export async function createTestDevServer(options: {
   fileWatcherDebounceMs?: number;
 }): Promise<TestServer> {
   const port = options.port ?? (await getFreePort());
-  const server = await createDevServer({
+  const server = await startDevServer({
     projectDir: options.projectDir,
     port,
     enableHMR: options.enableHMR ?? false,

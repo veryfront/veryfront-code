@@ -1,8 +1,8 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { BunAdapter } from "#veryfront/platform/adapters/runtime/bun/index.ts";
-import { startUniversalServer } from "../../../src/server/production-server.ts";
+import { startProductionServer } from "../../../src/server/production-server.ts";
 import { getFreePort } from "../../_helpers/utils.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
 
@@ -46,13 +46,13 @@ describe(
       );
     });
 
-    describe("Universal server integration", () => {
+    describe("Production server integration", () => {
       it(
-        "should run with universal server",
+        "should run with production server",
         { ignore: !isBunRuntime },
         async () => {
           const adapter = new BunAdapter();
-          const dir = await makeTempDir({ prefix: "vf_bun_universal_" });
+          const dir = await makeTempDir({ prefix: "vf_bun_production_" });
 
           try {
             await mkdir(join(dir, "public"), { recursive: true });
@@ -62,7 +62,7 @@ describe(
 
             const port = await getFreePort();
             const testProjectId = `test_bun_${Date.now().toString(36)}`;
-            const server = await startUniversalServer({
+            const server = await startProductionServer({
               projectDir: dir,
               port,
               bindAddress: "127.0.0.1",
@@ -96,7 +96,7 @@ describe(
         "should work with thin server wrapper",
         { ignore: !isBunRuntime },
         async () => {
-          const { startUniversalServer: startBun } = await import(
+          const { startProductionServer: startBun } = await import(
             "../../../src/server/production-server.ts"
           );
           const dir = await makeTempDir({ prefix: "vf_bun_wrap_" });

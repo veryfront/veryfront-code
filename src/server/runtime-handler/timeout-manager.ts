@@ -1,9 +1,9 @@
 /**
  * Timeout Manager
  *
- * Handles request timeout logic with Promise.race pattern for the universal handler.
+ * Handles request timeout logic with Promise.race pattern for the runtime handler.
  *
- * @module server/universal-handler/timeout-manager
+ * @module server/runtime-handler/timeout-manager
  */
 
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
@@ -38,7 +38,7 @@ export async function withRequestTimeout(
     return { response };
   } catch (e) {
     if (e === TIMEOUT_SENTINEL) {
-      logger.warn("[universal] Request timed out", {
+      logger.warn("[runtime-handler] Request timed out", {
         path: pathname,
         method,
         timeoutMs: getRequestTimeout(),

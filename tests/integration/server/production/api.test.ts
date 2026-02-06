@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
 
@@ -28,7 +28,7 @@ function getAllowHeader(headers: Headers): string | null {
 }
 
 describe(
-  "Universal Server API Tests",
+  "Production Server API Tests",
   {
     sanitizeResources: false,
     sanitizeOps: false,
@@ -39,14 +39,14 @@ describe(
     });
 
     describe(
-      "Universal Server - API Routes",
+      "Production Server - API Routes",
       {
         sanitizeResources: false,
         sanitizeOps: false,
       },
       () => {
         it("handles pages/api and app route handlers (GET/POST)", async () => {
-          await withTestContext("universal-server-api", async (context: TestContext) => {
+          await withTestContext("production-server-api", async (context: TestContext) => {
             await writeTextFile(
               join(context.projectDir, "veryfront.config.js"),
               `export default { experimental: { rsc: true } };`,
@@ -76,6 +76,7 @@ describe(
             );
 
             const server = await context.createProductionServer();
+            assertExists(server.port);
             const url = baseUrl(server.port);
 
             const aj = await fetchJson(`${url}/api/hello`);
@@ -114,7 +115,7 @@ describe(
 
         it("handles App Router params and method Allow header", async () => {
           await withTestContext(
-            "universal-server-app-route-methods",
+            "production-server-app-route-methods",
             async (context: TestContext) => {
               const postDir = join(context.projectDir, "app", "post", "[slug]");
               await mkdir(postDir, { recursive: true });
@@ -145,6 +146,7 @@ describe(
               );
 
               const server = await context.createProductionServer();
+              assertExists(server.port);
               const url = baseUrl(server.port);
 
               const gj = await fetchJson(`${url}/post/hello`);

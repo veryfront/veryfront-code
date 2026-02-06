@@ -4,7 +4,7 @@
  * Handles resolution of the runtime environment (preview vs production)
  * and validates release ID requirements.
  *
- * @module server/universal-handler/environment-resolution
+ * @module server/runtime-handler/environment-resolution
  */
 
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";

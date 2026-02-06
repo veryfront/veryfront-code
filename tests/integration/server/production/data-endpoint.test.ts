@@ -6,7 +6,7 @@ import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
 describe(
-  "Universal data endpoint",
+  "Production data endpoint",
   { sanitizeOps: false, sanitizeResources: false },
   () => {
     afterAll(async () => {
@@ -14,7 +14,7 @@ describe(
     });
 
     it("returns JSON with ETag/304 and no-cache", async () => {
-      await withTestContext("universal-data", async (context) => {
+      await withTestContext("production-data", async (context) => {
         await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home\n");
         const server = await context.createProductionServer();
 

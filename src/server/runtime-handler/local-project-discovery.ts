@@ -4,7 +4,7 @@
  * Handles discovery and caching of local project paths for the dev server.
  * Supports finding projects in standard directories (data/projects, projects, examples).
  *
- * @module server/universal-handler/local-project-discovery
+ * @module server/runtime-handler/local-project-discovery
  */
 
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
@@ -72,7 +72,7 @@ export async function findLocalProjectPath(
 
       const absolutePath = projectPath.startsWith("/") ? projectPath : `${cwd()}/${projectPath}`;
       localProjectCache.set(slug, absolutePath);
-      logger.debug("[universal] Discovered local project", { slug, path: absolutePath });
+      logger.debug("[runtime-handler] Discovered local project", { slug, path: absolutePath });
       return absolutePath;
     } catch {
       // Directory doesn't exist, continue

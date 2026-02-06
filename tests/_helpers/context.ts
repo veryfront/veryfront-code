@@ -13,7 +13,7 @@
  * const context = new TestContext("my-test");
  * await context.setup();
  * try {
- *   const server = await context.createDevServer();
+ *   const server = await context.startDevServer();
  *   // Run tests...
  * } finally {
  *   await context.cleanup();
@@ -30,7 +30,7 @@ import {
   writeTextFile,
 } from "../../src/platform/compat/fs.ts";
 import { deleteEnv, getEnv, setEnv } from "../../src/platform/compat/process.ts";
-import { createDevServer } from "../../src/server/dev-server.ts";
+import { startDevServer } from "../../src/server/dev-server.ts";
 import { startProductionServer } from "../../src/server/production-server.ts";
 import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";
 import { runWithCacheDir } from "../../src/utils/cache-dir.ts";
@@ -227,7 +227,7 @@ export class TestContext {
   /**
    * Creates a development server with automatic cleanup
    */
-  async createDevServer(options: {
+  async startDevServer(options: {
     port?: number;
     enableHMR?: boolean;
     fileWatcherDebounceMs?: number;
@@ -237,7 +237,7 @@ export class TestContext {
     const enableHMR = options.enableHMR ?? false;
     const hmrPort = enableHMR ? await this.allocatePort() : undefined;
 
-    const server = await createDevServer({
+    const server = await startDevServer({
       projectDir: this.projectDir,
       port,
       hmrPort,

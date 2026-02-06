@@ -18,7 +18,7 @@ import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 
 export class RequestHandler {
-  private universalHandler?: (req: Request) => Promise<Response>;
+  private runtimeHandler?: (req: Request) => Promise<Response>;
 
   constructor(
     private projectDir: string,
@@ -149,9 +149,9 @@ export class RequestHandler {
   }
 
   private async handleApplicationRequest(req: Request): Promise<Response> {
-    if (!this.universalHandler) {
-      const { createVeryfrontHandler } = await import("../universal-handler/index.ts");
-      this.universalHandler = createVeryfrontHandler(this.projectDir, this.adapter, {
+    if (!this.runtimeHandler) {
+      const { createVeryfrontHandler } = await import("../runtime-handler/index.ts");
+      this.runtimeHandler = createVeryfrontHandler(this.projectDir, this.adapter, {
         projectDir: this.projectDir,
         debug: this.isDebug(),
         moduleServerUrl: "/_vf_modules",
@@ -162,11 +162,11 @@ export class RequestHandler {
       });
     }
 
-    return this.universalHandler(req);
+    return this.runtimeHandler(req);
   }
 
-  invalidateUniversalHandler(): void {
-    this.universalHandler = undefined;
+  invalidateRuntimeHandler(): void {
+    this.runtimeHandler = undefined;
 
     resetApiHandler(this.projectDir).catch((error) => {
       logger.debug("[dev] resetApiHandler failed", error);

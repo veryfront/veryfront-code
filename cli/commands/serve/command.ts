@@ -49,7 +49,7 @@ async function runRenderer(options: ServeOptions): Promise<void> {
 
   const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
   const adapter = await runtime.get();
-  const { startUniversalServer } = await import("#veryfront/server/production-server.ts");
+  const { startProductionServer } = await import("#veryfront/server/production-server.ts");
 
   const { initializeOTLPWithApis } = await import(
     "#veryfront/observability/tracing/otlp-setup.ts"
@@ -67,7 +67,7 @@ async function runRenderer(options: ServeOptions): Promise<void> {
 
   const defaultProjectId = generateDefaultProjectId(projectDir);
 
-  const server = await startUniversalServer({
+  const server = await startProductionServer({
     projectDir,
     port: options.port,
     bindAddress: options.bindAddress,

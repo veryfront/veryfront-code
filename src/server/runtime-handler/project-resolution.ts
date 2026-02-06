@@ -7,7 +7,7 @@
  * - API domain lookup (custom domains)
  * - Config file defaults
  *
- * @module server/universal-handler/project-resolution
+ * @module server/runtime-handler/project-resolution
  */
 
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";

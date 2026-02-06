@@ -4,7 +4,7 @@
  * Handles project isolation checks to prevent noisy neighbor issues.
  * Manages circuit breakers and concurrency limits per project.
  *
- * @module server/universal-handler/isolation
+ * @module server/runtime-handler/isolation
  */
 
 import { type IsolationCheckResult, projectIsolation } from "./project-isolation.ts";

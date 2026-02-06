@@ -4,7 +4,7 @@
  * Handles creation and caching of runtime adapters for different project contexts.
  * Supports local projects (filesystem-first) and proxy mode (API-first).
  *
- * @module server/universal-handler/adapter-factory
+ * @module server/runtime-handler/adapter-factory
  */
 
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";

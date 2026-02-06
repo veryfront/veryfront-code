@@ -28,7 +28,7 @@ describe(
             "# Test",
           );
 
-          const server = await context.createDevServer({
+          const server = await context.startDevServer({
             enableHMR: true,
             fileWatcherDebounceMs: scaleMs(100),
           });
@@ -51,7 +51,7 @@ describe(
             "# Home",
           );
 
-          const server = await context.createDevServer({
+          const server = await context.startDevServer({
             enableHMR: true,
             fileWatcherDebounceMs: scaleMs(100),
           });

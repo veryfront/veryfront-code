@@ -146,7 +146,7 @@ describe("RSC Stream DOM Tests", { sanitizeOps: false, sanitizeResources: false 
           `export default function Page() { return <div>App Home</div>; }`,
         );
 
-        const server = await context.createDevServer({ enableHMR: false });
+        const server = await context.startDevServer({ enableHMR: false });
         if (!server.port) throw new Error("Server port not assigned");
         await waitForReady(server.port);
 

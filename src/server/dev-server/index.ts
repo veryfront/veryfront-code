@@ -5,7 +5,7 @@ export type { DevServerOptions, FileWatcherMetrics, RouteDirectory } from "./typ
 import type { DevServerOptions } from "./types.ts";
 import type { DevServer } from "./server.ts";
 
-export async function createDevServer(options: DevServerOptions): Promise<DevServer> {
+export async function startDevServer(options: DevServerOptions): Promise<DevServer> {
   const { DevServer } = await import("./server.ts");
   const server = new DevServer(options);
   await server.start();

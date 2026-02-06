@@ -4,7 +4,7 @@
  * Handles OpenTelemetry tracing setup for incoming requests.
  * Extracts trace context from headers and manages server spans.
  *
- * @module server/universal-handler/tracing
+ * @module server/runtime-handler/tracing
  */
 
 import {

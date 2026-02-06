@@ -87,6 +87,7 @@ export class DevServer {
 
     logger.debug("Starting dev server", {
       port: this.options.port,
+      bindAddress: this.options.bindAddress ?? LOCALHOST.IPV4,
       projectDir: this.options.projectDir,
       hmr: this.options.enableHMR,
       fastRefresh: this.options.enableFastRefresh,
@@ -123,8 +124,8 @@ export class DevServer {
 
       // Subscribe to immediate invalidation for cache clearing (fires immediately)
       this.invalidateUnsubscribe = ReloadNotifier.subscribeInvalidate(() => {
-        logger.debug("[DevServer] INVALIDATE callback triggered - clearing universal handler");
-        this.requestHandler?.invalidateUniversalHandler();
+        logger.debug("[DevServer] INVALIDATE callback triggered - clearing runtime handler");
+        this.requestHandler?.invalidateRuntimeHandler();
       });
 
       // Subscribe to debounced reload for browser refresh (batches rapid changes)
@@ -199,7 +200,7 @@ export class DevServer {
 
     this.server = await this.adapter.serve(handler, {
       port: this.options.port,
-      hostname: LOCALHOST.IPV4,
+      hostname: this.options.bindAddress ?? LOCALHOST.IPV4,
       signal: this.options.signal,
       onListen: ({ port }: { hostname: string; port: number }) => {
         const url = buildLocalhostUrl(port);
@@ -292,7 +293,7 @@ export class DevServer {
       this.hmrServer,
       routeDiscovery,
       debounceMs,
-      () => this.requestHandler?.invalidateUniversalHandler(),
+      () => this.requestHandler?.invalidateRuntimeHandler(),
       this,
       aiDirNames,
     );

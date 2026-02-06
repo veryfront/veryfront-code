@@ -4,7 +4,7 @@
  * Builds the HandlerContext object that is passed to all route handlers.
  * Combines information from various sources into a unified context.
  *
- * @module server/universal-handler/handler-context-builder
+ * @module server/runtime-handler/handler-context-builder
  */
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";

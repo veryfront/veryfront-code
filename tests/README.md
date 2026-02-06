@@ -102,7 +102,7 @@ import { withTestContext } from "../../_helpers/context.ts";
 
 it("should test server behavior", async () => {
   await withTestContext("my-test", async (context) => {
-    const server = await context.createDevServer();
+    const server = await context.startDevServer();
     // Test implementation
     // Cleanup is automatic
   });

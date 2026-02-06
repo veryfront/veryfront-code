@@ -4,7 +4,7 @@ import "../../../_helpers/log-guard.ts";
 
 import { isNotFoundError, mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { join } from "#veryfront/compat/path";
-import { startUniversalServer } from "../../../../src/server/production-server.ts";
+import { startProductionServer } from "../../../../src/server/production-server.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
@@ -34,7 +34,7 @@ async function removeAppDir(projectDir: string): Promise<void> {
 registerUnhandledRejectionGuard();
 
 describe(
-  "Universal Server - SSR",
+  "Production Server - SSR",
   { sanitizeOps: false, sanitizeResources: false },
   () => {
     afterAll(async () => {
@@ -44,7 +44,7 @@ describe(
     });
 
     it("returns 500 HTML fallback with security headers on SSR error", async () => {
-      await withTestContext("universal-server-500-fallback", async (context: TestContext) => {
+      await withTestContext("production-server-500-fallback", async (context: TestContext) => {
         const dir = join(context.projectDir, "app");
         await mkdir(dir, { recursive: true });
         await writeTextFile(
@@ -53,7 +53,7 @@ describe(
         );
 
         const port = await context.allocatePort();
-        const server = await startUniversalServer({
+        const server = await startProductionServer({
           projectDir: context.projectDir,
           port,
           bindAddress: "127.0.0.1",
@@ -74,8 +74,8 @@ describe(
       });
     });
 
-    it("renders App Router loading/error via universal server", async () => {
-      await withTestContext("universal-server-app-loading-error", async (context: TestContext) => {
+    it("renders App Router loading/error via production server", async () => {
+      await withTestContext("production-server-app-loading-error", async (context: TestContext) => {
         await removeAppDir(context.projectDir);
 
         await mkdir(join(context.projectDir, "app", "a", "b"), { recursive: true });
@@ -100,7 +100,7 @@ describe(
         );
 
         const port = await context.allocatePort();
-        const server = await startUniversalServer({
+        const server = await startProductionServer({
           projectDir: context.projectDir,
           port,
           bindAddress: "127.0.0.1",
@@ -122,7 +122,7 @@ describe(
     });
 
     it.ignore("renders not-found.tsx for missing App Router page", async () => {
-      await withTestContext("universal-server-app-not-found", async (context: TestContext) => {
+      await withTestContext("production-server-app-not-found", async (context: TestContext) => {
         await removeAppDir(context.projectDir);
 
         const segDir = join(context.projectDir, "app", "a", "b");
@@ -133,7 +133,7 @@ describe(
         );
 
         const port = await context.allocatePort();
-        const server = await startUniversalServer({
+        const server = await startProductionServer({
           projectDir: context.projectDir,
           port,
           bindAddress: "127.0.0.1",
@@ -155,7 +155,7 @@ describe(
     });
 
     it("includes metadata (title, description) in SSR HTML", async () => {
-      await withTestContext("universal-server-metadata", async (context: TestContext) => {
+      await withTestContext("production-server-metadata", async (context: TestContext) => {
         const appDir = join(context.projectDir, "app");
         await mkdir(appDir, { recursive: true });
         await writeTextFile(
@@ -164,7 +164,7 @@ describe(
         );
 
         const port = await context.allocatePort();
-        const server = await startUniversalServer({
+        const server = await startProductionServer({
           projectDir: context.projectDir,
           port,
           bindAddress: "127.0.0.1",
@@ -187,7 +187,7 @@ describe(
     });
 
     it("applies generateMetadata() from App Router script page", async () => {
-      await withTestContext("universal-server-generate-metadata", async (context: TestContext) => {
+      await withTestContext("production-server-generate-metadata", async (context: TestContext) => {
         const metaDir = join(context.projectDir, "app", "meta");
         await mkdir(metaDir, { recursive: true });
         await writeTextFile(
@@ -199,7 +199,7 @@ describe(
         );
 
         const port = await context.allocatePort();
-        const server = await startUniversalServer({
+        const server = await startProductionServer({
           projectDir: context.projectDir,
           port,
           bindAddress: "127.0.0.1",
@@ -223,13 +223,13 @@ describe(
     });
 
     it("serves SSR with caching headers and HEAD support", async () => {
-      await withTestContext("universal-server-ssr-caching-head", async (context: TestContext) => {
+      await withTestContext("production-server-ssr-caching-head", async (context: TestContext) => {
         const appDir = join(context.projectDir, "app");
         await mkdir(appDir, { recursive: true });
         await writeTextFile(join(appDir, "page.mdx"), `# Home SSR\n\nContent here.`);
 
         const port = await context.allocatePort();
-        const server = await startUniversalServer({
+        const server = await startProductionServer({
           projectDir: context.projectDir,
           port,
           bindAddress: "127.0.0.1",

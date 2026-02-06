@@ -6,7 +6,7 @@ import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
 describe(
-  "Universal Server - Health Endpoints",
+  "Production Server - Health Endpoints",
   { sanitizeOps: false, sanitizeResources: false },
   () => {
     // Clean up renderer intervals to prevent resource leaks
@@ -15,7 +15,7 @@ describe(
     });
 
     it("starts and serves health endpoints, 404 for others", async () => {
-      await withTestContext("universal-server", async (context) => {
+      await withTestContext("production-server", async (context) => {
         const server = await context.createProductionServer();
         const baseUrl = `http://127.0.0.1:${server.port}`;
 

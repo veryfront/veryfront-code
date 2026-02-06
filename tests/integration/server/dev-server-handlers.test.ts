@@ -238,7 +238,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
   });
 
   describe("DevServer - Application Request Handler", {}, () => {
-    it("delegates to universal handler for application routes", async () => {
+    it("delegates to runtime handler for application routes", async () => {
       await withTestContext("dev-server-app-handler", async (context) => {
         const { server, port } = await createTestDevServer(context);
 

@@ -10,7 +10,7 @@ import "../../../_helpers/log-guard.ts";
 
 import { isNotFoundError, mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { join } from "#veryfront/compat/path";
-import { startUniversalServer } from "../../../../src/server/production-server.ts";
+import { startProductionServer } from "../../../../src/server/production-server.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { assertDrained } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
@@ -31,7 +31,7 @@ async function startServer(
   signal: AbortSignal,
   debug?: boolean,
 ) {
-  const server = await startUniversalServer({
+  const server = await startProductionServer({
     projectDir: context.projectDir,
     port,
     bindAddress: "127.0.0.1",
@@ -45,7 +45,7 @@ async function startServer(
 }
 
 describe(
-  "Universal Server (adapter-backed)",
+  "Production Server (adapter-backed)",
   {
     sanitizeResources: false,
     sanitizeOps: false,
@@ -56,7 +56,7 @@ describe(
     });
 
     it("starts and serves health endpoints, 404 for others", async () => {
-      await withTestContext("universal-server", async (context: TestContext) => {
+      await withTestContext("production-server", async (context: TestContext) => {
         const port = await context.allocatePort();
         const controller = new AbortController();
         const server = await startServer(context, port, controller.signal, true);
@@ -80,7 +80,7 @@ describe(
     });
 
     it("serves static files from public/ and exposes metrics and CORS", async () => {
-      await withTestContext("universal-server-static", async (context: TestContext) => {
+      await withTestContext("production-server-static", async (context: TestContext) => {
         await writeTextFile(`${context.projectDir}/public/hello.txt`, "hi");
 
         const port = await context.allocatePort();
@@ -121,7 +121,7 @@ describe(
     });
 
     it("handles pages/api and app route handlers (GET/POST)", async () => {
-      await withTestContext("universal-server-api", async (context: TestContext) => {
+      await withTestContext("production-server-api", async (context: TestContext) => {
         await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
@@ -203,7 +203,7 @@ describe(
     });
 
     it("serves hydrate.js alias and RSC render ETag/304", async () => {
-      await withTestContext("universal-server-rsc-hydrate-etag", async (context: TestContext) => {
+      await withTestContext("production-server-rsc-hydrate-etag", async (context: TestContext) => {
         await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
@@ -242,7 +242,7 @@ describe(
     });
 
     it("returns 500 HTML fallback with security headers on SSR error", async () => {
-      await withTestContext("universal-server-500-fallback", async (context: TestContext) => {
+      await withTestContext("production-server-500-fallback", async (context: TestContext) => {
         const dir = join(context.projectDir, "app");
         await mkdir(dir, { recursive: true });
         await writeTextFile(
@@ -263,8 +263,8 @@ describe(
       });
     });
 
-    it("renders App Router loading/error via universal server", async () => {
-      await withTestContext("universal-server-app-loading-error", async (context: TestContext) => {
+    it("renders App Router loading/error via production server", async () => {
+      await withTestContext("production-server-app-loading-error", async (context: TestContext) => {
         try {
           await remove(join(context.projectDir, "app"), { recursive: true });
         } catch (e) {
@@ -308,7 +308,7 @@ describe(
     });
 
     it.ignore("renders not-found.tsx for missing App Router page", async () => {
-      await withTestContext("universal-server-app-not-found", async (context: TestContext) => {
+      await withTestContext("production-server-app-not-found", async (context: TestContext) => {
         try {
           await remove(join(context.projectDir, "app"), { recursive: true });
         } catch (e) {
@@ -337,7 +337,7 @@ describe(
     });
 
     it("includes metadata (title, description) in SSR HTML", async () => {
-      await withTestContext("universal-server-metadata", async (context: TestContext) => {
+      await withTestContext("production-server-metadata", async (context: TestContext) => {
         const appDir = join(context.projectDir, "app");
         await mkdir(appDir, { recursive: true });
         await writeTextFile(
@@ -361,7 +361,7 @@ describe(
     });
 
     it("applies generateMetadata() from App Router script page", async () => {
-      await withTestContext("universal-server-generate-metadata", async (context: TestContext) => {
+      await withTestContext("production-server-generate-metadata", async (context: TestContext) => {
         const metaDir = join(context.projectDir, "app", "meta");
         await mkdir(metaDir, { recursive: true });
         await writeTextFile(
@@ -389,7 +389,7 @@ describe(
     });
 
     it("streams RSC NDJSON with root and sidebar slots in order", async () => {
-      await withTestContext("universal-server-rsc-stream-order", async (context: TestContext) => {
+      await withTestContext("production-server-rsc-stream-order", async (context: TestContext) => {
         await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
@@ -458,7 +458,7 @@ describe(
     });
 
     it("serves SSR with caching headers and HEAD support", async () => {
-      await withTestContext("universal-server-ssr-caching-head", async (context: TestContext) => {
+      await withTestContext("production-server-ssr-caching-head", async (context: TestContext) => {
         const appDir = join(context.projectDir, "app");
         await mkdir(appDir, { recursive: true });
         await writeTextFile(join(appDir, "page.mdx"), `# Home SSR\n\nContent here.`);
@@ -485,7 +485,7 @@ describe(
     });
 
     it("handles App Router params and method Allow header", async () => {
-      await withTestContext("universal-server-app-route-methods", async (context: TestContext) => {
+      await withTestContext("production-server-app-route-methods", async (context: TestContext) => {
         const postDir = join(context.projectDir, "app", "post", "[slug]");
         await mkdir(postDir, { recursive: true });
         await writeTextFile(
@@ -554,7 +554,7 @@ describe(
     });
 
     it("serves RSC render/page endpoints for App Router page", async () => {
-      await withTestContext("universal-server-rsc-endpoints", async (context: TestContext) => {
+      await withTestContext("production-server-rsc-endpoints", async (context: TestContext) => {
         const dir = join(context.projectDir, "app", "rsc");
         await mkdir(dir, { recursive: true });
         await writeTextFile(

@@ -28,7 +28,7 @@ async function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): Pr
 }
 
 describe(
-  "Universal Server - RSC",
+  "Production Server - RSC",
   { sanitizeOps: false, sanitizeResources: false },
   () => {
     // Clean up renderer intervals to prevent resource leaks
@@ -37,7 +37,7 @@ describe(
     });
 
     it("serves hydrate.js alias and RSC render ETag/304", async () => {
-      await withTestContext("universal-server-rsc-hydrate-etag", async (context: TestContext) => {
+      await withTestContext("production-server-rsc-hydrate-etag", async (context: TestContext) => {
         await enableRsc(context);
 
         const dir = join(context.projectDir, "app");
@@ -48,6 +48,7 @@ describe(
         );
 
         const server = await context.createProductionServer();
+        assertExists(server.port);
         const baseUrl = getBaseUrl(server.port);
 
         const hyd = await fetch(`${baseUrl}/_veryfront/rsc/hydrate.js`);
@@ -71,7 +72,7 @@ describe(
     });
 
     it("streams RSC NDJSON with root and sidebar slots in order", async () => {
-      await withTestContext("universal-server-rsc-stream-order", async (context: TestContext) => {
+      await withTestContext("production-server-rsc-stream-order", async (context: TestContext) => {
         await enableRsc(context);
 
         const dir = join(context.projectDir, "app", "rsc");
@@ -82,6 +83,7 @@ describe(
         );
 
         const server = await context.createProductionServer();
+        assertExists(server.port);
         const baseUrl = getBaseUrl(server.port);
 
         const resp = await fetch(`${baseUrl}/_veryfront/rsc/stream?page=/rsc`);
@@ -129,7 +131,7 @@ describe(
     });
 
     it("serves RSC render/page endpoints for App Router page", async () => {
-      await withTestContext("universal-server-rsc-endpoints", async (context: TestContext) => {
+      await withTestContext("production-server-rsc-endpoints", async (context: TestContext) => {
         await enableRsc(context);
 
         const dir = join(context.projectDir, "app", "rsc");
@@ -144,6 +146,7 @@ describe(
         );
 
         const server = await context.createProductionServer();
+        assertExists(server.port);
         const baseUrl = getBaseUrl(server.port);
         const origin = "https://rsc.test";
 

@@ -1,6 +1,8 @@
 export interface DevServerOptions {
   port: number;
   projectDir: string;
+  /** 0.0.0.0 = all interfaces, 127.0.0.1 = localhost only */
+  bindAddress?: string;
   hmrPort?: number;
   moduleServerPort?: number;
   enableHMR?: boolean;
