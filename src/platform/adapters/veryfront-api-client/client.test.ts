@@ -1,7 +1,7 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontAPIClient } from "./client.ts";
-import { VeryfrontAPIError } from "./types.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 
 const baseConfig = {
   apiBaseUrl: "http://test.api",
@@ -35,7 +35,7 @@ describe("VeryfrontAPIClient", () => {
 
     it("throws when no token available", () => {
       const client = createClient({ apiBaseUrl: "http://test.api" });
-      assertThrows(() => client.getToken(), VeryfrontAPIError, "No API token available");
+      assertThrows(() => client.getToken(), VeryfrontError, "No API token available");
     });
   });
 
@@ -114,7 +114,7 @@ describe("VeryfrontAPIClient", () => {
       const client = createClient({ apiBaseUrl: "http://test.api", apiToken: "token" });
       await assertRejects(
         () => client.initialize(),
-        VeryfrontAPIError,
+        VeryfrontError,
         "No project slug available",
       );
     });
@@ -140,7 +140,7 @@ describe("VeryfrontAPIClient", () => {
       const client = createClient();
       assertThrows(
         () => client.listPublishedFiles(undefined, undefined, undefined),
-        VeryfrontAPIError,
+        VeryfrontError,
         "Cannot list published files without releaseId or environmentName",
       );
     });
@@ -149,7 +149,7 @@ describe("VeryfrontAPIClient", () => {
       const client = createClient();
       await assertRejects(
         () => client.getPublishedFileContent("pages/index.mdx"),
-        VeryfrontAPIError,
+        VeryfrontError,
         "Cannot fetch published file without releaseId or environmentName",
       );
     });

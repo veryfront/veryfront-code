@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { VeryfrontAPIClient, VeryfrontAPIError } from "./veryfront-api-client/index.ts";
+import { VeryfrontAPIClient, VeryfrontError } from "./veryfront-api-client/index.ts";
 
 function withMockFetch<T>(
   mockFetch: typeof globalThis.fetch,
@@ -14,9 +14,9 @@ function withMockFetch<T>(
   });
 }
 
-function assertVeryfrontError(error: unknown): VeryfrontAPIError {
-  assertEquals(error instanceof VeryfrontAPIError, true);
-  return error as VeryfrontAPIError;
+function assertVeryfrontError(error: unknown): VeryfrontError {
+  assertEquals(error instanceof VeryfrontError, true);
+  return error as VeryfrontError;
 }
 
 describe("VeryfrontAPIClient", () => {

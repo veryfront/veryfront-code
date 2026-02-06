@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ValidationError } from "./errors.ts";
+import { VeryfrontError } from "./errors.ts";
 import { readBodyWithLimit, validateRequestLimits } from "./limits.ts";
 
 describe("security/input-validation/limits", () => {
@@ -18,7 +18,7 @@ describe("security/input-validation/limits", () => {
 
       assertThrows(
         () => validateRequestLimits(req, { maxUrlLength: 100 }),
-        ValidationError,
+        VeryfrontError,
         "URL too long",
       );
     });
@@ -31,7 +31,7 @@ describe("security/input-validation/limits", () => {
 
       assertThrows(
         () => validateRequestLimits(req, { maxBodySize: 1000 }),
-        ValidationError,
+        VeryfrontError,
         "too large",
       );
     });
@@ -44,7 +44,7 @@ describe("security/input-validation/limits", () => {
 
       assertThrows(
         () => validateRequestLimits(req),
-        ValidationError,
+        VeryfrontError,
         "Invalid Content-Length",
       );
     });
@@ -60,7 +60,7 @@ describe("security/input-validation/limits", () => {
 
       assertThrows(
         () => validateRequestLimits(req, { maxHeaderSize: 1000 }),
-        ValidationError,
+        VeryfrontError,
         "Headers too large",
       );
     });
@@ -86,7 +86,7 @@ describe("security/input-validation/limits", () => {
 
       await assertRejects(
         () => readBodyWithLimit(req, 10),
-        ValidationError,
+        VeryfrontError,
         "exceeds size limit",
       );
     });
@@ -96,7 +96,7 @@ describe("security/input-validation/limits", () => {
 
       await assertRejects(
         () => readBodyWithLimit(req),
-        ValidationError,
+        VeryfrontError,
         "No request body",
       );
     });

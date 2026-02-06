@@ -10,7 +10,7 @@ export * from "./tokenizing-gateway.ts";
 export {
   assertPortableCode,
   CACHE_DIR_TOKEN,
-  CacheInvariantError,
+  CACHE_INVARIANT_VIOLATION,
   detokenizeAllCachePaths,
   detokenizeCachePaths,
   hasHardcodedCachePaths,

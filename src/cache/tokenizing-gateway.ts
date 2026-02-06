@@ -17,7 +17,7 @@ import { logger } from "#veryfront/utils";
 import type { CacheBackend } from "./types.ts";
 import {
   assertPortableCode,
-  CacheInvariantError,
+  CACHE_INVARIANT_VIOLATION,
   detokenizeAllCachePaths,
   tokenizeAllVeryFrontPaths,
 } from "./paths.ts";
@@ -48,7 +48,7 @@ export interface CodeCacheGateway {
   /**
    * Store code in cache with automatic tokenization.
    * ALWAYS tokenizes before storage.
-   * @throws CacheInvariantError if code contains paths that can't be tokenized
+   * @throws VeryfrontError (cache-invariant-violation) if code contains paths that can't be tokenized
    */
   setCode(key: string, code: string, ttlSeconds?: number): Promise<void>;
 
@@ -170,7 +170,7 @@ export class TokenizingCacheGateway implements CodeCacheGateway {
   /**
    * Store code in cache with automatic tokenization.
    * Validates that code is portable before storage.
-   * @throws CacheInvariantError if code contains paths that can't be properly tokenized
+   * @throws VeryfrontError (cache-invariant-violation) if code contains paths that can't be properly tokenized
    */
   async setCode(key: string, code: string, ttlSeconds?: number): Promise<void> {
     // For memory backend, no tokenization needed
@@ -282,5 +282,5 @@ export function createTokenizingGateway(
   return new TokenizingCacheGateway(backend, name);
 }
 
-// Re-export error type for consumers
-export { CacheInvariantError };
+// Re-export error definition for consumers
+export { CACHE_INVARIANT_VIOLATION };

@@ -1,12 +1,19 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  API_CLIENT_ERROR,
   BUILD_FAILED,
+  CACHE_INVARIANT_VIOLATION,
   CONFIG_NOT_FOUND,
+  CONFIG_VALIDATION_FAILED,
   ERROR_REGISTRY,
+  FALLBACK_EXHAUSTED,
   getAllSlugs,
   getErrorBySlug,
   getErrorsByCategory,
+  INPUT_VALIDATION_FAILED,
+  SECURITY_VIOLATION,
+  TOKEN_STORAGE_ERROR,
 } from "./error-registry.ts";
 import type { ErrorCategory } from "./types.ts";
 
@@ -18,9 +25,9 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("should have 69 registered errors", () => {
+    it("should have 76 registered errors", () => {
       const slugs = getAllSlugs();
-      assertEquals(slugs.length, 69);
+      assertEquals(slugs.length, 76);
     });
   });
 
@@ -134,7 +141,7 @@ describe("error-registry", () => {
   describe("getErrorsByCategory", () => {
     it("should return CONFIG errors", () => {
       const errors = getErrorsByCategory("CONFIG");
-      assertEquals(errors.length, 7);
+      assertEquals(errors.length, 8);
       for (const error of errors) {
         assertEquals(error.category, "CONFIG");
       }
@@ -187,6 +194,25 @@ describe("error-registry", () => {
 
       assertEquals(error.context, context);
     });
+
+    it("should support status override via create options", () => {
+      const error = API_CLIENT_ERROR.create({
+        detail: "Not found",
+        status: 404,
+      });
+
+      assertEquals(error.status, 404);
+    });
+
+    it("should support Error object as cause", () => {
+      const cause = new Error("original failure");
+      const error = FALLBACK_EXHAUSTED.create({
+        detail: "Both operations failed",
+        cause,
+      });
+
+      assertEquals(error.cause, cause);
+    });
   });
 
   describe("RFC 9457 compliance", () => {
@@ -210,7 +236,7 @@ describe("error-registry", () => {
       assertExists(rfc9457.suggestion);
     });
 
-    it("should include cause in RFC 9457 response when provided", () => {
+    it("should include cause in RFC 9457 response when provided as string", () => {
       const error = BUILD_FAILED.create({
         detail: "Build failed due to TypeScript errors",
         cause: "typescript-error",
@@ -218,6 +244,16 @@ describe("error-registry", () => {
 
       const rfc9457 = error.toRFC9457();
       assertEquals(rfc9457.cause, "typescript-error");
+    });
+
+    it("should omit non-string cause from RFC 9457 response", () => {
+      const error = FALLBACK_EXHAUSTED.create({
+        detail: "Both operations failed",
+        cause: new Error("original"),
+      });
+
+      const rfc9457 = error.toRFC9457();
+      assertEquals(rfc9457.cause, undefined);
     });
 
     it("should have type URI that matches docs URL", () => {
@@ -251,17 +287,17 @@ describe("error-registry", () => {
 
   describe("error categories coverage", () => {
     const expectedCategoryCounts: Record<string, number> = {
-      CONFIG: 7,
+      CONFIG: 8,
       BUILD: 8,
       RUNTIME: 7,
       ROUTE: 6,
       MODULE: 6,
-      SERVER: 8,
+      SERVER: 12,
       BOUNDARY: 6,
       DEV: 5,
       DEPLOY: 4,
       AGENT: 5,
-      GENERAL: 7,
+      GENERAL: 9,
     };
 
     for (const [category, count] of Object.entries(expectedCategoryCounts)) {
@@ -274,5 +310,94 @@ describe("error-registry", () => {
         );
       });
     }
+  });
+
+  // =========================================================================
+  // Scattered error migration tests
+  // =========================================================================
+
+  describe("API_CLIENT_ERROR", () => {
+    it("should preserve status and context", () => {
+      const error = API_CLIENT_ERROR.create({
+        detail: "Not found",
+        status: 404,
+        context: { endpoint: "/api/users" },
+      });
+      assertEquals(error.slug, "api-client-error");
+      assertEquals(error.status, 404);
+      assertEquals((error.context as Record<string, unknown>).endpoint, "/api/users");
+    });
+
+    it("should use title as message when no detail", () => {
+      const error = API_CLIENT_ERROR.create();
+      assertEquals(error.message, "API client request failed");
+      assertEquals(error.detail, undefined);
+    });
+  });
+
+  describe("CONFIG_VALIDATION_FAILED", () => {
+    it("should default to status 400", () => {
+      const error = CONFIG_VALIDATION_FAILED.create({ detail: "Invalid port" });
+      assertEquals(error.slug, "config-validation-failed");
+      assertEquals(error.status, 400);
+    });
+  });
+
+  describe("SECURITY_VIOLATION", () => {
+    it("should default to status 403", () => {
+      const error = SECURITY_VIOLATION.create({
+        detail: "Path traversal detected",
+        context: { path: "../etc/passwd", code: "TRAVERSAL" },
+      });
+      assertEquals(error.slug, "security-violation");
+      assertEquals(error.status, 403);
+      assertEquals((error.context as Record<string, unknown>).path, "../etc/passwd");
+    });
+  });
+
+  describe("INPUT_VALIDATION_FAILED", () => {
+    it("should default to status 400", () => {
+      const error = INPUT_VALIDATION_FAILED.create({
+        detail: "URL too long",
+        context: { maxLength: 2048 },
+      });
+      assertEquals(error.slug, "input-validation-failed");
+      assertEquals(error.status, 400);
+    });
+  });
+
+  describe("TOKEN_STORAGE_ERROR", () => {
+    it("should preserve status from response", () => {
+      const error = TOKEN_STORAGE_ERROR.create({
+        detail: "Failed to get token",
+        status: 503,
+      });
+      assertEquals(error.slug, "token-storage-error");
+      assertEquals(error.status, 503);
+    });
+  });
+
+  describe("CACHE_INVARIANT_VIOLATION", () => {
+    it("should default to status 500", () => {
+      const error = CACHE_INVARIANT_VIOLATION.create({
+        detail: "Hardcoded paths in portable code",
+      });
+      assertEquals(error.slug, "cache-invariant-violation");
+      assertEquals(error.status, 500);
+    });
+  });
+
+  describe("FALLBACK_EXHAUSTED", () => {
+    it("should chain cause errors", () => {
+      const primary = new Error("primary failed");
+      const error = FALLBACK_EXHAUSTED.create({
+        detail: "Both primary and fallback failed",
+        cause: primary,
+        context: { operationName: "readFile" },
+      });
+      assertEquals(error.slug, "fallback-exhausted");
+      assertEquals(error.status, 500);
+      assertEquals(error.cause, primary);
+    });
   });
 });

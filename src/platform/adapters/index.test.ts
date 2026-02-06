@@ -57,8 +57,12 @@ describe("adapters/index.ts exports", () => {
       await assertExport("VeryfrontAPIClient", "function");
     });
 
-    it("should export VeryfrontAPIError", async () => {
-      await assertExport("VeryfrontAPIError", "function");
+    it("should export API_CLIENT_ERROR", async () => {
+      await assertExport("API_CLIENT_ERROR", "object");
+    });
+
+    it("should export VeryfrontError", async () => {
+      await assertExport("VeryfrontError", "function");
     });
   });
 
@@ -75,8 +79,8 @@ describe("adapters/index.ts exports", () => {
       await assertExport("VeryfrontTokenAdapter", "function");
     });
 
-    it("should export TokenStorageError", async () => {
-      await assertExport("TokenStorageError", "function");
+    it("should export TOKEN_STORAGE_ERROR", async () => {
+      await assertExport("TOKEN_STORAGE_ERROR", "object");
     });
   });
 
@@ -89,8 +93,8 @@ describe("adapters/index.ts exports", () => {
       await assertExport("withFallback", "function");
     });
 
-    it("should export FallbackExecutionError", async () => {
-      await assertExport("FallbackExecutionError", "function");
+    it("should export FALLBACK_EXHAUSTED", async () => {
+      await assertExport("FALLBACK_EXHAUSTED", "object");
     });
   });
 

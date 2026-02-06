@@ -13,7 +13,6 @@ import {
   endRenderSession,
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
-import { VeryfrontAPIError } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { ErrorOverlay } from "../../dev-server/error-overlay/index.ts";
 import { ErrorPages } from "../../utils/error-html.ts";
@@ -192,8 +191,12 @@ export class SSRService {
       };
     }
 
-    if (error instanceof VeryfrontAPIError && error.status === 404) {
-      const apiUrl = ((error.details as { url?: string } | undefined)?.url ?? "").toString();
+    if (
+      error instanceof VeryfrontError && error.slug === "api-client-error" && error.status === 404
+    ) {
+      const apiUrl =
+        (((error.context as { details?: { url?: string } } | undefined)?.details?.url) ?? "")
+          .toString();
 
       const isFileListRequest = apiUrl.includes("/files") &&
         !apiUrl.includes("/files/") &&

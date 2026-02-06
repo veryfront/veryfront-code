@@ -1,9 +1,9 @@
 export {
   MemoryTokenAdapter,
+  TOKEN_STORAGE_ERROR,
   type TokenStorageAdapter,
   type TokenStorageAdapterConfig,
   TokenStorageAPIClient,
-  TokenStorageError,
   VeryfrontTokenAdapter,
   type VeryfrontTokenConfig,
 } from "./veryfront/index.ts";

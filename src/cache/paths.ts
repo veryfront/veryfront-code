@@ -10,6 +10,7 @@
  */
 
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
+import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors/error-registry.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
 
 /** Portable cache directory token */
@@ -120,25 +121,18 @@ export function detokenizeAllCachePaths(code: string): string {
   return detokenizeCachePaths(code, getCacheBaseDir());
 }
 
-/**
- * Error thrown when a cache invariant is violated (e.g., absolute path leaked to Redis).
- */
-export class CacheInvariantError extends Error {
-  constructor(message: string) {
-    super(`[CACHE INVARIANT VIOLATION] ${message}`);
-    this.name = "CacheInvariantError";
-  }
-}
+export { CACHE_INVARIANT_VIOLATION };
 
 /**
  * Assert that code is safe to store in distributed cache (portable).
- * @throws CacheInvariantError if code contains hardcoded paths
+ * @throws VeryfrontError (cache-invariant-violation) if code contains hardcoded paths
  */
 export function assertPortableCode(code: string): void {
   if (hasHardcodedCachePaths(code)) {
     logger.error("[CACHE] Invariant violation: hardcoded paths in portable code");
-    throw new CacheInvariantError(
-      "Code contains hardcoded cache paths that should be tokenized before storage in distributed cache.",
-    );
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail:
+        "[CACHE INVARIANT VIOLATION] Code contains hardcoded cache paths that should be tokenized before storage in distributed cache.",
+    });
   }
 }

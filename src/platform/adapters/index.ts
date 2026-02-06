@@ -33,6 +33,7 @@ export type {
 } from "./fs/index.ts";
 
 export {
+  API_CLIENT_ERROR,
   type FileContext,
   type FileDetail,
   type FileListResult,
@@ -42,7 +43,7 @@ export {
   type ProjectFile,
   VeryfrontAPIClient,
   type VeryfrontAPIConfig,
-  VeryfrontAPIError,
+  VeryfrontError,
 } from "./veryfront-api-client/index.ts";
 
 export {
@@ -52,10 +53,10 @@ export {
   isTokenStorageConfigured,
   MemoryTokenAdapter,
   resetTokenStorageAdapter,
+  TOKEN_STORAGE_ERROR,
   type TokenStorageAdapter,
   type TokenStorageAdapterConfig,
   TokenStorageAPIClient,
-  TokenStorageError,
   VeryfrontTokenAdapter,
   type VeryfrontTokenConfig,
 } from "./token/index.ts";
@@ -64,7 +65,7 @@ export {
   type AsyncAdapterFallback,
   createAdapterFallback,
   createAdapterFallbackSync,
-  FallbackExecutionError,
+  FALLBACK_EXHAUSTED,
   type FallbackOptions,
   type SyncAdapterFallback,
   withFallback,

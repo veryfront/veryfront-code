@@ -3,7 +3,7 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { serverLogger as logger } from "#veryfront/utils";
 import { renderSnippet } from "#veryfront/rendering/snippet-renderer.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
-import { VeryfrontAPIError } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 
 const PRIORITY_SNIPPET = 450;
 
@@ -76,7 +76,10 @@ export class SnippetHandler extends BaseHandler {
             .withContentType("text/html; charset=utf-8", result.html, 200),
         );
       } catch (error) {
-        if (error instanceof VeryfrontAPIError && error.status === 404) {
+        if (
+          error instanceof VeryfrontError && error.slug === "api-client-error" &&
+          error.status === 404
+        ) {
           logger.debug("[SnippetHandler] Snippet file not found", { filePath });
         } else {
           logger.error("[SnippetHandler] Error rendering snippet", {

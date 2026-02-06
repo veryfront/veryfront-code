@@ -2,7 +2,7 @@ import { logger } from "#veryfront/utils";
 import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { recordApiRequest, recordApiRetry } from "#veryfront/observability/simple-metrics/index.ts";
-import { VeryfrontAPIError } from "./types.ts";
+import { API_CLIENT_ERROR, VeryfrontError } from "./types.ts";
 
 export interface RetryConfig {
   maxRetries: number;
@@ -71,11 +71,11 @@ export async function requestWithRetry(
               responseText: text.slice(0, 500),
             });
 
-            throw new VeryfrontAPIError(
-              `API request failed: ${response.status} ${response.statusText}`,
-              response.status,
-              { url, responseText: text },
-            );
+            throw API_CLIENT_ERROR.create({
+              detail: `API request failed: ${response.status} ${response.statusText}`,
+              status: response.status,
+              context: { details: { url, responseText: text } },
+            });
           }
 
           const data = options.returnText ? await response.text() : await response.json();
@@ -104,7 +104,7 @@ export async function requestWithRetry(
         });
       }
 
-      if (error instanceof VeryfrontAPIError) {
+      if (error instanceof VeryfrontError && error.slug === "api-client-error") {
         const status = error.status;
         if (status && status >= 400 && status < 500 && status !== 429) {
           throw error;
@@ -133,9 +133,9 @@ export async function requestWithRetry(
     }
   }
 
-  throw new VeryfrontAPIError(
-    `API request failed after ${maxRetries} retries: ${lastError?.message}`,
-    undefined,
-    { originalError: lastError },
-  );
+  throw API_CLIENT_ERROR.create({
+    detail: `API request failed after ${maxRetries} retries: ${lastError?.message}`,
+    cause: lastError ?? undefined,
+    context: { details: { originalError: lastError } },
+  });
 }

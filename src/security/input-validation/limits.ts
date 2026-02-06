@@ -1,4 +1,4 @@
-import { ValidationError } from "./errors.ts";
+import { createValidationError } from "./errors.ts";
 import { DEFAULT_LIMITS, type RequestLimits } from "./types.ts";
 
 export function validateRequestLimits(
@@ -18,7 +18,7 @@ export function validateRequestLimits(
 function validateUrlLength(url: string, maxLength: number): void {
   if (url.length <= maxLength) return;
 
-  throw new ValidationError("URL too long", {
+  throw createValidationError("URL too long", {
     maxLength,
     actualLength: url.length,
   });
@@ -29,10 +29,10 @@ function validateContentLength(request: Request, maxSize: number): void {
   if (!contentLength) return;
 
   const size = Number.parseInt(contentLength, 10);
-  if (Number.isNaN(size)) throw new ValidationError("Invalid Content-Length header");
+  if (Number.isNaN(size)) throw createValidationError("Invalid Content-Length header");
   if (size <= maxSize) return;
 
-  throw new ValidationError("Request body too large", {
+  throw createValidationError("Request body too large", {
     maxSize,
     actualSize: size,
   });
@@ -47,7 +47,7 @@ function validateHeaderSize(request: Request, maxSize: number): void {
 
   if (headerSize <= maxSize) return;
 
-  throw new ValidationError("Headers too large", {
+  throw createValidationError("Headers too large", {
     maxSize,
     actualSize: headerSize,
   });
@@ -58,7 +58,7 @@ export async function readBodyWithLimit(
   maxSize: number = DEFAULT_LIMITS.maxBodySize,
 ): Promise<string> {
   const reader = request.body?.getReader();
-  if (!reader) throw new ValidationError("No request body");
+  if (!reader) throw createValidationError("No request body");
 
   const chunks: Uint8Array[] = [];
   let totalSize = 0;
@@ -70,7 +70,7 @@ export async function readBodyWithLimit(
 
       totalSize += value.length;
       if (totalSize > maxSize) {
-        throw new ValidationError("Request body exceeds size limit", {
+        throw createValidationError("Request body exceeds size limit", {
           maxSize,
           bytesRead: totalSize,
         });

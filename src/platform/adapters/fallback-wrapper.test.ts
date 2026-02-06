@@ -4,10 +4,11 @@ import { delay } from "#std/async.ts";
 import {
   createAdapterFallback,
   createAdapterFallbackSync,
-  FallbackExecutionError,
+  FALLBACK_EXHAUSTED,
   withFallback,
   withFallbackSync,
 } from "./fallback-wrapper.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 
 describe("fallback-wrapper", () => {
   describe("withFallback", () => {
@@ -34,7 +35,7 @@ describe("fallback-wrapper", () => {
       assertEquals(result, "fallback-success");
     });
 
-    it("should throw FallbackExecutionError when both fail", async () => {
+    it("should throw VeryfrontError with fallback-exhausted slug when both fail", async () => {
       const primaryError = new Error("primary-error");
       const fallbackError = new Error("fallback-error");
 
@@ -47,7 +48,7 @@ describe("fallback-wrapper", () => {
             operationName: "test-operation",
             logError: false,
           }),
-        FallbackExecutionError,
+        VeryfrontError,
         "Both primary and fallback operations failed for test-operation",
       );
     });
@@ -71,21 +72,12 @@ describe("fallback-wrapper", () => {
       );
     });
 
-    it("should preserve error context in FallbackExecutionError", async () => {
+    it("should preserve error context in fallback-exhausted error", async () => {
       const primaryError = new Error("primary-error");
       const fallbackError = new Error("fallback-error");
 
       const primary = () => Promise.reject(primaryError);
       const fallback = () => Promise.reject(fallbackError);
-
-      await assertRejects(
-        () =>
-          withFallback(primary, fallback, {
-            operationName: "test-operation",
-            logError: false,
-          }),
-        FallbackExecutionError,
-      );
 
       try {
         await withFallback(primary, fallback, {
@@ -94,9 +86,11 @@ describe("fallback-wrapper", () => {
         });
         throw new Error("Should have thrown");
       } catch (error) {
-        if (!(error instanceof FallbackExecutionError)) throw error;
-        assertEquals(error.primaryError, primaryError);
-        assertEquals(error.fallbackError, fallbackError);
+        if (!(error instanceof VeryfrontError && error.slug === "fallback-exhausted")) throw error;
+        const ctx = error.context as { primaryError: unknown; fallbackError: unknown };
+        assertEquals(ctx.primaryError, primaryError);
+        assertEquals(ctx.fallbackError, fallbackError);
+        assertEquals(error.cause, primaryError);
       }
     });
 
@@ -153,7 +147,7 @@ describe("fallback-wrapper", () => {
       assertEquals(result, "fallback-success");
     });
 
-    it("should throw FallbackExecutionError when both fail", () => {
+    it("should throw VeryfrontError with fallback-exhausted slug when both fail", () => {
       const primaryError = new Error("primary-error");
       const fallbackError = new Error("fallback-error");
 
@@ -171,7 +165,7 @@ describe("fallback-wrapper", () => {
         });
         throw new Error("Should have thrown");
       } catch (error) {
-        if (!(error instanceof FallbackExecutionError)) throw error;
+        if (!(error instanceof VeryfrontError && error.slug === "fallback-exhausted")) throw error;
         assertEquals(
           error.message,
           "Both primary and fallback operations failed for test-operation",
@@ -372,30 +366,28 @@ describe("fallback-wrapper", () => {
     });
   });
 
-  describe("FallbackExecutionError", () => {
-    it("should store both primary and fallback errors", () => {
+  describe("FALLBACK_EXHAUSTED", () => {
+    it("should create error with slug and context", () => {
       const primaryError = new Error("primary");
-      const fallbackError = new Error("fallback");
 
-      const error = new FallbackExecutionError(
-        "Both failed",
-        primaryError,
-        fallbackError,
-      );
+      const error = FALLBACK_EXHAUSTED.create({
+        detail: "Both failed",
+        cause: primaryError,
+        context: { primaryError, fallbackError: new Error("fallback") },
+      });
 
-      assertEquals(error.name, "FallbackExecutionError");
+      assertEquals(error.slug, "fallback-exhausted");
       assertEquals(error.message, "Both failed");
-      assertEquals(error.primaryError, primaryError);
-      assertEquals(error.fallbackError, fallbackError);
+      assertEquals(error.cause, primaryError);
+      const ctx = error.context as { primaryError: unknown; fallbackError: unknown };
+      assertEquals(ctx.primaryError, primaryError);
     });
 
-    it("should work without fallback error", () => {
-      const primaryError = new Error("primary");
+    it("should work without cause", () => {
+      const error = FALLBACK_EXHAUSTED.create({ detail: "Primary failed" });
 
-      const error = new FallbackExecutionError("Primary failed", primaryError);
-
-      assertEquals(error.primaryError, primaryError);
-      assertEquals(error.fallbackError, undefined);
+      assertEquals(error.slug, "fallback-exhausted");
+      assertEquals(error.cause, undefined);
     });
   });
 });

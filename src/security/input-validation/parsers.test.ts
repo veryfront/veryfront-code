@@ -1,7 +1,7 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { z } from "zod";
-import { ValidationError } from "./errors.ts";
+import { VeryfrontError } from "./errors.ts";
 import { parseJsonBody, parseQueryParams } from "./parsers.ts";
 
 describe("parseJsonBody", () => {
@@ -30,7 +30,7 @@ describe("parseJsonBody", () => {
 
     await assertRejects(
       () => parseJsonBody(request, schema),
-      ValidationError,
+      VeryfrontError,
       "Invalid JSON",
     );
   });
@@ -42,7 +42,7 @@ describe("parseJsonBody", () => {
 
     await assertRejects(
       () => parseJsonBody(request, schema),
-      ValidationError,
+      VeryfrontError,
       "Validation failed",
     );
   });
@@ -52,7 +52,7 @@ describe("parseJsonBody", () => {
 
     await assertRejects(
       () => parseJsonBody(request, schema),
-      ValidationError,
+      VeryfrontError,
       "Validation failed",
     );
   });
@@ -75,7 +75,7 @@ describe("parseQueryParams", () => {
 
     assertThrows(
       () => parseQueryParams(request, schema),
-      ValidationError,
+      VeryfrontError,
       "Query parameter validation failed",
     );
   });

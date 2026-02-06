@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ValidationError } from "./errors.ts";
+import { createValidationError, VeryfrontError } from "./errors.ts";
 import { readBodyWithLimit, validateRequestLimits } from "./limits.ts";
 import { sanitizeData } from "./sanitizers.ts";
 import { DEFAULT_LIMITS, type ParseFormOptions, type ParseJsonOptions } from "./types.ts";
@@ -16,9 +16,9 @@ export async function parseJsonBody<T>(
     const text = await readBodyWithLimit(request, options?.limits?.maxBodySize);
     data = JSON.parse(text);
   } catch (error) {
-    if (error instanceof ValidationError) throw error;
+    if (error instanceof VeryfrontError && error.slug === "input-validation-failed") throw error;
 
-    throw new ValidationError("Invalid JSON in request body", {
+    throw createValidationError("Invalid JSON in request body", {
       error: error instanceof Error ? error.message : "Parse error",
     });
   }
@@ -29,7 +29,7 @@ export async function parseJsonBody<T>(
   } catch (error) {
     if (!(error instanceof z.ZodError)) throw error;
 
-    throw new ValidationError("Validation failed", {
+    throw createValidationError("Validation failed", {
       errors: error.errors.map((e) => ({
         path: e.path.join("."),
         message: e.message,
@@ -53,7 +53,7 @@ export async function parseFormData<T>(
 
     for (const [key, value] of formData.entries()) {
       if (value instanceof File && value.size > maxFileSize) {
-        throw new ValidationError(`File ${key} too large`, {
+        throw createValidationError(`File ${key} too large`, {
           maxSize: maxFileSize,
           actualSize: value.size,
         });
@@ -65,7 +65,7 @@ export async function parseFormData<T>(
   } catch (error) {
     if (!(error instanceof z.ZodError)) throw error;
 
-    throw new ValidationError("Form validation failed", {
+    throw createValidationError("Form validation failed", {
       errors: error.errors,
     });
   }
@@ -96,7 +96,7 @@ export function parseQueryParams<T>(request: Request, schema: z.ZodSchema<T>): T
   } catch (error) {
     if (!(error instanceof z.ZodError)) throw error;
 
-    throw new ValidationError("Query parameter validation failed", {
+    throw createValidationError("Query parameter validation failed", {
       errors: error.errors,
     });
   }

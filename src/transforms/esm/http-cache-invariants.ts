@@ -11,9 +11,10 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import type { BundleHash, LocalModuleCode, PortableModuleCode } from "./http-cache-types.ts";
 import {
   CACHE_DIR_TOKEN,
-  CacheInvariantError as BaseCacheInvariantError,
+  CACHE_INVARIANT_VIOLATION,
   hasHardcodedCachePaths as baseHasHardcodedCachePaths,
 } from "#veryfront/cache";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 
 /**
  * Portable cache directory token for cross-environment compatibility.
@@ -21,16 +22,7 @@ import {
  */
 export { CACHE_DIR_TOKEN };
 
-/**
- * Error thrown when a cache invariant is violated.
- * These errors indicate programming bugs, not user errors.
- */
-export class CacheInvariantError extends BaseCacheInvariantError {
-  constructor(message: string) {
-    super(message);
-    this.name = "CacheInvariantError";
-  }
-}
+export { CACHE_INVARIANT_VIOLATION, VeryfrontError };
 
 /**
  * Check if code contains hardcoded cache paths that should be tokenized.
@@ -56,7 +48,7 @@ export function hasPortableTokens(code: string): boolean {
  * Fails fast if code contains hardcoded paths that should have been tokenized.
  *
  * @param code - The code to validate
- * @throws CacheInvariantError if code contains hardcoded paths
+ * @throws VeryfrontError (cache-invariant-violation) if code contains hardcoded paths
  */
 export function assertPortable(code: PortableModuleCode): void {
   const codeStr = code as unknown as string;
@@ -66,10 +58,10 @@ export function assertPortable(code: PortableModuleCode): void {
       preview: codeStr.substring(0, 200),
     });
 
-    throw new CacheInvariantError(
-      `Code contains hardcoded cache paths that should be tokenized.\n` +
-        `This indicates tokenization was not applied correctly.`,
-    );
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail:
+        "[CACHE INVARIANT VIOLATION] Code contains hardcoded cache paths that should be tokenized.\nThis indicates tokenization was not applied correctly.",
+    });
   }
 }
 
@@ -78,7 +70,7 @@ export function assertPortable(code: PortableModuleCode): void {
  * Fails fast if code contains __VF_CACHE_DIR__ tokens that weren't detokenized.
  *
  * @param code - The code to validate
- * @throws CacheInvariantError if code contains portable tokens
+ * @throws VeryfrontError (cache-invariant-violation) if code contains portable tokens
  */
 export function assertLocal(code: LocalModuleCode): void {
   const codeStr = code as unknown as string;
@@ -89,10 +81,10 @@ export function assertLocal(code: LocalModuleCode): void {
       preview: codeStr.substring(0, 200),
     });
 
-    throw new CacheInvariantError(
-      `Code contains ${CACHE_DIR_TOKEN} tokens that should be detokenized.\n` +
-        `This indicates detokenization was not applied correctly.`,
-    );
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail:
+        `[CACHE INVARIANT VIOLATION] Code contains ${CACHE_DIR_TOKEN} tokens that should be detokenized.\nThis indicates detokenization was not applied correctly.`,
+    });
   }
 }
 
@@ -102,12 +94,15 @@ export function assertLocal(code: LocalModuleCode): void {
  *
  * @param hash - The hash string
  * @returns Branded BundleHash
- * @throws CacheInvariantError if hash format is invalid
+ * @throws VeryfrontError (cache-invariant-violation) if hash format is invalid
  */
 export function asBundleHash(hash: string): BundleHash {
   // Bundle hashes should be numeric (from simpleHash)
   if (!/^\d+$/.test(hash)) {
-    throw new CacheInvariantError(`Invalid bundle hash format: "${hash}" (expected numeric)`);
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail:
+        `[CACHE INVARIANT VIOLATION] Invalid bundle hash format: "${hash}" (expected numeric)`,
+    });
   }
   return hash as unknown as BundleHash;
 }
@@ -118,13 +113,14 @@ export function asBundleHash(hash: string): BundleHash {
  *
  * @param code - The code string
  * @returns Branded LocalModuleCode
- * @throws CacheInvariantError if code contains portable tokens
+ * @throws VeryfrontError (cache-invariant-violation) if code contains portable tokens
  */
 export function asLocalModuleCode(code: string): LocalModuleCode {
   if (hasPortableTokens(code)) {
-    throw new CacheInvariantError(
-      `Cannot treat code as LocalModuleCode: contains ${CACHE_DIR_TOKEN} tokens`,
-    );
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail:
+        `[CACHE INVARIANT VIOLATION] Cannot treat code as LocalModuleCode: contains ${CACHE_DIR_TOKEN} tokens`,
+    });
   }
   return code as unknown as LocalModuleCode;
 }
@@ -135,13 +131,14 @@ export function asLocalModuleCode(code: string): LocalModuleCode {
  *
  * @param code - The code string
  * @returns Branded PortableModuleCode
- * @throws CacheInvariantError if code contains hardcoded paths
+ * @throws VeryfrontError (cache-invariant-violation) if code contains hardcoded paths
  */
 export function asPortableModuleCode(code: string): PortableModuleCode {
   if (hasHardcodedCachePaths(code)) {
-    throw new CacheInvariantError(
-      `Cannot treat code as PortableModuleCode: contains hardcoded cache paths`,
-    );
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail:
+        "[CACHE INVARIANT VIOLATION] Cannot treat code as PortableModuleCode: contains hardcoded cache paths",
+    });
   }
   return code as unknown as PortableModuleCode;
 }

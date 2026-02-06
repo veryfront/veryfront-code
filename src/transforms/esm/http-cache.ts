@@ -38,7 +38,7 @@ import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 
 // Type-safe cache wrapper (new architecture)
 import { httpBundleCache } from "./http-cache-wrapper.ts";
-import { asLocalModuleCode, CacheInvariantError } from "./http-cache-invariants.ts";
+import { asLocalModuleCode, VeryfrontError } from "./http-cache-invariants.ts";
 
 /** Maximum number of keys per batch request to distributed cache API */
 // Note: Now handled by httpBundleCache wrapper, kept for reference during migration
@@ -929,7 +929,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         HTTP_MODULE_DISTRIBUTED_TTL_SEC,
       );
     } catch (error) {
-      if (error instanceof CacheInvariantError) {
+      if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
         // Invariant violations should propagate - they indicate bugs
         throw error;
       }
@@ -1341,7 +1341,7 @@ export async function recoverHttpBundleByHash(
     logger.debug("[HTTP-CACHE] No recovery data found for hash", { hash });
     return false;
   } catch (error) {
-    if (error instanceof CacheInvariantError) {
+    if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
       // Invariant violations should propagate - they indicate bugs
       logger.error("[HTTP-CACHE] Cache invariant violation during recovery", { hash, error });
       throw error;
