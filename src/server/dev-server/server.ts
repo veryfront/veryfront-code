@@ -278,6 +278,14 @@ export class DevServer {
     );
 
     const debounceMs = this.options.fileWatcherDebounceMs ?? 100;
+    const ai = this.appConfig?.ai;
+    const aiDirNames = [
+      ...(ai?.tools?.discovery?.paths ?? ["tools"]),
+      ...(ai?.agents?.discovery?.paths ?? ["agents"]),
+      "resources",
+      "prompts",
+      "workflows",
+    ];
     this.fileWatchSetup = new FileWatchSetup(
       this.options.projectDir,
       this.adapter,
@@ -286,6 +294,7 @@ export class DevServer {
       debounceMs,
       () => this.requestHandler?.invalidateUniversalHandler(),
       this,
+      aiDirNames,
     );
 
     await this.fileWatchSetup.setup();

@@ -10,10 +10,8 @@ import type { DevServer } from "./server.ts";
 
 const METRICS_LOG_INTERVAL = 10;
 
-/**
- * AI primitive directories that trigger re-discovery on file changes.
- */
-const AI_DIRS = new Set(["tools", "agents", "workflows", "prompts", "resources"]);
+/** Default AI primitive directories (used when no custom paths configured) */
+const DEFAULT_AI_DIRS = ["tools", "agents", "workflows", "prompts", "resources"];
 
 /**
  * Patterns for paths that should NOT trigger HMR updates.
@@ -43,6 +41,7 @@ export class FileWatchSetup {
   private watcherController?: AbortController;
   private optimizedWatcher?: OptimizedFileWatcher;
   private batchCount = 0;
+  private aiDirs: Set<string>;
 
   constructor(
     private projectDir: string,
@@ -52,7 +51,10 @@ export class FileWatchSetup {
     private debounceMs: number,
     private invalidateHandler: () => void = () => {},
     private devServer?: DevServer,
-  ) {}
+    aiDirNames?: string[],
+  ) {
+    this.aiDirs = new Set(aiDirNames ?? DEFAULT_AI_DIRS);
+  }
 
   async setup(): Promise<void> {
     try {
@@ -92,12 +94,8 @@ export class FileWatchSetup {
       join(this.projectDir, "styles"),
       join(this.projectDir, "public"),
       join(this.projectDir, "app"),
-      // AI primitive directories
-      join(this.projectDir, "tools"),
-      join(this.projectDir, "agents"),
-      join(this.projectDir, "workflows"),
-      join(this.projectDir, "prompts"),
-      join(this.projectDir, "resources"),
+      // AI primitive directories (from config or defaults)
+      ...Array.from(this.aiDirs).map((dir) => join(this.projectDir, dir)),
     ];
 
     const watchPaths: string[] = [];
@@ -166,7 +164,7 @@ export class FileWatchSetup {
   private isAIPath(fullPath: string): boolean {
     const rel = relative(this.projectDir, fullPath);
     const firstSegment = rel.split(sep)[0] ?? "";
-    return AI_DIRS.has(firstSegment);
+    return this.aiDirs.has(firstSegment);
   }
 
   private async handleBatchedFileChanges(changes: string[]): Promise<void> {
