@@ -1,11 +1,11 @@
 import { VeryfrontError } from "./types.ts";
 import type { RegisteredError } from "./types.ts";
 import {
-  FILE_NOT_FOUND,
   CONFIG_INVALID,
+  FILE_NOT_FOUND,
   NETWORK_ERROR,
-  PERMISSION_DENIED,
   NOT_SUPPORTED,
+  PERMISSION_DENIED,
 } from "./error-registry.ts";
 
 function createSystemErrorClass(name: string, errorDef: RegisteredError) {

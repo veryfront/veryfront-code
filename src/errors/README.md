@@ -151,7 +151,7 @@ const problemResponse = createProblemResponse({
 The error catalog provides solutions and troubleshooting guidance:
 
 ```typescript
-import { getErrorSolution, ERROR_CATALOG } from "#veryfront/errors";
+import { ERROR_CATALOG, getErrorSolution } from "#veryfront/errors";
 
 // Get solution by slug
 const solution = getErrorSolution("config-not-found");

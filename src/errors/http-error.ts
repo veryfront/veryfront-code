@@ -7,7 +7,7 @@
  * @see https://datatracker.ietf.org/doc/html/rfc9457
  */
 
-import { VeryfrontError, type RFC9457Response, type ErrorCategory } from "./types.ts";
+import { type ErrorCategory, type RFC9457Response, VeryfrontError } from "./types.ts";
 import type { RegisteredError } from "./types.ts";
 
 /**

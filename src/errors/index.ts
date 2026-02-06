@@ -1,8 +1,8 @@
-export { VeryfrontError, defineError } from "./types.ts";
+export { defineError, VeryfrontError } from "./types.ts";
 export type {
   ErrorCategory,
-  ErrorDefinition,
   ErrorCreateOptions,
+  ErrorDefinition,
   RegisteredError,
   RFC9457Response,
   VeryfrontErrorOptions,
@@ -13,11 +13,11 @@ export * from "./error-registry.ts";
 
 // RFC 9457 HTTP error utilities
 export {
+  createErrorHandler,
   createErrorResponse,
   createErrorResponseFromDefinition,
   createProblemResponse,
   errorToResponse,
-  createErrorHandler,
   formatErrorLog,
   isVeryfrontError,
   PROBLEM_JSON_CONTENT_TYPE,

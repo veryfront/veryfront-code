@@ -1,12 +1,12 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  BUILD_FAILED,
+  CONFIG_NOT_FOUND,
   ERROR_REGISTRY,
   getAllSlugs,
   getErrorBySlug,
   getErrorsByCategory,
-  CONFIG_NOT_FOUND,
-  BUILD_FAILED,
 } from "./error-registry.ts";
 import type { ErrorCategory } from "./types.ts";
 
@@ -262,7 +262,11 @@ describe("error-registry", () => {
     for (const [category, count] of Object.entries(expectedCategoryCounts)) {
       it(`should have ${count} errors in ${category} category`, () => {
         const errors = getErrorsByCategory(category);
-        assertEquals(errors.length, count, `Expected ${count} ${category} errors, got ${errors.length}`);
+        assertEquals(
+          errors.length,
+          count,
+          `Expected ${count} ${category} errors, got ${errors.length}`,
+        );
       });
     }
   });

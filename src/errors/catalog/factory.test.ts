@@ -149,7 +149,10 @@ describe("factory", () => {
         ["route-conflict", "https://veryfront.com/docs/errors/route-conflict"],
         ["module-not-found", "https://veryfront.com/docs/errors/module-not-found"],
         ["port-in-use", "https://veryfront.com/docs/errors/port-in-use"],
-        ["client-boundary-violation", "https://veryfront.com/docs/errors/client-boundary-violation"],
+        [
+          "client-boundary-violation",
+          "https://veryfront.com/docs/errors/client-boundary-violation",
+        ],
         ["dev-server-error", "https://veryfront.com/docs/errors/dev-server-error"],
         ["deployment-error", "https://veryfront.com/docs/errors/deployment-error"],
         ["unknown-error", "https://veryfront.com/docs/errors/unknown-error"],
@@ -407,7 +410,9 @@ describe("factory", () => {
       });
 
       expect(runtimeError.relatedErrors?.length).toBe(2);
-      expect(runtimeError.docs).toBe("https://veryfront.com/docs/errors/hydration-mismatch#hydration");
+      expect(runtimeError.docs).toBe(
+        "https://veryfront.com/docs/errors/hydration-mismatch#hydration",
+      );
     });
   });
 });

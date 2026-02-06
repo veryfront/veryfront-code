@@ -1,9 +1,9 @@
 import { VeryfrontError } from "./types.ts";
 import {
   AGENT_ERROR,
+  AGENT_INTENT_ERROR,
   AGENT_NOT_FOUND,
   AGENT_TIMEOUT,
-  AGENT_INTENT_ERROR,
   ORCHESTRATION_ERROR,
 } from "./error-registry.ts";
 
