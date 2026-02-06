@@ -1,5 +1,5 @@
 import { assertEquals, assertMatch } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { loadHandlerModule } from "./loader.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -70,6 +70,11 @@ const adapter: RuntimeAdapter = {
 };
 
 describe("loadHandlerModule", () => {
+  afterAll(async () => {
+    const { stop } = await import("esbuild");
+    await stop();
+  });
+
   it("loads .ts file with explicit extension", async () => {
     const tmpDir = await makeTempDir();
     const modulePath = join(tmpDir, "handler.ts");
@@ -80,6 +85,47 @@ describe("loadHandlerModule", () => {
       projectDir: tmpDir,
       modulePath,
       adapter,
+      config: undefined,
+    });
+
+    assertEquals(typeof route?.GET, "function");
+  });
+
+  it("resolves relative imports through adapter when file is not local", async () => {
+    const realDir = await makeTempDir();
+    await fs.mkdir(join(realDir, "lib"), { recursive: true });
+    await fs.mkdir(join(realDir, "pages", "api"), { recursive: true });
+
+    await fs.writeTextFile(
+      join(realDir, "lib", "helper.ts"),
+      `export function greet(): string { return "hello"; }`,
+    );
+
+    await fs.writeTextFile(
+      join(realDir, "pages", "api", "test.ts"),
+      [
+        `import { greet } from "../../lib/helper.ts";`,
+        `export function GET() { return new Response(greet()); }`,
+      ].join("\n"),
+    );
+
+    const tempRoot = await makeTempDir();
+    const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
+    const toReal = (path: string): string => path.replace(virtualBase, realDir);
+
+    const virtualAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: (path: string) => fs.readTextFile(toReal(path)),
+        exists: (path: string) => fs.exists(toReal(path)),
+      },
+    };
+
+    const route = await loadHandlerModule({
+      projectDir: virtualBase,
+      modulePath: join(virtualBase, "pages", "api", "test.ts"),
+      adapter: virtualAdapter,
       config: undefined,
     });
 

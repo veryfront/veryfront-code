@@ -15,6 +15,20 @@ import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isCompiledBinary } from "#veryfront/utils";
 
+const FILE_EXTENSIONS: string[] = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs"];
+
+const EXT_TO_LOADER: Record<string, "tsx" | "jsx" | "ts" | "js" | "json"> = {
+  tsx: "tsx",
+  jsx: "jsx",
+  ts: "ts",
+  json: "json",
+};
+
+function getLoaderForFile(filePath: string): "tsx" | "jsx" | "ts" | "js" | "json" {
+  const ext = filePath.split(".").pop() ?? "";
+  return EXT_TO_LOADER[ext] ?? "js";
+}
+
 export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute | null> {
   return withSpan(
     "api.loadHandlerModule",
@@ -152,31 +166,63 @@ function createImportMapPlugin(
 
       build.onLoad({ filter: /.*/, namespace: "import-map" }, async (args) => {
         try {
-          const { filePath, contents } = await readFileWithExtensions(adapter, args.path, [
-            "",
-            ".ts",
-            ".tsx",
-            ".js",
-            ".jsx",
-            ".mjs",
-          ]);
-
-          const ext = filePath.split(".").pop() ?? "";
-          const loaderMap: Record<string, "tsx" | "jsx" | "ts" | "js" | "json"> = {
-            tsx: "tsx",
-            jsx: "jsx",
-            ts: "ts",
-            json: "json",
-          };
+          const { filePath, contents } = await readFileWithExtensions(
+            adapter,
+            args.path,
+            FILE_EXTENSIONS,
+          );
 
           return {
             contents,
-            loader: loaderMap[ext] ?? "js",
+            loader: getLoaderForFile(filePath),
             resolveDir: pathHelper.dirname(filePath),
           };
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           logger.error(`[API] Failed to load file via import map: ${args.path}`, error);
+          return { errors: [{ text: `Failed to load: ${msg}` }] };
+        }
+      });
+    },
+  };
+}
+
+/** Resolves relative imports through the adapter's virtual FS for remote projects. */
+function createAdapterResolvePlugin(adapter: RuntimeAdapter): Plugin {
+  return {
+    name: "vf-adapter-resolve",
+    setup(build) {
+      build.onResolve({ filter: /^\.\.?\// }, (args) => {
+        if (args.namespace === "http-url" || args.namespace === "import-map") return undefined;
+
+        const baseDir = args.importer ? pathHelper.dirname(args.importer) : args.resolveDir;
+        if (!baseDir) return undefined;
+
+        const absolutePath = pathHelper.resolve(baseDir, args.path);
+        logger.debug(
+          `[API] Adapter resolve: ${args.path} (from ${
+            args.importer || "stdin"
+          }) -> ${absolutePath}`,
+        );
+        return { path: absolutePath, namespace: "vf-adapter" };
+      });
+
+      build.onLoad({ filter: /.*/, namespace: "vf-adapter" }, async (args) => {
+        try {
+          const { filePath, contents } = await readFileWithExtensions(
+            adapter,
+            args.path,
+            FILE_EXTENSIONS,
+          );
+
+          return {
+            contents,
+            loader: getLoaderForFile(filePath),
+            resolveDir: pathHelper.dirname(filePath),
+          };
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          logger.error(`[API] Failed to load via adapter: ${args.path}`, error);
           return { errors: [{ text: `Failed to load: ${msg}` }] };
         }
       });
@@ -197,7 +243,7 @@ function loadAndTranspileModule(
       const { filePath: resolvedPath, contents: source } = await readFileWithExtensions(
         adapter,
         modulePath,
-        ["", ".ts", ".tsx", ".js", ".jsx", ".mjs"],
+        FILE_EXTENSIONS,
       );
 
       if (!source) {
@@ -245,6 +291,7 @@ function loadAndTranspileModule(
         },
         plugins: [
           createImportMapPlugin(projectDir, adapter, config),
+          createAdapterResolvePlugin(adapter),
           createHTTPPlugin(allowedHosts),
         ],
       });
