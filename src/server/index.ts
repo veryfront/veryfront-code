@@ -113,6 +113,7 @@ export async function startVeryfrontServer(
     const devServer = await startDevServer({
       port: options.port,
       projectDir: options.projectDir,
+      bindAddress: options.bindAddress,
       hmrPort: options.hmrPort,
       moduleServerPort: options.moduleServerPort,
       enableHMR: options.enableHMR,

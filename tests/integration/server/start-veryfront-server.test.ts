@@ -5,7 +5,7 @@
  * and that the VeryfrontServerHandle lifecycle (ready/stop) works.
  */
 
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import { join } from "#veryfront/compat/path";
 import { writeTextFile } from "#veryfront/testing/deno-compat";
@@ -69,11 +69,11 @@ describe(
         );
 
         const port = await context.allocatePort();
-
         const server = await startVeryfrontServer({
           mode: "development",
           projectDir: context.projectDir,
           port,
+          bindAddress: "127.0.0.1",
           enableHMR: false,
           defaultProjectSlug: context.projectId,
           defaultProjectId: context.projectId,
@@ -92,6 +92,27 @@ describe(
         const res = await fetch(`http://127.0.0.1:${port}/health.txt`);
         assertEquals(res.status, 200, "Dev mode should serve files");
         assertEquals(await res.text(), "ok");
+      });
+    });
+
+    it("honors bindAddress in development mode", async () => {
+      await withTestContext("unified-dev-bind-address", async (context) => {
+        const port = await context.allocatePort();
+
+        await assertRejects(async () => {
+          const server = await startVeryfrontServer({
+            mode: "development",
+            projectDir: context.projectDir,
+            port,
+            // TEST-NET-3 address should not be bindable in local test env.
+            bindAddress: "203.0.113.1",
+            enableHMR: false,
+            defaultProjectSlug: context.projectId,
+            defaultProjectId: context.projectId,
+          });
+
+          await server.stop();
+        });
       });
     });
 

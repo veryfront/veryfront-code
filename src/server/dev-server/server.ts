@@ -87,6 +87,7 @@ export class DevServer {
 
     logger.debug("Starting dev server", {
       port: this.options.port,
+      bindAddress: this.options.bindAddress ?? LOCALHOST.IPV4,
       projectDir: this.options.projectDir,
       hmr: this.options.enableHMR,
       fastRefresh: this.options.enableFastRefresh,
@@ -199,7 +200,7 @@ export class DevServer {
 
     this.server = await this.adapter.serve(handler, {
       port: this.options.port,
-      hostname: LOCALHOST.IPV4,
+      hostname: this.options.bindAddress ?? LOCALHOST.IPV4,
       signal: this.options.signal,
       onListen: ({ port }: { hostname: string; port: number }) => {
         const url = buildLocalhostUrl(port);
