@@ -72,6 +72,8 @@ export interface HandlerContext {
   resolvedEnvironment?: "preview" | "production";
   /** Unified request context (token, slug, branch, mode) */
   requestContext?: RequestContext;
+  /** Whether this request targets a local filesystem project (per-request, from adapter resolution). */
+  isLocalProject?: boolean;
   /** Route registry for handler chain inspection (dev dashboard) */
   routeRegistry?: {
     getHandlers(): ReadonlyArray<{ metadata: HandlerMetadata }>;

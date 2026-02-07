@@ -220,7 +220,6 @@ describe("extractRepositoryContext", () => {
         token: "",
         slug: "",
         branch: null,
-        isLocalDev: false,
       },
     };
 

@@ -28,7 +28,7 @@ export async function tryNotFoundFallback(
     const dirs = await collectAncestorDirs(searchBase, appRoot);
     const contentSourceId = ctx.enriched?.contentSourceId ??
       computeContentSourceId(
-        ctx.requestContext?.isLocalDev ?? false,
+        !!ctx.isLocalProject,
         ctx.resolvedEnvironment ?? ctx.requestContext?.mode ?? "preview",
         ctx.requestContext?.branch ?? null,
         ctx.releaseId,

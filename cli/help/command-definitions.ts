@@ -32,6 +32,7 @@ import { installHelp, uninstallHelp } from "../commands/install/command-help.ts"
 import { demoHelp } from "../commands/demo/command-help.ts";
 import { mcpHelp } from "../commands/mcp/command-help.ts";
 import { issuesHelp } from "../commands/issues/command-help.ts";
+import { startHelp } from "../commands/start/command-help.ts";
 
 /**
  * Central registry of all command help definitions.
@@ -63,4 +64,5 @@ export const COMMANDS: CommandRegistry = {
   demo: demoHelp,
   mcp: mcpHelp,
   issues: issuesHelp,
+  start: startHelp,
 };

@@ -34,6 +34,19 @@ export const localProjectCache = new LRUCache<string, string>({
 // Register cache for monitoring
 registerLRUCache("local-project-cache", localProjectCache);
 
+async function isValidLocalProjectPath(path: string, adapter: RuntimeAdapter): Promise<boolean> {
+  const stat = await adapter.fs.stat(path);
+  if (!stat?.isDirectory) return false;
+
+  const [hasApp, hasPages, hasComponents] = await Promise.all([
+    adapter.fs.stat(`${path}/app`).then((s) => s?.isDirectory).catch(() => false),
+    adapter.fs.stat(`${path}/pages`).then((s) => s?.isDirectory).catch(() => false),
+    adapter.fs.stat(`${path}/components`).then((s) => s?.isDirectory).catch(() => false),
+  ]);
+
+  return hasApp || hasPages || hasComponents;
+}
+
 /**
  * Find the local filesystem path for a project by slug.
  *
@@ -48,8 +61,25 @@ export async function findLocalProjectPath(
   headerPath?: string,
 ): Promise<string | undefined> {
   if (headerPath) {
-    localProjectCache.set(slug, headerPath);
-    return headerPath;
+    try {
+      const normalizedPath = headerPath.trim();
+      if (normalizedPath && await isValidLocalProjectPath(normalizedPath, adapter)) {
+        const absolutePath = normalizedPath.startsWith("/")
+          ? normalizedPath
+          : `${cwd()}/${normalizedPath}`;
+        localProjectCache.set(slug, absolutePath);
+        return absolutePath;
+      }
+      logger.warn("[runtime-handler] Ignoring invalid x-project-path override", {
+        slug,
+        path: normalizedPath,
+      });
+    } catch {
+      logger.warn("[runtime-handler] Failed to validate x-project-path override", {
+        slug,
+        path: headerPath,
+      });
+    }
   }
 
   const cached = localProjectCache.get(slug);
@@ -59,16 +89,7 @@ export async function findLocalProjectPath(
     const projectPath = `${dir}/${slug}`;
 
     try {
-      const stat = await adapter.fs.stat(projectPath);
-      if (!stat?.isDirectory) continue;
-
-      const [hasApp, hasPages, hasComponents] = await Promise.all([
-        adapter.fs.stat(`${projectPath}/app`).then((s) => s?.isDirectory).catch(() => false),
-        adapter.fs.stat(`${projectPath}/pages`).then((s) => s?.isDirectory).catch(() => false),
-        adapter.fs.stat(`${projectPath}/components`).then((s) => s?.isDirectory).catch(() => false),
-      ]);
-
-      if (!hasApp && !hasPages && !hasComponents) continue;
+      if (!await isValidLocalProjectPath(projectPath, adapter)) continue;
 
       const absolutePath = projectPath.startsWith("/") ? projectPath : `${cwd()}/${projectPath}`;
       localProjectCache.set(slug, absolutePath);

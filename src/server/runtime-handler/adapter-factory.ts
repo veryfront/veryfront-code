@@ -74,8 +74,9 @@ export async function resolveAdapter(
   let effectiveConfig = opts.config;
 
   // Check if this is a local project
+  const trustedHeaderProjectPath = opts.isProxyMode ? opts.headerProjectPath : undefined;
   const localProjectPath = opts.projectSlug
-    ? await findLocalProjectPath(opts.projectSlug, opts.adapter, opts.headerProjectPath)
+    ? await findLocalProjectPath(opts.projectSlug, opts.adapter, trustedHeaderProjectPath)
     : undefined;
 
   const isLocalProject = !!localProjectPath;

@@ -46,19 +46,20 @@ describe("server/handlers/monitoring/client-log", () => {
 
       if (typeof enabledFn !== "function") return;
 
-      assertEquals(enabledFn({ requestContext: { isLocalDev: false } } as never), false);
-      assertEquals(enabledFn({ requestContext: { isLocalDev: true } } as never), true);
+      assertEquals(enabledFn({ isLocalProject: false } as never), false);
+      assertEquals(enabledFn({ isLocalProject: true } as never), true);
       assertEquals(enabledFn({} as never), false);
     });
   });
 
   describe("ClientLogHandler.handle", () => {
-    const minimalCtx = { securityConfig: undefined } as never;
+    const localCtx = { securityConfig: undefined, isLocalProject: true } as never;
+    const remoteCtx = { securityConfig: undefined, isLocalProject: false } as never;
 
     it("should return continue for non-matching pathname", async () => {
       const handler = createHandler();
       const req = new Request("http://localhost/other-path", { method: "POST" });
-      const result = await handler.handle(req, minimalCtx);
+      const result = await handler.handle(req, localCtx);
       assertEquals(result.continue, true);
       assertEquals(result.response, undefined);
     });
@@ -66,7 +67,15 @@ describe("server/handlers/monitoring/client-log", () => {
     it("should return continue for GET requests to the log endpoint", async () => {
       const handler = createHandler();
       const req = new Request("http://localhost/_veryfront/log", { method: "GET" });
-      const result = await handler.handle(req, minimalCtx);
+      const result = await handler.handle(req, localCtx);
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
+    });
+
+    it("should return continue when request is not local project", async () => {
+      const handler = createHandler();
+      const req = createPostRequest({ level: "info", message: "test message" });
+      const result = await handler.handle(req, remoteCtx);
       assertEquals(result.continue, true);
       assertEquals(result.response, undefined);
     });
@@ -74,10 +83,10 @@ describe("server/handlers/monitoring/client-log", () => {
     it("should return response with ok:true for valid log data", async () => {
       const handler = createHandler();
       const req = createPostRequest({ level: "info", message: "test message" });
-      const result = await handler.handle(req, minimalCtx);
+      const result = await handler.handle(req, localCtx);
 
       await assertOkResponse(result);
-      const body = await result.response.json();
+      const body = await (result.response as Response).json();
       assertEquals(body.ok, true);
     });
 
@@ -87,10 +96,10 @@ describe("server/handlers/monitoring/client-log", () => {
         method: "POST",
         body: "not valid json {{{",
       });
-      const result = await handler.handle(req, minimalCtx);
+      const result = await handler.handle(req, localCtx);
 
       await assertOkResponse(result);
-      const body = await result.response.json();
+      const body = await (result.response as Response).json();
       assertEquals(body.ok, true);
     });
 
@@ -101,21 +110,21 @@ describe("server/handlers/monitoring/client-log", () => {
         message: "something failed",
         details: { component: "App", stack: "Error at line 5" },
       });
-      const result = await handler.handle(req, minimalCtx);
+      const result = await handler.handle(req, localCtx);
       await assertOkResponse(result);
     });
 
     it("should handle missing level gracefully", async () => {
       const handler = createHandler();
       const req = createPostRequest({ message: "no level" });
-      const result = await handler.handle(req, minimalCtx);
+      const result = await handler.handle(req, localCtx);
       await assertOkResponse(result);
     });
 
     it("should handle missing message gracefully", async () => {
       const handler = createHandler();
       const req = createPostRequest({ level: "warn" });
-      const result = await handler.handle(req, minimalCtx);
+      const result = await handler.handle(req, localCtx);
       await assertOkResponse(result);
     });
   });

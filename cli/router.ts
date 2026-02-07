@@ -73,6 +73,7 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
   "demo": handleDemoCommand,
   "mcp": handleMCPCommand,
   "issues": handleIssuesCommand,
+  "start": handleStartCommand,
 };
 
 /**

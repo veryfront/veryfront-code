@@ -72,12 +72,27 @@ describe("local-project-discovery", () => {
       } as unknown as RuntimeAdapter;
     }
 
-    it("returns headerPath immediately if provided", async () => {
-      const adapter = createMockAdapter({});
+    it("accepts headerPath only when it points to a valid project directory", async () => {
+      const adapter = createMockAdapter({
+        "/custom/path": { isDirectory: true },
+        "/custom/path/app": { isDirectory: true },
+      });
       const path = await findLocalProjectPath("myproject", adapter, "/custom/path");
 
       assertEquals(path, "/custom/path");
       assertEquals(localProjectCache.get("myproject"), "/custom/path");
+    });
+
+    it("ignores invalid headerPath override", async () => {
+      const adapter = createMockAdapter({
+        "/custom/path": { isDirectory: true },
+        // Missing app/pages/components
+      });
+
+      const path = await findLocalProjectPath("myproject", adapter, "/custom/path");
+
+      assertEquals(path, undefined);
+      assertEquals(localProjectCache.has("myproject"), false);
     });
 
     it("returns cached path if available", async () => {

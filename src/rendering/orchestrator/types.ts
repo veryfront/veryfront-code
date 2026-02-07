@@ -7,9 +7,6 @@ export type { RenderResult };
 
 export interface RendererOptions {
   projectDir: string;
-  /**
-   * @deprecated Use `ctx.requestContext?.isLocalDev` for environment checks.
-   */
   mode: "development" | "production";
   port?: number;
   adapter?: RuntimeAdapter;

@@ -42,8 +42,6 @@ interface ServerOptions {
   /** 0.0.0.0 = all interfaces, 127.0.0.1 = localhost only */
   bindAddress?: string;
   signal?: AbortSignal;
-  /** Server mode - "development" enables dev-only features like /_veryfront/fs/ */
-  mode?: "development" | "production";
   /** Default project slug when not provided via proxy headers (for tests/local mode) */
   defaultProjectSlug?: string;
   /** Default project ID when not provided via proxy headers (for tests/local mode) */
@@ -58,6 +56,8 @@ interface ServerOptions {
   requestInterceptor?: (req: Request) => Request | Promise<Request>;
   /** Discovery configuration for AI primitives. Runs discoverAll() before serving. */
   discoveryConfig?: DiscoveryOptions;
+  /** Map of project slugs to their filesystem paths (seeds local project discovery). */
+  localProjects?: Record<string, string>;
 }
 
 export interface ServerHandle {
@@ -84,13 +84,13 @@ export function startProductionServer(
         bindAddress = "0.0.0.0",
         signal,
         debug,
-        mode,
         defaultProjectSlug,
         defaultProjectId,
         defaultEnvironment,
         requestInterceptor,
         bootstrapResult,
         discoveryConfig,
+        localProjects,
       } = options;
 
       const baseAdapter = options.adapter ?? (await runtime.get());
@@ -155,12 +155,10 @@ export function startProductionServer(
         projectDir,
         debug,
         config: bootstrap.config,
-        // When mode is "development", enable dev-only features (e.g., /_veryfront/fs/)
-        // Otherwise explicitly disable dev mode (don't rely on NODE_ENV which may not be set in tests)
-        envConfig: { isLocalDev: mode === "development" },
         defaultProjectSlug,
         defaultProjectId,
         defaultEnvironment,
+        localProjects,
       });
 
       // Wrap handler with interceptor if provided (for combined mode)

@@ -55,14 +55,14 @@ export class StaticHandler extends BaseHandler {
       async () => {
         const method = req.method.toUpperCase();
         const isHead = method === "HEAD";
-        const isLocalDev = ctx.requestContext?.isLocalDev ?? false;
-        const isPreviewMode = ctx.requestContext?.mode === "preview" && !isLocalDev;
+        const isLocal = !!ctx.isLocalProject;
+        const isPreviewMode = ctx.requestContext?.mode === "preview" && !isLocal;
 
         const result = await this.staticService.resolveFile(pathname, {
           projectDir: ctx.projectDir,
           adapter: ctx.adapter,
           isPreviewMode,
-          isLocalDev,
+          isLocalProject: isLocal,
         });
 
         if (!result) {

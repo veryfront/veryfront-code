@@ -123,7 +123,6 @@
     "#veryfront/rendering": "./src/rendering/index.ts",
     "#veryfront/resource": "./src/resource/index.ts",
     "#veryfront/routing": "./src/routing/index.ts",
-    "#veryfront/schemas": "./src/schemas/index.ts",
     "#veryfront/security": "./src/security/index.ts",
     "#veryfront/server": "./src/server/index.ts",
     "#veryfront/testing": "./src/testing/index.ts",

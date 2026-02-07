@@ -7,7 +7,7 @@ import {
 } from "#veryfront/security/http/response/security-handler.ts";
 
 function isDev(ctx: HandlerContext): boolean {
-  return ctx.requestContext?.isLocalDev ?? false;
+  return !!ctx.isLocalProject;
 }
 
 export function buildCSP(ctx: HandlerContext): string {

@@ -26,8 +26,7 @@ export class MarkdownPreviewHandler extends BaseHandler {
     name: "MarkdownPreviewHandler",
     priority: PRIORITY_MARKDOWN_PREVIEW,
     patterns: [{ pattern: /\.md$/, method: "GET" }],
-    enabled: (ctx) =>
-      ctx.requestContext?.isLocalDev === true || ctx.requestContext?.mode === "preview",
+    enabled: (ctx) => ctx.isLocalProject || ctx.requestContext?.mode === "preview",
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {

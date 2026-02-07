@@ -10,11 +10,13 @@ export class ClientLogHandler extends BaseHandler {
     name: "ClientLogHandler",
     priority: PRIORITY_HIGH_CLIENT_LOG as HandlerPriority,
     patterns: [{ pattern: "/_veryfront/log", exact: true, method: "POST" }],
-    enabled: (ctx) => ctx.requestContext?.isLocalDev ?? false,
+    enabled: (ctx) => !!ctx.isLocalProject,
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const { pathname } = new URL(req.url);
+
+    if (!ctx.isLocalProject) return this.continue();
 
     if (pathname !== "/_veryfront/log" || req.method !== "POST") {
       return this.continue();

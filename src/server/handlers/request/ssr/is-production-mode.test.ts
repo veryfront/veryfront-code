@@ -22,7 +22,6 @@ const previewRequestContext = {
   slug: "test",
   branch: null,
   token: "",
-  isLocalDev: true,
 };
 
 const productionRequestContext = {
@@ -30,7 +29,6 @@ const productionRequestContext = {
   slug: "test",
   branch: null,
   token: "",
-  isLocalDev: false,
 };
 
 describe("isProductionMode", () => {

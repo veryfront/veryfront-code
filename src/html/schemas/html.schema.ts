@@ -44,7 +44,7 @@ export const HTMLGenerationOptionsSchema = z.object({
     )
     .optional(),
   projectClasses: z.set(z.string()).optional(),
-  isLocalDev: z.boolean().optional(),
+  isLocalProject: z.boolean().optional(),
   noHmr: z.boolean().optional(),
 });
 

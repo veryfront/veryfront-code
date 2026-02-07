@@ -55,7 +55,6 @@ interface BaseServerOptions {
   requestInterceptor?: (req: Request) => Request | Promise<Request>;
 }
 
-/** Options specific to development mode. */
 export interface StartDevModeOptions extends BaseServerOptions {
   mode: "development";
   hmrPort?: number;
@@ -65,7 +64,6 @@ export interface StartDevModeOptions extends BaseServerOptions {
   fileWatcherDebounceMs?: number;
 }
 
-/** Options specific to production mode. */
 export interface StartProductionModeOptions extends BaseServerOptions {
   mode?: "production";
   /** When true, expose additional debug logging. */
@@ -74,22 +72,13 @@ export interface StartProductionModeOptions extends BaseServerOptions {
   defaultEnvironment?: "preview" | "production";
   /** Discovery configuration for AI primitives. Runs discoverAll() before serving. */
   discoveryConfig?: DiscoveryOptions;
+  /** Map of local project slugs to their filesystem paths. */
+  localProjects?: Record<string, string>;
 }
 
 /**
- * Discriminated union of server options.
- *
- * - `mode: "development"` starts a dev server with HMR and file watching.
- * - `mode: "production"` (or omitted) starts a production server.
- *
- * @example
- * ```ts
- * // Development
- * await startVeryfrontServer({ mode: "development", projectDir: ".", port: 3000 });
- *
- * // Production (default)
- * await startVeryfrontServer({ projectDir: ".", port: 3000 });
- * ```
+ * Server options. Use `mode: "development"` for dev server with HMR,
+ * or omit/set `mode: "production"` for a production server.
  */
 export type StartVeryfrontServerOptions = StartDevModeOptions | StartProductionModeOptions;
 
@@ -103,10 +92,6 @@ export interface VeryfrontServerHandle {
  *
  * This is the primary entry point for running a Veryfront server.
  * Defaults to production mode when `mode` is not specified.
- *
- * @param options - Server options. Use `mode: "development"` for dev server with HMR,
- *   or omit/set `mode: "production"` for a production server.
- * @returns A handle with `ready` (resolves when the server is listening) and `stop` (graceful shutdown).
  */
 export async function startVeryfrontServer(
   options: StartVeryfrontServerOptions,
@@ -143,8 +128,8 @@ export async function startVeryfrontServer(
     requestInterceptor: options.requestInterceptor,
     defaultEnvironment: options.defaultEnvironment,
     discoveryConfig: options.discoveryConfig,
+    localProjects: options.localProjects,
     debug: options.debug,
-    mode: "production",
   });
 }
 

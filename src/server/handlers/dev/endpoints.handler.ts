@@ -89,7 +89,7 @@ export class DevEndpointsHandler extends BaseHandler {
       { pattern: "/_veryfront/hydrate.js", exact: true },
       { pattern: "/_veryfront/preview-hmr.js", exact: true },
     ],
-    enabled: (ctx) => ctx.requestContext?.isLocalDev || ctx.requestContext?.mode === "preview",
+    enabled: (ctx) => ctx.isLocalProject || ctx.requestContext?.mode === "preview",
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {

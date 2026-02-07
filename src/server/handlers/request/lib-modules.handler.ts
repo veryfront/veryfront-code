@@ -75,7 +75,7 @@ export class LibModulesHandler extends BaseHandler {
         );
       }
 
-      const isDev = ctx.requestContext?.isLocalDev ?? false;
+      const isDev = !!ctx.isLocalProject;
       const body = method === "HEAD" ? null : content;
 
       this.logDebug(

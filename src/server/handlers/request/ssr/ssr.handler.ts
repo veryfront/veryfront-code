@@ -258,7 +258,7 @@ export class SSRHandler extends BaseHandler {
   ): Promise<HandlerResult> {
     const builder = this.createResponseBuilder(ctx, nonce);
     const isHeadRequest = req.method.toUpperCase() === "HEAD";
-    const isDev = ctx.requestContext?.isLocalDev ?? false;
+    const isDev = !!ctx.isLocalProject;
 
     if (result.isStreaming && result.stream) {
       const response = builder

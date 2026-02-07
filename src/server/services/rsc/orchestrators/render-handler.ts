@@ -11,7 +11,7 @@ export class RenderHandler {
   constructor(
     private projectDir: string,
     private getRenderer: () => RSCRenderer | null,
-    private isLocalDev: boolean = false,
+    private isLocalProject: boolean = false,
   ) {}
 
   async handle(
@@ -86,7 +86,7 @@ export class RenderHandler {
       );
     }
 
-    return this.isLocalDev ? payload : RSCProductionOptimizer.optimizePayload(payload);
+    return this.isLocalProject ? payload : RSCProductionOptimizer.optimizePayload(payload);
   }
 
   private createResponse(payload: RSCPayload, request?: Request): Response {
@@ -106,7 +106,7 @@ export class RenderHandler {
   }
 
   private buildHeaders(etag: string): Record<string, string> {
-    const isProd = !this.isLocalDev;
+    const isProd = !this.isLocalProject;
 
     const headers: Record<string, string> = {
       "content-type": "application/json",
@@ -133,7 +133,7 @@ export class RenderHandler {
       JSON.stringify({
         error: "Render error",
         message: normalizedError.message,
-        stack: this.isLocalDev ? normalizedError.stack : undefined,
+        stack: this.isLocalProject ? normalizedError.stack : undefined,
       }),
       {
         status: normalizedError.message === "Component not found" ? 404 : 500,

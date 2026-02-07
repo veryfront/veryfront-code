@@ -18,7 +18,7 @@ async function setupProject(): Promise<string> {
 function createBuilder(ctx: HandlerContext): ResponseBuilder {
   return new ResponseBuilder({
     securityConfig: ctx.securityConfig ?? undefined,
-    isDev: ctx.requestContext?.isLocalDev ?? true, // Default to true in test environment
+    isDev: !!ctx.isLocalProject, // Default to false in test environment
     cspUserHeader: ctx.cspUserHeader ?? undefined,
     adapter: ctx.adapter,
   });

@@ -61,7 +61,7 @@ export interface HandlerContextOptions {
  */
 export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext {
   const contentSourceId = computeContentSourceId(
-    opts.requestContext.isLocalDev || opts.isLocalProject,
+    opts.isLocalProject,
     opts.resolvedEnvironment,
     opts.requestContext.branch,
     opts.releaseId,
@@ -76,7 +76,7 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
       token: opts.isLocalProject ? "" : (opts.proxyToken ?? ""),
       environment: opts.resolvedEnvironment,
       branch: opts.requestContext.branch,
-      isLocalDev: opts.requestContext.isLocalDev || opts.isLocalProject,
+      isLocalProject: opts.isLocalProject,
       contentSourceId,
       parsedDomain: opts.parsedDomain,
       adapter: opts.adapter,
@@ -105,6 +105,7 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
     resolvedEnvironment: opts.resolvedEnvironment,
     requestContext: { ...opts.requestContext, mode: opts.resolvedEnvironment },
     routeRegistry: opts.routeRegistry,
+    isLocalProject: opts.isLocalProject,
     enriched: enrichedContext,
   };
 }

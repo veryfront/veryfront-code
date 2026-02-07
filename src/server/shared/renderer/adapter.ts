@@ -143,10 +143,10 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
   const contextStartTime = performance.now();
   const environment = resolveEnvironment(ctx);
   const branch = ctx.requestContext?.branch ?? null;
-  const isLocalDev = ctx.requestContext?.isLocalDev ?? false;
+  const isLocal = !!ctx.isLocalProject;
 
   // Use shared utility for contentSourceId (fallback path when no enriched context)
-  const contentSourceId = computeContentSourceId(isLocalDev, environment, branch, ctx.releaseId);
+  const contentSourceId = computeContentSourceId(isLocal, environment, branch, ctx.releaseId);
 
   // Derive a unique identifier from projectDir when no explicit projectId/slug is available
   // This prevents cache pollution between different local projects
@@ -162,7 +162,7 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
     token: ctx.proxyToken ?? "",
     environment,
     branch,
-    isLocalDev,
+    isLocalProject: isLocal,
     contentSourceId,
     parsedDomain: ctx.parsedDomain ?? {
       slug: null,

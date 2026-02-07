@@ -52,16 +52,16 @@ export function createRenderContext(
   const branch = ctx.requestContext?.branch ?? null;
   const projectId = ctx.projectId ?? ctx.projectSlug!;
   const projectSlug = ctx.projectSlug ?? ctx.projectId!;
-  const isLocalDev = ctx.requestContext?.isLocalDev ?? false;
+  const isLocal = !!ctx.isLocalProject;
 
   const contentSourceId = computeContentSourceId(
-    isLocalDev,
+    isLocal,
     environment,
     branch,
     ctx.releaseId,
   );
 
-  const releaseKey = getReleaseKey(isLocalDev, environment, branch, ctx.releaseId);
+  const releaseKey = getReleaseKey(isLocal, environment, branch, ctx.releaseId);
   const cachePrefix = buildRenderCachePrefix(projectId, environment, releaseKey);
 
   return {
@@ -69,7 +69,7 @@ export function createRenderContext(
     projectSlug,
     projectDir: ctx.projectDir,
     config: ctx.config,
-    mode: isLocalDev ? "development" : "production",
+    mode: isLocal ? "development" : "production",
     adapter: ctx.adapter,
     cachePrefix,
     environment,
@@ -84,12 +84,12 @@ export function createRenderContext(
 }
 
 function getReleaseKey(
-  isLocalDev: boolean,
+  isLocal: boolean,
   environment: RenderEnvironment,
   branch: string | null,
   releaseId?: string,
 ): string {
-  if (isLocalDev) return branch ?? "main";
+  if (isLocal) return branch ?? "main";
   if (environment === "production") return releaseId!;
   return branch ?? "main";
 }

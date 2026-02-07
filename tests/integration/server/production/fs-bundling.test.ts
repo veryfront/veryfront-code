@@ -42,9 +42,9 @@ describe(
           projectDir: context.projectDir,
           port,
           bindAddress: "127.0.0.1",
-          mode: "development",
           defaultProjectSlug: context.projectId,
           defaultProjectId: context.projectId,
+          localProjects: { [context.projectId]: context.projectDir },
         });
 
         await server.ready;

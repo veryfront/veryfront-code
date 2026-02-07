@@ -7,6 +7,19 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 
+export const INTERNAL_PROXY_HEADERS = [
+  "x-token",
+  "x-project-slug",
+  "x-environment",
+  "x-content-source-id",
+  "x-forwarded-host",
+  "x-project-path",
+  "x-project-id",
+  "x-release-id",
+  "x-branch-id",
+  "x-branch-name",
+] as const;
+
 interface DomainLookupResult {
   id: string;
   slug: string;
@@ -500,6 +513,7 @@ export type ProxyHandler = ReturnType<typeof createProxyHandler>;
 
 export function injectContextHeaders(req: Request, ctx: ProxyContext): Request {
   const headers = new Headers(req.headers);
+  for (const header of INTERNAL_PROXY_HEADERS) headers.delete(header);
 
   if (ctx.token) headers.set("x-token", ctx.token);
   headers.set("x-project-slug", ctx.projectSlug ?? "");

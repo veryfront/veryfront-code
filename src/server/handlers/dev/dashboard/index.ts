@@ -12,7 +12,7 @@ export class DevDashboardHandler extends BaseHandler {
     name: "DevDashboardHandler",
     priority: PRIORITY_HIGH_DEV as HandlerPriority,
     patterns: [{ pattern: "/_dev", exact: false }],
-    enabled: (ctx) => ctx.requestContext?.isLocalDev ?? false,
+    enabled: (ctx) => !!ctx.isLocalProject,
   };
 
   protected override shouldHandle(req: Request, _ctx: HandlerContext): boolean {
@@ -22,6 +22,7 @@ export class DevDashboardHandler extends BaseHandler {
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) return this.continue();
+    if (!ctx.isLocalProject) return this.continue();
 
     const { pathname } = new URL(req.url);
 

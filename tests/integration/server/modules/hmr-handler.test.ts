@@ -30,11 +30,11 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(firstPattern.exact, true);
     });
 
-    it("is enabled in preview mode (regardless of isLocalDev)", () => {
+    it("is enabled in preview mode (regardless of isLocalProject)", () => {
       const handler = new HMRHandler();
 
       const previewCtx = {
-        requestContext: { mode: "preview", isLocalDev: false },
+        requestContext: { mode: "preview" },
       } as Parameters<NonNullable<typeof handler.metadata.enabled>>[0];
 
       assertEquals(handler.metadata.enabled?.(previewCtx), true);
@@ -44,7 +44,8 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const handler = new HMRHandler();
 
       const productionModeCtx = {
-        requestContext: { mode: "production", isLocalDev: true },
+        isLocalProject: true,
+        requestContext: { mode: "production" },
       } as Parameters<NonNullable<typeof handler.metadata.enabled>>[0];
 
       assertEquals(handler.metadata.enabled?.(productionModeCtx), true);
@@ -54,7 +55,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const handler = new HMRHandler();
 
       const productionCtx = {
-        requestContext: { mode: "production", isLocalDev: false },
+        requestContext: { mode: "production" },
       } as Parameters<NonNullable<typeof handler.metadata.enabled>>[0];
       assertEquals(handler.metadata.enabled?.(productionCtx), true);
 
@@ -67,7 +68,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const req = new Request("http://localhost:3000/_ws");
       const ctx = {
-        requestContext: { mode: "production", isLocalDev: false },
+        requestContext: { mode: "production" },
         projectDir: "/tmp/test",
         securityConfig: null,
         cspUserHeader: null,
@@ -85,7 +86,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const req = new Request("http://localhost:3000/_ws?x-environment=preview");
       const ctx = {
-        requestContext: { mode: "production", isLocalDev: false },
+        requestContext: { mode: "production" },
         projectDir: "/tmp/test",
         securityConfig: null,
         cspUserHeader: null,
@@ -232,7 +233,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const req = new Request("http://localhost:3000/_ws?x-environment=preview");
       const ctx = {
-        requestContext: { mode: "production", isLocalDev: false },
+        requestContext: { mode: "production" },
         resolvedEnvironment: "production", // Production mode
         projectSlug: "test-project",
         projectId: "proj-123",
