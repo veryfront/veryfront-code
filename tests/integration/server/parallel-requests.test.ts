@@ -4,8 +4,6 @@
  * Verifies that concurrent requests to the same page don't cause:
  * 1. "body already consumed" errors (from shared Response streams)
  * 2. Singleflight deadlocks (from recursive dependency resolution)
- *
- * @see https://github.com/veryfront/veryfront-server/issues/XXX
  */
 
 import { assertEquals, assertNotEquals, assertStringIncludes } from "#veryfront/testing/assert";
