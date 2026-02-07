@@ -1,3 +1,4 @@
-import { createOAuthInitHandler, hubspotConfig, memoryTokenStore } from "veryfront/oauth";
+import { createOAuthInitHandler, hubspotConfig } from "veryfront/oauth";
+import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
 
-export const GET = createOAuthInitHandler(hubspotConfig, { tokenStore: memoryTokenStore });
+export const GET = createOAuthInitHandler(hubspotConfig, { tokenStore: oauthMemoryTokenStore });

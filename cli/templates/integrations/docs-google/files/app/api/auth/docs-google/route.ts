@@ -1,5 +1,6 @@
-import { createOAuthInitHandler, docsGoogleConfig, memoryTokenStore } from "veryfront/oauth";
+import { createOAuthInitHandler, docsGoogleConfig } from "veryfront/oauth";
+import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
 
 export const GET = createOAuthInitHandler(docsGoogleConfig, {
-  tokenStore: memoryTokenStore,
+  tokenStore: oauthMemoryTokenStore,
 });

@@ -5,12 +5,9 @@ export {
   type GetConfigOptions,
 } from "./loader.ts";
 export { defineConfig } from "./define-config.ts";
-export * from "./env.ts";
+export { getApiTokenEnv, isCiEnv, isDenoTestingEnv, isRscExperimentalEnabled } from "./env.ts";
 
 export {
-  _resetEnvironmentConfig,
-  _setEnvironmentConfigForTesting,
-  createTestEnvironmentConfig,
   type EnvironmentConfig,
   getEnvironmentConfig,
   initEnvironmentConfig,
@@ -18,10 +15,7 @@ export {
 } from "./environment-config.ts";
 
 export {
-  _resetRuntimeConfig,
-  _setRuntimeConfigForTesting,
   createRuntimeConfig,
-  createTestConfig,
   DEFAULT_CONFIG,
   getRuntimeConfig,
   initRuntimeConfig,

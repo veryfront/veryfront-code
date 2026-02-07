@@ -9,13 +9,8 @@ export type {
   ProvidersConfig,
 } from "./types.ts";
 
-export { BaseProvider, mapFinishReason } from "./base.ts";
+export { BaseProvider } from "./base.ts";
 export { AnthropicProvider } from "./anthropic.ts";
 export { GoogleProvider } from "./google.ts";
 export { OpenAIProvider } from "./openai.ts";
-export {
-  getProvider,
-  getProviderFromModel,
-  initializeProviders,
-  providerRegistry,
-} from "./factory.ts";
+export { getProvider, getProviderFromModel, initializeProviders } from "./factory.ts";

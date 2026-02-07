@@ -25,7 +25,10 @@ function getEnv(key: string): string | undefined {
  * Executes the ingestion pipeline workflow using local MinIO and Redis.
  */
 
-import { WorkflowExecutor, RedisBackend, S3BlobStorage, DefaultAgentRegistry, DefaultToolRegistry } from "veryfront/workflow";
+import { RedisBackend } from "veryfront/workflow";
+import { WorkflowExecutor } from "veryfront/workflow/executor";
+import { DefaultAgentRegistry, DefaultToolRegistry } from "veryfront/workflow/runtime";
+import { S3BlobStorage } from "veryfront/workflow/blob";
 import ingestionWorkflow from "./ai/workflows/ingestion.ts";
 import processorAgent from "./ai/agents/processor.ts";
 import indexerAgent from "./ai/agents/indexer.ts";

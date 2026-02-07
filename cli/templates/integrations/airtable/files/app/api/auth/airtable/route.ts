@@ -1,5 +1,6 @@
-import { airtableConfig, createOAuthInitHandler, memoryTokenStore } from "veryfront/oauth";
+import { airtableConfig, createOAuthInitHandler } from "veryfront/oauth";
+import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
 
 export const GET = createOAuthInitHandler(airtableConfig, {
-  tokenStore: memoryTokenStore,
+  tokenStore: oauthMemoryTokenStore,
 });

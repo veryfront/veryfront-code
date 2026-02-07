@@ -8,8 +8,7 @@
  * - Prompt/action loading
  */
 
-import { createFileSystem } from "veryfront/platform";
-import * as pathHelper from "veryfront/platform/path";
+import { createFileSystem, join } from "veryfront/fs";
 import { loadTemplateFromDirectory } from "./loader.ts";
 import type {
   IntegrationConfig,
@@ -157,7 +156,7 @@ function getModuleDir(): string {
  * Get the directory path for an integration
  */
 export function getIntegrationDirectory(integrationName: string): string {
-  return pathHelper.join(getModuleDir(), "integrations", integrationName);
+  return join(getModuleDir(), "integrations", integrationName);
 }
 
 /**
@@ -167,7 +166,7 @@ export async function loadIntegrationConfig(
   integrationName: IntegrationName,
 ): Promise<IntegrationConfig | null> {
   const fs = createFileSystem();
-  const configPath = pathHelper.join(
+  const configPath = join(
     getIntegrationDirectory(integrationName),
     "connector.json",
   );

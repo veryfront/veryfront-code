@@ -1,7 +1,6 @@
 'use client'
 
-import { Chat } from 'veryfront/components/ai'
-import { useChat } from 'veryfront/agent/react'
+import { Chat, useChat } from 'veryfront/chat'
 
 export default function ChatPage(): JSX.Element {
   const chat = useChat({ api: '/api/chat' })

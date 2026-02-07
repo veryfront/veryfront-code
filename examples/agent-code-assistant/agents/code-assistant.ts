@@ -5,7 +5,7 @@
  */
 
 import { agent } from 'veryfront/agent';
-import { promptRegistry } from 'veryfront/mcp';
+import { promptRegistry } from 'veryfront/prompt';
 
 export default agent({
   id: 'codeAssistant',

@@ -7,7 +7,7 @@
 // Core
 import { agent, createWorkflow, agentAsTool } from 'veryfront/agent';
 import { initializeProviders } from 'veryfront/provider';
-import { detectPlatform, getPlatformCapabilities } from 'veryfront';
+import { detectPlatform, getPlatformCapabilities } from 'veryfront/platform';
 
 // Discovery & MCP
 import { discoverAll, createMCPServer, getMCPStats } from 'veryfront/mcp';

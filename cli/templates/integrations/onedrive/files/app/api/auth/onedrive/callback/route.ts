@@ -4,8 +4,10 @@
  * Handles the OAuth callback from Microsoft and stores the tokens.
  */
 
-import { createOAuthCallbackHandler, memoryTokenStore, oneDriveConfig } from "veryfront/oauth";
+import { createOAuthCallbackHandler, oneDriveConfig } from "veryfront/oauth";
 import { tokenStore } from "../../../../../lib/token-store.ts";
+import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
+
 
 const USER_ID = "current-user";
 
@@ -23,13 +25,13 @@ const hybridTokenStore = {
     await tokenStore.revokeToken(USER_ID, serviceId);
   },
   getState(state: string): Promise<unknown> {
-    return memoryTokenStore.getState(state);
+    return oauthMemoryTokenStore.getState(state);
   },
   setState(state: { state: string; codeVerifier?: string; createdAt: number }): Promise<void> {
-    return memoryTokenStore.setState(state);
+    return oauthMemoryTokenStore.setState(state);
   },
   clearState(state: string): Promise<void> {
-    return memoryTokenStore.clearState(state);
+    return oauthMemoryTokenStore.clearState(state);
   },
 };
 

@@ -5,7 +5,8 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { toolRegistry } from "#veryfront/tool";
-import { promptRegistry, resourceRegistry } from "#veryfront/mcp";
+import { promptRegistry } from "#veryfront/prompt";
+import { resourceRegistry } from "#veryfront/resource";
 import { join, resolve } from "#veryfront/compat/path";
 import { cwd } from "#veryfront/compat/process.ts";
 import { discoverAll } from "./index.ts";

@@ -2,9 +2,10 @@ import { getMCPRegistry, getMCPStats } from "#veryfront/mcp";
 import { executeTool, toolRegistry } from "#veryfront/tool";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
-import { agentRegistry } from "#veryfront/agent";
-import { providerRegistry } from "#veryfront/provider";
-import { WorkflowClient, workflowRegistry } from "#veryfront/workflow";
+import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import { providerRegistry } from "#veryfront/provider/factory.ts";
+import { WorkflowClient } from "#veryfront/workflow";
+import { workflowRegistry } from "#veryfront/workflow/registry.ts";
 import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
 import {
   checkMemoryPressure,

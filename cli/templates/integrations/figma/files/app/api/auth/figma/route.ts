@@ -1,3 +1,4 @@
-import { createOAuthInitHandler, figmaConfig, memoryTokenStore } from "veryfront/oauth";
+import { createOAuthInitHandler, figmaConfig } from "veryfront/oauth";
+import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
 
-export const GET = createOAuthInitHandler(figmaConfig, { tokenStore: memoryTokenStore });
+export const GET = createOAuthInitHandler(figmaConfig, { tokenStore: oauthMemoryTokenStore });

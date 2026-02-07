@@ -1,5 +1,6 @@
-import { bitbucketConfig, createOAuthInitHandler, memoryTokenStore } from "veryfront/oauth";
+import { bitbucketConfig, createOAuthInitHandler } from "veryfront/oauth";
+import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
 
 export const GET = createOAuthInitHandler(bitbucketConfig, {
-  tokenStore: memoryTokenStore,
+  tokenStore: oauthMemoryTokenStore,
 });

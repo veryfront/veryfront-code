@@ -12,9 +12,9 @@ import type { SplitOptions } from "./types.ts";
 
 /** Veryfront client modules that may be externalized based on moduleResolution setting */
 const VERYFRONT_CLIENT_MODULES = [
-  "veryfront/agent/react",
-  "veryfront/components/ai",
-  "veryfront/primitives",
+  "veryfront/chat",
+  "veryfront/markdown",
+  "veryfront/mdx",
 ];
 
 /** Gets list of external dependencies to exclude from bundle */

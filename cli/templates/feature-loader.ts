@@ -8,8 +8,7 @@
  * - Feature validation (requires/conflicts)
  */
 
-import { createFileSystem } from "veryfront/platform";
-import * as pathHelper from "veryfront/platform/path";
+import { createFileSystem, join } from "veryfront/fs";
 import { loadTemplateFromDirectory } from "./loader.ts";
 import type { FeatureConfig, FeatureName, ResolvedFeature, TemplateFile } from "./types.ts";
 
@@ -36,7 +35,7 @@ export function getFeatureDirectory(featureName: string): string {
   let moduleDir = isFile ? moduleUrl.pathname : moduleUrl.href;
   if (isFile && isWindows && moduleDir.startsWith("/")) moduleDir = moduleDir.slice(1);
 
-  return pathHelper.join(moduleDir, "features", featureName);
+  return join(moduleDir, "features", featureName);
 }
 
 /**
@@ -44,7 +43,7 @@ export function getFeatureDirectory(featureName: string): string {
  */
 export async function loadFeatureConfig(featureName: FeatureName): Promise<FeatureConfig | null> {
   const fs = createFileSystem();
-  const configPath = pathHelper.join(getFeatureDirectory(featureName), "feature.json");
+  const configPath = join(getFeatureDirectory(featureName), "feature.json");
 
   try {
     const content = await fs.readTextFile(configPath);
@@ -61,7 +60,7 @@ export async function loadFeature(featureName: FeatureName): Promise<ResolvedFea
   const config = await loadFeatureConfig(featureName);
   if (!config) return null;
 
-  const filesDir = pathHelper.join(getFeatureDirectory(featureName), "files");
+  const filesDir = join(getFeatureDirectory(featureName), "files");
   const files = await loadTemplateFromDirectory(filesDir);
 
   return { config, files };

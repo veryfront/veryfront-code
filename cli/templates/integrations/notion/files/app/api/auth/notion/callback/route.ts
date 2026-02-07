@@ -1,5 +1,7 @@
-import { createOAuthCallbackHandler, memoryTokenStore, notionConfig } from "veryfront/oauth";
+import { createOAuthCallbackHandler, notionConfig } from "veryfront/oauth";
 import { tokenStore } from "../../../../../lib/token-store.ts";
+import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
+
 
 const USER_ID = "current-user";
 
@@ -17,13 +19,13 @@ const hybridTokenStore = {
     await tokenStore.revokeToken(USER_ID, serviceId);
   },
   async getState(state: string) {
-    return memoryTokenStore.getState(state);
+    return oauthMemoryTokenStore.getState(state);
   },
   async setState(state: { state: string; codeVerifier?: string; createdAt: number }) {
-    await memoryTokenStore.setState(state);
+    await oauthMemoryTokenStore.setState(state);
   },
   async clearState(state: string) {
-    await memoryTokenStore.clearState(state);
+    await oauthMemoryTokenStore.clearState(state);
   },
 };
 

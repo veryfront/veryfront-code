@@ -1,3 +1,4 @@
-import { createOAuthInitHandler, gmailConfig, memoryTokenStore } from "veryfront/oauth";
+import { createOAuthInitHandler, gmailConfig } from "veryfront/oauth";
+import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
 
-export const GET = createOAuthInitHandler(gmailConfig, { tokenStore: memoryTokenStore });
+export const GET = createOAuthInitHandler(gmailConfig, { tokenStore: oauthMemoryTokenStore });

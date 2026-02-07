@@ -1,5 +1,6 @@
-import { confluenceConfig, createOAuthInitHandler, memoryTokenStore } from "veryfront/oauth";
+import { confluenceConfig, createOAuthInitHandler } from "veryfront/oauth";
+import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
 
 export const GET = createOAuthInitHandler(confluenceConfig, {
-  tokenStore: memoryTokenStore,
+  tokenStore: oauthMemoryTokenStore,
 });

@@ -86,7 +86,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 /**
  * Merge themes (user theme overrides default)
  */
-export function mergeThemes<T extends Record<string, unknown>>(
+export function mergeThemes<T extends Record<string, any>>(
   defaultTheme: T,
   userTheme?: Partial<T>,
 ): T {

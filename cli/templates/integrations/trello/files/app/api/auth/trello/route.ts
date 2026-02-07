@@ -1,3 +1,4 @@
 import { createOAuthInitHandler, trelloConfig } from "veryfront/oauth";
+import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
 
-export const GET = createOAuthInitHandler(trelloConfig);
+export const GET = createOAuthInitHandler(trelloConfig, { tokenStore: oauthMemoryTokenStore });
