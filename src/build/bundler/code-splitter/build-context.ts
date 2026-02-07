@@ -15,6 +15,10 @@ const VERYFRONT_CLIENT_MODULES = [
   "veryfront/agent/react",
   "veryfront/components/ai",
   "veryfront/primitives",
+  "veryfront/head",
+  "veryfront/router",
+  "veryfront/context",
+  "veryfront/fonts",
 ];
 
 /** Gets list of external dependencies to exclude from bundle */
