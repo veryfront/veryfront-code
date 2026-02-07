@@ -33,6 +33,8 @@ export type {
   ServerHandle,
   StartProductionServerOptions,
 };
+export { ReloadNotifier } from "./reload-notifier.ts";
+export type { BuildOptions, BuildStats } from "./build-types.ts";
 export { createVeryfrontHandler } from "./runtime-handler/index.ts";
 
 /** Shared options for both development and production server modes. */

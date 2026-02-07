@@ -6,15 +6,12 @@
  */
 
 import { join } from "#std/path.ts";
-import { cyan, dim, green } from "#veryfront/compat/console";
-import { cliLogger } from "#veryfront/utils";
-import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { cyan, dim, green } from "#cli/ui";
+import { cliLogger } from "#cli/utils";
+import { createFileSystem, type FileSystem } from "veryfront/platform";
 import { ensureDir } from "../../utils/fs.ts";
-import {
-  isInteractive as checkIsInteractive,
-  promptSync,
-} from "#veryfront/platform/compat/process.ts";
-import { isCiEnv, isDenoTestingEnv } from "#veryfront/config/env.ts";
+import { isInteractive as checkIsInteractive, promptSync } from "veryfront/platform";
+import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
 import { select } from "../../utils/terminal-select.ts";
 
 let fs: FileSystem;

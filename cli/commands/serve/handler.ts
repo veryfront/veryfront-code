@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { DEFAULT_DEV_SERVER_PORT } from "#veryfront/utils";
+import { DEFAULT_DEV_SERVER_PORT } from "#cli/utils";
 import { serveCommand } from "./command.ts";
 import { ServerModeSchema } from "#cli/shared/types";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
 const ServeArgsSchema = z.object({
-  mode: ServerModeSchema.default("renderer"),
+  mode: ServerModeSchema.default("production"),
   port: z.number().default(DEFAULT_DEV_SERVER_PORT),
   hostname: z.string().default("0.0.0.0"),
   split: z.boolean().default(false),

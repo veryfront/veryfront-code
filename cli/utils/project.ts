@@ -4,7 +4,7 @@
  * @module cli/utils/project
  */
 
-import { basename } from "#veryfront/compat/path/index.ts";
+import { basename } from "veryfront/platform/path";
 
 /**
  * Generate a default project ID from the project directory name.

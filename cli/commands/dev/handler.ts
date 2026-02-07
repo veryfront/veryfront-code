@@ -3,12 +3,12 @@
  */
 
 import { z } from "zod";
-import { isAbsolute, join } from "#veryfront/compat/path/index.ts";
-import { cwd } from "#veryfront/platform/compat/process.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { cliLogger, DEFAULT_DEV_SERVER_PORT } from "#veryfront/utils";
+import { isAbsolute, join } from "veryfront/platform/path";
+import { cwd } from "veryfront/platform";
+import { createFileSystem } from "veryfront/platform";
+import { cliLogger, DEFAULT_DEV_SERVER_PORT } from "#cli/utils";
 import { devCommand } from "./index.ts";
-import { clearAllLocalCaches } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
+import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 

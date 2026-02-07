@@ -7,7 +7,7 @@ import { generateCommand } from "./index.ts";
 import { showLogo } from "#cli/utils";
 import { createArgParser } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
-import { cwd } from "#veryfront/platform/compat/process.ts";
+import { cwd } from "veryfront/platform";
 
 const VALID_TYPES = ["page", "layout", "provider", "api", "integration"] as const;
 

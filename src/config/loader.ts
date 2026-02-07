@@ -17,7 +17,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { registerLRUCache } from "#veryfront/cache";
+import { registerLRUCache } from "../cache/registry.ts";
 
 export type { VeryfrontConfig } from "./schemas/index.ts";
 

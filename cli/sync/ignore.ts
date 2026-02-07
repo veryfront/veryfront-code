@@ -2,9 +2,9 @@
  * Ignore patterns for sync - similar to .gitignore
  */
 
-import { join } from "#veryfront/compat/path/index.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { cliLogger } from "#veryfront/utils";
+import { join } from "veryfront/platform/path";
+import { createFileSystem } from "veryfront/platform";
+import { cliLogger } from "#cli/utils";
 
 /** Default patterns always ignored */
 const DEFAULT_IGNORE_PATTERNS = [

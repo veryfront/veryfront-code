@@ -1,4 +1,4 @@
-import { env as getEnvObject, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
+import { env as getEnvObject, isStdoutTTY } from "veryfront/platform";
 import { ESC, RESET } from "./ansi.ts";
 
 export type ColorLevel = "truecolor" | "256" | "16" | "none";
@@ -191,6 +191,10 @@ export const success = rgb(34, 197, 94);
 export const error = rgb(239, 68, 68);
 export const warning = rgb(234, 179, 8);
 export const muted = rgb(113, 113, 122);
+export const cyan = rgb(34, 211, 238);
+export const green = success;
+export const yellow = warning;
+export const red = error;
 
 export const bold = (text: string) => `${ESC}[1m${text}${RESET}`;
 export const dim = (text: string) => `${ESC}[2m${text}${RESET}`;

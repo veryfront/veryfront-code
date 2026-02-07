@@ -2,14 +2,11 @@
  * Uninstall Command - Remove AI assistant integrations
  */
 
-import { dirname, join } from "#veryfront/compat/path/index.ts";
-import { cwd as getCwd } from "#veryfront/platform/compat/process.ts";
-import { exists, readDir, remove } from "#veryfront/platform/compat/fs.ts";
+import { dirname, join } from "veryfront/platform/path";
+import { cwd as getCwd } from "veryfront/platform";
+import { exists, readDir, remove } from "veryfront/platform";
 import { z } from "zod";
-import {
-  type EnvironmentConfig,
-  getEnvironmentConfig,
-} from "#veryfront/config/environment-config.ts";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { bold, brand, multiSelect, type MultiSelectOption, muted, success, warning } from "#cli/ui";
 import { AI_TOOLS, getToolById } from "./registry.ts";
 import { parseTargetFlag } from "./install.ts";

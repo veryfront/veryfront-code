@@ -20,9 +20,9 @@ describe("commands/serve/command", () => {
   });
 
   describe("ServeOptions interface", () => {
-    it("supports renderer mode", () => {
+    it("supports production mode", () => {
       const options: ServeOptions = {
-        mode: "renderer",
+        mode: "production",
         port: 3000,
         bindAddress: "0.0.0.0",
         splitMode: false,
@@ -30,7 +30,7 @@ describe("commands/serve/command", () => {
         binaryPath: "./bin/veryfront",
         debug: false,
       };
-      assertEquals(options.mode, "renderer");
+      assertEquals(options.mode, "production");
     });
 
     it("supports proxy mode", () => {
@@ -61,7 +61,7 @@ describe("commands/serve/command", () => {
 
     it("supports split mode configuration", () => {
       const options: ServeOptions = {
-        mode: "renderer",
+        mode: "production",
         port: 3000,
         bindAddress: "0.0.0.0",
         splitMode: true,
@@ -76,7 +76,7 @@ describe("commands/serve/command", () => {
 
     it("supports debug flag", () => {
       const options: ServeOptions = {
-        mode: "renderer",
+        mode: "production",
         port: 3000,
         bindAddress: "0.0.0.0",
         splitMode: false,
@@ -89,7 +89,7 @@ describe("commands/serve/command", () => {
 
     it("supports custom bind address", () => {
       const options: ServeOptions = {
-        mode: "renderer",
+        mode: "production",
         port: 3000,
         bindAddress: "127.0.0.1",
         splitMode: false,
@@ -102,7 +102,7 @@ describe("commands/serve/command", () => {
 
     it("includes all required fields", () => {
       const options: ServeOptions = {
-        mode: "renderer",
+        mode: "production",
         port: 3000,
         bindAddress: "0.0.0.0",
         splitMode: false,

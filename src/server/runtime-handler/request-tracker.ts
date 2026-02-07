@@ -6,6 +6,7 @@
  */
 
 import { serverLogger as logger } from "#veryfront/utils";
+import { unrefTimer } from "#veryfront/compat/process.ts";
 
 export interface TrackedRequest {
   requestId: string;
@@ -62,8 +63,8 @@ class RequestTracker {
       });
     }, STATUS_LOG_INTERVAL_MS);
 
-    // Don't block process exit (Deno doesn't support unref, but that's okay
-    // since Deno automatically doesn't block on intervals/timeouts)
+    // Global singleton status logging should not keep short-lived CLI processes alive.
+    if (this.statusInterval) unrefTimer(this.statusInterval);
   }
 
   start(
@@ -109,7 +110,9 @@ class RequestTracker {
           inFlightCount: this.inFlight.size,
         });
       }, VERY_SLOW_REQUEST_THRESHOLD_MS - SLOW_REQUEST_THRESHOLD_MS);
+      if (tracked.slowTimer) unrefTimer(tracked.slowTimer);
     }, SLOW_REQUEST_THRESHOLD_MS);
+    if (tracked.slowTimer) unrefTimer(tracked.slowTimer);
 
     this.inFlight.set(requestId, tracked);
 

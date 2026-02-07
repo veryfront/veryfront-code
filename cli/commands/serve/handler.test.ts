@@ -21,27 +21,27 @@ describe("commands/serve/handler", () => {
 
   describe("argument parsing patterns", () => {
     describe("mode resolution", () => {
-      it("defaults mode to renderer when not specified", () => {
+      it("defaults mode to production when not specified", () => {
         const args: ParsedArgs = { _: ["serve"] };
-        const mode = (args.mode || args.m || "renderer") as string;
-        assertEquals(mode, "renderer");
+        const mode = (args.mode || args.m || "production") as string;
+        assertEquals(mode, "production");
       });
 
       it("uses --mode flag when provided", () => {
         const args: ParsedArgs = { _: ["serve"], mode: "proxy" };
-        const mode = (args.mode || args.m || "renderer") as string;
+        const mode = (args.mode || args.m || "production") as string;
         assertEquals(mode, "proxy");
       });
 
       it("uses -m shorthand when provided", () => {
         const args: ParsedArgs = { _: ["serve"], m: "combined" };
-        const mode = (args.mode || args.m || "renderer") as string;
+        const mode = (args.mode || args.m || "production") as string;
         assertEquals(mode, "combined");
       });
 
       it("prefers --mode over -m shorthand", () => {
         const args: ParsedArgs = { _: ["serve"], mode: "proxy", m: "combined" };
-        const mode = (args.mode || args.m || "renderer") as string;
+        const mode = (args.mode || args.m || "production") as string;
         assertEquals(mode, "proxy");
       });
     });

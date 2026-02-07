@@ -6,7 +6,7 @@
 
 import { brand, dim, error, success, warning } from "../colors.ts";
 import { pad, repeat, visibleLength } from "../layout.ts";
-import { BORDER_STYLES, type BorderStyle } from "#veryfront/utils/box.ts";
+import { BORDER_STYLES, type BorderStyle } from "#cli/ui/box";
 
 export interface TableColumn {
   /** Column header */

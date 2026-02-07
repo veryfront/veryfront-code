@@ -1,5 +1,5 @@
-import { bold, cyan, dim, green, yellow } from "#veryfront/compat/console";
-import { cliLogger } from "#veryfront/utils";
+import { bold, cyan, dim, green, yellow } from "#cli/ui";
+import { cliLogger } from "#cli/utils";
 import type { BuildStats } from "./types.ts";
 
 export function displayBuildSuccess(

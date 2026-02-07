@@ -5,14 +5,11 @@
 
 import { canOpenBrowser, openBrowser } from "../../auth/browser.ts";
 import { readConfigFile } from "#cli/shared/config";
-import { cwd } from "#veryfront/platform/compat/process.ts";
-import { join } from "#veryfront/compat/path/index.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { cwd } from "veryfront/platform";
+import { join } from "veryfront/platform/path";
+import { createFileSystem } from "veryfront/platform";
 import { brand, dim, muted, success } from "#cli/ui";
-import {
-  type EnvironmentConfig,
-  getEnvironmentConfig,
-} from "#veryfront/config/environment-config.ts";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 
 /**
  * Build Studio URL with optional query params

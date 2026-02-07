@@ -6,13 +6,13 @@
  * direct filesystem access.
  *
  * Authentication: Uses the API token from environment or proxy context.
- * API Base: Configurable via VERYFRONT_API_BASE_URL (default: http://api.veryfront.me:4000)
+ * API Base: Configurable via VERYFRONT_API_BASE_URL (default: https://api.veryfront.com)
  */
 
 import { z } from "zod";
 import type { MCPTool } from "./tools.ts";
-import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { getEnvironmentConfig } from "veryfront/config";
+import { withSpan } from "veryfront/observability/otlp-setup";
 
 import { DEFAULT_LOCAL_API_URL } from "#cli/shared/constants";
 

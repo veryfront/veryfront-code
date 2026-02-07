@@ -5,19 +5,9 @@
  * Uses cross-runtime platform abstractions for terminal I/O.
  */
 
-import {
-  cwd,
-  exit,
-  isInteractive,
-  isStdoutTTY,
-  writeStdout,
-} from "#veryfront/platform/compat/process.ts";
-import { join } from "#veryfront/compat/path/index.ts";
-import {
-  createEscapeBuffer,
-  getStdinReader,
-  setRawMode,
-} from "#veryfront/platform/compat/stdin.ts";
+import { cwd, exit, isInteractive, isStdoutTTY, writeStdout } from "veryfront/platform";
+import { join } from "veryfront/platform/path";
+import { createEscapeBuffer, getStdinReader, setRawMode } from "veryfront/platform";
 import { cursor, screen } from "../ui/ansi.ts";
 import { dim } from "../ui/colors.ts";
 import { getTerminalWidth } from "../ui/layout.ts";

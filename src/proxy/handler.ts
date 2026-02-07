@@ -83,10 +83,10 @@ async function lookupProjectByDomain(
 
 export interface ProxyConfig {
   apiBaseUrl: string;
-  clientId: string;
-  clientSecret: string;
-  previewClientId: string;
-  previewClientSecret: string;
+  apiClientId: string;
+  apiClientSecret: string;
+  previewApiClientId: string;
+  previewApiClientSecret: string;
   apiToken?: string;
   localProjects?: Record<string, string>;
 }
@@ -179,18 +179,18 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
   const tokenManager = new TokenManager(
     {
       apiBaseUrl: config.apiBaseUrl,
-      clientId: config.clientId,
-      clientSecret: config.clientSecret,
-      previewClientId: config.previewClientId,
-      previewClientSecret: config.previewClientSecret,
+      apiClientId: config.apiClientId,
+      apiClientSecret: config.apiClientSecret,
+      previewApiClientId: config.previewApiClientId,
+      previewApiClientSecret: config.previewApiClientSecret,
     },
     { cache },
   );
 
   function validateConfig(): string[] {
     const missing: string[] = [];
-    if (!config.clientId) missing.push("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY");
-    if (!config.clientSecret) missing.push("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY");
+    if (!config.apiClientId) missing.push("VERYFRONT_PROXY_API_CLIENT_ID");
+    if (!config.apiClientSecret) missing.push("VERYFRONT_PROXY_API_CLIENT_SECRET");
     return missing;
   }
 
@@ -304,7 +304,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         logger?.debug("Using user auth token for preview");
       }
 
-      if (!token && config.clientId && config.clientSecret) {
+      if (!token && config.apiClientId && config.apiClientSecret) {
         const customDomain = projectSlug ? undefined : host;
         if (projectSlug || customDomain) {
           try {
@@ -461,7 +461,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       if (userToken) return userToken;
     }
 
-    if (config.clientId && config.clientSecret) {
+    if (config.apiClientId && config.apiClientSecret) {
       const customDomain = projectSlug ? undefined : host;
       if (projectSlug || customDomain) {
         try {

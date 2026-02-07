@@ -47,6 +47,9 @@ function extractJson(text: string): string {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (line === undefined) {
+      continue;
+    }
 
     if (jsonStart === -1) {
       // Look for the start of the JSON object

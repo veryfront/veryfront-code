@@ -11,6 +11,10 @@ deno task start:headless   # Headless mode (no TUI, for coding agents)
 deno task cli --help       # Show all commands
 ```
 
+Mode and process-model overview:
+
+- `../docs/server-modes.md`
+
 ## Structure
 
 ```

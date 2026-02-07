@@ -1,4 +1,4 @@
-import { readTextFile } from "#veryfront/platform/compat/fs.ts";
+import { readTextFile } from "veryfront/platform";
 import { type AITool, type AIToolId, AIToolIdSchema, AIToolSchema } from "./types.ts";
 
 const AI_TOOLS_RAW = [

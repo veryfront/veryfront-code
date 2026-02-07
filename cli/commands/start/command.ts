@@ -1,11 +1,11 @@
-import { cwd, getEnv, onGlobalError, setEnv } from "#veryfront/platform/compat/process.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { isAbsolute, join, resolve } from "#veryfront/compat/path/index.ts";
-import { cliLogger } from "#veryfront/utils";
+import { cwd, getEnv, onGlobalError } from "veryfront/platform";
+import { createFileSystem } from "veryfront/platform";
+import { isAbsolute, join, resolve } from "veryfront/platform/path";
+import { cliLogger } from "#cli/utils";
 import { exitProcess, registerTerminationSignals } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
-import { clearAllLocalCaches } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
-import type { DiscoveryOptions } from "#veryfront/server/production-server.ts";
+import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
+import { startCliDevServer, startCliProxyModeServer } from "#cli/shared/server-startup";
 
 export interface StartOptions {
   port: number;
@@ -95,16 +95,16 @@ async function trySetupProxy(localProjects: Map<string, string>): Promise<ProxyS
   try {
     // Proxy is only available in local dev, not in the npm package
     const { createProxyHandler, injectContextHeaders } = await import(
-      "#veryfront/proxy/handler.ts"
+      "veryfront/proxy/handler"
     );
-    const { createCacheFromEnv } = await import("#veryfront/proxy/cache/index.ts");
+    const { createCacheFromEnv } = await import("veryfront/proxy/cache");
 
     const proxyConfig = {
-      apiBaseUrl: getEnv("VERYFRONT_API_BASE_URL") ?? "http://api.veryfront.me:4000",
-      clientId: getEnv("API_CLIENT_ID") ?? "",
-      clientSecret: getEnv("API_CLIENT_SECRET") ?? "",
-      previewClientId: getEnv("API_CLIENT_ID") ?? "",
-      previewClientSecret: getEnv("API_CLIENT_SECRET") ?? "",
+      apiBaseUrl: getEnv("VERYFRONT_PROXY_API_BASE_URL") ?? "https://api.veryfront.com",
+      apiClientId: getEnv("VERYFRONT_PROXY_API_CLIENT_ID") ?? "",
+      apiClientSecret: getEnv("VERYFRONT_PROXY_API_CLIENT_SECRET") ?? "",
+      previewApiClientId: getEnv("VERYFRONT_PROXY_API_CLIENT_ID") ?? "",
+      previewApiClientSecret: getEnv("VERYFRONT_PROXY_API_CLIENT_SECRET") ?? "",
       apiToken: getEnv("VERYFRONT_API_TOKEN") ?? "",
       localProjects: Object.fromEntries(localProjects),
     };
@@ -176,57 +176,24 @@ export async function startCommand(options: StartOptions): Promise<void> {
     : cwd();
 
   if (useProxy) {
-    // Enable proxy mode so the FSAdapter fetches files from the API
-    // This must be set before importing production-server which loads config
-    // NODE_ENV=development allows dev features while proxy mode fetches from API
-    setEnv("PROXY_MODE", "1");
-    setEnv("NODE_ENV", "development");
-
-    const { startProductionServer } = await import("#veryfront/server/production-server.ts");
-    const { bootstrapProd } = await import("#veryfront/server/bootstrap.ts");
-    const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
-    const baseAdapter = await runtime.get();
-
-    const bootstrap = await bootstrapProd(cwd(), baseAdapter);
-    const adapter = bootstrap.adapter;
-
     const defaultProjectId = generateDefaultProjectId(cwd());
-
-    // Build discovery config based on adapter mode
-    // The production server handles execution; CLI provides configuration
-    let discoveryConfig: DiscoveryOptions | undefined;
-    if (bootstrap.usingFSAdapter) {
-      const token = getEnv("VERYFRONT_API_TOKEN") ?? "";
-      const slug = getEnv("VERYFRONT_PROJECT_SLUG") ?? discovered.defaultProject ?? "";
-      discoveryConfig = {
-        baseDir: "",
-        fsAdapter: adapter.fs,
-        projectSlug: slug || undefined,
-        apiToken: token || undefined,
-        verbose: false,
-      };
-    } else {
-      discoveryConfig = { baseDir: projectDir, verbose: false };
+    const requestInterceptor = proxy.interceptor;
+    if (!requestInterceptor) {
+      throw new Error("Proxy interceptor missing in proxy mode");
     }
-
-    server = await startProductionServer({
+    server = await startCliProxyModeServer({
       port,
-      projectDir: cwd(),
-      mode: "development",
-      adapter,
-      bootstrapResult: bootstrap,
+      projectDir,
       signal: shutdownController.signal,
-      requestInterceptor: proxy.interceptor,
+      requestInterceptor,
       defaultProjectSlug: defaultProjectId,
       defaultProjectId,
-      discoveryConfig,
+      fallbackProjectSlug: discovered.defaultProject ?? undefined,
     });
   } else {
-    const { startDevServer } = await import("#veryfront/server/dev-server.ts");
-    // Dev server handles AI discovery internally (Phase 2)
-    server = await startDevServer({
+    server = await startCliDevServer({
       port,
-      projectDir: cwd(),
+      projectDir,
       hmrPort: port + 1,
       enableHMR: true,
       enableFastRefresh: true,

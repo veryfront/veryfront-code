@@ -8,10 +8,10 @@
  */
 
 import { z } from "zod";
-import { join, relative } from "#veryfront/compat/path/index.ts";
-import { cliLogger } from "#veryfront/utils";
-import { cwd } from "#veryfront/platform/compat/process.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { join, relative } from "veryfront/platform/path";
+import { cliLogger } from "#cli/utils";
+import { cwd } from "veryfront/platform";
+import { createFileSystem } from "veryfront/platform";
 import {
   type ApiClient,
   createApiClient,
@@ -21,7 +21,7 @@ import {
 import { reserveProjectSlug } from "../new/reserve-slug.ts";
 import { confirmPrompt, logError, logInfo, logSuccess, logWarning } from "#cli/utils";
 import { createNoopSpinner, createSpinner } from "#cli/ui";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { withSpan } from "veryfront/observability/otlp-setup";
 import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import { listAllFiles } from "../pull/index.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";

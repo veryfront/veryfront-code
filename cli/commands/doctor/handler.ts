@@ -3,7 +3,7 @@
  */
 
 import { z } from "zod";
-import { cwd } from "#veryfront/platform/compat/process.ts";
+import { cwd } from "veryfront/platform";
 import { doctorCommand } from "./index.ts";
 import { showLogo } from "#cli/utils";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";

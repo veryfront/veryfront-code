@@ -13,10 +13,10 @@ function createHandler(port: number) {
   return createProxyHandler({
     config: {
       apiBaseUrl: `http://127.0.0.1:${port}`,
-      clientId: "test-client",
-      clientSecret: "test-secret",
-      previewClientId: "test-preview-client",
-      previewClientSecret: "test-preview-secret",
+      apiClientId: "test-client",
+      apiClientSecret: "test-secret",
+      previewApiClientId: "test-preview-client",
+      previewApiClientSecret: "test-preview-secret",
       apiToken: "static-fallback-token",
     },
   });
@@ -143,10 +143,10 @@ describe("Token Priority Cascade", () => {
       const handler = createProxyHandler({
         config: {
           apiBaseUrl: "http://localhost:9999",
-          clientId: "",
-          clientSecret: "",
-          previewClientId: "",
-          previewClientSecret: "",
+          apiClientId: "",
+          apiClientSecret: "",
+          previewApiClientId: "",
+          previewApiClientSecret: "",
           apiToken: "static-api-token",
         },
       });
@@ -169,10 +169,10 @@ describe("Token Priority Cascade", () => {
       const handler = createProxyHandler({
         config: {
           apiBaseUrl: "http://localhost:9999",
-          clientId: "",
-          clientSecret: "",
-          previewClientId: "",
-          previewClientSecret: "",
+          apiClientId: "",
+          apiClientSecret: "",
+          previewApiClientId: "",
+          previewApiClientSecret: "",
         },
       });
 
@@ -198,10 +198,10 @@ describe("Token Priority Cascade", () => {
       const handler = createProxyHandler({
         config: {
           apiBaseUrl: "http://localhost:9999",
-          clientId: "test-client",
-          clientSecret: "test-secret",
-          previewClientId: "test-preview-client",
-          previewClientSecret: "test-preview-secret",
+          apiClientId: "test-client",
+          apiClientSecret: "test-secret",
+          previewApiClientId: "test-preview-client",
+          previewApiClientSecret: "test-preview-secret",
           apiToken: "should-not-use",
           localProjects: { "local-proj": "/tmp/local-proj" },
         },

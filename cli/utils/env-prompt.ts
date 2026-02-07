@@ -3,10 +3,10 @@
  * @module
  */
 
-import { cliLogger as logger } from "#veryfront/utils";
-import { cyan, dim, green, yellow } from "#veryfront/compat/console";
-import { isInteractive as checkIsInteractive } from "#veryfront/platform/compat/process.ts";
-import { isCiEnv, isDenoTestingEnv } from "#veryfront/config/env.ts";
+import { cliLogger as logger } from "#cli/utils";
+import { cyan, dim, green, yellow } from "#cli/ui";
+import { isInteractive as checkIsInteractive } from "veryfront/platform";
+import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
 import type { EnvVarConfig } from "../templates/index.ts";
 import { promptUser } from "./index.ts";
 

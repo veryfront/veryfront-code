@@ -1,10 +1,7 @@
-import { join } from "#veryfront/compat/path/index.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import {
-  type EnvironmentConfig,
-  getEnvironmentConfig,
-} from "#veryfront/config/environment-config.ts";
-import { cliLogger } from "#veryfront/utils";
+import { join } from "veryfront/platform/path";
+import { createFileSystem } from "veryfront/platform";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
+import { cliLogger } from "#cli/utils";
 import { CONFIG_DIR_NAME, TOKEN_FILE_NAME, TOKEN_FILE_PERMISSIONS } from "../shared/constants.ts";
 
 function getConfigDir(env: EnvironmentConfig = getEnvironmentConfig()): string {

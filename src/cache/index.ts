@@ -1,4 +1,5 @@
 export * from "./backend.ts";
+export * from "./distributed-cache-init.ts";
 export * from "./hash.ts";
 export * from "./module-cache.ts";
 export * from "./multi-tier.ts";

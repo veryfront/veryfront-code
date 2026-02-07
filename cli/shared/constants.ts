@@ -3,10 +3,7 @@
  * @module cli/shared/constants
  */
 
-import {
-  type EnvironmentConfig,
-  getEnvironmentConfig,
-} from "#veryfront/config/environment-config.ts";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 
 export const DEFAULT_DEV_PORT = 3000;
 export const DEFAULT_PROXY_PORT = 8080;
@@ -15,7 +12,7 @@ export const DEFAULT_CALLBACK_PORT = 9876;
 export const MAX_PORT_ATTEMPTS = 100;
 
 export const DEFAULT_API_URL = "https://api.veryfront.com";
-export const DEFAULT_LOCAL_API_URL = "http://api.veryfront.me:4000";
+export const DEFAULT_LOCAL_API_URL = "https://api.veryfront.com";
 
 export function getApiUrl(env: EnvironmentConfig = getEnvironmentConfig()): string {
   return env.apiUrl ?? DEFAULT_API_URL;

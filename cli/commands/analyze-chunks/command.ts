@@ -1,10 +1,7 @@
-import {
-  analyzeProjectChunks,
-  generateChunkManifest,
-} from "#veryfront/rendering/chunk-optimizer.ts";
-import { cliLogger } from "#veryfront/utils";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { exit } from "#veryfront/platform/compat/process.ts";
+import { analyzeProjectChunks, generateChunkManifest } from "veryfront/rendering";
+import { cliLogger } from "#cli/utils";
+import { createFileSystem } from "veryfront/platform";
+import { exit } from "veryfront/platform";
 
 export interface AnalyzeChunksOptions {
   projectDir: string;

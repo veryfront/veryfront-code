@@ -1,14 +1,11 @@
 import { z } from "zod";
-import { cliLogger } from "#veryfront/utils";
-import { cwd } from "#veryfront/platform/compat/process.ts";
-import { join } from "#veryfront/compat/path/index.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { cyan, dim, green, red, yellow } from "#veryfront/compat/console";
+import { cliLogger } from "#cli/utils";
+import { cwd } from "veryfront/platform";
+import { join } from "veryfront/platform/path";
+import { createFileSystem } from "veryfront/platform";
+import { cyan, dim, green, red, yellow } from "#cli/ui";
 import { ensureAuthenticated, readToken } from "../../auth/index.ts";
-import {
-  type EnvironmentConfig,
-  getEnvironmentConfig,
-} from "#veryfront/config/environment-config.ts";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { createSpinner, shouldUseColor } from "#cli/ui";
 import { isTTY, promptUser } from "#cli/utils";
 import { CommonArgs, createArgParser } from "#cli/shared/args";

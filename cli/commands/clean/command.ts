@@ -1,17 +1,17 @@
-import { join } from "#veryfront/compat/path/index.ts";
-import { getConfig } from "#veryfront/config";
-import { runtime } from "#veryfront/platform/adapters/detect.ts";
-import { cliLogger } from "#veryfront/utils";
-import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
-import { CacheCoordinator, type CacheStore } from "#veryfront/rendering/cache/index.ts";
+import { join } from "veryfront/platform/path";
+import { getConfig } from "veryfront/config";
+import { runtime } from "veryfront/platform";
+import { cliLogger } from "#cli/utils";
+import { DEFAULT_CACHE_DIR } from "veryfront/utils/constants/server";
+import { CacheCoordinator, type CacheStore } from "veryfront/rendering";
 import {
   FilesystemCacheStore,
   KVCacheStore,
   MemoryCacheStore,
   RedisCacheStore,
-} from "#veryfront/rendering/cache/stores/index.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+} from "veryfront/rendering";
+import type { RuntimeAdapter } from "veryfront/platform";
+import { createFileSystem } from "veryfront/platform";
 import { confirmPrompt, logSuccess, logWarning } from "#cli/utils";
 import { createSpinner } from "#cli/ui";
 

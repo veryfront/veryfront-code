@@ -6,14 +6,11 @@
  */
 
 import { z } from "zod";
-import { join } from "#veryfront/compat/path/index.ts";
-import { cwd } from "#veryfront/platform/compat/process.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import {
-  type EnvironmentConfig,
-  getEnvironmentConfig,
-} from "#veryfront/config/environment-config.ts";
-import { cliLogger } from "#veryfront/utils";
+import { join } from "veryfront/platform/path";
+import { cwd } from "veryfront/platform";
+import { createFileSystem } from "veryfront/platform";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
+import { cliLogger } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
 import { DEFAULT_API_URL } from "./constants.ts";

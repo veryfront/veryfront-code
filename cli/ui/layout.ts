@@ -5,8 +5,8 @@
  * Runtime-agnostic: works on Deno, Node.js, and Bun.
  *************************************************/
 
-import { getTerminalSize, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
-import { pad as sharedPad } from "#veryfront/utils/box.ts";
+import { getTerminalSize, isStdoutTTY } from "veryfront/platform";
+import { pad as sharedPad } from "#cli/ui/box";
 import { ANSI_REGEX, RESET, stripAnsi } from "./ansi.ts";
 
 /**

@@ -2,21 +2,21 @@
  * Dev Command - Development server with HMR
  */
 
-import { compileAllMDX, watchMDX } from "#veryfront/build/compiler/mdx-compiler/index.ts";
-import { CONFIG_NOT_FOUND, INITIALIZATION_ERROR } from "#veryfront/errors/error-registry.ts";
-import { join } from "#veryfront/compat/path/index.ts";
-import { runtime } from "#veryfront/platform/adapters/detect.ts";
-import { getConfig } from "#veryfront/config";
-import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { startDevServer } from "#veryfront/server/dev-server.ts";
-import { validateAIConfig } from "#veryfront/discovery";
-import { yellow } from "#veryfront/compat/console";
+import { compileAllMDX, watchMDX } from "veryfront/build";
+import { CONFIG_NOT_FOUND, INITIALIZATION_ERROR } from "veryfront/errors";
+import { join } from "veryfront/platform/path";
+import { runtime } from "veryfront/platform";
+import { getConfig } from "veryfront/config";
+import { getEnvironmentConfig } from "veryfront/config";
+import { startDevServer } from "veryfront/server";
+import { validateAIConfig } from "veryfront/discovery";
+import { yellow } from "#cli/ui";
 import { exitProcess, registerTerminationSignals } from "#cli/utils";
 import { banner, brand, dim, error as errorColor, success } from "#cli/ui";
 import { createKeyboardHandler, type KeyboardHandler } from "../../ui/keyboard.ts";
 import { openBrowser } from "../../auth/browser.ts";
 import { createMCPServer, type MCPDevServer } from "../../mcp/server.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { withSpan } from "veryfront/observability/otlp-setup";
 import { login, type UserInfo, validateToken } from "../../auth/login.ts";
 import { readToken } from "../../auth/token-store.ts";
 import { fetchRemoteProjects, type RemoteProject } from "../../sync/index.ts";

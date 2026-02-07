@@ -1,5 +1,6 @@
-import { cliLogger, formatBytes, VERSION } from "#veryfront/utils";
-import { exit, isStdoutTTY, onSignal, promptSync } from "#veryfront/platform/compat/process.ts";
+import denoConfig from "../../deno.json" with { type: "json" };
+import { exit, getEnv, isStdoutTTY, onSignal, promptSync } from "veryfront/platform";
+import { DEFAULT_DEV_PORT } from "../shared/constants.ts";
 import {
   bold,
   brand,
@@ -10,6 +11,55 @@ import {
   success as successColor,
   warning as warningColor,
 } from "../ui/colors.ts";
+
+type LoggerMethod = (...args: unknown[]) => void;
+
+function debugEnabled(): boolean {
+  return _verboseMode || getEnv("VERYFRONT_DEBUG") === "1";
+}
+
+export const cliLogger: {
+  debug: LoggerMethod;
+  info: LoggerMethod;
+  warn: LoggerMethod;
+  error: LoggerMethod;
+  child: (_context: Record<string, unknown>) => typeof cliLogger;
+} = {
+  debug: (...args) => {
+    if (!debugEnabled()) return;
+    console.debug(...args);
+  },
+  info: (...args) => console.log(...args),
+  warn: (...args) => console.warn(...args),
+  error: (...args) => console.error(...args),
+  child: () => cliLogger,
+};
+
+export const VERSION = typeof denoConfig.version === "string" ? denoConfig.version : "0.0.0";
+export const DEFAULT_DEV_SERVER_PORT = DEFAULT_DEV_PORT;
+
+export function formatBytes(bytes: number): string {
+  const abs = Math.abs(bytes);
+
+  const formatNumber = (value: number): string => {
+    const rounded = Math.round(value * 100) / 100;
+    if (Number.isInteger(rounded)) return String(Math.trunc(rounded));
+    return String(rounded);
+  };
+
+  if (abs < 1024) return `${formatNumber(abs)} Bytes`;
+
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = abs / 1024;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex++;
+  }
+
+  return `${formatNumber(value)} ${units[unitIndex]}`;
+}
 
 export function isTTY(): boolean {
   return isStdoutTTY();
@@ -111,5 +161,3 @@ export async function confirmPrompt(
 export function exitProcess(code: number): void {
   exit(code);
 }
-
-export { formatBytes };

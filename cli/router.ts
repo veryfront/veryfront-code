@@ -4,8 +4,8 @@
  * @module cli/router
  */
 
-import { formatErrorBox } from "#veryfront/errors/user-friendly/index.ts";
-import { cliLogger, VERSION } from "#veryfront/utils";
+import { formatUserError } from "veryfront/errors";
+import { cliLogger, VERSION } from "#cli/utils";
 import { handleAnalyzeChunksCommand } from "./commands/analyze-chunks/handler.ts";
 import { handleBuildCommand } from "./commands/build/handler.ts";
 import { handleCleanCommand } from "./commands/clean/handler.ts";
@@ -131,9 +131,9 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
     await (handler ?? handleStartCommand)(args);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const err = error instanceof Error ? error : new Error(String(error));
     console.log();
-    console.log(formatErrorBox(new Error(message)));
+    console.log(formatUserError(err));
     console.log();
     exitProcess(1);
   }

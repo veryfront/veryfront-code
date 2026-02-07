@@ -8,10 +8,10 @@
  */
 
 import { z } from "zod";
-import { dirname, join, normalize, resolve } from "#veryfront/compat/path/index.ts";
-import { cliLogger } from "#veryfront/utils";
-import { cwd } from "#veryfront/platform/compat/process.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { dirname, join, normalize, resolve } from "veryfront/platform/path";
+import { cliLogger } from "#cli/utils";
+import { cwd } from "veryfront/platform";
+import { createFileSystem } from "veryfront/platform";
 import {
   createApiClient,
   readConfigFile,
@@ -20,8 +20,8 @@ import {
 } from "#cli/shared/config";
 import { confirmPrompt, logInfo, logSuccess, logWarning } from "#cli/utils";
 import { createNoopSpinner, createSpinner } from "#cli/ui";
-import { getApiTokenEnv } from "#veryfront/config/env.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { getApiTokenEnv } from "veryfront/config";
+import { withSpan } from "veryfront/observability/otlp-setup";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 
 /**

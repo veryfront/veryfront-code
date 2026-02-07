@@ -4,8 +4,8 @@
  * Handles argument parsing and config file loading for the init command.
  */
 
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { cliLogger } from "#veryfront/utils";
+import { createFileSystem } from "veryfront/platform";
+import { cliLogger } from "#cli/utils";
 import { resolvePath } from "./path-utils.ts";
 import { initCommand } from "./init-command.ts";
 import type { ParsedArgs } from "#cli/shared/types";

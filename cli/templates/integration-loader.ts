@@ -8,8 +8,8 @@
  * - Prompt/action loading
  */
 
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import * as pathHelper from "#veryfront/compat/path-helper.ts";
+import { createFileSystem } from "veryfront/platform";
+import * as pathHelper from "veryfront/platform/path";
 import { loadTemplateFromDirectory } from "./loader.ts";
 import type {
   IntegrationConfig,

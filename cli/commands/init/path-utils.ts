@@ -4,8 +4,8 @@
  * Shared path resolution utilities for CLI commands.
  */
 
-import { cwd } from "#veryfront/platform/compat/process.ts";
-import { join } from "#veryfront/compat/path/index.ts";
+import { cwd } from "veryfront/platform";
+import { join } from "veryfront/platform/path";
 
 /**
  * Resolve a path relative to cwd if not absolute

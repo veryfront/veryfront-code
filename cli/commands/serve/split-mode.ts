@@ -1,31 +1,31 @@
 /**
  * Split Mode Orchestration
  *
- * Runs proxy and renderer as separate processes, simulating production K8s architecture.
+ * Runs proxy and production server as separate processes, simulating production K8s architecture.
  * Used for testing production-like behavior locally.
  */
 
-import { cliLogger } from "#veryfront/utils";
+import { cliLogger } from "#cli/utils";
 import { exitProcess } from "#cli/utils";
 
 interface SplitModeOptions {
-  rendererPort: number;
+  productionServerPort: number;
   proxyPort: number;
   useBinary: boolean;
   binaryPath: string;
 }
 
 const REQUIRED_ENV_VARS = [
-  "VERYFRONT_API_BASE_URL",
-  "API_CLIENT_ID",
-  "API_CLIENT_SECRET",
+  "VERYFRONT_PROXY_API_BASE_URL",
+  "VERYFRONT_PROXY_API_CLIENT_ID",
+  "VERYFRONT_PROXY_API_CLIENT_SECRET",
   "REDIS_URL",
 ] as const;
 
 const STATIC_ENV: Record<string, string> = {
   CACHE_TYPE: "redis",
   REDIS_PREFIX: "vf:token:",
-  RENDERER_REQUEST_TIMEOUT_MS: "90000",
+  VERYFRONT_SERVER_REQUEST_TIMEOUT_MS: "90000",
   NODE_ENV: "production",
   PROXY_MODE: "1",
   PRODUCTION_MODE: "1",
@@ -90,40 +90,38 @@ function startProcess(
 }
 
 export async function runSplitMode(options: SplitModeOptions): Promise<void> {
-  const { rendererPort, proxyPort, useBinary, binaryPath } = options;
+  const { productionServerPort, proxyPort, useBinary, binaryPath } = options;
 
   // Validate environment
   cliLogger.info("Validating environment variables...");
   const userEnv = validateEnvVars();
 
-  // Build environment with OAuth mapping
+  // Build child-process environment
   const env: Record<string, string> = {
     ...STATIC_ENV,
     ...userEnv,
-    RENDERER_URL: `http://localhost:${rendererPort}`,
-    API_CLIENT_ID_VERYFRONT_RENDERER_PROXY: userEnv.API_CLIENT_ID!,
-    API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY: userEnv.API_CLIENT_SECRET!,
+    VERYFRONT_SERVER_URL: `http://localhost:${productionServerPort}`,
   };
 
   // Determine command
   const veryfront = useBinary ? [binaryPath] : ["deno", "run", "--allow-all", "cli/main.ts"];
 
-  // Start renderer
-  const rendererProcess = startProcess(
-    [...veryfront, "serve", "--mode=renderer", `--port=${rendererPort}`],
+  // Start production server
+  const productionServerProcess = startProcess(
+    [...veryfront, "serve", "--mode=production", `--port=${productionServerPort}`],
     env,
-    `renderer on :${rendererPort}`,
+    `production server on :${productionServerPort}`,
   );
 
-  // Wait for renderer
-  cliLogger.info("Waiting for renderer to be ready...");
-  const rendererReady = await waitForPort(rendererPort);
-  if (!rendererReady) {
-    rendererProcess.kill("SIGTERM");
-    cliLogger.error(`Renderer failed to start on port ${rendererPort}`);
+  // Wait for production server
+  cliLogger.info("Waiting for production server to be ready...");
+  const productionServerReady = await waitForPort(productionServerPort);
+  if (!productionServerReady) {
+    productionServerProcess.kill("SIGTERM");
+    cliLogger.error(`Production server failed to start on port ${productionServerPort}`);
     exitProcess(1);
   }
-  cliLogger.info("Renderer ready");
+  cliLogger.info("Production server ready");
 
   // Start proxy
   const proxyProcess = startProcess(
@@ -134,7 +132,7 @@ export async function runSplitMode(options: SplitModeOptions): Promise<void> {
 
   cliLogger.info(`\nSplit mode running:`);
   cliLogger.info(`  Proxy:    http://localhost:${proxyPort}`);
-  cliLogger.info(`  Renderer: http://localhost:${rendererPort}`);
+  cliLogger.info(`  Production server: http://localhost:${productionServerPort}`);
   cliLogger.info(`\nPress Ctrl+C to stop\n`);
 
   // Shutdown handler
@@ -146,7 +144,7 @@ export async function runSplitMode(options: SplitModeOptions): Promise<void> {
       proxyProcess.kill("SIGTERM");
     } catch { /* ignore */ }
     try {
-      rendererProcess.kill("SIGTERM");
+      productionServerProcess.kill("SIGTERM");
     } catch { /* ignore */ }
   };
 
@@ -160,7 +158,7 @@ export async function runSplitMode(options: SplitModeOptions): Promise<void> {
 
   // Wait for either process to exit
   const firstExit = await Promise.race([
-    rendererProcess.status.then((status) => ({ name: "renderer", status })),
+    productionServerProcess.status.then((status) => ({ name: "production-server", status })),
     proxyProcess.status.then((status) => ({ name: "proxy", status })),
   ]);
 

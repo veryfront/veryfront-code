@@ -1,4 +1,4 @@
-import { cwd } from "#veryfront/platform/compat/process.ts";
+import { cwd } from "veryfront/platform";
 import type { z } from "zod";
 import { parseArgsOrThrow } from "./args.ts";
 import type { ParsedArgs } from "./types.ts";

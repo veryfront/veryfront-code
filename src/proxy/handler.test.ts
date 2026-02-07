@@ -19,10 +19,10 @@ function createHandler(port: number) {
   return createProxyHandler({
     config: {
       apiBaseUrl: `http://127.0.0.1:${port}`,
-      clientId: "test-client",
-      clientSecret: "test-secret",
-      previewClientId: "test-client",
-      previewClientSecret: "test-secret",
+      apiClientId: "test-client",
+      apiClientSecret: "test-secret",
+      previewApiClientId: "test-client",
+      previewApiClientSecret: "test-secret",
     },
   });
 }
@@ -107,10 +107,10 @@ describe("Proxy Handler", () => {
       const handler = createProxyHandler({
         config: {
           apiBaseUrl: "http://localhost:9999",
-          clientId: "",
-          clientSecret: "",
-          previewClientId: "",
-          previewClientSecret: "",
+          apiClientId: "",
+          apiClientSecret: "",
+          previewApiClientId: "",
+          previewApiClientSecret: "",
         },
       });
 
@@ -134,10 +134,10 @@ describe("Proxy Handler", () => {
       const handler = createProxyHandler({
         config: {
           apiBaseUrl: "http://localhost:9999",
-          clientId: "",
-          clientSecret: "",
-          previewClientId: "",
-          previewClientSecret: "",
+          apiClientId: "",
+          apiClientSecret: "",
+          previewApiClientId: "",
+          previewApiClientSecret: "",
           apiToken: "fallback-token",
         },
       });

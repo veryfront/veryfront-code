@@ -1,6 +1,6 @@
-import { bold, cyan, dim, red } from "#veryfront/compat/console";
-import { cliLogger } from "#veryfront/utils";
-import { exit, getStdout } from "#veryfront/platform/compat/process.ts";
+import { bold, cyan, dim, red } from "#cli/ui";
+import { cliLogger } from "#cli/utils";
+import { exit, getStdout } from "veryfront/platform";
 
 export function handleBuildError(error: unknown): never {
   getStdout()?.write?.(`\r${" ".repeat(80)}\r`);

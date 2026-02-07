@@ -13,7 +13,7 @@ import {
   CACHE_DIR_TOKEN,
   CACHE_INVARIANT_VIOLATION,
   hasHardcodedCachePaths as baseHasHardcodedCachePaths,
-} from "#veryfront/cache";
+} from "#veryfront/cache/paths.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 
 /**

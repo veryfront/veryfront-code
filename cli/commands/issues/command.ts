@@ -4,14 +4,9 @@
  * @module cli/commands/issues
  */
 
-import { cwd } from "#veryfront/platform/compat/process.ts";
-import { cliLogger } from "#veryfront/utils";
-import {
-  createIssuesManager,
-  type Issue,
-  type IssuePrefix,
-  parseState,
-} from "#veryfront/issues/index.ts";
+import { cwd } from "veryfront/platform";
+import { cliLogger } from "#cli/utils";
+import { createIssuesManager, type Issue, type IssuePrefix, parseState } from "veryfront/issues";
 import { bold, muted, success } from "#cli/ui";
 
 import type { ParsedArgs } from "#cli/shared/types";

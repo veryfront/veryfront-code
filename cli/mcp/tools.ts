@@ -3,21 +3,14 @@
  **************************/
 
 import { z } from "zod";
-import {
-  type DevError,
-  type ErrorType,
-  getErrorCollector,
-} from "#veryfront/observability/error-collector.ts";
-import { getLogBuffer, type LogEntry, type LogLevel } from "#veryfront/observability/log-buffer.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import {
-  type EnvironmentConfig,
-  getEnvironmentConfig,
-} from "#veryfront/config/environment-config.ts";
-import type { MCPTool } from "#veryfront/mcp/types.ts";
+import { type DevError, type ErrorType, getErrorCollector } from "veryfront/observability";
+import { getLogBuffer, type LogEntry, type LogLevel } from "veryfront/observability";
+import { createFileSystem } from "veryfront/platform";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
+import type { MCPTool } from "veryfront/mcp";
 import { advancedTools } from "./advanced-tools.ts";
 import { remoteFileTools } from "./remote-file-tools.ts";
-import { issuesMcpTools } from "#veryfront/issues/mcp.ts";
+import { issuesMcpTools } from "veryfront/issues";
 import { DEFAULT_MCP_PORT } from "#cli/shared/constants";
 
 export type { MCPTool };

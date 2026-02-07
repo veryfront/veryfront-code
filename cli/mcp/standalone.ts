@@ -6,8 +6,8 @@
  * Falls back gracefully when the dev server is not running.
  */
 
-import { readTextFile } from "#veryfront/platform/compat/fs.ts";
-import type { StdinReader } from "#veryfront/platform/compat/stdin.ts";
+import { readTextFile } from "veryfront/platform";
+import type { StdinReader } from "veryfront/platform";
 import { DevServerClient } from "./dev-server-client.ts";
 import { startStdioJsonRpc } from "./stdio.ts";
 import {

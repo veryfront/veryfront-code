@@ -3,8 +3,8 @@
  * Shared UI for new/dev commands with collapsible logs
  **************************/
 
-import { getTerminalSize, writeStdout } from "#veryfront/platform/compat/process.ts";
-import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
+import { getTerminalSize, writeStdout } from "veryfront/platform";
+import { getStdinReader, setRawMode } from "veryfront/platform";
 import { brand, dim, error, muted, success } from "./colors.ts";
 import { ANSI_REGEX, cursor, getSpinnerFrame, screen, SPINNER_FRAMES } from "./ansi.ts";
 import {

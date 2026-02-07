@@ -1,10 +1,7 @@
-import { cliLogger } from "#veryfront/utils";
-import { writeStdout } from "#veryfront/platform/compat/process.ts";
-import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
-import {
-  type EnvironmentConfig,
-  getEnvironmentConfig,
-} from "#veryfront/config/environment-config.ts";
+import { cliLogger } from "#cli/utils";
+import { writeStdout } from "veryfront/platform";
+import { getStdinReader, setRawMode } from "veryfront/platform";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { deleteToken, getTokenLocation, hasToken, readToken, saveToken } from "./token-store.ts";
 import { getCallbackUrl, startCallbackServer } from "./callback-server.ts";
 import { canOpenBrowser, openBrowser } from "./browser.ts";

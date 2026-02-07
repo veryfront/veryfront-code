@@ -7,10 +7,10 @@ export type TokenScope = "preview" | "production";
 
 export interface OAuthConfig {
   apiBaseUrl: string;
-  clientId: string;
-  clientSecret: string;
-  previewClientId: string;
-  previewClientSecret: string;
+  apiClientId: string;
+  apiClientSecret: string;
+  previewApiClientId: string;
+  previewApiClientSecret: string;
 }
 
 export interface TokenManagerOptions {
@@ -96,13 +96,15 @@ export class TokenManager {
     customDomain?: string,
   ): Promise<string> {
     const isPreview = scope === "preview";
-    const clientId = isPreview ? this.config.previewClientId : this.config.clientId;
-    const clientSecret = isPreview ? this.config.previewClientSecret : this.config.clientSecret;
+    const apiClientId = isPreview ? this.config.previewApiClientId : this.config.apiClientId;
+    const apiClientSecret = isPreview
+      ? this.config.previewApiClientSecret
+      : this.config.apiClientSecret;
 
     const response = await fetchOAuthToken({
       apiBaseUrl: this.config.apiBaseUrl,
-      clientId,
-      clientSecret,
+      apiClientId,
+      apiClientSecret,
       projectSlug,
       customDomain,
     });

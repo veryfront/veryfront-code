@@ -1,5 +1,5 @@
 import { serverLogger as logger } from "#veryfront/utils";
-import { getEnvNumber } from "#veryfront/compat/process.ts";
+import { getEnvNumber, unrefTimer } from "#veryfront/compat/process.ts";
 
 export interface ProjectIsolationConfig {
   maxConcurrentPerProject: number;
@@ -58,6 +58,9 @@ export class ProjectIsolationManager {
         }
       }
     }, 60_000);
+
+    // Global singleton cleanup should not keep short-lived CLI processes alive.
+    unrefTimer(this.cleanupInterval);
   }
 
   private getOrCreateState(projectSlug: string): ProjectState {
