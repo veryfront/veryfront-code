@@ -125,7 +125,8 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
                         {msg.role}:
                       </span>
                       <span className="text-neutral-600 dark:text-neutral-400 ml-1">
-                        {text.substring(0, 200)}{text.length > 200 ? "..." : ""}
+                        {text.substring(0, 200)}
+                        {text.length > 200 ? "..." : ""}
                       </span>
                     </div>
                   );

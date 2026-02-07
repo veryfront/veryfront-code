@@ -52,4 +52,20 @@ export function useRouter(): RouterValue {
 
 export { RouterProvider as Router };
 
-export { Link, type LinkProps } from "../components/Link.tsx";
+// Link is defined here (not re-exported from components/Link.tsx) to avoid
+// relative imports in embedded framework sources, which break compiled binary SSR.
+export type LinkProps = React.AnchorHTMLAttributes<HTMLAnchorElement> & {
+  prefetch?: boolean;
+};
+
+export function Link({
+  prefetch = true,
+  children,
+  ...rest
+}: LinkProps): React.ReactElement {
+  return (
+    <a {...rest} data-prefetch={prefetch ? "true" : undefined}>
+      {children}
+    </a>
+  );
+}

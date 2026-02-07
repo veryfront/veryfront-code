@@ -126,8 +126,7 @@ const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
       `https://esm.sh/veryfront@${v}/chat?external=react,react-dom&target=es2022`,
     veryfrontMarkdown: (v) =>
       `https://esm.sh/veryfront@${v}/markdown?external=react,react-dom&target=es2022`,
-    veryfrontMdx: (v) =>
-      `https://esm.sh/veryfront@${v}/mdx?external=react,react-dom&target=es2022`,
+    veryfrontMdx: (v) => `https://esm.sh/veryfront@${v}/mdx?external=react,react-dom&target=es2022`,
   },
   unpkg: {
     react: (v) => `https://unpkg.com/react@${v}/umd/react.production.min.js`,

@@ -49,11 +49,7 @@
 // =============================================================================
 // Core Types
 // =============================================================================
-export type {
-  WorkflowDefinition,
-  WorkflowRun,
-  WorkflowStatus,
-} from "./types.ts";
+export type { WorkflowDefinition, WorkflowRun, WorkflowStatus } from "./types.ts";
 
 // =============================================================================
 // DSL Builders
