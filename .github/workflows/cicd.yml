@@ -288,11 +288,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Trigger cloud-renderer deploy
+      - name: Trigger server deploy
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ env.GITHUB_PAT }}
-          repository: veryfront/veryfront-cloud-renderer
+          repository: veryfront/veryfront-server
           event-type: veryfront-code-released
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
 
@@ -410,11 +410,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Trigger cloud-renderer deploy
+      - name: Trigger server deploy
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ env.GITHUB_PAT }}
-          repository: veryfront/veryfront-cloud-renderer
+          repository: veryfront/veryfront-server
           event-type: veryfront-code-released
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
 
