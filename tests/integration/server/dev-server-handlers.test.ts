@@ -10,8 +10,10 @@
  */
 
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
+import { join } from "#veryfront/compat/path";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
+import { toBase64Url } from "#veryfront/utils/path-utils.ts";
 import { DevServer } from "../../../src/server/dev-server.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { drainEventLoop } from "../../_helpers/utils.ts";
@@ -304,6 +306,26 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
 
         assertExists(response);
         assert(response.status !== 0);
+
+        await stopServer(server);
+      });
+    });
+
+    it("serves /_veryfront/fs modules without explicit defaultProjectSlug", async () => {
+      await withTestContext("dev-server-local-project-fallback", async (context) => {
+        await mkdir(join(context.projectDir, "components"), { recursive: true });
+        const modulePath = join(context.projectDir, "components", "fallback.js");
+        await writeTextFile(modulePath, "export default 'fallback';");
+
+        const { server, port } = await createTestDevServer(context);
+        const encodedPath = toBase64Url(modulePath);
+        const response = await fetch(
+          `http://127.0.0.1:${port}/_veryfront/fs/${encodedPath}.js`,
+        );
+
+        assertEquals(response.status, 200);
+        const body = await response.text();
+        assert(body.includes("fallback"), "Expected bundled module content");
 
         await stopServer(server);
       });

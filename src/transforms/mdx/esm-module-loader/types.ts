@@ -52,7 +52,7 @@ export interface ModuleFetcherContext {
   projectDir: string;
   projectId: string;
   projectSlug?: string;
-  isLocalDev?: boolean;
+  isLocalProject?: boolean;
   /**
    * Tracks modules currently being processed to detect circular imports.
    * Key: normalized module path, Value: promise resolving to cached path.

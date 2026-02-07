@@ -22,7 +22,7 @@ export interface EnrichedContext {
   token: string;
   environment: Environment;
   branch: string | null;
-  isLocalDev: boolean;
+  isLocalProject: boolean;
   mode: RenderMode;
 
   /** Content source identifier for cache isolation (e.g., "release-abc123", "preview-main", "local-main") */
@@ -50,7 +50,7 @@ export interface BuildEnrichedContextOptions {
   token: string;
   environment: Environment;
   branch: string | null;
-  isLocalDev: boolean;
+  isLocalProject: boolean;
   /** Content source identifier for cache isolation - computed by proxy */
   contentSourceId: string;
   parsedDomain: ParsedDomain;
@@ -82,8 +82,8 @@ export function buildEnrichedContext(options: BuildEnrichedContextOptions): Enri
     token: options.token,
     environment: options.environment,
     branch: options.branch,
-    isLocalDev: options.isLocalDev,
-    mode: options.isLocalDev ? "development" : "production",
+    isLocalProject: options.isLocalProject,
+    mode: options.isLocalProject ? "development" : "production",
 
     contentSourceId: options.contentSourceId,
     releaseId: options.releaseId,
@@ -108,28 +108,26 @@ export function toRequestContext(enriched: EnrichedContext): {
   slug: string;
   branch: string | null;
   mode: Environment;
-  isLocalDev: boolean;
 } {
   return {
     token: enriched.token,
     slug: enriched.projectSlug,
     branch: enriched.branch,
     mode: enriched.environment,
-    isLocalDev: enriched.isLocalDev,
   };
 }
 
 export function shouldEnableCacheFromEnriched(enriched: EnrichedContext): boolean {
-  return !enriched.isLocalDev && enriched.environment !== "preview";
+  return !enriched.isLocalProject && enriched.environment !== "preview";
 }
 
 export function shouldUseNoCacheHeadersFromEnriched(enriched: EnrichedContext): boolean {
-  return enriched.isLocalDev || enriched.environment === "preview";
+  return enriched.isLocalProject || enriched.environment === "preview";
 }
 
 export function shouldUseNoCacheHeadersFromHandler(ctx: HandlerContext): boolean {
   if (ctx.enriched) return shouldUseNoCacheHeadersFromEnriched(ctx.enriched);
-  if (ctx.requestContext?.isLocalDev) return true;
+  if (ctx.isLocalProject) return true;
 
   return (ctx.resolvedEnvironment ?? ctx.requestContext?.mode) === "preview";
 }

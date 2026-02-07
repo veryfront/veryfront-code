@@ -40,8 +40,6 @@ export interface EnvironmentResolutionOptions {
   isLocalProject: boolean;
   /** Whether running in proxy mode */
   isProxyMode: boolean;
-  /** Whether running in local dev mode */
-  isLocalDev: boolean;
   /** Pathname (for WS/HMR skip) */
   pathname: string;
   /** Default environment for standalone mode */
@@ -101,7 +99,6 @@ export function resolveEnvironment(
   const isStandaloneWithoutRelease = !opts.isProxyMode &&
     resolvedEnvironment === "production" &&
     !releaseId &&
-    !opts.isLocalDev &&
     !opts.isLocalProject;
 
   if (isStandaloneWithoutRelease) {

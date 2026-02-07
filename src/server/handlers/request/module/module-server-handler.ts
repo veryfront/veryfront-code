@@ -21,7 +21,7 @@ export function handleModuleServer(
           projectId: ctx.projectId ?? ctx.projectDir,
           projectDir: ctx.projectDir,
           adapter: ctx.adapter,
-          dev: ctx.requestContext?.isLocalDev ?? false,
+          dev: !!ctx.isLocalProject,
           projectUUID: ctx.projectId,
           projectSlug: ctx.projectSlug,
           branch: ctx.parsedDomain?.branch ?? null,

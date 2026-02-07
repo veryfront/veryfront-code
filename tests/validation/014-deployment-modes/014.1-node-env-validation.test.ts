@@ -62,14 +62,14 @@ describe("014.1 NODE_ENV Validation", () => {
   });
 
   describe("Request Context Safety", () => {
-    it("should default isLocalDev based on NODE_ENV", async () => {
+    it("should not contain process-level isLocalDev", async () => {
       const content = await Deno.readTextFile(
         "./src/server/context/request-context.ts",
       );
 
       assert(
-        content.includes('isLocalDev: env !== "production"'),
-        "isLocalDev should be true when NODE_ENV is not 'production'",
+        !content.includes("isLocalDev"),
+        "RequestContext should not contain isLocalDev (use per-request isLocalProject instead)",
       );
     });
   });

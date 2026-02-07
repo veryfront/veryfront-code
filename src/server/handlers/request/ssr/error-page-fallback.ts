@@ -191,10 +191,10 @@ async function loadErrorComponent(
     "#veryfront/modules/react-loader/component-loader.ts"
   );
 
-  const isLocalDev = ctx.requestContext?.isLocalDev ?? false;
+  const isLocal = !!ctx.isLocalProject;
   const contentSourceId = ctx.enriched?.contentSourceId ??
     computeContentSourceId(
-      isLocalDev,
+      isLocal,
       ctx.resolvedEnvironment ?? ctx.requestContext?.mode ?? "preview",
       ctx.requestContext?.branch ?? null,
       ctx.releaseId,
@@ -207,7 +207,7 @@ async function loadErrorComponent(
     ctx.adapter,
     {
       projectId: ctx.projectId ?? ctx.projectDir,
-      dev: isLocalDev,
+      dev: isLocal,
       contentSourceId,
     },
   );

@@ -511,9 +511,9 @@ async function fetchModuleViaHTTP(
   fetchAndCacheModuleFn: (path: string, parent?: string) => Promise<string | null>,
   log: Logger,
   projectSlug?: string,
-  isLocalDev?: boolean,
+  isLocalProject?: boolean,
 ): Promise<string | null> {
-  if (!isLocalDev) {
+  if (!isLocalProject) {
     log.warn(
       `${LOG_PREFIX_MDX_LOADER} Direct read failed in production (module must be pre-loaded): ${normalizedPath}`,
     );
@@ -759,7 +759,7 @@ async function doFetchAndCacheModule(
         fetchAndCacheModuleFn,
         log,
         projectSlug,
-        context.isLocalDev,
+        context.isLocalProject,
       );
 
       if (moduleCode) {
@@ -1091,7 +1091,7 @@ export function createModuleFetcherContext(
   projectDir: string,
   projectId: string,
   options?: {
-    isLocalDev?: boolean;
+    isLocalProject?: boolean;
     projectSlug?: string;
     reactVersion?: string;
     logger?: Logger;

@@ -42,6 +42,7 @@ describe(
           signal: controller.signal,
           defaultProjectSlug: context.projectId,
           defaultProjectId: context.projectId,
+          localProjects: { [context.projectId]: context.projectDir },
         });
 
         context.addCleanup(async () => {
@@ -133,6 +134,7 @@ describe(
           signal: controller.signal,
           defaultProjectSlug: context.projectId,
           defaultProjectId: context.projectId,
+          localProjects: { [context.projectId]: context.projectDir },
         });
 
         context.addCleanup(async () => {

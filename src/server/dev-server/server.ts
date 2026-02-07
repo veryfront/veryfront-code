@@ -1,5 +1,6 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import { buildLocalhostUrl, LOCALHOST } from "#veryfront/config";
+import { basename } from "#veryfront/compat/path";
 import type { RuntimeAdapter, Server } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { DynamicRouter } from "#veryfront/routing/api/index.ts";
@@ -22,6 +23,22 @@ import {
 import { setEnv } from "#veryfront/platform/compat/process.ts";
 import { clearTranspileCache, discoverAll } from "#veryfront/discovery";
 import type { DiscoveryConfig } from "#veryfront/discovery";
+
+function normalizeSlug(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
+function deriveProjectSlug(projectDir: string): string {
+  const dirName = basename(projectDir);
+  const slug = dirName
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  return slug || "local-project";
+}
 
 export class DevServer {
   private router: DynamicRouter;
@@ -163,6 +180,9 @@ export class DevServer {
       await Promise.all([this.componentRegistry.discover(), routeDiscovery.discoverRoutes()]);
     }
 
+    const defaultProjectSlug = this.resolveDefaultProjectSlug(isProxyMode);
+    const localProjects = this.buildLocalProjects(defaultProjectSlug);
+
     const requestHandler = new RequestHandler(
       this.options.projectDir,
       this.adapter,
@@ -170,8 +190,9 @@ export class DevServer {
       () => this.isDebug(),
       this.hmrServer,
       this.appConfig,
-      this.options.defaultProjectSlug,
+      defaultProjectSlug,
       this.options.defaultProjectId,
+      localProjects,
     );
     this.requestHandler = requestHandler;
 
@@ -247,6 +268,44 @@ export class DevServer {
     } catch (error) {
       logger.debug("[DevServer] AI discovery skipped:", error);
     }
+  }
+
+  private resolveDefaultProjectSlug(isProxyMode: boolean): string | undefined {
+    const explicitSlug = normalizeSlug(this.options.defaultProjectSlug);
+    if (explicitSlug) return explicitSlug;
+
+    const configuredSlug = normalizeSlug(this.appConfig?.fs?.veryfront?.projectSlug);
+    if (configuredSlug) return configuredSlug;
+
+    const defaultProjectId = normalizeSlug(this.options.defaultProjectId);
+    if (defaultProjectId) return defaultProjectId;
+
+    if (isProxyMode) return undefined;
+
+    return deriveProjectSlug(this.options.projectDir);
+  }
+
+  private buildLocalProjects(
+    defaultProjectSlug: string | undefined,
+  ): Record<string, string> | undefined {
+    const slugs = new Set<string>();
+
+    if (defaultProjectSlug) slugs.add(defaultProjectSlug);
+
+    const explicitSlug = normalizeSlug(this.options.defaultProjectSlug);
+    if (explicitSlug) slugs.add(explicitSlug);
+
+    const configuredSlug = normalizeSlug(this.appConfig?.fs?.veryfront?.projectSlug);
+    if (configuredSlug) slugs.add(configuredSlug);
+
+    const defaultProjectId = normalizeSlug(this.options.defaultProjectId);
+    if (defaultProjectId) slugs.add(defaultProjectId);
+
+    if (slugs.size === 0) return undefined;
+
+    return Object.fromEntries(
+      Array.from(slugs, (slug) => [slug, this.options.projectDir]),
+    );
   }
 
   async rediscoverAI(): Promise<void> {

@@ -53,8 +53,8 @@ export interface StaticFileOptions {
   adapter: RuntimeAdapter;
   /** Whether in preview mode (affects caching) */
   isPreviewMode: boolean;
-  /** Whether in local dev mode */
-  isLocalDev: boolean;
+  /** Whether this is a local filesystem project */
+  isLocalProject: boolean;
 }
 
 /**
@@ -195,7 +195,7 @@ export class StaticFileService {
     requestPath: string,
     options: StaticFileOptions,
   ): CacheStrategy {
-    if (options.isPreviewMode && !options.isLocalDev) return "no-cache";
+    if (options.isPreviewMode && !options.isLocalProject) return "no-cache";
 
     const isVeryfrontAsset = requestPath.includes("/_veryfront/");
     if (

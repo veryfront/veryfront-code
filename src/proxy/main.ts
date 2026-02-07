@@ -17,7 +17,7 @@
  * - REDIS_URL: Redis connection URL (required if CACHE_TYPE=redis)
  */
 
-import { createProxyHandler, type ProxyConfig } from "./handler.ts";
+import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
 import { isRetryableConnectionError } from "./retry.ts";
 import {
@@ -304,6 +304,7 @@ function forwardToServer(req: Request): Promise<Response> {
           });
 
           const newHeaders = new Headers(req.headers);
+          for (const header of INTERNAL_PROXY_HEADERS) newHeaders.delete(header);
           if (ctx.token) newHeaders.set("x-token", ctx.token);
           newHeaders.set("x-project-slug", ctx.projectSlug || "");
           newHeaders.set("x-environment", ctx.environment);

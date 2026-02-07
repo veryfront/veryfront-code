@@ -42,7 +42,7 @@ export class SnippetHandler extends BaseHandler {
 
         const moduleServerUrl = this.getModuleServerUrl(ctx.moduleServerUrl, url);
         const pageId = url.searchParams.get("page_id") ?? undefined;
-        const isDev = ctx.requestContext?.isLocalDev ?? false;
+        const isDev = !!ctx.isLocalProject;
 
         const result = await renderSnippet(content, {
           mode: isDev ? "development" : "production",

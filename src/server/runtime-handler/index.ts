@@ -80,6 +80,7 @@ import {
   startIsolatedRequest,
 } from "./isolation.ts";
 import { resolveAdapter } from "./adapter-factory.ts";
+import { localProjectCache } from "./local-project-discovery.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext, buildMinimalContext } from "./handler-context-builder.ts";
 import { handleProjectsRequest, shouldHandleProjectsUI } from "./projects-handler.ts";
@@ -106,8 +107,6 @@ export interface RuntimeHandlerOptions {
   config?: VeryfrontConfig;
   /** Map of local project slugs to their filesystem paths (for unified dev server) */
   localProjects?: Record<string, string>;
-  /** Override environment config for isLocalDev (dev server passes { isLocalDev: true }) */
-  envConfig?: import("../context/request-context.ts").EnvConfig;
   /** Default project slug when not provided via proxy headers (for tests/local mode) */
   defaultProjectSlug?: string;
   /** Default project ID when not provided via proxy headers (for tests/local mode) */
@@ -133,6 +132,16 @@ export function createVeryfrontHandler(
   }
 
   logDebug("[runtime-handler] handler initialized", { projectDir });
+
+  // Seed local project cache from explicit mappings (for tests and capability injection)
+  if (opts.localProjects) {
+    for (const [slug, path] of Object.entries(opts.localProjects)) {
+      localProjectCache.set(slug, path);
+    }
+    logDebug("[runtime-handler] Seeded local project cache", {
+      projects: Object.keys(opts.localProjects),
+    });
+  }
 
   const securityLoader = new SecurityConfigLoader(projectDir, adapter, opts.config);
 
@@ -292,7 +301,7 @@ export function createVeryfrontHandler(
         });
 
         const executeHandler = async (): Promise<Response> => {
-          const reqCtx = createRequestContext(req, opts.envConfig);
+          const reqCtx = createRequestContext(req);
 
           const wsSlugOverride = url.searchParams.get("x-project-slug") || undefined;
 
@@ -355,7 +364,6 @@ export function createVeryfrontHandler(
             host,
             isLocalProject: adapterRes.isLocalProject,
             isProxyMode,
-            isLocalDev: reqCtx.isLocalDev,
             pathname: url.pathname,
             defaultEnvironment: opts.defaultEnvironment,
           });

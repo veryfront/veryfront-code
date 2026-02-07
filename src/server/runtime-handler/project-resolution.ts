@@ -109,7 +109,6 @@ export interface ProjectResolutionOptions {
     mode: "preview" | "production" | undefined;
     branch: string | null | undefined;
     token: string | undefined;
-    isLocalDev: boolean;
   };
   /** Default project slug for standalone mode */
   defaultProjectSlug: string | undefined;
@@ -144,7 +143,8 @@ export async function resolveProject(
   const configuredSlug = opts.config?.fs?.veryfront?.projectSlug;
 
   // Initial resolution from headers/config/context
-  let projectSlug = opts.reqCtx.slug ?? opts.wsSlugOverride ?? configuredSlug ??
+  // Use || for slug (empty string should fall through to defaults)
+  let projectSlug = opts.reqCtx.slug || opts.wsSlugOverride || configuredSlug ||
     opts.defaultProjectSlug;
   let projectId: string | undefined = headers.projectId ?? opts.defaultProjectId;
   let releaseId: string | undefined = headers.releaseId;

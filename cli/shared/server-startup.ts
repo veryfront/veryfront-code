@@ -35,12 +35,17 @@ export async function startCliProxyModeServer(
 ): Promise<Awaited<ReturnType<typeof startProductionServer>>> {
   // Proxy mode must be set before config loading/bootstrap.
   setEnv("PROXY_MODE", "1");
-  setEnv("NODE_ENV", "development");
+
+  // Ensure NODE_ENV is set for local proxy mode (the `start` command uses
+  // startProductionServer with PROXY_MODE=1, but this is a local dev scenario,
+  // not a deployed pod). Without this, validateProductionEnvironment throws.
+  if (!getEnv("NODE_ENV") && !getEnv("DENO_ENV")) {
+    setEnv("NODE_ENV", "development");
+  }
 
   return await startProductionServer({
     port: options.port,
     projectDir: options.projectDir,
-    mode: "development",
     signal: options.signal,
     requestInterceptor: options.requestInterceptor,
     defaultProjectSlug: options.defaultProjectSlug,

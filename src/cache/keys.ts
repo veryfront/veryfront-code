@@ -97,7 +97,7 @@ export function buildRenderCachePrefix(
  * This is the SINGLE SOURCE OF TRUTH for contentSourceId computation.
  * Used by proxy to compute the value, and by fallback paths when proxy header is unavailable.
  *
- * @param isLocalDev - Whether this is a local development environment
+ * @param isLocal - Whether this is a local development project
  * @param environment - "preview" or "production"
  * @param branch - Branch name (for preview/local modes)
  * @param releaseId - Release ID (required for production, ignored for preview/local)
@@ -107,12 +107,12 @@ export function buildRenderCachePrefix(
  *   - Production: "release-{releaseId}"
  */
 export function computeContentSourceId(
-  isLocalDev: boolean,
+  isLocal: boolean,
   environment: "preview" | "production",
   branch: string | null | undefined,
   releaseId: string | null | undefined,
 ): string {
-  if (isLocalDev) return `local-${branch ?? "main"}`;
+  if (isLocal) return `local-${branch ?? "main"}`;
 
   if (environment === "production") {
     if (!releaseId) {

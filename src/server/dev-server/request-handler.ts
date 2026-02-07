@@ -29,6 +29,7 @@ export class RequestHandler {
     private config?: VeryfrontConfig,
     private defaultProjectSlug?: string,
     private defaultProjectId?: string,
+    private localProjects?: Record<string, string>,
   ) {}
 
   async handleRequest(req: Request): Promise<Response> {
@@ -156,9 +157,9 @@ export class RequestHandler {
         debug: this.isDebug(),
         moduleServerUrl: "/_vf_modules",
         config: this.config,
-        envConfig: { isLocalDev: true },
         defaultProjectSlug: this.defaultProjectSlug,
         defaultProjectId: this.defaultProjectId,
+        localProjects: this.localProjects,
       });
     }
 

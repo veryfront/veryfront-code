@@ -177,7 +177,7 @@ export class SSRService {
     request: Request,
   ): SSRRenderResult {
     const errorObj = error instanceof Error ? error : new Error(String(error));
-    const isDev = ctx.requestContext?.isLocalDev || ctx.requestContext?.mode === "preview";
+    const isDev = ctx.isLocalProject || ctx.requestContext?.mode === "preview";
 
     if (error instanceof VeryfrontError && error.slug === "file-not-found") {
       logger.debug("[SSRService] Page not found", { slug, error: errorObj.message });

@@ -222,7 +222,6 @@ function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
     if (!nodeEnv) {
       logger.error(
         "[Bootstrap:Prod] CRITICAL: NODE_ENV is not set in proxy mode. " +
-          "This will cause isLocalDev=true, enabling dev features in production. " +
           "Set NODE_ENV=production in your pod configuration.",
       );
       throw new Error(
@@ -241,8 +240,7 @@ function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
 
   // Log effective configuration for debugging
   logger.debug("[Bootstrap:Prod] Environment configuration", {
-    nodeEnv: nodeEnv ?? "(unset, defaults to development)",
+    nodeEnv: nodeEnv ?? "(unset)",
     proxyMode: proxyMode ?? "0",
-    isLocalDev: nodeEnv !== "production",
   });
 }

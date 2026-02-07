@@ -175,6 +175,39 @@ describe("Proxy-Renderer Mode Parity", () => {
       assertEquals(injected.headers.get("accept"), "text/html");
       assertEquals(injected.headers.get("user-agent"), "TestBot/1.0");
     });
+
+    it("strips client-supplied internal context headers before injecting", () => {
+      const ctx: ProxyContext = {
+        token: undefined,
+        projectSlug: "proj",
+        environment: "preview",
+        contentSourceId: "preview-main",
+        host: "proj.preview.veryfront.com",
+        parsedDomain: {
+          slug: "proj",
+          isVeryfrontDomain: true,
+          environment: "preview",
+          branch: null,
+          isDraft: true,
+          allowIframeEmbed: true,
+        },
+        isLocalProject: false,
+      };
+
+      const originalReq = new Request("http://proj.preview.veryfront.com/page", {
+        headers: {
+          "x-project-path": "/tmp/attacker",
+          "x-token": "attacker-token",
+          "x-environment": "production",
+        },
+      });
+
+      const injected = injectContextHeaders(originalReq, ctx);
+
+      assertEquals(injected.headers.get("x-project-path"), null);
+      assertEquals(injected.headers.get("x-token"), null);
+      assertEquals(injected.headers.get("x-environment"), "preview");
+    });
   });
 
   describe("combined mode produces same context as split mode", () => {

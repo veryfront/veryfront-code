@@ -1,4 +1,5 @@
 import { serverLogger } from "#veryfront/utils";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 
 interface TimingEntry {
   label: string;
@@ -12,23 +13,12 @@ let cachedEnabled: boolean | undefined;
 
 function getEnabled(): boolean {
   if (cachedEnabled !== undefined) return cachedEnabled;
-  // Default to disabled in tests/during module loading
-  cachedEnabled = false;
+  // Read env directly to avoid triggering getEnvironmentConfig() at module-load time.
+  // This module is imported before .env is loaded, so going through the config
+  // pipeline produces a noisy early-access warning.
+  cachedEnabled = getEnv("VERYFRONT_PERF") === "1";
   return cachedEnabled;
 }
-
-// Try to load the env module asynchronously - will update cachedEnabled on success
-import("#veryfront/config/env.ts")
-  .then((mod) => {
-    try {
-      cachedEnabled = mod.isPerfEnabledEnv();
-    } catch {
-      cachedEnabled = false;
-    }
-  })
-  .catch(() => {
-    cachedEnabled = false;
-  });
 const timings = new Map<string, TimingEntry[]>();
 let currentRequestId: string | null = null;
 

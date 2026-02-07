@@ -113,7 +113,7 @@ export function generateHTMLShellParts(
       "html.slug": meta.slug || "",
       "html.has_content": !!contentForTailwind,
       "html.mode": options.mode || "production",
-      "html.is_local_dev": options.isLocalDev ?? false,
+      "html.is_local_project": options.isLocalProject ?? false,
     },
   );
 }
@@ -127,9 +127,9 @@ async function generateHTMLShellPartsImpl(
 ): Promise<{ start: string; end: string }> {
   const stylesheetContent = options.globalCSS;
 
-  const localDev = options.isLocalDev ?? false;
+  const isLocalProject = options.isLocalProject ?? false;
   const isPreviewMode = options.environment === "preview";
-  const useProductionCSS = !localDev && options.environment === "production";
+  const useProductionCSS = !isLocalProject && options.environment === "production";
 
   // Use projectClasses (extracted from ALL source files) + current page as fallback
   const candidates = new Set<string>(options.projectClasses ?? []);
@@ -187,7 +187,7 @@ async function generateHTMLShellPartsImpl(
   // Error logger endpoint only enabled in local dev (returns 404 in preview/prod)
   const skipErrorLogger = isPreviewMode;
   // Enable dev scripts for local dev OR preview mode (for HMR support in Studio)
-  const useDevScripts = localDev || isPreviewMode;
+  const useDevScripts = isLocalProject || isPreviewMode;
 
   const modeScripts = useDevScripts
     ? getDevScripts(meta.slug || "", options.config, params, props, nonce, {
@@ -258,7 +258,7 @@ async function generateHTMLShellPartsImpl(
 
   // Markdown preview mode: .md files in preview/local dev with prose !== false
   // Only applies to standalone markdown files (not in pages/ or app/)
-  const isMarkdownPreview = (localDev || isPreviewMode) &&
+  const isMarkdownPreview = (isLocalProject || isPreviewMode) &&
     options.pageType === "md" &&
     checkMarkdownPreview(options.pagePath, options.frontmatter);
 

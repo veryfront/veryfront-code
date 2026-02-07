@@ -18,11 +18,13 @@ export class DevFileHandler extends BaseHandler {
     name: "DevFileHandler",
     priority: PRIORITY_MEDIUM_DEV_FILES as HandlerPriority,
     patterns: [{ pattern: "/_veryfront/fs/", prefix: true, method: "GET" }],
-    enabled: (ctx) => ctx.requestContext?.isLocalDev ?? false,
+    enabled: (ctx) => !!ctx.isLocalProject,
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const { pathname } = new URL(req.url);
+
+    if (!ctx.isLocalProject) return this.continue();
 
     if (req.method !== "GET" || !pathname.startsWith("/_veryfront/fs/")) {
       return this.continue();

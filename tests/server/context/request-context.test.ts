@@ -1,7 +1,6 @@
 import { assertEquals, assertStrictEquals } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import {
-  createEnvConfig,
   createRequestContext,
   getCacheStrategy,
   type RequestContext,
@@ -15,19 +14,11 @@ function makeCtx(overrides: Partial<RequestContext> = {}): RequestContext {
     slug: "",
     branch: null,
     mode: "production",
-    isLocalDev: false,
     ...overrides,
   };
 }
 
 describe("request-context", () => {
-  describe("createEnvConfig", () => {
-    it("returns an EnvConfig with isLocalDev boolean", () => {
-      const config = createEnvConfig();
-      assertEquals(typeof config.isLocalDev, "boolean");
-    });
-  });
-
   describe("createRequestContext", () => {
     it("extracts slug from production domain", () => {
       const ctx = createRequestContext(
@@ -131,87 +122,77 @@ describe("request-context", () => {
 
       assertEquals(ctx.mode, "production");
     });
-
-    it("uses envConfig.isLocalDev when provided", () => {
-      const req = new Request("https://myapp.veryfront.com/");
-
-      assertEquals(createRequestContext(req, { isLocalDev: true }).isLocalDev, true);
-      assertEquals(
-        createRequestContext(req, { isLocalDev: false }).isLocalDev,
-        false,
-      );
-    });
   });
 
   describe("getCacheStrategy", () => {
-    it("returns 'none' when isLocalDev is true regardless of mode", () => {
-      assertEquals(getCacheStrategy(makeCtx({ mode: "preview", isLocalDev: true })), "none");
+    it("returns 'none' when isLocalProject is true regardless of mode", () => {
+      assertEquals(getCacheStrategy(makeCtx({ mode: "preview" }), true), "none");
       assertEquals(
-        getCacheStrategy(makeCtx({ mode: "production", isLocalDev: true })),
+        getCacheStrategy(makeCtx({ mode: "production" }), true),
         "none",
       );
     });
 
-    it("returns 'invalidate' for preview mode when not local dev", () => {
+    it("returns 'invalidate' for preview mode when not local project", () => {
       assertEquals(
-        getCacheStrategy(makeCtx({ mode: "preview", isLocalDev: false })),
+        getCacheStrategy(makeCtx({ mode: "preview" }), false),
         "invalidate",
       );
     });
 
-    it("returns 'immutable' for production mode when not local dev", () => {
+    it("returns 'immutable' for production mode when not local project", () => {
       assertEquals(
-        getCacheStrategy(makeCtx({ mode: "production", isLocalDev: false })),
+        getCacheStrategy(makeCtx({ mode: "production" }), false),
         "immutable",
       );
     });
   });
 
   describe("shouldEnableCache", () => {
-    it("returns false when isLocalDev is true", () => {
+    it("returns false when isLocalProject is true", () => {
       assertStrictEquals(
-        shouldEnableCache(makeCtx({ mode: "production", isLocalDev: true })),
+        shouldEnableCache(makeCtx({ mode: "production" }), true),
         false,
       );
     });
 
     it("returns false for preview mode", () => {
       assertStrictEquals(
-        shouldEnableCache(makeCtx({ mode: "preview", isLocalDev: false })),
+        shouldEnableCache(makeCtx({ mode: "preview" }), false),
         false,
       );
     });
 
-    it("returns true for production mode when not local dev", () => {
+    it("returns true for production mode when not local project", () => {
       assertStrictEquals(
-        shouldEnableCache(makeCtx({ mode: "production", isLocalDev: false })),
+        shouldEnableCache(makeCtx({ mode: "production" }), false),
         true,
       );
     });
   });
 
   describe("shouldUseNoCacheHeaders", () => {
-    it("returns true when isLocalDev is true regardless of mode", () => {
+    it("returns true when isLocalProject is true regardless of mode", () => {
       assertStrictEquals(
-        shouldUseNoCacheHeaders(makeCtx({ mode: "preview", isLocalDev: true })),
+        shouldUseNoCacheHeaders(makeCtx({ mode: "preview" }), true),
         true,
       );
       assertStrictEquals(
-        shouldUseNoCacheHeaders(makeCtx({ mode: "production", isLocalDev: true })),
-        true,
-      );
-    });
-
-    it("returns true for preview mode when not local dev", () => {
-      assertStrictEquals(
-        shouldUseNoCacheHeaders(makeCtx({ mode: "preview", isLocalDev: false })),
+        shouldUseNoCacheHeaders(makeCtx({ mode: "production" }), true),
         true,
       );
     });
 
-    it("returns false for production mode when not local dev", () => {
+    it("returns true for preview mode when not local project", () => {
       assertStrictEquals(
-        shouldUseNoCacheHeaders(makeCtx({ mode: "production", isLocalDev: false })),
+        shouldUseNoCacheHeaders(makeCtx({ mode: "preview" }), false),
+        true,
+      );
+    });
+
+    it("returns false for production mode when not local project", () => {
+      assertStrictEquals(
+        shouldUseNoCacheHeaders(makeCtx({ mode: "production" }), false),
         false,
       );
     });

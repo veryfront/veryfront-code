@@ -315,7 +315,7 @@ export class HTMLGenerator {
       environment: context.options?.environment,
       headings: context.pageBundle.headings,
       projectClasses,
-      isLocalDev: this.config.mode === "development",
+      isLocalProject: this.config.mode === "development",
       noHmr: context.options?.noHmr,
     };
   }

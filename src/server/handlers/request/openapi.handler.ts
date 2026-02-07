@@ -42,7 +42,7 @@ export class OpenAPIHandler extends BaseHandler {
     try {
       const spec = await this.getOrGenerateSpec(ctx, url);
       const content = isYaml ? specToYaml(spec) : JSON.stringify(spec, null, 2);
-      const isDev = ctx.requestContext?.isLocalDev ?? false;
+      const isDev = !!ctx.isLocalProject;
 
       const response = this.createResponseBuilder(ctx)
         .withCache(isDev ? "no-cache" : { maxAge: 3600, public: true })
@@ -62,7 +62,7 @@ export class OpenAPIHandler extends BaseHandler {
         .json(
           {
             error: "Failed to generate OpenAPI specification",
-            message: ctx.requestContext?.isLocalDev ? String(error) : undefined,
+            message: ctx.isLocalProject ? String(error) : undefined,
           },
           HTTP_SERVER_ERROR,
         );
@@ -79,7 +79,7 @@ export class OpenAPIHandler extends BaseHandler {
   }
 
   private async getOrGenerateSpec(ctx: HandlerContext, url: URL): Promise<OpenAPISpec> {
-    const isDev = ctx.requestContext?.isLocalDev ?? false;
+    const isDev = !!ctx.isLocalProject;
     const currentKey = `${ctx.projectDir}:${ctx.projectSlug || "default"}`;
 
     if (!isDev && this.cachedSpec && this.cacheKey === currentKey) return this.cachedSpec;

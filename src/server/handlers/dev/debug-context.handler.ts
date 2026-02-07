@@ -19,11 +19,14 @@ export class DebugContextHandler extends BaseHandler {
     priority: PRIORITY_HIGH_DEV as HandlerPriority,
     patterns: [{ pattern: "/_vf_debug/context", exact: true }],
     // Only enable in local development - debug endpoints should not be exposed in production
-    enabled: (ctx) => ctx.requestContext?.isLocalDev ?? false,
+    enabled: (ctx) => !!ctx.isLocalProject,
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) {
+      return Promise.resolve(this.continue());
+    }
+    if (!ctx.isLocalProject) {
       return Promise.resolve(this.continue());
     }
 

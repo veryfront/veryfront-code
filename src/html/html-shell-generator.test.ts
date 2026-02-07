@@ -130,7 +130,7 @@ describe("html-generation/html-shell-generator", () => {
         createOptions({
           mode: "production",
           environment: "production",
-          isLocalDev: false,
+          isLocalProject: false,
         }),
       );
 
@@ -153,7 +153,7 @@ describe("html-generation/html-shell-generator", () => {
         createOptions({
           mode: "production",
           environment: "production",
-          isLocalDev: false,
+          isLocalProject: false,
           projectId: "default",
         }),
       );
@@ -187,7 +187,7 @@ describe("html-generation/html-shell-generator", () => {
       const result = await wrapInHTMLShell(
         "<div>Content</div>",
         createMeta(),
-        createOptions({ isLocalDev: true }),
+        createOptions({ isLocalProject: true }),
       );
 
       assertStringIncludes(result, "Client-side error logger");
@@ -198,7 +198,7 @@ describe("html-generation/html-shell-generator", () => {
       const result = await wrapInHTMLShell(
         "<div>Content</div>",
         createMeta(),
-        createOptions({ mode: "production", isLocalDev: false }),
+        createOptions({ mode: "production", isLocalProject: false }),
       );
 
       assertStringIncludes(result, "hydrateRoot");

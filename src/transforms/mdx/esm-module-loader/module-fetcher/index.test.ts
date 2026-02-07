@@ -310,11 +310,11 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
 
     it("includes optional fields when provided", () => {
       const ctx = createModuleFetcherContext("/cache", mockAdapter, "/project", "proj-123", {
-        isLocalDev: true,
+        isLocalProject: true,
         projectSlug: "my-project",
         reactVersion: "19.0.0",
       });
-      assertEquals(ctx.isLocalDev, true);
+      assertEquals(ctx.isLocalProject, true);
       assertEquals(ctx.projectSlug, "my-project");
       assertEquals(ctx.reactVersion, "19.0.0");
     });
