@@ -16,7 +16,7 @@ curl -X DELETE "https://api.veryfront.com/internal/cache/project/{projectId}/tra
   -H "Authorization: Bearer $ADMIN_TOKEN"
 
 # Or restart pods:
-kubectl rollout restart deployment/veryfront-renderer -n veryfront-production
+kubectl rollout restart deployment/veryfront-server -n veryfront-production
 
 # To reproduce locally with production cache:
 VERYFRONT_PROXY_API_BASE_URL=https://api.veryfront.com PROXY_MODE=1 deno task start`,

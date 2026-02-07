@@ -67,7 +67,7 @@ async function ensureApis(): Promise<void> {
 
 function getServiceName(): string {
   const tracingConfig = getOtelTracingConfig();
-  return tracingConfig.serviceName || "veryfront-renderer";
+  return tracingConfig.serviceName || "veryfront-server";
 }
 
 function setSpanErrorStatus(span: import("@opentelemetry/api").Span, error: unknown): void {

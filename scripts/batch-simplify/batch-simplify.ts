@@ -235,7 +235,7 @@ async function submit(): Promise<void> {
       endpoint: "/v1/chat/completions",
       completion_window: "24h",
       metadata: {
-        project: "veryfront-renderer",
+        project: "veryfront-server",
         task: "code-simplification",
       },
     }),

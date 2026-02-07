@@ -1,6 +1,6 @@
 # Task Completion Checklist
 
-When completing a coding task in veryfront-renderer, run these checks:
+When completing a coding task in veryfront-server, run these checks:
 
 ## Before Committing
 

@@ -127,7 +127,7 @@ const FRAMEWORK_SOURCE_PATH_RE = new RegExp(
  * Framework paths can appear in two forms:
  * 1. "_veryfront/..." - original framework module path prefix
  * 2. "src/react/...", "src/platform/...", etc. - framework source paths
- *    (after FSAdapter normalizes absolute paths like /Users/.../veryfront-renderer/src/...)
+ *    (after FSAdapter normalizes absolute paths like /Users/.../veryfront-server/src/...)
  */
 export function isFrameworkSourcePath(normalizedPath: string): boolean {
   // Check for _veryfront/ prefix (with or without embedded: prefix)

@@ -88,7 +88,7 @@ export class GitHubAPIClient {
           headers: {
             Authorization: `Bearer ${this.config.token}`,
             Accept: "application/vnd.github.v3+json",
-            "User-Agent": "veryfront-renderer",
+            "User-Agent": "veryfront-server",
             "X-GitHub-Api-Version": "2022-11-28",
           },
         });
