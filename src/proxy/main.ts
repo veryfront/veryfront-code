@@ -42,13 +42,21 @@ function getLocalProjects(): Record<string, string> {
 }
 
 // Configuration from environment variables
+// Support both new and legacy env var names for backward compatibility
+const apiClientId = getEnv("VERYFRONT_PROXY_API_CLIENT_ID") ||
+  getEnv("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY") ||
+  "";
+const apiClientSecret = getEnv("VERYFRONT_PROXY_API_CLIENT_SECRET") ||
+  getEnv("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY") ||
+  "";
+
 const config: ProxyConfig = {
   apiBaseUrl: getEnv("VERYFRONT_PROXY_API_BASE_URL") || "https://api.veryfront.com",
-  apiClientId: getEnv("VERYFRONT_PROXY_API_CLIENT_ID") || "",
-  apiClientSecret: getEnv("VERYFRONT_PROXY_API_CLIENT_SECRET") || "",
+  apiClientId,
+  apiClientSecret,
   // Preview uses same service account (scopes determine access)
-  previewApiClientId: getEnv("VERYFRONT_PROXY_API_CLIENT_ID") || "",
-  previewApiClientSecret: getEnv("VERYFRONT_PROXY_API_CLIENT_SECRET") || "",
+  previewApiClientId: apiClientId,
+  previewApiClientSecret: apiClientSecret,
   localProjects: getLocalProjects(),
 };
 
