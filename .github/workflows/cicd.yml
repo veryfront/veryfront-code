@@ -240,7 +240,7 @@ jobs:
       - name: Create GitHub releases
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ secrets.GITHUB_VERYFRONT_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT_VERYFRONT }}
         run: |
           # Public repo release
           gh release create "v${VERSION}" \
@@ -267,7 +267,7 @@ jobs:
       - name: Trigger server deploy
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ secrets.GITHUB_VERYFRONT_PAT }}
+          token: ${{ secrets.GH_PAT_VERYFRONT }}
           repository: veryfront/veryfront-server
           event-type: veryfront-code-released
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
@@ -330,7 +330,7 @@ jobs:
       - name: Create GitHub releases
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ secrets.GITHUB_VERYFRONT_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT_VERYFRONT }}
         run: |
           # Public repo release with binaries and install scripts
           gh release create "v${VERSION}" \
@@ -365,7 +365,7 @@ jobs:
       - name: Trigger server deploy
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ secrets.GITHUB_VERYFRONT_PAT }}
+          token: ${{ secrets.GH_PAT_VERYFRONT }}
           repository: veryfront/veryfront-server
           event-type: veryfront-code-released
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
@@ -384,7 +384,7 @@ jobs:
       - name: Update Homebrew tap
         uses: nick-fields/retry@v3
         env:
-          GITHUB_PAT: ${{ secrets.GITHUB_VERYFRONT_PAT }}
+          GITHUB_PAT: ${{ secrets.GH_PAT_VERYFRONT }}
         with:
           timeout_minutes: 5
           max_attempts: 3
