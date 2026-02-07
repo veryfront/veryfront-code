@@ -10,9 +10,9 @@ const srcDir = new URL(".", import.meta.url).pathname.replace(
 
 function getVeryfrontModulePaths(): Record<string, string> {
   return {
-    "veryfront/agent/react": `file://${srcDir}/agent/react/index.ts`,
-    "veryfront/components/ai": `file://${srcDir}/react/components/ai/index.ts`,
-    "veryfront/primitives": `file://${srcDir}/react/primitives/index.ts`,
+    "veryfront/chat": `file://${srcDir}/chat/index.ts`,
+    "veryfront/markdown": `file://${srcDir}/markdown/index.ts`,
+    "veryfront/mdx": `file://${srcDir}/mdx/index.ts`,
   };
 }
 

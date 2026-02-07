@@ -9,6 +9,9 @@ export type {
   TokenExchangeResult,
 } from "./schemas/index.ts";
 
+// Import types used locally in this file
+import type { OAuthState, OAuthTokens } from "./schemas/index.ts";
+
 export interface TokenStore {
   getTokens(serviceId: string): Promise<OAuthTokens | null>;
   setTokens(serviceId: string, tokens: OAuthTokens): Promise<void>;

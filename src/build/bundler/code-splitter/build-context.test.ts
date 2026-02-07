@@ -13,9 +13,9 @@ describe("build/bundler/code-splitter/build-context", () => {
     ];
 
     const VERYFRONT_CLIENT_MODULES = [
-      "veryfront/agent/react",
-      "veryfront/components/ai",
-      "veryfront/primitives",
+      "veryfront/chat",
+      "veryfront/markdown",
+      "veryfront/mdx",
     ];
 
     function assertIncludesAll(
@@ -67,7 +67,7 @@ describe("build/bundler/code-splitter/build-context", () => {
       const result = getExternalDependencies(["custom-lib"], "cdn");
       assertIncludesAll(
         result,
-        ["react", "veryfront/primitives", "custom-lib"],
+        ["react", "veryfront/chat", "custom-lib"],
         "Missing external",
       );
     });

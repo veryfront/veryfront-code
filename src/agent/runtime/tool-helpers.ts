@@ -7,7 +7,8 @@
  */
 
 import type { Tool, ToolDefinition } from "#veryfront/tool";
-import { toolRegistry, toolToProviderDefinition } from "#veryfront/tool";
+import { toolRegistry } from "#veryfront/tool";
+import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 
 /**

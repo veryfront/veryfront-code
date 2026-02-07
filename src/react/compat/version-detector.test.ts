@@ -6,7 +6,7 @@ import {
   getReactVersionInfo,
   getRecommendedSSRMethod,
   hasFeature,
-} from "../index.ts";
+} from "./index.ts";
 
 describe("React version detection", () => {
   it("should detect React version", () => {

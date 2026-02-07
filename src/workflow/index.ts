@@ -50,33 +50,10 @@
 // Core Types
 // =============================================================================
 export type {
-  ApprovalDecision,
-  BaseNodeConfig,
-  BlobResolver,
-  BranchNodeConfig,
-  Checkpoint,
-  DurationString,
-  NodeState,
-  NodeStatus,
-  ParallelNodeConfig,
-  PendingApproval,
-  RetryConfig,
-  RunFilter,
-  StepBuilderContext,
-  StepNodeConfig,
-  SubWorkflowNodeConfig,
-  WaitNodeConfig,
-  WorkflowContext,
   WorkflowDefinition,
-  WorkflowJob,
-  WorkflowNode,
-  WorkflowNodeConfig,
-  WorkflowNodeType,
   WorkflowRun,
   WorkflowStatus,
 } from "./types.ts";
-
-export { generateId, parseDuration } from "./types.ts";
 
 // =============================================================================
 // DSL Builders
@@ -87,11 +64,14 @@ export {
   dag,
   delay,
   dependsOn,
+  doWhile,
+  loop,
   map,
   parallel,
   sequence,
   step,
   subWorkflow,
+  times,
   toolStep,
   unless,
   waitForApproval,
@@ -102,6 +82,7 @@ export {
 
 export type {
   BranchOptions,
+  LoopOptions,
   MapOptions,
   ParallelOptions,
   StepOptions,
@@ -113,24 +94,9 @@ export type {
 } from "./dsl/index.ts";
 
 // =============================================================================
-// Blob Storage
-// =============================================================================
-export {
-  type BlobRef,
-  type BlobStorage,
-  GCSBlobStorage,
-  type GCSBlobStorageConfig,
-  LocalBlobStorage,
-  S3BlobStorage,
-  type S3BlobStorageConfig,
-  type StoreBlobOptions,
-} from "./blob/index.ts";
-
-// =============================================================================
 // Backend
 // =============================================================================
-export type { BackendConfig, Lock, WorkflowBackend } from "./backends/types.ts";
-export { hasEventSupport, hasLockSupport, hasQueueSupport } from "./backends/types.ts";
+export type { BackendConfig, WorkflowBackend } from "./backends/types.ts";
 
 export { MemoryBackend } from "./backends/memory.ts";
 
@@ -138,52 +104,10 @@ export { RedisBackend } from "./backends/redis.ts";
 export type { RedisAdapter, RedisBackendConfig } from "./backends/redis.ts";
 
 // =============================================================================
-// Executor
-// =============================================================================
-export {
-  CheckpointManager,
-  DAGExecutor,
-  StepExecutor,
-  WorkflowExecutor,
-} from "./executor/index.ts";
-
-export type {
-  AgentRegistry,
-  CheckpointManagerConfig,
-  DAGExecutionResult,
-  DAGExecutorConfig,
-  ResumeInfo,
-  StepExecutorConfig,
-  StepResult,
-  ToolRegistry,
-  WorkflowExecutorConfig,
-  WorkflowHandle,
-} from "./executor/index.ts";
-
-// =============================================================================
-// Runtime
-// =============================================================================
-export { ApprovalManager } from "./runtime/index.ts";
-export type { ApprovalManagerConfig, ApprovalNotifier, ApprovalRequest } from "./runtime/index.ts";
-
-export {
-  createMockAgent,
-  createMockTool,
-  DefaultAgentRegistry,
-  DefaultToolRegistry,
-} from "./runtime/agent-registry.ts";
-
-// =============================================================================
 // Client API
 // =============================================================================
 export { createWorkflowClient, WorkflowClient } from "./api/index.ts";
 export type { WorkflowClientConfig } from "./api/index.ts";
-
-// =============================================================================
-// Workflow Registry (for discovery/dev tools)
-// =============================================================================
-export { getAllWorkflowIds, getWorkflow, registerWorkflow, workflowRegistry } from "./registry.ts";
-export type { WorkflowMetadata } from "./registry.ts";
 
 // =============================================================================
 // React Hooks (re-exported for convenience)

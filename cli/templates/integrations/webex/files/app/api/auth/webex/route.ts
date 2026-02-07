@@ -1,3 +1,4 @@
 import { createOAuthInitHandler, webexConfig } from "veryfront/oauth";
+import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
 
-export const GET = createOAuthInitHandler(webexConfig);
+export const GET = createOAuthInitHandler(webexConfig, { tokenStore: oauthMemoryTokenStore });

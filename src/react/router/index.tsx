@@ -51,3 +51,5 @@ export function useRouter(): RouterValue {
 }
 
 export { RouterProvider as Router };
+
+export { Link, type LinkProps } from "../components/Link.tsx";

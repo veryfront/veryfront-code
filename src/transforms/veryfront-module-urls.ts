@@ -10,24 +10,24 @@ type DenoConfig = {
 const MODULE_EXT_RE = /\.(mjs|cjs|js|jsx|ts|tsx)$/;
 const SRC_PREFIX = "./src/";
 
-// AI modules that are NOT embedded in compiled binaries
+// Client-side modules that are NOT embedded in compiled binaries
 // These must use CDN URLs when running from a compiled binary
 const AI_MODULE_SPECIFIERS = new Set([
-  "veryfront/agent/react",
-  "veryfront/components/ai",
-  "veryfront/primitives",
+  "veryfront/chat",
+  "veryfront/markdown",
+  "veryfront/mdx",
 ]);
 
-// CDN URLs for AI modules (used when running from compiled binary)
+// CDN URLs for client-side modules (used when running from compiled binary)
 function getAiModuleCdnUrl(specifier: string): string | null {
   const version = VERYFRONT_VERSION;
   switch (specifier) {
-    case "veryfront/agent/react":
-      return `https://esm.sh/veryfront@${version}/agent/react?external=react,react-dom&target=es2022`;
-    case "veryfront/components/ai":
-      return `https://esm.sh/veryfront@${version}/components/ai?external=react,react-dom&target=es2022`;
-    case "veryfront/primitives":
-      return `https://esm.sh/veryfront@${version}/primitives?external=react,react-dom&target=es2022`;
+    case "veryfront/chat":
+      return `https://esm.sh/veryfront@${version}/chat?external=react,react-dom&target=es2022`;
+    case "veryfront/markdown":
+      return `https://esm.sh/veryfront@${version}/markdown?external=react,react-dom&target=es2022`;
+    case "veryfront/mdx":
+      return `https://esm.sh/veryfront@${version}/mdx?external=react,react-dom&target=es2022`;
     default:
       return null;
   }

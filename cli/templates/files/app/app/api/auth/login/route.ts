@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getEnv } from "veryfront/platform";
+import { getEnv } from "veryfront";
 import { createSession } from "../../../../lib/auth.ts";
 import { validatePassword } from "../../../../lib/users.ts";
 

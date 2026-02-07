@@ -4,7 +4,6 @@ import {
   AgentStatus as AgentStatusPrimitive,
   ThinkingIndicator,
   ToolInvocation,
-  ToolList,
   ToolResult,
 } from "../../primitives/index.ts";
 import type { AgentStatus, Message, ToolCall } from "#veryfront/agent";
@@ -52,12 +51,11 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
       ((tool: ToolCall) => (
         <ToolInvocation
           name={tool.name}
-          args={tool.args}
-          status={tool.status}
+          input={tool.args}
           className={theme.tool}
         >
           {tool.result !== undefined
-            ? <ToolResult result={tool.result} className={theme.toolResult} />
+            ? <ToolResult output={tool.result} className={theme.toolResult} />
             : null}
 
           {tool.error
@@ -95,11 +93,13 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
               <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
                 Tool Calls
               </h3>
-              <ToolList
-                toolCalls={toolCalls}
-                className="space-y-3"
-                renderTool={toolRenderer}
-              />
+              <div className="space-y-3">
+                {toolCalls.map((tool) => (
+                  <React.Fragment key={tool.id}>
+                    {toolRenderer(tool)}
+                  </React.Fragment>
+                ))}
+              </div>
             </div>
           )
           : null}
@@ -111,19 +111,25 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
                 Messages
               </h3>
               <div className="space-y-2 max-h-96 overflow-y-auto">
-                {messages!.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className="text-sm p-3 rounded-xl bg-neutral-50 dark:bg-neutral-800"
-                  >
-                    <span className="font-semibold capitalize text-neutral-900 dark:text-neutral-100">
-                      {msg.role}:
-                    </span>
-                    <span className="text-neutral-600 dark:text-neutral-400 ml-1">
-                      {msg.content.substring(0, 200)}...
-                    </span>
-                  </div>
-                ))}
+                {messages!.map((msg) => {
+                  const text = msg.parts
+                    ?.filter((p): p is { type: "text"; text: string } => p.type === "text")
+                    .map((p) => p.text)
+                    .join("") ?? "";
+                  return (
+                    <div
+                      key={msg.id}
+                      className="text-sm p-3 rounded-xl bg-neutral-50 dark:bg-neutral-800"
+                    >
+                      <span className="font-semibold capitalize text-neutral-900 dark:text-neutral-100">
+                        {msg.role}:
+                      </span>
+                      <span className="text-neutral-600 dark:text-neutral-400 ml-1">
+                        {text.substring(0, 200)}{text.length > 200 ? "..." : ""}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )

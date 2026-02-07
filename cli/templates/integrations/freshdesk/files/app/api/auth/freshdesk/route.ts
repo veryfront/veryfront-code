@@ -1,3 +1,4 @@
 import { createOAuthInitHandler, freshdeskConfig } from "veryfront/oauth";
+import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
 
-export const GET = createOAuthInitHandler(freshdeskConfig);
+export const GET = createOAuthInitHandler(freshdeskConfig, { tokenStore: oauthMemoryTokenStore });

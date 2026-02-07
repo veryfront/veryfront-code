@@ -3,7 +3,7 @@
  */
 
 import type { Workflow } from "#veryfront/workflow";
-import { registerWorkflow } from "#veryfront/workflow";
+import { registerWorkflow } from "#veryfront/workflow/registry.ts";
 import type { DiscoveryHandler } from "../types.ts";
 
 export const workflowHandler: DiscoveryHandler<Workflow> = {

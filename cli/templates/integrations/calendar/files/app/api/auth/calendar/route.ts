@@ -1,3 +1,4 @@
-import { calendarConfig, createOAuthInitHandler, memoryTokenStore } from "veryfront/oauth";
+import { calendarConfig, createOAuthInitHandler } from "veryfront/oauth";
+import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
 
-export const GET = createOAuthInitHandler(calendarConfig, { tokenStore: memoryTokenStore });
+export const GET = createOAuthInitHandler(calendarConfig, { tokenStore: oauthMemoryTokenStore });

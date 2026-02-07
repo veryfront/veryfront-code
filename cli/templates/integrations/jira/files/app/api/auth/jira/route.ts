@@ -1,3 +1,4 @@
-import { createOAuthInitHandler, jiraConfig, memoryTokenStore } from "veryfront/oauth";
+import { createOAuthInitHandler, jiraConfig } from "veryfront/oauth";
+import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
 
-export const GET = createOAuthInitHandler(jiraConfig, { tokenStore: memoryTokenStore });
+export const GET = createOAuthInitHandler(jiraConfig, { tokenStore: oauthMemoryTokenStore });

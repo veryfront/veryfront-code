@@ -1,8 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Chat } from 'veryfront/components/ai'
-import { useChat } from 'veryfront/agent/react'
+import { Chat, useChat } from 'veryfront/chat'
 
 interface Integration {
   id: string

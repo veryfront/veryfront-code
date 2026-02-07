@@ -1,8 +1,6 @@
 export { compileMDXToJS } from "./compiler/mdx-to-js.ts";
 export { compileAllMDX, watchMDX } from "./compiler/mdx-compiler/index.ts";
-export * from "./renderer/index.ts";
-export * from "./asset-pipeline/index.ts";
-export * from "./production-build/index.ts";
+export { buildProduction } from "./production-build/build/build-orchestrator.ts";
 export { buildEmbeddedPreset } from "./embedded/preset.ts";
 
 export interface EmbeddedPresetOptions {

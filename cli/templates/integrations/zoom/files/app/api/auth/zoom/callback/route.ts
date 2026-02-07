@@ -1,5 +1,7 @@
-import { createOAuthCallbackHandler, memoryTokenStore, zoomConfig } from "veryfront/oauth";
+import { createOAuthCallbackHandler, zoomConfig } from "veryfront/oauth";
 import { tokenStore } from "../../../../../lib/token-store.ts";
+import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
+
 
 const USER_ID = "current-user";
 
@@ -17,13 +19,13 @@ const hybridTokenStore = {
     await tokenStore.revokeToken(USER_ID, serviceId);
   },
   getState(state: string) {
-    return memoryTokenStore.getState(state);
+    return oauthMemoryTokenStore.getState(state);
   },
   setState(state: { state: string; codeVerifier?: string; createdAt: number }) {
-    return memoryTokenStore.setState(state);
+    return oauthMemoryTokenStore.setState(state);
   },
   clearState(state: string) {
-    return memoryTokenStore.clearState(state);
+    return oauthMemoryTokenStore.clearState(state);
   },
 };
 

@@ -4,8 +4,10 @@
  * Handles the OAuth callback from Atlassian and stores the tokens.
  */
 
-import { bitbucketConfig, createOAuthCallbackHandler, memoryTokenStore } from "veryfront/oauth";
+import { bitbucketConfig, createOAuthCallbackHandler } from "veryfront/oauth";
 import { tokenStore } from "../../../../../lib/token-store.ts";
+import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
+
 
 const USER_ID = "current-user";
 
@@ -26,15 +28,15 @@ const hybridTokenStore = {
   },
 
   getState(state: string): unknown {
-    return memoryTokenStore.getState(state);
+    return oauthMemoryTokenStore.getState(state);
   },
 
   setState(state: { state: string; codeVerifier?: string; createdAt: number }): unknown {
-    return memoryTokenStore.setState(state);
+    return oauthMemoryTokenStore.setState(state);
   },
 
   clearState(state: string): unknown {
-    return memoryTokenStore.clearState(state);
+    return oauthMemoryTokenStore.clearState(state);
   },
 };
 

@@ -16,7 +16,7 @@ export class AIErrorBoundary extends React.Component<
   AIErrorBoundaryProps,
   AIErrorBoundaryState
 > {
-  state: AIErrorBoundaryState = { hasError: false, error: null };
+  override state: AIErrorBoundaryState = { hasError: false, error: null };
 
   static getDerivedStateFromError(error: Error): AIErrorBoundaryState {
     return { hasError: true, error };

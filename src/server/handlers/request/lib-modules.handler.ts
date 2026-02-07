@@ -9,7 +9,7 @@ import {
   PRIORITY_MEDIUM_LIB_MODULES,
 } from "#veryfront/utils/constants/index.ts";
 
-const ALLOWED_MODULES = new Set(["agent/react.js", "components/ai.js", "primitives.js"]);
+const ALLOWED_MODULES = new Set(["chat.js", "markdown.js"]);
 const LIB_PREFIX = "/_veryfront/lib/";
 
 export class LibModulesHandler extends BaseHandler {

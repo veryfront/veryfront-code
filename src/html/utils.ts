@@ -68,11 +68,11 @@ const PLATFORM_UTILITY_PATHS = {
   router: "/_vf_modules/_veryfront/react/router/index.js",
   context: "/_vf_modules/_veryfront/react/context/index.js",
   fonts: "/_vf_modules/_veryfront/react/fonts/index.js",
-  // Client-side AI modules - use local module server in dev for faster iteration
+  // Client-side AI/chat modules - use local module server in dev for faster iteration
   // NOTE: These are NOT available in compiled binaries, so we use CDN URLs there instead
-  agentReact: "/_vf_modules/_veryfront/agent/react/index.js",
-  componentsAi: "/_vf_modules/_veryfront/react/components/ai/index.js",
-  primitives: "/_vf_modules/_veryfront/react/primitives/index.js",
+  chat: "/_vf_modules/_veryfront/chat/index.js",
+  markdown: "/_vf_modules/_veryfront/markdown/index.js",
+  mdx: "/_vf_modules/_veryfront/mdx/index.js",
 } as const;
 
 // Core platform utilities that are always served locally (embedded in compiled binary)
@@ -87,14 +87,14 @@ const CORE_PLATFORM_UTILITIES: Record<string, string> = {
   "veryfront/react/fonts": PLATFORM_UTILITY_PATHS.fonts,
 };
 
-// AI modules - only use local paths when running from source (not compiled binary)
+// AI/chat modules - only use local paths when running from source (not compiled binary)
 // In compiled binaries, these files aren't embedded, so we fall back to CDN URLs
 const AI_MODULE_UTILITIES: Record<string, string> = isDenoCompiled
   ? {} // Use CDN URLs (set in buildCdnImportMapFromTemplates)
   : {
-    "veryfront/agent/react": PLATFORM_UTILITY_PATHS.agentReact,
-    "veryfront/components/ai": PLATFORM_UTILITY_PATHS.componentsAi,
-    "veryfront/primitives": PLATFORM_UTILITY_PATHS.primitives,
+    "veryfront/chat": PLATFORM_UTILITY_PATHS.chat,
+    "veryfront/markdown": PLATFORM_UTILITY_PATHS.markdown,
+    "veryfront/mdx": PLATFORM_UTILITY_PATHS.mdx,
   };
 
 const PLATFORM_UTILITIES: Record<string, string> = {
@@ -108,9 +108,9 @@ interface CdnUrlTemplates {
   reactDomClient: (version: string) => string;
   jsxRuntime: (version: string) => string;
   jsxDevRuntime: (version: string) => string;
-  veryfrontAgentReact: (version: string) => string;
-  veryfrontComponentsAi: (version: string) => string;
-  veryfrontPrimitives: (version: string) => string;
+  veryfrontChat: (version: string) => string;
+  veryfrontMarkdown: (version: string) => string;
+  veryfrontMdx: (version: string) => string;
 }
 
 const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
@@ -122,12 +122,12 @@ const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
     reactDomClient: (v) => esmShReact("react-dom", v, "/client", true),
     jsxRuntime: (v) => esmShReact("react", v, "/jsx-runtime", true),
     jsxDevRuntime: (v) => esmShReact("react", v, "/jsx-dev-runtime", true),
-    veryfrontAgentReact: (v) =>
-      `https://esm.sh/veryfront@${v}/agent/react?external=react,react-dom&target=es2022`,
-    veryfrontComponentsAi: (v) =>
-      `https://esm.sh/veryfront@${v}/components/ai?external=react,react-dom&target=es2022`,
-    veryfrontPrimitives: (v) =>
-      `https://esm.sh/veryfront@${v}/primitives?external=react,react-dom&target=es2022`,
+    veryfrontChat: (v) =>
+      `https://esm.sh/veryfront@${v}/chat?external=react,react-dom&target=es2022`,
+    veryfrontMarkdown: (v) =>
+      `https://esm.sh/veryfront@${v}/markdown?external=react,react-dom&target=es2022`,
+    veryfrontMdx: (v) =>
+      `https://esm.sh/veryfront@${v}/mdx?external=react,react-dom&target=es2022`,
   },
   unpkg: {
     react: (v) => `https://unpkg.com/react@${v}/umd/react.production.min.js`,
@@ -135,9 +135,9 @@ const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
     reactDomClient: (v) => `https://unpkg.com/react-dom@${v}/umd/react-dom.production.min.js`,
     jsxRuntime: (v) => `https://unpkg.com/react@${v}/jsx-runtime`,
     jsxDevRuntime: (v) => `https://unpkg.com/react@${v}/jsx-dev-runtime`,
-    veryfrontAgentReact: (v) => `https://unpkg.com/veryfront@${v}/dist/agent/react.js`,
-    veryfrontComponentsAi: (v) => `https://unpkg.com/veryfront@${v}/dist/components/ai.js`,
-    veryfrontPrimitives: (v) => `https://unpkg.com/veryfront@${v}/dist/primitives.js`,
+    veryfrontChat: (v) => `https://unpkg.com/veryfront@${v}/dist/chat.js`,
+    veryfrontMarkdown: (v) => `https://unpkg.com/veryfront@${v}/dist/markdown.js`,
+    veryfrontMdx: (v) => `https://unpkg.com/veryfront@${v}/dist/mdx.js`,
   },
   jsdelivr: {
     react: (v) => `https://cdn.jsdelivr.net/npm/react@${v}/umd/react.production.min.js`,
@@ -146,10 +146,9 @@ const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
       `https://cdn.jsdelivr.net/npm/react-dom@${v}/umd/react-dom.production.min.js`,
     jsxRuntime: (v) => `https://cdn.jsdelivr.net/npm/react@${v}/jsx-runtime`,
     jsxDevRuntime: (v) => `https://cdn.jsdelivr.net/npm/react@${v}/jsx-dev-runtime`,
-    veryfrontAgentReact: (v) => `https://cdn.jsdelivr.net/npm/veryfront@${v}/dist/agent/react.js`,
-    veryfrontComponentsAi: (v) =>
-      `https://cdn.jsdelivr.net/npm/veryfront@${v}/dist/components/ai.js`,
-    veryfrontPrimitives: (v) => `https://cdn.jsdelivr.net/npm/veryfront@${v}/dist/primitives.js`,
+    veryfrontChat: (v) => `https://cdn.jsdelivr.net/npm/veryfront@${v}/dist/chat.js`,
+    veryfrontMarkdown: (v) => `https://cdn.jsdelivr.net/npm/veryfront@${v}/dist/markdown.js`,
+    veryfrontMdx: (v) => `https://cdn.jsdelivr.net/npm/veryfront@${v}/dist/mdx.js`,
   },
 };
 
@@ -166,9 +165,9 @@ function buildCdnImportMapFromTemplates(
     "react-dom/client": templates.reactDomClient(react),
     "react/jsx-runtime": templates.jsxRuntime(react),
     "react/jsx-dev-runtime": templates.jsxDevRuntime(react),
-    "veryfront/agent/react": templates.veryfrontAgentReact(veryfront),
-    "veryfront/components/ai": templates.veryfrontComponentsAi(veryfront),
-    "veryfront/primitives": templates.veryfrontPrimitives(veryfront),
+    "veryfront/chat": templates.veryfrontChat(veryfront),
+    "veryfront/markdown": templates.veryfrontMarkdown(veryfront),
+    "veryfront/mdx": templates.veryfrontMdx(veryfront),
     ...(includePlatformUtilities ? PLATFORM_UTILITIES : {}),
   };
 }
@@ -195,9 +194,9 @@ function getSelfHostedImportMap(versions: DetectedVersions): Record<string, stri
     "react-dom/client": esmShTemplates.reactDomClient(react),
     "react/jsx-runtime": esmShTemplates.jsxRuntime(react),
     "react/jsx-dev-runtime": esmShTemplates.jsxDevRuntime(react),
-    "veryfront/agent/react": "/_veryfront/lib/agent/react.js",
-    "veryfront/components/ai": "/_veryfront/lib/components/ai.js",
-    "veryfront/primitives": "/_veryfront/lib/primitives.js",
+    "veryfront/chat": "/_veryfront/lib/chat.js",
+    "veryfront/markdown": "/_veryfront/lib/markdown.js",
+    "veryfront/mdx": "/_veryfront/lib/mdx.js",
     "veryfront/head": PLATFORM_UTILITY_PATHS.head,
     "veryfront/router": PLATFORM_UTILITY_PATHS.router,
     "veryfront/context": PLATFORM_UTILITY_PATHS.context,

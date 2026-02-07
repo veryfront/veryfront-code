@@ -1,3 +1,4 @@
-import { createOAuthInitHandler, githubConfig, memoryTokenStore } from "veryfront/oauth";
+import { createOAuthInitHandler, githubConfig } from "veryfront/oauth";
+import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
 
-export const GET = createOAuthInitHandler(githubConfig, { tokenStore: memoryTokenStore });
+export const GET = createOAuthInitHandler(githubConfig, { tokenStore: oauthMemoryTokenStore });

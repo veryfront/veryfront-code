@@ -116,7 +116,7 @@ import {
   useWorkflowStart,
   useApproval,
   useWorkflowList,
-} from 'veryfront/workflow/react';
+} from 'veryfront/workflow';
 
 // Start a workflow
 const { start, isStarting } = useWorkflowStart({

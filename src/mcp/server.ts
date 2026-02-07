@@ -1,5 +1,6 @@
 import { getMCPRegistry } from "./registry.ts";
-import { executeTool, zodToJsonSchema } from "#veryfront/tool";
+import { executeTool } from "#veryfront/tool";
+import { zodToJsonSchema } from "#veryfront/tool/schema/index.ts";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
 import type { MCPServerConfig } from "./types.ts";

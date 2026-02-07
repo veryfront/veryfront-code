@@ -1,6 +1,5 @@
 import { parse as parseYaml } from "yaml";
-import { join } from "veryfront/platform/path";
-import { cwd, createFileSystem } from "veryfront/platform";
+import { cwd, createFileSystem, join } from "veryfront/fs";
 
 interface PostMeta {
   title: string;

@@ -7,7 +7,7 @@
  */
 
 import React, { useEffect, useState, useRef } from 'react';
-import { Markdown } from 'veryfront/components/ai';
+import { Markdown } from 'veryfront/markdown';
 
 interface Message {
   id: string;
