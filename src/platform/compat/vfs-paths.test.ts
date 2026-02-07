@@ -6,13 +6,13 @@ describe("getFrameworkRoot", () => {
   const cases: Array<{ name: string; input: string; expected: string }> = [
     {
       name: "should resolve Unix dev path correctly",
-      input: "/Users/dev/code/veryfront-renderer/src/modules/server/module-server.ts",
-      expected: "/Users/dev/code/veryfront-renderer",
+      input: "/Users/dev/code/veryfront-server/src/modules/server/module-server.ts",
+      expected: "/Users/dev/code/veryfront-server",
     },
     {
       name: "should resolve Linux dev path correctly",
-      input: "/home/developer/projects/veryfront-renderer/src/platform/compat/vfs-paths.ts",
-      expected: "/home/developer/projects/veryfront-renderer",
+      input: "/home/developer/projects/veryfront-server/src/platform/compat/vfs-paths.ts",
+      expected: "/home/developer/projects/veryfront-server",
     },
     {
       name: "should resolve deno-compile VFS path",
@@ -31,8 +31,8 @@ describe("getFrameworkRoot", () => {
     },
     {
       name: "should resolve Windows dev path with backslashes",
-      input: "C:\\Users\\dev\\code\\veryfront-renderer\\src\\modules\\server\\module-server.ts",
-      expected: "C:/Users/dev/code/veryfront-renderer",
+      input: "C:\\Users\\dev\\code\\veryfront-server\\src\\modules\\server\\module-server.ts",
+      expected: "C:/Users/dev/code/veryfront-server",
     },
     {
       name: "should resolve Windows deno-compile VFS path",
@@ -41,8 +41,8 @@ describe("getFrameworkRoot", () => {
     },
     {
       name: "should handle mixed slashes",
-      input: "C:\\Users\\dev/code/veryfront-renderer/src\\modules/server.ts",
-      expected: "C:/Users/dev/code/veryfront-renderer",
+      input: "C:\\Users\\dev/code/veryfront-server/src\\modules/server.ts",
+      expected: "C:/Users/dev/code/veryfront-server",
     },
     {
       name: "should return empty string for path without src/",
@@ -51,8 +51,8 @@ describe("getFrameworkRoot", () => {
     },
     {
       name: "should use last src/ when multiple exist",
-      input: "/home/src-user/projects/veryfront-renderer/src/modules/server.ts",
-      expected: "/home/src-user/projects/veryfront-renderer",
+      input: "/home/src-user/projects/veryfront-server/src/modules/server.ts",
+      expected: "/home/src-user/projects/veryfront-server",
     },
     {
       name: "should handle empty string",
@@ -72,8 +72,8 @@ describe("getFrameworkRootFromMeta", () => {
   const cases: Array<{ name: string; input: string; expected: string }> = [
     {
       name: "should resolve from file:// URL",
-      input: "file:///Users/dev/code/veryfront-renderer/src/platform/compat/vfs-paths.ts",
-      expected: "/Users/dev/code/veryfront-renderer",
+      input: "file:///Users/dev/code/veryfront-server/src/platform/compat/vfs-paths.ts",
+      expected: "/Users/dev/code/veryfront-server",
     },
     {
       name: "should resolve VFS URL from compiled binary",

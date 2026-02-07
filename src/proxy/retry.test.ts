@@ -58,7 +58,7 @@ describe("isRetryableConnectionError", () => {
     assertEquals(
       isRetryableConnectionError(
         new TypeError(
-          "error sending request from 10.192.0.35:60358 for http://veryfront-renderer/ (10.193.189.155:80): client error (SendRequest): connection error: Connection reset by peer (os error 104)",
+          "error sending request from 10.192.0.35:60358 for http://veryfront-server/ (10.193.189.155:80): client error (SendRequest): connection error: Connection reset by peer (os error 104)",
         ),
       ),
       true,
@@ -67,7 +67,7 @@ describe("isRetryableConnectionError", () => {
     assertEquals(
       isRetryableConnectionError(
         new TypeError(
-          "error sending request from 10.192.0.35:46166 for http://veryfront-renderer/ (10.193.189.155:80): client error (SendRequest): connection closed before message completed",
+          "error sending request from 10.192.0.35:46166 for http://veryfront-server/ (10.193.189.155:80): client error (SendRequest): connection closed before message completed",
         ),
       ),
       true,
@@ -76,7 +76,7 @@ describe("isRetryableConnectionError", () => {
     assertEquals(
       isRetryableConnectionError(
         new TypeError(
-          "error sending request for url (http://veryfront-renderer/_vf_modules/components/Welcome.js): client error (Connect): tcp connect error: Connection refused (os error 111)",
+          "error sending request for url (http://veryfront-server/_vf_modules/components/Welcome.js): client error (Connect): tcp connect error: Connection refused (os error 111)",
         ),
       ),
       true,

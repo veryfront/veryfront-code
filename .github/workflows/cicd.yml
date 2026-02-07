@@ -212,30 +212,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Load secrets from 1Password
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 3
-          max_attempts: 5
-          retry_wait_seconds: 10
-          command: |
-            # Install 1Password CLI
-            curl -sS https://downloads.1password.com/linux/keys/1password.asc | gpg --dearmor --output /tmp/1password-archive-keyring.gpg
-            echo "deb [arch=amd64 signed-by=/tmp/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main" | sudo tee /etc/apt/sources.list.d/1password.list
-            sudo apt-get update && sudo apt-get install -y 1password-cli
-
-            # Fetch secrets with retry
-            NPM_TOKEN=$(op read "op://VERYFRONT_CI/NPM_TOKEN_VERYFRONT/password")
-            GITHUB_PAT=$(op read "op://VERYFRONT_CI/GITHUB_VERYFRONT_PAT/credential")
-
-            # Export to GITHUB_ENV (masked)
-            echo "::add-mask::$NPM_TOKEN"
-            echo "::add-mask::$GITHUB_PAT"
-            echo "NPM_TOKEN=$NPM_TOKEN" >> $GITHUB_ENV
-            echo "GITHUB_PAT=$GITHUB_PAT" >> $GITHUB_ENV
-        env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-
       - uses: denoland/setup-deno@v2
         with:
           deno-version: lts
@@ -252,7 +228,7 @@ jobs:
       - name: Build and publish
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           deno task build:npm
           cd npm && npm publish --access public --tag rc
@@ -264,7 +240,7 @@ jobs:
       - name: Create GitHub releases
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ env.GITHUB_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_VERYFRONT_PAT }}
         run: |
           # Public repo release
           gh release create "v${VERSION}" \
@@ -291,7 +267,7 @@ jobs:
       - name: Trigger server deploy
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ env.GITHUB_PAT }}
+          token: ${{ secrets.GITHUB_VERYFRONT_PAT }}
           repository: veryfront/veryfront-server
           event-type: veryfront-code-released
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
@@ -310,30 +286,6 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-
-      - name: Load secrets from 1Password
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 3
-          max_attempts: 5
-          retry_wait_seconds: 10
-          command: |
-            # Install 1Password CLI
-            curl -sS https://downloads.1password.com/linux/keys/1password.asc | gpg --dearmor --output /tmp/1password-archive-keyring.gpg
-            echo "deb [arch=amd64 signed-by=/tmp/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main" | sudo tee /etc/apt/sources.list.d/1password.list
-            sudo apt-get update && sudo apt-get install -y 1password-cli
-
-            # Fetch secrets with retry
-            NPM_TOKEN=$(op read "op://VERYFRONT_CI/NPM_TOKEN_VERYFRONT/password")
-            GITHUB_PAT=$(op read "op://VERYFRONT_CI/GITHUB_VERYFRONT_PAT/credential")
-
-            # Export to GITHUB_ENV (masked)
-            echo "::add-mask::$NPM_TOKEN"
-            echo "::add-mask::$GITHUB_PAT"
-            echo "NPM_TOKEN=$NPM_TOKEN" >> $GITHUB_ENV
-            echo "GITHUB_PAT=$GITHUB_PAT" >> $GITHUB_ENV
-        env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
 
       - name: Validate tag matches deno.json
         run: |
@@ -369,7 +321,7 @@ jobs:
             cd npm && npm publish --access public
           fi
         env:
-          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -378,7 +330,7 @@ jobs:
       - name: Create GitHub releases
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ env.GITHUB_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_VERYFRONT_PAT }}
         run: |
           # Public repo release with binaries and install scripts
           gh release create "v${VERSION}" \
@@ -413,7 +365,7 @@ jobs:
       - name: Trigger server deploy
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ env.GITHUB_PAT }}
+          token: ${{ secrets.GITHUB_VERYFRONT_PAT }}
           repository: veryfront/veryfront-server
           event-type: veryfront-code-released
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
@@ -429,29 +381,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Load secrets from 1Password
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 3
-          max_attempts: 5
-          retry_wait_seconds: 10
-          command: |
-            # Install 1Password CLI
-            curl -sS https://downloads.1password.com/linux/keys/1password.asc | gpg --dearmor --output /tmp/1password-archive-keyring.gpg
-            echo "deb [arch=amd64 signed-by=/tmp/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main" | sudo tee /etc/apt/sources.list.d/1password.list
-            sudo apt-get update && sudo apt-get install -y 1password-cli
-
-            # Fetch secrets with retry
-            GITHUB_PAT=$(op read "op://VERYFRONT_CI/GITHUB_VERYFRONT_PAT/credential")
-
-            # Export to GITHUB_ENV (masked)
-            echo "::add-mask::$GITHUB_PAT"
-            echo "GITHUB_PAT=$GITHUB_PAT" >> $GITHUB_ENV
-        env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-
       - name: Update Homebrew tap
         uses: nick-fields/retry@v3
+        env:
+          GITHUB_PAT: ${{ secrets.GITHUB_VERYFRONT_PAT }}
         with:
           timeout_minutes: 5
           max_attempts: 3
