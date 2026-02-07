@@ -5,8 +5,8 @@
  * Used by install/uninstall commands for tool selection.
  */
 
-import { writeStdout } from "#veryfront/platform/compat/process.ts";
-import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
+import { writeStdout } from "veryfront/platform";
+import { getStdinReader, setRawMode } from "veryfront/platform";
 import { bold, brand, dim, muted } from "../colors.ts";
 import { cursor, screen } from "../ansi.ts";
 import { isTTY } from "#cli/utils";

@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { bold, cyan, dim, green, yellow } from "#veryfront/compat/console";
-import { join } from "#veryfront/compat/path/index.ts";
-import { cliLogger } from "#veryfront/utils";
-import { cwd } from "#veryfront/platform/compat/process.ts";
+import { bold, cyan, dim, green, yellow } from "#cli/ui";
+import { join } from "veryfront/platform/path";
+import { cliLogger } from "#cli/utils";
+import { cwd } from "veryfront/platform";
 import { buildCommand } from "./command.ts";
 import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { exitProcess, showLogo } from "#cli/utils";
@@ -73,7 +73,7 @@ export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
 }
 
 async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Promise<void> {
-  const { buildEmbeddedPreset } = await import("#veryfront/build/index.ts");
+  const { buildEmbeddedPreset } = await import("veryfront/build");
 
   const finalOutput = outputDir ?? join(projectDir, "dist");
 

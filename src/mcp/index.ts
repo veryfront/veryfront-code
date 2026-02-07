@@ -1,4 +1,4 @@
-export type { MCPRegistry, MCPServerConfig, MCPStats } from "./types.ts";
+export type { MCPRegistry, MCPServerConfig, MCPStats, MCPTool } from "./types.ts";
 
 export {
   clearMCPRegistry,

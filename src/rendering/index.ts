@@ -1,5 +1,7 @@
 export type { PageDataResponse, RendererOptions, RenderResult } from "./orchestrator/types.ts";
 export { VeryfrontRenderer } from "./orchestrator/ssr.ts";
+export * from "./chunk-optimizer.ts";
+export * from "./cache/index.ts";
 export * from "./client/index.ts";
 export * from "./layouts/index.ts";
 export {

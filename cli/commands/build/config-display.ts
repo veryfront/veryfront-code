@@ -1,5 +1,5 @@
-import { bold, cyan, dim, green, red, yellow } from "#veryfront/compat/console";
-import { cliLogger } from "#veryfront/utils";
+import { bold, cyan, dim, green, red, yellow } from "#cli/ui";
+import { cliLogger } from "#cli/utils";
 import type { BuildOptions } from "./types.ts";
 
 export function displayBuildConfig(options: BuildOptions): void {

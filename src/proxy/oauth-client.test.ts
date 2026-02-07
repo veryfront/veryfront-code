@@ -12,8 +12,8 @@ describe("OAuth Client", () => {
         () =>
           fetchOAuthToken({
             apiBaseUrl: "http://10.255.255.1", // Non-routable IP to force timeout
-            clientId: "test",
-            clientSecret: "test",
+            apiClientId: "test",
+            apiClientSecret: "test",
             timeoutMs: 100,
           }),
         Error,
@@ -32,8 +32,8 @@ describe("OAuth Client", () => {
           () =>
             fetchOAuthToken({
               apiBaseUrl: `http://127.0.0.1:${port}`,
-              clientId: "test",
-              clientSecret: "test",
+              apiClientId: "test",
+              apiClientSecret: "test",
             }),
           Error,
           "401",
@@ -60,8 +60,8 @@ describe("OAuth Client", () => {
       try {
         const result = await fetchOAuthToken({
           apiBaseUrl: `http://127.0.0.1:${port}`,
-          clientId: "test",
-          clientSecret: "test",
+          apiClientId: "test",
+          apiClientSecret: "test",
         });
 
         assertEquals(result.access_token, "test-token");

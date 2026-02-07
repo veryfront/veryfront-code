@@ -6,10 +6,7 @@
  * @module cli/commands/new/reserve-slug
  */
 
-import {
-  type EnvironmentConfig,
-  getEnvironmentConfig,
-} from "#veryfront/config/environment-config.ts";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 
 export interface ReserveResult {
   slug: string;

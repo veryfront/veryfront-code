@@ -2,14 +2,11 @@
  * AI Tool Detection - Detects which AI coding tools are in use
  */
 
-import { join } from "#veryfront/compat/path/index.ts";
-import { cwd as getCwd } from "#veryfront/platform/compat/process.ts";
-import { exists } from "#veryfront/platform/compat/fs.ts";
+import { join } from "veryfront/platform/path";
+import { cwd as getCwd } from "veryfront/platform";
+import { exists } from "veryfront/platform";
 import { type AIToolId, type DetectOptions, DetectOptionsSchema } from "./types.ts";
-import {
-  type EnvironmentConfig,
-  getEnvironmentConfig,
-} from "#veryfront/config/environment-config.ts";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 
 function createDetectionRules(
   env: EnvironmentConfig,

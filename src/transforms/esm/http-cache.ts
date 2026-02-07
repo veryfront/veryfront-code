@@ -50,7 +50,7 @@ import {
   detokenizeCachePaths,
   tokenizeAllCachePaths,
   tokenizeCachePaths,
-} from "#veryfront/cache";
+} from "#veryfront/cache/paths.ts";
 import { looksLikeHtmlContent as looksLikeHtmlNotJs } from "./html-content.ts";
 
 // Re-export for backwards compatibility

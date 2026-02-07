@@ -1,9 +1,9 @@
 import { join } from "#std/path.ts";
-import { runtime } from "#veryfront/platform/adapters/detect.ts";
-import { APIRouteHandler, DynamicRouter } from "#veryfront/routing/api/index.ts";
-import { getConfig } from "#veryfront/config";
-import { cliLogger } from "#veryfront/utils";
-import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { runtime } from "veryfront/platform";
+import { APIRouteHandler } from "veryfront/routing";
+import { getConfig } from "veryfront/config";
+import { cliLogger } from "#cli/utils";
+import { createFileSystem, type FileSystem } from "veryfront/platform";
 
 export interface RoutesOptions {
   projectDir: string;
@@ -21,7 +21,7 @@ export async function routesCommand(
   const apiHandler = new APIRouteHandler(projectDir, adapter);
   await apiHandler.initialize();
 
-  const router = new DynamicRouter();
+  const pages: Array<{ pattern: string; file: string }> = [];
   const pagesDir = join(projectDir, "pages");
 
   try {
@@ -32,17 +32,12 @@ export async function routesCommand(
 
       const slug = entry.name.replace(/\.(mdx|tsx)$/i, "");
       const path = slug === "index" ? "/" : `/${slug}`;
-      router.addRoute(path, `pages/${entry.name}`);
+      pages.push({ pattern: path, file: `pages/${entry.name}` });
     }
   } catch (error) {
     // Pages directory might not exist, which is okay for app router projects
     cliLogger.debug("Could not read pages directory:", error);
   }
-
-  const pages = Array.from(router.routes, ([pattern, { route }]) => ({
-    pattern,
-    file: route.page,
-  }));
 
   const apis: string[] = [];
   const apiDir = join(projectDir, "pages", "api");

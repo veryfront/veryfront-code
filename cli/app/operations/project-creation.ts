@@ -5,7 +5,7 @@
  * including remote project registration and local scaffolding.
  */
 
-import { cwd } from "#veryfront/platform/compat/process.ts";
+import { cwd } from "veryfront/platform";
 import type { AppState, ProjectInfo } from "../state.ts";
 import { addLog, navigateTo, setProjects, startInput, updateRemote } from "../state.ts";
 import { readToken } from "../../auth/token-store.ts";

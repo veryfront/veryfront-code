@@ -4,7 +4,7 @@
  * @module cli/ui/animated-text
  */
 
-import { writeStdout } from "#veryfront/platform/compat/process.ts";
+import { writeStdout } from "veryfront/platform";
 import { brand } from "./colors.ts";
 import { cursor } from "./ansi.ts";
 import { TYPEWRITER_CHAR_DELAY_MS, TYPEWRITER_WORD_DELAY_MS } from "./constants.ts";

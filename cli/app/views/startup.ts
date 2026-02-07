@@ -5,7 +5,7 @@
  * Displays avatar, title, and step checklist.
  **************************/
 
-import { box } from "#veryfront/utils/box.ts";
+import { box } from "#cli/ui/box";
 import { brand, dim, shimmer } from "../../ui/colors.ts";
 import { getAgentFaceWithText, getSpinningAgentFace } from "../../ui/dot-matrix.ts";
 import { getTerminalWidth } from "../../ui/layout.ts";

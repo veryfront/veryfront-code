@@ -1,8 +1,8 @@
 import { join } from "#std/path.ts";
-import { getConfig } from "#veryfront/config";
-import { cliLogger } from "#veryfront/utils";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { getConfig } from "veryfront/config";
+import { cliLogger } from "#cli/utils";
+import { createError, toError } from "veryfront/errors";
+import { createFileSystem } from "veryfront/platform";
 import { generateIntegration } from "./integration-generator.ts";
 import { ensureDir } from "../../utils/fs.ts";
 import { toComponentName, toSlug } from "../../utils/string.ts";
@@ -11,7 +11,7 @@ async function getPreferredRouter(
   projectDir: string,
 ): Promise<"pages-router" | "app-router"> {
   try {
-    const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+    const { runtime } = await import("veryfront/platform");
     const adapter = await runtime.get();
     const cfg = await getConfig(projectDir, adapter);
     const pref = cfg?.generate?.preferredRouter ?? cfg?.router;

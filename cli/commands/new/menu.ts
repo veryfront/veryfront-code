@@ -2,8 +2,8 @@
  * Main Menu - Interactive CLI launcher
  **************************/
 
-import { writeStdout } from "#veryfront/platform/compat/process.ts";
-import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
+import { writeStdout } from "veryfront/platform";
+import { getStdinReader, setRawMode } from "veryfront/platform";
 import { isTTY } from "#cli/utils";
 import { bold, brand, muted } from "#cli/ui";
 

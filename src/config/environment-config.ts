@@ -74,7 +74,7 @@ export interface EnvironmentConfig {
 }
 
 const DEFAULTS = {
-  apiBaseUrl: "http://api.lvh.me:4000",
+  apiBaseUrl: "https://api.veryfront.com",
   port: 3001,
   ssrMaxConcurrentTransforms: 3,
 } as const;

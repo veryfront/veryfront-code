@@ -6,7 +6,7 @@
  * Runtime-agnostic: works on Deno, Node.js, and Bun.
  */
 
-import { writeStdout } from "#veryfront/platform/compat/process.ts";
+import { writeStdout } from "veryfront/platform";
 import { brand, dim, error, muted, success } from "./colors.ts";
 import { isTTY } from "./layout.ts";
 import { getSpinnerFrame, screen } from "./ansi.ts";

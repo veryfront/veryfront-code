@@ -1,11 +1,11 @@
 // CRITICAL: Extract esbuild binary and set env var BEFORE any imports
 // This must happen synchronously at the very start to ensure esbuild sees the correct path
-await import("#veryfront/platform/compat/esbuild-init.ts");
+await import("veryfront/platform/esbuild-init");
 
 // All imports below must be dynamic to ensure esbuild init completes first
-const { getArgs } = await import("#veryfront/platform/compat/process.ts");
+const { getArgs } = await import("veryfront/platform");
 const { hasEnvLoaded, loadEnv, markEnvLoaded, supportsEnvFiles } = await import(
-  "#veryfront/utils/env-loader.ts"
+  "veryfront/utils/env-loader"
 );
 
 async function ensureEnvLoaded(): Promise<void> {
@@ -24,7 +24,9 @@ async function ensureEnvLoaded(): Promise<void> {
 
   markEnvLoaded();
 
-  const { initEnvironmentConfig } = await import("#veryfront/config/environment-config.ts");
+  const { initEnvironmentConfig } = await import(
+    "veryfront/config"
+  );
   initEnvironmentConfig();
 }
 

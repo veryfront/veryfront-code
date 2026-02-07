@@ -183,7 +183,7 @@ async function startBinaryServer(
     });
 
     const process = new Deno.Command(BINARY_PATH, {
-      args: ["serve", "--mode=renderer", "-p", String(port)],
+      args: ["serve", "--mode=production", "-p", String(port)],
       cwd: projectDir,
       env: {
         ...Deno.env.toObject(),
@@ -2659,8 +2659,8 @@ export default function Blog() {
     );
   });
 
-  // Test: Layout rendering with PROXY_MODE=1 (simulates split mode renderer)
-  // Regression test: In split:binary mode, the renderer runs with PROXY_MODE=1.
+  // Test: Layout rendering with PROXY_MODE=1 (simulates split mode production server)
+  // Regression test: In split:binary mode, the production server runs with PROXY_MODE=1.
   // Without proxy headers, it should fall back to local config and still render layouts.
   it("should render layout when PROXY_MODE=1 without proxy headers", async () => {
     const projectDir = await createTestProject(
@@ -2725,7 +2725,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   });
 
   // Test: Config layout with PROXY_MODE=1 and components/layouts/ path
-  // Regression test: In split:binary mode, the renderer gets PROXY_MODE=1 and must resolve
+  // Regression test: In split:binary mode, the production server gets PROXY_MODE=1 and must resolve
   // config-based layout paths through the API adapter. Without proxy headers, it should
   // fall back to local filesystem and still render the config layout.
   it("should render config layout in PROXY_MODE=1 with components/layouts/ path", async () => {

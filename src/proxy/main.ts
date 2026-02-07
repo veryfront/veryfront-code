@@ -1,15 +1,17 @@
 /**
  * Veryfront Proxy Server (Split Mode)
  *
- * Standalone proxy server that forwards requests to a separate renderer process.
+ * Standalone proxy server that forwards requests to a separate production server process.
  * Used in production for security isolation of OAuth credentials.
  *
- * For combined mode (single process), use the renderer with --proxy flag instead.
+ * For combined mode (single process), use the production server with --proxy flag instead.
  *
  * Environment Variables:
- * - API_CLIENT_ID_VERYFRONT_RENDERER_PROXY: OAuth client ID (from 1Password)
- * - API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY: OAuth client secret (from 1Password)
- * - RENDERER_URL: URL of the renderer service
+ * - VERYFRONT_PROXY_API_CLIENT_ID: OAuth client ID
+ * - VERYFRONT_PROXY_API_CLIENT_SECRET: OAuth client secret
+ * - VERYFRONT_PROXY_API_BASE_URL: Veryfront API base URL
+ * - VERYFRONT_SERVER_URL: URL of the production server service
+ * - VERYFRONT_PROXY_URL: Optional proxy bind URL (e.g. http://0.0.0.0:8080)
  * - LOCAL_PROJECTS: JSON map of slug → filesystem path (for dev)
  * - CACHE_TYPE: "memory" (default) or "redis"
  * - REDIS_URL: Redis connection URL (required if CACHE_TYPE=redis)
@@ -41,26 +43,40 @@ function getLocalProjects(): Record<string, string> {
 
 // Configuration from environment variables
 const config: ProxyConfig = {
-  apiBaseUrl: getEnv("VERYFRONT_API_BASE_URL") || "http://api.lvh.me:4000",
-  clientId: getEnv("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY") || "",
-  clientSecret: getEnv("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY") || "",
+  apiBaseUrl: getEnv("VERYFRONT_PROXY_API_BASE_URL") || "https://api.veryfront.com",
+  apiClientId: getEnv("VERYFRONT_PROXY_API_CLIENT_ID") || "",
+  apiClientSecret: getEnv("VERYFRONT_PROXY_API_CLIENT_SECRET") || "",
   // Preview uses same service account (scopes determine access)
-  previewClientId: getEnv("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY") || "",
-  previewClientSecret: getEnv("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY") || "",
+  previewApiClientId: getEnv("VERYFRONT_PROXY_API_CLIENT_ID") || "",
+  previewApiClientSecret: getEnv("VERYFRONT_PROXY_API_CLIENT_SECRET") || "",
   localProjects: getLocalProjects(),
 };
 
-const RENDERER_URL = getEnv("RENDERER_URL") || "http://localhost:3001";
-const PORT = parseInt(getEnv("PORT") || "8080");
-const HOST = getEnv("HOST") || "0.0.0.0"; // Default to 0.0.0.0 for Kubernetes
+function resolveProxyBinding(): { hostname: string; port: number } {
+  const proxyUrlRaw = getEnv("VERYFRONT_PROXY_URL");
+  if (proxyUrlRaw) {
+    const proxyUrl = new URL(proxyUrlRaw);
+    const port = proxyUrl.port ? Number(proxyUrl.port) : proxyUrl.protocol === "https:" ? 443 : 80;
+    return { hostname: proxyUrl.hostname, port };
+  }
+
+  const port = parseInt(getEnv("PORT") || "8080");
+  const hostname = getEnv("HOST") || "0.0.0.0";
+  return { hostname, port };
+}
+
+const PRODUCTION_SERVER_URL = getEnv("VERYFRONT_SERVER_URL") || "http://localhost:3001";
+const { hostname: HOST, port: PORT } = resolveProxyBinding();
 const WS_CONNECT_TIMEOUT_MS = 30000;
-// Timeout for forwarding requests to renderer (SSR can take time on cold start)
-const RENDERER_REQUEST_TIMEOUT_MS = parseInt(
-  getEnv("RENDERER_REQUEST_TIMEOUT_MS") || "90000",
+// Timeout for forwarding requests to production server (SSR can take time on cold start)
+const VERYFRONT_SERVER_REQUEST_TIMEOUT_MS = parseInt(
+  getEnv("VERYFRONT_SERVER_REQUEST_TIMEOUT_MS") || "90000",
 );
 // Retry configuration for transient connection errors
-const RENDERER_RETRY_COUNT = parseInt(getEnv("RENDERER_RETRY_COUNT") || "1");
-const RENDERER_RETRY_DELAY_MS = parseInt(getEnv("RENDERER_RETRY_DELAY_MS") || "100");
+const VERYFRONT_SERVER_RETRY_COUNT = parseInt(getEnv("VERYFRONT_SERVER_RETRY_COUNT") || "1");
+const VERYFRONT_SERVER_RETRY_DELAY_MS = parseInt(
+  getEnv("VERYFRONT_SERVER_RETRY_DELAY_MS") || "100",
+);
 
 // Initialize cache and proxy handler
 const cache = await createCacheFromEnv();
@@ -91,7 +107,7 @@ if (Object.keys(proxyHandler.localProjects).length > 0) {
 
 /**
  * Handle WebSocket upgrade requests.
- * Bridges browser WebSocket to renderer's HMR WebSocket endpoint.
+ * Bridges browser WebSocket to server HMR WebSocket endpoint.
  */
 function handleWebSocketUpgrade(req: Request): Response {
   const url = new URL(req.url);
@@ -101,8 +117,8 @@ function handleWebSocketUpgrade(req: Request): Response {
   const scope = parsed.environment === "preview" ? "preview" : "production";
   const projectSlug = parsed.slug || undefined;
 
-  const rendererWsUrl = RENDERER_URL.replace(/^http/, "ws");
-  const targetUrl = new URL(`${rendererWsUrl}${url.pathname}${url.search}`);
+  const serverWsUrl = PRODUCTION_SERVER_URL.replace(/^http/, "ws");
+  const targetUrl = new URL(`${serverWsUrl}${url.pathname}${url.search}`);
   targetUrl.searchParams.set("x-project-slug", projectSlug || "");
   targetUrl.searchParams.set("x-environment", scope);
 
@@ -117,7 +133,7 @@ function handleWebSocketUpgrade(req: Request): Response {
 
   const { socket: clientSocket, response } = upgradeWebSocket(req);
 
-  let rendererSocket: WebSocket | null = null;
+  let serverSocket: WebSocket | null = null;
   let connectTimeoutId: ReturnType<typeof setTimeout> | null = null;
   let timedOut = false;
 
@@ -128,54 +144,54 @@ function handleWebSocketUpgrade(req: Request): Response {
   };
 
   clientSocket.onopen = () => {
-    proxyLogger.info("[WebSocket] Client connected, bridging to renderer", {
+    proxyLogger.info("[WebSocket] Client connected, bridging to server", {
       targetUrl: targetUrl.toString(),
     });
 
     try {
-      rendererSocket = new WebSocket(targetUrl.toString());
+      serverSocket = new WebSocket(targetUrl.toString());
     } catch (error) {
-      proxyLogger.error("[WebSocket] Failed to create renderer WebSocket", {
+      proxyLogger.error("[WebSocket] Failed to create server WebSocket", {
         error: error instanceof Error ? error.message : String(error),
         targetUrl: targetUrl.toString(),
       });
-      clientSocket.close(1011, "Failed to connect to renderer");
+      clientSocket.close(1011, "Failed to connect to server");
       return;
     }
 
     connectTimeoutId = setTimeout(() => {
       timedOut = true;
-      proxyLogger.error("[WebSocket] Renderer connection timeout", {
+      proxyLogger.error("[WebSocket] Server connection timeout", {
         targetUrl: targetUrl.toString(),
         timeoutMs: WS_CONNECT_TIMEOUT_MS,
       });
-      rendererSocket?.close();
+      serverSocket?.close();
       if (clientSocket.readyState === WebSocket.OPEN) {
-        clientSocket.close(1001, "Renderer connection timeout");
+        clientSocket.close(1001, "Server connection timeout");
       }
     }, WS_CONNECT_TIMEOUT_MS);
 
-    rendererSocket.onopen = () => {
+    serverSocket.onopen = () => {
       clearConnectTimeout();
       if (timedOut) {
-        rendererSocket?.close();
+        serverSocket?.close();
         return;
       }
-      proxyLogger.info("[WebSocket] Renderer connected, bridge established", {
+      proxyLogger.info("[WebSocket] Server connected, bridge established", {
         projectSlug,
         environment: scope,
       });
     };
 
-    rendererSocket.onmessage = (event) => {
+    serverSocket.onmessage = (event) => {
       if (clientSocket.readyState === WebSocket.OPEN) {
         clientSocket.send(event.data);
       }
     };
 
-    rendererSocket.onerror = (event) => {
+    serverSocket.onerror = (event) => {
       clearConnectTimeout();
-      proxyLogger.error("[WebSocket] Renderer connection error", {
+      proxyLogger.error("[WebSocket] Server connection error", {
         projectSlug,
         environment: scope,
         targetUrl: targetUrl.toString(),
@@ -183,9 +199,9 @@ function handleWebSocketUpgrade(req: Request): Response {
       });
     };
 
-    rendererSocket.onclose = (event) => {
+    serverSocket.onclose = (event) => {
       clearConnectTimeout();
-      proxyLogger.info("[WebSocket] Renderer connection closed", {
+      proxyLogger.info("[WebSocket] Server connection closed", {
         code: event.code,
         reason: event.reason,
         wasClean: event.wasClean,
@@ -197,8 +213,8 @@ function handleWebSocketUpgrade(req: Request): Response {
   };
 
   clientSocket.onmessage = (event) => {
-    if (rendererSocket?.readyState === WebSocket.OPEN) {
-      rendererSocket.send(event.data);
+    if (serverSocket?.readyState === WebSocket.OPEN) {
+      serverSocket.send(event.data);
     }
   };
 
@@ -216,8 +232,8 @@ function handleWebSocketUpgrade(req: Request): Response {
       reason: event.reason,
       wasClean: event.wasClean,
     });
-    if (rendererSocket?.readyState === WebSocket.OPEN) {
-      rendererSocket.close();
+    if (serverSocket?.readyState === WebSocket.OPEN) {
+      serverSocket.close();
     }
   };
 
@@ -231,7 +247,7 @@ function jsonErrorResponse(status: number, body: Record<string, unknown>): Respo
   });
 }
 
-function forwardToRenderer(req: Request): Promise<Response> {
+function forwardToServer(req: Request): Promise<Response> {
   const startTime = performance.now();
   const url = new URL(req.url);
   const requestId = crypto.randomUUID();
@@ -293,11 +309,11 @@ function forwardToRenderer(req: Request): Promise<Response> {
 
           injectContext(newHeaders);
 
-          const rendererUrl = new URL(url.pathname + url.search, RENDERER_URL);
+          const serverUrl = new URL(url.pathname + url.search, PRODUCTION_SERVER_URL);
 
           // Only retry idempotent methods (GET, HEAD, OPTIONS)
           const isIdempotent = ["GET", "HEAD", "OPTIONS"].includes(req.method);
-          const maxRetries = isIdempotent ? RENDERER_RETRY_COUNT : 0;
+          const maxRetries = isIdempotent ? VERYFRONT_SERVER_RETRY_COUNT : 0;
           let lastError: Error | null = null;
 
           for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -306,25 +322,25 @@ function forwardToRenderer(req: Request): Promise<Response> {
               proxyLogger.info(
                 `[Retry] Attempt ${attempt + 1}/${
                   maxRetries + 1
-                } after ${RENDERER_RETRY_DELAY_MS}ms`,
+                } after ${VERYFRONT_SERVER_RETRY_DELAY_MS}ms`,
                 {
                   pathname: url.pathname,
                   method: req.method,
                 },
               );
-              await new Promise((resolve) => setTimeout(resolve, RENDERER_RETRY_DELAY_MS));
+              await new Promise((resolve) => setTimeout(resolve, VERYFRONT_SERVER_RETRY_DELAY_MS));
             }
 
             const abortController = new AbortController();
             const timeoutId = setTimeout(() => {
               abortController.abort();
-            }, RENDERER_REQUEST_TIMEOUT_MS);
+            }, VERYFRONT_SERVER_REQUEST_TIMEOUT_MS);
 
             try {
               const response = await withSpan(
                 ProxySpanNames.HTTP_CLIENT_FETCH,
                 () =>
-                  fetch(rendererUrl.toString(), {
+                  fetch(serverUrl.toString(), {
                     method: req.method,
                     headers: newHeaders,
                     body: req.body,
@@ -333,11 +349,11 @@ function forwardToRenderer(req: Request): Promise<Response> {
                   }),
                 {
                   "http.method": req.method,
-                  "http.url": rendererUrl.toString(),
-                  "http.host": rendererUrl.host,
-                  "proxy.target": "renderer",
+                  "http.url": serverUrl.toString(),
+                  "http.host": serverUrl.host,
+                  "proxy.target": "server",
                   "proxy.project_slug": ctx.projectSlug || "",
-                  "proxy.timeout_ms": RENDERER_REQUEST_TIMEOUT_MS,
+                  "proxy.timeout_ms": VERYFRONT_SERVER_REQUEST_TIMEOUT_MS,
                   "proxy.retry_attempt": attempt,
                 },
               );
@@ -369,12 +385,13 @@ function forwardToRenderer(req: Request): Promise<Response> {
                 const ms = Math.round(performance.now() - startTime);
                 proxyLogger.error(`504 ${req.method} ${url.pathname}`, {
                   ms,
-                  timeoutMs: RENDERER_REQUEST_TIMEOUT_MS,
+                  timeoutMs: VERYFRONT_SERVER_REQUEST_TIMEOUT_MS,
                 });
                 endSpan(spanInfo?.span, 504, error);
                 return jsonErrorResponse(504, {
                   error: "Gateway Timeout",
-                  message: `Renderer request timed out after ${RENDERER_REQUEST_TIMEOUT_MS}ms`,
+                  message:
+                    `Server request timed out after ${VERYFRONT_SERVER_REQUEST_TIMEOUT_MS}ms`,
                 });
               }
 
@@ -497,7 +514,7 @@ function router(req: Request): Promise<Response> {
 
   if (url.pathname.startsWith("/_vf/api/")) return handleApiProxy(req);
 
-  return forwardToRenderer(req);
+  return forwardToServer(req);
 }
 
 // Graceful shutdown
@@ -517,7 +534,7 @@ await initializeOTLPWithApis();
 
 proxyLogger.debug("Starting proxy server (split mode)", {
   port: PORT,
-  rendererUrl: RENDERER_URL,
+  serverUrl: PRODUCTION_SERVER_URL,
   apiBaseUrl: config.apiBaseUrl,
 });
 

@@ -3,11 +3,11 @@
  */
 
 import { z } from "zod";
-import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { ReloadNotifier } from "#veryfront/server/reload-notifier.ts";
-import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
-import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
+import { getEnvironmentConfig } from "veryfront/config";
+import { withSpan } from "veryfront/observability/otlp-setup";
+import { ReloadNotifier } from "veryfront/server";
+import { getErrorCollector } from "veryfront/observability";
+import { getLogBuffer } from "veryfront/observability";
 import type { MCPTool } from "../tools.ts";
 import { formatError } from "./helpers.ts";
 

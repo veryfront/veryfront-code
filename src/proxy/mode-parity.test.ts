@@ -195,10 +195,10 @@ describe("Proxy-Renderer Mode Parity", () => {
         const handler = createProxyHandler({
           config: {
             apiBaseUrl: `http://127.0.0.1:${port}`,
-            clientId: "test-client",
-            clientSecret: "test-secret",
-            previewClientId: "test-preview-client",
-            previewClientSecret: "test-preview-secret",
+            apiClientId: "test-client",
+            apiClientSecret: "test-secret",
+            previewApiClientId: "test-preview-client",
+            previewApiClientSecret: "test-preview-secret",
           },
         });
 

@@ -1,8 +1,8 @@
-import { join } from "#veryfront/compat/path/index.ts";
-import { runtime } from "#veryfront/platform/adapters/registry.ts";
-import { getConfig } from "#veryfront/config";
-import { buildProduction } from "#veryfront/build/production-build/index.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { join } from "veryfront/platform/path";
+import { runtime } from "veryfront/platform";
+import { getConfig } from "veryfront/config";
+import { buildProduction } from "veryfront/build";
+import { withSpan } from "veryfront/observability/otlp-setup";
 import { displayBuildConfig, displayBuildStart } from "./config-display.ts";
 import { handleBuildError } from "./error-handler.ts";
 import { displayBuildSuccess } from "./stats-display.ts";

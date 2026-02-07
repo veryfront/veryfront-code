@@ -2,14 +2,11 @@
  * Install Command - AI assistant integration installer
  */
 
-import { dirname, join } from "#veryfront/compat/path/index.ts";
-import { cwd as getCwd } from "#veryfront/platform/compat/process.ts";
-import { exists, mkdir, writeTextFile } from "#veryfront/platform/compat/fs.ts";
+import { dirname, join } from "veryfront/platform/path";
+import { cwd as getCwd } from "veryfront/platform";
+import { exists, mkdir, writeTextFile } from "veryfront/platform";
 import { z } from "zod";
-import {
-  type EnvironmentConfig,
-  getEnvironmentConfig,
-} from "#veryfront/config/environment-config.ts";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { bold, dim, multiSelect, type MultiSelectOption, muted, success, warning } from "#cli/ui";
 import { detectAITools, formatDetectionHint } from "./detect.ts";
 import { AI_TOOLS, getTemplateContent, getToolById, isValidToolId } from "./registry.ts";

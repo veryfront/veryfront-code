@@ -1,5 +1,5 @@
 import type { DiagnosticResult } from "./types.ts";
-import { cliLogger } from "#veryfront/utils";
+import { cliLogger } from "#cli/utils";
 import { formatError } from "../../utils/string.ts";
 
 const FETCH_TIMEOUT_MS = 2000;
@@ -36,7 +36,7 @@ function getHashFromManifest(json: unknown): string | null {
 
 export async function checkRSCFlag(): Promise<DiagnosticResult> {
   try {
-    const { isRscExperimentalEnabled } = await import("#veryfront/config/env.ts");
+    const { isRscExperimentalEnabled } = await import("veryfront/config");
     const isEnabled = isRscExperimentalEnabled();
 
     return {

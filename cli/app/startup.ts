@@ -4,7 +4,7 @@
  * Shows the startup animation with boxed view and shimmer effect.
  */
 
-import { writeStdout } from "#veryfront/platform/compat/process.ts";
+import { writeStdout } from "veryfront/platform";
 import { cursor, screen } from "../ui/ansi.ts";
 import {
   createStartupState,

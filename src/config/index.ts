@@ -5,6 +5,7 @@ export {
   type GetConfigOptions,
 } from "./loader.ts";
 export { defineConfig } from "./define-config.ts";
+export * from "./env.ts";
 
 export {
   _resetEnvironmentConfig,

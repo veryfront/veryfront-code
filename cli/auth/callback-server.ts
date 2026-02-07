@@ -1,5 +1,5 @@
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
-import { escapeHtml } from "#veryfront/utils/html-escape.ts";
+import { isDeno } from "veryfront/platform";
+import { escapeHtml } from "veryfront/utils/html-escape";
 import {
   DEFAULT_CALLBACK_PORT,
   DEFAULT_LOGIN_TIMEOUT_MS,

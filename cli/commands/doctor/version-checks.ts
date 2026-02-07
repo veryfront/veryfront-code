@@ -1,5 +1,5 @@
 import type { DiagnosticResult } from "./types.ts";
-import { getRuntimeVersion } from "#veryfront/platform/compat/process.ts";
+import { getRuntimeVersion } from "veryfront/platform";
 
 function createRuntimeResult(
   status: DiagnosticResult["status"],
@@ -46,7 +46,7 @@ export function checkDenoVersion(): Promise<DiagnosticResult> {
 export async function checkReactCompatibility(): Promise<DiagnosticResult> {
   try {
     const { getReactVersionInfo } = await import(
-      "#veryfront/react/compat/version-detector/index.ts"
+      "veryfront/react"
     );
     const reactInfo = getReactVersionInfo();
     const featureCount = Object.values(reactInfo.features).filter(Boolean).length;

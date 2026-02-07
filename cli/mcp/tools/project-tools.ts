@@ -3,10 +3,10 @@
  */
 
 import { z } from "zod";
-import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
-import { join } from "#veryfront/compat/path/index.ts";
-import { cwd } from "#veryfront/platform/compat/process.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import type { FileSystem } from "veryfront/platform";
+import { join } from "veryfront/platform/path";
+import { cwd } from "veryfront/platform";
+import { withSpan } from "veryfront/observability/otlp-setup";
 import type { MCPTool } from "../tools.ts";
 import {
   directoryExists,

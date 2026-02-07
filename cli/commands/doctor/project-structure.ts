@@ -1,6 +1,6 @@
 import { exists } from "#std/fs.ts";
-import { join } from "#veryfront/compat/path/index.ts";
-import { getConfig } from "#veryfront/config";
+import { join } from "veryfront/platform/path";
+import { getConfig } from "veryfront/config";
 import type { DiagnosticResult } from "./types.ts";
 
 export async function checkProjectStructure(projectDir: string): Promise<DiagnosticResult[]> {
@@ -26,7 +26,7 @@ export async function checkProjectStructure(projectDir: string): Promise<Diagnos
 
 export async function checkConfiguration(projectDir: string): Promise<DiagnosticResult> {
   try {
-    const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+    const { runtime } = await import("veryfront/platform");
     const adapter = await runtime.get();
     const config = await getConfig(projectDir, adapter);
     const reactVersion = config?.react?.version ?? "auto";

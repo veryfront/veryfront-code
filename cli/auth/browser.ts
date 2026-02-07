@@ -1,8 +1,5 @@
-import { getOsType, runCommand } from "#veryfront/platform/compat/process.ts";
-import {
-  type EnvironmentConfig,
-  getEnvironmentConfig,
-} from "#veryfront/config/environment-config.ts";
+import { getOsType, runCommand } from "veryfront/platform";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 
 function getOpenCommand(): { cmd: string; args: string[] } {
   const osType = getOsType();

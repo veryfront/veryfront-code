@@ -1,10 +1,11 @@
-import { cwd } from "#veryfront/platform/compat/process.ts";
-import { cliLogger } from "#veryfront/utils";
+import { cwd } from "veryfront/platform";
+import { cliLogger } from "#cli/utils";
 import { exitProcess, registerTerminationSignals, showLogo } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
+import { startCliProductionServer } from "#cli/shared/server-startup";
 
 export interface ServeOptions {
-  mode: "combined" | "proxy" | "renderer";
+  mode: "combined" | "proxy" | "production";
   port: number;
   bindAddress: string;
   splitMode: boolean;
@@ -17,11 +18,11 @@ async function runSplit(options: ServeOptions): Promise<void> {
   showLogo();
   const { runSplitMode } = await import("./split-mode.ts");
 
-  const { DEFAULT_DEV_SERVER_PORT } = await import("#veryfront/utils");
+  const { DEFAULT_DEV_SERVER_PORT } = await import("#cli/utils");
   const proxyPort = options.port !== DEFAULT_DEV_SERVER_PORT ? options.port : 8080;
 
   await runSplitMode({
-    rendererPort: 3000,
+    productionServerPort: 3000,
     proxyPort,
     useBinary: options.useBinary,
     binaryPath: options.binaryPath,
@@ -32,30 +33,26 @@ async function runProxy(options: ServeOptions): Promise<void> {
   showLogo();
   cliLogger.info(`Starting proxy server on ${options.bindAddress}:${options.port}`);
 
-  const { setEnv } = await import("#veryfront/platform/compat/process.ts");
+  const { setEnv } = await import("veryfront/platform");
   setEnv("PORT", String(options.port));
   setEnv("HOST", options.bindAddress);
 
-  await import("#veryfront/proxy/main.ts");
+  await import("veryfront/proxy/main");
 }
 
-async function runRenderer(options: ServeOptions): Promise<void> {
+async function runProductionServer(options: ServeOptions): Promise<void> {
   showLogo();
 
   const { clearAllLocalCaches } = await import(
-    "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts"
+    "veryfront/transforms/mdx-cache"
   );
   await clearAllLocalCaches();
 
-  const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
-  const adapter = await runtime.get();
-  const { startProductionServer } = await import("#veryfront/server/production-server.ts");
-
   const { initializeOTLPWithApis } = await import(
-    "#veryfront/observability/tracing/otlp-setup.ts"
+    "veryfront/observability/otlp-setup"
   );
   const { initializeDistributedCaches } = await import(
-    "#veryfront/cache/distributed-cache-init.ts"
+    "veryfront/cache"
   );
   await Promise.allSettled([
     initializeOTLPWithApis(),
@@ -67,12 +64,11 @@ async function runRenderer(options: ServeOptions): Promise<void> {
 
   const defaultProjectId = generateDefaultProjectId(projectDir);
 
-  const server = await startProductionServer({
+  const server = await startCliProductionServer({
     projectDir,
     port: options.port,
     bindAddress: options.bindAddress,
     debug: options.debug,
-    adapter,
     signal: shutdownController.signal,
     defaultProjectSlug: defaultProjectId,
     defaultProjectId,
@@ -113,7 +109,7 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
     return;
   }
 
-  if (options.mode === "renderer" || options.mode === "combined") {
-    await runRenderer(options);
+  if (options.mode === "production" || options.mode === "combined") {
+    await runProductionServer(options);
   }
 }

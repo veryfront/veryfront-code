@@ -2,7 +2,7 @@
  * Shared file-system utilities for CLI commands and MCP tools.
  */
 
-import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, type FileSystem } from "veryfront/platform";
 
 let cachedFs: FileSystem | null = null;
 

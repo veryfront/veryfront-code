@@ -14,8 +14,8 @@ export interface TokenResponse {
 
 export interface OAuthTokenConfig {
   apiBaseUrl: string;
-  clientId: string;
-  clientSecret: string;
+  apiClientId: string;
+  apiClientSecret: string;
   projectSlug?: string;
   customDomain?: string;
   timeoutMs?: number;
@@ -40,8 +40,8 @@ export async function fetchOAuthToken(
 
         const body = {
           grant_type: "client_credentials",
-          client_id: config.clientId,
-          client_secret: config.clientSecret,
+          client_id: config.apiClientId,
+          client_secret: config.apiClientSecret,
           ...(config.projectSlug ? { project_slug: config.projectSlug } : {}),
           ...(config.customDomain ? { custom_domain: config.customDomain } : {}),
         };

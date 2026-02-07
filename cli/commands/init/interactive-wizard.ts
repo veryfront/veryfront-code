@@ -1,7 +1,7 @@
-import { cyan, dim, green } from "#veryfront/compat/console";
-import { isCiEnv, isDenoTestingEnv } from "#veryfront/config/env.ts";
-import { isInteractive as checkIsInteractive } from "#veryfront/platform/compat/process.ts";
-import { cliLogger as logger } from "#veryfront/utils";
+import { cyan, dim, green } from "#cli/ui";
+import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
+import { isInteractive as checkIsInteractive } from "veryfront/platform";
+import { cliLogger as logger } from "#cli/utils";
 import { multiSelect, select } from "../../utils/terminal-select.ts";
 import {
   getIntegrationSelectOptionsWithHeaders,

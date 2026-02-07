@@ -1,5 +1,5 @@
 import { RESET } from "../ansi.ts";
-import { BORDER_STYLES, box } from "#veryfront/utils/box.ts";
+import { BORDER_STYLES, box } from "#cli/ui/box";
 import { brand, dim, shouldUseColor } from "../colors.ts";
 import { AGENT_FACE } from "../dot-matrix.ts";
 import { maxLineWidth, pad, repeat } from "../layout.ts";

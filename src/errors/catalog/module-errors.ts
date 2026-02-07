@@ -19,7 +19,7 @@ curl -X DELETE "https://api.veryfront.com/internal/cache/project/{projectId}/tra
 kubectl rollout restart deployment/veryfront-renderer -n veryfront-production
 
 # To reproduce locally with production cache:
-VERYFRONT_API_BASE_URL=https://api.veryfront.com PROXY_MODE=1 deno task start`,
+VERYFRONT_PROXY_API_BASE_URL=https://api.veryfront.com PROXY_MODE=1 deno task start`,
   }),
 
   "module-not-found": createErrorSolution("module-not-found", {

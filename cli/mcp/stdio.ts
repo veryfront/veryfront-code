@@ -1,5 +1,5 @@
-import { writeStdoutAsync } from "#veryfront/platform/compat/process.ts";
-import { getStdinReader, type StdinReader } from "#veryfront/platform/compat/stdin.ts";
+import { writeStdoutAsync } from "veryfront/platform";
+import { getStdinReader, type StdinReader } from "veryfront/platform";
 
 export interface StartStdioJsonRpcOptions<TRequest, TResponse> {
   isRunning: () => boolean;

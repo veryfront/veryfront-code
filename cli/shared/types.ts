@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const ServerModeSchema = z.enum(["combined", "proxy", "renderer"]);
+export const ServerModeSchema = z.enum(["combined", "proxy", "production"]);
 export type ServerMode = z.infer<typeof ServerModeSchema>;
 
 export interface ParsedArgs {
@@ -27,7 +27,7 @@ export interface ParsedArgs {
   j?: boolean;
   with?: string[];
   w?: string[];
-  /** Server mode: combined (default), proxy, or renderer */
+  /** Server mode: combined (default), proxy, or production */
   mode?: ServerMode;
   m?: ServerMode;
   [key: string]: unknown;

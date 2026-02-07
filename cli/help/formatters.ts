@@ -1,4 +1,4 @@
-import { VERSION } from "#veryfront/utils";
+import { VERSION } from "#cli/utils";
 import type { CommandHelp, CommandOption } from "./types.ts";
 import { bold, brand, dim, muted, shouldUseColor } from "../ui/colors.ts";
 import { AGENT_FACE } from "../ui/dot-matrix.ts";

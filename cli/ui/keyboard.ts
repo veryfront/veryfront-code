@@ -5,8 +5,8 @@
  * Uses platform abstractions for Deno, Node.js, and Bun runtimes.
  */
 
-import { isStdoutTTY } from "#veryfront/platform/compat/process.ts";
-import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
+import { isStdoutTTY } from "veryfront/platform";
+import { getStdinReader, setRawMode } from "veryfront/platform";
 
 export interface KeyboardHandler {
   /** Start listening for keyboard input */

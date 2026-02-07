@@ -1,1 +1,1 @@
-export type { BuildOptions, BuildStats } from "#veryfront/server/build-types.ts";
+export type { BuildOptions, BuildStats } from "veryfront/server";

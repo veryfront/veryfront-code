@@ -4,7 +4,7 @@
  * Main view showing server status, projects, and quick actions.
  */
 
-import { box } from "#veryfront/utils/box.ts";
+import { box } from "#cli/ui/box";
 import { brand, dim, error, muted } from "../../ui/colors.ts";
 import { getTerminalWidth } from "../../ui/layout.ts";
 import { getAgentFaceWithText } from "../../ui/dot-matrix.ts";
