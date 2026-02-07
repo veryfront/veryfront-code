@@ -62,6 +62,11 @@ export interface WorkflowBackend {
   extendLock?(runId: string, duration: number): Promise<boolean>;
   isLocked?(runId: string): Promise<boolean>;
 
+  /** Find runs that appear stalled (no heartbeat within threshold ms) */
+  findStalledRuns?(stalledThreshold: number): Promise<WorkflowRun[]>;
+  /** Attempt to claim a stalled run for this worker (atomic compare-and-swap) */
+  claimStalledRun?(runId: string, workerId: string, stalledThreshold: number): Promise<boolean>;
+
   publishEvent?(
     eventName: string,
     payload: unknown,
@@ -109,5 +114,29 @@ export function hasEventSupport(backend: WorkflowBackend): backend is WithEventS
   return (
     typeof backend.publishEvent === "function" &&
     typeof backend.subscribeEvents === "function"
+  );
+}
+
+type WithWorkerSupport =
+  & WorkflowBackend
+  & Required<
+    Pick<
+      WorkflowBackend,
+      | "enqueue"
+      | "dequeue"
+      | "acknowledge"
+      | "acquireLock"
+      | "releaseLock"
+      | "findStalledRuns"
+      | "claimStalledRun"
+    >
+  >;
+
+export function hasWorkerSupport(backend: WorkflowBackend): backend is WithWorkerSupport {
+  return (
+    hasQueueSupport(backend) &&
+    hasLockSupport(backend) &&
+    typeof backend.findStalledRuns === "function" &&
+    typeof backend.claimStalledRun === "function"
   );
 }

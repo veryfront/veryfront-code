@@ -48,6 +48,7 @@ export type DurationString = string;
  */
 export interface WorkflowContext {
   input: unknown;
+  _tenant?: CapturedTenantContext;
   [nodeId: string]: unknown;
 }
 
@@ -225,6 +226,24 @@ export interface Workflow<TInput = unknown, TOutput = unknown> {
 }
 
 /**
+ * Captured tenant context for multi-tenant workflow execution.
+ * Allows tools and framework utilities to access the current tenant
+ * without explicit parameter passing.
+ */
+export interface CapturedTenantContext {
+  /** Project slug identifying the tenant */
+  projectSlug: string;
+  /** OAuth token for API access */
+  token: string;
+  /** Optional project ID (UUID) */
+  projectId?: string;
+  /** Whether running in production mode */
+  productionMode: boolean;
+  /** Release ID for production deployments */
+  releaseId?: string | null;
+}
+
+/**
  * Workflow run state
  */
 export interface WorkflowRun<TInput = unknown, TOutput = unknown> {
@@ -242,7 +261,13 @@ export interface WorkflowRun<TInput = unknown, TOutput = unknown> {
   error?: WorkflowError;
   createdAt: Date;
   startedAt?: Date;
+  /** Last heartbeat timestamp for liveness detection in distributed workers */
+  heartbeatAt?: Date;
   completedAt?: Date;
+  /** Worker ID for distributed execution */
+  workerId?: string;
+  /** Captured tenant context for multi-tenant job execution */
+  _tenant?: CapturedTenantContext;
 }
 
 // Utility functions

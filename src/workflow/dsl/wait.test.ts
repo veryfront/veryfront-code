@@ -5,7 +5,14 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay, waitForApproval, waitForEvent } from "./wait.ts";
-import type { WaitNodeConfig } from "../types.ts";
+import type { WaitNodeConfig, WorkflowNode } from "../types.ts";
+
+function expectWaitConfig(node: WorkflowNode): WaitNodeConfig {
+  if (node.config.type !== "wait") {
+    throw new Error(`Expected wait node, got ${node.config.type}`);
+  }
+  return node.config;
+}
 
 describe("waitForApproval()", () => {
   it("should create an approval wait node", () => {
@@ -14,10 +21,9 @@ describe("waitForApproval()", () => {
       timeout: "24h",
     });
 
+    const config = expectWaitConfig(node);
     assertEquals(node.id, "human-review");
-    assertEquals(node.config.type, "wait");
-
-    const config: WaitNodeConfig = node.config;
+    assertEquals(config.type, "wait");
     assertEquals(config.waitType, "approval");
     assertEquals(config.message, "Please review this content");
     assertEquals(config.timeout, "24h");
@@ -26,10 +32,9 @@ describe("waitForApproval()", () => {
   it("should work with minimal options", () => {
     const node = waitForApproval("quick-review");
 
+    const config = expectWaitConfig(node);
     assertEquals(node.id, "quick-review");
-    assertEquals(node.config.type, "wait");
-
-    const config: WaitNodeConfig = node.config;
+    assertEquals(config.type, "wait");
     assertEquals(config.waitType, "approval");
   });
 
@@ -38,7 +43,7 @@ describe("waitForApproval()", () => {
       approvers: ["admin@example.com", "lead@example.com"],
     });
 
-    const config: WaitNodeConfig = node.config;
+    const config = expectWaitConfig(node);
     assertEquals(config.approvers, ["admin@example.com", "lead@example.com"]);
   });
 });
@@ -50,10 +55,9 @@ describe("waitForEvent()", () => {
       timeout: "1h",
     });
 
+    const config = expectWaitConfig(node);
     assertEquals(node.id, "payment-confirmed");
-    assertEquals(node.config.type, "wait");
-
-    const config: WaitNodeConfig = node.config;
+    assertEquals(config.type, "wait");
     assertEquals(config.waitType, "event");
     assertEquals(config.eventName, "payment.success");
     assertEquals(config.timeout, "1h");
@@ -64,7 +68,7 @@ describe("waitForEvent()", () => {
       eventName: "order.updated",
     });
 
-    const config: WaitNodeConfig = node.config;
+    const config = expectWaitConfig(node);
     assertEquals(config.eventName, "order.updated");
   });
 });
@@ -73,10 +77,9 @@ describe("delay()", () => {
   it("should create a delay wait node", () => {
     const node = delay("cool-down", "5m");
 
+    const config = expectWaitConfig(node);
     assertEquals(node.id, "cool-down");
-    assertEquals(node.config.type, "wait");
-
-    const config: WaitNodeConfig = node.config;
+    assertEquals(config.type, "wait");
     assertEquals(config.waitType, "event");
     assertEquals(config.timeout, "5m");
   });
@@ -84,7 +87,7 @@ describe("delay()", () => {
   it("should support numeric duration", () => {
     const node = delay("short-wait", 3000);
 
-    const config: WaitNodeConfig = node.config;
+    const config = expectWaitConfig(node);
     assertEquals(config.timeout, 3000);
   });
 });

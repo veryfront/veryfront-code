@@ -1,7 +1,9 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { Agent, AgentResponse } from "#veryfront/agent";
 import type { Tool } from "#veryfront/tool";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import type {
+  CapturedTenantContext,
   NodeState,
   RetryConfig,
   StepNodeConfig,
@@ -10,6 +12,36 @@ import type {
 } from "../types.ts";
 import { parseDuration } from "../types.ts";
 import type { BlobStorage } from "../blob/types.ts";
+
+/**
+ * AsyncLocalStorage for workflow tenant context.
+ * This allows tools and framework utilities to access the current tenant
+ * without explicit parameter passing.
+ */
+const workflowTenantStorage = new AsyncLocalStorage<CapturedTenantContext>();
+
+/**
+ * Get the current workflow tenant context.
+ * Returns undefined if not executing within a workflow step.
+ *
+ * This is used by context-aware framework utilities (e.g., the api module)
+ * to automatically access project-scoped resources.
+ */
+export function getWorkflowTenant(): CapturedTenantContext | undefined {
+  return workflowTenantStorage.getStore();
+}
+
+/**
+ * Run a function with workflow tenant context available via AsyncLocalStorage.
+ * If tenant is undefined, preserves any existing outer context.
+ */
+export function runWithWorkflowTenant<T>(
+  tenant: CapturedTenantContext | undefined,
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (!tenant) return fn();
+  return workflowTenantStorage.run(tenant, fn);
+}
 
 const DEFAULT_RETRY: RetryConfig = {
   maxAttempts: 1,
@@ -69,21 +101,24 @@ export class StepExecutor {
     const maxAttempts = retryConfig.maxAttempts ?? 1;
 
     let lastError: Error | undefined;
+    const tenant = context._tenant;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const resolvedInput = await this.resolveInput(config.input, context);
-        this.config.onStepStart?.(node.id, resolvedInput);
+        const output = await runWithWorkflowTenant(tenant, async () => {
+          const resolvedInput = await this.resolveInput(config.input, context);
+          this.config.onStepStart?.(node.id, resolvedInput);
 
-        const timeout = config.timeout
-          ? parseDuration(config.timeout)
-          : (this.config.defaultTimeout ?? DEFAULT_STEP_TIMEOUT_MS);
+          const timeout = config.timeout
+            ? parseDuration(config.timeout)
+            : (this.config.defaultTimeout ?? DEFAULT_STEP_TIMEOUT_MS);
 
-        const output = await this.executeWithTimeout(
-          () => this.executeStep(config, resolvedInput, context),
-          timeout,
-          node.id,
-        );
+          return this.executeWithTimeout(
+            () => this.executeStep(config, resolvedInput, context),
+            timeout,
+            node.id,
+          );
+        });
 
         this.config.onStepComplete?.(node.id, output);
 

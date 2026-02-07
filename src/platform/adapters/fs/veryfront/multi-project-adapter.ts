@@ -278,6 +278,32 @@ export function setRequestScopedFile(cacheKey: string, content: string): void {
   asyncLocalStorage.getStore()?.fileCache?.set(cacheKey, content);
 }
 
+/**
+ * Run a function within a request context.
+ * Standalone version that doesn't require an adapter instance.
+ * Used by workflow workers and other components that need to establish context.
+ */
+export function runWithRequestContext<T>(
+  options: {
+    projectSlug: string;
+    token: string;
+    projectId?: string;
+    productionMode?: boolean;
+    releaseId?: string | null;
+  },
+  fn: () => Promise<T>,
+): Promise<T> {
+  const context: RequestContext = {
+    projectSlug: options.projectSlug,
+    projectId: options.projectId,
+    token: options.token,
+    productionMode: options.productionMode ?? false,
+    releaseId: options.releaseId ?? null,
+    fileCache: new Map<string, string>(),
+  };
+  return asyncLocalStorage.run(context, fn);
+}
+
 export type { RequestContext };
 
 // Register globally for lazy access from cache-key-builder to avoid circular dependency

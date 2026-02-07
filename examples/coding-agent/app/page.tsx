@@ -56,11 +56,11 @@ function TypingIndicator() {
 }
 
 // Tool call card component
-function ToolCard({ name, args, result }: { name: string; args: any; result?: any }) {
+function ToolCard({ name, args }: { name: string; args: any }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="mt-3 border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden bg-neutral-50 dark:bg-neutral-800/50">
+    <div className="border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden bg-neutral-50 dark:bg-neutral-800/50">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
@@ -77,30 +77,23 @@ function ToolCard({ name, args, result }: { name: string; args: any; result?: an
       {expanded && (
         <div className="px-3 py-2 border-t border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800">
           <div className="text-xs font-medium text-neutral-500 dark:text-neutral-400 mb-1">Arguments</div>
-          <pre className="text-xs text-neutral-600 dark:text-neutral-300 overflow-x-auto bg-neutral-50 dark:bg-neutral-900 rounded-lg p-2 mb-2">
+          <pre className="text-xs text-neutral-600 dark:text-neutral-300 overflow-x-auto bg-neutral-50 dark:bg-neutral-900 rounded-lg p-2">
             {JSON.stringify(args, null, 2)}
           </pre>
-          {result !== undefined && (
-            <>
-              <div className="text-xs font-medium text-neutral-500 dark:text-neutral-400 mb-1">Result</div>
-              <pre className="text-xs text-neutral-600 dark:text-neutral-300 overflow-x-auto bg-neutral-50 dark:bg-neutral-900 rounded-lg p-2 max-h-32">
-                {typeof result === "string" ? result.slice(0, 500) : JSON.stringify(result, null, 2).slice(0, 500)}
-                {(typeof result === "string" ? result.length : JSON.stringify(result).length) > 500 && "..."}
-              </pre>
-            </>
-          )}
         </div>
       )}
     </div>
   );
 }
 
+type MessageBlock =
+  | { type: "text"; text: string }
+  | { type: "tool-call"; name: string; args: any };
+
 interface Message {
   id: string;
   role: "user" | "assistant";
-  content: string;
-  toolCalls?: Array<{ name: string; args: any }>;
-  toolResults?: Array<{ name: string; result: any }>;
+  blocks: MessageBlock[];
 }
 
 // Message bubble component
@@ -122,29 +115,28 @@ function MessageBubble({ message }: { message: Message }) {
         )}
       </div>
 
-      {/* Message content */}
-      <div className={`max-w-[85%] ${isUser ? '' : ''}`}>
-        <div className={`px-4 py-3 rounded-[20px] ${
-          isUser
-            ? 'bg-blue-500 text-white rounded-br-[4px]'
-            : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white rounded-bl-[4px]'
-        }`}>
-          <div className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</div>
-        </div>
-
-        {/* Tool calls */}
-        {message.toolCalls && message.toolCalls.length > 0 && (
-          <div className="mt-2 space-y-2">
-            {message.toolCalls.map((tc, i) => (
-              <ToolCard
+      {/* Message content — blocks rendered in order */}
+      <div className={`max-w-[85%] space-y-2`}>
+        {message.blocks.map((block, i) => {
+          if (block.type === "text" && block.text) {
+            return (
+              <div
                 key={i}
-                name={tc.name}
-                args={tc.args}
-                result={message.toolResults?.[i]?.result}
-              />
-            ))}
-          </div>
-        )}
+                className={`px-4 py-3 rounded-[20px] ${
+                  isUser
+                    ? 'bg-blue-500 text-white rounded-br-[4px]'
+                    : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white rounded-bl-[4px]'
+                }`}
+              >
+                <div className="whitespace-pre-wrap text-sm leading-relaxed">{block.text}</div>
+              </div>
+            );
+          }
+          if (block.type === "tool-call") {
+            return <ToolCard key={i} name={block.name} args={block.args} />;
+          }
+          return null;
+        })}
       </div>
     </div>
   );
@@ -153,10 +145,10 @@ function MessageBubble({ message }: { message: Message }) {
 // Empty state component
 function EmptyState({ onSuggestionClick }: { onSuggestionClick: (text: string) => void }) {
   const suggestions = [
-    { text: "List all TypeScript files in the project" },
-    { text: "Search the web for React best practices" },
-    { text: "Read the package.json file" },
-    { text: "What files are in the src directory?" },
+    { text: "Read the veryfront.config.ts and explain what it does" },
+    { text: "Search for TODO comments using grep" },
+    { text: "Run the tests and summarize the results" },
+    { text: "What files are in this project?" },
   ];
 
   return (
@@ -168,7 +160,7 @@ function EmptyState({ onSuggestionClick }: { onSuggestionClick: (text: string) =
         Coding Agent
       </h2>
       <p className="text-neutral-500 dark:text-neutral-400 text-center max-w-md mb-8">
-        AI assistant with file operations, web search, and command execution capabilities.
+        Powered by the Claude Agent SDK — all tools built-in, no API key needed.
       </p>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-lg">
@@ -192,7 +184,7 @@ function EmptyState({ onSuggestionClick }: { onSuggestionClick: (text: string) =
 }
 
 /**
- * Custom hook for agent chat with tool calls support
+ * Custom hook for agent chat with ordered blocks
  */
 function useAgentChat(options: { api: string }) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -207,7 +199,7 @@ function useAgentChat(options: { api: string }) {
     const userMessage: Message = {
       id: `user-${Date.now()}`,
       role: "user",
-      content: input.trim(),
+      blocks: [{ type: "text", text: input.trim() }],
     };
 
     setMessages((prev) => [...prev, userMessage]);
@@ -219,15 +211,20 @@ function useAgentChat(options: { api: string }) {
     abortControllerRef.current = abortController;
 
     try {
+      // Build plain text history for the API
+      const allMessages = [...messages, userMessage];
+      const apiMessages = allMessages.map((m) => ({
+        role: m.role,
+        content: m.blocks
+          .filter((b): b is MessageBlock & { type: "text" } => b.type === "text")
+          .map((b) => b.text)
+          .join("\n"),
+      }));
+
       const response = await fetch(options.api, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: [...messages, userMessage].map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
-        }),
+        body: JSON.stringify({ messages: apiMessages }),
         signal: abortController.signal,
       });
 
@@ -238,13 +235,17 @@ function useAgentChat(options: { api: string }) {
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
 
-      let assistantMessage: Message = {
-        id: `assistant-${Date.now()}`,
-        role: "assistant",
-        content: "",
-      };
+      let blocks: MessageBlock[] = [];
+      const assistantId = `assistant-${Date.now()}`;
 
-      setMessages((prev) => [...prev, assistantMessage]);
+      setMessages((prev) => [...prev, { id: assistantId, role: "assistant", blocks: [] }]);
+
+      const updateAssistant = (newBlocks: MessageBlock[]) => {
+        setMessages((prev) => [
+          ...prev.slice(0, -1),
+          { id: assistantId, role: "assistant", blocks: newBlocks },
+        ]);
+      };
 
       while (reader) {
         const { done, value } = await reader.read();
@@ -262,31 +263,22 @@ function useAgentChat(options: { api: string }) {
           try {
             const data = JSON.parse(rawData);
 
-            // Vercel AI SDK data stream format
             if (data.type === "text-delta") {
-              assistantMessage = {
-                ...assistantMessage,
-                content: assistantMessage.content + (data.textDelta || ""),
-              };
-              setMessages((prev) => [...prev.slice(0, -1), assistantMessage]);
+              const last = blocks[blocks.length - 1];
+              if (last?.type === "text") {
+                // Append to existing text block
+                last.text += data.textDelta || "";
+              } else {
+                // Start a new text block
+                blocks.push({ type: "text", text: data.textDelta || "" });
+              }
+              updateAssistant([...blocks]);
             } else if (data.type === "tool-call") {
-              assistantMessage = {
-                ...assistantMessage,
-                toolCalls: [...(assistantMessage.toolCalls || []), { name: data.toolName, args: data.args }],
-              };
-              setMessages((prev) => [...prev.slice(0, -1), assistantMessage]);
-            } else if (data.type === "tool-result") {
-              assistantMessage = {
-                ...assistantMessage,
-                toolResults: [...(assistantMessage.toolResults || []), { name: data.toolName, result: data.result }],
-              };
-              setMessages((prev) => [...prev.slice(0, -1), assistantMessage]);
+              blocks.push({ type: "tool-call", name: data.toolName, args: data.args });
+              updateAssistant([...blocks]);
             } else if (data.type === "error") {
-              assistantMessage = {
-                ...assistantMessage,
-                content: assistantMessage.content + `\n\nError: ${data.error}`,
-              };
-              setMessages((prev) => [...prev.slice(0, -1), assistantMessage]);
+              blocks.push({ type: "text", text: `Error: ${data.error}` });
+              updateAssistant([...blocks]);
             }
           } catch (_e) {
             // Skip invalid JSON
@@ -305,7 +297,7 @@ function useAgentChat(options: { api: string }) {
         {
           id: `error-${Date.now()}`,
           role: "assistant",
-          content: `Error: ${errorObj.message}`,
+          blocks: [{ type: "text", text: `Error: ${errorObj.message}` }],
         },
       ]);
     } finally {
@@ -376,7 +368,7 @@ export default function CodingAgentPage() {
           </div>
           <div>
             <h1 className="font-semibold text-neutral-900 dark:text-white">Coding Agent</h1>
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">File ops, web search, command execution</p>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">Claude Agent SDK — all tools built-in</p>
           </div>
         </div>
       </header>

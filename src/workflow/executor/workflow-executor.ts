@@ -18,9 +18,10 @@ import type {
 } from "../types.ts";
 import { generateId, parseDuration } from "../types.ts";
 import { hasLockSupport, type WorkflowBackend } from "../backends/types.ts";
+import { getCurrentRequestContext } from "../../platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
-import { StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
+import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
 import type { BlobStorage } from "../blob/types.ts";
 
 /**
@@ -84,6 +85,8 @@ export class WorkflowExecutor {
 
   /** Default lock duration: 30 seconds */
   private static readonly DEFAULT_LOCK_DURATION = 30000;
+  /** Heartbeat interval for long-running workflow liveness tracking */
+  private static readonly HEARTBEAT_INTERVAL_MS = 10000;
 
   constructor(config: WorkflowExecutorConfig) {
     this.config = {
@@ -157,6 +160,21 @@ export class WorkflowExecutor {
 
     workflow.inputSchema?.parse(input);
 
+    // Capture current tenant context for multi-tenant job execution.
+    // When a workflow is started from an API route, the request context
+    // carries the tenant info (slug, token, etc.). We persist it on the run
+    // so that worker processes can restore the context when executing jobs.
+    const requestCtx = getCurrentRequestContext();
+    const tenant = requestCtx
+      ? {
+        projectSlug: requestCtx.projectSlug,
+        token: requestCtx.token,
+        projectId: requestCtx.projectId,
+        productionMode: requestCtx.productionMode ?? false,
+        releaseId: requestCtx.releaseId ?? null,
+      }
+      : undefined;
+
     const run: WorkflowRun<TInput, TOutput> = {
       id: options?.runId ?? generateId("run"),
       workflowId,
@@ -169,6 +187,7 @@ export class WorkflowExecutor {
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),
+      _tenant: tenant,
     };
 
     await this.config.backend.createRun(run);
@@ -233,6 +252,8 @@ export class WorkflowExecutor {
 
     const useLocking = this.config.enableLocking !== false && hasLockSupport(this.config.backend);
     const lockDuration = this.config.lockDuration ?? WorkflowExecutor.DEFAULT_LOCK_DURATION;
+    let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
+    let heartbeatInFlight = false;
 
     if (useLocking) {
       const acquired = await this.config.backend.acquireLock!(runId, lockDuration);
@@ -246,20 +267,54 @@ export class WorkflowExecutor {
     }
 
     try {
+      const now = new Date();
       await this.config.backend.updateRun(runId, {
         status: "running",
-        startedAt: run.startedAt || new Date(),
+        startedAt: run.startedAt || now,
+        heartbeatAt: now,
       });
+
+      heartbeatInterval = setInterval(() => {
+        if (heartbeatInFlight) return;
+        heartbeatInFlight = true;
+
+        void (async () => {
+          try {
+            await this.config.backend.updateRun(runId, {
+              heartbeatAt: new Date(),
+            });
+
+            if (useLocking && typeof this.config.backend.extendLock === "function") {
+              const extended = await this.config.backend.extendLock(runId, lockDuration);
+              if (!extended) {
+                logger.warn("[WorkflowExecutor] Failed to extend lock during heartbeat", { runId });
+              }
+            }
+          } catch (error) {
+            logger.warn("[WorkflowExecutor] Heartbeat update failed", { runId }, error);
+          } finally {
+            heartbeatInFlight = false;
+          }
+        })();
+      }, WorkflowExecutor.HEARTBEAT_INTERVAL_MS);
 
       const updatedRun = await this.config.backend.getRun(runId);
       this.config.onStart?.(updatedRun!);
 
       const nodes = this.resolveNodes(workflow, run.context);
 
-      const result = await this.executeWithTimeout(
-        () => this.dagExecutor.execute(nodes, run as WorkflowRun, startFromNode),
-        workflow.timeout,
-      );
+      const runWithTenantContext: WorkflowRun = run._tenant
+        ? {
+          ...run,
+          context: { ...run.context, _tenant: run._tenant },
+        }
+        : run;
+
+      const result = await runWithWorkflowTenant(run._tenant, () =>
+        this.executeWithTimeout(
+          () => this.dagExecutor.execute(nodes, runWithTenantContext, startFromNode),
+          workflow.timeout,
+        ));
 
       if (result.completed) {
         const finalRun = await this.completeRun(runId, result.context, result.nodeStates);
@@ -293,6 +348,10 @@ export class WorkflowExecutor {
 
       throw normalizedError;
     } finally {
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+      }
+
       if (useLocking) {
         await this.config.backend.releaseLock!(runId);
         logger.debug("[WorkflowExecutor] Released lock for run", { runId });

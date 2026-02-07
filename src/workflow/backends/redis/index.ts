@@ -75,12 +75,18 @@ export class RedisBackend implements WorkflowBackend {
     return `${this.config.prefix}lock:${runId}`;
   }
 
+  private claimKey(runId: string): string {
+    return `${this.config.prefix}claim:${runId}`;
+  }
+
   private serializeRun(run: WorkflowRun): Record<string, string> {
     return {
       id: run.id,
       workflowId: run.workflowId,
       version: run.version || "",
       status: run.status,
+      workerId: run.workerId || "",
+      tenant: run._tenant ? JSON.stringify(run._tenant) : "",
       input: JSON.stringify(run.input),
       output: run.output !== undefined ? JSON.stringify(run.output) : "",
       nodeStates: JSON.stringify(run.nodeStates),
@@ -89,6 +95,7 @@ export class RedisBackend implements WorkflowBackend {
       error: run.error ? JSON.stringify(run.error) : "",
       createdAt: run.createdAt.toISOString(),
       startedAt: run.startedAt?.toISOString() || "",
+      heartbeatAt: run.heartbeatAt?.toISOString() || "",
       completedAt: run.completedAt?.toISOString() || "",
     };
   }
@@ -138,6 +145,8 @@ export class RedisBackend implements WorkflowBackend {
       workflowId: data.workflowId,
       version: data.version || undefined,
       status: status ?? "pending",
+      workerId: data.workerId || undefined,
+      _tenant: safeJsonParse(data.id, "tenant", data.tenant, undefined),
       input: safeJsonParse(data.id, "input", data.input, undefined),
       output: safeJsonParse(data.id, "output", data.output, undefined),
       nodeStates: safeJsonParse(data.id, "nodeStates", data.nodeStates, {}),
@@ -148,6 +157,7 @@ export class RedisBackend implements WorkflowBackend {
       error: safeJsonParse(data.id, "error", data.error, undefined),
       createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
       startedAt: data.startedAt ? new Date(data.startedAt) : undefined,
+      heartbeatAt: data.heartbeatAt ? new Date(data.heartbeatAt) : undefined,
       completedAt: data.completedAt ? new Date(data.completedAt) : undefined,
     };
   }
@@ -250,12 +260,17 @@ export class RedisBackend implements WorkflowBackend {
 
     const fields: Record<string, string> = {};
     if (patch.status !== undefined) fields.status = patch.status;
+    if (patch.workerId !== undefined) fields.workerId = patch.workerId ?? "";
+    if (patch._tenant !== undefined) {
+      fields.tenant = patch._tenant ? JSON.stringify(patch._tenant) : "";
+    }
     if (patch.output !== undefined) fields.output = JSON.stringify(patch.output);
     if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
     if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
     if (patch.context !== undefined) fields.context = JSON.stringify(patch.context);
     if (patch.error !== undefined) fields.error = JSON.stringify(patch.error);
     if (patch.startedAt !== undefined) fields.startedAt = patch.startedAt.toISOString();
+    if (patch.heartbeatAt !== undefined) fields.heartbeatAt = patch.heartbeatAt.toISOString();
     if (patch.completedAt !== undefined) fields.completedAt = patch.completedAt.toISOString();
 
     if (Object.keys(fields).length > 0) await client.hset(this.runKey(runId), fields);
@@ -263,6 +278,11 @@ export class RedisBackend implements WorkflowBackend {
     if (patch.status && oldStatus && patch.status !== oldStatus) {
       await client.srem(this.statusIndexKey(oldStatus), runId);
       await client.sadd(this.statusIndexKey(patch.status), runId);
+    }
+
+    // Terminal states should clear stale-claim markers.
+    if (patch.status && patch.status !== "running") {
+      await client.del(this.claimKey(runId));
     }
   }
 
@@ -272,7 +292,12 @@ export class RedisBackend implements WorkflowBackend {
     const run = await this.getRun(runId);
     if (!run) return;
 
-    await client.del(this.runKey(runId), this.checkpointsKey(runId), this.approvalsKey(runId));
+    await client.del(
+      this.runKey(runId),
+      this.checkpointsKey(runId),
+      this.approvalsKey(runId),
+      this.claimKey(runId),
+    );
     await client.srem(this.statusIndexKey(run.status), runId);
     await client.srem(this.workflowIndexKey(run.workflowId), runId);
   }
@@ -534,6 +559,56 @@ export class RedisBackend implements WorkflowBackend {
   async isLocked(runId: string): Promise<boolean> {
     const client = await this.ensureClient();
     return (await client.exists(this.lockKey(runId))) > 0;
+  }
+
+  async findStalledRuns(stalledThreshold: number): Promise<WorkflowRun[]> {
+    const runs = await this.listRuns({ status: "running" });
+    const now = Date.now();
+
+    return runs.filter((run) => {
+      const lastActivity = run.heartbeatAt?.getTime() ?? run.startedAt?.getTime() ??
+        run.createdAt.getTime();
+      return now - lastActivity >= stalledThreshold;
+    });
+  }
+
+  async claimStalledRun(
+    runId: string,
+    workerId: string,
+    stalledThreshold: number,
+  ): Promise<boolean> {
+    const client = await this.ensureClient();
+    const run = await this.getRun(runId);
+    if (!run || run.status !== "running") {
+      return false;
+    }
+
+    const now = Date.now();
+    const lastActivity = run.heartbeatAt?.getTime() ?? run.startedAt?.getTime() ??
+      run.createdAt.getTime();
+    if (now - lastActivity < stalledThreshold) {
+      return false;
+    }
+
+    const claimed = await client.set(this.claimKey(runId), workerId, {
+      nx: true,
+      px: stalledThreshold,
+    });
+    if (claimed !== "OK") {
+      return false;
+    }
+
+    try {
+      await this.updateRun(runId, {
+        workerId,
+        startedAt: run.startedAt ?? new Date(now),
+        heartbeatAt: new Date(now),
+      });
+      return true;
+    } catch (error) {
+      await client.del(this.claimKey(runId));
+      throw error;
+    }
   }
 
   async healthCheck(): Promise<boolean> {
