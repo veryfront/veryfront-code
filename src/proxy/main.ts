@@ -107,8 +107,22 @@ if (Object.keys(proxyHandler.localProjects).length > 0) {
   });
 }
 
+/**
+ * Validate server hostname is a safe internal hostname.
+ * Must be a bare hostname or hostname:port -- no protocol, path, user-info, or special chars.
+ */
+const VALID_HOSTNAME_RE = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?$/i;
+
 function resolveServerBaseUrl(serverHostname: string | undefined): string {
-  return serverHostname ? `http://${serverHostname}` : PRODUCTION_SERVER_URL;
+  if (serverHostname && VALID_HOSTNAME_RE.test(serverHostname)) {
+    return `http://${serverHostname}`;
+  }
+  if (serverHostname) {
+    proxyLogger.warn("Invalid server hostname, falling back to shared server", {
+      serverHostname,
+    });
+  }
+  return PRODUCTION_SERVER_URL;
 }
 
 /**

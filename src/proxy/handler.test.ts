@@ -347,6 +347,185 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("extracts serverHostname from custom domain with dedicated server", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["dedicated.example.com"],
+              active_release_id: "rel-123",
+              server_hostname:
+                "veryfront-server-2847395106.veryfront-production.svc.cluster.local",
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://dedicated.example.com/page", {
+          headers: { host: "dedicated.example.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "my-project");
+        assertEquals(
+          ctx.serverHostname,
+          "veryfront-server-2847395106.veryfront-production.svc.cluster.local",
+        );
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("extracts serverHostname from veryfront production domain", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-456",
+            slug: "dedicated-project",
+            name: "Dedicated Project",
+            environments: [{
+              id: "env-2",
+              name: "staging",
+              active_release_id: "rel-456",
+              server_hostname:
+                "veryfront-server-1234567890.veryfront-production.svc.cluster.local",
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request(
+          "http://dedicated-project.staging.veryfront.com/page",
+          {
+            headers: { host: "dedicated-project.staging.veryfront.com" },
+          },
+        );
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "dedicated-project");
+        assertEquals(
+          ctx.serverHostname,
+          "veryfront-server-1234567890.veryfront-production.svc.cluster.local",
+        );
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("serverHostname is undefined when no dedicated server configured", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "shared-project",
+            name: "Shared Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["shared.example.com"],
+              active_release_id: "rel-123",
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://shared.example.com/page", {
+          headers: { host: "shared.example.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.serverHostname, undefined);
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("serverHostname is undefined when server_hostname is null", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "null-server-project",
+            name: "Null Server Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["null-server.example.com"],
+              active_release_id: "rel-123",
+              server_hostname: null,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://null-server.example.com/page", {
+          headers: { host: "null-server.example.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.serverHostname, undefined);
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("allows access to non-protected environment without auth token", async () => {
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
