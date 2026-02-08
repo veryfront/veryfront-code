@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { logger } from "#veryfront/utils";
 import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -34,6 +35,8 @@ export interface ContentContextProvider {
 }
 
 const EXTENSION_PRIORITY = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"] as const;
+const EXTENSION_PRIORITY_ARRAY = [...EXTENSION_PRIORITY];
+const HAS_KNOWN_EXTENSION_REGEX = /\.(tsx|ts|jsx|js|mdx|md)$/;
 
 const IN_FLIGHT_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_IN_FLIGHT_REQUESTS = 100;
@@ -84,7 +87,7 @@ const cumulativeMetrics: CumulativeMetrics = {
 };
 
 // Per-request metrics (reset each request via startRequestMetrics)
-let currentRequest: PerRequestMetrics | null = null;
+const metricsStore = new AsyncLocalStorage<PerRequestMetrics>();
 
 function createFreshRequestMetrics(): PerRequestMetrics {
   return {
@@ -101,28 +104,34 @@ function createFreshRequestMetrics(): PerRequestMetrics {
   };
 }
 
+const API_ROUTE_REGEX = /^(pages|app)\/api\//;
+const LAYOUT_REGEX = /\/layout(\.|\/)/;
+const PAGE_REGEX = /^(pages|app)\//;
+const COMPONENT_REGEX = /(^|\/)components\//;
+const DATA_EXTENSION_REGEX = /\.(json|yaml|yml)$/;
+const CONFIG_REGEX = /config|\.config\./;
+
 function detectFileType(path: string): FileType {
-  if (path.startsWith("pages/api/") || path.startsWith("app/api/")) return "api";
-  if (path.includes("/layout.") || path.includes("/layout/")) return "layout";
-  if (path.startsWith("pages/") || path.startsWith("app/")) return "page";
-  if (path.startsWith("components/") || path.includes("/components/")) return "component";
-  if (path.endsWith(".json") || path.endsWith(".yaml") || path.endsWith(".yml")) return "data";
-  if (path.includes("config") || path.includes(".config.")) return "config";
+  if (API_ROUTE_REGEX.test(path)) return "api";
+  if (LAYOUT_REGEX.test(path)) return "layout";
+  if (PAGE_REGEX.test(path)) return "page";
+  if (COMPONENT_REGEX.test(path)) return "component";
+  if (DATA_EXTENSION_REGEX.test(path)) return "data";
+  if (CONFIG_REGEX.test(path)) return "config";
   return "other";
 }
 
 /** Call at start of HTTP request to begin per-request tracking */
 export function startRequestMetrics(): void {
-  currentRequest = createFreshRequestMetrics();
+  metricsStore.enterWith(createFreshRequestMetrics());
 }
 
 /** Call at end of HTTP request to log summary and update cumulative metrics */
 export function endRequestMetrics(
   requestContext?: { requestId?: string; pathname?: string; mode?: string },
 ): void {
-  if (!currentRequest) return;
-
-  const req = currentRequest;
+  const req = metricsStore.getStore();
+  if (!req) return;
   const durationMs = Math.round(performance.now() - req.startTime);
 
   // Compute derived metrics
@@ -166,14 +175,13 @@ export function endRequestMetrics(
     uniqueFiles: req.filesAccessed.size,
     isPreviewMode: req.isPreviewMode,
   });
-
-  currentRequest = null;
 }
 
 type ContentMetricEvent =
   | "REQUEST_SCOPED_HIT"
   | "PERSISTENT_CACHE_HIT"
   | "FILE_LIST_HIT"
+  | "IN_FLIGHT_JOIN_HIT"
   | "NETWORK_FETCH"
   | "NETWORK_FETCH_COMPLETE"
   | "CACHE_MISS";
@@ -190,6 +198,7 @@ function logContentMetric(
   },
 ): void {
   const path = details.path ?? "";
+  const currentRequest = metricsStore.getStore();
 
   // Track in per-request metrics if active
   if (currentRequest) {
@@ -210,6 +219,12 @@ function logContentMetric(
       case "FILE_LIST_HIT":
         currentRequest.fileListHits++;
         recordContentCacheHit("filelist");
+        break;
+      case "IN_FLIGHT_JOIN_HIT":
+        // Join hits are counted as request-scoped hits for metrics purposes
+        // as they avoided any additional L2/L3/API work for this request.
+        currentRequest.requestScopedHits++;
+        recordContentCacheHit("request");
         break;
       case "NETWORK_FETCH":
         currentRequest.networkFetches++;
@@ -277,6 +292,7 @@ export class ReadOperations {
 
   private fileListIndex: Map<string, string> | null = null;
   private fileListIndexKey: string | null = null;
+  private fileListIndexPromise: Promise<Map<string, string> | null> | null = null;
 
   private fileListReadyPromise: Promise<void> | null = null;
 
@@ -339,53 +355,63 @@ export class ReadOperations {
   }
 
   private async getOrBuildFileListIndex(): Promise<Map<string, string> | null> {
-    if (!this.getFileListCache) {
-      logger.debug("[ReadOperations] getOrBuildFileListIndex: no getFileListCache function");
-      return null;
-    }
+    if (this.fileListIndexPromise) return this.fileListIndexPromise;
 
-    const fileList = await this.getFileListCache();
-    if (!fileList) {
-      logger.debug(
-        "[ReadOperations] getOrBuildFileListIndex: getFileListCache returned null/undefined",
-      );
-      return null;
-    }
+    this.fileListIndexPromise = (async () => {
+      try {
+        if (!this.getFileListCache) {
+          logger.debug("[ReadOperations] getOrBuildFileListIndex: no getFileListCache function");
+          return null;
+        }
 
-    const cacheCheckSample = fileList.find((f) => /welcome/i.test(f.path));
-    logger.debug("[ReadOperations] getOrBuildFileListIndex: got file list from cache", {
-      fileListSize: fileList.length,
-      filesWithContent: fileList.filter((f) => f.content).length,
-      sampleFilePath: cacheCheckSample?.path,
-      sampleContentLength: cacheCheckSample?.content?.length,
-      sampleContentPreview: cacheCheckSample?.content?.slice(0, 200)?.replace(/\n/g, "\\n"),
-    });
+        const fileList = await this.getFileListCache();
+        if (!fileList) {
+          logger.debug(
+            "[ReadOperations] getOrBuildFileListIndex: getFileListCache returned null/undefined",
+          );
+          return null;
+        }
 
-    const indexKey = `${fileList.length}:${fileList[0]?.path ?? ""}:${
-      fileList[fileList.length - 1]?.path ?? ""
-    }`;
-    if (this.fileListIndex && this.fileListIndexKey === indexKey) return this.fileListIndex;
+        const cacheCheckSample = fileList.find((f) => /welcome/i.test(f.path));
+        logger.debug("[ReadOperations] getOrBuildFileListIndex: got file list from cache", {
+          fileListSize: fileList.length,
+          filesWithContent: fileList.filter((f) => f.content).length,
+          sampleFilePath: cacheCheckSample?.path,
+          sampleContentLength: cacheCheckSample?.content?.length,
+          sampleContentPreview: cacheCheckSample?.content?.slice(0, 200)?.replace(/\n/g, "\\n"),
+        });
 
-    const index = new Map<string, string>();
-    for (const file of fileList) {
-      if (file.content) index.set(file.path, file.content);
-    }
+        const indexKey = `${fileList.length}:${fileList[0]?.path ?? ""}:${
+          fileList[fileList.length - 1]?.path ?? ""
+        }`;
+        if (this.fileListIndex && this.fileListIndexKey === indexKey) return this.fileListIndex;
 
-    this.fileListIndex = index;
-    this.fileListIndexKey = indexKey;
+        const index = new Map<string, string>();
+        for (const file of fileList) {
+          if (file.content) index.set(file.path, file.content);
+        }
 
-    const sampleFile = fileList.find((f) => /welcome/i.test(f.path));
-    const sampleContent = sampleFile?.content;
-    logger.debug("[ReadOperations] Built file list index", {
-      fileListSize: fileList.length,
-      indexedWithContent: index.size,
-      sampleFilePath: sampleFile?.path,
-      sampleContentLength: sampleContent?.length,
-      sampleContentHash: sampleContent ? hashPreview(sampleContent) : undefined,
-      sampleContentPreview: sampleContent?.slice(0, 200)?.replace(/\n/g, "\\n"),
-    });
+        this.fileListIndex = index;
+        this.fileListIndexKey = indexKey;
 
-    return index;
+        const sampleFile = fileList.find((f) => /welcome/i.test(f.path));
+        const sampleContent = sampleFile?.content;
+        logger.debug("[ReadOperations] Built file list index", {
+          fileListSize: fileList.length,
+          indexedWithContent: index.size,
+          sampleFilePath: sampleFile?.path,
+          sampleContentLength: sampleContent?.length,
+          sampleContentHash: sampleContent ? hashPreview(sampleContent) : undefined,
+          sampleContentPreview: sampleContent?.slice(0, 200)?.replace(/\n/g, "\\n"),
+        });
+
+        return index;
+      } finally {
+        this.fileListIndexPromise = null;
+      }
+    })();
+
+    return this.fileListIndexPromise;
   }
 
   private async getContentFromFileList(normalizedPath: string): Promise<string | undefined> {
@@ -448,7 +474,6 @@ export class ReadOperations {
 
   private async fetchContent(normalizedPath: string): Promise<string> {
     // Framework paths should NEVER be fetched from API - they must be read from local filesystem.
-    // If we reach here for a framework path, the module server's local resolution failed.
     if (isFrameworkSourcePath(normalizedPath)) {
       throw new Error(
         `[ReadOperations] Framework path "${normalizedPath}" cannot be fetched from API. ` +
@@ -457,24 +482,10 @@ export class ReadOperations {
     }
 
     const ctx = this.contextProvider?.getContentContext();
-    const apiPath = this.getOriginalApiPath?.(normalizedPath) ?? normalizedPath;
     const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
     const cacheKey = `${cacheKeyPrefix}:${normalizedPath}`;
-    const isProduction = this.contextProvider?.isProductionMode() ?? false;
-    const hasKnownExt = EXTENSION_PRIORITY.some((ext) => apiPath.endsWith(ext));
 
-    logger.debug("[ReadOperations] fetchContent context", {
-      path: normalizedPath,
-      hasContextProvider: !!this.contextProvider,
-      hasContext: !!ctx,
-      sourceType: ctx?.sourceType,
-      projectSlug: ctx?.projectSlug,
-      branch: ctx?.branch,
-      releaseId: ctx?.releaseId,
-      cacheKeyPrefix,
-      isProduction,
-    });
-
+    // 1. L1 Request Cache (Synchronous check)
     const requestCached = getRequestScopedFile(cacheKey);
     if (requestCached) {
       logContentMetric("REQUEST_SCOPED_HIT", {
@@ -482,14 +493,56 @@ export class ReadOperations {
         mode: ctx?.sourceType ?? "unknown",
         cacheKey,
       });
-      logger.debug("[ReadOperations] REQUEST_CACHE_HIT", {
-        path: normalizedPath,
-        cacheKey,
-        contentLength: requestCached.length,
-        preview: previewText(requestCached).replace(/\n/g, "\\n"),
-      });
       return requestCached;
     }
+
+    this.cleanupStaleInFlightRequests();
+
+    // 2. Early In-Flight JOIN: Check if this file is already being fetched by another concurrent request.
+    // This deduplicates not only the API fetch, but also the L2/L3 cache lookups and extension resolution.
+    const existingEntry = this.inFlightRequests.get(cacheKey);
+    if (existingEntry) {
+      logContentMetric("IN_FLIGHT_JOIN_HIT", {
+        path: normalizedPath,
+        mode: ctx?.sourceType ?? "unknown",
+        cacheKey,
+      });
+      logger.debug("[ReadOperations] Joining in-flight request", {
+        path: normalizedPath,
+        cacheKey,
+        ageMs: Date.now() - existingEntry.startedAt,
+      });
+      const content = await existingEntry.promise;
+      // Populate L1 cache for the joining request to ensure consistency within this request's render
+      setRequestScopedFile(cacheKey, content);
+      return content;
+    }
+
+    // 3. Start fetch pipeline and track it for other concurrent requests to join
+    const fetchPromise = this.performContentFetch(normalizedPath, cacheKey, cacheKeyPrefix, ctx);
+    this.inFlightRequests.set(cacheKey, { promise: fetchPromise, startedAt: Date.now() });
+
+    try {
+      return await fetchPromise;
+    } finally {
+      this.inFlightRequests.delete(cacheKey);
+    }
+  }
+
+  /**
+   * Internal fetch pipeline that checks L2, L3, resolves extensions, and performs API fetches.
+   * Extracted from fetchContent to reduce nesting and improve readability.
+   */
+  private async performContentFetch(
+    normalizedPath: string,
+    cacheKey: string,
+    cacheKeyPrefix: string,
+    ctx: ResolvedContentContext | null | undefined,
+  ): Promise<string> {
+    const isProduction = this.contextProvider?.isProductionMode() ?? false;
+    const apiPath = this.getOriginalApiPath?.(normalizedPath) ?? normalizedPath;
+    const hasKnownExt = HAS_KNOWN_EXTENSION_REGEX.test(apiPath);
+    const isPreviewMode = ctx?.sourceType === "branch";
 
     const currentReleaseId = ctx?.releaseId;
     const isPrefixInvalidated =
@@ -512,7 +565,6 @@ export class ReadOperations {
     }
 
     // Check persistent cache for PRODUCTION mode only
-    // Preview mode skips persistent cache to avoid staleness risk when WebSocket is slow/disconnected
     if (isProduction && !skipPersistentCaches) {
       const cached = await this.cache.getAsync<string>(cacheKey);
       if (cached) {
@@ -521,24 +573,12 @@ export class ReadOperations {
           mode: ctx?.sourceType ?? "unknown",
           cacheKey,
         });
-        logger.debug("[ReadOperations] PERSISTENT_CACHE_HIT", {
-          path: normalizedPath,
-          cacheKey,
-          contentLength: cached.length,
-          preview: previewText(cached).replace(/\n/g, "\\n"),
-        });
         setRequestScopedFile(cacheKey, cached);
         return cached;
       }
     }
 
-    // File list cache is enabled for BOTH preview and production modes.
-    // The file list is an in-memory index built from API response at init, updated by WebSocket pokes.
-    // This is safe because:
-    // - File list is refreshed on every WebSocket poke (websocket-manager.ts:483-500)
-    // - Request-scoped cache ensures consistency within a single render
-    // - Persistent cache is only written for production mode (to avoid staleness risk in preview)
-    const isPreviewMode = ctx?.sourceType === "branch";
+    // File list cache (available for both modes)
     if (!skipPersistentCaches) {
       const fileListContent = await this.getContentFromFileList(normalizedPath);
       if (fileListContent) {
@@ -548,44 +588,29 @@ export class ReadOperations {
           cacheKey,
           isPreviewMode,
         });
-        // Only cache to persistent storage for production mode
-        // Preview mode uses file list cache directly without persisting (fresher, WebSocket-driven)
-        if (isProduction) {
-          this.cache.set(cacheKey, fileListContent);
-        }
+        if (isProduction) this.cache.set(cacheKey, fileListContent);
         setRequestScopedFile(cacheKey, fileListContent);
         return fileListContent;
       }
     } else {
-      // Skip only happens during cache invalidation (both preview and production)
       logContentMetric("CACHE_MISS", {
         path: normalizedPath,
         mode: ctx?.sourceType ?? "unknown",
         missReason: "invalidation" as MissReason,
         isPreviewMode,
       });
-      logger.debug("[ReadOperations] Skipping file list cache due to invalidation", {
-        path: normalizedPath,
-        cacheKeyPrefix,
-      });
     }
 
+    // API Extension Resolution
     if (!hasKnownExt) {
       try {
         const resolved = await this.client.resolveFileWithExtension(
           apiPath,
-          [...EXTENSION_PRIORITY],
+          EXTENSION_PRIORITY_ARRAY,
         );
         if (resolved) {
           const resolvedPath = this.normalizer.normalize(resolved.path);
           const resolvedCacheKey = `${cacheKeyPrefix}:${resolvedPath}`;
-
-          logger.debug("[ReadOperations] Resolved extension for base path", {
-            basePath: apiPath,
-            resolvedPath,
-            cacheKey,
-            resolvedCacheKey: resolvedCacheKey === cacheKey ? undefined : resolvedCacheKey,
-          });
 
           if (isProduction) {
             this.cache.set(cacheKey, resolved.content);
@@ -593,9 +618,7 @@ export class ReadOperations {
           }
 
           setRequestScopedFile(cacheKey, resolved.content);
-          if (resolvedCacheKey !== cacheKey) {
-            setRequestScopedFile(resolvedCacheKey, resolved.content);
-          }
+          if (resolvedCacheKey !== cacheKey) setRequestScopedFile(resolvedCacheKey, resolved.content);
 
           return resolved.content;
         }
@@ -607,22 +630,9 @@ export class ReadOperations {
       }
     }
 
-    this.cleanupStaleInFlightRequests();
-
-    const existingEntry = this.inFlightRequests.get(cacheKey);
-    if (existingEntry) {
-      logger.debug("[ReadOperations] Deduplicating request - joining existing fetch", {
-        path: normalizedPath,
-        cacheKey,
-        ageMs: Date.now() - existingEntry.startedAt,
-      });
-      return existingEntry.promise;
-    }
-
     const isPublished = ctx?.sourceType !== "branch";
-
-    // Track why we're making a network fetch (for optimization analysis)
     const hasFileListCache = !!this.getFileListCache;
+
     logContentMetric("CACHE_MISS", {
       path: normalizedPath,
       mode: ctx?.sourceType ?? "unknown",
@@ -630,8 +640,7 @@ export class ReadOperations {
       isPreviewMode,
     });
 
-    // THIS IS A NETWORK FETCH - every call here = API round trip
-    // With caching enabled for preview mode, this should only happen on true cache misses
+    // NETWORK FETCH
     logContentMetric("NETWORK_FETCH", {
       path: normalizedPath,
       mode: ctx?.sourceType ?? "unknown",
@@ -639,46 +648,29 @@ export class ReadOperations {
       isPreviewMode,
     });
 
-    logger.debug("[ReadOperations] fetchContent decision", {
+    const fetchStartTime = performance.now();
+    const result = isPublished
+      ? await this.fetchPublishedContent(
+        normalizedPath,
+        apiPath,
+        cacheKey,
+        ctx?.releaseId ?? null,
+        ctx?.environmentName ?? null,
+        isProduction,
+      )
+      : await this.fetchDraftContent(normalizedPath, apiPath, cacheKey, isProduction);
+
+    const fetchDuration = Math.round(performance.now() - fetchStartTime);
+
+    logContentMetric("NETWORK_FETCH_COMPLETE", {
       path: normalizedPath,
-      isPublished,
-      willFetch: isPublished ? "published (environment)" : "draft (branch)",
-      sourceType: ctx?.sourceType ?? "null/undefined",
+      mode: ctx?.sourceType ?? "unknown",
+      durationMs: fetchDuration,
+      contentLength: result.length,
+      isPreviewMode,
     });
 
-    const fetchStartTime = performance.now();
-    const fetchPromise = (async () => {
-      try {
-        const result = isPublished
-          ? await this.fetchPublishedContent(
-            normalizedPath,
-            apiPath,
-            cacheKey,
-            ctx?.releaseId ?? null,
-            ctx?.environmentName ?? null,
-            isProduction,
-          )
-          : await this.fetchDraftContent(normalizedPath, apiPath, cacheKey, isProduction);
-
-        const fetchDuration = Math.round(performance.now() - fetchStartTime);
-
-        // Record fetch completion with timing for per-request metrics
-        logContentMetric("NETWORK_FETCH_COMPLETE", {
-          path: normalizedPath,
-          mode: ctx?.sourceType ?? "unknown",
-          durationMs: fetchDuration,
-          contentLength: result.length,
-          isPreviewMode,
-        });
-
-        return result;
-      } finally {
-        this.inFlightRequests.delete(cacheKey);
-      }
-    })();
-
-    this.inFlightRequests.set(cacheKey, { promise: fetchPromise, startedAt: Date.now() });
-    return fetchPromise;
+    return result;
   }
 
   private async fetchPublishedContent(
@@ -762,7 +754,7 @@ export class ReadOperations {
     });
 
     try {
-      const result = await this.client.resolveFileWithExtension(basePath, [...EXTENSION_PRIORITY]);
+      const result = await this.client.resolveFileWithExtension(basePath, EXTENSION_PRIORITY_ARRAY);
       if (!result) return null;
 
       logger.debug("[ReadOperations] Pattern search found file", {
