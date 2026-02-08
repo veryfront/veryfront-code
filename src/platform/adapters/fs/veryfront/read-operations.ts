@@ -181,7 +181,6 @@ export function endRequestMetrics(
     uniqueFiles: req.filesAccessed.size,
     isPreviewMode: req.isPreviewMode,
   });
-
 }
 
 type ContentMetricEvent =

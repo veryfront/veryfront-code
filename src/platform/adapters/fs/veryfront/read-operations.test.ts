@@ -573,7 +573,7 @@ describe("ReadOperations", () => {
           buildCount++;
           await new Promise((r) => setTimeout(r, 10));
           return fileList;
-        }
+        },
       );
 
       readOps.setFileListReadyPromise(Promise.resolve());
