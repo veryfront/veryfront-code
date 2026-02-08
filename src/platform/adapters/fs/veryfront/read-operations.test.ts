@@ -535,4 +535,57 @@ describe("ReadOperations", () => {
       assertEquals(indexBuildCount >= 1, true);
     });
   });
+
+  describe("new optimizations", () => {
+    it("should deduplicate extension resolution", async () => {
+      let resolveCount = 0;
+      const client = createMockClient({
+        resolveFileWithExtension: async (path: string) => {
+          resolveCount++;
+          await new Promise((r) => setTimeout(r, 10));
+          return { path: `${path}.tsx`, content: "resolved content" };
+        },
+      });
+
+      const readOps = createReadOps(client, false, createBranchContext());
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const [result1, result2] = await Promise.all([
+        readOps.readTextFile("pages/welcome"), // No extension
+        readOps.readTextFile("pages/welcome"),
+      ]);
+
+      assertEquals(result1, "resolved content");
+      assertEquals(result2, "resolved content");
+      assertEquals(resolveCount, 1);
+    });
+
+    it("should deduplicate file list index construction", async () => {
+      let buildCount = 0;
+      const fileList = [{ path: "pages/index.tsx", content: "content" }];
+
+      const readOps = createReadOps(
+        createMockClient(),
+        false,
+        createReleaseContext(),
+        (path: string) => path,
+        async () => {
+          buildCount++;
+          await new Promise((r) => setTimeout(r, 10));
+          return fileList;
+        }
+      );
+
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const [result1, result2] = await Promise.all([
+        readOps.readTextFile("pages/index.tsx"),
+        readOps.readTextFile("pages/index.tsx"),
+      ]);
+
+      assertEquals(result1, "content");
+      assertEquals(result2, "content");
+      assertEquals(buildCount, 1);
+    });
+  });
 });
