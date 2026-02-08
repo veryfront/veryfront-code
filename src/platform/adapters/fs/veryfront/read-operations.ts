@@ -618,7 +618,9 @@ export class ReadOperations {
           }
 
           setRequestScopedFile(cacheKey, resolved.content);
-          if (resolvedCacheKey !== cacheKey) setRequestScopedFile(resolvedCacheKey, resolved.content);
+          if (resolvedCacheKey !== cacheKey) {
+            setRequestScopedFile(resolvedCacheKey, resolved.content);
+          }
 
           return resolved.content;
         }
