@@ -30,6 +30,7 @@ interface DomainLookupResult {
     domains?: string[];
     active_release_id?: string | null;
     protected?: boolean;
+    server_hostname?: string | null;
   }>;
 }
 
@@ -117,6 +118,7 @@ export interface ProxyContext {
   host: string;
   parsedDomain: ParsedDomain;
   isLocalProject: boolean;
+  serverHostname?: string;
   error?: { status: number; message: string; redirectUrl?: string };
 }
 
@@ -244,11 +246,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     envMatcher: (env: NonNullable<DomainLookupResult["environments"]>[number]) => boolean,
     logContext: Record<string, unknown>,
   ): Promise<
-    | { projectId?: string; releaseId?: string }
+    | { slug: string; projectId: string; releaseId?: string; serverHostname?: string }
+    | { slug?: undefined; projectId?: undefined; releaseId?: undefined; serverHostname?: undefined }
     | { error: { status: number; message: string; redirectUrl?: string } }
   > {
     const lookupResult = await lookupProjectByDomain(lookupKey, config.apiBaseUrl, token, logger);
-    if (!lookupResult) return { projectId: undefined, releaseId: undefined };
+    if (!lookupResult) return {};
 
     const matchingEnv = lookupResult.environments?.find(envMatcher);
 
@@ -263,8 +266,10 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     }
 
     return {
+      slug: lookupResult.slug,
       projectId: lookupResult.id,
       releaseId: matchingEnv?.active_release_id ?? undefined,
+      serverHostname: matchingEnv?.server_hostname ?? undefined,
     };
   }
 
@@ -276,6 +281,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     let projectSlug = parsedDomain.slug ?? undefined;
     let projectId: string | undefined;
     let releaseId: string | undefined;
+    let serverHostname: string | undefined;
 
     const isCustomDomain = !projectSlug && !parsedDomain.isVeryfrontDomain;
 
@@ -341,38 +347,42 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           return makeErrorContext(base, 502, `Failed to authenticate for domain: ${host}`, token);
         }
 
-        const lookupResult = await lookupProjectByDomain(host, config.apiBaseUrl, token, logger);
-        if (!lookupResult) {
+        const normalizedHost = host.toLowerCase().replace(/:\d+$/, "");
+        const resolved = await resolveReleaseAndProtection(
+          req,
+          token,
+          userToken,
+          host,
+          (env) => env.domains?.some((d) => d.toLowerCase() === normalizedHost) ?? false,
+          { domain: host },
+        );
+
+        if ("error" in resolved) {
+          return makeErrorContext(
+            base,
+            resolved.error.status,
+            resolved.error.message,
+            token,
+            resolved.error.redirectUrl,
+          );
+        }
+
+        if (!resolved.slug) {
           logger?.error("Custom domain not found", undefined, { domain: host });
           return makeErrorContext(base, 404, `No project configured for domain: ${host}`, token);
         }
 
-        projectSlug = lookupResult.slug;
-        projectId = lookupResult.id;
-
-        const normalizedHost = host.toLowerCase().replace(/:\d+$/, "");
-        const matchingEnv = lookupResult.environments?.find((env) =>
-          env.domains?.some((d) => d.toLowerCase() === normalizedHost)
-        );
-
-        releaseId = matchingEnv?.active_release_id ?? undefined;
-
-        if (matchingEnv?.protected && !userToken) {
-          const redirectUrl = makeAuthRedirectUrl(req);
-          logger?.info("Protected environment requires authentication", {
-            domain: host,
-            environmentName: matchingEnv.name,
-            redirectUrl,
-          });
-          return makeErrorContext(base, 302, "Authentication required", token, redirectUrl);
-        }
+        projectSlug = resolved.slug;
+        projectId = resolved.projectId;
+        releaseId = resolved.releaseId;
+        serverHostname = resolved.serverHostname;
 
         logger?.info("Resolved custom domain to project", {
           domain: host,
           projectSlug,
           projectId,
           releaseId,
-          environmentName: matchingEnv?.name,
+          serverHostname,
         });
       } else if (projectSlug && scope === "production" && token && parsedDomain.environment) {
         const targetEnv = parsedDomain.environment.toLowerCase();
@@ -398,11 +408,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         projectId = resolved.projectId;
         releaseId = resolved.releaseId;
+        serverHostname = resolved.serverHostname;
 
         logger?.info("Resolved veryfront domain to project", {
           projectSlug,
           projectId,
           releaseId,
+          serverHostname,
           targetEnvName: parsedDomain.environment,
         });
       } else if (projectSlug && scope === "preview" && token) {
@@ -459,6 +471,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       host,
       parsedDomain,
       isLocalProject,
+      serverHostname,
     };
   }
 

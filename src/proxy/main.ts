@@ -32,7 +32,6 @@ import {
   withSpan,
 } from "./tracing.ts";
 import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
-import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
 
@@ -108,29 +107,44 @@ if (Object.keys(proxyHandler.localProjects).length > 0) {
   });
 }
 
+function resolveServerBaseUrl(serverHostname: string | undefined): string {
+  return serverHostname ? `http://${serverHostname}` : PRODUCTION_SERVER_URL;
+}
+
 /**
  * Handle WebSocket upgrade requests.
  * Bridges browser WebSocket to server HMR WebSocket endpoint.
  */
-function handleWebSocketUpgrade(req: Request): Response {
+async function handleWebSocketUpgrade(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const host = req.headers.get("host") || "";
 
-  const parsed = parseProjectDomain(host);
-  const scope = parsed.environment === "preview" ? "preview" : "production";
-  const projectSlug = parsed.slug || undefined;
+  const ctx = await proxyHandler.processRequest(req);
 
-  const serverWsUrl = PRODUCTION_SERVER_URL.replace(/^http/, "ws");
+  if (ctx.error) {
+    if (ctx.error.redirectUrl) {
+      return new Response(null, {
+        status: 302,
+        headers: { Location: ctx.error.redirectUrl },
+      });
+    }
+    return jsonErrorResponse(ctx.error.status, {
+      error: ctx.error.message,
+      status: ctx.error.status,
+    });
+  }
+
+  const serverWsUrl = resolveServerBaseUrl(ctx.serverHostname).replace(/^http/, "ws");
   const targetUrl = new URL(`${serverWsUrl}${url.pathname}${url.search}`);
-  targetUrl.searchParams.set("x-project-slug", projectSlug || "");
-  targetUrl.searchParams.set("x-environment", scope);
+  targetUrl.searchParams.set("x-project-slug", ctx.projectSlug || "");
+  targetUrl.searchParams.set("x-environment", ctx.environment);
 
   proxyLogger.info("[WebSocket] Upgrade request received", {
     host,
     path: url.pathname,
-    projectSlug,
-    environment: scope,
-    parsedEnvironment: parsed.environment,
+    projectSlug: ctx.projectSlug,
+    environment: ctx.environment,
+    serverHostname: ctx.serverHostname,
     targetUrl: targetUrl.toString(),
   });
 
@@ -181,8 +195,8 @@ function handleWebSocketUpgrade(req: Request): Response {
         return;
       }
       proxyLogger.info("[WebSocket] Server connected, bridge established", {
-        projectSlug,
-        environment: scope,
+        projectSlug: ctx.projectSlug,
+        environment: ctx.environment,
       });
     };
 
@@ -195,8 +209,8 @@ function handleWebSocketUpgrade(req: Request): Response {
     serverSocket.onerror = (event) => {
       clearConnectTimeout();
       proxyLogger.error("[WebSocket] Server connection error", {
-        projectSlug,
-        environment: scope,
+        projectSlug: ctx.projectSlug,
+        environment: ctx.environment,
         targetUrl: targetUrl.toString(),
         error: event instanceof ErrorEvent ? event.message : "Unknown error",
       });
@@ -313,7 +327,10 @@ function forwardToServer(req: Request): Promise<Response> {
 
           injectContext(newHeaders);
 
-          const serverUrl = new URL(url.pathname + url.search, PRODUCTION_SERVER_URL);
+          const serverUrl = new URL(
+            url.pathname + url.search,
+            resolveServerBaseUrl(ctx.serverHostname),
+          );
 
           // Only retry idempotent methods (GET, HEAD, OPTIONS)
           const isIdempotent = ["GET", "HEAD", "OPTIONS"].includes(req.method);
@@ -506,7 +523,7 @@ function router(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
   if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
-    return Promise.resolve(handleWebSocketUpgrade(req));
+    return handleWebSocketUpgrade(req);
   }
 
   switch (url.pathname) {
