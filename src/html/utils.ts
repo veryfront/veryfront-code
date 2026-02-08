@@ -2,7 +2,6 @@ import { escapeHTML } from "./html-escape.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { REACT_DEFAULT_VERSION, VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { esmShReact } from "#veryfront/transforms/esm/package-registry.ts";
-import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 
 function joinAttributes(attrs: Array<string | false | undefined | null | "">): string {
   return attrs.filter(Boolean).join(" ");
@@ -87,15 +86,12 @@ const CORE_PLATFORM_UTILITIES: Record<string, string> = {
   "veryfront/react/fonts": PLATFORM_UTILITY_PATHS.fonts,
 };
 
-// AI/chat modules - only use local paths when running from source (not compiled binary)
-// In compiled binaries, these files aren't embedded, so we fall back to CDN URLs
-const AI_MODULE_UTILITIES: Record<string, string> = isDenoCompiled
-  ? {} // Use CDN URLs (set in buildCdnImportMapFromTemplates)
-  : {
-    "veryfront/chat": PLATFORM_UTILITY_PATHS.chat,
-    "veryfront/markdown": PLATFORM_UTILITY_PATHS.markdown,
-    "veryfront/mdx": PLATFORM_UTILITY_PATHS.mdx,
-  };
+// AI/chat modules - served from local module server (embedded in compiled binary)
+const AI_MODULE_UTILITIES: Record<string, string> = {
+  "veryfront/chat": PLATFORM_UTILITY_PATHS.chat,
+  "veryfront/markdown": PLATFORM_UTILITY_PATHS.markdown,
+  "veryfront/mdx": PLATFORM_UTILITY_PATHS.mdx,
+};
 
 const PLATFORM_UTILITIES: Record<string, string> = {
   ...CORE_PLATFORM_UTILITIES,

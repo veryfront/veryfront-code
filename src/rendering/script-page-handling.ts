@@ -9,7 +9,7 @@ import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "#veryfront/uti
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
-import { createError, toError } from "../errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type {
   ComponentProps,
   EntityInfo,
@@ -23,8 +23,8 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { computeHash } from "./utils/index.ts";
 import { type HTMLGenerationOptions, wrapInHTMLShell } from "#veryfront/html";
 import { extractHTMLMetadata, injectHTMLContent, isFullHTMLDocument } from "#veryfront/html";
-import { createFileSystem } from "../platform/compat/fs.ts";
-import { getEsbuildLoader } from "../utils/path-utils.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 
 type ScriptModuleOutput =
   | string

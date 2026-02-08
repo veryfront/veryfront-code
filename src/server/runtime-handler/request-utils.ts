@@ -7,7 +7,7 @@
  * @module server/runtime-handler/request-utils
  */
 
-import { getTimeoutFromEnv } from "../../middleware/builtin/timeout.ts";
+import { getTimeoutFromEnv } from "#veryfront/middleware/builtin/timeout.ts";
 import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
 
 /** Check if host is a private/internal IP address */

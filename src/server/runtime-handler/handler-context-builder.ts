@@ -17,7 +17,7 @@ import type { ParsedDomain } from "../utils/domain-parser.ts";
 import type { HandlerContext } from "../handlers/types.ts";
 import type { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { buildEnrichedContext } from "../context/enriched-context.ts";
-import { computeContentSourceId } from "../../cache/keys.ts";
+import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 
 export interface HandlerContextOptions {
   /** Project directory */

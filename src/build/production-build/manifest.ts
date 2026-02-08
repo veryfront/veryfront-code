@@ -1,4 +1,4 @@
-import type { AppRouteInfo, BuildStats, RouteInfo } from "../../server/build-types.ts";
+import type { AppRouteInfo, BuildStats, RouteInfo } from "#veryfront/server/build-types.ts";
 import { bundlerLogger } from "#veryfront/utils";
 
 export interface ManifestChunkInfo {

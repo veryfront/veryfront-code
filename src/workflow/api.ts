@@ -20,8 +20,8 @@
  */
 
 import { getWorkflowTenant } from "./executor/step-executor.ts";
-import { getCurrentRequestContext } from "../platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { VeryfrontAPIClient } from "../platform/adapters/veryfront-api-client/client.ts";
+import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { VeryfrontAPIClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 
 /**
  * Validate that a project slug is safe and well-formed.

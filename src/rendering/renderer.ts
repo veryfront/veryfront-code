@@ -70,7 +70,7 @@ import { SSROrchestrator } from "./orchestrator/ssr-orchestrator.ts";
 import { RenderPipeline } from "./orchestrator/pipeline.ts";
 import { createLayoutComponentCache } from "./layouts/utils/component-loader.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./orchestrator/types.ts";
-import type { HandlerContext } from "../server/handlers/types.ts";
+import type { HandlerContext } from "#veryfront/types";
 import { TimeoutError, withTimeoutThrow } from "./utils/stream-utils.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 

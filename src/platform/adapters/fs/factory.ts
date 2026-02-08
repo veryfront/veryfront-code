@@ -1,26 +1,26 @@
 import type { FSAdapter, FSAdapterConfig } from "./veryfront/types.ts";
-import { createError, toError } from "../../../errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { ReloadNotifier } from "../../../server/reload-notifier.ts";
+import { ReloadNotifier } from "#veryfront/server/reload-notifier.ts";
 import {
   clearSSRModuleCache,
   clearSSRModuleCacheForProject,
-} from "../../../modules/react-loader/ssr-module-loader/cache/index.ts";
+} from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
 import {
   clearRouterDetectionCache,
   clearRouterDetectionCacheForProject,
-} from "../../../rendering/router-detection.ts";
+} from "#veryfront/rendering/router-detection.ts";
 import {
   clearModulePathCache,
   invalidateModulePaths,
-} from "../../../transforms/mdx/esm-module-loader/cache/index.ts";
+} from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import {
   clearSnippetCache,
   clearSnippetCacheForProject,
-} from "../../../rendering/snippet-renderer.ts";
-import { clearRendererCacheForProject } from "../../../rendering/renderer.ts";
-import { invalidateProjectCSS } from "../../../html/styles-builder/tailwind-compiler.ts";
-import { clearDomainCache } from "../../../server/utils/domain-lookup.ts";
+} from "#veryfront/rendering/snippet-renderer.ts";
+import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
+import { invalidateProjectCSS } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import { clearDomainCache } from "#veryfront/server/utils/domain-lookup.ts";
 
 export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
   const type = config.type ?? "local";

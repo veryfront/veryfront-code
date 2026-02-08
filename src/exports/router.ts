@@ -1,1 +1,1 @@
-export * from "../react/router/index.tsx";
+export * from "#veryfront/react/router/index.tsx";

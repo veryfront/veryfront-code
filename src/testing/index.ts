@@ -69,4 +69,4 @@ export {
 
 export { getTestTimeScale, scaleMs, testDelay } from "./timing.ts";
 
-export { isBun, isDeno, isNode } from "../platform/compat/runtime.ts";
+export { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";

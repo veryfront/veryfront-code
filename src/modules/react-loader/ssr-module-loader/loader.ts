@@ -11,8 +11,8 @@ import type * as React from "react";
 import { transformToESM } from "#veryfront/transforms/esm/index.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import { buildSSRModuleCacheKey } from "../../../cache/keys.ts";
-import { computeConfigHashSync } from "../../../cache/config-hash.ts";
+import { buildSSRModuleCacheKey } from "#veryfront/cache/keys.ts";
+import { computeConfigHashSync } from "#veryfront/cache/config-hash.ts";
 import {
   type CrossProjectImport,
   type MissingImport,

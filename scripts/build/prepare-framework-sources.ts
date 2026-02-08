@@ -24,10 +24,15 @@ const SRC_ROOT = join(FRAMEWORK_ROOT, "src");
 const OUTPUT_DIR = join(FRAMEWORK_ROOT, "dist", "framework-src");
 const METADATA_FILE = join(OUTPUT_DIR, ".compile-metadata.json");
 
-// Directories containing framework code that may be imported by user projects
+// Directories containing framework code that may be imported by user projects.
+// These are embedded in the compiled binary and served via /_vf_modules/_veryfront/.
 const FRAMEWORK_DIRS = [
   "react",
   "lib",
+  "markdown",
+  "chat",
+  "mdx",
+  "agent/react",
 ];
 
 // Extensions to process

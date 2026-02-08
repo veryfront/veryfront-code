@@ -4,7 +4,7 @@ import type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./types.ts";
 import type { FileInfo } from "../../base.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 import type { VeryfrontFSAdapter } from "./index.ts";
-import { runWithCacheBatching } from "../../../../cache/request-cache-batcher.ts";
+import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
 
 interface RequestContext {
   projectSlug: string;

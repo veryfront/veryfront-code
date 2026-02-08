@@ -1,1 +1,1 @@
-export * from "../../react/fonts/index.ts";
+export * from "#veryfront/react/fonts/index.ts";

@@ -18,7 +18,7 @@ import type {
 } from "../types.ts";
 import { generateId, parseDuration } from "../types.ts";
 import { hasLockSupport, type WorkflowBackend } from "../backends/types.ts";
-import { getCurrentRequestContext } from "../../platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";

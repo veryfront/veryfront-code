@@ -8,8 +8,8 @@
  * @module
  */
 
-import { isBun, isDeno } from "../platform/compat/runtime.ts";
-import { getEnvOverlayStorage } from "../platform/compat/process.ts";
+import { isBun, isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { getEnvOverlayStorage } from "#veryfront/platform/compat/process.ts";
 
 /** Test function that can be sync or async */
 type TestFn = () => void | Promise<void>;

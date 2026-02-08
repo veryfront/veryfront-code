@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { HandlerContext } from "../types/server.ts";
+import type { HandlerContext } from "#veryfront/types";
 import { type CacheKeyContext, CacheKeyContextSchema } from "./schemas/index.ts";
 import { buildContentHashCacheKey } from "./keys.ts";
 

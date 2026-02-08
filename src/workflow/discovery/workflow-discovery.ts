@@ -26,8 +26,8 @@ import { join } from "@std/path";
 import { logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { collectFiles } from "../../utils/file-discovery.ts";
-import { loadHandlerModule } from "../../routing/api/module-loader/loader.ts";
+import { collectFiles } from "#veryfront/utils/file-discovery.ts";
+import { loadHandlerModule } from "#veryfront/routing/api/module-loader/loader.ts";
 import type { WorkflowDefinition } from "../types.ts";
 
 /**

@@ -43,7 +43,7 @@ import { getLocalFs, getModulePathCache, saveModulePathCache } from "../cache/in
 import { hashString } from "../utils/hash.ts";
 import { createStubModule } from "../utils/stub-module.ts";
 import { resolveModuleFile } from "../resolution/file-finder.ts";
-import { recordSSRModules } from "../../../../modules/manifest/route-module-manifest.ts";
+import { recordSSRModules } from "#veryfront/modules/manifest/route-module-manifest.ts";
 import { getDistributedTransformBackend } from "#veryfront/transforms/esm/transform-cache.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { buildMissingModuleError } from "../missing-module.ts";

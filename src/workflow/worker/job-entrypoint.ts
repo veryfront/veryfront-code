@@ -21,7 +21,7 @@
  */
 
 import { logger } from "#veryfront/utils";
-import { runWithRequestContext } from "../../platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { CapturedTenantContext, WorkflowDefinition } from "../types.ts";

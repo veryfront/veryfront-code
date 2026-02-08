@@ -4,8 +4,8 @@ import { initializeTransformCache } from "#veryfront/transforms/esm/transform-ca
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { initializeProjectCSSCache } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
-import { logger } from "../utils/logger/logger.ts";
-import { isRedisConfigured } from "../utils/redis-client.ts";
+import { logger } from "#veryfront/utils/logger/logger.ts";
+import { isRedisConfigured } from "#veryfront/utils/redis-client.ts";
 import { isApiCacheAvailable } from "./backend.ts";
 
 export interface DistributedCacheStatus {

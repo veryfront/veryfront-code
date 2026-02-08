@@ -476,18 +476,16 @@ async function transformFrameworkCode(
       }
     }
 
-    // Collect and transform relative imports (./foo, ../bar) at depth 0 only
-    // This fixes the bug where relative imports in framework files like index.ts
-    // weren't being converted to absolute file:// paths, causing "Module not found" errors
+    // Collect and transform relative imports (./foo, ../bar) at any depth.
+    // Relative imports in framework files must be resolved to absolute file:// paths
+    // pointing to cached modules, otherwise they fail at runtime (e.g., markdown.tsx
+    // imports ./theme.ts which must also be cached).
     //
-    // We only process relative imports at the top level (depth=0) to avoid exponential
-    // explosion. Deeper files will have their #veryfront/ imports resolved by the
-    // existing mechanism, and relative imports within them will be handled by their
-    // own transformation when used directly.
+    // Safety: MAX_RELATIVE_IMPORT_DEPTH limits recursion, transformingFiles detects
+    // cycles, and frameworkFileCache deduplicates already-transformed files.
     const relativeReplacements = new Map<string, string>();
 
-    // Only process relative imports at depth 0 (top-level framework file)
-    if (depth === 0) {
+    {
       const relativeImports = findRelativeImports(transformed);
 
       for (const specifier of relativeImports) {

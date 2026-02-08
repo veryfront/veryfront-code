@@ -1,5 +1,5 @@
 import type { Counter, Histogram, Meter } from "@opentelemetry/api";
-import { DURATION_HISTOGRAM_BOUNDARIES_MS } from "../../config/defaults.ts";
+import { DURATION_HISTOGRAM_BOUNDARIES_MS } from "#veryfront/config/defaults.ts";
 import type { MetricsConfig } from "../metrics/types.ts";
 
 export interface RscInstruments {

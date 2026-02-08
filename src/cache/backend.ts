@@ -2,16 +2,20 @@ import { logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { Span } from "@opentelemetry/api";
-import { getRedisClient, isRedisConfigured, type RedisClient } from "../utils/redis-client.ts";
-import { runtime } from "../platform/adapters/registry.ts";
+import {
+  getRedisClient,
+  isRedisConfigured,
+  type RedisClient,
+} from "#veryfront/utils/redis-client.ts";
+import { runtime } from "#veryfront/platform/adapters/registry.ts";
 import { tryGetCacheKeyContext } from "./cache-key-builder.ts";
 import {
   type EnvironmentConfig,
   getEnvironmentConfig,
   isEnvironmentConfigInitialized,
-} from "../config/environment-config.ts";
-import { CircuitBreakerOpen, getCircuitBreaker } from "../utils/circuit-breaker.ts";
-import { MEMORY_CACHE_MAX_ENTRIES } from "../utils/constants/cache.ts";
+} from "#veryfront/config/environment-config.ts";
+import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
+import { MEMORY_CACHE_MAX_ENTRIES } from "#veryfront/utils/constants/cache.ts";
 import type { CacheBackend } from "./types.ts";
 import {
   type CodeCacheGateway,

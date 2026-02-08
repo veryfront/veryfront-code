@@ -26,9 +26,9 @@
  */
 
 import { logger } from "#veryfront/utils";
-import { runWithRequestContext } from "../../platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { enhanceAdapterWithFS } from "../../platform/adapters/fs/integration.ts";
-import { denoAdapter } from "../../platform/adapters/runtime/deno/index.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
+import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { discoverWorkflows } from "../discovery/index.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import { WorkflowExecutor } from "../executor/workflow-executor.ts";

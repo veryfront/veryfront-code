@@ -1,7 +1,7 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import type { RequestContext } from "../server/context/request-context.ts";
-import type { EnrichedContext } from "../server/context/enriched-context.ts";
+import type { RequestContext } from "#veryfront/server/context/request-context.ts";
+import type { EnrichedContext } from "#veryfront/server/context/enriched-context.ts";
 
 export interface ParsedDomain {
   /** Project slug extracted from host (e.g., "my-project" from "my-project.preview.veryfront.dev") */

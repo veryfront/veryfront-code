@@ -215,6 +215,6 @@ export type {
   LightningCSSTransformOptions,
   LightningCSSTransformResult,
   SelectorExtractionResult,
-} from "../build/asset-pipeline/css-optimizer/types/index.ts";
+} from "#veryfront/build/asset-pipeline/css-optimizer/types/index.ts";
 
 export { getEntityBySlug, getEntityInfo, getLayoutEntity } from "./entities/getEntityInfo.ts";

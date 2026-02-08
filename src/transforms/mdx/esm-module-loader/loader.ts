@@ -28,7 +28,7 @@ import {
 } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { replaceSpecifiers } from "../../esm/lexer.ts";
-import { setupSSRGlobals } from "../../../rendering/ssr-globals.ts";
+import { setupSSRGlobals } from "#veryfront/rendering/ssr-globals.ts";
 import type { MDXFrontmatter, MDXModule } from "../types.ts";
 import type { ESMLoaderContext } from "./types.ts";
 import { getLocalReactPaths, isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
