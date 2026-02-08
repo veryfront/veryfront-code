@@ -18,6 +18,7 @@
  */
 
 import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
+import { resolveServerBaseUrl } from "./server-url.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
 import { isRetryableConnectionError } from "./retry.ts";
 import {
@@ -108,21 +109,15 @@ if (Object.keys(proxyHandler.localProjects).length > 0) {
 }
 
 /**
- * Validate server hostname is a safe internal hostname.
- * Must be a bare hostname or hostname:port -- no protocol, path, user-info, or special chars.
+ * Resolve a dedicated server URL or fall back to the shared production server.
+ * Validates hostname to prevent SSRF -- see server-url.ts for the regex.
  */
-const VALID_HOSTNAME_RE = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?$/i;
-
-function resolveServerBaseUrl(serverHostname: string | undefined): string {
-  if (serverHostname && VALID_HOSTNAME_RE.test(serverHostname)) {
-    return `http://${serverHostname}`;
-  }
-  if (serverHostname) {
+function resolveServerUrl(serverHostname: string | undefined): string {
+  return resolveServerBaseUrl(serverHostname, PRODUCTION_SERVER_URL, (h) => {
     proxyLogger.warn("Invalid server hostname, falling back to shared server", {
-      serverHostname,
+      serverHostname: h,
     });
-  }
-  return PRODUCTION_SERVER_URL;
+  });
 }
 
 /**
@@ -148,7 +143,7 @@ async function handleWebSocketUpgrade(req: Request): Promise<Response> {
     });
   }
 
-  const serverWsUrl = resolveServerBaseUrl(ctx.serverHostname).replace(/^http/, "ws");
+  const serverWsUrl = resolveServerUrl(ctx.serverHostname).replace(/^http/, "ws");
   const targetUrl = new URL(`${serverWsUrl}${url.pathname}${url.search}`);
   targetUrl.searchParams.set("x-project-slug", ctx.projectSlug || "");
   targetUrl.searchParams.set("x-environment", ctx.environment);
@@ -343,7 +338,7 @@ function forwardToServer(req: Request): Promise<Response> {
 
           const serverUrl = new URL(
             url.pathname + url.search,
-            resolveServerBaseUrl(ctx.serverHostname),
+            resolveServerUrl(ctx.serverHostname),
           );
 
           // Only retry idempotent methods (GET, HEAD, OPTIONS)

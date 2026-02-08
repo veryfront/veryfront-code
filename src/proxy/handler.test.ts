@@ -363,8 +363,7 @@ describe("Proxy Handler", () => {
               name: "production",
               domains: ["dedicated.example.com"],
               active_release_id: "rel-123",
-              server_hostname:
-                "veryfront-server-2847395106.veryfront-production.svc.cluster.local",
+              server_hostname: "veryfront-server-2847395106.veryfront-production.svc.cluster.local",
             }],
           });
         }
@@ -409,8 +408,7 @@ describe("Proxy Handler", () => {
               id: "env-2",
               name: "staging",
               active_release_id: "rel-456",
-              server_hostname:
-                "veryfront-server-1234567890.veryfront-production.svc.cluster.local",
+              server_hostname: "veryfront-server-1234567890.veryfront-production.svc.cluster.local",
             }],
           });
         }
