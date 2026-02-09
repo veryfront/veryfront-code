@@ -1,4 +1,5 @@
 import { isBun as IS_BUN, isDeno as IS_DENO } from "./runtime.ts";
+import { getRequestEnv } from "../../server/env-vars/request-env-store.ts";
 
 const nodeProcess = (globalThis as { process?: typeof import("node:process") }).process;
 const hasNodeProcess = !!nodeProcess?.versions?.node;
@@ -53,6 +54,10 @@ export function env(): Record<string, string> {
 }
 
 export function getEnv(key: string): string | undefined {
+  // Request-scoped env vars take precedence (project env vars from API)
+  const scoped = getRequestEnv(key);
+  if (scoped !== undefined) return scoped;
+
   if (IS_DENO) return Deno.env.get(key);
   if (hasNodeProcess) return nodeProcess!.env[key];
   return undefined;

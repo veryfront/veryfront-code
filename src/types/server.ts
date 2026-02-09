@@ -64,6 +64,8 @@ export interface HandlerContext {
   proxyToken?: string;
   /** Actual environment name from API (e.g., "Development", "Production") */
   environmentName?: string;
+  /** Environment ID from domain lookup (used for env var fetching) */
+  environmentId?: string;
   /**
    * Resolved environment from domain lookup or proxy headers.
    * This takes precedence over requestContext.mode for cache isolation.

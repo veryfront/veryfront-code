@@ -44,6 +44,8 @@ export interface HandlerContextOptions {
   proxyToken: string | undefined;
   /** Environment name */
   environmentName: string | undefined;
+  /** Environment ID from domain lookup */
+  environmentId: string | undefined;
   /** Resolved environment */
   resolvedEnvironment: "preview" | "production";
   /** Request context (from createRequestContext) */
@@ -102,6 +104,7 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
     releaseId: opts.releaseId,
     proxyToken: opts.isLocalProject ? undefined : opts.proxyToken,
     environmentName: opts.environmentName,
+    environmentId: opts.environmentId,
     resolvedEnvironment: opts.resolvedEnvironment,
     requestContext: { ...opts.requestContext, mode: opts.resolvedEnvironment },
     routeRegistry: opts.routeRegistry,

@@ -44,6 +44,8 @@ import { CSSHandler } from "../handlers/request/css.handler.ts";
 import { RSCHandler } from "../handlers/request/rsc/index.ts";
 import { ModuleHandler } from "../handlers/request/module/index.ts";
 import { ApiHandlerWrapper } from "../handlers/request/api/index.ts";
+import { EnvironmentVariableCache } from "../env-vars/environment-variable-cache.ts";
+import { ApiEnvVarSource } from "../env-vars/env-var-source.ts";
 import { SSRHandler } from "../handlers/request/ssr/index.ts";
 import { NotFoundHandler } from "../handlers/response/not-found.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
@@ -160,7 +162,14 @@ export function createVeryfrontHandler(
     enableMetrics: true,
   });
 
-  const apiHandler = new ApiHandlerWrapper(projectDir, adapter);
+  // Initialize environment variable cache for request-scoped env vars
+  const apiBaseUrl = adapter.env.get("VERYFRONT_API_BASE_URL");
+  const apiToken = adapter.env.get("VERYFRONT_API_TOKEN");
+  const envVarCache = apiBaseUrl && apiToken
+    ? new EnvironmentVariableCache(new ApiEnvVarSource(apiBaseUrl, apiToken))
+    : undefined;
+
+  const apiHandler = new ApiHandlerWrapper(projectDir, adapter, envVarCache);
 
   registry.registerAll([
     new AuthHandler(),
@@ -382,6 +391,7 @@ export function createVeryfrontHandler(
             releaseId: envRes.releaseId,
             proxyToken: reqCtx.token,
             environmentName: projectRes.environmentName,
+            environmentId: projectRes.environmentId,
             resolvedEnvironment: envRes.resolvedEnvironment ?? "preview",
             requestContext: reqCtx,
             routeRegistry: registry,

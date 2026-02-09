@@ -8,6 +8,8 @@ import type {
 import { getApiHandler } from "./pages-api-handler.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { runWithEnv } from "../../../env-vars/request-env-store.ts";
+import type { EnvironmentVariableCache } from "../../../env-vars/environment-variable-cache.ts";
 
 type FsWrapper = {
   isMultiProjectMode?: () => boolean;
@@ -24,6 +26,7 @@ export class ApiHandlerWrapper extends BaseHandler {
   private projectDir: string;
   private adapter: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
   private initPromise: Promise<void> | null = null;
+  private envVarCache: EnvironmentVariableCache | null = null;
 
   metadata: HandlerMetadata = {
     name: "ApiHandlerWrapper",
@@ -33,10 +36,12 @@ export class ApiHandlerWrapper extends BaseHandler {
   constructor(
     projectDir: string,
     adapter: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
+    envVarCache?: EnvironmentVariableCache,
   ) {
     super();
     this.projectDir = projectDir;
     this.adapter = adapter;
+    this.envVarCache = envVarCache ?? null;
   }
 
   async initialize(): Promise<void> {
@@ -104,8 +109,17 @@ export class ApiHandlerWrapper extends BaseHandler {
       "api.handleWithContext",
       async () => {
         try {
-          const api = await getApiHandler(ctx);
-          const apiRes = await api.handle(req);
+          // Resolve request-scoped environment variables
+          const envVars = await this.resolveEnvVars(ctx);
+
+          const executeHandler = async () => {
+            const api = await getApiHandler(ctx);
+            return api.handle(req);
+          };
+
+          const apiRes = envVars
+            ? await runWithEnv(envVars, executeHandler)
+            : await executeHandler();
 
           if (!apiRes) {
             this.logDebug(
@@ -150,5 +164,24 @@ export class ApiHandlerWrapper extends BaseHandler {
         "api.projectSlug": ctx.projectSlug ?? "unknown",
       },
     );
+  }
+
+  /**
+   * Resolve environment variables for this request from the cache.
+   * Returns null if no cache is configured or no environment ID is available.
+   */
+  private async resolveEnvVars(ctx: HandlerContext): Promise<Record<string, string> | null> {
+    if (!this.envVarCache || !ctx.environmentId) return null;
+
+    try {
+      return await this.envVarCache.get(ctx.environmentId);
+    } catch (error) {
+      this.logDebug(
+        "[API-Wrapper] Failed to resolve env vars, continuing without",
+        { error: this.getErrorMessage(error), environmentId: ctx.environmentId },
+        ctx,
+      );
+      return null;
+    }
   }
 }

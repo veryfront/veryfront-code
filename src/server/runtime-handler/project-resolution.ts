@@ -94,6 +94,8 @@ export interface ProjectResolutionResult {
   releaseId: string | undefined;
   /** Environment name (e.g., "staging") */
   environmentName: string | undefined;
+  /** Environment ID from domain lookup */
+  environmentId: string | undefined;
   /** Resolved proxy environment (preview/production) */
   proxyEnv: ProxyEnvironment | undefined;
   /** Parsed domain information */
@@ -149,6 +151,7 @@ export async function resolveProject(
   let projectId: string | undefined = headers.projectId ?? opts.defaultProjectId;
   let releaseId: string | undefined = headers.releaseId;
   let environmentName: string | undefined;
+  let environmentId: string | undefined;
   let proxyEnv = parseProxyEnvironment(headers.environment ?? null);
 
   const shouldSkipDomainLookup = isInternalHost(host);
@@ -184,6 +187,7 @@ export async function resolveProject(
         projectId = projectId ?? lookupResult.project_id;
         releaseId = releaseId ?? lookupResult.release_id ?? undefined;
         environmentName = lookupResult.environment?.name;
+        environmentId = lookupResult.environment?.id;
 
         if (!proxyEnv) proxyEnv = deps.getEnvironmentType(lookupResult);
 
@@ -230,6 +234,7 @@ export async function resolveProject(
         releaseId = lookupResult.release_id;
         projectId = lookupResult.project_id;
         environmentName = environmentName ?? lookupResult.environment?.name;
+        environmentId = environmentId ?? lookupResult.environment?.id;
         proxyEnv = "production";
 
         logger.debug("[project-resolution] Veryfront domain release lookup successful", {
@@ -246,6 +251,7 @@ export async function resolveProject(
     projectId,
     releaseId,
     environmentName,
+    environmentId,
     proxyEnv,
     parsedDomain,
   };
