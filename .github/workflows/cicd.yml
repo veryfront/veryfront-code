@@ -246,6 +246,13 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           GH_TOKEN: ${{ secrets.GH_PAT_VERYFRONT }}
         run: |
+          # Collect available binaries dynamically (Windows build is optional)
+          BINARIES=""
+          for f in binaries/veryfront-*/veryfront-*; do
+            [ -f "$f" ] && BINARIES="$BINARIES $f"
+          done
+          echo "Available binaries: $BINARIES"
+
           # Public repo release
           gh release create "v${VERSION}" \
             --repo veryfront/veryfront \
@@ -253,11 +260,7 @@ jobs:
             --notes '```bash
           npx veryfront@'"${VERSION}"'
           ```' \
-            binaries/veryfront-macos-arm64/veryfront-macos-arm64 \
-            binaries/veryfront-macos-x64/veryfront-macos-x64 \
-            binaries/veryfront-linux-x64/veryfront-linux-x64 \
-            binaries/veryfront-linux-arm64/veryfront-linux-arm64 \
-            binaries/veryfront-windows-x64.exe/veryfront-windows-x64.exe \
+            $BINARIES \
             scripts/install.sh
 
       - name: Create source repo release
@@ -336,6 +339,13 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           GH_TOKEN: ${{ secrets.GH_PAT_VERYFRONT }}
         run: |
+          # Collect available binaries dynamically (Windows build is optional)
+          BINARIES=""
+          for f in binaries/veryfront-*/veryfront-*; do
+            [ -f "$f" ] && BINARIES="$BINARIES $f"
+          done
+          echo "Available binaries: $BINARIES"
+
           # Public repo release with binaries and install scripts
           gh release create "v${VERSION}" \
             --repo veryfront/veryfront \
@@ -349,11 +359,7 @@ jobs:
           # npm
           npm install -g veryfront
           ```' \
-            binaries/veryfront-macos-arm64/veryfront-macos-arm64 \
-            binaries/veryfront-macos-x64/veryfront-macos-x64 \
-            binaries/veryfront-linux-x64/veryfront-linux-x64 \
-            binaries/veryfront-linux-arm64/veryfront-linux-arm64 \
-            binaries/veryfront-windows-x64.exe/veryfront-windows-x64.exe \
+            $BINARIES \
             scripts/install.sh \
             scripts/install.ps1
 

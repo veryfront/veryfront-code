@@ -4,7 +4,7 @@
  * @module cli/router
  */
 
-import { formatUserError } from "veryfront/errors";
+import { cliErrorBoundary } from "veryfront/errors";
 import { cliLogger, VERSION } from "#cli/utils";
 import { handleAnalyzeChunksCommand } from "./commands/analyze-chunks/handler.ts";
 import { handleBuildCommand } from "./commands/build/handler.ts";
@@ -116,7 +116,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     return;
   }
 
-  try {
+  await cliErrorBoundary(async () => {
     if (command === "help") {
       showHelp();
       exitProcess(0);
@@ -133,11 +133,5 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     }
 
     await (handler ?? handleStartCommand)(args);
-  } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error));
-    console.log();
-    console.log(formatUserError(err));
-    console.log();
-    exitProcess(1);
-  }
+  });
 }

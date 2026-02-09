@@ -16,6 +16,8 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { TIMEOUT_ERROR, UNKNOWN_ERROR } from "#veryfront/errors/error-registry.ts";
+import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-boundary.ts";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 
@@ -50,7 +52,6 @@ import { OpenAPIHandler } from "../handlers/request/openapi.handler.ts";
 import { OpenAPIDocsHandler } from "../handlers/request/openapi-docs.handler.ts";
 import { DevDashboardHandler } from "../handlers/dev/dashboard/index.ts";
 import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
-import { ErrorPages } from "../utils/error-html.ts";
 
 // Extracted modules
 import {
@@ -295,6 +296,8 @@ export function createVeryfrontHandler(
           await configPromise;
         });
 
+        let isLocalProject = false;
+
         const executeHandler = async (): Promise<Response> => {
           const reqCtx = createRequestContext(req);
 
@@ -346,6 +349,8 @@ export function createVeryfrontHandler(
             headerProjectPath: headers.projectPath,
             isProxyMode,
           });
+
+          isLocalProject = !!adapterRes.isLocalProject;
 
           // Resolve environment and validate
           const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host;
@@ -405,10 +410,12 @@ export function createVeryfrontHandler(
           logDebug("[runtime-handler] No handler produced response (unexpected)", {
             path: url.pathname,
           });
-          return new Response(ErrorPages.serverError(), {
-            status: 500,
-            headers: { "Content-Type": "text/html; charset=utf-8" },
+          // RFC 9457 error response for no handler case (env-aware filtering)
+          const noHandlerError = UNKNOWN_ERROR.create({
+            detail: "No handler available to process this request",
+            instance: url.pathname,
           });
+          return errorToRFC9457Response(noHandlerError, ctx, req);
         };
 
         const { response, error } = await withRequestTimeout(

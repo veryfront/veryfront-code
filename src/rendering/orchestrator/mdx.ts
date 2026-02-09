@@ -1,4 +1,4 @@
-import { wrapError } from "#veryfront/errors/index.ts";
+import { wrapWithContext } from "#veryfront/errors/index.ts";
 import type { MdxBundle } from "#veryfront/types";
 import type { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -72,7 +72,7 @@ export class MDXCompiler {
 
       return bundle;
     } catch (error) {
-      throw wrapError(error, "MDX compilation failed", { filePath });
+      throw wrapWithContext(error, "MDX compilation failed", { filePath });
     }
   }
 }
