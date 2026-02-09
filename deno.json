@@ -301,7 +301,6 @@
     "lint:check-awaits": "deno run --allow-read scripts/lint/check-unawaited-promises.ts",
     "dupes": "deno run --allow-read scripts/lint/find-duplicate-functions.ts",
     "lint:platform": "deno run --allow-read scripts/lint/lint-platform-agnostic.ts",
-    "test:smoke": "deno run --allow-all src/platform/compat/smoke-test.ts",
     "test:cross-runtime": "deno run --allow-all src/platform/compat/cross-runtime.test.ts",
     "test:node": "node ./tests/node/run-tests.mjs 'src/**/*.test.ts'",
     "test:bun": "node ./tests/bun/run-tests.mjs src/",

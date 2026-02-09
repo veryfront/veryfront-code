@@ -1,13 +1,57 @@
-export * from "./base.ts";
-export * from "./detect.ts";
-export { getLocalAdapter, runtime } from "./registry.ts";
+// Core types from base.ts — only the frequently-imported interfaces/types
+export type {
+  DirEntry,
+  EnvironmentAdapter,
+  FileChangeEvent,
+  FileChangeKind,
+  FileInfo,
+  FileSystemAdapter,
+  FileWatcher,
+  FileWatcherAdapter,
+  KVStoreAdapter,
+  RuntimeAdapter,
+  RuntimeCapabilities,
+  RuntimeId,
+  ServeOptions,
+  Server,
+  ServerAdapter,
+  ShellAdapter,
+  WatchOptions,
+  WebSocketUpgrade,
+} from "./base.ts";
 
-export * from "./mock.ts";
+// Detection & registry
+export { detectRuntime } from "./detect.ts";
+export { getAdapter } from "./detect.ts";
+export { getLocalAdapter, resetLocalAdapter, runtime } from "./registry.ts";
 
-export * from "./bun.ts";
-export * from "./node.ts";
-export * from "./deno.ts";
+// Mock adapter (testing)
+export { createMockAdapter } from "./mock.ts";
+export type { MockRuntimeAdapter } from "./mock.ts";
 
+// Runtime adapters — selective (consumers use deep paths for full surface)
+export { DenoAdapter, denoAdapter } from "./deno.ts";
+export {
+  BunAdapter,
+  bunAdapter,
+  BunEnvironmentAdapter,
+  BunFileSystemAdapter,
+  BunServer,
+  BunServerAdapter,
+} from "./bun.ts";
+export type { BunFile, BunNamespace, BunServeOptions, BunServerType } from "./bun.ts";
+export {
+  createNodeServer,
+  NodeAdapter,
+  nodeAdapter,
+  NodeEnvironmentAdapter,
+  NodeFileSystemAdapter,
+  NodeServer,
+  NodeServerAdapter,
+} from "./node.ts";
+export type { NodeHttpServer, NodeIncomingMessage, NodeServerResponse } from "./node.ts";
+
+// Security namespace
 export * as security from "./security/index.ts";
 
 export {

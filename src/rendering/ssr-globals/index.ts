@@ -11,7 +11,6 @@ export {
   disableSSRClientOnlyFetching,
   enableSSRClientOnlyFetching,
   isSSRGlobalsActive,
-  setSSRProjectDomain,
   setSSRServerPort,
 } from "./context.ts";
 
