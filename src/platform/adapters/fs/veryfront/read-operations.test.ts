@@ -2,6 +2,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
+import { runWithRequestContext } from "./multi-project-adapter.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { ReadOperations } from "./read-operations.ts";
 import type { ContentContextProvider } from "./read-operations.ts";
@@ -148,6 +149,73 @@ describe("ReadOperations", () => {
       assertEquals(content, "published content here");
       assertEquals(fetchedPath, "pages/index.tsx");
       assertEquals(fetchedReleaseId, "rel-abc");
+    });
+
+    it("should hit request-scoped cache within a single request context", async () => {
+      let fetchCount = 0;
+      const client = createMockClient({
+        getFileContent: () => {
+          fetchCount++;
+          return Promise.resolve(`draft content ${fetchCount}`);
+        },
+      });
+
+      const readOps = createReadOps(client, false, createBranchContext());
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const [first, second] = await runWithRequestContext(
+        { projectSlug: "test", token: "token-1", productionMode: false },
+        async () => {
+          const first = await readOps.readTextFile("pages/index.tsx");
+          const second = await readOps.readTextFile("pages/index.tsx");
+          return [first, second] as const;
+        },
+      );
+
+      assertEquals(first, "draft content 1");
+      assertEquals(second, "draft content 1");
+      assertEquals(fetchCount, 1);
+    });
+
+    it("should hit persistent cache across production requests", async () => {
+      let fetchCount = 0;
+      const client = createMockClient({
+        getPublishedFileContent: () => {
+          fetchCount++;
+          return Promise.resolve(`published content ${fetchCount}`);
+        },
+      });
+
+      const readOps = new ReadOperations(
+        client,
+        new FileCache({ enabled: true, ttl: 60000, maxSize: 100 }),
+        new PathNormalizer(),
+        createReleaseContext("rel-cache-hit"),
+      );
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const first = await runWithRequestContext(
+        {
+          projectSlug: "test",
+          token: "token-1",
+          productionMode: true,
+          releaseId: "rel-cache-hit",
+        },
+        () => readOps.readTextFile("pages/index.tsx"),
+      );
+      const second = await runWithRequestContext(
+        {
+          projectSlug: "test",
+          token: "token-1",
+          productionMode: true,
+          releaseId: "rel-cache-hit",
+        },
+        () => readOps.readTextFile("pages/index.tsx"),
+      );
+
+      assertEquals(first, "published content 1");
+      assertEquals(second, "published content 1");
+      assertEquals(fetchCount, 1);
     });
 
     it("should serve content from file list cache in production mode", async () => {
@@ -351,6 +419,53 @@ describe("ReadOperations", () => {
       assertEquals(apiFetchCalled, true);
     });
 
+    it("should skip persistent and file-list caches during invalidation and use API path", async () => {
+      let fileListCalls = 0;
+      let fetchedApiPath: string | undefined;
+      const client = createMockClient({
+        getPublishedFileContent: (path: string) => {
+          fetchedApiPath = path;
+          return Promise.resolve("fresh api content");
+        },
+      });
+
+      const cache = new FileCache({ enabled: true, ttl: 60000, maxSize: 100 });
+      cache.set("file:release:test:rel-invalidation:pages/index.tsx", "stale persistent content");
+
+      const contextProvider: ContentContextProvider = {
+        isProductionMode: () => true,
+        getReleaseId: () => "rel-invalidation",
+        getContentContext: () => ({
+          sourceType: "release" as const,
+          projectSlug: "test",
+          releaseId: "rel-invalidation",
+        }),
+        isPersistentCacheInvalidated: () => true,
+        isReleaseBeingInvalidated: () => false,
+      };
+
+      const readOps = new ReadOperations(
+        client,
+        cache,
+        new PathNormalizer(),
+        contextProvider,
+        (path: string) => `api-source/${path}`,
+        () => {
+          fileListCalls++;
+          return Promise.resolve([
+            { path: "pages/index.tsx", content: "stale file-list content" },
+          ]);
+        },
+      );
+
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const content = await readOps.readTextFile("pages/index.tsx");
+      assertEquals(content, "fresh api content");
+      assertEquals(fileListCalls, 0);
+      assertEquals(fetchedApiPath, "api-source/pages/index.tsx");
+    });
+
     it("should track invalidation state changes", () => {
       const invalidatedReleases = new Set<string>();
 
@@ -505,6 +620,33 @@ describe("ReadOperations", () => {
       assertEquals(result1, "content for pages/index.tsx");
       assertEquals(result2, "content for pages/about.tsx");
       assertEquals(fetchCount, 2);
+    });
+
+    it("should evict oldest in-flight request when cap is exceeded", async () => {
+      const fetchCountByPath = new Map<string, number>();
+      const client = createMockClient({
+        getFileContent: (path: string) => {
+          fetchCountByPath.set(path, (fetchCountByPath.get(path) ?? 0) + 1);
+          return new Promise<string>(() => {});
+        },
+      });
+
+      const readOps = createReadOps(client, false, createBranchContext());
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const oldestPath = "pages/oldest.tsx";
+      void readOps.readTextFile(oldestPath);
+      for (let i = 0; i < 100; i++) {
+        void readOps.readTextFile(`pages/in-flight-${i}.tsx`);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+
+      void readOps.readTextFile(oldestPath);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      assertEquals(fetchCountByPath.get(oldestPath), 2);
     });
   });
 

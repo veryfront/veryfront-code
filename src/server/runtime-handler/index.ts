@@ -84,11 +84,7 @@ import { localProjectCache } from "./local-project-discovery.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext, buildMinimalContext } from "./handler-context-builder.ts";
 import { handleProjectsRequest, shouldHandleProjectsUI } from "./projects-handler.ts";
-import {
-  HTTP_GATEWAY_TIMEOUT,
-  isLightweightPath,
-  isMonitoringPath,
-} from "./request-utils.ts";
+import { HTTP_GATEWAY_TIMEOUT, isLightweightPath, isMonitoringPath } from "./request-utils.ts";
 import { withRequestTimeout } from "./timeout-manager.ts";
 
 // Re-export from dedicated module for lightweight imports

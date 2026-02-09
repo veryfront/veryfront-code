@@ -354,6 +354,27 @@ describe("StatOperations", () => {
 
       assertEquals(await statOps.resolveFile("utils/helpers.tsx"), "utils/helpers.ts");
     });
+
+    it("should reuse negative cache and avoid duplicate API search for same missing path", async () => {
+      let searchCallCount = 0;
+      const client = createMockClient({
+        searchFiles: () => {
+          searchCallCount++;
+          return Promise.resolve([]);
+        },
+      });
+
+      const statOps = new StatOperations(
+        client,
+        new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 }),
+        new PathNormalizer(),
+        createBranchContextWithFiles([]),
+      );
+
+      assertEquals(await statOps.resolveFile("missing/component"), null);
+      assertEquals(await statOps.resolveFile("missing/component"), null);
+      assertEquals(searchCallCount, 1);
+    });
   });
 
   describe("index building", () => {
@@ -511,6 +532,44 @@ describe("StatOperations", () => {
       await statOps.resolveFile("nonexistent-6");
 
       assertEquals(searchCallCount, searchCallsBefore);
+    });
+
+    it("should attempt API search again after circuit breaker cooldown", async () => {
+      const originalNow = Date.now;
+      let now = originalNow();
+      Date.now = () => now;
+
+      try {
+        let searchCallCount = 0;
+        const client = createMockClient({
+          searchFiles: () => {
+            searchCallCount++;
+            return Promise.reject(new Error("API error"));
+          },
+        });
+
+        const statOps = new StatOperations(
+          client,
+          new FileCache({ enabled: false, ttl: 1000, maxSize: 100 }),
+          new PathNormalizer(),
+          createBranchContextWithFiles([]),
+        );
+
+        for (let i = 0; i < 5; i++) {
+          await statOps.resolveFile(`missing-trip-${i}`);
+        }
+        assertEquals(searchCallCount, 5);
+
+        await statOps.resolveFile("missing-while-open");
+        assertEquals(searchCallCount, 5);
+
+        now += 30_001;
+
+        await statOps.resolveFile("missing-after-cooldown");
+        assertEquals(searchCallCount, 6);
+      } finally {
+        Date.now = originalNow;
+      }
     });
   });
 });

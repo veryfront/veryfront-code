@@ -9,9 +9,9 @@ import {
   buildFileListCacheKey,
   buildStatCacheKeyPrefix,
 } from "./cache-keys.ts";
+import { STAT_OPERATION_EXTENSION_PRIORITY as EXTENSION_PRIORITY } from "./extension-priority.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-const EXTENSION_PRIORITY = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"] as const;
 const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
 
 export class StatOperations extends VeryfrontOperationsBase {

@@ -10,6 +10,9 @@ export async function cleanupBundler(): Promise<void> {
   const { clearMDXModuleCache } = await import("./ssr/index.ts");
   clearMDXModuleCache();
 
+  const { clearSSRModuleCache } = await import("#veryfront/modules");
+  clearSSRModuleCache();
+
   const { destroyRendererAdapter } = await import("../server/shared/index.ts");
   await destroyRendererAdapter();
 

@@ -1,16 +1,27 @@
 import { logger } from "#veryfront/utils";
-import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import {
-  recordContentCacheHit,
-  recordContentNetworkFetch,
-} from "#veryfront/observability/simple-metrics/index.ts";
 import type { VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
-import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
+import { logContentMetric, type MissReason } from "./content-metrics.ts";
+import { FileListIndex } from "./file-list-index.ts";
 import { getRequestScopedFile, setRequestScopedFile } from "./multi-project-adapter.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
+import {
+  assertProjectSourcePath,
+  buildReadFetchState,
+  getResolvedCacheKey,
+  isNotFoundLikeError,
+  READ_OPERATION_EXTENSION_PRIORITY as EXTENSION_PRIORITY,
+  splitKnownFileExtension,
+} from "./read-operations-helpers.ts";
 import type { ResolvedContentContext } from "./types.ts";
+
+export {
+  endRequestMetrics,
+  getContentMetricsSnapshot,
+  resetContentMetrics,
+  startRequestMetrics,
+} from "./content-metrics.ts";
 
 export interface ContentContextProvider {
   isProductionMode: () => boolean;
@@ -33,238 +44,12 @@ export interface ContentContextProvider {
   isReleaseBeingInvalidated?: (releaseId: string) => boolean;
 }
 
-const EXTENSION_PRIORITY = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"] as const;
-
 const IN_FLIGHT_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_IN_FLIGHT_REQUESTS = 100;
-
-// ============================================================================
-// CONTENT METRICS - Per-request tracking for optimization decisions
-// ============================================================================
-
-type FileType = "page" | "layout" | "component" | "api" | "data" | "config" | "other";
-type MissReason = "cold_start" | "not_in_filelist" | "invalidation" | "no_filelist_cache";
-
-interface PerRequestMetrics {
-  startTime: number;
-  // Cache layer hits
-  requestScopedHits: number;
-  persistentCacheHits: number;
-  fileListHits: number;
-  // Network
-  networkFetches: number;
-  networkMs: number;
-  // File type breakdown (for fetches only - where optimization matters)
-  fetchesByType: Record<FileType, number>;
-  // Miss reasons
-  missReasons: Record<MissReason, number>;
-  // Mode tracking
-  isPreviewMode: boolean | null;
-  // Unique files accessed
-  filesAccessed: Set<string>;
-}
-
-// Global cumulative metrics (for /metrics endpoint)
-interface CumulativeMetrics {
-  requestScopedHits: number;
-  persistentCacheHits: number;
-  fileListHits: number;
-  networkFetches: number;
-  totalNetworkMs: number;
-  requestsTracked: number;
-}
-
-const cumulativeMetrics: CumulativeMetrics = {
-  requestScopedHits: 0,
-  persistentCacheHits: 0,
-  fileListHits: 0,
-  networkFetches: 0,
-  totalNetworkMs: 0,
-  requestsTracked: 0,
-};
-
-// Per-request metrics (reset each request via startRequestMetrics)
-let currentRequest: PerRequestMetrics | null = null;
-
-function createFreshRequestMetrics(): PerRequestMetrics {
-  return {
-    startTime: performance.now(),
-    requestScopedHits: 0,
-    persistentCacheHits: 0,
-    fileListHits: 0,
-    networkFetches: 0,
-    networkMs: 0,
-    fetchesByType: { page: 0, layout: 0, component: 0, api: 0, data: 0, config: 0, other: 0 },
-    missReasons: { cold_start: 0, not_in_filelist: 0, invalidation: 0, no_filelist_cache: 0 },
-    isPreviewMode: null,
-    filesAccessed: new Set(),
-  };
-}
-
-function detectFileType(path: string): FileType {
-  if (path.startsWith("pages/api/") || path.startsWith("app/api/")) return "api";
-  if (path.includes("/layout.") || path.includes("/layout/")) return "layout";
-  if (path.startsWith("pages/") || path.startsWith("app/")) return "page";
-  if (path.startsWith("components/") || path.includes("/components/")) return "component";
-  if (path.endsWith(".json") || path.endsWith(".yaml") || path.endsWith(".yml")) return "data";
-  if (path.includes("config") || path.includes(".config.")) return "config";
-  return "other";
-}
-
-/** Call at start of HTTP request to begin per-request tracking */
-export function startRequestMetrics(): void {
-  currentRequest = createFreshRequestMetrics();
-}
-
-/** Call at end of HTTP request to log summary and update cumulative metrics */
-export function endRequestMetrics(
-  requestContext?: { requestId?: string; pathname?: string; mode?: string },
-): void {
-  if (!currentRequest) return;
-
-  const req = currentRequest;
-  const durationMs = Math.round(performance.now() - req.startTime);
-
-  // Compute derived metrics
-  const totalCacheHits = req.requestScopedHits + req.persistentCacheHits + req.fileListHits;
-  const totalOperations = totalCacheHits + req.networkFetches;
-  const cacheHitRate = totalOperations > 0
-    ? Math.round((totalCacheHits / totalOperations) * 100)
-    : 100;
-  const networkTimeRatio = durationMs > 0 ? Math.round((req.networkMs / durationMs) * 100) : 0;
-
-  // Update cumulative metrics
-  cumulativeMetrics.requestScopedHits += req.requestScopedHits;
-  cumulativeMetrics.persistentCacheHits += req.persistentCacheHits;
-  cumulativeMetrics.fileListHits += req.fileListHits;
-  cumulativeMetrics.networkFetches += req.networkFetches;
-  cumulativeMetrics.totalNetworkMs += req.networkMs;
-  cumulativeMetrics.requestsTracked++;
-
-  // Record to production metrics system
-  recordContentNetworkFetch(req.networkMs, req.isPreviewMode ?? false);
-
-  // Log summary
-  logger.info("[ContentMetrics] REQUEST_SUMMARY", {
-    ...requestContext,
-    // Timing
-    durationMs,
-    networkMs: req.networkMs,
-    networkTimeRatio: `${networkTimeRatio}%`,
-    // Cache performance
-    cacheHitRate: `${cacheHitRate}%`,
-    cacheHits: {
-      l1_request: req.requestScopedHits,
-      l2_persistent: req.persistentCacheHits,
-      l3_filelist: req.fileListHits,
-    },
-    networkFetches: req.networkFetches,
-    // Breakdown
-    fetchesByType: req.fetchesByType,
-    missReasons: req.missReasons,
-    // Context
-    uniqueFiles: req.filesAccessed.size,
-    isPreviewMode: req.isPreviewMode,
-  });
-
-  currentRequest = null;
-}
-
-type ContentMetricEvent =
-  | "REQUEST_SCOPED_HIT"
-  | "PERSISTENT_CACHE_HIT"
-  | "FILE_LIST_HIT"
-  | "NETWORK_FETCH"
-  | "NETWORK_FETCH_COMPLETE"
-  | "CACHE_MISS";
-
-function logContentMetric(
-  event: ContentMetricEvent,
-  details: {
-    path?: string;
-    mode?: string;
-    isPreviewMode?: boolean;
-    durationMs?: number;
-    missReason?: MissReason;
-    [key: string]: unknown;
-  },
-): void {
-  const path = details.path ?? "";
-
-  // Track in per-request metrics if active
-  if (currentRequest) {
-    currentRequest.filesAccessed.add(path);
-    if (details.isPreviewMode !== undefined) {
-      currentRequest.isPreviewMode = details.isPreviewMode;
-    }
-
-    switch (event) {
-      case "REQUEST_SCOPED_HIT":
-        currentRequest.requestScopedHits++;
-        recordContentCacheHit("request");
-        break;
-      case "PERSISTENT_CACHE_HIT":
-        currentRequest.persistentCacheHits++;
-        recordContentCacheHit("persistent");
-        break;
-      case "FILE_LIST_HIT":
-        currentRequest.fileListHits++;
-        recordContentCacheHit("filelist");
-        break;
-      case "NETWORK_FETCH":
-        currentRequest.networkFetches++;
-        currentRequest.fetchesByType[detectFileType(path)]++;
-        break;
-      case "NETWORK_FETCH_COMPLETE":
-        if (details.durationMs) {
-          currentRequest.networkMs += details.durationMs;
-        }
-        break;
-      case "CACHE_MISS":
-        if (details.missReason) {
-          currentRequest.missReasons[details.missReason]++;
-        }
-        break;
-    }
-  }
-
-  // Debug log individual events (not info level to reduce noise)
-  logger.debug(`[ContentMetrics] ${event}`, details);
-}
-
-/** Get current cumulative metrics snapshot for /metrics endpoint */
-export function getContentMetricsSnapshot(): CumulativeMetrics & {
-  avgNetworkMsPerRequest: number;
-} {
-  return {
-    ...cumulativeMetrics,
-    avgNetworkMsPerRequest: cumulativeMetrics.requestsTracked > 0
-      ? Math.round(cumulativeMetrics.totalNetworkMs / cumulativeMetrics.requestsTracked)
-      : 0,
-  };
-}
-
-/** Reset cumulative metrics */
-export function resetContentMetrics(): void {
-  cumulativeMetrics.requestScopedHits = 0;
-  cumulativeMetrics.persistentCacheHits = 0;
-  cumulativeMetrics.fileListHits = 0;
-  cumulativeMetrics.networkFetches = 0;
-  cumulativeMetrics.totalNetworkMs = 0;
-  cumulativeMetrics.requestsTracked = 0;
-}
-// ============================================================================
 
 interface InFlightEntry {
   promise: Promise<string>;
   startedAt: number;
-}
-
-function hashPreview(content: string): number {
-  return content
-    .slice(0, 100)
-    .split("")
-    .reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
 }
 
 function previewText(content: string, max = 80): string {
@@ -274,11 +59,7 @@ function previewText(content: string, max = 80): string {
 export class ReadOperations {
   private readonly inFlightRequests = new Map<string, InFlightEntry>();
   private lastCleanupTime = 0;
-
-  private fileListIndex: Map<string, string> | null = null;
-  private fileListIndexKey: string | null = null;
-
-  private fileListReadyPromise: Promise<void> | null = null;
+  private readonly fileListIndex: FileListIndex;
 
   constructor(
     private readonly client: VeryfrontAPIClient,
@@ -289,19 +70,16 @@ export class ReadOperations {
     private readonly getFileListCache?: () => Promise<
       Array<{ path: string; content?: string }> | undefined
     >,
-  ) {}
+  ) {
+    this.fileListIndex = new FileListIndex(this.getFileListCache);
+  }
 
   setFileListReadyPromise(promise: Promise<void>): void {
-    this.fileListReadyPromise = promise;
+    this.fileListIndex.setReadyPromise(promise);
   }
 
   clearFileListIndex(): void {
-    if (!this.fileListIndex) return;
-
-    const size = this.fileListIndex.size;
-    this.fileListIndex = null;
-    this.fileListIndexKey = null;
-    logger.debug("[ReadOperations] Cleared file list index", { entriesCleared: size });
+    this.fileListIndex.clear();
   }
 
   private cleanupStaleInFlightRequests(): void {
@@ -338,90 +116,6 @@ export class ReadOperations {
     }
   }
 
-  private async getOrBuildFileListIndex(): Promise<Map<string, string> | null> {
-    if (!this.getFileListCache) {
-      logger.debug("[ReadOperations] getOrBuildFileListIndex: no getFileListCache function");
-      return null;
-    }
-
-    const fileList = await this.getFileListCache();
-    if (!fileList) {
-      logger.debug(
-        "[ReadOperations] getOrBuildFileListIndex: getFileListCache returned null/undefined",
-      );
-      return null;
-    }
-
-    const cacheCheckSample = fileList.find((f) => /welcome/i.test(f.path));
-    logger.debug("[ReadOperations] getOrBuildFileListIndex: got file list from cache", {
-      fileListSize: fileList.length,
-      filesWithContent: fileList.filter((f) => f.content).length,
-      sampleFilePath: cacheCheckSample?.path,
-      sampleContentLength: cacheCheckSample?.content?.length,
-      sampleContentPreview: cacheCheckSample?.content?.slice(0, 200)?.replace(/\n/g, "\\n"),
-    });
-
-    const indexKey = `${fileList.length}:${fileList[0]?.path ?? ""}:${
-      fileList[fileList.length - 1]?.path ?? ""
-    }`;
-    if (this.fileListIndex && this.fileListIndexKey === indexKey) return this.fileListIndex;
-
-    const index = new Map<string, string>();
-    for (const file of fileList) {
-      if (file.content) index.set(file.path, file.content);
-    }
-
-    this.fileListIndex = index;
-    this.fileListIndexKey = indexKey;
-
-    const sampleFile = fileList.find((f) => /welcome/i.test(f.path));
-    const sampleContent = sampleFile?.content;
-    logger.debug("[ReadOperations] Built file list index", {
-      fileListSize: fileList.length,
-      indexedWithContent: index.size,
-      sampleFilePath: sampleFile?.path,
-      sampleContentLength: sampleContent?.length,
-      sampleContentHash: sampleContent ? hashPreview(sampleContent) : undefined,
-      sampleContentPreview: sampleContent?.slice(0, 200)?.replace(/\n/g, "\\n"),
-    });
-
-    return index;
-  }
-
-  private async getContentFromFileList(normalizedPath: string): Promise<string | undefined> {
-    if (this.fileListReadyPromise) {
-      try {
-        await this.fileListReadyPromise;
-      } catch {
-        logger.debug("[ReadOperations] File list initialization failed, will fetch individually");
-      }
-    }
-
-    const index = await this.getOrBuildFileListIndex();
-    if (!index) {
-      logger.debug("[ReadOperations] No file list cache available");
-      return undefined;
-    }
-
-    const content = index.get(normalizedPath);
-    if (!content) {
-      logger.debug("[ReadOperations] Content not in file list index", {
-        path: normalizedPath,
-        indexSize: index.size,
-      });
-      return undefined;
-    }
-
-    logger.debug("[ReadOperations] FILE_LIST_CACHE_HIT - serving from file list cache", {
-      path: normalizedPath,
-      contentLength: content.length,
-      contentHash: hashPreview(content),
-      contentPreview: previewText(content, 200).replace(/\n/g, "\\n"),
-    });
-
-    return content;
-  }
-
   readFile(path: string): Promise<Uint8Array> {
     return withSpan(
       "fs.veryfront.readFile",
@@ -449,19 +143,26 @@ export class ReadOperations {
   private async fetchContent(normalizedPath: string): Promise<string> {
     // Framework paths should NEVER be fetched from API - they must be read from local filesystem.
     // If we reach here for a framework path, the module server's local resolution failed.
-    if (isFrameworkSourcePath(normalizedPath)) {
-      throw new Error(
-        `[ReadOperations] Framework path "${normalizedPath}" cannot be fetched from API. ` +
-          `Framework modules must be served from local filesystem.`,
-      );
-    }
+    assertProjectSourcePath(normalizedPath);
 
-    const ctx = this.contextProvider?.getContentContext();
-    const apiPath = this.getOriginalApiPath?.(normalizedPath) ?? normalizedPath;
-    const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
-    const cacheKey = `${cacheKeyPrefix}:${normalizedPath}`;
-    const isProduction = this.contextProvider?.isProductionMode() ?? false;
-    const hasKnownExt = EXTENSION_PRIORITY.some((ext) => apiPath.endsWith(ext));
+    const ctx = this.contextProvider?.getContentContext() ?? null;
+    const {
+      apiPath,
+      cacheKeyPrefix,
+      cacheKey,
+      isProduction,
+      hasKnownExtension: hasKnownExt,
+      isPreviewMode,
+      isPublished,
+      releaseId: currentReleaseId,
+      isPrefixInvalidated,
+      skipPersistentCaches,
+    } = buildReadFetchState({
+      normalizedPath,
+      contentContext: ctx,
+      contextProvider: this.contextProvider,
+      getOriginalApiPath: this.getOriginalApiPath,
+    });
 
     logger.debug("[ReadOperations] fetchContent context", {
       path: normalizedPath,
@@ -490,16 +191,6 @@ export class ReadOperations {
       });
       return requestCached;
     }
-
-    const currentReleaseId = ctx?.releaseId;
-    const isPrefixInvalidated =
-      (isProduction && this.contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix)) ??
-        false;
-    const isReleaseInvalidated = isProduction && currentReleaseId
-      ? this.contextProvider?.isReleaseBeingInvalidated?.(currentReleaseId)
-      : undefined;
-
-    const skipPersistentCaches = !!(isPrefixInvalidated || isReleaseInvalidated);
 
     if (isProduction && skipPersistentCaches) {
       logger.info("[ReadOperations] PERSISTENT_CACHE_SKIPPED - cache invalidation in progress", {
@@ -538,9 +229,8 @@ export class ReadOperations {
     // - File list is refreshed on every WebSocket poke (websocket-manager.ts:483-500)
     // - Request-scoped cache ensures consistency within a single render
     // - Persistent cache is only written for production mode (to avoid staleness risk in preview)
-    const isPreviewMode = ctx?.sourceType === "branch";
     if (!skipPersistentCaches) {
-      const fileListContent = await this.getContentFromFileList(normalizedPath);
+      const fileListContent = await this.fileListIndex.lookup(normalizedPath);
       if (fileListContent) {
         logContentMetric("FILE_LIST_HIT", {
           path: normalizedPath,
@@ -578,7 +268,7 @@ export class ReadOperations {
         );
         if (resolved) {
           const resolvedPath = this.normalizer.normalize(resolved.path);
-          const resolvedCacheKey = `${cacheKeyPrefix}:${resolvedPath}`;
+          const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, resolvedPath);
 
           logger.debug("[ReadOperations] Resolved extension for base path", {
             basePath: apiPath,
@@ -618,8 +308,6 @@ export class ReadOperations {
       });
       return existingEntry.promise;
     }
-
-    const isPublished = ctx?.sourceType !== "branch";
 
     // Track why we're making a network fetch (for optimization analysis)
     const hasFileListCache = !!this.getFileListCache;
@@ -714,7 +402,7 @@ export class ReadOperations {
       return content;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const is404Error = errorMessage.includes("404") || errorMessage.includes("Not Found");
+      const is404Error = isNotFoundLikeError(error);
 
       if (!is404Error) {
         logger.error("[ReadOperations] Failed to fetch published content", {
@@ -750,11 +438,10 @@ export class ReadOperations {
     releaseId: string | null,
     environmentName?: string | null,
   ): Promise<string | null> {
-    const extMatch = apiPath.match(/\.(tsx|ts|jsx|js|mdx|md)$/);
-    if (!extMatch) return null;
+    const pathParts = splitKnownFileExtension(apiPath);
+    if (!pathParts) return null;
 
-    const originalExt = extMatch[0];
-    const basePath = apiPath.slice(0, -originalExt.length);
+    const { originalExtension: originalExt, basePath } = pathParts;
 
     logger.debug("[ReadOperations] Searching for file with pattern", {
       originalPath: apiPath,

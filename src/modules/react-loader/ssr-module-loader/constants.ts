@@ -54,6 +54,12 @@ export function getTransformPerProjectLimit(): number {
   return _transformPerProjectLimit;
 }
 
+/** Reset cached transform limits so env var changes take effect. */
+export function resetCachedTransformLimits(): void {
+  _maxConcurrentTransforms = undefined;
+  _transformPerProjectLimit = undefined;
+}
+
 export const TRANSFORM_ACQUIRE_TIMEOUT_MS = 500;
 export const IN_PROGRESS_WAIT_TIMEOUT_MS = 30_000;
 

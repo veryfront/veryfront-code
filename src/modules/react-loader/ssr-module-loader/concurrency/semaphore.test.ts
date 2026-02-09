@@ -65,5 +65,18 @@ describe("modules/react-loader/ssr-module-loader/concurrency/semaphore", () => {
 
       await Promise.all([p1, p2]);
     });
+
+    it("should remove timed-out waiters from queue", async () => {
+      const sem = new Semaphore(1);
+
+      await sem.tryAcquire();
+      const timedOutAcquire = sem.tryAcquire(5);
+
+      assertEquals(await timedOutAcquire, false);
+      assertEquals(sem.waiting, 0);
+
+      sem.release();
+      assertEquals(sem.available, 1);
+    });
   });
 });
