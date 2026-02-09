@@ -15,15 +15,20 @@ type Fetcher = (
   projectSlug: string,
 ) => Promise<Record<string, string>>;
 
+/** Max number of environments to cache. Evicts oldest entry when exceeded. */
+const DEFAULT_MAX_ENTRIES = 100;
+
 export class EnvironmentVariableCache {
   private cache = new Map<string, CacheEntry>();
   private inflight = new Map<string, Promise<Record<string, string>>>();
   private fetcher: Fetcher;
   private ttlMs: number;
+  private maxEntries: number;
 
-  constructor(fetcher: Fetcher, ttlMs = 60_000) {
+  constructor(fetcher: Fetcher, ttlMs = 60_000, maxEntries = DEFAULT_MAX_ENTRIES) {
     this.fetcher = fetcher;
     this.ttlMs = ttlMs;
+    this.maxEntries = maxEntries;
   }
 
   async get(
@@ -69,11 +74,25 @@ export class EnvironmentVariableCache {
     try {
       const vars = await this.fetcher(environmentId, token, projectSlug);
       this.cache.set(environmentId, { vars, fetchedAt: Date.now() });
+      this.evictIfNeeded();
       return vars;
     } catch {
       // Stale-on-error: return stale data if available
       if (stale) return stale.vars;
       return {};
+    }
+  }
+
+  /** Evict oldest entries when cache exceeds maxEntries. */
+  private evictIfNeeded(): void {
+    if (this.cache.size <= this.maxEntries) return;
+    // Map iterates in insertion order; delete the first (oldest) entries
+    const excess = this.cache.size - this.maxEntries;
+    let removed = 0;
+    for (const key of this.cache.keys()) {
+      if (removed >= excess) break;
+      this.cache.delete(key);
+      removed++;
     }
   }
 }

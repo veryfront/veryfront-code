@@ -78,7 +78,8 @@ export async function writeCacheFile(
 export async function verifyCacheFileExists(
   fs: FileSystem,
   path: string,
-  _label = "cache",
+  // deno-lint-ignore no-unused-vars
+  label = "cache",
 ): Promise<boolean> {
   try {
     const stat = await fs.stat(path);
