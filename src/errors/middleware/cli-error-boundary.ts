@@ -13,6 +13,7 @@ import { UNKNOWN_ERROR } from "../error-registry.ts";
 import { getErrorMessage } from "../veryfront-error.ts";
 import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
 import { attachErrorToActiveSpan } from "../tracing.ts";
+import { isProduction } from "#veryfront/build/config/environment.ts";
 
 /**
  * Color formatting functions (compatible with CLI colors)
@@ -30,27 +31,14 @@ interface ColorFormatter {
  * Check if output is a TTY (supports colors)
  */
 function isTTY(): boolean {
-  // Check if stdout is a TTY
-  if (typeof Deno !== "undefined") {
-    return Deno.stdout.isTerminal?.() ?? false;
-  }
-  if (typeof process !== "undefined") {
-    return process.stdout?.isTTY ?? false;
-  }
-  return false;
+  return Deno.stdout.isTerminal?.() ?? false;
 }
 
 /**
- * Get environment mode (development or production)
+ * Check if running in development mode
  */
 function isDevelopment(): boolean {
-  const env = typeof Deno !== "undefined"
-    ? Deno.env.get("NODE_ENV") ?? Deno.env.get("DENO_ENV") ?? Deno.env.get("MODE")
-    : typeof process !== "undefined"
-    ? process.env.NODE_ENV ?? process.env.DENO_ENV ?? process.env.MODE
-    : undefined;
-
-  return env === "development" || env === "dev" || !env;
+  return !isProduction();
 }
 
 /**
@@ -218,14 +206,7 @@ export function cliErrorBoundarySync(
 
 /**
  * Exit the process with a status code
- * Abstracted for testing purposes
  */
 function exit(code: number): never {
-  if (typeof Deno !== "undefined") {
-    Deno.exit(code);
-  }
-  if (typeof process !== "undefined") {
-    process.exit(code);
-  }
-  throw new Error(`Exit with code ${code}`);
+  Deno.exit(code);
 }
