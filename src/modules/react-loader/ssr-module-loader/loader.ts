@@ -12,7 +12,6 @@ import { transformToESM } from "#veryfront/transforms/esm/index.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
 import {
   type CrossProjectImport,
-  type MissingImport,
   parseLocalImports,
 } from "#veryfront/transforms/esm/import-parser.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -51,6 +50,7 @@ import { rewriteCrossProjectImport, rewriteLocalImports } from "./import-rewrite
 import { SSRCacheManager } from "./ssr-cache-manager.ts";
 import { SSRCircuitBreaker } from "./ssr-circuit-breaker.ts";
 import { SSRDependencyValidator } from "./ssr-dependency-validator.ts";
+import { preflightLocalImports } from "./preflight-imports.ts";
 import { resolveVfModuleImports } from "./vf-module-resolver.ts";
 
 const MISSING_HTTP_BUNDLE_PATTERN = /veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/;
@@ -542,34 +542,11 @@ export class SSRModuleLoader {
 
       if (parseResult.imports.length > 0) {
         const preflightFs = createFileSystem();
-        const preflightMissing: MissingImport[] = [];
-        const validImports: typeof parseResult.imports = [];
-
-        for (const imp of parseResult.imports) {
-          if (!imp.absolutePath.startsWith("/")) {
-            validImports.push(imp);
-            continue;
-          }
-
-          try {
-            const stat = await preflightFs.stat(imp.absolutePath);
-            if (stat?.isFile) {
-              validImports.push(imp);
-            } else {
-              preflightMissing.push({
-                specifier: imp.specifier,
-                fromFile: filePath,
-                reason: `Pre-flight: not a file on disk: ${imp.absolutePath}`,
-              });
-            }
-          } catch {
-            preflightMissing.push({
-              specifier: imp.specifier,
-              fromFile: filePath,
-              reason: `Pre-flight: file not accessible: ${imp.absolutePath}`,
-            });
-          }
-        }
+        const { validImports, missingImports: preflightMissing } = await preflightLocalImports(
+          parseResult.imports,
+          filePath,
+          preflightFs,
+        );
 
         if (preflightMissing.length > 0) {
           logger.warn("[SSR-MODULE-LOADER] Pre-flight: some dependencies missing, skipping them", {
