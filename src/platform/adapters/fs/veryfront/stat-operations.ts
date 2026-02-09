@@ -18,6 +18,7 @@ import {
   sortPathsByExtensionPriority,
   stripKnownExtension,
 } from "./stat-operations-helpers.ts";
+import { ApiSearchCircuitBreaker } from "./api-search-circuit-breaker.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
@@ -32,8 +33,10 @@ export class StatOperations extends VeryfrontOperationsBase {
 
   private pathMapping: Map<string, string> = new Map();
 
-  private apiSearchFailures = 0;
-  private apiSearchDisabledUntil = 0;
+  private readonly apiSearchCircuitBreaker = new ApiSearchCircuitBreaker({
+    threshold: 5,
+    cooldownMs: 30000,
+  });
 
   stat(path: string): Promise<FileInfo> {
     return withSpan(
@@ -85,7 +88,7 @@ export class StatOperations extends VeryfrontOperationsBase {
 
         // File not in index - try API pattern search as fallback for project files
         // Skip for framework paths (node_modules, _veryfront, etc.)
-        if (!isFrameworkSourcePath(normalizedPath) && Date.now() >= this.apiSearchDisabledUntil) {
+        if (!isFrameworkSourcePath(normalizedPath) && this.apiSearchCircuitBreaker.canSearch()) {
           const hasKnownExt = EXTENSION_PRIORITY.some((ext) => normalizedPath.endsWith(ext));
           if (hasKnownExt) {
             logger.debug("[StatOperations] stat file not in index, trying API search", {
@@ -96,7 +99,7 @@ export class StatOperations extends VeryfrontOperationsBase {
             try {
               // Search for the exact file path
               const matches = await this.client.searchFiles(normalizedPath);
-              this.apiSearchFailures = 0;
+              this.apiSearchCircuitBreaker.recordSuccess();
 
               const exactMatch = matches.find((m) => m.path === normalizedPath);
               if (exactMatch) {
@@ -119,12 +122,10 @@ export class StatOperations extends VeryfrontOperationsBase {
                 };
               }
             } catch (error) {
-              this.apiSearchFailures++;
-              if (this.apiSearchFailures >= 5) {
-                this.apiSearchDisabledUntil = Date.now() + 30000;
-                this.apiSearchFailures = 0;
+              const result = this.apiSearchCircuitBreaker.recordFailure();
+              if (result.tripped) {
                 logger.warn("[StatOperations] stat API search circuit breaker tripped", {
-                  failures: 5,
+                  failures: result.failures,
                 });
               }
               logger.debug("[StatOperations] stat API search failed", {
@@ -408,7 +409,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     // they were missing from the file index (due to cache issues, incomplete fetch, etc.).
     // The API pattern search is the fallback to ensure files can still be found.
 
-    if (Date.now() < this.apiSearchDisabledUntil) {
+    if (!this.apiSearchCircuitBreaker.canSearch()) {
       logger.warn("[StatOperations] API search circuit breaker open, skipping", { normalizedPath });
       return null;
     }
@@ -443,7 +444,7 @@ export class StatOperations extends VeryfrontOperationsBase {
 
     try {
       const matches = await this.client.searchFiles(searchPattern);
-      this.apiSearchFailures = 0;
+      this.apiSearchCircuitBreaker.recordSuccess();
 
       logger.debug("[StatOperations] API search result", {
         pattern: searchPattern,
@@ -459,11 +460,11 @@ export class StatOperations extends VeryfrontOperationsBase {
         return first.path;
       }
     } catch (error) {
-      this.apiSearchFailures++;
-      if (this.apiSearchFailures >= 5) {
-        this.apiSearchDisabledUntil = Date.now() + 30000;
-        this.apiSearchFailures = 0;
-        logger.warn("[StatOperations] API search circuit breaker tripped", { failures: 5 });
+      const result = this.apiSearchCircuitBreaker.recordFailure();
+      if (result.tripped) {
+        logger.warn("[StatOperations] API search circuit breaker tripped", {
+          failures: result.failures,
+        });
       }
       logger.error("[StatOperations] API pattern search failed", { pattern: searchPattern, error });
     }
