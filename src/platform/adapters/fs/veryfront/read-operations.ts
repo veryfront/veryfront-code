@@ -301,6 +301,49 @@ export class ReadOperations {
     return fetchPromise;
   }
 
+  private async tryResolveExtensionlessPath(
+    apiPath: string,
+    cacheKeyPrefix: string,
+    cacheKey: string,
+    isProduction: boolean,
+  ): Promise<string | null> {
+    try {
+      const resolved = await this.client.resolveFileWithExtension(
+        apiPath,
+        [...EXTENSION_PRIORITY],
+      );
+      if (!resolved) return null;
+
+      const resolvedPath = this.normalizer.normalize(resolved.path);
+      const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, resolvedPath);
+
+      logger.debug("[ReadOperations] Resolved extension for base path", {
+        basePath: apiPath,
+        resolvedPath,
+        cacheKey,
+        resolvedCacheKey: resolvedCacheKey === cacheKey ? undefined : resolvedCacheKey,
+      });
+
+      if (isProduction) {
+        this.cache.set(cacheKey, resolved.content);
+        if (resolvedCacheKey !== cacheKey) this.cache.set(resolvedCacheKey, resolved.content);
+      }
+
+      setRequestScopedFile(cacheKey, resolved.content);
+      if (resolvedCacheKey !== cacheKey) {
+        setRequestScopedFile(resolvedCacheKey, resolved.content);
+      }
+
+      return resolved.content;
+    } catch (error) {
+      logger.debug("[ReadOperations] resolveFileWithExtension failed", {
+        basePath: apiPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
   private async fetchContent(normalizedPath: string): Promise<string> {
     // Framework paths should NEVER be fetched from API - they must be read from local filesystem.
     // If we reach here for a framework path, the module server's local resolution failed.
@@ -364,40 +407,13 @@ export class ReadOperations {
     if (fileListCached) return fileListCached;
 
     if (!hasKnownExt) {
-      try {
-        const resolved = await this.client.resolveFileWithExtension(
-          apiPath,
-          [...EXTENSION_PRIORITY],
-        );
-        if (resolved) {
-          const resolvedPath = this.normalizer.normalize(resolved.path);
-          const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, resolvedPath);
-
-          logger.debug("[ReadOperations] Resolved extension for base path", {
-            basePath: apiPath,
-            resolvedPath,
-            cacheKey,
-            resolvedCacheKey: resolvedCacheKey === cacheKey ? undefined : resolvedCacheKey,
-          });
-
-          if (isProduction) {
-            this.cache.set(cacheKey, resolved.content);
-            if (resolvedCacheKey !== cacheKey) this.cache.set(resolvedCacheKey, resolved.content);
-          }
-
-          setRequestScopedFile(cacheKey, resolved.content);
-          if (resolvedCacheKey !== cacheKey) {
-            setRequestScopedFile(resolvedCacheKey, resolved.content);
-          }
-
-          return resolved.content;
-        }
-      } catch (error) {
-        logger.debug("[ReadOperations] resolveFileWithExtension failed", {
-          basePath: apiPath,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+      const resolved = await this.tryResolveExtensionlessPath(
+        apiPath,
+        cacheKeyPrefix,
+        cacheKey,
+        isProduction,
+      );
+      if (resolved) return resolved;
     }
 
     return this.setupInFlightFetch(
