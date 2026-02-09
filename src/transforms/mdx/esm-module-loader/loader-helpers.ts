@@ -17,10 +17,7 @@ import { exists as fsExists } from "#veryfront/platform/compat/fs.ts";
 import { LOG_PREFIX_MDX_LOADER } from "./constants.ts";
 import { getLocalFs } from "./cache/index.ts";
 import { createStubModule } from "./utils/stub-module.ts";
-import {
-  createModuleFetcherContext,
-  fetchAndCacheModule,
-} from "./module-fetcher/index.ts";
+import { createModuleFetcherContext, fetchAndCacheModule } from "./module-fetcher/index.ts";
 import { buildMissingModuleError } from "./missing-module.ts";
 import type { ESMLoaderContext } from "./types.ts";
 

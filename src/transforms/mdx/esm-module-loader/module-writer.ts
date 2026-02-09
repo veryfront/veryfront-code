@@ -14,10 +14,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import {
-  ensureCacheNodeModules,
-  getHttpBundleCacheDir,
-} from "#veryfront/utils/cache-dir.ts";
+import { ensureCacheNodeModules, getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../esm/http-cache.ts";

@@ -137,5 +137,4 @@ body::before {
 @custom-variant dark (&:is(.dark, [data-theme="dark"]) *, &:is(.dark, [data-theme="dark"]));`;
     }
   }
-
 }

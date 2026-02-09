@@ -36,7 +36,7 @@ import {
 } from "./constants.ts";
 
 // Re-export submodules for external consumers
-export { findVfModuleImports, findRelativeImports } from "./import-finder.ts";
+export { findRelativeImports, findVfModuleImports } from "./import-finder.ts";
 export {
   resolveFrameworkFile,
   resolveRelativeFrameworkImport,
@@ -59,8 +59,8 @@ export {
   frameworkWriteFlight,
   LOG_PREFIX,
   MAX_RELATIVE_IMPORT_DEPTH,
-  transformingFiles,
   type TransformContext,
+  transformingFiles,
   veryfrontTransformCache,
 } from "./constants.ts";
 
