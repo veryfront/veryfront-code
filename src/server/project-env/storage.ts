@@ -21,12 +21,22 @@ export function runWithProjectEnv<T>(vars: Record<string, string>, fn: () => T):
 
 /**
  * Get a project-scoped environment variable from the current request context.
- * Returns undefined if no project env overlay is active.
+ * Returns undefined if no project env overlay is active or key is not present.
  */
 export function getProjectEnv(key: string): string | undefined {
   return projectEnvStorage.getStore()?.[key];
 }
 
+/**
+ * Check whether a project env overlay is currently active.
+ * When true, getEnv() should NOT fall through to host process env
+ * to prevent remote projects from reading host-level secrets.
+ */
+export function isProjectEnvActive(): boolean {
+  return projectEnvStorage.getStore() !== undefined;
+}
+
 // Register on globalThis so process.ts can access without circular imports.
 // process.ts is low-level (platform/compat), project-env is high-level (server/).
 (globalThis as Record<string, unknown>).__vfProjectEnvGetter = getProjectEnv;
+(globalThis as Record<string, unknown>).__vfProjectEnvActiveChecker = isProjectEnvActive;

@@ -420,10 +420,13 @@ export function createVeryfrontHandler(
           await incrementRequestMetrics();
 
           const executeRoute = () => registry.execute(req, ctx);
+          const isRemoteProject = !adapterRes.isLocalProject;
           const response = await withSpan(
             SpanNames.HANDLER_EXECUTE,
             () => {
-              if (Object.keys(envVarsForRequest).length > 0) {
+              // Always apply env overlay for remote projects, even when empty.
+              // This activates isolation so getEnv() won't fall through to host env.
+              if (isRemoteProject) {
                 return runWithProjectEnv(envVarsForRequest, executeRoute);
               }
               return executeRoute();
