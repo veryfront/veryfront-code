@@ -184,7 +184,12 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals(result?.status, 404);
       assertEquals(result?.headers.get("Content-Type"), "application/problem+json");
 
-      const body = await result?.json() as { type?: string; detail?: string; suggestion?: string; category?: string };
+      const body = await result?.json() as {
+        type?: string;
+        detail?: string;
+        suggestion?: string;
+        category?: string;
+      };
       assertEquals(body.type?.includes("config-not-found"), true);
       assertEquals(body.category, "CONFIG");
       assertEquals(body.detail, "Test config error");
