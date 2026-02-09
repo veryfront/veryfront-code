@@ -94,11 +94,6 @@ await build({
 			version: "19.1.1",
 			subPath: "server",
 		},
-		"https://esm.sh/react-dom@19.1.1/client?external=react&target=es2022&deps=csstype@3.2.3": {
-			name: "react-dom",
-			version: "19.1.1",
-			subPath: "client",
-		},
 		"https://esm.sh/react@19.1.1/jsx-runtime?external=react&target=es2022&deps=csstype@3.2.3": {
 			name: "react",
 			version: "19.1.1",
