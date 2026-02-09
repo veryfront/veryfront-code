@@ -85,12 +85,11 @@ import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext, buildMinimalContext } from "./handler-context-builder.ts";
 import { handleProjectsRequest, shouldHandleProjectsUI } from "./projects-handler.ts";
 import {
-  getRequestTimeout,
   HTTP_GATEWAY_TIMEOUT,
   isLightweightPath,
   isMonitoringPath,
-  TIMEOUT_SENTINEL,
 } from "./request-utils.ts";
+import { withRequestTimeout } from "./timeout-manager.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -416,46 +415,11 @@ export function createVeryfrontHandler(
           });
         };
 
-        let response: Response;
-        let error: Error | undefined;
-        let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-        try {
-          response = await Promise.race([
-            executeWithTracingContext(spanInfo, executeHandler),
-            new Promise<never>((_, reject) => {
-              timeoutId = setTimeout(() => reject(TIMEOUT_SENTINEL), getRequestTimeout());
-            }),
-          ]);
-        } catch (e) {
-          if (e === TIMEOUT_SENTINEL) {
-            logger.warn("[runtime-handler] Request timed out", {
-              path: url.pathname,
-              method: req.method,
-              timeoutMs: getRequestTimeout(),
-            });
-
-            response = new Response(
-              JSON.stringify({
-                error: "Request timeout",
-                timeoutMs: getRequestTimeout(),
-                path: url.pathname,
-              }),
-              {
-                status: HTTP_GATEWAY_TIMEOUT,
-                headers: { "Content-Type": "application/json" },
-              },
-            );
-          } else {
-            error = e instanceof Error ? e : new Error(String(e));
-            response = new Response(ErrorPages.serverError(), {
-              status: 500,
-              headers: { "Content-Type": "text/html; charset=utf-8" },
-            });
-          }
-        } finally {
-          if (timeoutId !== undefined) clearTimeout(timeoutId);
-        }
+        const { response, error } = await withRequestTimeout(
+          () => executeWithTracingContext(spanInfo, executeHandler),
+          url.pathname,
+          req.method,
+        );
 
         endRequestTracing(spanInfo.span, response.status, error);
 

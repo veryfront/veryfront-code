@@ -76,9 +76,26 @@ export class TransformTreeTimeoutError extends Error {
   }
 }
 
+/**
+ * Error thrown when a circular module dependency is detected in the current fetch chain.
+ */
+export class CircularModuleDependencyError extends Error {
+  constructor(pathChain: string) {
+    super(`Circular module dependency detected: ${pathChain}`);
+    this.name = "CircularModuleDependencyError";
+  }
+}
+
 /** Resolve the logger from context, falling back to global logger */
 function getLog(context?: { logger?: Logger }): Logger {
   return context?.logger ?? globalLogger;
+}
+
+function isFatalModuleFetchError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.name === "MissingModuleError" ||
+    error instanceof TransformTreeTimeoutError ||
+    error instanceof CircularModuleDependencyError;
 }
 
 /**
@@ -217,6 +234,7 @@ export async function fetchAndCacheModule(
   modulePath: string,
   context: ModuleFetcherContext,
   parentModulePath?: string,
+  lineage: Set<string> = new Set(),
 ): Promise<string | null> {
   const log = getLog(context);
   const normalizedPath = normalizePath(modulePath, parentModulePath);
@@ -240,7 +258,30 @@ export async function fetchAndCacheModule(
   const inFlight = context.inFlightModules;
   const existingPromise = inFlight?.get(normalizedPath);
   if (existingPromise) {
-    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] CIRCULAR IMPORT detected`, {
+    if (lineage.has(normalizedPath)) {
+      const cycleChain = [...lineage, normalizedPath].join(" -> ");
+      const cycleError = new CircularModuleDependencyError(cycleChain);
+
+      if (context.strictMissingModules ?? true) {
+        log.error(`${LOG_PREFIX_MDX_LOADER} Circular module dependency`, {
+          projectSlug,
+          normalizedPath,
+          parentModulePath,
+          cycleChain,
+        });
+        throw cycleError;
+      }
+
+      log.warn(`${LOG_PREFIX_MDX_LOADER} Circular module dependency (using stub fallback)`, {
+        projectSlug,
+        normalizedPath,
+        parentModulePath,
+        cycleChain,
+      });
+      return null;
+    }
+
+    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] Waiting for in-flight module`, {
       projectSlug,
       normalizedPath,
       parentModulePath,
@@ -255,8 +296,11 @@ export async function fetchAndCacheModule(
     parentModulePath,
   });
 
+  const nextLineage = new Set(lineage);
+  nextLineage.add(normalizedPath);
+
   const fetchAndCacheModuleFn = (path: string, parent?: string): Promise<string | null> =>
-    fetchAndCacheModule(path, context, parent);
+    fetchAndCacheModule(path, context, parent, nextLineage);
 
   const fetchPromise = doFetchAndCacheModule(
     normalizedPath,
@@ -650,7 +694,9 @@ async function doFetchAndCacheModule(
     return finalCachedPath;
   } catch (error) {
     log.warn(`${LOG_PREFIX_MDX_LOADER} Failed to process ${normalizedPath}`, error);
-    if (error instanceof Error && error.name === "MissingModuleError") throw error;
+    if ((context.strictMissingModules ?? true) || isFatalModuleFetchError(error)) {
+      throw (error instanceof Error) ? error : new Error(String(error));
+    }
     return null;
   }
 }

@@ -37,7 +37,7 @@ import type { LayoutOrchestrator } from "./layout.ts";
 import type { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./types.ts";
 import { DataFetcher } from "#veryfront/data/index.ts";
-import type { DataContext, PageWithData } from "#veryfront/data/types.ts";
+import type { DataContext } from "#veryfront/data/types.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
@@ -80,6 +80,12 @@ export interface RenderPipelineConfig {
   projectDir: string;
   /** Query parameter handling for cache keys (from config.cache.queryParams) */
   queryParamOptions?: import("#veryfront/cache/keys.ts").QueryParamCacheOptions;
+}
+
+interface DataResolutionResult {
+  params: Record<string, string | string[]>;
+  pageProps: Record<string, unknown>;
+  layoutProps: Map<string, Record<string, unknown>>;
 }
 
 export class RenderPipeline {
@@ -177,6 +183,124 @@ export class RenderPipeline {
     return loaded;
   }
 
+  /**
+   * Resolve page + layout data props from module data-fetching hooks.
+   * Shared by both renderPage() and resolvePageData() to keep behavior aligned.
+   */
+  private async resolveDataFetching(
+    slug: string,
+    pagePath: string,
+    nestedLayouts: LayoutItem[],
+    options?: RenderOptions,
+  ): Promise<DataResolutionResult> {
+    let params: Record<string, string | string[]> = options?.params ? { ...options.params } : {};
+    const pageProps: Record<string, unknown> = {};
+    const layoutProps = new Map<string, Record<string, unknown>>();
+
+    if (!options?.request || !options?.url) {
+      return { params, pageProps, layoutProps };
+    }
+
+    if (Object.keys(params).length === 0) {
+      logger.debug("[renderPage] Extracting route params", {
+        slug,
+        pagePath,
+      });
+
+      const extracted = extractRouteParamsShared(pagePath, slug);
+      if (extracted.matched) {
+        params = extracted.params;
+        logger.debug("[renderPage] Extracted route params", { slug, params });
+      }
+    }
+
+    const dataContext: DataContext = {
+      params,
+      query: options.url.searchParams,
+      request: options.request,
+      url: options.url,
+    };
+
+    const fileExtension = getExtensionName(pagePath);
+    const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
+    const isInPagesDir = pagePath.includes("/pages/");
+    const isInAppDir = pagePath.includes("/app/");
+
+    const modulesToLoad = collectModulesToLoad(
+      pagePath,
+      isComponentPage,
+      isInPagesDir || isInAppDir,
+      nestedLayouts,
+    );
+
+    if (modulesToLoad.length === 0) {
+      return { params, pageProps, layoutProps };
+    }
+
+    const loadedModules = await withSpan(
+      SpanNames.RENDER_LOAD_MODULES,
+      () =>
+        withTimeoutThrow(
+          this.loadModulesInParallel(modulesToLoad),
+          MODULE_LOAD_TIMEOUT_MS,
+          `Module loading for ${slug}`,
+        ),
+      { "render.module_count": modulesToLoad.length },
+    );
+
+    const dataJobs = loadedModules.filter((m) => hasDataFetchingFunction(m.mod));
+    if (dataJobs.length === 0) {
+      return { params, pageProps, layoutProps };
+    }
+
+    const dataResults = await withSpan(
+      SpanNames.RENDER_FETCH_DATA,
+      () =>
+        withTimeoutThrow(
+          Promise.all(
+            dataJobs.map((job) =>
+              this.dataFetcher
+                .fetchData(job.mod, dataContext, this.config.mode)
+                .then((result) => ({ ...job, result, error: null as Error | null }))
+                .catch((error: Error) => ({ ...job, result: null, error }))
+            ),
+          ),
+          DATA_FETCH_TIMEOUT_MS,
+          `Data fetch for ${slug}`,
+        ),
+      { "render.data_job_count": dataJobs.length },
+    );
+
+    for (const { type, id, result, error } of dataResults) {
+      if (error) throw error;
+      if (!result) continue;
+
+      if (result.notFound) {
+        throw FILE_NOT_FOUND.create({
+          detail: "Page/Layout returned notFound",
+          context: { slug, component: id },
+        });
+      }
+
+      if (result.redirect) {
+        throw RENDER_ERROR.create({
+          detail: `Redirect to ${result.redirect.destination}`,
+          context: { slug, redirect: result.redirect },
+        });
+      }
+
+      if (!result.props) continue;
+
+      if (type === "page") {
+        Object.assign(pageProps, result.props as Record<string, unknown>);
+      } else {
+        layoutProps.set(id, result.props as Record<string, unknown>);
+      }
+    }
+
+    return { params, pageProps, layoutProps };
+  }
+
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
     const pipelineStartTime = performance.now();
     const timing: Record<string, number> = {};
@@ -235,12 +359,10 @@ export class RenderPipeline {
           : Promise.resolve();
 
         let dataFetchingProps: Record<string, unknown> | undefined;
-        const layoutDataMap = new Map<string, Record<string, unknown>>();
-
-        const fileExtension = getExtensionName(pageInfo.entity.path);
-        const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
-        const isInPagesDir = pageInfo.entity.path.includes("/pages/");
-        const isInAppDir = pageInfo.entity.path.includes("/app/");
+        let resolvedParams: Record<string, string | string[]> = options?.params
+          ? { ...options.params }
+          : {};
+        let layoutDataMap = new Map<string, Record<string, unknown>>();
 
         const dataFetchStart = performance.now();
         if (options?.request && options?.url) {
@@ -248,96 +370,17 @@ export class RenderPipeline {
             "render.data_fetching",
             async () => {
               try {
-                if (!options.params || Object.keys(options.params).length === 0) {
-                  logger.debug("[renderPage] Extracting route params", {
-                    slug,
-                    pagePath: pageInfo.entity.path,
-                  });
-
-                  const extracted = extractRouteParamsShared(pageInfo.entity.path, slug);
-                  if (extracted.matched) {
-                    options.params = extracted.params;
-                    logger.debug("[renderPage] Extracted route params", {
-                      slug,
-                      params: extracted.params,
-                    });
-                  }
-                }
-
-                const dataContext: DataContext = {
-                  params: options.params || {},
-                  query: options.url!.searchParams,
-                  request: options.request!,
-                  url: options.url!,
-                };
-
-                const modulesToLoad = collectModulesToLoad(
+                const dataResolution = await this.resolveDataFetching(
+                  slug,
                   pageInfo.entity.path,
-                  isComponentPage,
-                  isInPagesDir || isInAppDir,
                   layoutResult.nestedLayouts,
+                  options,
                 );
-
-                if (modulesToLoad.length === 0) return;
-
-                const loadedModules = await withSpan(
-                  SpanNames.RENDER_LOAD_MODULES,
-                  () =>
-                    withTimeoutThrow(
-                      this.loadModulesInParallel(modulesToLoad),
-                      MODULE_LOAD_TIMEOUT_MS,
-                      `Module loading for ${slug}`,
-                    ),
-                  { "render.module_count": modulesToLoad.length },
-                );
-
-                const dataJobs = loadedModules.filter((m) => hasDataFetchingFunction(m.mod));
-                if (dataJobs.length === 0) return;
-
-                const dataResults = await withSpan(
-                  SpanNames.RENDER_FETCH_DATA,
-                  () =>
-                    withTimeoutThrow(
-                      Promise.all(
-                        dataJobs.map((job) =>
-                          this.dataFetcher
-                            .fetchData(job.mod, dataContext, this.config.mode)
-                            .then((result) => ({ ...job, result, error: null as Error | null }))
-                            .catch((error: Error) => ({ ...job, result: null, error }))
-                        ),
-                      ),
-                      DATA_FETCH_TIMEOUT_MS,
-                      `Data fetch for ${slug}`,
-                    ),
-                  { "render.data_job_count": dataJobs.length },
-                );
-
-                for (const { type, id, result, error } of dataResults) {
-                  if (error) throw error;
-                  if (!result) continue;
-
-                  if (result.notFound) {
-                    throw FILE_NOT_FOUND.create({
-                      detail: "Page/Layout returned notFound",
-                      context: { slug, component: id },
-                    });
-                  }
-
-                  if (result.redirect) {
-                    throw RENDER_ERROR.create({
-                      detail: `Redirect to ${result.redirect.destination}`,
-                      context: { slug, redirect: result.redirect },
-                    });
-                  }
-
-                  if (!result.props) continue;
-
-                  if (type === "page") {
-                    dataFetchingProps = result.props as Record<string, unknown>;
-                  } else {
-                    layoutDataMap.set(id, result.props as Record<string, unknown>);
-                  }
-                }
+                resolvedParams = dataResolution.params;
+                dataFetchingProps = Object.keys(dataResolution.pageProps).length > 0
+                  ? dataResolution.pageProps
+                  : undefined;
+                layoutDataMap = dataResolution.layoutProps;
               } catch (error) {
                 if (error instanceof VeryfrontError) throw error;
 
@@ -353,8 +396,13 @@ export class RenderPipeline {
         }
         timing.dataFetch = Math.round(performance.now() - dataFetchStart);
 
-        const mergedOptions = dataFetchingProps
-          ? { ...options, props: { ...options?.props, ...dataFetchingProps } }
+        const hasResolvedParams = Object.keys(resolvedParams).length > 0;
+        const mergedOptions = (dataFetchingProps || hasResolvedParams)
+          ? {
+            ...options,
+            ...(hasResolvedParams ? { params: resolvedParams } : {}),
+            ...(dataFetchingProps ? { props: { ...options?.props, ...dataFetchingProps } } : {}),
+          }
           : options;
 
         const bundlePrepStart = performance.now();
@@ -493,73 +541,19 @@ export class RenderPipeline {
     const pagePath = extractRelativePathShared(pageInfo.entity.path, this.config.projectDir);
     const fileExtension = getExtensionName(pageInfo.entity.path);
     const pageType = fileExtension as PageDataResponse["pageType"];
-    const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
-    const isInPagesDir = pageInfo.entity.path.includes("/pages/");
-    const isInAppDir = pageInfo.entity.path.includes("/app/");
+    const dataResolution = await this.resolveDataFetching(
+      slug,
+      pageInfo.entity.path,
+      layoutResult.nestedLayouts,
+      options,
+    );
 
-    let pageProps: Record<string, unknown> = {};
+    const pageProps: Record<string, unknown> = dataResolution.pageProps;
+    const params = dataResolution.params;
     const layoutProps: Record<string, Record<string, unknown>> = {};
-    let params: Record<string, string | string[]> = options?.params || {};
 
-    if (options?.request && options?.url && Object.keys(params).length === 0) {
-      const extracted = extractRouteParamsShared(pageInfo.entity.path, slug);
-      if (extracted.matched) params = extracted.params;
-    }
-
-    if (options?.request && options?.url) {
-      const dataContext: DataContext = {
-        params,
-        query: options.url.searchParams,
-        request: options.request,
-        url: options.url,
-      };
-
-      const modulesToLoad = collectModulesToLoad(
-        pageInfo.entity.path,
-        isComponentPage,
-        isInPagesDir || isInAppDir,
-        layoutResult.nestedLayouts,
-      );
-
-      if (modulesToLoad.length > 0) {
-        const loadedModules = await withTimeoutThrow(
-          Promise.all(
-            modulesToLoad.map((m) =>
-              this.loadModule(m.path)
-                .then((mod) => ({ ...m, mod }))
-                .catch(() => ({ ...m, mod: null }))
-            ),
-          ),
-          MODULE_LOAD_TIMEOUT_MS,
-          `Module loading for ${slug}`,
-        );
-
-        const dataJobs = loadedModules
-          .filter((r) => r.mod && hasDataFetchingFunction(r.mod))
-          .map((r) => ({
-            type: r.type,
-            id: r.id,
-            promise: this.dataFetcher.fetchData(
-              r.mod as PageWithData<unknown>,
-              dataContext,
-              this.config.mode,
-            ),
-          }));
-
-        const dataResults = await Promise.all(
-          dataJobs.map((job) => job.promise.then((result) => ({ ...job, result }))),
-        );
-
-        for (const { type, id, result } of dataResults) {
-          if (!result?.props) continue;
-
-          if (type === "page") {
-            pageProps = result.props as Record<string, unknown>;
-          } else {
-            layoutProps[id] = result.props as Record<string, unknown>;
-          }
-        }
-      }
+    for (const [layoutId, props] of dataResolution.layoutProps.entries()) {
+      layoutProps[layoutId] = props;
     }
 
     let frontmatter: Record<string, unknown> = {};

@@ -717,30 +717,6 @@ export async function ensureHttpBundlesExist(
   const fs = createFileSystem();
   const absoluteCacheDir = ensureAbsoluteDir(cacheDir);
 
-  const extractBundleRefs = (code: string): Array<{ hash: string }> => {
-    const refs: Array<{ hash: string }> = [];
-    const dedup = new Set<string>();
-
-    const absoluteRe = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-(\d+)\.mjs)/gi;
-    let match: RegExpExecArray | null;
-    while ((match = absoluteRe.exec(code)) !== null) {
-      const hash = match[2]!;
-      if (dedup.has(hash)) continue;
-      dedup.add(hash);
-      refs.push({ hash });
-    }
-
-    const relativeRe = /["']\.\/http-(\d+)\.mjs["']/gi;
-    while ((match = relativeRe.exec(code)) !== null) {
-      const hash = match[1]!;
-      if (dedup.has(hash)) continue;
-      dedup.add(hash);
-      refs.push({ hash });
-    }
-
-    return refs;
-  };
-
   const pending: Array<{ hash: string }> = bundlePaths.map((b) => ({ hash: b.hash }));
   const seen = new Set<string>();
   const failed = new Set<string>();
@@ -768,8 +744,8 @@ export async function ensureHttpBundlesExist(
     for (const { canonicalPath } of presentLocally) {
       try {
         const code = await fs.readTextFile(canonicalPath);
-        for (const ref of extractBundleRefs(code)) {
-          if (!seen.has(ref.hash)) pending.push(ref);
+        for (const dep of extractBundleDeps(code)) {
+          if (!seen.has(dep.hash)) pending.push({ hash: dep.hash });
         }
       } catch {
         /* ignore read errors for dep scanning */
@@ -804,8 +780,8 @@ export async function ensureHttpBundlesExist(
 
           try {
             const recoveredCode = await fs.readTextFile(canonicalPath);
-            for (const ref of extractBundleRefs(recoveredCode)) {
-              if (!seen.has(ref.hash)) pending.push(ref);
+            for (const dep of extractBundleDeps(recoveredCode)) {
+              if (!seen.has(dep.hash)) pending.push({ hash: dep.hash });
             }
           } catch {
             /* ignore read errors for dep scanning */
@@ -836,8 +812,8 @@ export async function ensureHttpBundlesExist(
             getCachedPaths().set(cacheKey, canonicalPath);
           }
 
-          for (const ref of extractBundleRefs(code)) {
-            if (!seen.has(ref.hash)) pending.push(ref);
+          for (const dep of extractBundleDeps(code)) {
+            if (!seen.has(dep.hash)) pending.push({ hash: dep.hash });
           }
         } catch (error) {
           logger.error("[HTTP-CACHE] Failed to write bundle to disk", { hash, error });
