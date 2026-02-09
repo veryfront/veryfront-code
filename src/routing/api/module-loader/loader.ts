@@ -14,6 +14,7 @@ import * as pathHelper from "#veryfront/compat/path";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isCompiledBinary } from "#veryfront/utils";
+import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 
 const FILE_EXTENSIONS: string[] = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs"];
 
@@ -164,25 +165,28 @@ function createImportMapPlugin(
         return { path: absolutePath, namespace: "import-map" };
       });
 
-      build.onLoad({ filter: /.*/, namespace: "import-map" }, async (args) => {
-        try {
-          const { filePath, contents } = await readFileWithExtensions(
-            adapter,
-            args.path,
-            FILE_EXTENSIONS,
-          );
+      build.onLoad(
+        { filter: /.*/, namespace: "import-map" },
+        wrapWithCurrentContext(async (args) => {
+          try {
+            const { filePath, contents } = await readFileWithExtensions(
+              adapter,
+              args.path,
+              FILE_EXTENSIONS,
+            );
 
-          return {
-            contents,
-            loader: getLoaderForFile(filePath),
-            resolveDir: pathHelper.dirname(filePath),
-          };
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          logger.error(`[API] Failed to load file via import map: ${args.path}`, error);
-          return { errors: [{ text: `Failed to load: ${msg}` }] };
-        }
-      });
+            return {
+              contents,
+              loader: getLoaderForFile(filePath),
+              resolveDir: pathHelper.dirname(filePath),
+            };
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            logger.error(`[API] Failed to load file via import map: ${args.path}`, error);
+            return { errors: [{ text: `Failed to load: ${msg}` }] };
+          }
+        }),
+      );
     },
   };
 }
@@ -207,25 +211,33 @@ function createAdapterResolvePlugin(adapter: RuntimeAdapter): Plugin {
         return { path: absolutePath, namespace: "vf-adapter" };
       });
 
-      build.onLoad({ filter: /.*/, namespace: "vf-adapter" }, async (args) => {
-        try {
-          const { filePath, contents } = await readFileWithExtensions(
-            adapter,
-            args.path,
-            FILE_EXTENSIONS,
-          );
+      // Wrap the onLoad callback with wrapWithCurrentContext to preserve the
+      // AsyncLocalStorage context. esbuild runs in a child process and its plugin
+      // callbacks fire from the child process message handler, losing the
+      // AsyncLocalStorage store. Without this, MultiProjectFSAdapter.getAdapter()
+      // cannot resolve the per-project adapter and all file reads fail silently.
+      build.onLoad(
+        { filter: /.*/, namespace: "vf-adapter" },
+        wrapWithCurrentContext(async (args) => {
+          try {
+            const { filePath, contents } = await readFileWithExtensions(
+              adapter,
+              args.path,
+              FILE_EXTENSIONS,
+            );
 
-          return {
-            contents,
-            loader: getLoaderForFile(filePath),
-            resolveDir: pathHelper.dirname(filePath),
-          };
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          logger.error(`[API] Failed to load via adapter: ${args.path}`, error);
-          return { errors: [{ text: `Failed to load: ${msg}` }] };
-        }
-      });
+            return {
+              contents,
+              loader: getLoaderForFile(filePath),
+              resolveDir: pathHelper.dirname(filePath),
+            };
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            logger.error(`[API] Failed to load via adapter: ${args.path}`, error);
+            return { errors: [{ text: `Failed to load: ${msg}` }] };
+          }
+        }),
+      );
     },
   };
 }

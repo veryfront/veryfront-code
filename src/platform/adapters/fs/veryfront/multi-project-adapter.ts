@@ -270,6 +270,25 @@ export function getCurrentRequestContext(): RequestContext | null {
   return asyncLocalStorage.getStore() ?? null;
 }
 
+/**
+ * Wraps a callback to preserve the current AsyncLocalStorage context.
+ *
+ * esbuild communicates with its Go binary via a child process. When esbuild's
+ * plugin callbacks (onResolve, onLoad) fire, they run in the child process's
+ * message handler context, which does NOT inherit the AsyncLocalStorage store
+ * from the original caller. This utility captures the current store and
+ * re-enters it inside the callback, so that `getAdapter()` can resolve the
+ * correct per-project adapter.
+ */
+export function wrapWithCurrentContext<T extends (...args: never[]) => unknown>(fn: T): T {
+  const store = asyncLocalStorage.getStore();
+  if (!store) return fn;
+
+  return ((...args: Parameters<T>) => {
+    return asyncLocalStorage.run(store, () => fn(...args));
+  }) as unknown as T;
+}
+
 export function getRequestScopedFile(cacheKey: string): string | undefined {
   return asyncLocalStorage.getStore()?.fileCache?.get(cacheKey);
 }
