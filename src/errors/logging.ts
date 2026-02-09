@@ -44,7 +44,9 @@ export function logError(
     status: error.status,
     docs: `https://veryfront.com/docs/errors/${error.slug}`,
     timestamp: new Date().toISOString(),
-    context: (context || error.context) as Record<string, unknown> | undefined,
+    context: context
+      ? { ...(error.context as Record<string, unknown> ?? {}), ...context }
+      : error.context as Record<string, unknown> | undefined,
   };
 
   if (isProduction()) {
@@ -60,8 +62,11 @@ export function logError(
       console.error(`  💡 Suggestion: ${error.suggestion}`);
     }
     console.error(`  📚 Docs: ${entry.docs}`);
-    if (context || error.context) {
-      console.error(`  Context: ${JSON.stringify(context || error.context, null, 2)}`);
+    const mergedContext = context
+      ? { ...(error.context as Record<string, unknown> ?? {}), ...context }
+      : error.context;
+    if (mergedContext) {
+      console.error(`  Context: ${JSON.stringify(mergedContext, null, 2)}`);
     }
   }
 }
