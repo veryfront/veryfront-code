@@ -154,6 +154,75 @@ export class SSRModuleLoader {
     }
   }
 
+  private async importModuleFromCacheEntry(
+    filePath: string,
+    fileName: string,
+    cacheEntry: ModuleCacheEntry,
+  ): Promise<Record<string, unknown>> {
+    try {
+      return (await withSpan(
+        SpanNames.SSR_DYNAMIC_IMPORT,
+        () => import(`file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}`),
+        { "ssr.file": fileName },
+      )) as Record<string, unknown>;
+    } catch (importError) {
+      const classifiedError = this.classifyImportError(importError);
+
+      if (classifiedError.type === "http-bundle-missing") {
+        const hash = classifiedError.hash;
+        const cacheDir = getHttpBundleCacheDir();
+
+        logger.error("[SSR-MODULE-LOADER] Missing HTTP bundle after ensureHttpBundlesExist", {
+          file: filePath.slice(-40),
+          hash,
+          tempPath: cacheEntry.tempPath,
+          contentHash: cacheEntry.contentHash,
+          cacheDir,
+          expectedPath: `${cacheDir}/http-${hash}.mjs`,
+        });
+
+        const { recoverHttpBundleByHash } = await import(
+          "#veryfront/transforms/esm/http-cache.ts"
+        );
+        const recovered = await recoverHttpBundleByHash(hash, cacheDir);
+
+        if (recovered) {
+          logger.info("[SSR-MODULE-LOADER] HTTP bundle recovered, retrying import", {
+            hash,
+            file: filePath.slice(-40),
+          });
+          return (await import(
+            `file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}&retry=1`
+          )) as Record<string, unknown>;
+        }
+
+        this.cache.invalidateFilePathCacheEntry(filePath, cacheEntry);
+
+        logger.error("[SSR-MODULE-LOADER] HTTP bundle recovery failed, cache invalidated", {
+          hash,
+          file: filePath.slice(-40),
+          cacheDir,
+          hint: "Bundle may have expired from Redis (24h TTL) while transform was still cached",
+        });
+        throw importError;
+      }
+
+      if (classifiedError.type === "module-not-found") {
+        logger.error(
+          "[SSR-MODULE-LOADER] Cached module has missing dependency, invalidating cache",
+          {
+            file: filePath.slice(-40),
+            tempPath: cacheEntry.tempPath,
+            error: classifiedError.message.slice(0, 200),
+          },
+        );
+        this.cache.invalidateFilePathCacheEntry(filePath, cacheEntry);
+      }
+
+      throw importError;
+    }
+  }
+
   loadModule(
     filePath: string,
     source: string,
@@ -187,72 +256,7 @@ export class SSRModuleLoader {
             );
           }
 
-          let mod: Record<string, unknown>;
-          try {
-            mod = (await withSpan(
-              SpanNames.SSR_DYNAMIC_IMPORT,
-              () => import(`file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}`),
-              { "ssr.file": fileName },
-            )) as Record<string, unknown>;
-          } catch (importError) {
-            const classifiedError = this.classifyImportError(importError);
-
-            if (classifiedError.type === "http-bundle-missing") {
-              const hash = classifiedError.hash;
-              const cacheDir = getHttpBundleCacheDir();
-
-              logger.error("[SSR-MODULE-LOADER] Missing HTTP bundle after ensureHttpBundlesExist", {
-                file: filePath.slice(-40),
-                hash,
-                tempPath: cacheEntry.tempPath,
-                contentHash: cacheEntry.contentHash,
-                cacheDir,
-                expectedPath: `${cacheDir}/http-${hash}.mjs`,
-              });
-
-              const { recoverHttpBundleByHash } = await import(
-                "#veryfront/transforms/esm/http-cache.ts"
-              );
-              const recovered = await recoverHttpBundleByHash(hash, cacheDir);
-
-              if (recovered) {
-                logger.info("[SSR-MODULE-LOADER] HTTP bundle recovered, retrying import", {
-                  hash,
-                  file: filePath.slice(-40),
-                });
-                mod = (await import(
-                  `file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}&retry=1`
-                )) as Record<string, unknown>;
-              } else {
-                this.cache.invalidateFilePathCacheEntry(filePath, cacheEntry);
-
-                logger.error("[SSR-MODULE-LOADER] HTTP bundle recovery failed, cache invalidated", {
-                  hash,
-                  file: filePath.slice(-40),
-                  cacheDir,
-                  hint:
-                    "Bundle may have expired from Redis (24h TTL) while transform was still cached",
-                });
-                throw importError;
-              }
-            }
-
-            if (classifiedError.type === "module-not-found") {
-              logger.error(
-                "[SSR-MODULE-LOADER] Cached module has missing dependency, invalidating cache",
-                {
-                  file: filePath.slice(-40),
-                  tempPath: cacheEntry.tempPath,
-                  error: classifiedError.message.slice(0, 200),
-                },
-              );
-              this.cache.invalidateFilePathCacheEntry(filePath, cacheEntry);
-
-              throw importError;
-            }
-
-            throw importError;
-          }
+          const mod = await this.importModuleFromCacheEntry(filePath, fileName, cacheEntry);
 
           this.circuitBreaker.recordSuccess(circuitKey);
           return extractComponent(mod, filePath);
