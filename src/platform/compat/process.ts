@@ -52,7 +52,25 @@ export function env(): Record<string, string> {
   return {};
 }
 
+// Lazy-loaded reference to getProjectEnv from server/project-env/storage.ts.
+// Uses globalThis to avoid circular imports (process.ts is low-level, project-env is high-level).
+let _getProjectEnv: ((key: string) => string | undefined) | null = null;
+
+function getProjectEnvSafe(key: string): string | undefined {
+  if (_getProjectEnv === null) {
+    const mod = (globalThis as Record<string, unknown>).__vfProjectEnvGetter as
+      | ((key: string) => string | undefined)
+      | undefined;
+    _getProjectEnv = mod ?? (() => undefined);
+  }
+  return _getProjectEnv(key);
+}
+
 export function getEnv(key: string): string | undefined {
+  // Check per-request project env overlay first (AsyncLocalStorage)
+  const projectValue = getProjectEnvSafe(key);
+  if (projectValue !== undefined) return projectValue;
+
   if (IS_DENO) return Deno.env.get(key);
   if (hasNodeProcess) return nodeProcess!.env[key];
   return undefined;

@@ -59,6 +59,8 @@ export interface RequestHeaders {
   branchName: string | undefined;
   /** Environment from x-environment header */
   environment: string | undefined;
+  /** Environment ID from x-environment-id header (for env var resolution) */
+  environmentId: string | undefined;
   /** Token from authorization header */
   token: string | undefined;
   /** Content source ID from x-content-source-id header */
@@ -79,6 +81,7 @@ export function extractRequestHeaders(req: Request, url: URL): RequestHeaders {
     branchName: req.headers.get("x-branch-name") ?? undefined,
     environment: req.headers.get("x-environment") ?? url.searchParams.get("x-environment") ??
       undefined,
+    environmentId: req.headers.get("x-environment-id") ?? undefined,
     token: undefined, // Extracted separately from request context
     contentSourceId: req.headers.get("x-content-source-id") ?? undefined,
     projectPath: req.headers.get("x-project-path") ?? undefined,
