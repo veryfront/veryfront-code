@@ -4,9 +4,6 @@ import {
   DEFAULT_RETRY_MAX_ATTEMPTS,
   DEFAULT_RETRY_MAX_DELAY_MS,
 } from "#veryfront/utils/constants/retry.ts";
-import { VeryfrontError } from "./types.ts";
-import { wrapWithContext } from "./middleware/wrap-unknown.ts";
-
 function safeLog(logFn: () => void): void {
   try {
     logFn();
@@ -17,25 +14,6 @@ function safeLog(logFn: () => void): void {
       // Silently ignore if even warning fails
     }
   }
-}
-
-/**
- * Wrap an error with additional context and message
- *
- * Uses the unified wrapWithContext from middleware for consistent wrapping.
- * Preserves slug for VeryfrontError, wraps plain Errors as unknown-error.
- *
- * @param error - Any error value
- * @param message - Additional message to prepend
- * @param context - Additional context to add
- * @returns VeryfrontError with added context
- */
-export function wrapError(
-  error: unknown,
-  message: string,
-  context?: unknown,
-): VeryfrontError {
-  return wrapWithContext(error, message, context as Record<string, unknown> | undefined);
 }
 
 export async function handleErrorWithFallback<T>(

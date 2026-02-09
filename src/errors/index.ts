@@ -47,7 +47,6 @@ export {
   handleErrorWithFallback,
   handleErrorWithFallbackSync,
   retryWithBackoff,
-  wrapError,
 } from "./error-handlers.ts";
 
 export {

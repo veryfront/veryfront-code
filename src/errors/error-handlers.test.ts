@@ -4,40 +4,9 @@ import {
   handleErrorWithFallback,
   handleErrorWithFallbackSync,
   retryWithBackoff,
-  wrapError,
 } from "./error-handlers.ts";
-import { VeryfrontError } from "./types.ts";
 
 describe("error-handlers", () => {
-  describe("wrapError", () => {
-    it("should wrap a plain Error with message and context", () => {
-      const original = new Error("Original error");
-      const wrapped = wrapError(original, "Wrapper message", { key: "value" });
-
-      assertEquals(wrapped.message, "Wrapper message: Original error");
-      assertEquals(wrapped.slug, "unknown-error");
-      assertEquals((wrapped.context as { key?: string } | undefined)?.key, "value");
-    });
-
-    it("should preserve slug from VeryfrontError", () => {
-      const original = new VeryfrontError("Original", {
-        slug: "build-failed",
-        category: "BUILD",
-        status: 500,
-        title: "Build failed",
-      });
-      const wrapped = wrapError(original, "Wrapped");
-
-      assertEquals(wrapped.slug, "build-failed");
-    });
-
-    it("should convert non-Error to Error", () => {
-      const wrapped = wrapError("string error", "Wrapper");
-
-      assertEquals(wrapped.message, "Wrapper: string error");
-    });
-  });
-
   describe("handleErrorWithFallback", () => {
     it("should return function result on success", async () => {
       const result = await handleErrorWithFallback(() => "success", "fallback");
