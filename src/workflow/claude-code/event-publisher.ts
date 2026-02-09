@@ -104,7 +104,7 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
     if (this.initialized) return;
 
     // Dynamic import to avoid loading Redis if not used
-    const { createClient } = await import("npm:redis@4.6.13");
+    const { createClient } = await import("redis");
 
     this.publishClient = createClient({ url: this.config.url });
     this.subscribeClient = createClient({ url: this.config.url });

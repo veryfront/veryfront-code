@@ -104,7 +104,7 @@ export class RedisCache implements TokenCache {
         const client = this.client!;
 
         const pattern = `${this.prefix}*`;
-        let cursor = "0";
+        let cursor = 0;
         let totalDeleted = 0;
 
         do {
@@ -113,12 +113,12 @@ export class RedisCache implements TokenCache {
             COUNT: DEFAULT_SCAN_COUNT,
           });
 
-          cursor = String(nextCursor);
+          cursor = nextCursor;
 
           if (keys.length > 0) {
             totalDeleted += await client.del(keys);
           }
-        } while (cursor !== "0");
+        } while (cursor !== 0);
 
         if (totalDeleted > 0) {
           console.log(`[RedisCache] Cleared ${totalDeleted} keys`);
