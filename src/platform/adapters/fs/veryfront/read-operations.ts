@@ -4,6 +4,7 @@ import type { VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { logContentMetric, type MissReason } from "./content-metrics.ts";
 import { FileListIndex } from "./file-list-index.ts";
+import { InFlightRequestDeduper } from "./in-flight-dedupe.ts";
 import { getRequestScopedFile, setRequestScopedFile } from "./multi-project-adapter.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import {
@@ -47,18 +48,16 @@ export interface ContentContextProvider {
 const IN_FLIGHT_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_IN_FLIGHT_REQUESTS = 100;
 
-interface InFlightEntry {
-  promise: Promise<string>;
-  startedAt: number;
-}
-
 function previewText(content: string, max = 80): string {
   return content.length > max ? `${content.slice(0, max)}...` : content;
 }
 
 export class ReadOperations {
-  private readonly inFlightRequests = new Map<string, InFlightEntry>();
-  private lastCleanupTime = 0;
+  private readonly inFlightRequests = new InFlightRequestDeduper<string>({
+    timeoutMs: IN_FLIGHT_REQUEST_TIMEOUT_MS,
+    maxEntries: MAX_IN_FLIGHT_REQUESTS,
+    cleanupIntervalMs: 1000,
+  });
   private readonly fileListIndex: FileListIndex;
 
   constructor(
@@ -80,40 +79,6 @@ export class ReadOperations {
 
   clearFileListIndex(): void {
     this.fileListIndex.clear();
-  }
-
-  private cleanupStaleInFlightRequests(): void {
-    const now = Date.now();
-    if (now - this.lastCleanupTime < 1000) return;
-
-    this.lastCleanupTime = now;
-
-    let cleanedCount = 0;
-
-    for (const [key, entry] of this.inFlightRequests) {
-      if (now - entry.startedAt > IN_FLIGHT_REQUEST_TIMEOUT_MS) {
-        this.inFlightRequests.delete(key);
-        cleanedCount++;
-      }
-    }
-
-    if (this.inFlightRequests.size > MAX_IN_FLIGHT_REQUESTS) {
-      const entries = [...this.inFlightRequests.entries()].sort(
-        (a, b) => a[1].startedAt - b[1].startedAt,
-      );
-      const toRemove = entries.slice(0, this.inFlightRequests.size - MAX_IN_FLIGHT_REQUESTS);
-      for (const [key] of toRemove) {
-        this.inFlightRequests.delete(key);
-        cleanedCount++;
-      }
-    }
-
-    if (cleanedCount > 0) {
-      logger.warn("[ReadOperations] Cleaned up in-flight requests", {
-        cleanedCount,
-        remainingCount: this.inFlightRequests.size,
-      });
-    }
   }
 
   readFile(path: string): Promise<Uint8Array> {
@@ -297,7 +262,10 @@ export class ReadOperations {
       }
     }
 
-    this.cleanupStaleInFlightRequests();
+    const cleanupResult = this.inFlightRequests.cleanup();
+    if (cleanupResult) {
+      logger.warn("[ReadOperations] Cleaned up in-flight requests", cleanupResult);
+    }
 
     const existingEntry = this.inFlightRequests.get(cacheKey);
     if (existingEntry) {
@@ -365,7 +333,7 @@ export class ReadOperations {
       }
     })();
 
-    this.inFlightRequests.set(cacheKey, { promise: fetchPromise, startedAt: Date.now() });
+    this.inFlightRequests.set(cacheKey, fetchPromise, Date.now());
     return fetchPromise;
   }
 
