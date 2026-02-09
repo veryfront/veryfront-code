@@ -125,6 +125,7 @@
     "#veryfront/routing": "./src/routing/index.ts",
     "#veryfront/security": "./src/security/index.ts",
     "#veryfront/server": "./src/server/index.ts",
+    "#veryfront/server/project-env": "./src/server/project-env/index.ts",
     "#veryfront/testing": "./src/testing/index.ts",
     "#veryfront/testing/assert": "./src/testing/assert.ts",
     "#veryfront/testing/bdd": "./src/testing/bdd.ts",

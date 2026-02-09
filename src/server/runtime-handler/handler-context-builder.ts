@@ -54,6 +54,8 @@ export interface HandlerContextOptions {
   isLocalProject: boolean;
   /** Module server URL */
   moduleServerUrl: string | undefined;
+  /** Environment ID for env var resolution (from proxy x-environment-id header) */
+  environmentId: string | undefined;
 }
 
 /**
@@ -106,6 +108,7 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
     requestContext: { ...opts.requestContext, mode: opts.resolvedEnvironment },
     routeRegistry: opts.routeRegistry,
     isLocalProject: opts.isLocalProject,
+    environmentId: opts.environmentId,
     enriched: enrichedContext,
   };
 }

@@ -15,6 +15,7 @@ import {
   parseLocalImports,
 } from "#veryfront/transforms/esm/import-parser.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { verifyCacheFileExists, writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -153,6 +154,28 @@ export class SSRModuleLoader {
     fileName: string,
     cacheEntry: ModuleCacheEntry,
   ): Promise<Record<string, unknown>> {
+    // Verify the cache file exists before attempting dynamic import
+    const fileExists = await verifyCacheFileExists(
+      this.cache.getFs(),
+      cacheEntry.tempPath,
+      "SSR-MODULE-LOADER",
+    );
+    if (!fileExists) {
+      logger.debug("[SSR-MODULE-LOADER] Cache file missing before import, invalidating", {
+        file: filePath.slice(-40),
+        tempPath: cacheEntry.tempPath,
+        contentHash: cacheEntry.contentHash,
+      });
+      this.cache.invalidateFilePathCacheEntry(filePath, cacheEntry);
+      throw toError(
+        createError({
+          type: "build",
+          message: `Cache file missing: ${cacheEntry.tempPath}`,
+          context: { file: filePath, phase: "transform" },
+        }),
+      );
+    }
+
     try {
       return (await withSpan(
         SpanNames.SSR_DYNAMIC_IMPORT,
@@ -354,21 +377,25 @@ export class SSRModuleLoader {
         if (isValidRedisCode) {
           const transformedHash = await this.cache.hashContentAsync(redisCode);
           const tempPath = await this.cache.getTempPath(filePath, transformedHash);
-          const fs = this.cache.getFs();
-          await fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), {
-            recursive: true,
-          });
-          await fs.writeTextFile(tempPath, redisCode);
-          verifiedHttpBundlePaths.set(`${tempPath}:${transformedHash}`, true);
+          const written = await writeCacheFile(
+            this.cache.getFs(),
+            tempPath,
+            redisCode,
+            "SSR-MODULE-LOADER",
+          );
+          if (written) {
+            verifiedHttpBundlePaths.set(`${tempPath}:${transformedHash}`, true);
 
-          const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
-          globalModuleCache.set(contentCacheKey, entry);
-          globalModuleCache.set(filePathCacheKey, entry);
+            const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
+            globalModuleCache.set(contentCacheKey, entry);
+            globalModuleCache.set(filePathCacheKey, entry);
 
-          logger.debug("[SSR-MODULE-LOADER] Redis cache hit", { file: filePath.slice(-40) });
+            logger.debug("[SSR-MODULE-LOADER] Redis cache hit", { file: filePath.slice(-40) });
 
-          await this.depValidator.ensureDependenciesExist(code, filePath, depth);
-          return;
+            await this.depValidator.ensureDependenciesExist(code, filePath, depth);
+            return;
+          }
+          // writeCacheFile returned false — fall through to fresh transform
         }
       }
     }
@@ -581,23 +608,16 @@ export class SSRModuleLoader {
 
         const transformedHash = await this.cache.hashContentAsync(transformed);
 
-        let tempPath: string;
-        const fs = this.cache.getFs();
-        try {
-          tempPath = await this.cache.getTempPath(filePath, transformedHash);
-          await fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), {
-            recursive: true,
-          });
-          await fs.writeTextFile(tempPath, transformed);
-        } catch (writeError) {
-          if (this.cache.isCacheWriteSkippedError(writeError)) {
-            logger.debug("[SSR-MODULE-LOADER] Cache write skipped (directory removed)", {
-              filePath,
-            });
-            return;
-          }
-
-          throw writeError;
+        const tempPath = await this.cache.getTempPath(filePath, transformedHash);
+        const written = await writeCacheFile(
+          this.cache.getFs(),
+          tempPath,
+          transformed,
+          "SSR-MODULE-LOADER",
+        );
+        if (!written) {
+          // Cache file write failed (directory removed concurrently or verification failed)
+          return;
         }
 
         if (isSSRDistributedCacheEnabled()) {

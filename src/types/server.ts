@@ -74,6 +74,8 @@ export interface HandlerContext {
   requestContext?: RequestContext;
   /** Whether this request targets a local filesystem project (per-request, from adapter resolution). */
   isLocalProject?: boolean;
+  /** Environment ID for per-project env var resolution (from proxy x-environment-id header) */
+  environmentId?: string;
   /** Route registry for handler chain inspection (dev dashboard) */
   routeRegistry?: {
     getHandlers(): ReadonlyArray<{ metadata: HandlerMetadata }>;

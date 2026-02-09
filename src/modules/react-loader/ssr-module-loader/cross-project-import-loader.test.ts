@@ -1,9 +1,34 @@
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
+import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { CrossProjectImport } from "#veryfront/transforms/esm/import-parser.ts";
 import { globalCrossProjectCache } from "./cache/index.ts";
 import { transformCrossProjectImportFlow } from "./cross-project-import-loader.ts";
+
+function createMockCacheFs(overrides: Partial<FileSystem> = {}): FileSystem {
+  return {
+    readTextFile: () => Promise.resolve(""),
+    readFile: () => Promise.resolve(new Uint8Array()),
+    writeTextFile: () => Promise.resolve(),
+    writeFile: () => Promise.resolve(),
+    exists: () => Promise.resolve(true),
+    stat: () =>
+      Promise.resolve({
+        isFile: true,
+        isDirectory: false,
+        isSymlink: false,
+        size: 100,
+        mtime: null,
+      }),
+    mkdir: () => Promise.resolve(),
+    readDir: () => (async function* () {})(),
+    remove: () => Promise.resolve(),
+    makeTempDir: () => Promise.resolve("/tmp/test"),
+    chmod: () => Promise.resolve(),
+    ...overrides,
+  } as FileSystem;
+}
 
 const crossProjectImport: CrossProjectImport = {
   specifier: "@acme-ui@1.2.3/@/components/Button.tsx",
@@ -35,10 +60,7 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
       cache: {
         hashContentAsync: async () => "unused",
         getTempPath: async () => "/tmp/unused.mjs",
-        getFs: () => ({
-          mkdir: async () => {},
-          writeTextFile: async () => {},
-        }),
+        getFs: () => createMockCacheFs(),
       },
       withTransformCapacity: async <T>(
         _syntheticFilePath: string,
@@ -90,15 +112,16 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
           assertEquals(contentHash, "1234abcd");
           return "/tmp/cross-project-transformed.mjs";
         },
-        getFs: () => ({
-          mkdir: async (path: string) => {
-            mkdirPath = path;
-          },
-          writeTextFile: async (path: string, data: string) => {
-            writePath = path;
-            writeCode = data;
-          },
-        }),
+        getFs: () =>
+          createMockCacheFs({
+            mkdir: async (path: string) => {
+              mkdirPath = path;
+            },
+            writeTextFile: async (path: string, data: string) => {
+              writePath = path;
+              writeCode = data;
+            },
+          }),
       },
       withTransformCapacity: async (syntheticFilePath, operation) => {
         capacityPath = syntheticFilePath;
@@ -168,10 +191,7 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
           cache: {
             hashContentAsync: async () => "unused",
             getTempPath: async () => "/tmp/unused.mjs",
-            getFs: () => ({
-              mkdir: async () => {},
-              writeTextFile: async () => {},
-            }),
+            getFs: () => createMockCacheFs(),
           },
           withTransformCapacity: async (_syntheticFilePath, operation) => await operation(),
           fetchImpl: async () =>

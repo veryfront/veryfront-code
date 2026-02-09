@@ -1,22 +1,19 @@
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
+import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { transformToESM } from "#veryfront/transforms/esm/index.ts";
 import type { CrossProjectImport } from "#veryfront/transforms/esm/import-parser.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
+import { writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { globalCrossProjectCache } from "./cache/index.ts";
 import type { SSRModuleLoaderOptions } from "./types.ts";
 
-export interface CrossProjectImportCacheFs {
-  mkdir(path: string, options: { recursive: boolean }): Promise<void>;
-  writeTextFile(path: string, data: string): Promise<void>;
-}
-
 export interface CrossProjectImportCache {
   hashContentAsync(content: string): Promise<string>;
   getTempPath(filePath: string, contentHash?: string): Promise<string>;
-  getFs(): CrossProjectImportCacheFs;
+  getFs(): FileSystem;
 }
 
 export interface TransformCrossProjectImportFlowOptions {
@@ -97,8 +94,6 @@ export async function transformCrossProjectImportFlow(
     const ext = path.match(/\.(tsx?|jsx?|mdx)$/)?.[0] ?? ".tsx";
     const syntheticFilePath = `cross-project/${projectRef}/@/${path}`;
     const tempPath = await cache.getTempPath(syntheticFilePath, contentHash);
-    const fs = cache.getFs();
-    await fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), { recursive: true });
 
     return await withTransformCapacity(syntheticFilePath, async () => {
       const projectId = options.projectId;
@@ -122,7 +117,15 @@ export async function transformCrossProjectImportFlow(
         transformOpts,
       );
 
-      await fs.writeTextFile(tempPath, transformed);
+      const written = await writeCacheFile(
+        cache.getFs(),
+        tempPath,
+        transformed,
+        "SSR-MODULE-LOADER",
+      );
+      if (!written) {
+        throw new Error(`Failed to write cross-project import cache file: ${tempPath}`);
+      }
 
       globalCrossProjectCache.set(cacheKey, { tempPath, contentHash });
 

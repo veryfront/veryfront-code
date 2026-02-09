@@ -87,6 +87,11 @@ import { buildHandlerContext, buildMinimalContext } from "./handler-context-buil
 import { handleProjectsRequest, shouldHandleProjectsUI } from "./projects-handler.ts";
 import { HTTP_GATEWAY_TIMEOUT, isLightweightPath, isMonitoringPath } from "./request-utils.ts";
 import { withRequestTimeout } from "./timeout-manager.ts";
+import {
+  EnvironmentVariableCache,
+  fetchProjectEnvVars,
+  runWithProjectEnv,
+} from "../project-env/index.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -140,6 +145,13 @@ export function createVeryfrontHandler(
   }
 
   const securityLoader = new SecurityConfigLoader(projectDir, adapter, opts.config);
+
+  // Per-project environment variable cache (fetches from API, caches with 60s TTL)
+  const apiBaseUrl = adapter.env.get("VERYFRONT_API_BASE_URL") ?? "https://api.veryfront.com/api";
+  const envVarCache = new EnvironmentVariableCache(
+    (environmentId, token, projectSlug) =>
+      fetchProjectEnvVars(apiBaseUrl, projectSlug, environmentId, token),
+  );
 
   let config: VeryfrontConfig | undefined = opts.config;
   const configPromise =
@@ -387,13 +399,39 @@ export function createVeryfrontHandler(
             routeRegistry: registry,
             isLocalProject: adapterRes.isLocalProject,
             moduleServerUrl: opts.moduleServerUrl,
+            environmentId: headers.environmentId,
           });
+
+          // Fetch per-project env vars for remote projects
+          let envVarsForRequest: Record<string, string> = {};
+          if (
+            !adapterRes.isLocalProject &&
+            headers.environmentId &&
+            reqCtx.token &&
+            projectRes.projectSlug
+          ) {
+            envVarsForRequest = await envVarCache.get(
+              headers.environmentId,
+              reqCtx.token,
+              projectRes.projectSlug,
+            );
+          }
 
           await incrementRequestMetrics();
 
+          const executeRoute = () => registry.execute(req, ctx);
+          // Only activate env isolation in proxy mode (multi-tenant).
+          // reqCtx.token indicates the request came through the proxy with auth.
+          // Without it (standalone / test), host env must remain accessible.
+          const shouldIsolateEnv = !adapterRes.isLocalProject && !!reqCtx.token;
           const response = await withSpan(
             SpanNames.HANDLER_EXECUTE,
-            () => registry.execute(req, ctx),
+            () => {
+              if (shouldIsolateEnv) {
+                return runWithProjectEnv(envVarsForRequest, executeRoute);
+              }
+              return executeRoute();
+            },
             {
               "handler.project_slug": projectRes.projectSlug || "unknown",
               "handler.path": url.pathname,
