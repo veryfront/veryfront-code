@@ -200,12 +200,15 @@ export async function resolveProject(
   }
 
   // Veryfront domain release lookup (for production domains without releaseId)
+  // Check headers.releaseId to skip if proxy already resolved it
+  const proxyAlreadyResolvedRelease = !!headers.releaseId;
+
   if (
     parsedDomain.isVeryfrontDomain &&
     parsedDomain.isDraft === false &&
     projectSlug &&
     !releaseId &&
-    !opts.reqCtx.token &&
+    !proxyAlreadyResolvedRelease &&
     opts.config?.fs?.veryfront &&
     !shouldSkipDomainLookup
   ) {
@@ -225,7 +228,7 @@ export async function resolveProject(
 
       if (lookupResult?.release_id) {
         releaseId = lookupResult.release_id;
-        projectId = projectId ?? lookupResult.project_id;
+        projectId = lookupResult.project_id;
         environmentName = environmentName ?? lookupResult.environment?.name;
         proxyEnv = "production";
 

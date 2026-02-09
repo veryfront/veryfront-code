@@ -32,7 +32,8 @@ const FRAMEWORK_DIRS = [
   "markdown",
   "chat",
   "mdx",
-  "agent/react",
+  "agent",
+  "workflow",
 ];
 
 // Extensions to process
