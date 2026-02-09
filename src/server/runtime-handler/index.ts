@@ -16,7 +16,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
-import { TIMEOUT_ERROR, UNKNOWN_ERROR } from "#veryfront/errors/error-registry.ts";
+import { UNKNOWN_ERROR } from "#veryfront/errors/error-registry.ts";
 import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-boundary.ts";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
@@ -296,8 +296,6 @@ export function createVeryfrontHandler(
           await configPromise;
         });
 
-        let isLocalProject = false;
-
         const executeHandler = async (): Promise<Response> => {
           const reqCtx = createRequestContext(req);
 
@@ -349,8 +347,6 @@ export function createVeryfrontHandler(
             headerProjectPath: headers.projectPath,
             isProxyMode,
           });
-
-          isLocalProject = !!adapterRes.isLocalProject;
 
           // Resolve environment and validate
           const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host;
