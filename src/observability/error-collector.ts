@@ -3,20 +3,14 @@
  *
  * Aggregates compilation, bundle, and runtime errors from the dev server
  * for exposure via MCP to coding agents.
- *
- * Migrated to use ErrorCategory from slug registry for unified error handling.
  **************************/
 
 import type { ErrorCategory } from "#veryfront/errors/types.ts";
 
-/**
- * @deprecated Use ErrorCategory from slug registry instead
- * Legacy type maintained for backward compatibility with MCP consumers
- */
 export type ErrorType = "compile" | "runtime" | "bundle" | "hmr" | "module";
 
 /**
- * Map legacy ErrorType to ErrorCategory from slug registry
+ * Map ErrorType to ErrorCategory from slug registry
  */
 const ERROR_TYPE_TO_CATEGORY: Record<ErrorType, ErrorCategory> = {
   compile: "BUILD",
@@ -31,7 +25,7 @@ export interface DevError {
   id: string;
   /** Error category from slug registry (BUILD, RUNTIME, DEV, MODULE, etc.) */
   category: ErrorCategory;
-  /** @deprecated Use category instead - kept for backward compatibility */
+  /** Error type */
   type: ErrorType;
   /** Error slug from registry (if available) */
   slug?: string;
@@ -52,7 +46,7 @@ export interface DevError {
 }
 
 export interface ErrorFilter {
-  /** @deprecated Use category instead */
+  /** Filter by type */
   type?: ErrorType | ErrorType[];
   /** Filter by error category (BUILD, RUNTIME, DEV, MODULE, etc.) */
   category?: ErrorCategory | ErrorCategory[];
@@ -79,15 +73,15 @@ export class ErrorCollector {
   }
 
   add(error: Omit<DevError, "id" | "timestamp">): DevError {
-    // Ensure backward compatibility: if only type is provided, compute category
-    const category = error.category ?? ERROR_TYPE_TO_CATEGORY[error.type];
-    // Ensure backward compatibility: if only category is provided, derive type
-    const type = error.type ?? this.categoryToType(category);
+    const expectedCategory = ERROR_TYPE_TO_CATEGORY[error.type];
+    if (error.category !== expectedCategory) {
+      throw new Error(
+        `ErrorCollector.add() received mismatched type/category: ${error.type} must use ${expectedCategory}, got ${error.category}`,
+      );
+    }
 
     const fullError: DevError = {
       ...error,
-      category,
-      type,
       id: this.generateId(),
       timestamp: Date.now(),
     };
@@ -108,22 +102,6 @@ export class ErrorCollector {
     }
 
     return fullError;
-  }
-
-  private categoryToType(category: ErrorCategory): ErrorType {
-    // Reverse mapping for backward compatibility
-    switch (category) {
-      case "BUILD":
-        return "compile"; // Default BUILD to compile
-      case "RUNTIME":
-        return "runtime";
-      case "DEV":
-        return "hmr";
-      case "MODULE":
-        return "module";
-      default:
-        return "runtime"; // Fallback
-    }
   }
 
   private addTypedError(
@@ -225,13 +203,13 @@ export class ErrorCollector {
     const { type, category, slug, file, since } = filter;
 
     return errors.filter((e) => {
-      // Filter by type (legacy)
+      // Filter by type
       if (type) {
         const types = Array.isArray(type) ? type : [type];
         if (!types.includes(e.type)) return false;
       }
 
-      // Filter by category (preferred)
+      // Filter by category
       if (category) {
         const categories = Array.isArray(category) ? category : [category];
         if (!categories.includes(e.category)) return false;
@@ -265,9 +243,6 @@ export class ErrorCollector {
     return this.clearWhere((error) => error.file === file);
   }
 
-  /**
-   * @deprecated Use clearCategory() instead
-   */
   clearType(type: ErrorType): number {
     return this.clearWhere((error) => error.type === type);
   }
@@ -287,10 +262,6 @@ export class ErrorCollector {
     return this.errors.size;
   }
 
-  /**
-   * Count errors by legacy type (for backward compatibility)
-   * @deprecated Use countByCategory() instead
-   */
   countByType(): Record<ErrorType, number> {
     const counts: Record<ErrorType, number> = {
       compile: 0,

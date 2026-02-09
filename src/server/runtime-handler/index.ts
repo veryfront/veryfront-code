@@ -449,7 +449,6 @@ export function createVeryfrontHandler(
             error = e instanceof Error ? e : new Error(String(e));
             // RFC 9457 generic error response
             const unknownError = UNKNOWN_ERROR.create({
-              detail: error.message,
               instance: url.pathname,
               cause: error,
             });

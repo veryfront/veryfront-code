@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ErrorCollector, parseCompileError } from "./error-collector.ts";
 
@@ -37,9 +37,9 @@ describe("cli/mc./error-collector", () => {
 
     it("should enforce maxErrors", () => {
       const ec = new ErrorCollector({ maxErrors: 2 });
-      ec.add({ type: "compile", message: "1" });
-      ec.add({ type: "compile", message: "2" });
-      ec.add({ type: "compile", message: "3" });
+      ec.add({ type: "compile", category: "BUILD", message: "1" });
+      ec.add({ type: "compile", category: "BUILD", message: "2" });
+      ec.add({ type: "compile", category: "BUILD", message: "3" });
 
       assertEquals(ec.count, 2);
     });
@@ -75,7 +75,7 @@ describe("cli/mc./error-collector", () => {
 
     it("should get by id", () => {
       const ec = new ErrorCollector();
-      const err = ec.add({ type: "compile", message: "test" });
+      const err = ec.add({ type: "compile", category: "BUILD", message: "test" });
 
       assertEquals(ec.get(err.id)?.message, "test");
       assertEquals(ec.get("nonexistent"), undefined);
@@ -172,24 +172,23 @@ describe("cli/mc./error-collector", () => {
       assertEquals(remaining[0]?.category, "RUNTIME");
     });
 
-    it("should auto-compute category from type for backward compat", () => {
+    it("should require explicit type and category", () => {
       const ec = new ErrorCollector();
-      ec.add({ type: "compile", message: "test" });
+      ec.add({ type: "compile", category: "BUILD", message: "test" });
 
       const first = ec.getAll()[0];
       assertExists(first);
-      assertEquals(first.category, "BUILD"); // Auto-computed
+      assertEquals(first.category, "BUILD");
       assertEquals(first.type, "compile");
     });
 
-    it("should auto-compute type from category for backward compat", () => {
+    it("should reject mismatched type/category pairs", () => {
       const ec = new ErrorCollector();
-      ec.add({ category: "RUNTIME", type: "runtime", message: "test" });
-
-      const first = ec.getAll()[0];
-      assertExists(first);
-      assertEquals(first.type, "runtime");
-      assertEquals(first.category, "RUNTIME");
+      assertThrows(
+        () => ec.add({ category: "RUNTIME", type: "compile", message: "test" }),
+        Error,
+        "mismatched type/category",
+      );
     });
   });
 

@@ -115,6 +115,8 @@ export class SnippetHandler extends BaseHandler {
       detail: `Snippet file not found: ${filePath}`,
       context: { path: filePath },
     });
-    return { response: createErrorResponse(error) };
+    const response = createErrorResponse(error);
+    response.headers.set("Cache-Control", "no-cache");
+    return { response };
   }
 }
