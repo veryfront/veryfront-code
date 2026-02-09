@@ -20,8 +20,9 @@ export async function fetchProjectEnvVars(
   environmentId: string,
   token: string,
 ): Promise<Record<string, string>> {
-  const url =
-    `${apiBaseUrl}/${encodeURIComponent(projectSlug)}/env-vars?environment_id=${encodeURIComponent(environmentId)}&limit=100`;
+  const url = `${apiBaseUrl}/${encodeURIComponent(projectSlug)}/env-vars?environment_id=${
+    encodeURIComponent(environmentId)
+  }&limit=100`;
 
   try {
     const response = await fetch(url, {
