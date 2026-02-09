@@ -26,7 +26,7 @@ export async function writeCacheFile(
   try {
     await fs.mkdir(parentDir, { recursive: true });
   } catch (mkdirError) {
-    logger.warn(`[${label}] mkdir failed for cache file parent`, {
+    logger.debug(`[${label}] mkdir failed for cache file parent`, {
       path: path.slice(-80),
       dir: parentDir.slice(-80),
       error: mkdirError instanceof Error ? mkdirError.message : String(mkdirError),
@@ -44,7 +44,7 @@ export async function writeCacheFile(
       });
       return false;
     }
-    logger.error(`[${label}] Failed to write cache file`, {
+    logger.debug(`[${label}] Failed to write cache file`, {
       path: path.slice(-80),
       error: writeError instanceof Error ? writeError.message : String(writeError),
     });
@@ -55,13 +55,13 @@ export async function writeCacheFile(
   try {
     const stat = await fs.stat(path);
     if (!stat?.isFile) {
-      logger.error(`[${label}] Cache file verification failed: not a file after write`, {
+      logger.debug(`[${label}] Cache file verification failed: not a file after write`, {
         path: path.slice(-80),
       });
       return false;
     }
   } catch (verifyError) {
-    logger.error(`[${label}] Cache file verification failed: cannot stat after write`, {
+    logger.debug(`[${label}] Cache file verification failed: cannot stat after write`, {
       path: path.slice(-80),
       error: verifyError instanceof Error ? verifyError.message : String(verifyError),
     });
@@ -78,15 +78,12 @@ export async function writeCacheFile(
 export async function verifyCacheFileExists(
   fs: FileSystem,
   path: string,
-  label = "cache",
+  _label = "cache",
 ): Promise<boolean> {
   try {
     const stat = await fs.stat(path);
     return !!stat?.isFile;
   } catch {
-    logger.warn(`[${label}] Cache file missing before import`, {
-      path: path.slice(-80),
-    });
     return false;
   }
 }

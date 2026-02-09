@@ -420,13 +420,14 @@ export function createVeryfrontHandler(
           await incrementRequestMetrics();
 
           const executeRoute = () => registry.execute(req, ctx);
-          const isRemoteProject = !adapterRes.isLocalProject;
+          // Only activate env isolation in proxy mode (multi-tenant).
+          // reqCtx.token indicates the request came through the proxy with auth.
+          // Without it (standalone / test), host env must remain accessible.
+          const shouldIsolateEnv = !adapterRes.isLocalProject && !!reqCtx.token;
           const response = await withSpan(
             SpanNames.HANDLER_EXECUTE,
             () => {
-              // Always apply env overlay for remote projects, even when empty.
-              // This activates isolation so getEnv() won't fall through to host env.
-              if (isRemoteProject) {
+              if (shouldIsolateEnv) {
                 return runWithProjectEnv(envVarsForRequest, executeRoute);
               }
               return executeRoute();

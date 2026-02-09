@@ -161,7 +161,7 @@ export class SSRModuleLoader {
       "SSR-MODULE-LOADER",
     );
     if (!fileExists) {
-      logger.error("[SSR-MODULE-LOADER] Cache file missing before import, invalidating", {
+      logger.debug("[SSR-MODULE-LOADER] Cache file missing before import, invalidating", {
         file: filePath.slice(-40),
         tempPath: cacheEntry.tempPath,
         contentHash: cacheEntry.contentHash,
