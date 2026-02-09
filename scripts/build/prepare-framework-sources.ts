@@ -28,6 +28,8 @@ const METADATA_FILE = join(OUTPUT_DIR, ".compile-metadata.json");
 const FRAMEWORK_DIRS = [
   "react",
   "lib",
+  "agent",
+  "workflow",
 ];
 
 // Extensions to process
