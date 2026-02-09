@@ -103,12 +103,7 @@ export class RouteRegistry {
               },
             );
             // Convert handler error to RFC 9457 response and return immediately
-            // This ensures errors are properly structured and observable
-            const req2 = new Request(req.url, {
-              method: req.method,
-              headers: req.headers,
-            });
-            return errorToRFC9457Response(error, ctx, req2);
+            return errorToRFC9457Response(error, ctx, req);
           }
         }
 
