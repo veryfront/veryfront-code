@@ -50,6 +50,9 @@ export interface MetricsInstruments {
   heapUsageGauge: ObservableGauge | null;
   heapTotalGauge: ObservableGauge | null;
   heapPercentGauge: ObservableGauge | null;
+
+  errorCounter: Counter | null;
+  errorRate: Histogram | null;
 }
 
 export interface MetricsConfig {

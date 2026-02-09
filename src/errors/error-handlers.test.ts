@@ -17,7 +17,7 @@ describe("error-handlers", () => {
       const wrapped = wrapError(original, "Wrapper message", { key: "value" });
 
       assertEquals(wrapped.message, "Wrapper message: Original error");
-      assertEquals(wrapped.slug, "render-error");
+      assertEquals(wrapped.slug, "unknown-error");
       assertEquals((wrapped.context as { key?: string } | undefined)?.key, "value");
     });
 

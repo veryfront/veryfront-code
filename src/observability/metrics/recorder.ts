@@ -132,4 +132,8 @@ export class MetricsRecorder {
   recordSecurityHeaders(attributes?: Record<string, string>): void {
     this.instruments.securityHeadersCounter?.add(1, attributes);
   }
+
+  recordError(attributes?: Record<string, string>): void {
+    this.instruments.errorCounter?.add(1, attributes);
+  }
 }

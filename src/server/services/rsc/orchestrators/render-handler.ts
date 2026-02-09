@@ -3,7 +3,10 @@ import { serverLogger as logger } from "#veryfront/utils";
 import { RSCProductionOptimizer } from "#veryfront/rendering/rsc/production-optimizer.ts";
 import type { RSCRenderer } from "#veryfront/rendering/rsc/server-renderer/index.ts";
 import type { RSCPayload } from "#veryfront/rendering/rsc/types.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, getErrorMessage, toError } from "#veryfront/errors/veryfront-error.ts";
+import { COMPONENT_ERROR, PAGE_NOT_FOUND, RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createErrorResponse } from "#veryfront/errors/http-error.ts";
+import { wrapUnknownError } from "#veryfront/errors/middleware/wrap-unknown.ts";
 import { extractParams, resolveComponentPath } from "./component-resolver.ts";
 import type { RenderProps } from "./types.ts";
 
@@ -127,18 +130,30 @@ export class RenderHandler {
   private createErrorResponse(error: unknown): Response {
     logger.error("[RSC] Render error:", error);
 
-    const normalizedError = error instanceof Error ? error : new Error(String(error));
+    const message = getErrorMessage(error);
+    let vfError;
 
-    return new Response(
-      JSON.stringify({
-        error: "Render error",
-        message: normalizedError.message,
-        stack: this.isLocalProject ? normalizedError.stack : undefined,
-      }),
-      {
-        status: normalizedError.message === "Component not found" ? 404 : 500,
-        headers: { "content-type": "application/json" },
-      },
-    );
+    // Map specific error messages to appropriate error types
+    if (message === "Component not found") {
+      vfError = PAGE_NOT_FOUND.create({
+        detail: "The requested component could not be found",
+      });
+    } else if (message === "Invalid component") {
+      vfError = COMPONENT_ERROR.create({
+        detail: "Component module must export a valid React component",
+      });
+    } else if (
+      message === "Renderer not initialized" || message === "Failed to render RSC payload"
+    ) {
+      vfError = RENDER_ERROR.create({
+        detail: message,
+        cause: error instanceof Error ? error : undefined,
+      });
+    } else {
+      // Wrap unknown errors in RFC 9457 format
+      vfError = wrapUnknownError(error);
+    }
+
+    return createErrorResponse(vfError);
   }
 }

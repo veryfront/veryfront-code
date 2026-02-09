@@ -16,6 +16,8 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { TIMEOUT_ERROR, UNKNOWN_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createErrorResponse } from "#veryfront/errors/http-error.ts";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 
@@ -50,7 +52,6 @@ import { OpenAPIHandler } from "../handlers/request/openapi.handler.ts";
 import { OpenAPIDocsHandler } from "../handlers/request/openapi-docs.handler.ts";
 import { DevDashboardHandler } from "../handlers/dev/dashboard/index.ts";
 import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
-import { ErrorPages } from "../utils/error-html.ts";
 
 // Extracted modules
 import {
@@ -410,10 +411,12 @@ export function createVeryfrontHandler(
           logDebug("[runtime-handler] No handler produced response (unexpected)", {
             path: url.pathname,
           });
-          return new Response(ErrorPages.serverError(), {
-            status: 500,
-            headers: { "Content-Type": "text/html; charset=utf-8" },
+          // RFC 9457 error response for no handler case
+          const noHandlerError = UNKNOWN_ERROR.create({
+            detail: "No handler available to process this request",
+            instance: url.pathname,
           });
+          return createErrorResponse(noHandlerError);
         };
 
         let response: Response;
@@ -435,23 +438,22 @@ export function createVeryfrontHandler(
               timeoutMs: getRequestTimeout(),
             });
 
-            response = new Response(
-              JSON.stringify({
-                error: "Request timeout",
-                timeoutMs: getRequestTimeout(),
-                path: url.pathname,
-              }),
-              {
-                status: HTTP_GATEWAY_TIMEOUT,
-                headers: { "Content-Type": "application/json" },
-              },
-            );
+            // RFC 9457 timeout error response
+            const timeoutError = TIMEOUT_ERROR.create({
+              detail: `Request to ${url.pathname} timed out after ${getRequestTimeout()}ms`,
+              instance: url.pathname,
+              status: HTTP_GATEWAY_TIMEOUT, // Use 504 Gateway Timeout for proxy timeout
+            });
+            response = createErrorResponse(timeoutError);
           } else {
             error = e instanceof Error ? e : new Error(String(e));
-            response = new Response(ErrorPages.serverError(), {
-              status: 500,
-              headers: { "Content-Type": "text/html; charset=utf-8" },
+            // RFC 9457 generic error response
+            const unknownError = UNKNOWN_ERROR.create({
+              detail: error.message,
+              instance: url.pathname,
+              cause: error,
             });
+            response = createErrorResponse(unknownError);
           }
         } finally {
           if (timeoutId !== undefined) clearTimeout(timeoutId);

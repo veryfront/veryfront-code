@@ -3,15 +3,38 @@
  *
  * Aggregates compilation, bundle, and runtime errors from the dev server
  * for exposure via MCP to coding agents.
+ *
+ * Migrated to use ErrorCategory from slug registry for unified error handling.
  **************************/
 
+import type { ErrorCategory } from "#veryfront/errors/types.ts";
+
+/**
+ * @deprecated Use ErrorCategory from slug registry instead
+ * Legacy type maintained for backward compatibility with MCP consumers
+ */
 export type ErrorType = "compile" | "runtime" | "bundle" | "hmr" | "module";
+
+/**
+ * Map legacy ErrorType to ErrorCategory from slug registry
+ */
+const ERROR_TYPE_TO_CATEGORY: Record<ErrorType, ErrorCategory> = {
+  compile: "BUILD",
+  runtime: "RUNTIME",
+  bundle: "BUILD",
+  hmr: "DEV",
+  module: "MODULE",
+};
 
 export interface DevError {
   /** Unique error identifier */
   id: string;
-  /** Error category */
+  /** Error category from slug registry (BUILD, RUNTIME, DEV, MODULE, etc.) */
+  category: ErrorCategory;
+  /** @deprecated Use category instead - kept for backward compatibility */
   type: ErrorType;
+  /** Error slug from registry (if available) */
+  slug?: string;
   /** Human-readable error message */
   message: string;
   /** Source file path (if available) */
@@ -29,7 +52,12 @@ export interface DevError {
 }
 
 export interface ErrorFilter {
+  /** @deprecated Use category instead */
   type?: ErrorType | ErrorType[];
+  /** Filter by error category (BUILD, RUNTIME, DEV, MODULE, etc.) */
+  category?: ErrorCategory | ErrorCategory[];
+  /** Filter by error slug */
+  slug?: string | string[];
   file?: string | RegExp;
   since?: number;
 }
@@ -51,8 +79,15 @@ export class ErrorCollector {
   }
 
   add(error: Omit<DevError, "id" | "timestamp">): DevError {
+    // Ensure backward compatibility: if only type is provided, compute category
+    const category = error.category ?? ERROR_TYPE_TO_CATEGORY[error.type];
+    // Ensure backward compatibility: if only category is provided, derive type
+    const type = error.type ?? this.categoryToType(category);
+
     const fullError: DevError = {
       ...error,
+      category,
+      type,
       id: this.generateId(),
       timestamp: Date.now(),
     };
@@ -75,49 +110,137 @@ export class ErrorCollector {
     return fullError;
   }
 
+  private categoryToType(category: ErrorCategory): ErrorType {
+    // Reverse mapping for backward compatibility
+    switch (category) {
+      case "BUILD":
+        return "compile"; // Default BUILD to compile
+      case "RUNTIME":
+        return "runtime";
+      case "DEV":
+        return "hmr";
+      case "MODULE":
+        return "module";
+      default:
+        return "runtime"; // Fallback
+    }
+  }
+
   private addTypedError(
     type: ErrorType,
     message: string,
-    details: Partial<Pick<DevError, "file" | "line" | "column" | "stack" | "context">> = {},
+    details: Partial<Pick<DevError, "file" | "line" | "column" | "stack" | "context" | "slug">> =
+      {},
   ): DevError {
-    return this.add({ type, message, ...details });
+    const category = ERROR_TYPE_TO_CATEGORY[type];
+    return this.add({ type, category, message, ...details });
   }
 
+  /**
+   * Add a compile/build error
+   * @param message Error message
+   * @param file Source file path
+   * @param line Line number
+   * @param column Column number
+   * @param slug Error slug from registry (optional)
+   */
   addCompileError(
     message: string,
     file?: string,
     line?: number,
     column?: number,
+    slug?: string,
   ): DevError {
-    return this.addTypedError("compile", message, { file, line, column });
+    return this.addTypedError("compile", message, { file, line, column, slug });
   }
 
-  addRuntimeError(message: string, stack?: string, context?: Record<string, unknown>): DevError {
-    return this.addTypedError("runtime", message, { stack, context });
+  /**
+   * Add a runtime error
+   * @param message Error message
+   * @param stack Stack trace
+   * @param context Additional context
+   * @param slug Error slug from registry (optional)
+   */
+  addRuntimeError(
+    message: string,
+    stack?: string,
+    context?: Record<string, unknown>,
+    slug?: string,
+  ): DevError {
+    return this.addTypedError("runtime", message, { stack, context, slug });
   }
 
-  addBundleError(message: string, file?: string, context?: Record<string, unknown>): DevError {
-    return this.addTypedError("bundle", message, { file, context });
+  /**
+   * Add a bundle error
+   * @param message Error message
+   * @param file Source file path
+   * @param context Additional context
+   * @param slug Error slug from registry (optional)
+   */
+  addBundleError(
+    message: string,
+    file?: string,
+    context?: Record<string, unknown>,
+    slug?: string,
+  ): DevError {
+    return this.addTypedError("bundle", message, { file, context, slug });
   }
 
-  addHMRError(message: string, file?: string, context?: Record<string, unknown>): DevError {
-    return this.addTypedError("hmr", message, { file, context });
+  /**
+   * Add an HMR error
+   * @param message Error message
+   * @param file Source file path
+   * @param context Additional context
+   * @param slug Error slug from registry (optional)
+   */
+  addHMRError(
+    message: string,
+    file?: string,
+    context?: Record<string, unknown>,
+    slug?: string,
+  ): DevError {
+    return this.addTypedError("hmr", message, { file, context, slug });
   }
 
-  addModuleError(message: string, file?: string, context?: Record<string, unknown>): DevError {
-    return this.addTypedError("module", message, { file, context });
+  /**
+   * Add a module error
+   * @param message Error message
+   * @param file Source file path
+   * @param context Additional context
+   * @param slug Error slug from registry (optional)
+   */
+  addModuleError(
+    message: string,
+    file?: string,
+    context?: Record<string, unknown>,
+    slug?: string,
+  ): DevError {
+    return this.addTypedError("module", message, { file, context, slug });
   }
 
   getAll(filter?: ErrorFilter): DevError[] {
     const errors = Array.from(this.errors.values());
     if (!filter) return errors;
 
-    const { type, file, since } = filter;
+    const { type, category, slug, file, since } = filter;
 
     return errors.filter((e) => {
+      // Filter by type (legacy)
       if (type) {
         const types = Array.isArray(type) ? type : [type];
         if (!types.includes(e.type)) return false;
+      }
+
+      // Filter by category (preferred)
+      if (category) {
+        const categories = Array.isArray(category) ? category : [category];
+        if (!categories.includes(e.category)) return false;
+      }
+
+      // Filter by slug
+      if (slug) {
+        const slugs = Array.isArray(slug) ? slug : [slug];
+        if (!e.slug || !slugs.includes(e.slug)) return false;
       }
 
       if (file) {
@@ -142,8 +265,18 @@ export class ErrorCollector {
     return this.clearWhere((error) => error.file === file);
   }
 
+  /**
+   * @deprecated Use clearCategory() instead
+   */
   clearType(type: ErrorType): number {
     return this.clearWhere((error) => error.type === type);
+  }
+
+  /**
+   * Clear all errors of a specific category
+   */
+  clearCategory(category: ErrorCategory): number {
+    return this.clearWhere((error) => error.category === category);
   }
 
   clear(): void {
@@ -154,6 +287,10 @@ export class ErrorCollector {
     return this.errors.size;
   }
 
+  /**
+   * Count errors by legacy type (for backward compatibility)
+   * @deprecated Use countByCategory() instead
+   */
   countByType(): Record<ErrorType, number> {
     const counts: Record<ErrorType, number> = {
       compile: 0,
@@ -165,6 +302,31 @@ export class ErrorCollector {
 
     for (const { type } of this.errors.values()) {
       counts[type]++;
+    }
+
+    return counts;
+  }
+
+  /**
+   * Count errors by category (preferred method)
+   */
+  countByCategory(): Record<ErrorCategory, number> {
+    const counts: Record<ErrorCategory, number> = {
+      CONFIG: 0,
+      BUILD: 0,
+      RUNTIME: 0,
+      ROUTE: 0,
+      MODULE: 0,
+      SERVER: 0,
+      BOUNDARY: 0,
+      DEV: 0,
+      DEPLOY: 0,
+      AGENT: 0,
+      GENERAL: 0,
+    };
+
+    for (const { category } of this.errors.values()) {
+      counts[category]++;
     }
 
     return counts;
@@ -211,6 +373,7 @@ export function parseCompileError(output: string): Partial<DevError> | null {
   if (tsMatch && tsMatch[1] && tsMatch[2] && tsMatch[3] && tsMatch[4]) {
     return {
       type: "compile",
+      category: "BUILD",
       file: tsMatch[1],
       line: parseInt(tsMatch[2], 10),
       column: parseInt(tsMatch[3], 10),
@@ -224,6 +387,7 @@ export function parseCompileError(output: string): Partial<DevError> | null {
   if (esbuildMatch && esbuildMatch[1] && esbuildMatch[2] && esbuildMatch[3] && esbuildMatch[4]) {
     return {
       type: "bundle",
+      category: "BUILD",
       file: esbuildMatch[1],
       line: parseInt(esbuildMatch[2], 10),
       column: parseInt(esbuildMatch[3], 10),
@@ -232,7 +396,11 @@ export function parseCompileError(output: string): Partial<DevError> | null {
   }
 
   if (output.includes("error") || output.includes("Error")) {
-    return { type: "compile", message: output.trim() };
+    return {
+      type: "compile",
+      category: "BUILD",
+      message: output.trim(),
+    };
   }
 
   return null;

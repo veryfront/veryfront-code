@@ -4,6 +4,8 @@ import { serverLogger as logger } from "#veryfront/utils";
 import { renderSnippet } from "#veryfront/rendering/snippet-renderer.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
+import { createErrorResponse } from "#veryfront/errors/http-error.ts";
 
 const PRIORITY_SNIPPET = 450;
 
@@ -108,16 +110,11 @@ export class SnippetHandler extends BaseHandler {
     return isFullUrl ? moduleServerUrl! : `${url.protocol}//${url.host}`;
   }
 
-  private respondNotFound(ctx: HandlerContext, filePath: string): HandlerResult {
-    const builder = this.createResponseBuilder(ctx);
-    return this.respond(
-      builder
-        .withCache("no-cache")
-        .withContentType(
-          "application/json",
-          JSON.stringify({ error: "Snippet not found", path: filePath }),
-          404,
-        ),
-    );
+  private respondNotFound(_ctx: HandlerContext, filePath: string): HandlerResult {
+    const error = FILE_NOT_FOUND.create({
+      detail: `Snippet file not found: ${filePath}`,
+      context: { path: filePath },
+    });
+    return { response: createErrorResponse(error) };
   }
 }

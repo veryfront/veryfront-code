@@ -23,11 +23,32 @@ export {
   PROBLEM_JSON_CONTENT_TYPE,
 } from "./http-error.ts";
 
+// Error boundary middleware (HTTP and CLI)
 export {
-  handleError,
+  cliErrorBoundary,
+  cliErrorBoundarySync,
+  formatCLIError,
+  httpErrorBoundary,
+  isVeryfrontError as isVeryfrontErrorMiddleware,
+  wrapHandlerWithErrorBoundary,
+  wrapUnknownError,
+  wrapWithContext,
+} from "./middleware/index.ts";
+
+// Structured error logging for observability
+export { logError, logErrorWithMessage } from "./logging.ts";
+export type { ErrorLogEntry } from "./logging.ts";
+
+// Error tracing integration (OpenTelemetry)
+export { attachErrorToActiveSpan, attachErrorToSpan } from "./tracing.ts";
+
+// Legacy error handling utilities
+// Note: handleError and logAndThrow are deprecated - use error boundary middleware instead
+export {
+  handleError, // @deprecated - use httpErrorBoundary or cliErrorBoundary
   handleErrorWithFallback,
   handleErrorWithFallbackSync,
-  logAndThrow,
+  logAndThrow, // @deprecated - use httpErrorBoundary or cliErrorBoundary
   retryWithBackoff,
   wrapError,
 } from "./error-handlers.ts";

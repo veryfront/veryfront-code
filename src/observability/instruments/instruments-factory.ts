@@ -4,6 +4,7 @@ import type { MetricsConfig, MetricsInstruments, RuntimeState } from "../metrics
 import { createBuildInstruments } from "./build-instruments.ts";
 import { createCacheInstruments } from "./cache-instruments.ts";
 import { createDataInstruments } from "./data-instruments.ts";
+import { createErrorInstruments } from "./error-instruments.ts";
 import { createHttpInstruments } from "./http-instruments.ts";
 import { createMemoryInstruments } from "./memory-instruments.ts";
 import { createRenderInstruments } from "./render-instruments.ts";
@@ -46,6 +47,8 @@ export function initializeInstruments(
     heapUsageGauge: null,
     heapTotalGauge: null,
     heapPercentGauge: null,
+    errorCounter: null,
+    errorRate: null,
   };
 
   try {
@@ -57,6 +60,7 @@ export function initializeInstruments(
       ...createBuildInstruments(meter, config),
       ...createDataInstruments(meter, config),
       ...createMemoryInstruments(meter, config),
+      ...createErrorInstruments(meter, config),
     });
   } catch (error) {
     logger.warn("[metrics] Failed to initialize metric instruments", error);

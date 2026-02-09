@@ -5,8 +5,9 @@ import {
   DEFAULT_RETRY_MAX_DELAY_MS,
 } from "#veryfront/utils/constants/retry.ts";
 import { VeryfrontError } from "./types.ts";
-import { RENDER_ERROR } from "./error-registry.ts";
+import { wrapUnknownError, wrapWithContext } from "./middleware/wrap-unknown.ts";
 import { ensureError } from "./veryfront-error.ts";
+import { logError } from "./logging.ts";
 
 function safeLog(logFn: () => void): void {
   try {
@@ -20,58 +21,54 @@ function safeLog(logFn: () => void): void {
   }
 }
 
+/**
+ * Log an error with structured formatting
+ *
+ * @deprecated Use error boundary middleware (httpErrorBoundary, cliErrorBoundary) instead.
+ * Error boundaries handle both catching, logging, and formatting automatically.
+ *
+ * For VeryfrontError instances, logs slug, category, and other structured fields.
+ * For plain Errors, wraps as unknown-error and logs with structured format.
+ *
+ * This function is kept for backward compatibility but will be removed in a future version.
+ * Now delegates to logError() for unified observability.
+ */
 export function handleError(error: Error): void {
-  safeLog(() => serverLogger.error(`Error: ${error.message}`));
+  const vfError = error instanceof VeryfrontError ? error : wrapUnknownError(error);
 
-  if (error instanceof VeryfrontError && error.context) {
-    safeLog(() => serverLogger.error("Context:", error.context));
-  }
-
-  if (error.stack) {
-    const stack = error.stack;
-    safeLog(() => serverLogger.error(stack));
-  }
+  safeLog(() => logError(vfError));
 }
 
+/**
+ * Wrap an error with additional context and message
+ *
+ * Uses the unified wrapWithContext from middleware for consistent wrapping.
+ * Preserves slug for VeryfrontError, wraps plain Errors as unknown-error.
+ *
+ * @param error - Any error value
+ * @param message - Additional message to prepend
+ * @param context - Additional context to add
+ * @returns VeryfrontError with added context
+ */
 export function wrapError(
   error: unknown,
   message: string,
   context?: unknown,
 ): VeryfrontError {
-  const originalError = ensureError(error);
-  const errorMessage = `${message}: ${originalError.message}`;
-
-  const wrappedContext = {
-    originalError: {
-      name: originalError.name,
-      message: originalError.message,
-      stack: originalError.stack,
-    },
-    ...(context as Record<string, unknown> | undefined),
-  };
-
-  // Preserve slug/code from original error, or use render-error as default
-  if (error instanceof VeryfrontError) {
-    return new VeryfrontError(errorMessage, {
-      slug: error.slug,
-      category: error.category,
-      status: error.status,
-      title: error.title,
-      suggestion: error.suggestion,
-      context: wrappedContext,
-    });
-  }
-
-  return new VeryfrontError(errorMessage, {
-    slug: RENDER_ERROR.slug,
-    category: RENDER_ERROR.category,
-    status: RENDER_ERROR.status,
-    title: RENDER_ERROR.title,
-    suggestion: RENDER_ERROR.suggestion,
-    context: wrappedContext,
-  });
+  return wrapWithContext(error, message, context as Record<string, unknown> | undefined);
 }
 
+/**
+ * Log an error and re-throw it
+ *
+ * @deprecated This function is deprecated in favor of error boundary middleware.
+ * Use `httpErrorBoundary()` or `cliErrorBoundary()` at system boundaries instead.
+ * Error boundaries handle both logging and formatting automatically.
+ *
+ * @param error - Error to log and throw
+ * @param message - Optional message to prepend
+ * @param logger - Logger instance to use
+ */
 export function logAndThrow(
   error: unknown,
   message?: string,

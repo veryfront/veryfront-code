@@ -13,9 +13,77 @@ import {
   createAppRouteMethodNotAllowed,
   createPagesRouteMethodNotAllowed,
 } from "./method-validator.ts";
-import { handleAPIError } from "./error-handler.ts";
 import { isAbsolute, join } from "#veryfront/compat/path/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { UNKNOWN_ERROR } from "#veryfront/errors/error-registry.ts";
+import { PROBLEM_JSON_CONTENT_TYPE } from "#veryfront/errors/http-error.ts";
+import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import { isDevelopment as isDevelopmentEnv } from "#veryfront/build/config/environment.ts";
+
+function isDevelopment(adapter: RuntimeAdapter): boolean {
+  const env = adapter.env.get("MODE") ??
+    adapter.env.get("NODE_ENV") ??
+    adapter.env.get("DENO_ENV");
+
+  if (!env) return isDevelopmentEnv();
+
+  const normalized = env.toLowerCase();
+  return normalized === "development" || normalized === "dev";
+}
+
+/**
+ * Convert an error to RFC 9457 error response with environment-aware filtering
+ */
+function handleAPIError(
+  error: unknown,
+  pathname: string,
+  adapter: RuntimeAdapter,
+): Response {
+  logger.error(`API route error in ${pathname}:`, error);
+
+  const isDev = isDevelopment(adapter);
+
+  // Convert to VeryfrontError or wrap as unknown-error
+  const vfError = error instanceof VeryfrontError ? error : UNKNOWN_ERROR.create({
+    detail: getErrorMessage(error),
+    instance: pathname,
+    cause: error instanceof Error ? error : undefined,
+  });
+
+  // Set instance if not already set
+  if (!vfError.instance) {
+    vfError.instance = pathname;
+  }
+
+  // Serialize to RFC 9457
+  const body = vfError.toRFC9457();
+
+  // Apply environment-specific filtering
+  if (!isDev) {
+    // Production: omit stack
+    delete (body as { stack?: string }).stack;
+
+    // Production: omit detail for 5xx errors (may contain sensitive info)
+    if (vfError.status >= 500) {
+      delete body.detail;
+    }
+  } else {
+    // Dev mode: include stack trace if available
+    const stack = error instanceof Error ? error.stack : undefined;
+    if (stack) {
+      (body as { stack?: string }).stack = stack;
+    }
+  }
+
+  return new Response(JSON.stringify(body, null, isDev ? 2 : undefined), {
+    status: vfError.status,
+    headers: {
+      "Content-Type": PROBLEM_JSON_CONTENT_TYPE,
+    },
+  });
+}
 
 function createProjectScopedFs(fs: FileSystemAdapter, projectDir: string): FileSystemAdapter {
   const resolvePath = (path: string): string => (isAbsolute(path) ? path : join(projectDir, path));
