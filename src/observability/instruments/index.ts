@@ -2,6 +2,8 @@ export { initializeInstruments } from "./instruments-factory.ts";
 export type { BuildInstruments } from "./build-instruments.ts";
 export type { CacheInstruments } from "./cache-instruments.ts";
 export type { DataInstruments } from "./data-instruments.ts";
+export type { ErrorInstruments } from "./error-instruments.ts";
+export { recordError } from "./error-instruments.ts";
 export type { HttpInstruments } from "./http-instruments.ts";
 export type { MemoryInstruments } from "./memory-instruments.ts";
 export type { RenderInstruments } from "./render-instruments.ts";

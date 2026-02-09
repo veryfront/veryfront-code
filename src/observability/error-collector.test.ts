@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ErrorCollector, parseCompileError } from "./error-collector.ts";
 
@@ -6,13 +6,15 @@ describe("cli/mc./error-collector", () => {
   describe("ErrorCollector", () => {
     it("should add and retrieve errors", () => {
       const ec = new ErrorCollector();
-      ec.add({ type: "compile", message: "fail" });
+      ec.add({ type: "compile", category: "BUILD", message: "fail" });
 
       assertEquals(ec.count, 1);
 
       const first = ec.getAll()[0];
       assertExists(first);
       assertEquals(first.message, "fail");
+      assertEquals(first.category, "BUILD");
+      assertEquals(first.type, "compile"); // Backward compat
     });
 
     it("should add typed errors", () => {
@@ -35,9 +37,9 @@ describe("cli/mc./error-collector", () => {
 
     it("should enforce maxErrors", () => {
       const ec = new ErrorCollector({ maxErrors: 2 });
-      ec.add({ type: "compile", message: "1" });
-      ec.add({ type: "compile", message: "2" });
-      ec.add({ type: "compile", message: "3" });
+      ec.add({ type: "compile", category: "BUILD", message: "1" });
+      ec.add({ type: "compile", category: "BUILD", message: "2" });
+      ec.add({ type: "compile", category: "BUILD", message: "3" });
 
       assertEquals(ec.count, 2);
     });
@@ -73,7 +75,7 @@ describe("cli/mc./error-collector", () => {
 
     it("should get by id", () => {
       const ec = new ErrorCollector();
-      const err = ec.add({ type: "compile", message: "test" });
+      const err = ec.add({ type: "compile", category: "BUILD", message: "test" });
 
       assertEquals(ec.get(err.id)?.message, "test");
       assertEquals(ec.get("nonexistent"), undefined);
@@ -118,6 +120,76 @@ describe("cli/mc./error-collector", () => {
       ec.addCompileError("after");
       assertEquals(received.length, 1);
     });
+
+    it("should support slug-based error tracking", () => {
+      const ec = new ErrorCollector();
+      ec.addCompileError("build failed", "src/app.ts", 10, 5, "build-failed");
+      ec.addRuntimeError("render error", undefined, undefined, "render-error");
+
+      assertEquals(ec.count, 2);
+
+      const buildErrors = ec.getAll({ slug: "build-failed" });
+      assertEquals(buildErrors.length, 1);
+      assertEquals(buildErrors[0]?.slug, "build-failed");
+    });
+
+    it("should filter by category", () => {
+      const ec = new ErrorCollector();
+      ec.addCompileError("a"); // BUILD category
+      ec.addRuntimeError("b"); // RUNTIME category
+
+      const buildErrors = ec.getAll({ category: "BUILD" });
+      assertEquals(buildErrors.length, 1);
+      assertEquals(buildErrors[0]?.category, "BUILD");
+
+      const runtimeErrors = ec.getAll({ category: "RUNTIME" });
+      assertEquals(runtimeErrors.length, 1);
+      assertEquals(runtimeErrors[0]?.category, "RUNTIME");
+    });
+
+    it("should count by category", () => {
+      const ec = new ErrorCollector();
+      ec.addCompileError("a");
+      ec.addRuntimeError("b");
+      ec.addHMRError("c");
+
+      const counts = ec.countByCategory();
+      assertEquals(counts.BUILD, 1); // compile → BUILD
+      assertEquals(counts.RUNTIME, 1);
+      assertEquals(counts.DEV, 1); // hmr → DEV
+      assertEquals(counts.MODULE, 0);
+    });
+
+    it("should clear by category", () => {
+      const ec = new ErrorCollector();
+      ec.addCompileError("a"); // BUILD
+      ec.addRuntimeError("b"); // RUNTIME
+
+      assertEquals(ec.clearCategory("BUILD"), 1);
+      assertEquals(ec.count, 1);
+
+      const remaining = ec.getAll();
+      assertEquals(remaining[0]?.category, "RUNTIME");
+    });
+
+    it("should require explicit type and category", () => {
+      const ec = new ErrorCollector();
+      ec.add({ type: "compile", category: "BUILD", message: "test" });
+
+      const first = ec.getAll()[0];
+      assertExists(first);
+      assertEquals(first.category, "BUILD");
+      assertEquals(first.type, "compile");
+    });
+
+    it("should reject mismatched type/category pairs", () => {
+      const ec = new ErrorCollector();
+      assertThrows(
+        () => ec.add({ category: "RUNTIME", type: "compile", message: "test" }),
+        Error,
+        "mismatched type/category",
+      );
+    });
   });
 
   describe("parseCompileError", () => {
@@ -127,6 +199,7 @@ describe("cli/mc./error-collector", () => {
       );
 
       assertEquals(result?.type, "compile");
+      assertEquals(result?.category, "BUILD");
       assertEquals(result?.file, "src/app.ts");
       assertEquals(result?.line, 10);
       assertEquals(result?.column, 5);
@@ -136,6 +209,7 @@ describe("cli/mc./error-collector", () => {
       const result = parseCompileError("ERROR: [mod.js:5:12] Unexpected token");
 
       assertEquals(result?.type, "bundle");
+      assertEquals(result?.category, "BUILD");
       assertEquals(result?.file, "mod.js");
       assertEquals(result?.line, 5);
     });
@@ -144,6 +218,7 @@ describe("cli/mc./error-collector", () => {
       const result = parseCompileError("Some error occurred");
 
       assertEquals(result?.type, "compile");
+      assertEquals(result?.category, "BUILD");
       assertEquals(result?.message, "Some error occurred");
     });
 

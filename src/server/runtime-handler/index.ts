@@ -16,6 +16,8 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { TIMEOUT_ERROR, UNKNOWN_ERROR } from "#veryfront/errors/error-registry.ts";
+import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-boundary.ts";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 
@@ -50,7 +52,6 @@ import { OpenAPIHandler } from "../handlers/request/openapi.handler.ts";
 import { OpenAPIDocsHandler } from "../handlers/request/openapi-docs.handler.ts";
 import { DevDashboardHandler } from "../handlers/dev/dashboard/index.ts";
 import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
-import { ErrorPages } from "../utils/error-html.ts";
 
 // Extracted modules
 import {
@@ -300,6 +301,8 @@ export function createVeryfrontHandler(
           await configPromise;
         });
 
+        let isLocalProject = false;
+
         const executeHandler = async (): Promise<Response> => {
           const reqCtx = createRequestContext(req);
 
@@ -351,6 +354,8 @@ export function createVeryfrontHandler(
             headerProjectPath: headers.projectPath,
             isProxyMode,
           });
+
+          isLocalProject = !!adapterRes.isLocalProject;
 
           // Resolve environment and validate
           const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host;
@@ -410,10 +415,12 @@ export function createVeryfrontHandler(
           logDebug("[runtime-handler] No handler produced response (unexpected)", {
             path: url.pathname,
           });
-          return new Response(ErrorPages.serverError(), {
-            status: 500,
-            headers: { "Content-Type": "text/html; charset=utf-8" },
+          // RFC 9457 error response for no handler case (env-aware filtering)
+          const noHandlerError = UNKNOWN_ERROR.create({
+            detail: "No handler available to process this request",
+            instance: url.pathname,
           });
+          return errorToRFC9457Response(noHandlerError, ctx, req);
         };
 
         let response: Response;
@@ -435,23 +442,29 @@ export function createVeryfrontHandler(
               timeoutMs: getRequestTimeout(),
             });
 
-            response = new Response(
-              JSON.stringify({
-                error: "Request timeout",
-                timeoutMs: getRequestTimeout(),
-                path: url.pathname,
-              }),
-              {
-                status: HTTP_GATEWAY_TIMEOUT,
-                headers: { "Content-Type": "application/json" },
-              },
+            // RFC 9457 timeout error response (env-aware: strips detail in production)
+            const timeoutError = TIMEOUT_ERROR.create({
+              detail: `Request to ${url.pathname} timed out after ${getRequestTimeout()}ms`,
+              instance: url.pathname,
+              status: HTTP_GATEWAY_TIMEOUT, // Use 504 Gateway Timeout for proxy timeout
+            });
+            response = errorToRFC9457Response(
+              timeoutError,
+              { isLocalProject } as _HandlerContext,
+              req,
             );
           } else {
             error = e instanceof Error ? e : new Error(String(e));
-            response = new Response(ErrorPages.serverError(), {
-              status: 500,
-              headers: { "Content-Type": "text/html; charset=utf-8" },
+            // RFC 9457 generic error response (env-aware: strips detail/cause in production)
+            const unknownError = UNKNOWN_ERROR.create({
+              instance: url.pathname,
+              cause: error,
             });
+            response = errorToRFC9457Response(
+              unknownError,
+              { isLocalProject } as _HandlerContext,
+              req,
+            );
           }
         } finally {
           if (timeoutId !== undefined) clearTimeout(timeoutId);

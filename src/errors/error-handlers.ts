@@ -4,10 +4,6 @@ import {
   DEFAULT_RETRY_MAX_ATTEMPTS,
   DEFAULT_RETRY_MAX_DELAY_MS,
 } from "#veryfront/utils/constants/retry.ts";
-import { VeryfrontError } from "./types.ts";
-import { RENDER_ERROR } from "./error-registry.ts";
-import { ensureError } from "./veryfront-error.ts";
-
 function safeLog(logFn: () => void): void {
   try {
     logFn();
@@ -18,71 +14,6 @@ function safeLog(logFn: () => void): void {
       // Silently ignore if even warning fails
     }
   }
-}
-
-export function handleError(error: Error): void {
-  safeLog(() => serverLogger.error(`Error: ${error.message}`));
-
-  if (error instanceof VeryfrontError && error.context) {
-    safeLog(() => serverLogger.error("Context:", error.context));
-  }
-
-  if (error.stack) {
-    const stack = error.stack;
-    safeLog(() => serverLogger.error(stack));
-  }
-}
-
-export function wrapError(
-  error: unknown,
-  message: string,
-  context?: unknown,
-): VeryfrontError {
-  const originalError = ensureError(error);
-  const errorMessage = `${message}: ${originalError.message}`;
-
-  const wrappedContext = {
-    originalError: {
-      name: originalError.name,
-      message: originalError.message,
-      stack: originalError.stack,
-    },
-    ...(context as Record<string, unknown> | undefined),
-  };
-
-  // Preserve slug/code from original error, or use render-error as default
-  if (error instanceof VeryfrontError) {
-    return new VeryfrontError(errorMessage, {
-      slug: error.slug,
-      category: error.category,
-      status: error.status,
-      title: error.title,
-      suggestion: error.suggestion,
-      context: wrappedContext,
-    });
-  }
-
-  return new VeryfrontError(errorMessage, {
-    slug: RENDER_ERROR.slug,
-    category: RENDER_ERROR.category,
-    status: RENDER_ERROR.status,
-    title: RENDER_ERROR.title,
-    suggestion: RENDER_ERROR.suggestion,
-    context: wrappedContext,
-  });
-}
-
-export function logAndThrow(
-  error: unknown,
-  message?: string,
-  logger: typeof serverLogger = serverLogger,
-): never {
-  const errorObj = ensureError(error);
-  const logMessage = message ? `${message}: ${errorObj.message}` : errorObj.message;
-
-  safeLog(() => logger.error(logMessage, error));
-
-  throw errorObj;
 }
 
 export async function handleErrorWithFallback<T>(

@@ -1,6 +1,9 @@
+import { PAGE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
+import { createErrorResponse } from "#veryfront/errors/http-error.ts";
+
 export function createDevNotFoundResponse(): Response {
-  return new Response(JSON.stringify({ error: "Not found" }), {
-    status: 404,
-    headers: { "Content-Type": "application/json" },
+  const error = PAGE_NOT_FOUND.create({
+    detail: "The requested resource was not found",
   });
+  return createErrorResponse(error);
 }

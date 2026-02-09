@@ -130,3 +130,7 @@ export function recordCorsRejection(attributes?: Record<string, string>): void {
 export function recordSecurityHeaders(attributes?: Record<string, string>): void {
   getRecorder()?.recordSecurityHeaders?.(attributes);
 }
+
+export function recordErrorCount(attributes?: Record<string, string>): void {
+  getRecorder()?.recordError(attributes);
+}

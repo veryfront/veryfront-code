@@ -23,13 +23,30 @@ export {
   PROBLEM_JSON_CONTENT_TYPE,
 } from "./http-error.ts";
 
+// Error boundary middleware (HTTP and CLI)
 export {
-  handleError,
+  cliErrorBoundary,
+  cliErrorBoundarySync,
+  errorToRFC9457Response,
+  formatCLIError,
+  httpErrorBoundary,
+  wrapHandlerWithErrorBoundary,
+  wrapUnknownError,
+  wrapWithContext,
+} from "./middleware/index.ts";
+
+// Structured error logging for observability
+export { logError, logErrorWithMessage } from "./logging.ts";
+export type { ErrorLogEntry } from "./logging.ts";
+
+// Error tracing integration (OpenTelemetry)
+export { attachErrorToActiveSpan, attachErrorToSpan } from "./tracing.ts";
+
+// Error handling utilities
+export {
   handleErrorWithFallback,
   handleErrorWithFallbackSync,
-  logAndThrow,
   retryWithBackoff,
-  wrapError,
 } from "./error-handlers.ts";
 
 export {
