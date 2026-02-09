@@ -1,6 +1,7 @@
 import type { Handler, HandlerContext, RouteRegistryConfig } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-boundary.ts";
 
 export class RouteRegistry {
   private handlers: Handler[] = [];
@@ -101,7 +102,13 @@ export class RouteRegistry {
                 stack: error instanceof Error ? error.stack : undefined,
               },
             );
-            // Continue to next handler - a single handler failure shouldn't break the chain
+            // Convert handler error to RFC 9457 response and return immediately
+            // This ensures errors are properly structured and observable
+            const req2 = new Request(req.url, {
+              method: req.method,
+              headers: req.headers,
+            });
+            return errorToRFC9457Response(error, ctx, req2);
           }
         }
 
