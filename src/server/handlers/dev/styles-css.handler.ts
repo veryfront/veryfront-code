@@ -10,16 +10,11 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { joinPath } from "#veryfront/utils/path-utils.ts";
 import {
-  extractCandidates,
   formatCSSError,
   generateTailwindCSS,
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { serverLogger as logger } from "#veryfront/utils";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { join } from "#veryfront/compat/path/index.ts";
-
-const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
-const SKIP_DIRS = new Set(["node_modules", ".cache", ".git", "dist", "build", ".vscode"]);
+import { extractProjectCandidates } from "./styles-candidate-scanner.ts";
 
 export class StylesCSSHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -47,7 +42,7 @@ export class StylesCSSHandler extends BaseHandler {
 
         let candidates: Set<string>;
         try {
-          candidates = await this.extractProjectCandidates(ctx);
+          candidates = await extractProjectCandidates(ctx);
         } catch (error) {
           logger.error("[StylesCSSHandler] Failed to extract candidates", {
             error: error instanceof Error ? error.message : String(error),
@@ -143,94 +138,4 @@ body::before {
     }
   }
 
-  private async extractProjectCandidates(ctx: HandlerContext): Promise<Set<string>> {
-    const wrappedFs = ctx.adapter.fs as { getUnderlyingAdapter?: () => unknown };
-
-    if (typeof wrappedFs.getUnderlyingAdapter !== "function") {
-      logger.debug(
-        "[StylesCSSHandler] No FS adapter wrapper, falling back to local file scanning",
-      );
-      return this.scanLocalFiles(ctx.projectDir, ctx);
-    }
-
-    // Call method directly on wrappedFs to preserve 'this' context
-    const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
-      getAllSourceFiles?: () =>
-        | Array<{ path: string; content?: string }>
-        | Promise<Array<{ path: string; content?: string }>>;
-    };
-
-    if (typeof fsAdapter.getAllSourceFiles !== "function") {
-      logger.debug(
-        "[StylesCSSHandler] FS adapter missing getAllSourceFiles, falling back to local file scanning",
-      );
-      return this.scanLocalFiles(ctx.projectDir, ctx);
-    }
-
-    const candidates = new Set<string>();
-    const files = await fsAdapter.getAllSourceFiles();
-
-    for (const file of files) {
-      if (!file.content) continue;
-      if (!SOURCE_EXTENSIONS.some((ext) => file.path.endsWith(ext))) continue;
-
-      for (const cls of extractCandidates(file.content)) {
-        candidates.add(cls);
-      }
-    }
-
-    return candidates;
-  }
-
-  /**
-   * Fallback: scan local files for Tailwind candidates when no FS adapter is available.
-   * Used in local development mode where projects are read directly from disk.
-   */
-  private async scanLocalFiles(projectDir: string, ctx: HandlerContext): Promise<Set<string>> {
-    const candidates = new Set<string>();
-    const fs = createFileSystem();
-
-    const scanDir = async (dir: string): Promise<void> => {
-      let entries: AsyncIterable<{ name: string; isDirectory: boolean; isFile: boolean }>;
-      try {
-        entries = fs.readDir(dir);
-      } catch {
-        return;
-      }
-
-      for await (const entry of entries) {
-        const fullPath = join(dir, entry.name);
-
-        if (entry.isDirectory) {
-          if (!SKIP_DIRS.has(entry.name)) await scanDir(fullPath);
-          continue;
-        }
-
-        if (!entry.isFile) continue;
-        if (!SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) continue;
-
-        try {
-          const content = await ctx.adapter.fs.readFile(fullPath);
-          for (const cls of extractCandidates(content)) candidates.add(cls);
-        } catch {
-          // Skip files that can't be read
-        }
-      }
-    };
-
-    try {
-      await scanDir(projectDir);
-      logger.debug("[StylesCSSHandler] Local file scan complete", {
-        projectDir,
-        candidates: candidates.size,
-      });
-    } catch (error) {
-      logger.warn("[StylesCSSHandler] Failed to scan local files", {
-        projectDir,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-
-    return candidates;
-  }
 }
