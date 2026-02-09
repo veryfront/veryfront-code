@@ -6,11 +6,11 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { VeryfrontRenderer } from "../../rendering/orchestrator/ssr.ts";
+import type { VeryfrontRenderer } from "#veryfront/rendering/orchestrator/ssr.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import type { ChunkManifest } from "../../build/bundler/index.ts";
-import { renderAppRouteToHTML } from "../../server/build-app-route-renderer.ts";
-import type { AppRouteInfo, RouteInfo } from "../../server/build-types.ts";
+import type { ChunkManifest } from "#veryfront/build/bundler/index.ts";
+import { renderAppRouteToHTML } from "#veryfront/server/build-app-route-renderer.ts";
+import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
 import { loadClientStyles } from "./asset-generation.ts";
 import { generateImportMap } from "./client-runtime.ts";
 

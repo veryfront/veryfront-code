@@ -1,13 +1,13 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import type { HandlerContext } from "../../server/handlers/types.ts";
-import type { EnrichedContext } from "../../server/context/enriched-context.ts";
+import type { HandlerContext } from "#veryfront/types";
+import type { EnrichedContext } from "#veryfront/server/context/enriched-context.ts";
 import {
   buildRenderCacheKey,
   buildRenderCachePrefix,
   computeContentSourceId,
   parseRenderCacheKey,
-} from "../../cache/keys.ts";
+} from "#veryfront/cache/keys.ts";
 
 export type RenderEnvironment = "preview" | "production";
 

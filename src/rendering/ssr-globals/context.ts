@@ -42,15 +42,6 @@ export function getSSRProjectDomain(): string | null {
   return ssrProjectDomain;
 }
 
-/**
- * @deprecated Not called from any active code path. The getter is used by the
- * fetch interceptor but always returns null. If per-project domain rewriting is
- * needed, pass the domain through RenderContext instead.
- */
-export function setSSRProjectDomain(domain: string | null): void {
-  ssrProjectDomain = domain;
-}
-
 export function isSSRClientOnlyFetching(): boolean {
   return ssrClientOnlyFetching;
 }

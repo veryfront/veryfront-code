@@ -1,4 +1,4 @@
-import { createError, toError } from "../../errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type { FileChangeEvent, FileWatcher, RuntimeAdapter, WatchOptions } from "./base.ts";
 
 export interface MockRuntimeAdapter extends RuntimeAdapter {

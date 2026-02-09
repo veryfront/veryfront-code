@@ -28,6 +28,7 @@ import { handleServeCommand } from "./commands/serve/handler.ts";
 import { handleStartCommand } from "./commands/start/handler.ts";
 import { handleStudioCommand } from "./commands/studio/handler.ts";
 import { handleUpCommand } from "./commands/up/index.ts";
+import { handleWorkerCommand } from "./commands/worker/handler.ts";
 import { login, logout, whoami } from "./auth/index.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
 import { showCommandHelp, showMainHelp } from "./help/index.ts";
@@ -74,6 +75,7 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
   "mcp": handleMCPCommand,
   "issues": handleIssuesCommand,
   "start": handleStartCommand,
+  "worker": handleWorkerCommand,
 };
 
 /**

@@ -9,9 +9,18 @@ import {
   buildFileListCacheKey,
   buildStatCacheKeyPrefix,
 } from "./cache-keys.ts";
+import { STAT_OPERATION_EXTENSION_PRIORITY as EXTENSION_PRIORITY } from "./extension-priority.ts";
+import {
+  collectParentDirectories,
+  normalizeIndexedFilePath,
+  resolveByExtensionPriority,
+  resolveIndexByExtensionPriority,
+  sortPathsByExtensionPriority,
+  stripKnownExtension,
+} from "./stat-operations-helpers.ts";
+import { ApiSearchCircuitBreaker } from "./api-search-circuit-breaker.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-const EXTENSION_PRIORITY = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"] as const;
 const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
 
 export class StatOperations extends VeryfrontOperationsBase {
@@ -24,8 +33,10 @@ export class StatOperations extends VeryfrontOperationsBase {
 
   private pathMapping: Map<string, string> = new Map();
 
-  private apiSearchFailures = 0;
-  private apiSearchDisabledUntil = 0;
+  private readonly apiSearchCircuitBreaker = new ApiSearchCircuitBreaker({
+    threshold: 5,
+    cooldownMs: 30000,
+  });
 
   stat(path: string): Promise<FileInfo> {
     return withSpan(
@@ -77,7 +88,7 @@ export class StatOperations extends VeryfrontOperationsBase {
 
         // File not in index - try API pattern search as fallback for project files
         // Skip for framework paths (node_modules, _veryfront, etc.)
-        if (!isFrameworkSourcePath(normalizedPath) && Date.now() >= this.apiSearchDisabledUntil) {
+        if (!isFrameworkSourcePath(normalizedPath) && this.apiSearchCircuitBreaker.canSearch()) {
           const hasKnownExt = EXTENSION_PRIORITY.some((ext) => normalizedPath.endsWith(ext));
           if (hasKnownExt) {
             logger.debug("[StatOperations] stat file not in index, trying API search", {
@@ -88,7 +99,7 @@ export class StatOperations extends VeryfrontOperationsBase {
             try {
               // Search for the exact file path
               const matches = await this.client.searchFiles(normalizedPath);
-              this.apiSearchFailures = 0;
+              this.apiSearchCircuitBreaker.recordSuccess();
 
               const exactMatch = matches.find((m) => m.path === normalizedPath);
               if (exactMatch) {
@@ -111,12 +122,10 @@ export class StatOperations extends VeryfrontOperationsBase {
                 };
               }
             } catch (error) {
-              this.apiSearchFailures++;
-              if (this.apiSearchFailures >= 5) {
-                this.apiSearchDisabledUntil = Date.now() + 30000;
-                this.apiSearchFailures = 0;
+              const result = this.apiSearchCircuitBreaker.recordFailure();
+              if (result.tripped) {
                 logger.warn("[StatOperations] stat API search circuit breaker tripped", {
-                  failures: 5,
+                  failures: result.failures,
                 });
               }
               logger.debug("[StatOperations] stat API search failed", {
@@ -200,27 +209,19 @@ export class StatOperations extends VeryfrontOperationsBase {
     const pathMap = new Map<string, string>();
 
     for (const file of allFiles) {
-      let normalizedPath = file.path;
-
-      if (file.path.endsWith("/")) {
-        const ext = file.type === "page" ? ".mdx" : ".tsx";
-        normalizedPath = file.path.replace(/\/+$/, "") + "/index" + ext;
-        pathMap.set(normalizedPath, file.path);
+      const { normalizedPath, originalPath } = normalizeIndexedFilePath(file);
+      if (originalPath) {
+        pathMap.set(normalizedPath, originalPath);
         logger.debug("[StatOperations] Normalized trailing slash path", {
-          original: file.path,
+          original: originalPath,
           normalized: normalizedPath,
         });
       }
 
       fileIdx.set(normalizedPath, file);
 
-      const parts = normalizedPath.split("/");
-      let current = "";
-      for (let i = 0; i < parts.length - 1; i++) {
-        const part = parts[i];
-        if (!part) continue;
-        current = current ? `${current}/${part}` : part;
-        dirIdx.add(current);
+      for (const dir of collectParentDirectories(normalizedPath)) {
+        dirIdx.add(dir);
       }
     }
 
@@ -357,20 +358,9 @@ export class StatOperations extends VeryfrontOperationsBase {
       return normalizedPath;
     }
 
-    const hasExtension = EXTENSION_PRIORITY.some((ext) => normalizedPath.endsWith(ext));
-    const pathWithoutExt = hasExtension
-      ? normalizedPath.replace(/\.(mdx|md|tsx|jsx|ts|js)$/, "")
-      : normalizedPath;
+    const pathWithoutExt = stripKnownExtension(normalizedPath, EXTENSION_PRIORITY);
 
-    const tryResolve = (candidateBase: string): string | null => {
-      for (const ext of EXTENSION_PRIORITY) {
-        const candidate = candidateBase + ext;
-        if (fileIdx.has(candidate)) return candidate;
-      }
-      return null;
-    };
-
-    const resolvedDirect = tryResolve(pathWithoutExt);
+    const resolvedDirect = resolveByExtensionPriority(fileIdx, pathWithoutExt, EXTENSION_PRIORITY);
     if (resolvedDirect) {
       const totalMs = Math.round(performance.now() - resolveStart);
       logger.debug("[StatOperations] resolveFile found with extension", {
@@ -382,7 +372,11 @@ export class StatOperations extends VeryfrontOperationsBase {
     }
 
     if (!pathWithoutExt.startsWith("pages/")) {
-      const resolvedPages = tryResolve(`pages/${pathWithoutExt}`);
+      const resolvedPages = resolveByExtensionPriority(
+        fileIdx,
+        `pages/${pathWithoutExt}`,
+        EXTENSION_PRIORITY,
+      );
       if (resolvedPages) {
         const totalMs = Math.round(performance.now() - resolveStart);
         logger.debug("[StatOperations] resolveFile found with pages prefix", {
@@ -394,10 +388,8 @@ export class StatOperations extends VeryfrontOperationsBase {
       }
     }
 
-    for (const ext of EXTENSION_PRIORITY) {
-      const indexPath = `${pathWithoutExt}/index${ext}`;
-      if (!fileIdx.has(indexPath)) continue;
-
+    const indexPath = resolveIndexByExtensionPriority(fileIdx, pathWithoutExt, EXTENSION_PRIORITY);
+    if (indexPath) {
       const totalMs = Math.round(performance.now() - resolveStart);
       logger.debug("[StatOperations] resolveFile found index file", {
         indexPath,
@@ -417,7 +409,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     // they were missing from the file index (due to cache issues, incomplete fetch, etc.).
     // The API pattern search is the fallback to ensure files can still be found.
 
-    if (Date.now() < this.apiSearchDisabledUntil) {
+    if (!this.apiSearchCircuitBreaker.canSearch()) {
       logger.warn("[StatOperations] API search circuit breaker open, skipping", { normalizedPath });
       return null;
     }
@@ -452,7 +444,7 @@ export class StatOperations extends VeryfrontOperationsBase {
 
     try {
       const matches = await this.client.searchFiles(searchPattern);
-      this.apiSearchFailures = 0;
+      this.apiSearchCircuitBreaker.recordSuccess();
 
       logger.debug("[StatOperations] API search result", {
         pattern: searchPattern,
@@ -460,26 +452,19 @@ export class StatOperations extends VeryfrontOperationsBase {
         matches: matches.map((m) => m.path).slice(0, 5),
       });
 
-      if (matches.length > 0) {
-        matches.sort((a, b) => {
-          const extA = EXTENSION_PRIORITY.findIndex((ext) => a.path.endsWith(ext));
-          const extB = EXTENSION_PRIORITY.findIndex((ext) => b.path.endsWith(ext));
-          return (extA === -1 ? 99 : extA) - (extB === -1 ? 99 : extB);
-        });
-
-        const first = matches[0];
-        if (first) {
-          logger.debug("[StatOperations] resolveFile found via API search", { path: first.path });
-          this.cache.set(cacheKey, first.path);
-          return first.path;
-        }
+      const sortedMatches = sortPathsByExtensionPriority(matches, EXTENSION_PRIORITY);
+      const first = sortedMatches[0];
+      if (first) {
+        logger.debug("[StatOperations] resolveFile found via API search", { path: first.path });
+        this.cache.set(cacheKey, first.path);
+        return first.path;
       }
     } catch (error) {
-      this.apiSearchFailures++;
-      if (this.apiSearchFailures >= 5) {
-        this.apiSearchDisabledUntil = Date.now() + 30000;
-        this.apiSearchFailures = 0;
-        logger.warn("[StatOperations] API search circuit breaker tripped", { failures: 5 });
+      const result = this.apiSearchCircuitBreaker.recordFailure();
+      if (result.tripped) {
+        logger.warn("[StatOperations] API search circuit breaker tripped", {
+          failures: result.failures,
+        });
       }
       logger.error("[StatOperations] API pattern search failed", { pattern: searchPattern, error });
     }

@@ -1,14 +1,14 @@
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
-import { buildTransformCacheKey } from "../../cache/keys.ts";
+import { buildTransformCacheKey } from "#veryfront/cache/keys.ts";
 import {
   type CacheBackend,
   CacheBackends,
   MemoryCacheBackend,
   type TokenizingCacheGateway,
-} from "../../cache/backend.ts";
+} from "#veryfront/cache/backend.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "../../cache/paths.ts";
+import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "#veryfront/cache/paths.ts";
 
 const DEFAULT_TTL_SECONDS = 300; // 5 minutes
 const FALLBACK_MAX_ENTRIES = 500;

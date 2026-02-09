@@ -513,7 +513,9 @@ function router(req: Request): Promise<Response> {
     case "/_proxy/stats":
       return handleStats();
     case "/_proxy/health":
-      return Promise.resolve(new Response("OK", { status: 200 }));
+      return Promise.resolve(
+        Response.json({ service: "veryfront-proxy", status: "ok" }),
+      );
   }
 
   if (url.pathname.startsWith("/_vf/api/")) return handleApiProxy(req);

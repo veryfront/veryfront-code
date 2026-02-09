@@ -318,6 +318,28 @@ describe("RedisBackend", () => {
       assertEquals(retrieved.output, { result: "hello" });
       assertEquals(retrieved.error, { message: "boom" });
     });
+
+    it("should persist workerId and tenant context", async () => {
+      await backend.createRun(
+        createTestRun("run-tenant", {
+          workerId: "worker-1",
+          heartbeatAt: new Date("2025-06-15T12:10:00Z"),
+          _tenant: {
+            projectSlug: "acme",
+            token: "vf_token",
+            projectId: "project-123",
+            productionMode: false,
+            releaseId: null,
+          },
+        }),
+      );
+
+      const retrieved = await backend.getRun("run-tenant");
+      assertEquals(retrieved?.workerId, "worker-1");
+      assertEquals(retrieved?.heartbeatAt?.toISOString(), "2025-06-15T12:10:00.000Z");
+      assertEquals(retrieved?._tenant?.projectSlug, "acme");
+      assertEquals(retrieved?._tenant?.token, "vf_token");
+    });
   });
 
   describe("updateRun", () => {
@@ -541,6 +563,43 @@ describe("RedisBackend", () => {
 
     it("should fail to extend non-existent lock", async () => {
       assertEquals(await backend.extendLock("no-such-lock", 10000), false);
+    });
+  });
+
+  describe("stalled run recovery", () => {
+    it("should find stalled runs", async () => {
+      await backend.createRun(
+        createTestRun("run-fresh", {
+          status: "running",
+          startedAt: new Date(Date.now() - 120_000),
+          heartbeatAt: new Date(),
+        }),
+      );
+      await backend.createRun(
+        createTestRun("run-stalled", {
+          status: "running",
+          startedAt: new Date(Date.now() - 120_000),
+        }),
+      );
+
+      const stalled = await backend.findStalledRuns(60_000);
+      assertEquals(stalled.map((run) => run.id), ["run-stalled"]);
+    });
+
+    it("should claim a stalled run once and set workerId", async () => {
+      await backend.createRun(
+        createTestRun("run-claim", {
+          status: "running",
+          startedAt: new Date(Date.now() - 120_000),
+        }),
+      );
+
+      assertEquals(await backend.claimStalledRun("run-claim", "worker-a", 60_000), true);
+      assertEquals(await backend.claimStalledRun("run-claim", "worker-b", 60_000), false);
+
+      const run = await backend.getRun("run-claim");
+      assertEquals(run?.workerId, "worker-a");
+      assertExists(run?.heartbeatAt);
     });
   });
 

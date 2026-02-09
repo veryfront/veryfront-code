@@ -58,5 +58,31 @@ describe("PathNormalizer", () => {
       const normalizer = new PathNormalizer();
       assertEquals(normalizer.normalize("file.ts"), "file.ts");
     });
+
+    it("should strip projectDir and @/ alias together", () => {
+      const normalizer = new PathNormalizer("/project");
+      assertEquals(
+        normalizer.normalize("/project/@/components/Button.tsx"),
+        "components/Button.tsx",
+      );
+    });
+
+    it("should not strip @/ when it is not at the beginning", () => {
+      const normalizer = new PathNormalizer();
+      assertEquals(
+        normalizer.normalize("src/@/components/Button.tsx"),
+        "src/@/components/Button.tsx",
+      );
+    });
+
+    it("should normalize to empty string when path equals projectDir", () => {
+      const normalizer = new PathNormalizer("/project");
+      assertEquals(normalizer.normalize("/project"), "");
+    });
+
+    it("should normalize repeated slashes after stripping projectDir", () => {
+      const normalizer = new PathNormalizer("/project");
+      assertEquals(normalizer.normalize("/project//src///page.tsx"), "src/page.tsx");
+    });
   });
 });

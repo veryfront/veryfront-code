@@ -4,7 +4,7 @@
  */
 
 import { computeHash } from "#veryfront/utils";
-import { parseAllImports } from "../transforms/import-rewriter/parse-cache.ts";
+import { parseAllImports } from "#veryfront/transforms/import-rewriter/parse-cache.ts";
 
 export class DependencyGraph {
   private dependencies = new Map<string, Set<string>>();

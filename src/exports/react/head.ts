@@ -1,1 +1,1 @@
-export * from "../../react/components/Head.tsx";
+export * from "#veryfront/react/components/Head.tsx";

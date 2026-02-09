@@ -1,6 +1,6 @@
 import { join } from "#veryfront/compat/path/index.ts";
 import { bundlerLogger as logger } from "#veryfront/utils";
-import { createFileSystem } from "../platform/compat/fs.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
 /** Directories within .veryfront that should be excluded from scanning */
 const VERYFRONT_EXCLUDED_DIRS = new Set([

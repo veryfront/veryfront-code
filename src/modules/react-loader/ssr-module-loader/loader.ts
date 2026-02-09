@@ -10,25 +10,17 @@ import { join } from "#veryfront/compat/path/index.ts";
 import type * as React from "react";
 import { transformToESM } from "#veryfront/transforms/esm/index.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
-import { VERSION } from "#veryfront/utils/version.ts";
-import { buildSSRModuleCacheKey } from "../../../cache/keys.ts";
-import { computeConfigHashSync } from "../../../cache/config-hash.ts";
 import {
   type CrossProjectImport,
-  type MissingImport,
   parseLocalImports,
 } from "#veryfront/transforms/esm/import-parser.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
-import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { extractComponent } from "../extract-component.ts";
 import {
-  CIRCUIT_BREAKER_RESET_MS,
-  CIRCUIT_BREAKER_THRESHOLD,
   getMaxConcurrentTransforms,
   IN_PROGRESS_WAIT_TIMEOUT_MS,
   MAX_TRANSFORM_DEPTH,
@@ -37,13 +29,10 @@ import {
 } from "./constants.ts";
 import { withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 import {
-  failedComponents,
   getFromRedis,
   getTransformSemaphore,
-  globalCrossProjectCache,
   globalInProgress,
   globalModuleCache,
-  globalTmpDirs,
   isSSRDistributedCacheEnabled,
   releaseTransformSlot,
   setInRedis,
@@ -53,40 +42,23 @@ import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { lookupMdxEsmCache } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
-import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
-import {
-  extractAllFilePaths,
-  extractHttpBundlePaths,
-  verifiedHttpBundlePaths,
-} from "./http-bundle-helpers.ts";
+import { extractHttpBundlePaths, verifiedHttpBundlePaths } from "./http-bundle-helpers.ts";
 import { rewriteCrossProjectImport, rewriteLocalImports } from "./import-rewriter.ts";
-import {
-  createModuleFetcherContext,
-  fetchAndCacheModule,
-} from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
-import { VF_MODULE_IMPORT_PATTERN } from "#veryfront/transforms/mdx/esm-module-loader/constants.ts";
+import { transformCrossProjectImportFlow } from "./cross-project-import-loader.ts";
+import { SSRCacheManager } from "./ssr-cache-manager.ts";
+import { SSRCircuitBreaker } from "./ssr-circuit-breaker.ts";
+import { SSRDependencyValidator } from "./ssr-dependency-validator.ts";
+import { preflightLocalImports } from "./preflight-imports.ts";
+import { resolveVfModuleImports } from "./vf-module-resolver.ts";
 
-/**
- * Find /_vf_modules/ imports in transformed code.
- * These need to be resolved to file:// paths for dynamic import.
- * Matches both /_vf_modules/... and file:///_vf_modules/... patterns.
- */
-function findVfModuleImports(code: string): Array<{ original: string; path: string }> {
-  const imports: Array<{ original: string; path: string }> = [];
-  const pattern = new RegExp(VF_MODULE_IMPORT_PATTERN.source, "g");
+const MISSING_HTTP_BUNDLE_PATTERN = /veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/;
 
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(code)) !== null) {
-    const rawPath = match[1];
-    if (rawPath) {
-      // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
-      const path = rawPath.replace(/^(?:file:\/\/)?\/+/, "");
-      imports.push({ original: match[0], path });
-    }
-  }
+type TransformCapacityErrorMode = "plain" | "build";
 
-  return imports;
-}
+type ImportErrorClassification =
+  | { type: "http-bundle-missing"; hash: string; message: string }
+  | { type: "module-not-found"; message: string }
+  | { type: "unknown"; message: string };
 
 /**
  * SSR Module Loader with Redis Support.
@@ -95,21 +67,154 @@ function findVfModuleImports(code: string): Array<{ original: string; path: stri
  * Supports Redis caching to share transformed modules across pods.
  */
 export class SSRModuleLoader {
-  private fs = createFileSystem();
-  private missingDependencies: MissingImport[] = [];
-  private cachedConfigHash: string | undefined;
+  private cache: SSRCacheManager;
+  private circuitBreaker = new SSRCircuitBreaker();
+  private depValidator: SSRDependencyValidator;
 
-  constructor(private options: SSRModuleLoaderOptions) {}
+  constructor(private options: SSRModuleLoaderOptions) {
+    this.cache = new SSRCacheManager(options);
+    this.depValidator = new SSRDependencyValidator(
+      (filePath) => this.cache.getCacheKey(filePath),
+      (filePath, source, depth) => this.transformWithDependencies(filePath, source, depth),
+      (crossImport) => this.transformCrossProjectImport(crossImport),
+      options.adapter,
+      options.projectDir,
+    );
+  }
 
-  /** Lazily compute config hash once per loader instance. */
-  private getConfigHash(): string {
-    if (!this.cachedConfigHash) {
-      this.cachedConfigHash = computeConfigHashSync({
-        reactVersion: this.options.reactVersion,
-        dev: this.options.dev,
-      });
+  private classifyImportError(importError: unknown): ImportErrorClassification {
+    const message = importError instanceof Error ? importError.message : String(importError);
+    const bundleMatch = message.match(MISSING_HTTP_BUNDLE_PATTERN);
+    if (bundleMatch?.[1]) {
+      return { type: "http-bundle-missing", hash: bundleMatch[1], message };
     }
-    return this.cachedConfigHash;
+    if (message.includes("Cannot find module") || message.includes("Module not found")) {
+      return { type: "module-not-found", message };
+    }
+    return { type: "unknown", message };
+  }
+
+  private createTransformCapacityError(
+    mode: TransformCapacityErrorMode,
+    message: string,
+    filePath: string,
+  ): Error {
+    if (mode === "plain") return new Error(message);
+    return toError(
+      createError({
+        type: "build",
+        message,
+        context: { file: filePath, phase: "transform" },
+      }),
+    );
+  }
+
+  private async withTransformCapacity<T>(
+    filePath: string,
+    mode: TransformCapacityErrorMode,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const useSemaphore = getMaxConcurrentTransforms() > 0;
+    const projectId = this.options.projectId;
+    const semaphore = useSemaphore ? getTransformSemaphore() : undefined;
+    let semaphoreAcquired = false;
+
+    if (!await tryAcquireTransformSlot(projectId, TRANSFORM_ACQUIRE_TIMEOUT_MS)) {
+      throw this.createTransformCapacityError(
+        mode,
+        `Project ${projectId} at transform capacity. Consider reducing page complexity or request rate.`,
+        filePath,
+      );
+    }
+
+    try {
+      if (semaphore) {
+        semaphoreAcquired = await semaphore.tryAcquire(TRANSFORM_ACQUIRE_TIMEOUT_MS);
+        if (!semaphoreAcquired) {
+          throw this.createTransformCapacityError(
+            mode,
+            `Transform capacity exceeded (${semaphore.waiting} waiting). Service is overloaded.`,
+            filePath,
+          );
+        }
+      }
+
+      return await operation();
+    } finally {
+      if (semaphore && semaphoreAcquired) {
+        semaphore.release();
+      }
+      releaseTransformSlot(projectId);
+    }
+  }
+
+  private async importModuleFromCacheEntry(
+    filePath: string,
+    fileName: string,
+    cacheEntry: ModuleCacheEntry,
+  ): Promise<Record<string, unknown>> {
+    try {
+      return (await withSpan(
+        SpanNames.SSR_DYNAMIC_IMPORT,
+        () => import(`file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}`),
+        { "ssr.file": fileName },
+      )) as Record<string, unknown>;
+    } catch (importError) {
+      const classifiedError = this.classifyImportError(importError);
+
+      if (classifiedError.type === "http-bundle-missing") {
+        const hash = classifiedError.hash;
+        const cacheDir = getHttpBundleCacheDir();
+
+        logger.error("[SSR-MODULE-LOADER] Missing HTTP bundle after ensureHttpBundlesExist", {
+          file: filePath.slice(-40),
+          hash,
+          tempPath: cacheEntry.tempPath,
+          contentHash: cacheEntry.contentHash,
+          cacheDir,
+          expectedPath: `${cacheDir}/http-${hash}.mjs`,
+        });
+
+        const { recoverHttpBundleByHash } = await import(
+          "#veryfront/transforms/esm/http-cache.ts"
+        );
+        const recovered = await recoverHttpBundleByHash(hash, cacheDir);
+
+        if (recovered) {
+          logger.info("[SSR-MODULE-LOADER] HTTP bundle recovered, retrying import", {
+            hash,
+            file: filePath.slice(-40),
+          });
+          return (await import(
+            `file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}&retry=1`
+          )) as Record<string, unknown>;
+        }
+
+        this.cache.invalidateFilePathCacheEntry(filePath, cacheEntry);
+
+        logger.error("[SSR-MODULE-LOADER] HTTP bundle recovery failed, cache invalidated", {
+          hash,
+          file: filePath.slice(-40),
+          cacheDir,
+          hint: "Bundle may have expired from Redis (24h TTL) while transform was still cached",
+        });
+        throw importError;
+      }
+
+      if (classifiedError.type === "module-not-found") {
+        logger.error(
+          "[SSR-MODULE-LOADER] Cached module has missing dependency, invalidating cache",
+          {
+            file: filePath.slice(-40),
+            tempPath: cacheEntry.tempPath,
+            error: classifiedError.message.slice(0, 200),
+          },
+        );
+        this.cache.invalidateFilePathCacheEntry(filePath, cacheEntry);
+      }
+
+      throw importError;
+    }
   }
 
   loadModule(
@@ -121,19 +226,19 @@ export class SSRModuleLoader {
     return withSpan(
       SpanNames.SSR_LOAD_MODULE,
       async () => {
-        const circuitKey = this.getCacheKey(filePath);
-        this.checkCircuitBreaker(circuitKey, filePath);
+        const circuitKey = this.cache.getCacheKey(filePath);
+        this.circuitBreaker.check(circuitKey, filePath);
 
-        this.missingDependencies = [];
+        this.depValidator.reset();
 
         try {
           await this.transformWithDependencies(filePath, source);
 
-          if (this.missingDependencies.length > 0) {
-            this.throwMissingDependencies(filePath);
+          if (this.depValidator.missingDependencies.length > 0) {
+            this.depValidator.throwMissingDependencies(filePath);
           }
 
-          const cacheKey = this.getCacheKey(filePath);
+          const cacheKey = this.cache.getCacheKey(filePath);
           const cacheEntry = globalModuleCache.get(cacheKey);
           if (!cacheEntry) {
             throw toError(
@@ -145,92 +250,12 @@ export class SSRModuleLoader {
             );
           }
 
-          let mod: Record<string, unknown>;
-          try {
-            mod = (await withSpan(
-              SpanNames.SSR_DYNAMIC_IMPORT,
-              () => import(`file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}`),
-              { "ssr.file": fileName },
-            )) as Record<string, unknown>;
-          } catch (importError) {
-            const errorMsg = importError instanceof Error
-              ? importError.message
-              : String(importError);
-            const bundleMatch = errorMsg.match(/veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/);
+          const mod = await this.importModuleFromCacheEntry(filePath, fileName, cacheEntry);
 
-            if (bundleMatch) {
-              const hash = bundleMatch[1]!;
-              const cacheDir = getHttpBundleCacheDir();
-
-              logger.error("[SSR-MODULE-LOADER] Missing HTTP bundle after ensureHttpBundlesExist", {
-                file: filePath.slice(-40),
-                hash,
-                tempPath: cacheEntry.tempPath,
-                contentHash: cacheEntry.contentHash,
-                cacheDir,
-                expectedPath: `${cacheDir}/http-${hash}.mjs`,
-              });
-
-              const { recoverHttpBundleByHash } = await import(
-                "#veryfront/transforms/esm/http-cache.ts"
-              );
-              const recovered = await recoverHttpBundleByHash(hash, cacheDir);
-
-              if (recovered) {
-                logger.info("[SSR-MODULE-LOADER] HTTP bundle recovered, retrying import", {
-                  hash,
-                  file: filePath.slice(-40),
-                });
-                mod = (await import(
-                  `file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}&retry=1`
-                )) as Record<string, unknown>;
-              } else {
-                const cacheKey = this.getCacheKey(filePath);
-                globalModuleCache.delete(cacheKey);
-
-                const verifyKey = `${cacheEntry.tempPath}:${cacheEntry.contentHash}`;
-                verifiedHttpBundlePaths.delete(verifyKey);
-
-                logger.error("[SSR-MODULE-LOADER] HTTP bundle recovery failed, cache invalidated", {
-                  hash,
-                  file: filePath.slice(-40),
-                  cacheDir,
-                  hint:
-                    "Bundle may have expired from Redis (24h TTL) while transform was still cached",
-                });
-                throw importError;
-              }
-            }
-
-            if (errorMsg.includes("Cannot find module") || errorMsg.includes("Module not found")) {
-              const cacheKey = this.getCacheKey(filePath);
-              logger.error(
-                "[SSR-MODULE-LOADER] Cached module has missing dependency, invalidating cache",
-                {
-                  file: filePath.slice(-40),
-                  tempPath: cacheEntry.tempPath,
-                  error: errorMsg.slice(0, 200),
-                },
-              );
-              globalModuleCache.delete(cacheKey);
-
-              const verifyKey = `${cacheEntry.tempPath}:${cacheEntry.contentHash}`;
-              verifiedHttpBundlePaths.delete(verifyKey);
-
-              throw importError;
-            }
-
-            throw importError;
-          }
-
-          failedComponents.delete(circuitKey);
+          this.circuitBreaker.recordSuccess(circuitKey);
           return extractComponent(mod, filePath);
         } catch (error) {
-          const existing = failedComponents.get(circuitKey);
-          failedComponents.set(circuitKey, {
-            count: (existing?.count ?? 0) + 1,
-            lastFailure: Date.now(),
-          });
+          this.circuitBreaker.recordFailure(circuitKey);
           throw error;
         }
       },
@@ -242,215 +267,16 @@ export class SSRModuleLoader {
     );
   }
 
-  private checkCircuitBreaker(circuitKey: string, filePath: string): void {
-    const failureRecord = failedComponents.get(circuitKey);
-    if (!failureRecord) return;
-
-    const timeSinceFailure = Date.now() - failureRecord.lastFailure;
-
-    if (
-      failureRecord.count >= CIRCUIT_BREAKER_THRESHOLD &&
-      timeSinceFailure < CIRCUIT_BREAKER_RESET_MS
-    ) {
-      throw toError(
-        createError({
-          type: "build",
-          message:
-            `Component ${filePath} is temporarily blocked due to repeated failures. Will retry in ${
-              Math.ceil((CIRCUIT_BREAKER_RESET_MS - timeSinceFailure) / 1000)
-            }s.`,
-          context: {
-            file: filePath,
-            phase: "circuit-breaker",
-            failures: failureRecord.count,
-          },
-        }),
-      );
-    }
-
-    if (timeSinceFailure >= CIRCUIT_BREAKER_RESET_MS) {
-      failedComponents.delete(circuitKey);
-    }
-  }
-
-  private throwMissingDependencies(filePath: string): never {
-    const missingList = this.missingDependencies
-      .map((m) => `  - ${m.specifier} (from ${m.fromFile.slice(-40)}): ${m.reason}`)
-      .join("\n");
-
-    logger.error("[SSR-MODULE-LOADER] Missing dependencies detected", {
-      file: filePath.slice(-60),
-      missing: this.missingDependencies.length,
-      details: this.missingDependencies,
-    });
-
-    throw toError(
-      createError({
-        type: "build",
-        message: `Component has missing dependencies:\n${missingList}`,
-        context: {
-          file: filePath,
-          phase: "dependency-resolution",
-          missing: this.missingDependencies,
-        },
-      }),
-    );
-  }
-
-  private getCacheKey(filePath: string): string {
-    if (!this.options.contentSourceId) {
-      throw new Error(
-        `Missing contentSourceId for SSR module cache (project: ${this.options.projectId}, file: ${filePath})`,
-      );
-    }
-
-    const reactVersion = this.options.reactVersion ?? "default";
-    const configHash = this.getConfigHash();
-
-    return buildSSRModuleCacheKey(
-      VERSION,
-      this.options.projectId,
-      `${this.options.contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
-    );
-  }
-
-  private isProductionContentSource(): boolean {
-    const sourceId = this.options.contentSourceId;
-    if (!sourceId) return !this.options.dev;
-
-    if (sourceId.startsWith("preview-") || sourceId === "preview" || sourceId === "preview-draft") {
-      return false;
-    }
-
-    if (
-      sourceId.startsWith("release-") ||
-      sourceId.startsWith("production-") ||
-      sourceId.startsWith("prod-") ||
-      sourceId === "production"
-    ) {
-      return true;
-    }
-
-    return !this.options.dev;
-  }
-
-  private getRegistryBaseUrl(): string {
-    const apiBaseUrl = this.options.apiBaseUrl || getApiBaseUrlEnv();
-    return apiBaseUrl.replace(/\/api\/?$/, "");
-  }
-
   private async transformCrossProjectImport(
     crossProjectImport: CrossProjectImport,
   ): Promise<string> {
-    const { specifier, projectSlug, version, path } = crossProjectImport;
-
-    const reactVersion = this.options.reactVersion ?? "default";
-    const cacheKey = `${specifier}:${this.options.projectId}:${reactVersion}`;
-
-    const cachedEntry = globalCrossProjectCache.get(cacheKey);
-    if (cachedEntry) return cachedEntry.tempPath;
-
-    const registryBaseUrl = this.getRegistryBaseUrl();
-    const projectRef = `${projectSlug}@${version}`;
-    const registryUrl = `${registryBaseUrl}/${projectRef}/@/${path}`;
-
-    logger.debug("[SSR-MODULE-LOADER] Fetching cross-project import", {
-      specifier,
-      registryUrl,
+    return transformCrossProjectImportFlow({
+      crossProjectImport,
+      options: this.options,
+      cache: this.cache,
+      withTransformCapacity: (syntheticFilePath, operation) =>
+        this.withTransformCapacity(syntheticFilePath, "plain", operation),
     });
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), HTTP_FETCH_TIMEOUT_MS);
-
-    try {
-      const headers = new Headers({
-        Accept: "text/plain, application/javascript, */*",
-      });
-      injectContext(headers);
-
-      const response = await fetch(registryUrl, { signal: controller.signal, headers });
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        throw new Error(
-          `Failed to fetch ${registryUrl}: ${response.status} ${response.statusText}`,
-        );
-      }
-
-      const sourceCode = await response.text();
-      const contentHash = await this.hashContentAsync(sourceCode);
-
-      const ext = path.match(/\.(tsx?|jsx?|mdx)$/)?.[0] ?? ".tsx";
-      const syntheticFilePath = `cross-project/${projectRef}/@/${path}`;
-      const tempPath = await this.getTempPath(syntheticFilePath, contentHash);
-      await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), { recursive: true });
-
-      const useSemaphore = getMaxConcurrentTransforms() > 0;
-      const projectId = this.options.projectId;
-      let projectSlotAcquired = false;
-
-      if (!await tryAcquireTransformSlot(projectId, TRANSFORM_ACQUIRE_TIMEOUT_MS)) {
-        throw new Error(
-          `Project ${projectId} at transform capacity. Consider reducing page complexity or request rate.`,
-        );
-      }
-      projectSlotAcquired = true;
-
-      if (useSemaphore) {
-        const acquired = await getTransformSemaphore().tryAcquire(TRANSFORM_ACQUIRE_TIMEOUT_MS);
-        if (!acquired) {
-          releaseTransformSlot(projectId);
-          projectSlotAcquired = false;
-          throw new Error(
-            `Transform capacity exceeded (${getTransformSemaphore().waiting} waiting). Service is overloaded.`,
-          );
-        }
-      }
-
-      try {
-        const transformOpts: TransformOptions = {
-          projectId,
-          dev: this.options.dev,
-          ssr: true,
-          apiBaseUrl: this.options.apiBaseUrl,
-          reactVersion: this.options.reactVersion,
-        };
-
-        const filePathWithExt = syntheticFilePath.endsWith(ext)
-          ? syntheticFilePath
-          : syntheticFilePath + ext;
-
-        const transformed = await transformToESM(
-          sourceCode,
-          filePathWithExt,
-          this.options.projectDir,
-          this.options.adapter,
-          transformOpts,
-        );
-
-        await this.fs.writeTextFile(tempPath, transformed);
-
-        globalCrossProjectCache.set(cacheKey, { tempPath, contentHash });
-
-        logger.debug("[SSR-MODULE-LOADER] Cross-project import transformed", {
-          specifier,
-          tempPath,
-        });
-
-        return tempPath;
-      } finally {
-        if (useSemaphore) getTransformSemaphore().release();
-        if (projectSlotAcquired) releaseTransformSlot(projectId);
-      }
-    } catch (error) {
-      clearTimeout(timeout);
-      logger.error("[SSR-MODULE-LOADER] Failed to fetch cross-project import", {
-        specifier,
-        registryUrl,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
-    }
   }
 
   private transformWithDependencies(
@@ -492,64 +318,23 @@ export class SSRModuleLoader {
     }
 
     const code = source ?? (await this.options.adapter.fs.readFile(filePath));
-    const contentHash = await this.hashContentAsync(code);
-    const contentCacheKey = this.getCacheKey(`${filePath}:${contentHash}`);
-    const filePathCacheKey = this.getCacheKey(filePath);
+    const contentHash = await this.cache.hashContentAsync(code);
+    const contentCacheKey = this.cache.getCacheKey(`${filePath}:${contentHash}`);
+    const filePathCacheKey = this.cache.getCacheKey(filePath);
     const inProgressKey = contentCacheKey;
 
     const cachedEntry = globalModuleCache.get(contentCacheKey);
     if (cachedEntry) {
-      const verifyKey = `${cachedEntry.tempPath}:${cachedEntry.contentHash}`;
-      if (!verifiedHttpBundlePaths.get(verifyKey)) {
-        try {
-          const cachedCode = await this.fs.readTextFile(cachedEntry.tempPath);
-
-          // Check for unresolved /_vf_modules/ imports
-          const unresolvedPattern = /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/g;
-          if (unresolvedPattern.test(cachedCode)) {
-            logger.warn(
-              "[SSR-MODULE-LOADER] Memory cache has unresolved _vf_modules imports, invalidating",
-              { file: filePath.slice(-40), tempPath: cachedEntry.tempPath.slice(-60) },
-            );
-            globalModuleCache.delete(contentCacheKey);
-            globalModuleCache.delete(filePathCacheKey);
-            verifiedHttpBundlePaths.delete(verifyKey);
-            // Fall through to Redis or fresh transform
-          } else {
-            const bundlePaths = extractHttpBundlePaths(cachedCode);
-            if (bundlePaths.length > 0) {
-              const cacheDir = getHttpBundleCacheDir();
-              const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-              if (failed.length > 0) {
-                logger.warn("[SSR-MODULE-LOADER] Unrecoverable HTTP bundles, re-transforming", {
-                  file: filePath.slice(-40),
-                  failed,
-                  totalBundles: bundlePaths.length,
-                  cacheDir,
-                  source: "memory-cache",
-                });
-                globalModuleCache.delete(contentCacheKey);
-                globalModuleCache.delete(filePathCacheKey);
-                // Also clear the verification cache so re-verification happens after re-transform
-                verifiedHttpBundlePaths.delete(verifyKey);
-                // Fall through to Redis or fresh transform
-              } else {
-                verifiedHttpBundlePaths.set(verifyKey, true);
-              }
-            } else {
-              verifiedHttpBundlePaths.set(verifyKey, true);
-            }
-          }
-        } catch {
-          globalModuleCache.delete(contentCacheKey);
-          globalModuleCache.delete(filePathCacheKey);
-          verifiedHttpBundlePaths.delete(verifyKey);
-        }
-      }
-
-      if (globalModuleCache.has(contentCacheKey)) {
+      if (
+        await this.cache.validateMemoryCacheEntry(
+          cachedEntry,
+          contentCacheKey,
+          filePathCacheKey,
+          filePath,
+        )
+      ) {
         globalModuleCache.set(filePathCacheKey, cachedEntry);
-        await this.ensureDependenciesExist(code, filePath, depth);
+        await this.depValidator.ensureDependenciesExist(code, filePath, depth);
         return;
       }
     }
@@ -557,84 +342,33 @@ export class SSRModuleLoader {
     if (isSSRDistributedCacheEnabled()) {
       const redisCode = await getFromRedis(contentCacheKey);
       if (redisCode) {
-        if (/esm\.sh\/_?vf_modules\//.test(redisCode)) {
-          logger.warn(
-            "[SSR-MODULE-LOADER] Redis cache has invalid esm.sh/_vf_modules URL, re-transforming",
-            { file: filePath.slice(-40) },
-          );
-        } else {
-          let allPathsOk = true;
+        const isValidRedisCode = await this.cache.validateCachedCode(
+          redisCode,
+          filePath,
+          "redis-cache",
+          {
+            checkLocalPaths: true,
+            checkInvalidEsmShPath: true,
+          },
+        );
+        if (isValidRedisCode) {
+          const transformedHash = await this.cache.hashContentAsync(redisCode);
+          const tempPath = await this.cache.getTempPath(filePath, transformedHash);
+          const fs = this.cache.getFs();
+          await fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), {
+            recursive: true,
+          });
+          await fs.writeTextFile(tempPath, redisCode);
+          verifiedHttpBundlePaths.set(`${tempPath}:${transformedHash}`, true);
 
-          const bundlePaths = extractHttpBundlePaths(redisCode);
-          if (bundlePaths.length > 0) {
-            const cacheDir = getHttpBundleCacheDir();
-            const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-            if (failed.length > 0) {
-              logger.warn("[SSR-MODULE-LOADER] Unrecoverable HTTP bundles, re-transforming", {
-                file: filePath.slice(-40),
-                failed,
-                totalBundles: bundlePaths.length,
-                cacheDir,
-                source: "redis-cache",
-              });
-              allPathsOk = false;
-            }
-          }
+          const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
+          globalModuleCache.set(contentCacheKey, entry);
+          globalModuleCache.set(filePathCacheKey, entry);
 
-          if (allPathsOk) {
-            const allPaths = extractAllFilePaths(redisCode);
-            for (const path of allPaths) {
-              try {
-                const stat = await this.fs.stat(path);
-                if (!stat.isFile) {
-                  allPathsOk = false;
-                  break;
-                }
-              } catch {
-                logger.debug(
-                  "[SSR-MODULE-LOADER] Redis cache has invalid local path, re-transforming",
-                  {
-                    file: filePath.slice(-40),
-                    missingPath: path.slice(-60),
-                  },
-                );
-                allPathsOk = false;
-                break;
-              }
-            }
-          }
+          logger.debug("[SSR-MODULE-LOADER] Redis cache hit", { file: filePath.slice(-40) });
 
-          // CRITICAL: Check for unresolved /_vf_modules/ imports.
-          // Stale cache entries may have unresolved paths that weren't converted to file:// URLs.
-          if (allPathsOk) {
-            const unresolvedPattern = /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/g;
-            if (unresolvedPattern.test(redisCode)) {
-              logger.warn(
-                "[SSR-MODULE-LOADER] Redis cache has unresolved _vf_modules imports, re-transforming",
-                { file: filePath.slice(-40) },
-              );
-              allPathsOk = false;
-            }
-          }
-
-          if (allPathsOk) {
-            const transformedHash = await this.hashContentAsync(redisCode);
-            const tempPath = await this.getTempPath(filePath, transformedHash);
-            await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), {
-              recursive: true,
-            });
-            await this.fs.writeTextFile(tempPath, redisCode);
-            verifiedHttpBundlePaths.set(`${tempPath}:${transformedHash}`, true);
-
-            const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
-            globalModuleCache.set(contentCacheKey, entry);
-            globalModuleCache.set(filePathCacheKey, entry);
-
-            logger.debug("[SSR-MODULE-LOADER] Redis cache hit", { file: filePath.slice(-40) });
-
-            await this.ensureDependenciesExist(code, filePath, depth);
-            return;
-          }
+          await this.depValidator.ensureDependenciesExist(code, filePath, depth);
+          return;
         }
       }
     }
@@ -662,7 +396,7 @@ export class SSRModuleLoader {
           cachedPath: mdxCacheResult.path.slice(-60),
         });
 
-        await this.ensureDependenciesExist(code, filePath, depth);
+        await this.depValidator.ensureDependenciesExist(code, filePath, depth);
         return;
       }
 
@@ -717,39 +451,16 @@ export class SSRModuleLoader {
       );
 
       if (parseResult.missing.length > 0) {
-        this.missingDependencies.push(...parseResult.missing);
+        this.depValidator.missingDependencies.push(...parseResult.missing);
       }
 
       if (parseResult.imports.length > 0) {
         const preflightFs = createFileSystem();
-        const preflightMissing: MissingImport[] = [];
-        const validImports: typeof parseResult.imports = [];
-
-        for (const imp of parseResult.imports) {
-          if (!imp.absolutePath.startsWith("/")) {
-            validImports.push(imp);
-            continue;
-          }
-
-          try {
-            const stat = await preflightFs.stat(imp.absolutePath);
-            if (stat?.isFile) {
-              validImports.push(imp);
-            } else {
-              preflightMissing.push({
-                specifier: imp.specifier,
-                fromFile: filePath,
-                reason: `Pre-flight: not a file on disk: ${imp.absolutePath}`,
-              });
-            }
-          } catch {
-            preflightMissing.push({
-              specifier: imp.specifier,
-              fromFile: filePath,
-              reason: `Pre-flight: file not accessible: ${imp.absolutePath}`,
-            });
-          }
-        }
+        const { validImports, missingImports: preflightMissing } = await preflightLocalImports(
+          parseResult.imports,
+          filePath,
+          preflightFs,
+        );
 
         if (preflightMissing.length > 0) {
           logger.warn("[SSR-MODULE-LOADER] Pre-flight: some dependencies missing, skipping them", {
@@ -757,34 +468,19 @@ export class SSRModuleLoader {
             missing: preflightMissing.map((m) => m.specifier),
             depth,
           });
-          this.missingDependencies.push(...preflightMissing);
+          this.depValidator.missingDependencies.push(...preflightMissing);
           parseResult = { ...parseResult, imports: validImports };
         }
       }
 
-      // Acquire per-project slot BEFORE processing imports to prevent unbounded parallelism.
-      // Without this, recursive transforms can exhaust the slot limit (e.g., 10 batch × 10 depth = 100 transforms
-      // trying to run simultaneously, but per-project limit is only 17).
-      const useSemaphore = getMaxConcurrentTransforms() > 0;
-      const projectId = this.options.projectId;
-      let projectSlotAcquired = false;
-
-      if (!await tryAcquireTransformSlot(projectId, TRANSFORM_ACQUIRE_TIMEOUT_MS)) {
-        throw toError(
-          createError({
-            type: "build",
-            message:
-              `Project ${projectId} at transform capacity. Consider reducing page complexity or request rate.`,
-            context: { file: filePath, phase: "transform" },
-          }),
-        );
-      }
-      projectSlotAcquired = true;
-
+      // Process recursive imports FIRST, without holding a project slot.
+      // Each recursive child acquires its own slot for its own transform only.
+      // This prevents hierarchical deadlock where parent holds a slot while
+      // children also need slots (10 batch x 2 depth = 21 slots, but limit is 17).
       const crossProjectPaths = new Map<string, string>();
       const localFs = createFileSystem();
 
-      const localImportPaths = await this.processLocalImports(
+      const localImportPaths = await this.depValidator.processLocalImports(
         parseResult.imports,
         filePath,
         depth,
@@ -799,7 +495,7 @@ export class SSRModuleLoader {
               const tempPath = await this.transformCrossProjectImport(crossImport);
               crossProjectPaths.set(crossImport.specifier, tempPath);
             } catch (error) {
-              this.missingDependencies.push({
+              this.depValidator.missingDependencies.push({
                 specifier: crossImport.specifier,
                 fromFile: filePath,
                 reason: `Failed to fetch cross-project import: ${
@@ -811,23 +507,9 @@ export class SSRModuleLoader {
         );
       }
 
-      if (useSemaphore) {
-        const acquired = await getTransformSemaphore().tryAcquire(TRANSFORM_ACQUIRE_TIMEOUT_MS);
-        if (!acquired) {
-          releaseTransformSlot(projectId);
-          projectSlotAcquired = false;
-          throw toError(
-            createError({
-              type: "build",
-              message:
-                `Transform capacity exceeded (${getTransformSemaphore().waiting} waiting). Service is overloaded.`,
-              context: { file: filePath, phase: "transform" },
-            }),
-          );
-        }
-      }
-
-      try {
+      // Hold project slots only around the actual transform and file write.
+      await this.withTransformCapacity(filePath, "build", async () => {
+        const projectId = this.options.projectId;
         const transformOpts: TransformOptions = {
           projectId,
           dev: this.options.dev,
@@ -860,51 +542,14 @@ export class SSRModuleLoader {
           this.options.projectDir,
         );
 
-        // Process /_vf_modules/ imports and resolve them to file:// paths
-        // These are framework module imports that need to be fetched and cached
-        const vfModuleImports = findVfModuleImports(transformed);
-        if (vfModuleImports.length > 0) {
-          logger.debug("[SSR-MODULE-LOADER] Processing _vf_modules imports", {
-            file: filePath.slice(-40),
-            count: vfModuleImports.length,
-            paths: vfModuleImports.map((i) => i.path).slice(0, 5),
-          });
-
-          const baseCacheDir = getMdxEsmCacheDir();
-          const projectKey = encodeURIComponent(this.options.projectId);
-          const sourceKey = this.options.contentSourceId!;
-          const esmCacheDir = join(baseCacheDir, projectKey, sourceKey);
-
-          const fetcherContext = createModuleFetcherContext(
-            esmCacheDir,
-            this.options.adapter,
-            this.options.projectDir,
-            this.options.projectId,
-            {
-              reactVersion: this.options.reactVersion,
-              projectSlug: this.options.projectId,
-              strictMissingModules: false,
-            },
-          );
-
-          const vfModuleResults = await Promise.all(
-            vfModuleImports.map(async ({ original, path }) => {
-              const cachedFilePath = await fetchAndCacheModule(path, fetcherContext);
-              return { original, cachedFilePath, path };
-            }),
-          );
-
-          for (const { original, cachedFilePath, path } of vfModuleResults) {
-            if (cachedFilePath) {
-              transformed = transformed.replace(original, `from "file://${cachedFilePath}"`);
-            } else {
-              logger.warn("[SSR-MODULE-LOADER] Failed to resolve _vf_modules import", {
-                file: filePath.slice(-40),
-                path,
-              });
-            }
-          }
-        }
+        transformed = await resolveVfModuleImports(transformed, {
+          filePath,
+          projectId: this.options.projectId,
+          contentSourceId: this.options.contentSourceId!,
+          adapter: this.options.adapter,
+          projectDir: this.options.projectDir,
+          reactVersion: this.options.reactVersion,
+        });
 
         // Ensure HTTP bundles exist for this transform (handles nested bundle deps)
         const bundlePaths = extractHttpBundlePaths(transformed);
@@ -934,21 +579,18 @@ export class SSRModuleLoader {
           }
         }
 
-        const transformedHash = await this.hashContentAsync(transformed);
+        const transformedHash = await this.cache.hashContentAsync(transformed);
 
         let tempPath: string;
+        const fs = this.cache.getFs();
         try {
-          tempPath = await this.getTempPath(filePath, transformedHash);
-          await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), {
+          tempPath = await this.cache.getTempPath(filePath, transformedHash);
+          await fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), {
             recursive: true,
           });
-          await this.fs.writeTextFile(tempPath, transformed);
+          await fs.writeTextFile(tempPath, transformed);
         } catch (writeError) {
-          const code = (writeError as { code?: string } | null | undefined)?.code;
-          const isOsError22 = writeError instanceof TypeError &&
-            String(writeError.message).includes("os error 22");
-
-          if (code === "ENOENT" || writeError instanceof Deno.errors.NotFound || isOsError22) {
+          if (this.cache.isCacheWriteSkippedError(writeError)) {
             logger.debug("[SSR-MODULE-LOADER] Cache write skipped (directory removed)", {
               filePath,
             });
@@ -960,7 +602,7 @@ export class SSRModuleLoader {
 
         if (isSSRDistributedCacheEnabled()) {
           setInRedis(contentCacheKey, transformed, {
-            isProduction: this.isProductionContentSource(),
+            isProduction: this.cache.isProductionContentSource(),
           }).catch((error) => {
             logger.debug("[SSR-MODULE-LOADER] Distributed cache set failed", {
               key: contentCacheKey,
@@ -972,10 +614,7 @@ export class SSRModuleLoader {
         const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
         globalModuleCache.set(contentCacheKey, entry);
         globalModuleCache.set(filePathCacheKey, entry);
-      } finally {
-        if (useSemaphore) getTransformSemaphore().release();
-        if (projectSlotAcquired) releaseTransformSlot(projectId);
-      }
+      });
 
       resolveTransform();
     } catch (error) {
@@ -984,146 +623,5 @@ export class SSRModuleLoader {
     } finally {
       globalInProgress.delete(inProgressKey);
     }
-  }
-
-  private async processLocalImports(
-    imports: Array<{ absolutePath: string; specifier: string }>,
-    fromFilePath: string,
-    depth: number,
-    localFs: ReturnType<typeof createFileSystem>,
-  ): Promise<Map<string, string>> {
-    const importPathMap = new Map<string, string>();
-
-    for (let i = 0; i < imports.length; i += TRANSFORM_BATCH_SIZE) {
-      const batch = imports.slice(i, i + TRANSFORM_BATCH_SIZE);
-      await Promise.all(
-        batch.map(async (imp) => {
-          try {
-            const depSource = imp.absolutePath.startsWith("/")
-              ? await localFs.readTextFile(imp.absolutePath)
-              : await this.options.adapter.fs.readFile(imp.absolutePath);
-
-            await this.transformWithDependencies(imp.absolutePath, depSource, depth + 1);
-
-            const depCacheKey = this.getCacheKey(imp.absolutePath);
-            const depEntry = globalModuleCache.get(depCacheKey);
-            if (depEntry) {
-              importPathMap.set(imp.specifier, depEntry.tempPath);
-              importPathMap.set(imp.absolutePath, depEntry.tempPath);
-            }
-          } catch (error) {
-            this.missingDependencies.push({
-              specifier: imp.specifier,
-              fromFile: fromFilePath,
-              reason: `Failed to read file: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            });
-          }
-        }),
-      );
-    }
-
-    return importPathMap;
-  }
-
-  private async ensureDependenciesExist(
-    code: string,
-    filePath: string,
-    depth: number = 0,
-  ): Promise<void> {
-    if (depth > MAX_TRANSFORM_DEPTH) return;
-
-    const parseResult = await parseLocalImports(
-      code,
-      filePath,
-      this.options.projectDir,
-      this.options.adapter,
-    );
-
-    if (parseResult.missing.length > 0) {
-      this.missingDependencies.push(...parseResult.missing);
-    }
-
-    const localFs = createFileSystem();
-    await this.processLocalImports(parseResult.imports, filePath, depth, localFs);
-
-    for (let i = 0; i < parseResult.crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
-      const batch = parseResult.crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
-      await Promise.all(
-        batch.map(async (crossImport) => {
-          try {
-            await this.transformCrossProjectImport(crossImport);
-          } catch (error) {
-            this.missingDependencies.push({
-              specifier: crossImport.specifier,
-              fromFile: filePath,
-              reason: `Failed to fetch cross-project import: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            });
-          }
-        }),
-      );
-    }
-  }
-
-  private async hashContentAsync(content: string): Promise<string> {
-    if (content.length < 10000) return hashCodeHex(content);
-
-    try {
-      const data = new TextEncoder().encode(content);
-      const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      return hashArray
-        .slice(0, 8)
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-    } catch {
-      return hashCodeHex(content);
-    }
-  }
-
-  private async getTempPath(filePath: string, contentHash?: string): Promise<string> {
-    const tmpDir = await this.ensureTmpDir();
-
-    const projectDir = this.options.projectDir.replace(/\/$/, "");
-    const relativePath = filePath.startsWith(projectDir)
-      ? filePath.substring(projectDir.length)
-      : filePath;
-
-    const versionPrefix = VERSION.replace(/\./g, "-");
-    const hashSuffix = contentHash
-      ? `.v${versionPrefix}.${contentHash.slice(0, 8)}`
-      : `.v${versionPrefix}`;
-    const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, `${hashSuffix}.js`);
-    return join(tmpDir, jsPath);
-  }
-
-  private async ensureTmpDir(): Promise<string> {
-    const { projectId, contentSourceId } = this.options;
-
-    if (!projectId) {
-      throw new Error(
-        `Missing projectId for SSR temp directory (projectDir: ${this.options.projectDir})`,
-      );
-    }
-    if (!contentSourceId) {
-      throw new Error(`Missing contentSourceId for SSR temp directory (project: ${projectId})`);
-    }
-
-    const baseCacheDir = getMdxEsmCacheDir();
-    const projectKey = encodeURIComponent(projectId);
-    const sourceKey = contentSourceId;
-    const cacheKey = `${baseCacheDir}|${projectKey}|${sourceKey}`;
-
-    const existingDir = globalTmpDirs.get(cacheKey);
-    if (existingDir) return existingDir;
-
-    const tmpDir = join(baseCacheDir, projectKey, sourceKey);
-
-    await this.fs.mkdir(tmpDir, { recursive: true });
-    globalTmpDirs.set(cacheKey, tmpDir);
-    return tmpDir;
   }
 }

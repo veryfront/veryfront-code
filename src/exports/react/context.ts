@@ -1,1 +1,1 @@
-export * from "../../react/context/index.tsx";
+export * from "#veryfront/react/context/index.tsx";

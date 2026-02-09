@@ -1,5 +1,5 @@
 import "./init.ts";
-import { isDeno } from "../platform/compat/runtime.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { deepEquals, safeStringify } from "./utils.ts";
 
 // deno-lint-ignore no-explicit-any

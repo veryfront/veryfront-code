@@ -1,5 +1,5 @@
 import { logger } from "#veryfront/utils";
-import { getGithubEnvConfig } from "#veryfront/config/env.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import type { FSAdapter, FSAdapterConfig } from "../veryfront/types.ts";
 import { GitHubAPIClient } from "./github-api-client.ts";
@@ -35,12 +35,11 @@ export class GitHubFSAdapter implements FSAdapter {
 
     this.projectDir = adapterConfig.projectDir ?? "";
 
-    const envConfig = getGithubEnvConfig();
     const rawConfig: GitHubConfig = {
-      token: githubConfig.token ?? envConfig.token ?? "",
-      owner: githubConfig.owner ?? envConfig.owner ?? "",
-      repo: githubConfig.repo ?? envConfig.repo ?? "",
-      ref: githubConfig.ref ?? envConfig.ref ?? "main",
+      token: githubConfig.token ?? getEnv("GITHUB_TOKEN") ?? "",
+      owner: githubConfig.owner ?? getEnv("GITHUB_OWNER") ?? "",
+      repo: githubConfig.repo ?? getEnv("GITHUB_REPO") ?? "",
+      ref: githubConfig.ref ?? getEnv("GITHUB_REF") ?? "main",
       cache: githubConfig.cache,
       retry: githubConfig.retry,
     };

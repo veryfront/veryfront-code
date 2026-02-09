@@ -4,7 +4,7 @@
 
 import type { z } from "zod";
 import type { JsonSchema } from "./schema/json-schema.ts";
-import type { BlobStorage } from "../workflow/blob/types.ts";
+import type { BlobStorage } from "#veryfront/workflow/blob/types.ts";
 
 /**
  * Tool configuration options

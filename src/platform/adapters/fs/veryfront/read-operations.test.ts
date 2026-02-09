@@ -2,6 +2,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
+import { runWithRequestContext } from "./multi-project-adapter.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { ReadOperations } from "./read-operations.ts";
 import type { ContentContextProvider } from "./read-operations.ts";
@@ -150,6 +151,73 @@ describe("ReadOperations", () => {
       assertEquals(fetchedReleaseId, "rel-abc");
     });
 
+    it("should hit request-scoped cache within a single request context", async () => {
+      let fetchCount = 0;
+      const client = createMockClient({
+        getFileContent: () => {
+          fetchCount++;
+          return Promise.resolve(`draft content ${fetchCount}`);
+        },
+      });
+
+      const readOps = createReadOps(client, false, createBranchContext());
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const [first, second] = await runWithRequestContext(
+        { projectSlug: "test", token: "token-1", productionMode: false },
+        async () => {
+          const first = await readOps.readTextFile("pages/index.tsx");
+          const second = await readOps.readTextFile("pages/index.tsx");
+          return [first, second] as const;
+        },
+      );
+
+      assertEquals(first, "draft content 1");
+      assertEquals(second, "draft content 1");
+      assertEquals(fetchCount, 1);
+    });
+
+    it("should hit persistent cache across production requests", async () => {
+      let fetchCount = 0;
+      const client = createMockClient({
+        getPublishedFileContent: () => {
+          fetchCount++;
+          return Promise.resolve(`published content ${fetchCount}`);
+        },
+      });
+
+      const readOps = new ReadOperations(
+        client,
+        new FileCache({ enabled: true, ttl: 60000, maxSize: 100 }),
+        new PathNormalizer(),
+        createReleaseContext("rel-cache-hit"),
+      );
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const first = await runWithRequestContext(
+        {
+          projectSlug: "test",
+          token: "token-1",
+          productionMode: true,
+          releaseId: "rel-cache-hit",
+        },
+        () => readOps.readTextFile("pages/index.tsx"),
+      );
+      const second = await runWithRequestContext(
+        {
+          projectSlug: "test",
+          token: "token-1",
+          productionMode: true,
+          releaseId: "rel-cache-hit",
+        },
+        () => readOps.readTextFile("pages/index.tsx"),
+      );
+
+      assertEquals(first, "published content 1");
+      assertEquals(second, "published content 1");
+      assertEquals(fetchCount, 1);
+    });
+
     it("should serve content from file list cache in production mode", async () => {
       let apiFetchCalled = false;
       const client = createMockClient({
@@ -228,6 +296,153 @@ describe("ReadOperations", () => {
 
       await readOps.readTextFile("/project/root/pages/index.tsx");
       assertEquals(fetchedPath, "pages/index.tsx");
+    });
+
+    it("should resolve extensionless paths and cache resolved content in production", async () => {
+      let resolveCallCount = 0;
+      let publishedFetchCount = 0;
+      let resolveBasePath: string | undefined;
+      let resolveExtensions: string[] | undefined;
+
+      const client = createMockClient({
+        resolveFileWithExtension: (basePath: string, extensionPriority: string[]) => {
+          resolveCallCount++;
+          resolveBasePath = basePath;
+          resolveExtensions = extensionPriority;
+          return Promise.resolve({
+            path: "pages/home.tsx",
+            content: "resolved home content",
+          });
+        },
+        getPublishedFileContent: () => {
+          publishedFetchCount++;
+          return Promise.resolve("published API content");
+        },
+      });
+
+      const readOps = createReadOps(client, true, createReleaseContext("rel-resolve-success"));
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const fromBasePath = await readOps.readTextFile("pages/home");
+      const fromBasePathAgain = await readOps.readTextFile("pages/home");
+      const fromResolvedPath = await readOps.readTextFile("pages/home.tsx");
+
+      assertEquals(fromBasePath, "resolved home content");
+      assertEquals(fromBasePathAgain, "resolved home content");
+      assertEquals(fromResolvedPath, "resolved home content");
+      assertEquals(resolveCallCount, 1);
+      assertEquals(publishedFetchCount, 0);
+      assertEquals(resolveBasePath, "pages/home");
+      assertEquals(resolveExtensions, [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"]);
+    });
+
+    it("should fall back to API fetch when extension resolution fails", async () => {
+      let resolveCallCount = 0;
+      let fileFetchCount = 0;
+      const fetchedPaths: string[] = [];
+
+      const client = createMockClient({
+        resolveFileWithExtension: () => {
+          resolveCallCount++;
+          return Promise.reject(new Error("resolver unavailable"));
+        },
+        getFileContent: (path: string) => {
+          fileFetchCount++;
+          fetchedPaths.push(path);
+          return Promise.resolve("draft fallback content");
+        },
+      });
+
+      const readOps = createReadOps(client, false, createBranchContext());
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const [first, second] = await runWithRequestContext(
+        { projectSlug: "test", token: "token-1", productionMode: false },
+        async () => {
+          const first = await readOps.readTextFile("pages/profile");
+          const second = await readOps.readTextFile("pages/profile");
+          return [first, second] as const;
+        },
+      );
+
+      assertEquals(first, "draft fallback content");
+      assertEquals(second, "draft fallback content");
+      assertEquals(resolveCallCount, 1);
+      assertEquals(fileFetchCount, 1);
+      assertEquals(fetchedPaths, ["pages/profile"]);
+    });
+
+    it("should use pattern search fallback when published extension lookup returns 404", async () => {
+      let resolveCallCount = 0;
+      let resolveBasePath: string | undefined;
+      let resolveExtensions: string[] | undefined;
+      const publishedFetchPaths: string[] = [];
+
+      const client = createMockClient({
+        getPublishedFileContent: (path: string) => {
+          publishedFetchPaths.push(path);
+          if (path === "pages/landing.tsx") {
+            return Promise.reject(new Error("404 Not Found"));
+          }
+          return Promise.reject(new Error(`unexpected published path: ${path}`));
+        },
+        resolveFileWithExtension: (basePath: string, extensionPriority: string[]) => {
+          resolveCallCount++;
+          resolveBasePath = basePath;
+          resolveExtensions = extensionPriority;
+          return Promise.resolve({
+            path: "pages/landing.mdx",
+            content: "landing mdx fallback",
+          });
+        },
+      });
+
+      const readOps = createReadOps(client, true, createReleaseContext("rel-pattern-fallback"));
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const first = await readOps.readTextFile("pages/landing.tsx");
+      const second = await readOps.readTextFile("pages/landing.tsx");
+
+      assertEquals(first, "landing mdx fallback");
+      assertEquals(second, "landing mdx fallback");
+      assertEquals(resolveCallCount, 1);
+      assertEquals(resolveBasePath, "pages/landing");
+      assertEquals(resolveExtensions, [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"]);
+      assertEquals(publishedFetchPaths, ["pages/landing.tsx"]);
+    });
+
+    it("should fall back sequentially when pattern search fails for published 404", async () => {
+      let resolveCallCount = 0;
+      const publishedFetchPaths: string[] = [];
+
+      const client = createMockClient({
+        getPublishedFileContent: (path: string) => {
+          publishedFetchPaths.push(path);
+          if (path === "pages/guide.tsx") return Promise.reject(new Error("404 Not Found"));
+          if (path === "pages/guide.ts") return Promise.reject(new Error("404 Not Found"));
+          if (path === "pages/guide.jsx") return Promise.resolve("guide jsx fallback");
+          return Promise.reject(new Error(`unexpected published path: ${path}`));
+        },
+        resolveFileWithExtension: () => {
+          resolveCallCount++;
+          return Promise.reject(new Error("pattern search unavailable"));
+        },
+      });
+
+      const readOps = createReadOps(client, true, createReleaseContext("rel-sequential-fallback"));
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const first = await readOps.readTextFile("pages/guide.tsx");
+      const second = await readOps.readTextFile("pages/guide.tsx");
+
+      assertEquals(first, "guide jsx fallback");
+      assertEquals(second, "guide jsx fallback");
+      assertEquals(resolveCallCount, 1);
+      assertEquals(publishedFetchPaths, [
+        "pages/guide.tsx",
+        "pages/guide.ts",
+        "pages/guide.jsx",
+      ]);
     });
   });
 
@@ -349,6 +564,53 @@ describe("ReadOperations", () => {
       const content = await readOps.readTextFile("pages/index.tsx");
       assertEquals(content, "fresh api content");
       assertEquals(apiFetchCalled, true);
+    });
+
+    it("should skip persistent and file-list caches during invalidation and use API path", async () => {
+      let fileListCalls = 0;
+      let fetchedApiPath: string | undefined;
+      const client = createMockClient({
+        getPublishedFileContent: (path: string) => {
+          fetchedApiPath = path;
+          return Promise.resolve("fresh api content");
+        },
+      });
+
+      const cache = new FileCache({ enabled: true, ttl: 60000, maxSize: 100 });
+      cache.set("file:release:test:rel-invalidation:pages/index.tsx", "stale persistent content");
+
+      const contextProvider: ContentContextProvider = {
+        isProductionMode: () => true,
+        getReleaseId: () => "rel-invalidation",
+        getContentContext: () => ({
+          sourceType: "release" as const,
+          projectSlug: "test",
+          releaseId: "rel-invalidation",
+        }),
+        isPersistentCacheInvalidated: () => true,
+        isReleaseBeingInvalidated: () => false,
+      };
+
+      const readOps = new ReadOperations(
+        client,
+        cache,
+        new PathNormalizer(),
+        contextProvider,
+        (path: string) => `api-source/${path}`,
+        () => {
+          fileListCalls++;
+          return Promise.resolve([
+            { path: "pages/index.tsx", content: "stale file-list content" },
+          ]);
+        },
+      );
+
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const content = await readOps.readTextFile("pages/index.tsx");
+      assertEquals(content, "fresh api content");
+      assertEquals(fileListCalls, 0);
+      assertEquals(fetchedApiPath, "api-source/pages/index.tsx");
     });
 
     it("should track invalidation state changes", () => {
@@ -505,6 +767,33 @@ describe("ReadOperations", () => {
       assertEquals(result1, "content for pages/index.tsx");
       assertEquals(result2, "content for pages/about.tsx");
       assertEquals(fetchCount, 2);
+    });
+
+    it("should evict oldest in-flight request when cap is exceeded", async () => {
+      const fetchCountByPath = new Map<string, number>();
+      const client = createMockClient({
+        getFileContent: (path: string) => {
+          fetchCountByPath.set(path, (fetchCountByPath.get(path) ?? 0) + 1);
+          return new Promise<string>(() => {});
+        },
+      });
+
+      const readOps = createReadOps(client, false, createBranchContext());
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const oldestPath = "pages/oldest.tsx";
+      void readOps.readTextFile(oldestPath);
+      for (let i = 0; i < 100; i++) {
+        void readOps.readTextFile(`pages/in-flight-${i}.tsx`);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+
+      void readOps.readTextFile(oldestPath);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      assertEquals(fetchCountByPath.get(oldestPath), 2);
     });
   });
 

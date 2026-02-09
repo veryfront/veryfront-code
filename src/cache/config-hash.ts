@@ -11,7 +11,7 @@ import {
   CSSTYPE_VERSION,
   DEFAULT_REACT_VERSION,
   TAILWIND_VERSION,
-} from "../transforms/import-rewriter/url-builder.ts";
+} from "#veryfront/transforms/import-rewriter/url-builder.ts";
 
 /**
  * Configuration that affects transform output.

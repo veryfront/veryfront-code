@@ -1,10 +1,10 @@
 import { computeHash, rendererLogger as logger } from "#veryfront/utils";
 import type { RenderMetadata } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { wrapInHTMLShell } from "../html/html-shell-generator.ts";
-import { LRUCache } from "../utils/lru-wrapper.ts";
-import { registerCache } from "../utils/memory/index.ts";
-import { escapeHtml } from "../html/html-escape.ts";
+import { wrapInHTMLShell } from "#veryfront/html/html-shell-generator.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { registerCache } from "#veryfront/utils/memory/index.ts";
+import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import {
   type CacheBackend,
   createCacheBackend,

@@ -1,7 +1,7 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import type { HandlerContext, ParsedDomain } from "../../types/server.ts";
-import { buildRenderCachePrefix } from "../../cache/keys.ts";
+import type { HandlerContext, ParsedDomain } from "#veryfront/types";
+import { buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
 
 export type Environment = "preview" | "production";
 export type RenderMode = "development" | "production";

@@ -6,8 +6,8 @@ import {
 import { rendererLogger as logger } from "#veryfront/utils";
 import { createTransformContext, formatTimingLog, recordStageTiming } from "./context.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { computeConfigHash } from "../../cache/config-hash.ts";
-import { computeDepsHash } from "../../cache/dependency-graph.ts";
+import { computeConfigHash } from "#veryfront/cache/config-hash.ts";
+import { computeDepsHash } from "#veryfront/cache/dependency-graph.ts";
 import type {
   PipelineConfig,
   TransformOptions,

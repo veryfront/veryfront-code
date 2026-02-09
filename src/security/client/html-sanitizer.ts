@@ -7,7 +7,7 @@
  * - validateTrustedHtml() provides defense-in-depth for server HTML
  */
 
-import { escapeHtml } from "../../html/html-escape.ts";
+import { escapeHtml } from "#veryfront/html/html-escape.ts";
 
 export { escapeHtml };
 

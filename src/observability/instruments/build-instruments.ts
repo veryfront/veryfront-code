@@ -2,7 +2,7 @@ import type { Counter, Histogram, Meter } from "@opentelemetry/api";
 import {
   DURATION_HISTOGRAM_BOUNDARIES_MS,
   SIZE_HISTOGRAM_BOUNDARIES_KB,
-} from "../../config/defaults.ts";
+} from "#veryfront/config/defaults.ts";
 import type { MetricsConfig } from "../metrics/types.ts";
 
 export interface BuildInstruments {

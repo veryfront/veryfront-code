@@ -14,8 +14,6 @@ import type {
   HandlerPriority,
   HandlerResult,
 } from "../../types.ts";
-import { hasMatchingEtag } from "../../utils/etag.ts";
-import { getContentType } from "../../utils/content-types.ts";
 import { PRIORITY_LOW } from "#veryfront/utils/constants/index.ts";
 import { generateNonce } from "#veryfront/security/http/response/security-handler.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
@@ -28,6 +26,7 @@ import { tryNotFoundFallback } from "./not-found-fallback.ts";
 import { tryErrorPageFallback } from "./error-page-fallback.ts";
 import { type SSRRenderResult, SSRService } from "../../../services/rendering/ssr.service.ts";
 import { ErrorPages } from "../../../utils/error-html.ts";
+import { buildSSRResponse } from "./ssr-response-builder.ts";
 
 /**
  * Determine if request should serve production (released) content.
@@ -257,57 +256,7 @@ export class SSRHandler extends BaseHandler {
     nonce: string,
   ): Promise<HandlerResult> {
     const builder = this.createResponseBuilder(ctx, nonce);
-    const isHeadRequest = req.method.toUpperCase() === "HEAD";
-    const isDev = !!ctx.isLocalProject;
-
-    if (result.isStreaming && result.stream) {
-      const response = builder
-        .withCORS(req, ctx.securityConfig?.cors)
-        .withSecurity(ctx.securityConfig ?? undefined)
-        .withClientHints()
-        .withCache("no-cache")
-        .withContentType(getContentType(".html"), result.stream, result.status);
-
-      if (!isHeadRequest) return this.respond(response);
-
-      await response.body?.cancel().catch(() => {});
-      return this.respond(
-        new Response(null, { status: response.status, headers: response.headers }),
-      );
-    }
-
-    if (!isDev && result.etag && hasMatchingEtag(req, result.etag)) {
-      return this.respond(
-        builder
-          .withCORS(req, ctx.securityConfig?.cors)
-          .withSecurity(ctx.securityConfig ?? undefined)
-          .withCache(result.cacheStrategy)
-          .notModified(result.etag),
-      );
-    }
-
-    const content = result.html || result.stream || ErrorPages.serverError();
-    const body = isHeadRequest ? null : content;
-
-    let response = builder
-      .withCORS(req, ctx.securityConfig?.cors)
-      .withSecurity(ctx.securityConfig ?? undefined)
-      .withCache(result.cacheStrategy);
-
-    if (!result.isStreaming) response = response.withClientHints();
-    if (result.etag) response = response.withETag(result.etag);
-
-    const finalResponse = response.withContentType(
-      getContentType(".html"),
-      body,
-      result.status,
-    );
-
-    if (!isHeadRequest || !finalResponse.body) return this.respond(finalResponse);
-
-    await finalResponse.body.cancel().catch(() => {});
-    return this.respond(
-      new Response(null, { status: finalResponse.status, headers: finalResponse.headers }),
-    );
+    const response = await buildSSRResponse(req, ctx, result, builder);
+    return this.respond(response);
   }
 }

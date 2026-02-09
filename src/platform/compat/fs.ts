@@ -1,5 +1,5 @@
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
-import { createError, toError } from "../../errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
 export interface FileSystem {

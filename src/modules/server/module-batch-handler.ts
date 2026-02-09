@@ -29,7 +29,7 @@ import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
-import { buildModuleTransformCacheKey } from "../../cache/keys.ts";
+import { buildModuleTransformCacheKey } from "#veryfront/cache/keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";

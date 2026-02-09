@@ -10,13 +10,13 @@
 
 import { rendererLogger as logger } from "#veryfront/utils";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
-import { buildBundleManifestCacheKey } from "../../cache/keys.ts";
+import { buildBundleManifestCacheKey } from "#veryfront/cache/keys.ts";
 import {
   BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC,
   BUNDLE_MANIFEST_LRU_MAX_ENTRIES,
 } from "#veryfront/utils/constants/cache.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { CacheBackends, createDistributedCacheAccessor } from "../../cache/backend.ts";
+import { CacheBackends, createDistributedCacheAccessor } from "#veryfront/cache/backend.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
 import { ensureHttpBundlesExist } from "./http-cache.ts";

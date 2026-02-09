@@ -8,7 +8,6 @@ export {
   enableSSRClientOnlyFetching,
   enableSSRFetchInterception,
   isSSRGlobalsActive,
-  setSSRProjectDomain,
   setSSRServerPort,
   setupSSRGlobals,
 } from "./ssr-globals/index.ts";

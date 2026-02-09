@@ -3,11 +3,11 @@ import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolv
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
-import { isMarkdownPreview as checkMarkdownPreview } from "../transforms/md/utils.ts";
+import { isMarkdownPreview as checkMarkdownPreview } from "#veryfront/transforms/md/utils.ts";
 import {
   generateModulePreloadHintsFromManifest,
   getRouteManifest,
-} from "../modules/manifest/route-module-manifest.ts";
+} from "#veryfront/modules/manifest/route-module-manifest.ts";
 import { escapeHTML } from "./html-escape.ts";
 import {
   generateHydrationData,

@@ -1,8 +1,5 @@
-export const LOCALHOST = {
-  IPV4: "127.0.0.1",
-  IPV6: "::1",
-  HOSTNAME: "localhost",
-} as const;
+import { LOCALHOST } from "#veryfront/platform/compat/constants.ts";
+export { LOCALHOST };
 
 export const HTTP_DEFAULTS = {
   PORT: 3000,

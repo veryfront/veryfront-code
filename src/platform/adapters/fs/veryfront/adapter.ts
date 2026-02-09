@@ -21,16 +21,13 @@ import { StatOperations } from "./stat-operations.ts";
 import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { isPrefixBeingInvalidated } from "./invalidation-state.ts";
 import { WebSocketManager } from "./websocket-manager.ts";
-
-function isSourceFile(path: string): boolean {
-  return (
-    path.endsWith(".tsx") ||
-    path.endsWith(".jsx") ||
-    path.endsWith(".mdx") ||
-    path.endsWith(".ts") ||
-    path.endsWith(".js")
-  );
-}
+import {
+  fetchFileListForContext,
+  hasContentContextChanged,
+  resolveContentContext,
+  summarizeFileList,
+  toClientContext,
+} from "./adapter-content-context.ts";
 
 export class VeryfrontFSAdapter implements FSAdapter {
   private client: VeryfrontAPIClient;
@@ -268,7 +265,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (!this.contentContext) {
       logger.debug("[VeryfrontFSAdapter] Step 3: resolveContentSource START", { projectSlug });
       const step3Start = performance.now();
-      this.contentContext = await this.resolveContentSource();
+      this.contentContext = await resolveContentContext(
+        this.client,
+        this.contentSource,
+        this.projectSlug,
+      );
       logger.debug("[VeryfrontFSAdapter] Step 3: resolveContentSource DONE", {
         projectSlug,
         sourceType: this.contentContext.sourceType,
@@ -293,11 +294,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     logger.debug("[VeryfrontFSAdapter] Step 4: fetchFileList START", { projectSlug, cacheKey });
 
     try {
-      const files = await this.fetchFileList();
-
-      const filesWithContent = files.filter((f) => f.content);
-      const sourceFiles = files.filter((f) => isSourceFile(f.path));
-      const sourceFilesWithContent = sourceFiles.filter((f) => f.content);
+      const files = await fetchFileListForContext(this.client, this.contentContext);
+      const fileSummary = summarizeFileList(files);
 
       await this.cache.setAsync(cacheKey, files);
 
@@ -307,15 +305,18 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
       logger.debug("[VeryfrontFSAdapter] Fetched files during initialization", {
         cacheKey,
-        totalFiles: files.length,
-        filesWithContent: filesWithContent.length,
-        sourceFiles: sourceFiles.length,
-        sourceFilesWithContent: sourceFilesWithContent.length,
+        totalFiles: fileSummary.totalFiles,
+        filesWithContent: fileSummary.filesWithContent,
+        sourceFiles: fileSummary.sourceFiles,
+        sourceFilesWithContent: fileSummary.sourceFilesWithContent,
       });
 
       // Trigger CSS pre-generation for non-branch environments (fire-and-forget)
       // This runs in parallel with the rest of initialization
-      if (this.contentContext.sourceType !== "branch" && sourceFilesWithContent.length > 0) {
+      if (
+        this.contentContext.sourceType !== "branch" &&
+        fileSummary.sourceFilesWithContent > 0
+      ) {
         this.triggerCSSPregeneration(files).catch(() => {
           // Error already logged in triggerCSSPregeneration
         });
@@ -358,63 +359,6 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.fileListReadyResolve = null;
       this.fileListReadyReject = null;
       throw error;
-    }
-  }
-
-  private async resolveContentSource(): Promise<ResolvedContentContext> {
-    switch (this.contentSource.type) {
-      case "branch":
-        return {
-          sourceType: "branch",
-          projectSlug: this.projectSlug,
-          branch: this.contentSource.branch ?? "main",
-        };
-
-      case "environment": {
-        const envResult = await this.client.listEnvironmentFiles(this.contentSource.name);
-        return {
-          sourceType: "environment",
-          projectSlug: this.projectSlug,
-          environmentName: this.contentSource.name,
-          releaseId: envResult.release_id,
-        };
-      }
-
-      case "domain": {
-        const lookup = await this.client.lookupProjectByDomain(this.contentSource.domain);
-        if (!lookup) throw new Error(`Domain lookup failed for: ${this.contentSource.domain}`);
-        return {
-          sourceType: "environment",
-          projectSlug: lookup.project_slug,
-          environmentName: lookup.environment?.name ?? "production",
-          releaseId: lookup.release_id ?? undefined,
-        };
-      }
-
-      case "release":
-        if (!this.contentSource.releaseId) {
-          throw new Error(
-            `Missing releaseId for release sourceType (project: ${this.projectSlug})`,
-          );
-        }
-        return {
-          sourceType: "release",
-          projectSlug: this.projectSlug,
-          releaseId: this.contentSource.releaseId,
-        };
-    }
-  }
-
-  private fetchFileList(): Promise<Array<{ path: string; content?: string }>> {
-    if (!this.contentContext) throw new Error("Content context not resolved");
-
-    switch (this.contentContext.sourceType) {
-      case "branch":
-        return this.client.listAllFiles();
-      case "environment":
-        return this.client.listAllEnvironmentFiles(this.contentContext.environmentName!);
-      case "release":
-        return this.client.listPublishedFiles(undefined, this.contentContext.releaseId);
     }
   }
 
@@ -506,16 +450,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return [];
     }
 
-    const filesWithContent = files.filter((f) => f.content);
-    const sourceFiles = files.filter((f) => isSourceFile(f.path));
-    const sourceFilesWithContent = sourceFiles.filter((f) => f.content);
+    const fileSummary = summarizeFileList(files);
 
     logger.debug("[VeryfrontFSAdapter] getAllSourceFiles returning", {
       cacheKey,
-      totalFiles: files.length,
-      filesWithContent: filesWithContent.length,
-      sourceFiles: sourceFiles.length,
-      sourceFilesWithContent: sourceFilesWithContent.length,
+      totalFiles: fileSummary.totalFiles,
+      filesWithContent: fileSummary.filesWithContent,
+      sourceFiles: fileSummary.sourceFiles,
+      sourceFilesWithContent: fileSummary.sourceFilesWithContent,
     });
 
     return files;
@@ -596,12 +538,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   setContentContext(context: ResolvedContentContext): void {
     const oldContext = this.contentContext;
-    const contextChanged = !oldContext ||
-      oldContext.sourceType !== context.sourceType ||
-      oldContext.projectSlug !== context.projectSlug ||
-      oldContext.branch !== context.branch ||
-      oldContext.environmentName !== context.environmentName ||
-      oldContext.releaseId !== context.releaseId;
+    const contextChanged = hasContentContextChanged(oldContext, context);
 
     logger.debug("[VeryfrontFSAdapter] setContentContext called", {
       newSourceType: context.sourceType,
@@ -616,21 +553,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
 
     this.contentContext = context;
-
-    switch (context.sourceType) {
-      case "branch":
-        this.client.setContext({ type: "branch", name: context.branch ?? "main" });
-        break;
-      case "environment":
-        this.client.setContext({
-          type: "environment",
-          name: context.environmentName ?? "production",
-        });
-        break;
-      case "release":
-        this.client.setContext({ type: "release", version: context.releaseId ?? "" });
-        break;
-    }
+    this.client.setContext(toClientContext(context));
 
     if (contextChanged) {
       this.statOps.clearIndex();

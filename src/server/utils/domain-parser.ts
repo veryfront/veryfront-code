@@ -11,7 +11,9 @@ export interface ParsedDomain {
 type Environment = ParsedDomain["environment"];
 
 // Local development domains (veryfront.me preferred, lvh.me alternative, veryfront.dev for HTTPS testing)
-const LOCAL_DEV_DOMAINS = "veryfront\\.me|lvh\\.me|veryfront\\.dev";
+// `localhost` included so that {slug}.localhost URLs work — *.localhost is a W3C Secure Context,
+// enabling navigator.mediaDevices / getUserMedia in WKWebView (Tauri) and all browsers.
+const LOCAL_DEV_DOMAINS = "veryfront\\.me|lvh\\.me|veryfront\\.dev|localhost";
 // Production domains
 const PROD_DOMAINS = "veryfront\\.com|veryfront\\.org";
 

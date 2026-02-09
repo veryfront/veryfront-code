@@ -1,7 +1,4 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { VeryfrontConfig } from "#veryfront/config";
-import type { RequestContext } from "../server/context/request-context.ts";
-import type { EnrichedContext } from "../server/context/enriched-context.ts";
 
 export interface ParsedDomain {
   /** Project slug extracted from host (e.g., "my-project" from "my-project.preview.veryfront.dev") */
@@ -51,7 +48,8 @@ export interface HandlerContext {
   securityConfig: SecurityConfig | null;
   cspUserHeader: string | null;
   debug?: boolean;
-  config?: VeryfrontConfig;
+  // deno-lint-ignore no-explicit-any
+  config?: any;
   /** Parsed domain info from request host header */
   parsedDomain?: ParsedDomain;
   /** Project slug (from URL or config) */
@@ -71,7 +69,8 @@ export interface HandlerContext {
    */
   resolvedEnvironment?: "preview" | "production";
   /** Unified request context (token, slug, branch, mode) */
-  requestContext?: RequestContext;
+  // deno-lint-ignore no-explicit-any
+  requestContext?: any;
   /** Whether this request targets a local filesystem project (per-request, from adapter resolution). */
   isLocalProject?: boolean;
   /** Route registry for handler chain inspection (dev dashboard) */
@@ -88,7 +87,8 @@ export interface HandlerContext {
    * Built once at request entry, passed through all stages.
    * When present, use this instead of individual fields for better performance.
    */
-  enriched?: EnrichedContext;
+  // deno-lint-ignore no-explicit-any
+  enriched?: any;
 }
 
 export interface HandlerResult {

@@ -9,9 +9,9 @@ import {
   clearSSRModuleCacheForProject,
 } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
 import { cacheRegistry } from "#veryfront/cache";
-import { clearRendererCacheForProject } from "../../rendering/renderer.ts";
-import { clearRouterDetectionCache } from "../../rendering/router-detection.ts";
-import { clearSnippetCacheForProject } from "../../rendering/snippet-renderer.ts";
+import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
+import { clearRouterDetectionCache } from "#veryfront/rendering/router-detection.ts";
+import { clearSnippetCacheForProject } from "#veryfront/rendering/snippet-renderer.ts";
 
 export interface InvalidationOptions {
   /** Environment scope: only invalidate caches for this environment */

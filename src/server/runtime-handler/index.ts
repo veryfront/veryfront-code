@@ -16,7 +16,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
-import { TIMEOUT_ERROR, UNKNOWN_ERROR } from "#veryfront/errors/error-registry.ts";
+import { UNKNOWN_ERROR } from "#veryfront/errors/error-registry.ts";
 import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-boundary.ts";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
@@ -85,13 +85,8 @@ import { localProjectCache } from "./local-project-discovery.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext, buildMinimalContext } from "./handler-context-builder.ts";
 import { handleProjectsRequest, shouldHandleProjectsUI } from "./projects-handler.ts";
-import {
-  getRequestTimeout,
-  HTTP_GATEWAY_TIMEOUT,
-  isLightweightPath,
-  isMonitoringPath,
-  TIMEOUT_SENTINEL,
-} from "./request-utils.ts";
+import { HTTP_GATEWAY_TIMEOUT, isLightweightPath, isMonitoringPath } from "./request-utils.ts";
+import { withRequestTimeout } from "./timeout-manager.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -301,8 +296,6 @@ export function createVeryfrontHandler(
           await configPromise;
         });
 
-        let isLocalProject = false;
-
         const executeHandler = async (): Promise<Response> => {
           const reqCtx = createRequestContext(req);
 
@@ -354,8 +347,6 @@ export function createVeryfrontHandler(
             headerProjectPath: headers.projectPath,
             isProxyMode,
           });
-
-          isLocalProject = !!adapterRes.isLocalProject;
 
           // Resolve environment and validate
           const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host;
@@ -423,52 +414,11 @@ export function createVeryfrontHandler(
           return errorToRFC9457Response(noHandlerError, ctx, req);
         };
 
-        let response: Response;
-        let error: Error | undefined;
-        let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-        try {
-          response = await Promise.race([
-            executeWithTracingContext(spanInfo, executeHandler),
-            new Promise<never>((_, reject) => {
-              timeoutId = setTimeout(() => reject(TIMEOUT_SENTINEL), getRequestTimeout());
-            }),
-          ]);
-        } catch (e) {
-          if (e === TIMEOUT_SENTINEL) {
-            logger.warn("[runtime-handler] Request timed out", {
-              path: url.pathname,
-              method: req.method,
-              timeoutMs: getRequestTimeout(),
-            });
-
-            // RFC 9457 timeout error response (env-aware: strips detail in production)
-            const timeoutError = TIMEOUT_ERROR.create({
-              detail: `Request to ${url.pathname} timed out after ${getRequestTimeout()}ms`,
-              instance: url.pathname,
-              status: HTTP_GATEWAY_TIMEOUT, // Use 504 Gateway Timeout for proxy timeout
-            });
-            response = errorToRFC9457Response(
-              timeoutError,
-              { isLocalProject } as _HandlerContext,
-              req,
-            );
-          } else {
-            error = e instanceof Error ? e : new Error(String(e));
-            // RFC 9457 generic error response (env-aware: strips detail/cause in production)
-            const unknownError = UNKNOWN_ERROR.create({
-              instance: url.pathname,
-              cause: error,
-            });
-            response = errorToRFC9457Response(
-              unknownError,
-              { isLocalProject } as _HandlerContext,
-              req,
-            );
-          }
-        } finally {
-          if (timeoutId !== undefined) clearTimeout(timeoutId);
-        }
+        const { response, error } = await withRequestTimeout(
+          () => executeWithTracingContext(spanInfo, executeHandler),
+          url.pathname,
+          req.method,
+        );
 
         endRequestTracing(spanInfo.span, response.status, error);
 

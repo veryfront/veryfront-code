@@ -21,7 +21,7 @@ describe(
 
         const health = await fetch(`${baseUrl}/healthz`);
         assertEquals(health.status, 200);
-        assertEquals(await health.text(), "ok");
+        assertEquals(await health.json(), { service: "veryfront-server", status: "ok" });
 
         const ready = await fetch(`${baseUrl}/readyz`);
         assertEquals(ready.status, 200);

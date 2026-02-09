@@ -4,5 +4,5 @@
 // Mermaid diagram support. Used for displaying AI-generated content.
 // For MDX page customization, use veryfront/mdx instead.
 
-export { Markdown } from "../react/components/ai/markdown.tsx";
-export type { CodeBlockProps, MarkdownProps } from "../react/components/ai/markdown.tsx";
+export { Markdown } from "#veryfront/react/components/ai/markdown.tsx";
+export type { CodeBlockProps, MarkdownProps } from "#veryfront/react/components/ai/markdown.tsx";

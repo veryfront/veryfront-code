@@ -10,11 +10,18 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
   const context = `${base}/react/context/index.js${ssr}`;
   const fonts = `${base}/react/fonts/index.js${ssr}`;
 
+  const markdown = `${base}/markdown/index.js${ssr}`;
+  const chat = `${base}/chat/index.js${ssr}`;
+  const mdx = `${base}/mdx/index.js${ssr}`;
+
   return {
     "veryfront/head": head,
     "veryfront/router": router,
     "veryfront/context": context,
     "veryfront/fonts": fonts,
+    "veryfront/markdown": markdown,
+    "veryfront/chat": chat,
+    "veryfront/mdx": mdx,
     "veryfront/react/head": head,
     "veryfront/react/router": router,
     "veryfront/react/context": context,

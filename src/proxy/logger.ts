@@ -1,5 +1,5 @@
 // Import version from root deno.json (the source of truth)
-import denoConfig from "../../deno.json" with { type: "json" };
+import denoConfig from "#deno-config" with { type: "json" };
 import { getEnv } from "./env.ts";
 import { getTraceContext } from "./tracing.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
