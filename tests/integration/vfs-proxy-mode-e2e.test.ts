@@ -173,6 +173,54 @@ describe("VFS Proxy Mode - Compiled Binary", { sanitizeOps: false, sanitizeResou
     }
   });
 
+  it("should serve embedded framework modules from compiled binary", async () => {
+    const projectDir = await createMinimalVFSProject();
+    // Use standalone mode (no proxy) so framework modules can be served without
+    // needing a releaseId from the API. Framework files are resolved from
+    // dist/framework-src/ embedded in the compiled binary.
+    const server = await startVFSServer(projectDir, { PROXY_MODE: "0" });
+    try {
+      // Wait for server to be ready
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        try {
+          const r = await fetch(`http://127.0.0.1:${server.port}/`);
+          await r.text();
+          break;
+        } catch { await new Promise((r) => setTimeout(r, 500)); }
+      }
+
+      // Framework modules under _veryfront/ should be served from embedded sources
+      // These are resolved from dist/framework-src/ in compiled binaries
+      const modulePaths = [
+        "_veryfront/react/components/Head.js",
+        "_veryfront/react/context/index.js",
+        "_veryfront/agent/react/index.js",
+        "_veryfront/workflow/react/index.js",
+      ];
+
+      for (const modulePath of modulePaths) {
+        const response = await fetch(
+          `http://127.0.0.1:${server.port}/_vf_modules/${modulePath}`,
+        );
+        const body = await response.text();
+
+        assertEquals(
+          response.status,
+          200,
+          `Expected 200 for ${modulePath}, got ${response.status}: ${body.slice(0, 200)}`,
+        );
+        assert(
+          body.includes("export") || body.includes("import"),
+          `Expected JS module for ${modulePath}, got: ${body.slice(0, 200)}`,
+        );
+      }
+    } finally {
+      await server.kill();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   // Only run live API tests when token is available (local dev, not CI)
   if (VERYFRONT_API_TOKEN) {
     it("should serve API routes from VFS project via domain", async () => {
