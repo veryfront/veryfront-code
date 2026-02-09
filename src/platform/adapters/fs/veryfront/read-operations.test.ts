@@ -297,6 +297,153 @@ describe("ReadOperations", () => {
       await readOps.readTextFile("/project/root/pages/index.tsx");
       assertEquals(fetchedPath, "pages/index.tsx");
     });
+
+    it("should resolve extensionless paths and cache resolved content in production", async () => {
+      let resolveCallCount = 0;
+      let publishedFetchCount = 0;
+      let resolveBasePath: string | undefined;
+      let resolveExtensions: string[] | undefined;
+
+      const client = createMockClient({
+        resolveFileWithExtension: (basePath: string, extensionPriority: string[]) => {
+          resolveCallCount++;
+          resolveBasePath = basePath;
+          resolveExtensions = extensionPriority;
+          return Promise.resolve({
+            path: "pages/home.tsx",
+            content: "resolved home content",
+          });
+        },
+        getPublishedFileContent: () => {
+          publishedFetchCount++;
+          return Promise.resolve("published API content");
+        },
+      });
+
+      const readOps = createReadOps(client, true, createReleaseContext("rel-resolve-success"));
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const fromBasePath = await readOps.readTextFile("pages/home");
+      const fromBasePathAgain = await readOps.readTextFile("pages/home");
+      const fromResolvedPath = await readOps.readTextFile("pages/home.tsx");
+
+      assertEquals(fromBasePath, "resolved home content");
+      assertEquals(fromBasePathAgain, "resolved home content");
+      assertEquals(fromResolvedPath, "resolved home content");
+      assertEquals(resolveCallCount, 1);
+      assertEquals(publishedFetchCount, 0);
+      assertEquals(resolveBasePath, "pages/home");
+      assertEquals(resolveExtensions, [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"]);
+    });
+
+    it("should fall back to API fetch when extension resolution fails", async () => {
+      let resolveCallCount = 0;
+      let fileFetchCount = 0;
+      const fetchedPaths: string[] = [];
+
+      const client = createMockClient({
+        resolveFileWithExtension: () => {
+          resolveCallCount++;
+          return Promise.reject(new Error("resolver unavailable"));
+        },
+        getFileContent: (path: string) => {
+          fileFetchCount++;
+          fetchedPaths.push(path);
+          return Promise.resolve("draft fallback content");
+        },
+      });
+
+      const readOps = createReadOps(client, false, createBranchContext());
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const [first, second] = await runWithRequestContext(
+        { projectSlug: "test", token: "token-1", productionMode: false },
+        async () => {
+          const first = await readOps.readTextFile("pages/profile");
+          const second = await readOps.readTextFile("pages/profile");
+          return [first, second] as const;
+        },
+      );
+
+      assertEquals(first, "draft fallback content");
+      assertEquals(second, "draft fallback content");
+      assertEquals(resolveCallCount, 1);
+      assertEquals(fileFetchCount, 1);
+      assertEquals(fetchedPaths, ["pages/profile"]);
+    });
+
+    it("should use pattern search fallback when published extension lookup returns 404", async () => {
+      let resolveCallCount = 0;
+      let resolveBasePath: string | undefined;
+      let resolveExtensions: string[] | undefined;
+      const publishedFetchPaths: string[] = [];
+
+      const client = createMockClient({
+        getPublishedFileContent: (path: string) => {
+          publishedFetchPaths.push(path);
+          if (path === "pages/landing.tsx") {
+            return Promise.reject(new Error("404 Not Found"));
+          }
+          return Promise.reject(new Error(`unexpected published path: ${path}`));
+        },
+        resolveFileWithExtension: (basePath: string, extensionPriority: string[]) => {
+          resolveCallCount++;
+          resolveBasePath = basePath;
+          resolveExtensions = extensionPriority;
+          return Promise.resolve({
+            path: "pages/landing.mdx",
+            content: "landing mdx fallback",
+          });
+        },
+      });
+
+      const readOps = createReadOps(client, true, createReleaseContext("rel-pattern-fallback"));
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const first = await readOps.readTextFile("pages/landing.tsx");
+      const second = await readOps.readTextFile("pages/landing.tsx");
+
+      assertEquals(first, "landing mdx fallback");
+      assertEquals(second, "landing mdx fallback");
+      assertEquals(resolveCallCount, 1);
+      assertEquals(resolveBasePath, "pages/landing");
+      assertEquals(resolveExtensions, [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"]);
+      assertEquals(publishedFetchPaths, ["pages/landing.tsx"]);
+    });
+
+    it("should fall back sequentially when pattern search fails for published 404", async () => {
+      let resolveCallCount = 0;
+      const publishedFetchPaths: string[] = [];
+
+      const client = createMockClient({
+        getPublishedFileContent: (path: string) => {
+          publishedFetchPaths.push(path);
+          if (path === "pages/guide.tsx") return Promise.reject(new Error("404 Not Found"));
+          if (path === "pages/guide.ts") return Promise.reject(new Error("404 Not Found"));
+          if (path === "pages/guide.jsx") return Promise.resolve("guide jsx fallback");
+          return Promise.reject(new Error(`unexpected published path: ${path}`));
+        },
+        resolveFileWithExtension: () => {
+          resolveCallCount++;
+          return Promise.reject(new Error("pattern search unavailable"));
+        },
+      });
+
+      const readOps = createReadOps(client, true, createReleaseContext("rel-sequential-fallback"));
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const first = await readOps.readTextFile("pages/guide.tsx");
+      const second = await readOps.readTextFile("pages/guide.tsx");
+
+      assertEquals(first, "guide jsx fallback");
+      assertEquals(second, "guide jsx fallback");
+      assertEquals(resolveCallCount, 1);
+      assertEquals(publishedFetchPaths, [
+        "pages/guide.tsx",
+        "pages/guide.ts",
+        "pages/guide.jsx",
+      ]);
+    });
   });
 
   describe("readFile", () => {
