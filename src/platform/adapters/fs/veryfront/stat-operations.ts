@@ -10,6 +10,14 @@ import {
   buildStatCacheKeyPrefix,
 } from "./cache-keys.ts";
 import { STAT_OPERATION_EXTENSION_PRIORITY as EXTENSION_PRIORITY } from "./extension-priority.ts";
+import {
+  collectParentDirectories,
+  normalizeIndexedFilePath,
+  resolveByExtensionPriority,
+  resolveIndexByExtensionPriority,
+  sortPathsByExtensionPriority,
+  stripKnownExtension,
+} from "./stat-operations-helpers.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
@@ -200,27 +208,19 @@ export class StatOperations extends VeryfrontOperationsBase {
     const pathMap = new Map<string, string>();
 
     for (const file of allFiles) {
-      let normalizedPath = file.path;
-
-      if (file.path.endsWith("/")) {
-        const ext = file.type === "page" ? ".mdx" : ".tsx";
-        normalizedPath = file.path.replace(/\/+$/, "") + "/index" + ext;
-        pathMap.set(normalizedPath, file.path);
+      const { normalizedPath, originalPath } = normalizeIndexedFilePath(file);
+      if (originalPath) {
+        pathMap.set(normalizedPath, originalPath);
         logger.debug("[StatOperations] Normalized trailing slash path", {
-          original: file.path,
+          original: originalPath,
           normalized: normalizedPath,
         });
       }
 
       fileIdx.set(normalizedPath, file);
 
-      const parts = normalizedPath.split("/");
-      let current = "";
-      for (let i = 0; i < parts.length - 1; i++) {
-        const part = parts[i];
-        if (!part) continue;
-        current = current ? `${current}/${part}` : part;
-        dirIdx.add(current);
+      for (const dir of collectParentDirectories(normalizedPath)) {
+        dirIdx.add(dir);
       }
     }
 
@@ -357,20 +357,9 @@ export class StatOperations extends VeryfrontOperationsBase {
       return normalizedPath;
     }
 
-    const hasExtension = EXTENSION_PRIORITY.some((ext) => normalizedPath.endsWith(ext));
-    const pathWithoutExt = hasExtension
-      ? normalizedPath.replace(/\.(mdx|md|tsx|jsx|ts|js)$/, "")
-      : normalizedPath;
+    const pathWithoutExt = stripKnownExtension(normalizedPath, EXTENSION_PRIORITY);
 
-    const tryResolve = (candidateBase: string): string | null => {
-      for (const ext of EXTENSION_PRIORITY) {
-        const candidate = candidateBase + ext;
-        if (fileIdx.has(candidate)) return candidate;
-      }
-      return null;
-    };
-
-    const resolvedDirect = tryResolve(pathWithoutExt);
+    const resolvedDirect = resolveByExtensionPriority(fileIdx, pathWithoutExt, EXTENSION_PRIORITY);
     if (resolvedDirect) {
       const totalMs = Math.round(performance.now() - resolveStart);
       logger.debug("[StatOperations] resolveFile found with extension", {
@@ -382,7 +371,11 @@ export class StatOperations extends VeryfrontOperationsBase {
     }
 
     if (!pathWithoutExt.startsWith("pages/")) {
-      const resolvedPages = tryResolve(`pages/${pathWithoutExt}`);
+      const resolvedPages = resolveByExtensionPriority(
+        fileIdx,
+        `pages/${pathWithoutExt}`,
+        EXTENSION_PRIORITY,
+      );
       if (resolvedPages) {
         const totalMs = Math.round(performance.now() - resolveStart);
         logger.debug("[StatOperations] resolveFile found with pages prefix", {
@@ -394,10 +387,8 @@ export class StatOperations extends VeryfrontOperationsBase {
       }
     }
 
-    for (const ext of EXTENSION_PRIORITY) {
-      const indexPath = `${pathWithoutExt}/index${ext}`;
-      if (!fileIdx.has(indexPath)) continue;
-
+    const indexPath = resolveIndexByExtensionPriority(fileIdx, pathWithoutExt, EXTENSION_PRIORITY);
+    if (indexPath) {
       const totalMs = Math.round(performance.now() - resolveStart);
       logger.debug("[StatOperations] resolveFile found index file", {
         indexPath,
@@ -460,19 +451,12 @@ export class StatOperations extends VeryfrontOperationsBase {
         matches: matches.map((m) => m.path).slice(0, 5),
       });
 
-      if (matches.length > 0) {
-        matches.sort((a, b) => {
-          const extA = EXTENSION_PRIORITY.findIndex((ext) => a.path.endsWith(ext));
-          const extB = EXTENSION_PRIORITY.findIndex((ext) => b.path.endsWith(ext));
-          return (extA === -1 ? 99 : extA) - (extB === -1 ? 99 : extB);
-        });
-
-        const first = matches[0];
-        if (first) {
-          logger.debug("[StatOperations] resolveFile found via API search", { path: first.path });
-          this.cache.set(cacheKey, first.path);
-          return first.path;
-        }
+      const sortedMatches = sortPathsByExtensionPriority(matches, EXTENSION_PRIORITY);
+      const first = sortedMatches[0];
+      if (first) {
+        logger.debug("[StatOperations] resolveFile found via API search", { path: first.path });
+        this.cache.set(cacheKey, first.path);
+        return first.path;
       }
     } catch (error) {
       this.apiSearchFailures++;
