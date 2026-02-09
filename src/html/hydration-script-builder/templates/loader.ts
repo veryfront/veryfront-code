@@ -72,6 +72,18 @@ export const getLoaderScript = (): string => `
       const loadPromise = (async () => {
         try {
           const moduleUrl = pathToModuleUrl(path, __studioEmbed);
+
+          // Check batch-preloaded modules (populated by HTML shell batch preload script).
+          // The batch endpoint coalesces N module fetches into 1 HTTP request.
+          var batchRelPath = moduleUrl.replace(MODULE_SERVER_URL + '/', '');
+          var batchMod = window.__vf_batch_modules ? window.__vf_batch_modules.get(batchRelPath) : null;
+          if (batchMod && !batchMod.__vf_error) {
+            var batchComponent = batchMod.MDXLayout || batchMod.MainLayout || batchMod.default || batchMod;
+            componentCache.set(path, batchComponent);
+            log('Component from batch:', path);
+            return batchComponent;
+          }
+
           const start = DEBUG ? performance.now() : 0;
 
           log('Loading component:', moduleUrl);

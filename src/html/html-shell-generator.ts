@@ -53,21 +53,29 @@ function getRelativePagePath(
   return resolveRelativePath(normalized, projectDir);
 }
 
-function generateModulePreloadHints(options: HTMLGenerationOptions): string {
+interface ModulePreloadResult {
+  html: string;
+  /** Critical module URLs (page + layouts) for early dependency resolution */
+  criticalModuleUrls: string[];
+}
+
+function generateModulePreloadHints(options: HTMLGenerationOptions): ModulePreloadResult {
   const hints: string[] = [];
+  const criticalModuleUrls: string[] = [];
   const addedUrls = new Set<string>();
   const projectDir = options.projectDir ?? "";
   const studioEmbed = options.studioEmbed;
 
-  function addHint(moduleUrl: string): void {
+  function addHint(moduleUrl: string, isCritical: boolean): void {
     if (!moduleUrl || addedUrls.has(moduleUrl)) return;
     hints.push(`<link rel="modulepreload" href="${moduleUrl}">`);
     addedUrls.add(moduleUrl);
+    if (isCritical) criticalModuleUrls.push(moduleUrl);
   }
 
   if (options.pagePath) {
     const relativePath = getRelativePagePath(options.pagePath, projectDir);
-    addHint(pathToModuleUrl(relativePath, studioEmbed));
+    addHint(pathToModuleUrl(relativePath, studioEmbed), true);
   }
 
   for (const layout of options.nestedLayouts ?? []) {
@@ -75,7 +83,7 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
     if (!layoutPath) continue;
 
     const relativePath = getRelativePagePath(layoutPath, projectDir);
-    addHint(pathToModuleUrl(relativePath, studioEmbed));
+    addHint(pathToModuleUrl(relativePath, studioEmbed), true);
   }
 
   const projectSlug = options.projectId;
@@ -86,7 +94,9 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
     : "";
 
   const manifest = getRouteManifest(projectSlug, route);
-  if (!manifest || manifest.renderCount <= 0) return hints.join("\n  ");
+  if (!manifest || manifest.renderCount <= 0) {
+    return { html: hints.join("\n  "), criticalModuleUrls };
+  }
 
   for (const hint of generateModulePreloadHintsFromManifest(projectSlug, route, 50)) {
     const href = hint.match(/href="([^"]+)"/)?.[1];
@@ -96,7 +106,35 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
     addedUrls.add(href);
   }
 
-  return hints.join("\n  ");
+  return { html: hints.join("\n  "), criticalModuleUrls };
+}
+
+/**
+ * Generate a batch preload script that starts module execution early.
+ *
+ * Two optimizations in one script:
+ * 1. Early import() for each critical module — triggers full dependency graph resolution
+ *    ahead of the hydration script. Unlike <link rel="modulepreload"> which only
+ *    prefetches/parses, import() executes the module and discovers sub-dependencies.
+ * 2. Batch endpoint fetch — coalesces N module requests into 1 HTTP round trip.
+ *    Result is stored in window.__vf_batch_modules for the loader to consume.
+ *
+ * Both are fire-and-forget (no top-level await) to avoid blocking subsequent scripts.
+ * If either fails, the hydration script falls back to individual imports.
+ */
+function generateBatchPreloadScript(moduleUrls: string[], nonce: string): string {
+  if (moduleUrls.length === 0) return "";
+
+  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+  const urlList = moduleUrls.map((u) => `'${u}'`).join(",");
+  const batchPaths = moduleUrls
+    .map((u) => u.replace(/^\/_vf_modules\//, ""))
+    .join(",");
+
+  return `<!-- Batch module preload: early dependency resolution + coalesced fetch -->
+  <script type="module"${nonceAttr}>
+(function(){var u=[${urlList}];u.forEach(function(m){import(m)});try{import('/_vf_modules/_batch?paths='+encodeURIComponent('${batchPaths}')).then(function(b){window.__vf_batch_modules=b.batchModules}).catch(function(){})}catch(e){}})();
+</script>`;
 }
 
 export function generateHTMLShellParts(
@@ -198,7 +236,7 @@ async function generateHTMLShellPartsImpl(
 
   const modeStyles = useDevScripts ? getDevStyles(nonce) : getProductionStyles(nonce);
 
-  const modulePreloadHints = generateModulePreloadHints(options);
+  const { html: modulePreloadHints, criticalModuleUrls } = generateModulePreloadHints(options);
 
   // Preload critical React dependencies to avoid waterfall delays.
   // jsx-runtime is discovered late (only when modules execute), adding ~500ms latency.
@@ -206,6 +244,12 @@ async function generateHTMLShellPartsImpl(
   const jsxRuntimeUrl = importMapData.imports?.["react/jsx-runtime"];
   const criticalDepsPreload = jsxRuntimeUrl
     ? `<link rel="modulepreload" href="${jsxRuntimeUrl}">`
+    : "";
+
+  // Batch preload: start module execution early + coalesce into single HTTP request.
+  // Only for production — dev/preview modules are served locally with minimal latency.
+  const batchPreloadScript = !useDevScripts
+    ? generateBatchPreloadScript(criticalModuleUrls, nonce)
     : "";
 
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
@@ -293,6 +337,7 @@ async function generateHTMLShellPartsImpl(
   <!-- Modulepreload hints for faster cold start -->
   ${modulePreloadHints}
   ${criticalDepsPreload}
+  ${batchPreloadScript}
 
   <!-- Tailwind CSS: Server-side JIT compiled -->
   ${tailwindCSSBlock}

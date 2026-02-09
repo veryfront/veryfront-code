@@ -85,7 +85,9 @@ export class OpenAPIHandler extends BaseHandler {
   private async getOrGenerateSpec(ctx: HandlerContext, url: URL): Promise<OpenAPISpec> {
     const isDev = !!ctx.isLocalProject;
     const branch = ctx.parsedDomain?.branch ?? "";
-    const currentKey = `${ctx.projectDir}:${ctx.projectSlug || "default"}:${branch}:${ctx.releaseId ?? ""}`;
+    const currentKey = `${ctx.projectDir}:${ctx.projectSlug || "default"}:${branch}:${
+      ctx.releaseId ?? ""
+    }`;
 
     if (!isDev && this.cachedSpec && this.cacheKey === currentKey) return this.cachedSpec;
 

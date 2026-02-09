@@ -315,7 +315,7 @@ export class ReadOperations {
     const cachedResolvedPath = this.extensionResolutionCache.get(apiPath);
     if (cachedResolvedPath) {
       const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, cachedResolvedPath);
-      const cached = this.cache.get(resolvedCacheKey) ?? this.cache.get(cacheKey);
+      const cached = this.cache.get<string>(resolvedCacheKey) ?? this.cache.get<string>(cacheKey);
       if (cached) {
         logger.debug("[ReadOperations] Extension resolution cache hit", {
           basePath: apiPath,

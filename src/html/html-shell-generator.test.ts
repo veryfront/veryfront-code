@@ -319,5 +319,54 @@ describe("html-generation/html-shell-generator", () => {
       assert(!result.includes("<script>alert('xss')</script>"));
       assertStringIncludes(result, "&lt;script&gt;");
     });
+
+    it("should generate batch preload script for production with page and layout modules", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          mode: "production",
+          isLocalProject: false,
+          pagePath: "/project/pages/home.tsx",
+          projectDir: "/project",
+          nestedLayouts: [
+            { path: "/project/layouts/MainLayout.tsx" },
+          ],
+        }),
+      );
+
+      // Batch preload script should be present in production mode
+      assertStringIncludes(result, "Batch module preload");
+      assertStringIncludes(result, "_vf_modules/_batch");
+      // Should contain early import() calls for dependency resolution
+      assertStringIncludes(result, "forEach(function(m){import(m)})");
+      // Should register batch modules globally for the loader
+      assertStringIncludes(result, "window.__vf_batch_modules");
+      // Should appear in <head>, before <body>
+      const batchIndex = result.indexOf("_vf_modules/_batch");
+      const bodyIndex = result.indexOf("<body");
+      assert(
+        batchIndex < bodyIndex,
+        "Batch preload script should be in <head>, before <body>",
+      );
+    });
+
+    it("should not generate batch preload in development mode", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          mode: "development",
+          isLocalProject: true,
+          pagePath: "/project/pages/home.tsx",
+          projectDir: "/project",
+        }),
+      );
+
+      assert(
+        !result.includes("_vf_modules/_batch"),
+        "Batch preload should not appear in dev mode",
+      );
+    });
   });
 });
