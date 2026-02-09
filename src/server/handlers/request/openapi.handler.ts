@@ -84,7 +84,8 @@ export class OpenAPIHandler extends BaseHandler {
 
   private async getOrGenerateSpec(ctx: HandlerContext, url: URL): Promise<OpenAPISpec> {
     const isDev = !!ctx.isLocalProject;
-    const currentKey = `${ctx.projectDir}:${ctx.projectSlug || "default"}`;
+    const branch = ctx.parsedDomain?.branch ?? "";
+    const currentKey = `${ctx.projectDir}:${ctx.projectSlug || "default"}:${branch}:${ctx.releaseId ?? ""}`;
 
     if (!isDev && this.cachedSpec && this.cacheKey === currentKey) return this.cachedSpec;
 
@@ -117,10 +118,11 @@ export class OpenAPIHandler extends BaseHandler {
       });
     };
 
-    // In proxy mode, wrap discovery in runWithContext so VFS can resolve files
+    // In proxy mode, wrap discovery in runWithContext so VFS can resolve files.
+    // Requires both extended FS adapter AND multi-project mode support.
     const extFs = isExtendedFSAdapter(ctx.adapter.fs) ? ctx.adapter.fs : null;
     const needsContext = !isDev && ctx.projectSlug && ctx.proxyToken &&
-      extFs?.runWithContext;
+      extFs?.isMultiProjectMode();
 
     const spec = needsContext
       ? await (extFs as ExtendedFileSystemAdapter).runWithContext(
