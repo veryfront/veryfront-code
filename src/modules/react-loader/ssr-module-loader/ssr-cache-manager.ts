@@ -193,13 +193,6 @@ export class SSRCacheManager {
     }
   }
 
-  isCacheWriteSkippedError(writeError: unknown): boolean {
-    const code = (writeError as { code?: string } | null | undefined)?.code;
-    const isOsError22 = writeError instanceof TypeError &&
-      String(writeError.message).includes("os error 22");
-    return code === "ENOENT" || writeError instanceof Deno.errors.NotFound || isOsError22;
-  }
-
   /** Get the filesystem instance for external callers. */
   getFs(): ReturnType<typeof createFileSystem> {
     return this.fs;

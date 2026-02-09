@@ -16,6 +16,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { ensureCacheNodeModules, getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { verifyCacheFileExists, writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../esm/http-cache.ts";
 import {
@@ -179,34 +180,24 @@ export async function doLoadModuleESM(
     const nsDir = join(esmCacheDir, namespaceKey);
     const localFs = getLocalFs();
 
-    try {
-      await localFs.mkdir(nsDir, { recursive: true });
-    } catch (e) {
-      logger.debug(
-        `${LOG_PREFIX_MDX_RENDERER} mkdir nsDir failed`,
-        e instanceof Error ? e : String(e),
-      );
-    }
-
     let filePath = join(nsDir, `${codeHash}.mjs`);
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: mdxWriteFlight START`, { projectSlug, filePath });
     await mdxWriteFlight.do(filePath, async () => {
-      try {
-        const stat = await localFs.stat(filePath);
-        if (stat?.isFile) {
-          logger.debug(`${LOG_PREFIX_MDX_LOADER} File exists, skipping write`, {
-            projectSlug,
-            filePath,
-          });
-          return;
-        }
-      } catch {
-        // File doesn't exist
+      // Check if file already exists (written by another request)
+      if (await verifyCacheFileExists(localFs, filePath, "MDX-ESM-LOADER")) {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} File exists, skipping write`, {
+          projectSlug,
+          filePath,
+        });
+        return;
       }
 
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Writing module file`, { projectSlug, filePath });
-      await localFs.writeTextFile(filePath, rewritten);
+      const written = await writeCacheFile(localFs, filePath, rewritten, "MDX-ESM-LOADER");
+      if (!written) {
+        throw new Error(`Failed to write MDX module cache file: ${filePath}`);
+      }
     });
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: mdxWriteFlight DONE`, { projectSlug, filePath });
 
@@ -260,7 +251,17 @@ export async function doLoadModuleESM(
           const refreshedHash = hashString(rewritten);
           const refreshedPath = join(nsDir, `${refreshedHash}.mjs`);
           await mdxWriteFlight.do(refreshedPath, async () => {
-            await getLocalFs().writeTextFile(refreshedPath, rewritten);
+            const written = await writeCacheFile(
+              getLocalFs(),
+              refreshedPath,
+              rewritten,
+              "MDX-ESM-LOADER",
+            );
+            if (!written) {
+              throw new Error(
+                `Failed to write refreshed MDX module cache file: ${refreshedPath}`,
+              );
+            }
           });
 
           filePath = refreshedPath;
@@ -325,7 +326,17 @@ export async function doLoadModuleESM(
         const refreshedHash = hashString(rewritten);
         const refreshedPath = join(nsDir, `${refreshedHash}.mjs`);
         await mdxWriteFlight.do(refreshedPath, async () => {
-          await getLocalFs().writeTextFile(refreshedPath, rewritten);
+          const written = await writeCacheFile(
+            getLocalFs(),
+            refreshedPath,
+            rewritten,
+            "MDX-ESM-LOADER",
+          );
+          if (!written) {
+            throw new Error(
+              `Failed to write regenerated MDX module cache file: ${refreshedPath}`,
+            );
+          }
         });
 
         filePath = refreshedPath;
@@ -352,6 +363,14 @@ export async function doLoadModuleESM(
           count: missingBundles.length,
         });
       }
+    }
+
+    // Verify the cache file exists before attempting dynamic import
+    const fileExists = await verifyCacheFileExists(localFs, filePath, "MDX-ESM-LOADER");
+    if (!fileExists) {
+      throw new Error(
+        `MDX module cache file missing before import: ${filePath}`,
+      );
     }
 
     const mod = await withSpan(
