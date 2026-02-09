@@ -59,6 +59,8 @@ export class ReadOperations {
     cleanupIntervalMs: 1000,
   });
   private readonly fileListIndex: FileListIndex;
+  /** Caches extensionless base paths → resolved full paths to avoid repeated API resolution calls */
+  private readonly extensionResolutionCache = new Map<string, string>();
 
   constructor(
     private readonly client: VeryfrontAPIClient,
@@ -79,6 +81,7 @@ export class ReadOperations {
 
   clearFileListIndex(): void {
     this.fileListIndex.clear();
+    this.extensionResolutionCache.clear();
   }
 
   readFile(path: string): Promise<Uint8Array> {
@@ -307,6 +310,22 @@ export class ReadOperations {
     cacheKey: string,
     isProduction: boolean,
   ): Promise<string | null> {
+    // Check extension resolution cache first to skip the API call entirely.
+    // Once we know pages/home → pages/home.tsx, we never need to ask the API again.
+    const cachedResolvedPath = this.extensionResolutionCache.get(apiPath);
+    if (cachedResolvedPath) {
+      const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, cachedResolvedPath);
+      const cached = this.cache.get(resolvedCacheKey) ?? this.cache.get(cacheKey);
+      if (cached) {
+        logger.debug("[ReadOperations] Extension resolution cache hit", {
+          basePath: apiPath,
+          resolvedPath: cachedResolvedPath,
+        });
+        setRequestScopedFile(cacheKey, cached);
+        return cached;
+      }
+    }
+
     try {
       const resolved = await this.client.resolveFileWithExtension(
         apiPath,
@@ -316,6 +335,9 @@ export class ReadOperations {
 
       const resolvedPath = this.normalizer.normalize(resolved.path);
       const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, resolvedPath);
+
+      // Cache the path mapping to avoid future API resolution calls
+      this.extensionResolutionCache.set(apiPath, resolvedPath);
 
       logger.debug("[ReadOperations] Resolved extension for base path", {
         basePath: apiPath,
@@ -546,29 +568,39 @@ export class ReadOperations {
     releaseId: string | null,
     environmentName?: string | null,
   ): Promise<string | null> {
-    for (const ext of EXTENSION_PRIORITY) {
-      if (ext === originalExt) continue;
+    // Fire all extension attempts in parallel to eliminate sequential round-trip latency.
+    // With 6 extensions at ~100ms each, sequential = ~600ms; parallel = ~100ms.
+    const candidates = EXTENSION_PRIORITY.filter((ext) => ext !== originalExt);
+    const startTime = performance.now();
 
-      const fallbackPath = basePath + ext;
-
-      try {
-        const content = await this.client.getPublishedFileContent(
-          fallbackPath,
+    const results = await Promise.allSettled(
+      candidates.map((ext) =>
+        this.client.getPublishedFileContent(
+          basePath + ext,
           releaseId ?? undefined,
           environmentName ?? undefined,
-        );
+        ).then((content) => ({ ext, content }))
+      ),
+    );
 
-        logger.debug("[ReadOperations] Sequential fallback succeeded", {
+    // Pick the first successful result in priority order (allSettled preserves order)
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        const { ext, content } = result.value;
+        const fallbackPath = basePath + ext;
+        const durationMs = Math.round(performance.now() - startTime);
+
+        logger.debug("[ReadOperations] Parallel fallback succeeded", {
           originalPath: apiPath,
           fallbackPath,
           contentLength: content.length,
+          durationMs,
+          candidateCount: candidates.length,
         });
 
         if (shouldCache) this.cache.set(cacheKey, content);
         setRequestScopedFile(cacheKey, content);
         return content;
-      } catch {
-        // continue
       }
     }
 
