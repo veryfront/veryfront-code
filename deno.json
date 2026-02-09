@@ -233,7 +233,7 @@
     "tailwindcss/plugin": "https://esm.sh/tailwindcss@4.1.8/plugin",
     "tailwindcss/defaultTheme": "https://esm.sh/tailwindcss@4.1.8/defaultTheme",
     "tailwindcss/colors": "https://esm.sh/tailwindcss@4.1.8/colors",
-    "redis": "npm:redis",
+    "redis": "npm:redis@4.6.13",
     "pg": "npm:pg",
     "@opentelemetry/api": "npm:@opentelemetry/api@1",
     "@opentelemetry/core": "npm:@opentelemetry/core@1",
