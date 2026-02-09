@@ -73,6 +73,9 @@ export class EnvironmentVariableCache {
   ): Promise<Record<string, string>> {
     try {
       const vars = await this.fetcher(environmentId, token, projectSlug);
+      // Delete before set to move refreshed entries to the end of Map iteration order,
+      // ensuring eviction targets the least-recently-fetched entry (LRU behavior).
+      this.cache.delete(environmentId);
       this.cache.set(environmentId, { vars, fetchedAt: Date.now() });
       this.evictIfNeeded();
       return vars;

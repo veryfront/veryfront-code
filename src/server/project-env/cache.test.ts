@@ -157,4 +157,39 @@ describe("project-env/cache", () => {
     await cache.get("env-3", "token", "p");
     assertEquals(fetchCount, 5);
   });
+
+  it("refreshed entries move to end of eviction order (LRU)", async () => {
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(
+      async () => {
+        fetchCount++;
+        return { KEY: `v${fetchCount}` };
+      },
+      50, // 50ms TTL
+      3,
+    );
+
+    // Fill cache: env-1, env-2, env-3
+    await cache.get("env-1", "token", "p");
+    await cache.get("env-2", "token", "p");
+    await cache.get("env-3", "token", "p");
+    assertEquals(fetchCount, 3);
+
+    // Wait for TTL to expire, then refresh env-1 (moves it to end)
+    await delay(60);
+    await cache.get("env-1", "token", "p");
+    assertEquals(fetchCount, 4);
+
+    // Add env-4 — should evict env-2 (oldest), NOT env-1 (just refreshed)
+    await cache.get("env-4", "token", "p");
+    assertEquals(fetchCount, 5);
+
+    // env-1 should still be cached (was refreshed, moved to end)
+    await cache.get("env-1", "token", "p");
+    assertEquals(fetchCount, 5);
+
+    // env-2 should have been evicted
+    await cache.get("env-2", "token", "p");
+    assertEquals(fetchCount, 6);
+  });
 });
