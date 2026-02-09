@@ -50,8 +50,7 @@ function getRequestContextFn(): (() => MultiProjectRequestContextType | null) | 
   if (_getCurrentRequestContext !== undefined) return _getCurrentRequestContext;
 
   try {
-    // deno-lint-ignore no-explicit-any
-    const mod = (globalThis as any).__vf_multi_project_adapter;
+    const mod = globalThis.__vf_multi_project_adapter;
     _getCurrentRequestContext = mod?.getCurrentRequestContext ?? null;
   } catch {
     _getCurrentRequestContext = null;

@@ -50,7 +50,12 @@ export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsCon
   static stream = staticHelpers.stream;
 }
 
-staticHelpers.setResponseBuilderClass(ResponseBuilder);
+// Type assertion: ResponseBuilder fully implements the interface at runtime,
+// but TS can't verify this because property-assigned methods with generic
+// `this` parameters resolve to the constraint type, not the class type.
+staticHelpers.setResponseBuilderClass(
+  ResponseBuilder as unknown as Parameters<typeof staticHelpers.setResponseBuilderClass>[0],
+);
 
 export function createResponseBuilder(config?: ResponseBuilderConfig): ResponseBuilder {
   return new ResponseBuilder(config);

@@ -421,8 +421,7 @@ export function createWindowStub(): {
   };
 }
 
-// deno-lint-ignore no-explicit-any
-export function createElementClass(name: string): any {
+export function createElementClass(name: string): { new (): object } {
   const ElementClass = class {};
   Object.defineProperty(ElementClass, "name", { value: name });
   return ElementClass;
