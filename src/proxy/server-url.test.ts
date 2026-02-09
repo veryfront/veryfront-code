@@ -131,4 +131,18 @@ describe("resolveServerBaseUrl", () => {
     resolveServerBaseUrl("valid-server", FALLBACK, (h) => warnings.push(h));
     assertEquals(warnings, []);
   });
+
+  it("derives https protocol from fallback URL", () => {
+    assertEquals(
+      resolveServerBaseUrl("my-server.local", "https://shared-server:3001"),
+      "https://my-server.local",
+    );
+  });
+
+  it("derives http protocol from fallback URL", () => {
+    assertEquals(
+      resolveServerBaseUrl("my-server.local", "http://shared-server:3001"),
+      "http://my-server.local",
+    );
+  });
 });

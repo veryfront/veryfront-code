@@ -255,7 +255,16 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
     const matchingEnv = lookupResult.environments?.find(envMatcher);
 
-    if (matchingEnv?.protected && !userToken) {
+    if (!matchingEnv) {
+      logger?.warn("Project found but no matching environment", {
+        ...logContext,
+        projectSlug: lookupResult.slug,
+        availableEnvs: lookupResult.environments?.map((e) => e.name),
+      });
+      return {};
+    }
+
+    if (matchingEnv.protected && !userToken) {
       const redirectUrl = makeAuthRedirectUrl(req);
       logger?.info("Protected environment requires authentication", {
         ...logContext,
@@ -268,8 +277,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     return {
       slug: lookupResult.slug,
       projectId: lookupResult.id,
-      releaseId: matchingEnv?.active_release_id ?? undefined,
-      serverHostname: matchingEnv?.server_hostname ?? undefined,
+      releaseId: matchingEnv.active_release_id ?? undefined,
+      serverHostname: matchingEnv.server_hostname ?? undefined,
     };
   }
 

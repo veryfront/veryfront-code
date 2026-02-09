@@ -524,6 +524,49 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("returns 404 when project exists but no environment matches custom domain", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "mismatched-project",
+            name: "Mismatched Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["other-domain.example.com"],
+              active_release_id: "rel-123",
+              server_hostname: "veryfront-server-999.veryfront-production.svc.cluster.local",
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://no-match.example.com/page", {
+          headers: { host: "no-match.example.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        // Project found but no env matches this domain — should be a 404
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(ctx.serverHostname, undefined);
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("allows access to non-protected environment without auth token", async () => {
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
