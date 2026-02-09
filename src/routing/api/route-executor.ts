@@ -15,12 +15,10 @@ import {
 } from "./method-validator.ts";
 import { isAbsolute, join } from "#veryfront/compat/path/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { VeryfrontError } from "#veryfront/errors/types.ts";
-import { UNKNOWN_ERROR } from "#veryfront/errors/error-registry.ts";
-import { PROBLEM_JSON_CONTENT_TYPE } from "#veryfront/errors/http-error.ts";
-import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-boundary.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import { isDevelopment as isDevelopmentEnv } from "#veryfront/build/config/environment.ts";
+import type { HandlerContext } from "#veryfront/types";
 
 function isDevelopment(adapter: RuntimeAdapter): boolean {
   const env = adapter.env.get("MODE") ??
@@ -34,7 +32,8 @@ function isDevelopment(adapter: RuntimeAdapter): boolean {
 }
 
 /**
- * Convert an error to RFC 9457 error response with environment-aware filtering
+ * Convert an error to RFC 9457 error response with environment-aware filtering.
+ * Delegates to the shared errorToRFC9457Response from http-error-boundary.
  */
 function handleAPIError(
   error: unknown,
@@ -43,46 +42,9 @@ function handleAPIError(
 ): Response {
   logger.error(`API route error in ${pathname}:`, error);
 
-  const isDev = isDevelopment(adapter);
-
-  // Convert to VeryfrontError or wrap as unknown-error
-  const vfError = error instanceof VeryfrontError ? error : UNKNOWN_ERROR.create({
-    detail: getErrorMessage(error),
-    instance: pathname,
-    cause: error instanceof Error ? error : undefined,
-  });
-
-  // Set instance if not already set
-  if (!vfError.instance) {
-    vfError.instance = pathname;
-  }
-
-  // Serialize to RFC 9457
-  const body = vfError.toRFC9457();
-
-  // Apply environment-specific filtering
-  if (!isDev) {
-    // Production: omit stack
-    delete (body as { stack?: string }).stack;
-
-    // Production: omit detail for 5xx errors (may contain sensitive info)
-    if (vfError.status >= 500) {
-      delete body.detail;
-    }
-  } else {
-    // Dev mode: include stack trace if available
-    const stack = error instanceof Error ? error.stack : undefined;
-    if (stack) {
-      (body as { stack?: string }).stack = stack;
-    }
-  }
-
-  return new Response(JSON.stringify(body, null, isDev ? 2 : undefined), {
-    status: vfError.status,
-    headers: {
-      "Content-Type": PROBLEM_JSON_CONTENT_TYPE,
-    },
-  });
+  const ctx = { isLocalProject: isDevelopment(adapter) } as HandlerContext;
+  const req = new Request(`http://localhost${pathname}`);
+  return errorToRFC9457Response(error, ctx, req);
 }
 
 function createProjectScopedFs(fs: FileSystemAdapter, projectDir: string): FileSystemAdapter {

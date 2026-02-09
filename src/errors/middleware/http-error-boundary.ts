@@ -12,10 +12,9 @@ import type { Handler, HandlerContext, HandlerResult } from "#veryfront/types";
 import { trace } from "@opentelemetry/api";
 import { VeryfrontError } from "../types.ts";
 import { PROBLEM_JSON_CONTENT_TYPE } from "../http-error.ts";
-import { UNKNOWN_ERROR } from "../error-registry.ts";
-import { getErrorMessage } from "../veryfront-error.ts";
 import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
 import { attachErrorToActiveSpan } from "../tracing.ts";
+import { wrapUnknownError } from "./wrap-unknown.ts";
 
 /**
  * Wrap a handler with error boundary that catches all errors and converts them
@@ -46,7 +45,7 @@ export function httpErrorBoundary(
       return await handlerFn(req, ctx);
     } catch (error) {
       // Convert error and record observability
-      const vfError = error instanceof VeryfrontError ? error : wrapAsUnknownError(error);
+      const vfError = wrapUnknownError(error);
 
       // Record error metrics with slug, category, and status
       recordErrorCount({
@@ -86,8 +85,11 @@ export function wrapHandlerWithErrorBoundary(handler: Handler): Handler {
 
 /**
  * Convert any error to an RFC 9457 Response with environment-aware filtering
+ *
+ * Exported for reuse in route-executor and other HTTP boundaries that
+ * need RFC 9457 responses without the full handler-wrapping middleware.
  */
-function errorToRFC9457Response(
+export function errorToRFC9457Response(
   error: unknown,
   ctx: HandlerContext,
   req: Request,
@@ -96,7 +98,7 @@ function errorToRFC9457Response(
   const instance = new URL(req.url).pathname;
 
   // Convert to VeryfrontError (or wrap as unknown-error)
-  const vfError = error instanceof VeryfrontError ? error : wrapAsUnknownError(error);
+  const vfError = wrapUnknownError(error);
 
   // Set instance if not already set
   if (!vfError.instance) {
@@ -131,15 +133,3 @@ function errorToRFC9457Response(
   });
 }
 
-/**
- * Wrap any non-VeryfrontError as unknown-error slug
- */
-function wrapAsUnknownError(error: unknown): VeryfrontError {
-  const message = getErrorMessage(error);
-  const cause = error instanceof Error ? error : undefined;
-
-  return UNKNOWN_ERROR.create({
-    detail: message,
-    cause,
-  });
-}
