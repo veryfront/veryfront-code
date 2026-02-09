@@ -5,20 +5,18 @@
  * observability dashboards and alerting.
  */
 
-import type { Counter, Histogram, Meter } from "@opentelemetry/api";
+import type { Counter, Meter } from "@opentelemetry/api";
 import type { MetricsConfig } from "../metrics/types.ts";
 import type { VeryfrontError } from "#veryfront/errors/types.ts";
 
 export interface ErrorInstruments {
   errorCounter: Counter | null;
-  errorRate: Histogram | null;
 }
 
 /**
  * Create error tracking instruments
  *
  * - errorCounter: Total errors by slug, category, and status
- * - errorRate: Error rate histogram for spike detection
  */
 export function createErrorInstruments(meter: Meter, config: MetricsConfig): ErrorInstruments {
   const prefix = config.prefix;
@@ -27,10 +25,6 @@ export function createErrorInstruments(meter: Meter, config: MetricsConfig): Err
     errorCounter: meter.createCounter(`${prefix}.error.count`, {
       description: "Total errors by slug and category",
       unit: "errors",
-    }),
-    errorRate: meter.createHistogram(`${prefix}.error.rate`, {
-      description: "Error rate tracking for spike detection",
-      unit: "errors/s",
     }),
   };
 }

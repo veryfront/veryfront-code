@@ -48,7 +48,6 @@ export function initializeInstruments(
     heapTotalGauge: null,
     heapPercentGauge: null,
     errorCounter: null,
-    errorRate: null,
   };
 
   try {

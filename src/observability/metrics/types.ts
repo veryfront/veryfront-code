@@ -52,7 +52,6 @@ export interface MetricsInstruments {
   heapPercentGauge: ObservableGauge | null;
 
   errorCounter: Counter | null;
-  errorRate: Histogram | null;
 }
 
 export interface MetricsConfig {

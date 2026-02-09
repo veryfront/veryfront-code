@@ -27,9 +27,9 @@ export {
 export {
   cliErrorBoundary,
   cliErrorBoundarySync,
+  errorToRFC9457Response,
   formatCLIError,
   httpErrorBoundary,
-  isVeryfrontError as isVeryfrontErrorMiddleware,
   wrapHandlerWithErrorBoundary,
   wrapUnknownError,
   wrapWithContext,

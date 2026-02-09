@@ -58,7 +58,6 @@ export class MetricsManager {
       heapTotalGauge: null,
       heapPercentGauge: null,
       errorCounter: null,
-      errorRate: null,
     };
   }
 
