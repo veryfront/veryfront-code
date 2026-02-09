@@ -2,6 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RouteRegistry } from "./registry.ts";
 import type { Handler, HandlerContext, HandlerResult } from "./types.ts";
+import { CONFIG_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
 
 function makeHandler(
   name: string,
@@ -144,7 +145,7 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals(await result?.text(), "enabled");
     });
 
-    it("should continue on handler errors", async () => {
+    it("should return RFC 9457 error response when handler throws", async () => {
       const registry = new RouteRegistry();
       const errorHandler: Handler = {
         metadata: { name: "erroring", priority: 100 },
@@ -159,8 +160,40 @@ describe("routing/registry/RouteRegistry", () => {
       );
 
       const result = await registry.execute(makeReq(), makeCtx());
-      assertEquals(result?.status, 200);
-      assertEquals(await result?.text(), "fallback");
+
+      // Should return error response, not continue to fallback handler
+      assertEquals(result?.status, 500);
+      assertEquals(result?.headers.get("Content-Type"), "application/problem+json");
+
+      const body = await result?.json() as { type?: string; title?: string; category?: string };
+      assertEquals(body.type?.includes("unknown-error"), true);
+      assertEquals(body.category, "GENERAL");
+    });
+
+    it("should return RFC 9457 response with correct slug for VeryfrontError", async () => {
+      const registry = new RouteRegistry();
+      const errorHandler: Handler = {
+        metadata: { name: "config-error", priority: 100 },
+        handle: () => Promise.reject(CONFIG_NOT_FOUND.create({ detail: "Test config error" })),
+      };
+
+      registry.register(errorHandler);
+
+      const result = await registry.execute(makeReq(), makeCtx());
+
+      assertEquals(result?.status, 404);
+      assertEquals(result?.headers.get("Content-Type"), "application/problem+json");
+
+      const body = await result?.json() as {
+        type?: string;
+        detail?: string;
+        suggestion?: string;
+        category?: string;
+      };
+      assertEquals(body.type?.includes("config-not-found"), true);
+      assertEquals(body.category, "CONFIG");
+      assertEquals(body.detail, "Test config error");
+      assertEquals(body.suggestion?.includes("vf init"), true);
     });
 
     it("should return null on empty registry", async () => {
