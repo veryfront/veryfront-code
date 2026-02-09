@@ -17,9 +17,9 @@
  */
 
 import { walk } from "@std/fs";
-import { dirname, join, relative } from "#std/path.ts";
+import { dirname, fromFileUrl, join, relative } from "#std/path.ts";
 
-const FRAMEWORK_ROOT = new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
+const FRAMEWORK_ROOT = fromFileUrl(new URL("../..", import.meta.url));
 const SRC_ROOT = join(FRAMEWORK_ROOT, "src");
 const OUTPUT_DIR = join(FRAMEWORK_ROOT, "dist", "framework-src");
 const METADATA_FILE = join(OUTPUT_DIR, ".compile-metadata.json");
