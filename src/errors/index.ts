@@ -42,13 +42,10 @@ export type { ErrorLogEntry } from "./logging.ts";
 // Error tracing integration (OpenTelemetry)
 export { attachErrorToActiveSpan, attachErrorToSpan } from "./tracing.ts";
 
-// Legacy error handling utilities
-// Note: handleError and logAndThrow are deprecated - use error boundary middleware instead
+// Error handling utilities
 export {
-  handleError, // @deprecated - use httpErrorBoundary or cliErrorBoundary
   handleErrorWithFallback,
   handleErrorWithFallbackSync,
-  logAndThrow, // @deprecated - use httpErrorBoundary or cliErrorBoundary
   retryWithBackoff,
   wrapError,
 } from "./error-handlers.ts";

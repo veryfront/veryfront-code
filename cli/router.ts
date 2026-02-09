@@ -4,7 +4,7 @@
  * @module cli/router
  */
 
-import { formatCLIError } from "veryfront/errors";
+import { cliErrorBoundary } from "veryfront/errors";
 import { cliLogger, VERSION } from "#cli/utils";
 import { handleAnalyzeChunksCommand } from "./commands/analyze-chunks/handler.ts";
 import { handleBuildCommand } from "./commands/build/handler.ts";
@@ -114,7 +114,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     return;
   }
 
-  try {
+  await cliErrorBoundary(async () => {
     if (command === "help") {
       showHelp();
       exitProcess(0);
@@ -131,9 +131,5 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     }
 
     await (handler ?? handleStartCommand)(args);
-  } catch (error) {
-    // Use RFC 9457-style CLI error formatting with slug-based identity
-    console.log(formatCLIError(error));
-    exitProcess(1);
-  }
+  });
 }

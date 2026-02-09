@@ -5,9 +5,7 @@ import {
   DEFAULT_RETRY_MAX_DELAY_MS,
 } from "#veryfront/utils/constants/retry.ts";
 import { VeryfrontError } from "./types.ts";
-import { wrapUnknownError, wrapWithContext } from "./middleware/wrap-unknown.ts";
-import { ensureError } from "./veryfront-error.ts";
-import { logError } from "./logging.ts";
+import { wrapWithContext } from "./middleware/wrap-unknown.ts";
 
 function safeLog(logFn: () => void): void {
   try {
@@ -19,24 +17,6 @@ function safeLog(logFn: () => void): void {
       // Silently ignore if even warning fails
     }
   }
-}
-
-/**
- * Log an error with structured formatting
- *
- * @deprecated Use error boundary middleware (httpErrorBoundary, cliErrorBoundary) instead.
- * Error boundaries handle both catching, logging, and formatting automatically.
- *
- * For VeryfrontError instances, logs slug, category, and other structured fields.
- * For plain Errors, wraps as unknown-error and logs with structured format.
- *
- * This function is kept for backward compatibility but will be removed in a future version.
- * Now delegates to logError() for unified observability.
- */
-export function handleError(error: Error): void {
-  const vfError = error instanceof VeryfrontError ? error : wrapUnknownError(error);
-
-  safeLog(() => logError(vfError));
 }
 
 /**
@@ -56,30 +36,6 @@ export function wrapError(
   context?: unknown,
 ): VeryfrontError {
   return wrapWithContext(error, message, context as Record<string, unknown> | undefined);
-}
-
-/**
- * Log an error and re-throw it
- *
- * @deprecated This function is deprecated in favor of error boundary middleware.
- * Use `httpErrorBoundary()` or `cliErrorBoundary()` at system boundaries instead.
- * Error boundaries handle both logging and formatting automatically.
- *
- * @param error - Error to log and throw
- * @param message - Optional message to prepend
- * @param logger - Logger instance to use
- */
-export function logAndThrow(
-  error: unknown,
-  message?: string,
-  logger: typeof serverLogger = serverLogger,
-): never {
-  const errorObj = ensureError(error);
-  const logMessage = message ? `${message}: ${errorObj.message}` : errorObj.message;
-
-  safeLog(() => logger.error(logMessage, error));
-
-  throw errorObj;
 }
 
 export async function handleErrorWithFallback<T>(

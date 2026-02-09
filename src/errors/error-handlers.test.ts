@@ -1,10 +1,8 @@
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import {
-  handleError,
   handleErrorWithFallback,
   handleErrorWithFallbackSync,
-  logAndThrow,
   retryWithBackoff,
   wrapError,
 } from "./error-handlers.ts";
@@ -37,38 +35,6 @@ describe("error-handlers", () => {
       const wrapped = wrapError("string error", "Wrapper");
 
       assertEquals(wrapped.message, "Wrapper: string error");
-    });
-  });
-
-  describe("handleError", () => {
-    it("should not throw when handling regular Error", () => {
-      handleError(new Error("Test error"));
-    });
-
-    it("should not throw when handling VeryfrontError with context", () => {
-      handleError(
-        new VeryfrontError("Test", {
-          slug: "build-failed",
-          category: "BUILD",
-          status: 500,
-          title: "Build failed",
-          context: { test: true },
-        }),
-      );
-    });
-  });
-
-  describe("logAndThrow", () => {
-    it("should throw the original Error", () => {
-      assertThrows(() => logAndThrow(new Error("Test error")), Error, "Test error");
-    });
-
-    it("should convert non-Error to Error and throw", () => {
-      assertThrows(() => logAndThrow("string error"), Error, "string error");
-    });
-
-    it("should include custom message in log", () => {
-      assertThrows(() => logAndThrow(new Error("Original"), "Custom context"), Error, "Original");
     });
   });
 
