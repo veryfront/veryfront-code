@@ -338,27 +338,87 @@ describe("styles-builder/tailwind-compiler", () => {
 
   describe("loadModuleFromEsmSh", () => {
     it("should dynamically load tailwindcss-animate plugin from esm.sh", async () => {
-      const mod = await loadModuleFromEsmSh("tailwindcss-animate@1.0.7");
+      const originalFetch = globalThis.fetch;
+      let fetchCallCount = 0;
+      globalThis.fetch = ((input: URL | Request | string) => {
+        const url = typeof input === "string"
+          ? input
+          : input instanceof URL
+          ? input.toString()
+          : input.url;
 
-      assertEquals(typeof mod, "object");
-      assertEquals("default" in mod, true);
+        fetchCallCount++;
+        if (fetchCallCount === 1) {
+          assertEquals(url.includes("tailwindcss-animate@1.0.7?bundle"), true);
+          return Promise.resolve(
+            new Response(`export * from "/v1/tailwindcss-animate.bundle.mjs";`, { status: 200 }),
+          );
+        }
 
-      const plugin = (mod as { default: unknown }).default;
-      assertEquals(typeof plugin, "object");
-      assertEquals(plugin !== null, true);
-      assertEquals("handler" in (plugin as object), true);
+        assertEquals(url.includes("/v1/tailwindcss-animate.bundle.mjs"), true);
+        return Promise.resolve(
+          new Response(`export default { handler() {} };`, { status: 200 }),
+        );
+      }) as typeof fetch;
+
+      try {
+        const mod = await loadModuleFromEsmSh("tailwindcss-animate@1.0.7");
+
+        assertEquals(typeof mod, "object");
+        assertEquals(mod !== null, true);
+        const modObj = mod as { default?: unknown };
+        assertEquals("default" in modObj, true);
+
+        const plugin = modObj.default;
+        assertEquals(typeof plugin, "object");
+        assertEquals(plugin !== null, true);
+        assertEquals("handler" in (plugin as object), true);
+        assertEquals(fetchCallCount, 2);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
 
     it("should dynamically load a simple package without tailwindcss dependency", async () => {
-      const mod = await loadModuleFromEsmSh("is-odd@3.0.1");
+      const originalFetch = globalThis.fetch;
+      let fetchCallCount = 0;
+      globalThis.fetch = ((input: URL | Request | string) => {
+        const url = typeof input === "string"
+          ? input
+          : input instanceof URL
+          ? input.toString()
+          : input.url;
 
-      assertEquals(typeof mod, "object");
-      assertEquals("default" in mod, true);
+        fetchCallCount++;
+        if (fetchCallCount === 1) {
+          assertEquals(url.includes("is-odd@3.0.1?bundle"), true);
+          return Promise.resolve(
+            new Response(`export * from "/v1/is-odd.bundle.mjs";`, { status: 200 }),
+          );
+        }
 
-      const isOdd = (mod as { default: (n: number) => boolean }).default;
-      assertEquals(typeof isOdd, "function");
-      assertEquals(isOdd(3), true);
-      assertEquals(isOdd(4), false);
+        assertEquals(url.includes("/v1/is-odd.bundle.mjs"), true);
+        return Promise.resolve(
+          new Response(`export default (n) => n % 2 === 1;`, { status: 200 }),
+        );
+      }) as typeof fetch;
+
+      try {
+        const mod = await loadModuleFromEsmSh("is-odd@3.0.1");
+
+        assertEquals(typeof mod, "object");
+        assertEquals(mod !== null, true);
+        const modObj = mod as { default?: unknown };
+        assertEquals("default" in modObj, true);
+
+        const isOdd = modObj.default as (n: number) => boolean;
+        assertEquals(typeof isOdd, "function");
+        assertEquals(isOdd(3), true);
+        assertEquals(isOdd(4), false);
+        assertEquals(fetchCallCount, 2);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 });

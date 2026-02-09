@@ -48,36 +48,10 @@ import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts"
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { extractHttpBundlePaths, verifiedHttpBundlePaths } from "./http-bundle-helpers.ts";
 import { rewriteCrossProjectImport, rewriteLocalImports } from "./import-rewriter.ts";
-import {
-  createModuleFetcherContext,
-  fetchAndCacheModule,
-} from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
-import { VF_MODULE_IMPORT_PATTERN } from "#veryfront/transforms/mdx/esm-module-loader/constants.ts";
 import { SSRCacheManager } from "./ssr-cache-manager.ts";
 import { SSRCircuitBreaker } from "./ssr-circuit-breaker.ts";
 import { SSRDependencyValidator } from "./ssr-dependency-validator.ts";
-
-/**
- * Find /_vf_modules/ imports in transformed code.
- * These need to be resolved to file:// paths for dynamic import.
- * Matches both /_vf_modules/... and file:///_vf_modules/... patterns.
- */
-function findVfModuleImports(code: string): Array<{ original: string; path: string }> {
-  const imports: Array<{ original: string; path: string }> = [];
-  const pattern = new RegExp(VF_MODULE_IMPORT_PATTERN.source, "g");
-
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(code)) !== null) {
-    const rawPath = match[1];
-    if (rawPath) {
-      // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
-      const path = rawPath.replace(/^(?:file:\/\/)?\/+/, "");
-      imports.push({ original: match[0], path });
-    }
-  }
-
-  return imports;
-}
+import { resolveVfModuleImports } from "./vf-module-resolver.ts";
 
 const MISSING_HTTP_BUNDLE_PATTERN = /veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/;
 
@@ -677,51 +651,14 @@ export class SSRModuleLoader {
           this.options.projectDir,
         );
 
-        // Process /_vf_modules/ imports and resolve them to file:// paths
-        // These are framework module imports that need to be fetched and cached
-        const vfModuleImports = findVfModuleImports(transformed);
-        if (vfModuleImports.length > 0) {
-          logger.debug("[SSR-MODULE-LOADER] Processing _vf_modules imports", {
-            file: filePath.slice(-40),
-            count: vfModuleImports.length,
-            paths: vfModuleImports.map((i) => i.path).slice(0, 5),
-          });
-
-          const baseCacheDir = getMdxEsmCacheDir();
-          const projectKey = encodeURIComponent(this.options.projectId);
-          const sourceKey = this.options.contentSourceId!;
-          const esmCacheDir = join(baseCacheDir, projectKey, sourceKey);
-
-          const fetcherContext = createModuleFetcherContext(
-            esmCacheDir,
-            this.options.adapter,
-            this.options.projectDir,
-            this.options.projectId,
-            {
-              reactVersion: this.options.reactVersion,
-              projectSlug: this.options.projectId,
-              strictMissingModules: false,
-            },
-          );
-
-          const vfModuleResults = await Promise.all(
-            vfModuleImports.map(async ({ original, path }) => {
-              const cachedFilePath = await fetchAndCacheModule(path, fetcherContext);
-              return { original, cachedFilePath, path };
-            }),
-          );
-
-          for (const { original, cachedFilePath, path } of vfModuleResults) {
-            if (cachedFilePath) {
-              transformed = transformed.replace(original, `from "file://${cachedFilePath}"`);
-            } else {
-              logger.warn("[SSR-MODULE-LOADER] Failed to resolve _vf_modules import", {
-                file: filePath.slice(-40),
-                path,
-              });
-            }
-          }
-        }
+        transformed = await resolveVfModuleImports(transformed, {
+          filePath,
+          projectId: this.options.projectId,
+          contentSourceId: this.options.contentSourceId!,
+          adapter: this.options.adapter,
+          projectDir: this.options.projectDir,
+          reactVersion: this.options.reactVersion,
+        });
 
         // Ensure HTTP bundles exist for this transform (handles nested bundle deps)
         const bundlePaths = extractHttpBundlePaths(transformed);

@@ -7,7 +7,6 @@
  * @module module-system/react-loader/ssr-module-loader/ssr-cache-manager
  */
 
-import { join } from "#veryfront/compat/path/index.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { buildSSRModuleCacheKey } from "#veryfront/cache/keys.ts";
 import { computeConfigHashSync } from "#veryfront/cache/config-hash.ts";
@@ -22,6 +21,7 @@ import {
   extractHttpBundlePaths,
   verifiedHttpBundlePaths,
 } from "./http-bundle-helpers.ts";
+import { buildTempModulePath, buildTmpDirPath, getTmpDirCacheKey } from "./tmp-paths.ts";
 import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
 
 const UNRESOLVED_VF_MODULE_IMPORT_PATTERN =
@@ -87,18 +87,7 @@ export class SSRCacheManager {
 
   async getTempPath(filePath: string, contentHash?: string): Promise<string> {
     const tmpDir = await this.ensureTmpDir();
-
-    const projectDir = this.options.projectDir.replace(/\/$/, "");
-    const relativePath = filePath.startsWith(projectDir)
-      ? filePath.substring(projectDir.length)
-      : filePath;
-
-    const versionPrefix = VERSION.replace(/\./g, "-");
-    const hashSuffix = contentHash
-      ? `.v${versionPrefix}.${contentHash.slice(0, 8)}`
-      : `.v${versionPrefix}`;
-    const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, `${hashSuffix}.js`);
-    return join(tmpDir, jsPath);
+    return buildTempModulePath(tmpDir, filePath, this.options.projectDir, VERSION, contentHash);
   }
 
   isProductionContentSource(): boolean {
@@ -275,14 +264,13 @@ export class SSRCacheManager {
     }
 
     const baseCacheDir = getMdxEsmCacheDir();
-    const projectKey = encodeURIComponent(projectId);
     const sourceKey = contentSourceId;
-    const cacheKey = `${baseCacheDir}|${projectKey}|${sourceKey}`;
+    const cacheKey = getTmpDirCacheKey(baseCacheDir, projectId, sourceKey);
 
     const existingDir = globalTmpDirs.get(cacheKey);
     if (existingDir) return existingDir;
 
-    const tmpDir = join(baseCacheDir, projectKey, sourceKey);
+    const tmpDir = buildTmpDirPath(baseCacheDir, projectId, sourceKey);
 
     await this.fs.mkdir(tmpDir, { recursive: true });
     globalTmpDirs.set(cacheKey, tmpDir);
