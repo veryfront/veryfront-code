@@ -13,8 +13,7 @@ type CacheRequestContext = {
 };
 
 function getCurrentRequestContext(): CacheRequestContext | null {
-  // deno-lint-ignore no-explicit-any
-  const mod = (globalThis as any).__vf_multi_project_adapter;
+  const mod = globalThis.__vf_multi_project_adapter;
   return (mod?.getCurrentRequestContext?.() as CacheRequestContext | undefined) ?? null;
 }
 

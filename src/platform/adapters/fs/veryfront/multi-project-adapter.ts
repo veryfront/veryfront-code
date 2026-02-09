@@ -325,9 +325,23 @@ export function runWithRequestContext<T>(
 
 export type { RequestContext };
 
+/**
+ * Typed global interface for the multi-project adapter module.
+ * Registered on globalThis to avoid circular dependencies between
+ * cache-key-builder / cache backends and the FS adapter layer.
+ */
+export interface VfMultiProjectAdapterGlobal {
+  getCurrentRequestContext: () => RequestContext | null;
+  getRequestScopedFile: (cacheKey: string) => string | undefined;
+  setRequestScopedFile: (cacheKey: string, content: string) => void;
+}
+
+declare global {
+  var __vf_multi_project_adapter: VfMultiProjectAdapterGlobal | undefined;
+}
+
 // Register globally for lazy access from cache-key-builder to avoid circular dependency
-// deno-lint-ignore no-explicit-any
-(globalThis as any).__vf_multi_project_adapter = {
+globalThis.__vf_multi_project_adapter = {
   getCurrentRequestContext,
   getRequestScopedFile,
   setRequestScopedFile,

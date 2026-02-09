@@ -86,26 +86,28 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 /**
  * Merge themes (user theme overrides default)
  */
-export function mergeThemes<T extends Record<string, any>>(
+export function mergeThemes<T>(
   defaultTheme: T,
   userTheme?: Partial<T>,
 ): T {
   if (!userTheme) return defaultTheme;
 
-  const merged: T = { ...defaultTheme };
+  const merged = { ...defaultTheme };
+  const defaultObj = defaultTheme as Record<string, unknown>;
+  const userObj = userTheme as Record<string, unknown>;
 
-  for (const key in userTheme) {
-    const value = userTheme[key];
+  for (const key in userObj) {
+    const value = userObj[key];
     if (value === undefined) continue;
 
-    const defaultValue = defaultTheme[key];
+    const defaultValue = defaultObj[key];
 
     if (isPlainObject(value) && isPlainObject(defaultValue)) {
-      merged[key] = { ...defaultValue, ...value } as T[Extract<keyof T, string>];
+      (merged as Record<string, unknown>)[key] = { ...defaultValue, ...value };
       continue;
     }
 
-    merged[key] = value as T[Extract<keyof T, string>];
+    (merged as Record<string, unknown>)[key] = value;
   }
 
   return merged;

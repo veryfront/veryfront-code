@@ -20,5 +20,5 @@ export const HMR_MESSAGE_TYPES = {
 export function isValidHMRMessageType(
   type: string,
 ): type is (typeof HMR_MESSAGE_TYPES)[keyof typeof HMR_MESSAGE_TYPES] {
-  return Object.values(HMR_MESSAGE_TYPES).includes(type as any);
+  return (Object.values(HMR_MESSAGE_TYPES) as readonly string[]).includes(type);
 }

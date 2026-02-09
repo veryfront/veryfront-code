@@ -2,7 +2,6 @@ import { CONTENT_TYPES } from "./constants.ts";
 import type { CacheStrategy, CORSConfig, SecurityConfig } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
-// deno-lint-ignore no-explicit-any
 type ResponseBuilderConstructor = new (config?: {
   securityConfig?: SecurityConfig | null;
   isDev?: boolean;
@@ -13,16 +12,11 @@ type ResponseBuilderConstructor = new (config?: {
 interface ResponseBuilderInstance {
   headers: Headers;
   status: number;
-  // deno-lint-ignore no-explicit-any
-  withCORS(req: Request, corsConfig?: boolean | CORSConfig): any;
-  // deno-lint-ignore no-explicit-any
-  withSecurity(config?: SecurityConfig): any;
-  // deno-lint-ignore no-explicit-any
-  withCache(strategy: CacheStrategy): any;
-  // deno-lint-ignore no-explicit-any
-  withETag(etag: string): any;
-  // deno-lint-ignore no-explicit-any
-  withAllow(methods: string | string[]): any;
+  withCORS(req: Request, corsConfig?: boolean | CORSConfig): ResponseBuilderInstance;
+  withSecurity(config?: SecurityConfig): ResponseBuilderInstance;
+  withCache(strategy: CacheStrategy): ResponseBuilderInstance;
+  withETag(etag: string): ResponseBuilderInstance;
+  withAllow(methods: string | string[]): ResponseBuilderInstance;
   json(data: unknown, status?: number): Response;
   html(body: string, status?: number): Response;
   text(message: string, status?: number): Response;
