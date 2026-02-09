@@ -17,8 +17,7 @@ import {
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
-import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
-import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { extractComponent } from "../extract-component.ts";
 import {
@@ -32,7 +31,6 @@ import { withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 import {
   getFromRedis,
   getTransformSemaphore,
-  globalCrossProjectCache,
   globalInProgress,
   globalModuleCache,
   isSSRDistributedCacheEnabled,
@@ -44,9 +42,9 @@ import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { lookupMdxEsmCache } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
-import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { extractHttpBundlePaths, verifiedHttpBundlePaths } from "./http-bundle-helpers.ts";
 import { rewriteCrossProjectImport, rewriteLocalImports } from "./import-rewriter.ts";
+import { transformCrossProjectImportFlow } from "./cross-project-import-loader.ts";
 import { SSRCacheManager } from "./ssr-cache-manager.ts";
 import { SSRCircuitBreaker } from "./ssr-circuit-breaker.ts";
 import { SSRDependencyValidator } from "./ssr-dependency-validator.ts";
@@ -273,100 +271,16 @@ export class SSRModuleLoader {
     );
   }
 
-  private getRegistryBaseUrl(): string {
-    const apiBaseUrl = this.options.apiBaseUrl || getApiBaseUrlEnv();
-    return apiBaseUrl.replace(/\/api\/?$/, "");
-  }
-
   private async transformCrossProjectImport(
     crossProjectImport: CrossProjectImport,
   ): Promise<string> {
-    const { specifier, projectSlug, version, path } = crossProjectImport;
-
-    const reactVersion = this.options.reactVersion ?? "default";
-    const cacheKey = `${specifier}:${this.options.projectId}:${reactVersion}`;
-
-    const cachedEntry = globalCrossProjectCache.get(cacheKey);
-    if (cachedEntry) return cachedEntry.tempPath;
-
-    const registryBaseUrl = this.getRegistryBaseUrl();
-    const projectRef = `${projectSlug}@${version}`;
-    const registryUrl = `${registryBaseUrl}/${projectRef}/@/${path}`;
-
-    logger.debug("[SSR-MODULE-LOADER] Fetching cross-project import", {
-      specifier,
-      registryUrl,
+    return transformCrossProjectImportFlow({
+      crossProjectImport,
+      options: this.options,
+      cache: this.cache,
+      withTransformCapacity: (syntheticFilePath, operation) =>
+        this.withTransformCapacity(syntheticFilePath, "plain", operation),
     });
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), HTTP_FETCH_TIMEOUT_MS);
-
-    try {
-      const headers = new Headers({
-        Accept: "text/plain, application/javascript, */*",
-      });
-      injectContext(headers);
-
-      const response = await fetch(registryUrl, { signal: controller.signal, headers });
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        throw new Error(
-          `Failed to fetch ${registryUrl}: ${response.status} ${response.statusText}`,
-        );
-      }
-
-      const sourceCode = await response.text();
-      const contentHash = await this.cache.hashContentAsync(sourceCode);
-
-      const ext = path.match(/\.(tsx?|jsx?|mdx)$/)?.[0] ?? ".tsx";
-      const syntheticFilePath = `cross-project/${projectRef}/@/${path}`;
-      const tempPath = await this.cache.getTempPath(syntheticFilePath, contentHash);
-      const fs = this.cache.getFs();
-      await fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), { recursive: true });
-
-      return await this.withTransformCapacity(syntheticFilePath, "plain", async () => {
-        const projectId = this.options.projectId;
-        const transformOpts: TransformOptions = {
-          projectId,
-          dev: this.options.dev,
-          ssr: true,
-          apiBaseUrl: this.options.apiBaseUrl,
-          reactVersion: this.options.reactVersion,
-        };
-
-        const filePathWithExt = syntheticFilePath.endsWith(ext)
-          ? syntheticFilePath
-          : syntheticFilePath + ext;
-
-        const transformed = await transformToESM(
-          sourceCode,
-          filePathWithExt,
-          this.options.projectDir,
-          this.options.adapter,
-          transformOpts,
-        );
-
-        await fs.writeTextFile(tempPath, transformed);
-
-        globalCrossProjectCache.set(cacheKey, { tempPath, contentHash });
-
-        logger.debug("[SSR-MODULE-LOADER] Cross-project import transformed", {
-          specifier,
-          tempPath,
-        });
-
-        return tempPath;
-      });
-    } catch (error) {
-      clearTimeout(timeout);
-      logger.error("[SSR-MODULE-LOADER] Failed to fetch cross-project import", {
-        specifier,
-        registryUrl,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
-    }
   }
 
   private transformWithDependencies(
