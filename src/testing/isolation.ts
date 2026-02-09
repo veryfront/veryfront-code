@@ -520,7 +520,7 @@ export async function resetAllTestState(): Promise<void> {
 
     // SSR module caches
     async () => {
-      const { clearSSRModuleCache } = await import("../modules/react-loader/index.ts");
+      const { clearSSRModuleCache } = await import("#veryfront/modules");
       clearSSRModuleCache();
     },
 

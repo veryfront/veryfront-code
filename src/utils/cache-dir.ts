@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "#veryfront/compat/path/index.ts";
-import { cwd } from "#veryfront/platform/compat/process.ts";
-import { getCacheDirEnv } from "#veryfront/config/env.ts";
+import { cwd, getEnv } from "#veryfront/platform/compat/process.ts";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
 
 const cacheStorage = new AsyncLocalStorage<string>();
@@ -18,7 +17,7 @@ export function getCacheDirFromContext(): string | undefined {
 export function getCacheBaseDir(): string {
   return (
     getCacheDirFromContext() ??
-      getCacheDirEnv() ??
+      getEnv("VERYFRONT_CACHE_DIR") ?? getEnv("VF_CACHE_DIR") ??
       join(cwd(), ".cache")
   );
 }

@@ -1,7 +1,4 @@
 import { compile } from "tailwindcss";
-import plugin from "tailwindcss/plugin";
-import defaultTheme from "tailwindcss/defaultTheme";
-import colors from "tailwindcss/colors";
 import { serverLogger as logger } from "#veryfront/utils";
 import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
 import {
@@ -14,46 +11,12 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { minifyCSS } from "#veryfront/build/asset-pipeline/tailwind-processor/css-utils.ts";
+import { extractCandidates, hashCandidates, hashCSS, hashString } from "./candidate-extractor.ts";
+import { loadPlugin } from "./plugin-loader.ts";
 
-// Provide localStorage shim for plugins that use util-deprecate (which checks localStorage)
-// This prevents "LocalStorage is not supported in this context" errors in Deno.
-// In Deno, localStorage is a GETTER that throws - simple assignment doesn't override it.
-// We must use Object.defineProperty to properly replace the getter with our shim.
-try {
-  // deno-lint-ignore no-explicit-any
-  const _test = (globalThis as any).localStorage;
-  // If we get here, localStorage exists (browser or already shimmed)
-} catch {
-  // localStorage access threw - use defineProperty to override the throwing getter
-  const localStorageShim = {
-    getItem: () => null,
-    setItem: () => {},
-    removeItem: () => {},
-    clear: () => {},
-    key: () => null,
-    length: 0,
-  };
-  Object.defineProperty(globalThis, "localStorage", {
-    value: localStorageShim,
-    writable: true,
-    configurable: true,
-    enumerable: true,
-  });
-}
-
-// Set up global shims for tailwindcss subpaths - used by dynamically loaded plugins
-(globalThis as Record<string, unknown>).__tailwindPluginShim = {
-  default: plugin,
-  __esModule: true,
-};
-(globalThis as Record<string, unknown>).__tailwindDefaultThemeShim = {
-  default: defaultTheme,
-  __esModule: true,
-};
-(globalThis as Record<string, unknown>).__tailwindColorsShim = {
-  default: colors,
-  __esModule: true,
-};
+// Re-export extracted modules for backward compatibility
+export { extractCandidates, extractCandidatesFromFiles, hashCSS } from "./candidate-extractor.ts";
+export { loadModuleFromEsmSh } from "./plugin-loader.ts";
 
 export interface TailwindResult {
   css: string;
@@ -306,14 +269,6 @@ export async function getProjectCSS(
 }
 
 /**
- * Hash candidates set to detect when Tailwind classes change.
- * Uses sorted array to ensure consistent hash regardless of Set iteration order.
- */
-function hashCandidates(candidates: Set<string>): string {
-  return hashString(Array.from(candidates).sort().join(","));
-}
-
-/**
  * Invalidate project CSS cache for a specific project.
  */
 export function invalidateProjectCSS(projectSlug: string): void {
@@ -365,19 +320,6 @@ function pruneProjectCSSLocalFallback(): void {
 
 const DEFAULT_STYLESHEET = `@import "tailwindcss";
 @custom-variant dark (&:is(.dark, [data-theme="dark"]) *, &:is(.dark, [data-theme="dark"]));`;
-
-function hashString(str: string): string {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash) + str.charCodeAt(i);
-    hash = hash & hash;
-  }
-  return hash.toString(36);
-}
-
-export function hashCSS(css: string): string {
-  return hashString(css).slice(0, 8);
-}
 
 function storeInBoundedLocalCache<T>(
   cache: Map<string, T>,
@@ -726,177 +668,6 @@ export async function regenerateCSSByHash(expectedHash: string): Promise<string 
     },
     { "css.hash": expectedHash },
   );
-}
-
-/**
- * Extract Tailwind CSS v4 class candidates from content.
- *
- * Supports all Tailwind v4 features including:
- * - Basic utilities: mt-4, bg-blue-500
- * - Negative values: -mt-4, -translate-x-1/2
- * - Important modifier: !mt-4, !text-red-500
- * - Responsive/state variants: sm:mt-4, hover:bg-blue, dark:text-white
- * - Arbitrary values: w-[100px], bg-[#ff0000], bg-[var(--color)]
- * - Arbitrary properties: [mask-type:alpha], [--my-var:value]
- * - Arbitrary variants: [&>*]:mt-4, [&:hover]:bg-blue
- * - Container queries: @container, @lg:flex, @[200px]:grid
- * - Opacity modifier: bg-black/50
- * - Fractions: w-1/2
- * - CSS variable utilities: text-[--my-color], bg-[--theme-bg]
- * - 3D transforms: rotate-x-45, perspective-500
- */
-export function extractCandidates(content: string): string[] {
-  const pattern = /!?-?@?(?:[a-zA-Z0-9]|\[&?)[a-zA-Z0-9_\-:\/\.\[\]%#,()!'=<>$@{}|*+?;^~]*/g;
-  return [...new Set(content.match(pattern) ?? [])];
-}
-
-export function extractCandidatesFromFiles(
-  files: Array<{ path: string; content?: string }>,
-): Set<string> {
-  const candidates = new Set<string>();
-  const sourceExtensions = [".tsx", ".jsx", ".ts", ".js", ".mdx"];
-
-  for (const file of files) {
-    if (!file.content) continue;
-    if (!sourceExtensions.some((ext) => file.path.endsWith(ext))) continue;
-
-    for (const candidate of extractCandidates(file.content)) {
-      candidates.add(candidate);
-    }
-  }
-
-  return candidates;
-}
-
-/**
- * Dynamically load a module from esm.sh in a compiled Deno binary.
- *
- * This works around the limitation that compiled Deno binaries cannot do
- * dynamic imports from URLs. Instead, we:
- * 1. Fetch the bundled code from esm.sh (with ?bundle&external=tailwindcss)
- * 2. Rewrite the tailwindcss/plugin import to use our global shim
- * 3. Write to a temp file
- * 4. Import via file:// URL
- *
- * @param packageName - The npm package name (e.g., "tailwindcss-animate" or "tailwindcss-animate@1.0.7")
- * @returns The loaded module
- */
-export async function loadModuleFromEsmSh(packageName: string): Promise<unknown> {
-  // Step 1: Fetch the redirect stub to find the actual bundle URL
-  // Use target=denonext to avoid browser-specific APIs like localStorage
-  const stubUrl = `https://esm.sh/${packageName}?bundle&external=tailwindcss&target=denonext`;
-  logger.debug("[tailwind] Fetching esm.sh stub", { url: stubUrl });
-
-  const stubResponse = await fetch(stubUrl);
-  if (!stubResponse.ok) {
-    throw new Error(`Failed to fetch stub: ${stubResponse.status}`);
-  }
-  const stubCode = await stubResponse.text();
-
-  // Step 2: Parse stub to find actual bundle path
-  const bundleMatch = stubCode.match(/from\s*["'](\/[^"']+\.bundle\.mjs)["']/);
-  if (!bundleMatch) {
-    throw new Error(`Could not find bundle path in esm.sh response: ${stubCode.substring(0, 200)}`);
-  }
-
-  const bundleUrl = `https://esm.sh${bundleMatch[1]}`;
-  logger.debug("[tailwind] Fetching actual bundle", { url: bundleUrl });
-
-  // Step 3: Fetch the actual bundled code
-  const bundleResponse = await fetch(bundleUrl);
-  if (!bundleResponse.ok) {
-    throw new Error(`Failed to fetch bundle: ${bundleResponse.status}`);
-  }
-  let code = await bundleResponse.text();
-
-  // Step 4: Rewrite tailwindcss/* imports to use our global shims
-  // The bundle contains imports like: import*as __0$ from"tailwindcss/plugin"
-  // Variable names can be __0$, __1$, __2$, etc. so we use regex
-  const shimMap: Record<string, string> = {
-    "tailwindcss/plugin": "__tailwindPluginShim",
-    "tailwindcss/defaultTheme": "__tailwindDefaultThemeShim",
-    "tailwindcss/colors": "__tailwindColorsShim",
-  };
-
-  for (const [importPath, shimName] of Object.entries(shimMap)) {
-    const importRegex = new RegExp(
-      `import\\*as\\s+(__\\d+\\$)\\s+from["']${importPath.replace("/", "\\/")}["']`,
-      "g",
-    );
-    code = code.replace(importRegex, (_, varName) => {
-      logger.debug(`[tailwind] Rewrote ${importPath} import to use global shim`, { varName });
-      return `const ${varName} = globalThis.${shimName}`;
-    });
-  }
-
-  // Step 4b: Patch out localStorage access from util-deprecate
-  // The bundled code contains patterns like: try{if(!globalThis.localStorage)return!1}
-  // In Deno compiled binaries, even with our global shim, this can fail.
-  // Replace globalThis.localStorage with a safe inline shim.
-  code = code.replace(
-    /globalThis\.localStorage/g,
-    "(globalThis.__localStorageShim||(globalThis.__localStorageShim={getItem:()=>null,setItem:()=>{},length:0}))",
-  );
-
-  // Step 5: Write to temp file and import
-  const tempPath = `/tmp/tw_plugin_${crypto.randomUUID()}.mjs`;
-  await Deno.writeTextFile(tempPath, code);
-  logger.debug("[tailwind] Wrote plugin to temp file", { path: tempPath });
-
-  try {
-    return await import(`file://${tempPath}`);
-  } finally {
-    await Deno.remove(tempPath).catch(() => {});
-  }
-}
-
-async function loadPlugin(
-  id: string,
-  pluginCache: Map<string, unknown>,
-  pluginErrors: Map<string, string>,
-): Promise<unknown> {
-  if (pluginCache.has(id)) {
-    const errorMsg = pluginErrors.get(id);
-    if (errorMsg) throw new Error(errorMsg);
-    return pluginCache.get(id);
-  }
-
-  // Use the proper isDeno check that distinguishes between real Deno and dnt shim
-  const { isDeno } = await import("#veryfront/platform/compat/runtime.ts");
-
-  try {
-    let mod: unknown;
-
-    if (isDeno) {
-      // Use dynamic module loading that works in compiled binaries
-      // This fetches the bundled code, rewrites imports, and loads via temp file
-      logger.debug("[tailwind] Loading plugin via dynamic esm.sh fetch", { id });
-      mod = await loadModuleFromEsmSh(id);
-    } else {
-      // Node.js: Try to import from node_modules
-      logger.debug("[tailwind] Loading plugin from node_modules", { id });
-      try {
-        mod = await import(id);
-      } catch {
-        const errorMsg = `Failed to load plugin "${id}": plugin not installed`;
-        logger.warn("[tailwind] Plugin not installed", { id });
-        pluginErrors.set(id, errorMsg);
-        pluginCache.set(id, null);
-        throw new Error(errorMsg);
-      }
-    }
-
-    const pluginExport = (mod as { default?: unknown }).default ?? mod;
-    pluginCache.set(id, pluginExport);
-    return pluginExport;
-  } catch (error) {
-    const errorMsg = `Failed to load plugin "${id}": ${
-      error instanceof Error ? error.message : String(error)
-    }`;
-    logger.warn(`[tailwind] ${errorMsg}`);
-    pluginErrors.set(id, errorMsg);
-    throw new Error(errorMsg);
-  }
 }
 
 export function clearPluginCache(id?: string): void {

@@ -1,4 +1,5 @@
-export const DEFAULT_PORT = 3000;
+import { DEFAULT_PORT } from "#veryfront/platform/compat/constants.ts";
+export { DEFAULT_PORT };
 export const DEFAULT_TIMEOUT_MS = 5000;
 export const SSR_TIMEOUT_MS = 10000;
 export const SANDBOX_TIMEOUT_MS = 5000;

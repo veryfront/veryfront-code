@@ -1,7 +1,6 @@
 import type { FSAdapter, FSAdapterConfig } from "./veryfront/types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { ReloadNotifier } from "#veryfront/server/reload-notifier.ts";
 import {
   clearSSRModuleCache,
   clearSSRModuleCacheForProject,
@@ -20,7 +19,6 @@ import {
 } from "#veryfront/rendering/snippet-renderer.ts";
 import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
 import { invalidateProjectCSS } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
-import { clearDomainCache } from "#veryfront/server/utils/domain-lookup.ts";
 
 export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
   const type = config.type ?? "local";
@@ -44,7 +42,6 @@ export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
         const configWithCallbacks: FSAdapterConfig = {
           ...config,
           invalidationCallbacks: {
-            ...config.invalidationCallbacks,
             clearSSRModuleCache,
             clearRouterDetectionCache,
             clearModulePathCache,
@@ -55,9 +52,7 @@ export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
             clearSnippetCacheForProject,
             clearRendererCacheForProject,
             clearProjectCSSCache: invalidateProjectCSS,
-            clearDomainCache,
-            triggerReload: (changedPaths, project) =>
-              ReloadNotifier.triggerReload(changedPaths, project),
+            ...config.invalidationCallbacks,
           },
         };
 

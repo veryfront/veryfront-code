@@ -12,7 +12,7 @@
  * @module build/transforms/mdx/esm-module-loader/module-fetcher
  */
 
-import { dirname, join, resolve } from "#veryfront/compat/path";
+import { join } from "#veryfront/compat/path";
 import * as posix from "#std/path/posix";
 import { rendererLogger as globalLogger } from "#veryfront/utils";
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
@@ -30,24 +30,28 @@ import {
   storeBundleManifest,
   validateBundleGroup,
 } from "../../../esm/bundle-manifest.ts";
-import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
-import {
-  FRAMEWORK_ROOT,
-  LOG_PREFIX_MDX_LOADER,
-  RELATIVE_IMPORT_PATTERN,
-  UNRESOLVED_VF_MODULES_PATTERN,
-  VF_MODULE_IMPORT_PATTERN,
-} from "../constants.ts";
-import type { ModuleFetcherContext, NestedImportResult } from "../types.ts";
+import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { FRAMEWORK_ROOT, LOG_PREFIX_MDX_LOADER } from "../constants.ts";
+import type { ModuleFetcherContext } from "../types.ts";
 import { getLocalFs, getModulePathCache, saveModulePathCache } from "../cache/index.ts";
 import { hashString } from "../utils/hash.ts";
-import { createStubModule } from "../utils/stub-module.ts";
 import { resolveModuleFile } from "../resolution/file-finder.ts";
-import { recordSSRModules } from "#veryfront/modules/manifest/route-module-manifest.ts";
 import { getDistributedTransformBackend } from "#veryfront/transforms/esm/transform-cache.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
-import { resolveVeryfrontModuleUrl } from "../../../veryfront-module-urls.ts";
+import { getTransformCacheKey, getVersionedPathCacheKey } from "./cache-keys.ts";
+import { rewriteDntImports, rewriteVeryfrontImports } from "./import-rewriter.ts";
+import { findNestedImports, hasUnresolvedImports, processNestedImports } from "./nested-imports.ts";
+import {
+  findMissingFileDependenciesInCode,
+  hasIncompatibleFrameworkPaths,
+  validateCachedModule,
+} from "./framework-validator.ts";
+import { recordModuleToSession } from "./render-sessions.ts";
+
+// Re-export extracted modules for backward compatibility
+export { rewriteDntImports } from "./import-rewriter.ts";
+export { endRenderSession, startRenderSession } from "./render-sessions.ts";
 
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
@@ -78,287 +82,6 @@ function getLog(context?: { logger?: Logger }): Logger {
 }
 
 /**
- * Build cache key for transformed module.
- * Includes content hash so cache invalidates when source changes.
- * Always uses SSR mode suffix since this module loader is for server-side MDX rendering.
- * CRITICAL: The :ssr suffix is required to avoid cache collisions with browser-mode transforms
- * that use relative paths (../lib/utils.js) instead of absolute paths (/_vf_modules/lib/utils.js).
- */
-function getTransformCacheKey(
-  projectId: string,
-  normalizedPath: string,
-  contentHash: string,
-): string {
-  return `v${VERSION}:${projectId}:${normalizedPath}:${contentHash}:ssr`;
-}
-
-/**
- * Rewrite veryfront/* imports to /_vf_modules/_veryfront/ paths for MDX module loading.
- * Uses deno.json exports/imports as the source of truth and appends ?ssr=true.
- */
-function rewriteVeryfrontImports(code: string): string {
-  return code.replace(/from\s*["'](veryfront\/[^"']+)["']/g, (_match, specifier: string) => {
-    const mapped = resolveVeryfrontModuleUrl(specifier);
-    if (!mapped) return `from "${specifier}"`;
-    return `from "${mapped}?ssr=true"`;
-  });
-}
-
-/**
- * Rewrite relative imports in framework files to absolute file:// paths.
- *
- * Framework files from the npm package (e.g., Head.js) contain relative imports like:
- *   import "../../../_dnt.polyfills.js"
- *   import { collectHead } from "../head-collector.js"
- *
- * These resolve correctly when loaded from the npm package directory, but break when
- * the transformed code is cached to a different directory (e.g., /app/.cache/veryfront-mdx-esm/...).
- * The relative path would resolve to /app/.cache/head-collector.js which doesn't exist.
- *
- * Fix: Replace ALL relative imports with absolute file:// paths resolved from the source file's directory.
- */
-export function rewriteDntImports(code: string, sourceFilePath: string): string {
-  // Only needed for framework files that come from the npm package.
-  // IMPORTANT: Use FRAMEWORK_ROOT + "src/" or dist/framework-src to avoid matching project source files
-  // that live under FRAMEWORK_ROOT (e.g., projects/myproject/components/...).
-  // Without this, project relative imports get rewritten to absolute file:// source
-  // paths with .js extensions, which fail because actual files are .tsx/.ts.
-  const frameworkSrcRoot = join(FRAMEWORK_ROOT, "src") + "/";
-  const embeddedSrcRoot = join(FRAMEWORK_ROOT, "dist", "framework-src") + "/";
-  const isFrameworkFile = sourceFilePath.startsWith(frameworkSrcRoot) ||
-    sourceFilePath.startsWith(embeddedSrcRoot) ||
-    sourceFilePath.includes("/node_modules/");
-  if (!isFrameworkFile) {
-    return code;
-  }
-
-  const sourceDir = dirname(sourceFilePath);
-
-  return code.replace(
-    /from\s*["'](\.\.?\/[^"']+)["']/g,
-    (_match, relativePath: string) => {
-      const absolutePath = resolve(sourceDir, relativePath);
-      return `from "file://${absolutePath}"`;
-    },
-  ).replace(
-    /import\s*["'](\.\.?\/[^"']+)["']/g,
-    (_match, relativePath: string) => {
-      const absolutePath = resolve(sourceDir, relativePath);
-      return `import "file://${absolutePath}"`;
-    },
-  );
-}
-
-function getVersionedPathCacheKey(normalizedPath: string): string {
-  return `v${VERSION}:${normalizedPath}`;
-}
-
-/**
- * Check if cached code has file:// paths that are incompatible with this environment.
- * Returns true if the cached code should be invalidated (has paths from a different environment).
- *
- * Checks for:
- * 1. Framework source paths (file:///app/src/...) that don't match FRAMEWORK_ROOT
- * 2. HTTP bundle cache paths (file:///app/.cache/veryfront-http-bundle/...) that don't match local cache dir
- * 3. MDX ESM cache paths (file:///app/.cache/veryfront-mdx-esm/...) that don't match local cache dir
- *
- * IMPORTANT: This function creates a new RegExp on each call to avoid race conditions
- * when multiple modules are processed concurrently. Using a shared global regex with
- * the 'g' flag would cause interleaved exec() calls to skip paths.
- */
-async function hasIncompatibleFrameworkPaths(code: string, log: Logger): Promise<boolean> {
-  // Check for esm.sh URLs that reference /_vf_modules/ paths - these are invalid
-  // and indicate a cached transform from before the fix was deployed
-  if (/esm\.sh\/_?vf_modules\//.test(code)) {
-    log.debug(`${LOG_PREFIX_MDX_LOADER} Cached code has invalid esm.sh/_vf_modules URL`);
-    return true;
-  }
-
-  const localHttpCacheDir = getHttpBundleCacheDir();
-  const localMdxCacheDir = getMdxEsmCacheDir();
-  const localFs = getLocalFs();
-
-  // Create a NEW regex for each call to avoid race conditions with concurrent calls.
-  // Global regexes maintain lastIndex state that can interleave between concurrent calls.
-  const allFilePathsPattern = /file:\/\/([^"'\s]+)/gi;
-
-  const allPaths: string[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = allFilePathsPattern.exec(code)) !== null) {
-    if (match[1]) allPaths.push(match[1]);
-  }
-
-  for (const path of allPaths) {
-    if (path.includes("veryfront-http-bundle")) {
-      if (!path.startsWith(localHttpCacheDir)) {
-        log.debug(`${LOG_PREFIX_MDX_LOADER} HTTP bundle path from different environment`, {
-          path,
-          expectedDir: localHttpCacheDir,
-        });
-        return true;
-      }
-      continue;
-    }
-
-    if (path.includes("veryfront-mdx-esm")) {
-      if (!path.startsWith(localMdxCacheDir)) {
-        log.debug(`${LOG_PREFIX_MDX_LOADER} MDX cache path from different environment`, {
-          path,
-          expectedDir: localMdxCacheDir,
-        });
-        return true;
-      }
-      continue;
-    }
-
-    if (!path.includes("/src/") || path.includes(".cache")) continue;
-
-    if (!path.startsWith(FRAMEWORK_ROOT)) {
-      log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path from different environment`, {
-        path,
-        expectedRoot: FRAMEWORK_ROOT,
-      });
-      return true;
-    }
-
-    try {
-      const stat = await localFs.stat(path);
-      if (!stat?.isFile) {
-        log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path does not exist`, { path });
-        return true;
-      }
-    } catch {
-      log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path not accessible`, { path });
-      return true;
-    }
-  }
-
-  return false;
-}
-
-/**
- * Check if cached code has file:// paths that don't exist locally.
- * Returns list of missing paths, or empty array if all exist.
- *
- * This catches cases where distributed cache returns code with file:// paths
- * to vfmod modules that were created on a different pod/run with different hashes.
- */
-async function findMissingFileDependenciesInCode(code: string, log: Logger): Promise<string[]> {
-  const localFs = getLocalFs();
-  const pattern = /file:\/\/([^"'\s]+\.mjs)/gi;
-  const missing: string[] = [];
-  const checked = new Set<string>();
-
-  let match;
-  while ((match = pattern.exec(code)) !== null) {
-    const path = match[1] as string;
-    // Skip query parameters in paths
-    const cleanPath = path.replace(/\?.*$/, "");
-
-    if (checked.has(cleanPath)) continue;
-    checked.add(cleanPath);
-
-    try {
-      const stat = await localFs.stat(cleanPath);
-      if (!stat?.isFile) {
-        log.debug(`${LOG_PREFIX_MDX_LOADER} File dependency does not exist`, { path: cleanPath });
-        missing.push(cleanPath);
-      }
-    } catch {
-      log.debug(`${LOG_PREFIX_MDX_LOADER} File dependency not accessible`, { path: cleanPath });
-      missing.push(cleanPath);
-    }
-  }
-
-  return missing;
-}
-
-/**
- * Render session state for module tracking.
- */
-interface RenderSession {
-  modules: Set<string>;
-  projectSlug?: string;
-  route?: string;
-}
-
-/**
- * Track modules loaded during current render for manifest recording.
- * Key: renderSessionId, Value: RenderSession
- */
-const renderSessions = new Map<string, RenderSession>();
-
-/**
- * Start a render session to track module loading.
- * Call this before rendering a page.
- */
-export function startRenderSession(sessionId: string, projectSlug?: string, route?: string): void {
-  renderSessions.set(sessionId, { modules: new Set(), projectSlug, route });
-  globalLogger.debug(`${LOG_PREFIX_MDX_LOADER} Started render session`, {
-    sessionId,
-    projectSlug,
-    route,
-  });
-}
-
-/**
- * End a render session and record loaded modules to the manifest.
- */
-export function endRenderSession(sessionId: string): void {
-  const session = renderSessions.get(sessionId);
-  if (!session) {
-    globalLogger.warn(`${LOG_PREFIX_MDX_LOADER} End session called but no session found`, {
-      sessionId,
-    });
-    return;
-  }
-
-  const modulePaths = Array.from(session.modules);
-  globalLogger.debug(`${LOG_PREFIX_MDX_LOADER} End render session`, {
-    sessionId,
-    moduleCount: modulePaths.length,
-    projectSlug: session.projectSlug,
-    route: session.route,
-    sampleModules: modulePaths.slice(0, 5),
-  });
-
-  if (session.projectSlug !== undefined && session.route !== undefined) {
-    if (modulePaths.length > 0) recordSSRModules(session.projectSlug, session.route, modulePaths);
-  } else {
-    // This is normal in local dev/tests where projectSlug isn't set
-    // The manifest is an optimization for production, not required
-    globalLogger.debug(
-      `${LOG_PREFIX_MDX_LOADER} Cannot record to manifest - missing projectSlug or route`,
-      {
-        projectSlug: session.projectSlug,
-        route: session.route,
-      },
-    );
-  }
-
-  renderSessions.delete(sessionId);
-}
-
-/**
- * Get the current active render session (if any).
- * Used to record modules during fetch and for per-session in-flight deduplication.
- */
-function getCurrentSession(): RenderSession | null {
-  const firstSession = renderSessions.values().next();
-  return firstSession.done ? null : firstSession.value;
-}
-
-function recordModuleToSession(normalizedPath: string): void {
-  const session = getCurrentSession();
-  if (!session) return;
-
-  const moduleUrlPath = normalizedPath
-    .replace(/^_vf_modules\//, "")
-    .replace(/\.(tsx|ts|jsx|mdx)$/, ".js");
-  session.modules.add(moduleUrlPath);
-}
-
-/**
  * Normalize a module path, resolving relative paths if a parent is provided.
  */
 function normalizePath(modulePath: string, parentModulePath?: string): string {
@@ -374,87 +97,6 @@ function normalizePath(modulePath: string, parentModulePath?: string): string {
 
   if (!normalizedPath.startsWith("_vf_modules/")) normalizedPath = `_vf_modules/${normalizedPath}`;
   return normalizedPath;
-}
-
-/**
- * Find nested module imports in code.
- * Matches both /_vf_modules/... and file:///_vf_modules/... patterns.
- */
-function findNestedImports(
-  moduleCode: string,
-): {
-  vfModules: Array<{ original: string; path: string }>;
-  relative: Array<{ original: string; path: string }>;
-} {
-  const vfModules: Array<{ original: string; path: string }> = [];
-  const relative: Array<{ original: string; path: string }> = [];
-
-  const vfPattern = new RegExp(VF_MODULE_IMPORT_PATTERN.source, "g");
-  let match: RegExpExecArray | null;
-  while ((match = vfPattern.exec(moduleCode)) !== null) {
-    const rawPath = match[1];
-    // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
-    if (rawPath) {
-      vfModules.push({ original: match[0], path: rawPath.replace(/^(?:file:\/\/)?\/+/, "") });
-    }
-  }
-
-  const relativePattern = new RegExp(RELATIVE_IMPORT_PATTERN.source, "g");
-  while ((match = relativePattern.exec(moduleCode)) !== null) {
-    const path = match[1];
-    if (path) relative.push({ original: match[0], path });
-  }
-
-  return { vfModules, relative };
-}
-
-/**
- * Check for unresolved /_vf_modules/ imports.
- */
-function hasUnresolvedImports(moduleCode: string): { count: number; paths: string[] } {
-  const pattern = new RegExp(UNRESOLVED_VF_MODULES_PATTERN.source, "g");
-  const matches = [...moduleCode.matchAll(pattern)];
-  return {
-    count: matches.length,
-    paths: matches.map((m) => m[1]).filter((p): p is string => p !== undefined).slice(0, 5),
-  };
-}
-
-/**
- * Process nested imports by replacing them with file:// paths or stub modules.
- */
-async function processNestedImports(
-  moduleCode: string,
-  results: NestedImportResult[],
-  esmCacheDir: string,
-  strictMissingModules: boolean,
-  parentModulePath?: string,
-  projectSlug?: string,
-): Promise<string> {
-  let result = moduleCode;
-
-  for (const { original, nestedFilePath, nestedPath, relativePath } of results) {
-    if (nestedFilePath) {
-      result = result.replace(original, `from "file://${nestedFilePath}"`);
-      continue;
-    }
-
-    const modulePath = nestedPath || relativePath || "";
-    if (strictMissingModules) {
-      throw buildMissingModuleError({
-        modulePath,
-        importer: parentModulePath,
-        importStatement: original,
-        code: moduleCode,
-        projectSlug,
-      });
-    }
-
-    const stubPath = await createStubModule(modulePath, result, original, esmCacheDir);
-    if (stubPath) result = result.replace(original, `from "file://${stubPath}"`);
-  }
-
-  return result;
 }
 
 /**
@@ -565,75 +207,6 @@ async function fetchModuleViaHTTP(
   }
 
   return moduleCode;
-}
-
-/**
- * Check if code contains raw HTTP URLs that would fail in compiled binary mode.
- * Compiled binaries cannot do dynamic HTTP imports.
- */
-function hasRawHttpImports(code: string): boolean {
-  // Match HTTP URLs in import statements: from "https://..." or from 'https://...'
-  const httpImportPattern = /from\s+["'](https?:\/\/[^"']+)["']/gi;
-  return httpImportPattern.test(code);
-}
-
-async function validateCachedModule(
-  normalizedPath: string,
-  cachedPath: string,
-  cachedCode: string,
-  log: Logger,
-  pathCache: Map<string, string>,
-  versionedKey: string,
-): Promise<boolean> {
-  // Reject caches with raw HTTP URLs - all modules should use file:// paths.
-  // This ensures consistency between compiled and non-compiled modes.
-  if (hasRawHttpImports(cachedCode)) {
-    log.warn(
-      `${LOG_PREFIX_MDX_LOADER} Cached module has raw HTTP imports, invalidating legacy cache`,
-      {
-        normalizedPath,
-        cachedPath,
-      },
-    );
-    pathCache.delete(versionedKey);
-    try {
-      await getLocalFs().remove(cachedPath);
-    } catch {
-      /* ignore removal errors */
-    }
-    return false;
-  }
-
-  const bundlePaths = extractHttpBundlePaths(cachedCode);
-  if (bundlePaths.length > 0) {
-    const cacheDir = getHttpBundleCacheDir();
-    const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-    if (failed.length > 0) {
-      log.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has missing HTTP bundles`, {
-        normalizedPath,
-        cachedPath,
-        failed,
-      });
-      pathCache.delete(versionedKey);
-      return false;
-    }
-  }
-
-  if (!(await hasIncompatibleFrameworkPaths(cachedCode, log))) return true;
-
-  log.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible framework paths`, {
-    normalizedPath,
-    cachedPath,
-    frameworkRoot: FRAMEWORK_ROOT,
-  });
-
-  pathCache.delete(versionedKey);
-  try {
-    await getLocalFs().remove(cachedPath);
-  } catch {
-    /* ignore removal errors */
-  }
-  return false;
 }
 
 /**

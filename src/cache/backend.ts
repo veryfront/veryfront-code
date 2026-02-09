@@ -9,11 +9,7 @@ import {
 } from "#veryfront/utils/redis-client.ts";
 import { runtime } from "#veryfront/platform/adapters/registry.ts";
 import { tryGetCacheKeyContext } from "./cache-key-builder.ts";
-import {
-  type EnvironmentConfig,
-  getEnvironmentConfig,
-  isEnvironmentConfigInitialized,
-} from "#veryfront/config/environment-config.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 import { MEMORY_CACHE_MAX_ENTRIES } from "#veryfront/utils/constants/cache.ts";
 import type { CacheBackend } from "./types.ts";
@@ -40,23 +36,9 @@ function getCurrentRequestContext(): CacheRequestContext | null {
   return (mod?.getCurrentRequestContext?.() as CacheRequestContext | undefined) ?? null;
 }
 
-const ENV_KEY_MAP: Record<string, keyof EnvironmentConfig | undefined> = {
-  VERYFRONT_API_BASE_URL: "apiBaseUrl",
-  VERYFRONT_API_TOKEN: "apiToken",
-};
-
-function getEnvValue(key: string, env?: EnvironmentConfig): string | undefined {
-  const envConfig = env ?? (isEnvironmentConfigInitialized() ? getEnvironmentConfig() : null);
-  if (envConfig) {
-    const prop = ENV_KEY_MAP[key];
-    return prop ? (envConfig[prop] as string | undefined) : undefined;
-  }
-
+function getEnvValue(key: string): string | undefined {
   if (runtime.isInitialized()) return runtime.getSync().env.get(key);
-
-  // deno-lint-ignore no-explicit-any
-  const g = globalThis as any;
-  return g.Deno?.env?.get(key) ?? g.process?.env?.[key];
+  return getEnv(key);
 }
 
 export class MemoryCacheBackend implements CacheBackend {
@@ -294,7 +276,6 @@ export class ApiCacheBackend implements CacheBackend {
   private apiBaseUrl: string;
   private keyPrefix: string;
   private timeoutMs: number;
-  private env?: EnvironmentConfig;
   private circuitBreaker;
 
   constructor(
@@ -302,13 +283,11 @@ export class ApiCacheBackend implements CacheBackend {
       apiBaseUrl?: string;
       keyPrefix?: string;
       timeoutMs?: number;
-      env?: EnvironmentConfig;
       circuitBreakerName?: string;
     } = {},
   ) {
-    this.env = options.env;
     this.apiBaseUrl = options.apiBaseUrl ??
-      getEnvValue("VERYFRONT_API_BASE_URL", this.env) ??
+      getEnvValue("VERYFRONT_API_BASE_URL") ??
       "https://api.veryfront.com";
     this.keyPrefix = options.keyPrefix ?? "";
     this.timeoutMs = options.timeoutMs ?? 10000;
@@ -331,7 +310,7 @@ export class ApiCacheBackend implements CacheBackend {
     body?: Record<string, unknown>,
   ): Promise<T | null> {
     const reqCtx = getCurrentRequestContext();
-    const envToken = getEnvValue("VERYFRONT_API_TOKEN", this.env);
+    const envToken = getEnvValue("VERYFRONT_API_TOKEN");
     // Prefer request context token (from proxy) - this is how production works
     const token = reqCtx?.token || envToken || null;
     const tokenSource = reqCtx?.token ? "request" : envToken ? "env" : "none";
@@ -488,18 +467,13 @@ export interface CacheBackendConfig {
   memoryMaxEntries?: number;
   preferredBackend?: "api" | "redis" | "memory";
   apiBaseUrl?: string;
-  env?: EnvironmentConfig;
   circuitBreakerName?: string;
 }
 
-export function isApiCacheAvailable(env?: EnvironmentConfig): boolean {
-  // deno-lint-ignore no-explicit-any
-  const g = globalThis as any;
-  const getEnvDirect = (key: string) => g.Deno?.env?.get(key) ?? g.process?.env?.[key];
-
-  const proxyMode = getEnvDirect("PROXY_MODE");
-  const nodeEnv = getEnvDirect("NODE_ENV");
-  const apiUrl = getEnvValue("VERYFRONT_API_BASE_URL", env);
+export function isApiCacheAvailable(): boolean {
+  const proxyMode = getEnv("PROXY_MODE");
+  const nodeEnv = getEnv("NODE_ENV");
+  const apiUrl = getEnvValue("VERYFRONT_API_BASE_URL");
 
   const isProduction = proxyMode === "1" ||
     nodeEnv === "production" ||
@@ -514,7 +488,6 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
     memoryMaxEntries = 500,
     preferredBackend,
     apiBaseUrl,
-    env,
     circuitBreakerName,
   } = config;
 
@@ -522,11 +495,11 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
     SpanNames.CACHE_BACKEND_CREATE,
     async (span?: Span) => {
       const shouldUseApi = preferredBackend === "api" ||
-        (!preferredBackend && isApiCacheAvailable(env));
+        (!preferredBackend && isApiCacheAvailable());
       if (shouldUseApi) {
         logger.debug("[CacheBackend] Using API backend (centralized cache)");
         span?.setAttribute("cache.backend.type", "api");
-        return new ApiCacheBackend({ keyPrefix, apiBaseUrl, env, circuitBreakerName });
+        return new ApiCacheBackend({ keyPrefix, apiBaseUrl, circuitBreakerName });
       }
 
       const shouldUseRedis = preferredBackend === "redis" ||

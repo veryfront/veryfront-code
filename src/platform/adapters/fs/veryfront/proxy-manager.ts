@@ -2,7 +2,6 @@ import { logger } from "#veryfront/utils";
 import { buildProxyManagerCacheKey } from "#veryfront/cache";
 import { VeryfrontFSAdapter } from "./index.ts";
 import type { CacheStats, FSAdapterConfig, ResolvedContentContext } from "./types.ts";
-import { ReloadNotifier } from "#veryfront/server/reload-notifier.ts";
 import {
   clearSSRModuleCache,
   clearSSRModuleCacheForProject,
@@ -20,7 +19,6 @@ import {
   clearSnippetCacheForProject,
 } from "#veryfront/rendering/snippet-renderer.ts";
 import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
-import { clearDomainCache } from "#veryfront/server/utils/domain-lookup.ts";
 import { GetAdapterParamsSchema } from "./schemas/index.ts";
 
 interface ProjectAdapter {
@@ -316,9 +314,7 @@ export class ProxyFSAdapterManager {
         clearRouterDetectionCacheForProject,
         clearSnippetCacheForProject,
         clearRendererCacheForProject,
-        clearDomainCache,
-        triggerReload: (changedPaths, project) =>
-          ReloadNotifier.triggerReload(changedPaths, project),
+        ...this.baseConfig.invalidationCallbacks,
       },
     };
 

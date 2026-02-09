@@ -1,4 +1,4 @@
-import { getRedisUrlEnv } from "#veryfront/config/env.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { logger } from "./logger/logger.ts";
 
 export interface RedisClient {
@@ -71,7 +71,7 @@ async function createClient(options: RedisClientOptions): Promise<RedisClient> {
     );
   }
 
-  const client = createClientFn({ url: options.url ?? getRedisUrlEnv() });
+  const client = createClientFn({ url: options.url ?? getEnv("REDIS_URL") });
 
   if (typeof client.on === "function") {
     client.on("error", (err: unknown) => {
@@ -98,7 +98,7 @@ export function isRedisAvailable(): boolean {
 }
 
 export function isRedisConfigured(): boolean {
-  return Boolean(getRedisUrlEnv());
+  return Boolean(getEnv("REDIS_URL"));
 }
 
 export async function disconnectRedis(): Promise<void> {

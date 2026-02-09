@@ -8,7 +8,7 @@ import type {
   NodeUrlModule,
 } from "./node-types.ts";
 import { convertNodeRequestToWebRequest } from "./request-adapter.ts";
-import { LOCALHOST } from "#veryfront/config";
+import { LOCALHOST } from "../constants.ts";
 
 export class NodeHttpServer implements HttpServer {
   private http: NodeHttpModule | null = null;

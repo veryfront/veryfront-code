@@ -1,6 +1,6 @@
 import type { ServeOptions, Server } from "../../base.ts";
 import type { NodeHttpServer, WSWebSocket, WSWebSocketServer } from "./types.ts";
-import { DEFAULT_PORT } from "#veryfront/config";
+import { DEFAULT_PORT } from "../../../compat/constants.ts";
 
 const pendingWebSocketUpgrades = new Map<
   string,

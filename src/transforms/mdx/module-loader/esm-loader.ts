@@ -12,7 +12,7 @@ export function loadESMModule(
     "transforms.mdx.loadESMModule",
     async (): Promise<MDXModule> => {
       const { loadImportMap, transformImportsWithMap } = await import(
-        "../../../../modules/import-map/index.ts"
+        "#veryfront/modules"
       );
 
       const importMap = await loadImportMap(projectDir, adapter);
