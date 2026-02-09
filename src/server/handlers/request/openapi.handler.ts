@@ -7,6 +7,10 @@ import { generateOpenAPISpec, specToYaml } from "#veryfront/routing/api/openapi/
 import type { OpenAPISpec } from "#veryfront/routing/api/openapi/types.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { logger } from "#veryfront/utils";
+import {
+  type ExtendedFileSystemAdapter,
+  isExtendedFSAdapter,
+} from "#veryfront/platform/adapters/fs/wrapper.ts";
 
 const DEFAULT_JSON_PATH = "/_openapi.json";
 const DEFAULT_YAML_PATH = "/_openapi.yaml";
@@ -84,32 +88,54 @@ export class OpenAPIHandler extends BaseHandler {
 
     if (!isDev && this.cachedSpec && this.cacheKey === currentKey) return this.cachedSpec;
 
-    const router = new DynamicRouter();
-    const pagesDir = ctx.config?.directories?.pages ?? "pages";
-    const appDirName = ctx.config?.directories?.app ?? "app";
+    const discover = async (): Promise<OpenAPISpec> => {
+      const router = new DynamicRouter();
+      const pagesDir = ctx.config?.directories?.pages ?? "pages";
+      const appDirName = ctx.config?.directories?.app ?? "app";
 
-    await this.tryDiscover(async () => {
-      const apiDir = join(ctx.projectDir, pagesDir, "api");
-      if (!(await ctx.adapter.fs.exists(apiDir))) return;
-      await discoverPagesRoutes(router, apiDir, "/api", ctx.adapter);
-    });
+      await this.tryDiscover(async () => {
+        const apiDir = join(ctx.projectDir, pagesDir, "api");
+        if (!(await ctx.adapter.fs.exists(apiDir))) return;
+        await discoverPagesRoutes(router, apiDir, "/api", ctx.adapter);
+      });
 
-    await this.tryDiscover(async () => {
-      const appApiDir = join(ctx.projectDir, appDirName, "api");
-      if (!(await ctx.adapter.fs.exists(appApiDir))) return;
-      await discoverAppRoutes(router, appApiDir, "/api", ctx.adapter);
-    });
+      await this.tryDiscover(async () => {
+        const appApiDir = join(ctx.projectDir, appDirName, "api");
+        if (!(await ctx.adapter.fs.exists(appApiDir))) return;
+        await discoverAppRoutes(router, appApiDir, "/api", ctx.adapter);
+      });
 
-    await this.tryDiscover(async () => {
-      const appDir = join(ctx.projectDir, appDirName);
-      if (!(await ctx.adapter.fs.exists(appDir))) return;
-      await discoverAppRoutes(router, appDir, "", ctx.adapter);
-    });
+      await this.tryDiscover(async () => {
+        const appDir = join(ctx.projectDir, appDirName);
+        if (!(await ctx.adapter.fs.exists(appDir))) return;
+        await discoverAppRoutes(router, appDir, "", ctx.adapter);
+      });
 
-    const serverUrl = `${url.protocol}//${url.host}`;
-    const spec = await generateOpenAPISpec(router, ctx.projectDir, ctx.adapter, ctx.config, {
-      servers: [{ url: serverUrl, description: "Current server" }],
-    });
+      const serverUrl = `${url.protocol}//${url.host}`;
+      return await generateOpenAPISpec(router, ctx.projectDir, ctx.adapter, ctx.config, {
+        servers: [{ url: serverUrl, description: "Current server" }],
+      });
+    };
+
+    // In proxy mode, wrap discovery in runWithContext so VFS can resolve files
+    const extFs = isExtendedFSAdapter(ctx.adapter.fs) ? ctx.adapter.fs : null;
+    const needsContext = !isDev && ctx.projectSlug && ctx.proxyToken &&
+      extFs?.runWithContext;
+
+    const spec = needsContext
+      ? await (extFs as ExtendedFileSystemAdapter).runWithContext(
+        ctx.projectSlug!,
+        ctx.proxyToken!,
+        discover,
+        ctx.projectId,
+        {
+          productionMode: ctx.resolvedEnvironment === "production",
+          releaseId: ctx.releaseId,
+          branch: ctx.parsedDomain?.branch ?? null,
+          environmentName: ctx.environmentName,
+        },
+      )
+      : await discover();
 
     if (!isDev) {
       this.cachedSpec = spec;
