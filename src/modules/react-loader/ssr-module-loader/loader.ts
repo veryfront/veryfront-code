@@ -117,7 +117,6 @@ export class SSRModuleLoader {
     const useSemaphore = getMaxConcurrentTransforms() > 0;
     const projectId = this.options.projectId;
     const semaphore = useSemaphore ? getTransformSemaphore() : undefined;
-    let projectSlotAcquired = false;
     let semaphoreAcquired = false;
 
     if (!await tryAcquireTransformSlot(projectId, TRANSFORM_ACQUIRE_TIMEOUT_MS)) {
@@ -127,7 +126,6 @@ export class SSRModuleLoader {
         filePath,
       );
     }
-    projectSlotAcquired = true;
 
     try {
       if (semaphore) {
@@ -146,9 +144,7 @@ export class SSRModuleLoader {
       if (semaphore && semaphoreAcquired) {
         semaphore.release();
       }
-      if (projectSlotAcquired) {
-        releaseTransformSlot(projectId);
-      }
+      releaseTransformSlot(projectId);
     }
   }
 

@@ -227,6 +227,11 @@ export class ProcessJobExecutor implements JobExecutor {
 
       job.completedAt = new Date();
 
+      if (job.status === "failed") {
+        // Already marked as failed (e.g. timeout) — don't overwrite
+        return;
+      }
+
       if (status.success) {
         job.status = "succeeded";
 
