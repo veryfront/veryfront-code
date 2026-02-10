@@ -568,25 +568,29 @@ export class ReadOperations {
     releaseId: string | null,
     environmentName?: string | null,
   ): Promise<string | null> {
-    // Fire all extension attempts in parallel to eliminate sequential round-trip latency.
-    // With 6 extensions at ~100ms each, sequential = ~600ms; parallel = ~100ms.
+    // Start all extension fetches in parallel, but resolve in priority order.
+    // This gives us parallel network initiation (no sequential round trips)
+    // AND returns as soon as the highest-priority extension succeeds —
+    // without waiting for slow lower-priority extensions to settle.
     const candidates = EXTENSION_PRIORITY.filter((ext) => ext !== originalExt);
     const startTime = performance.now();
 
-    const results = await Promise.allSettled(
-      candidates.map((ext) =>
-        this.client.getPublishedFileContent(
-          basePath + ext,
-          releaseId ?? undefined,
-          environmentName ?? undefined,
-        ).then((content) => ({ ext, content }))
-      ),
+    const promises = candidates.map((ext) =>
+      this.client.getPublishedFileContent(
+        basePath + ext,
+        releaseId ?? undefined,
+        environmentName ?? undefined,
+      ).then((content) => ({ ext, content }))
     );
 
-    // Pick the first successful result in priority order (allSettled preserves order)
-    for (const result of results) {
-      if (result.status === "fulfilled") {
-        const { ext, content } = result.value;
+    // Mark all promises as handled to prevent unhandled rejection errors
+    // when we return early after a high-priority success (skipping lower-priority promises).
+    for (const p of promises) p.catch(() => {});
+
+    // Await in priority order: return as soon as highest-priority succeeds
+    for (const promise of promises) {
+      try {
+        const { ext, content } = await promise;
         const fallbackPath = basePath + ext;
         const durationMs = Math.round(performance.now() - startTime);
 
@@ -601,6 +605,9 @@ export class ReadOperations {
         if (shouldCache) this.cache.set(cacheKey, content);
         setRequestScopedFile(cacheKey, content);
         return content;
+      } catch {
+        // This extension failed, try next priority
+        continue;
       }
     }
 

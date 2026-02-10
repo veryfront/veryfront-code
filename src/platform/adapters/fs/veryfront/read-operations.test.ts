@@ -561,6 +561,44 @@ describe("ReadOperations", () => {
         }ms (sequential would be ~${SIMULATED_LATENCY_MS * 5}ms)`,
       );
     });
+
+    it("should not wait for slow lower-priority extensions when higher-priority succeeds", async () => {
+      // Regression test for Codex review: Promise.allSettled waited for ALL extensions.
+      // New approach uses priority-ordered await so a fast .ts resolves immediately
+      // without blocking on a slow .mdx or .md.
+      let mdxRequested = false;
+      const client = createMockClient({
+        getPublishedFileContent: (path: string) => {
+          if (path === "pages/fast.tsx") return Promise.reject(new Error("404"));
+          // .ts resolves instantly (high priority)
+          if (path === "pages/fast.ts") return Promise.resolve("fast ts content");
+          // .mdx never resolves (simulates slow extension) — should NOT block result
+          if (path === "pages/fast.mdx") {
+            mdxRequested = true;
+            return new Promise<string>(() => {}); // Never resolves
+          }
+          return Promise.reject(new Error("404"));
+        },
+        resolveFileWithExtension: () => Promise.reject(new Error("unavailable")),
+      });
+
+      const readOps = createReadOps(client, false, createReleaseContext("rel-nowait"));
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const start = performance.now();
+      const content = await readOps.readTextFile("pages/fast.tsx");
+      const elapsed = performance.now() - start;
+
+      assertEquals(content, "fast ts content");
+      // .mdx was requested (parallel initiation) but didn't block
+      assertEquals(mdxRequested, true);
+      // Should resolve in well under 100ms, NOT wait for the never-resolving .mdx
+      assert(
+        elapsed < 200,
+        `Should not wait for slow extensions: took ${Math.round(elapsed)}ms, ` +
+          `expected < 200ms (slow .mdx never resolves)`,
+      );
+    });
   });
 
   describe("readFile", () => {
