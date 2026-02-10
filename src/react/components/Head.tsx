@@ -86,6 +86,37 @@ export function Head({ children }: { children: React.ReactNode }): React.ReactEl
 
       const element = document.createElement(type);
 
+      // For scripts, check if already exists to avoid double execution after SSR
+      if (type === "script") {
+        const src = props.src as string | undefined;
+        const id = props.id as string | undefined;
+
+        // Check by id first (most reliable)
+        if (id && document.getElementById(id)) {
+          return;
+        }
+        // Check by src for external scripts
+        if (src && document.querySelector(`script[src="${src}"]`)) {
+          return;
+        }
+        // For inline scripts without id, generate hash from content
+        const content = typeof props.children === "string"
+          ? props.children
+          : (props.dangerouslySetInnerHTML as { __html?: string })?.__html;
+        if (content && !id) {
+          // Simple hash: sum of char codes, then convert to base36
+          let sum = 0;
+          for (let i = 0; i < Math.min(content.length, 200); i++) {
+            sum = ((sum << 5) - sum + content.charCodeAt(i)) | 0;
+          }
+          const hash = "vf" + Math.abs(sum).toString(36);
+          if (document.querySelector(`script[data-vf-hash="${hash}"]`)) {
+            return;
+          }
+          element.setAttribute("data-vf-hash", hash);
+        }
+      }
+
       for (const [key, value] of Object.entries(props)) {
         if (key === "children") continue;
 

@@ -198,8 +198,14 @@ export class HTMLGenerator {
     }
 
     // Inject other head elements at BOTTOM of <head> (before closing tag)
+    // Use lastIndexOf to avoid matching </head> inside inline script content
     if (other) {
-      modifiedStart = modifiedStart.replace("</head>", `  ${other}\n</head>`);
+      const headCloseIdx = modifiedStart.lastIndexOf("</head>");
+      if (headCloseIdx !== -1) {
+        modifiedStart = modifiedStart.slice(0, headCloseIdx) +
+          `  ${other}\n` +
+          modifiedStart.slice(headCloseIdx);
+      }
     }
 
     return { start: modifiedStart, end };
@@ -214,10 +220,19 @@ export class HTMLGenerator {
     // Scripts go at TOP of head (before CSS) to prevent flash
     for (const script of head.scripts ?? []) {
       const { content, ...attrs } = script;
-      const attrStr = Object.entries(attrs)
-        .filter(([, v]) => v != null)
-        .map(([k, v]) => `${k}="${v}"`)
-        .join(" ");
+      const attrPairs = Object.entries(attrs).filter(([, v]) => v != null);
+
+      // For inline scripts without id, add hash for client-side deduplication
+      if (content && !attrs.id) {
+        let sum = 0;
+        for (let i = 0; i < Math.min(content.length, 200); i++) {
+          sum = ((sum << 5) - sum + content.charCodeAt(i)) | 0;
+        }
+        const hash = "vf" + Math.abs(sum).toString(36);
+        attrPairs.push(["data-vf-hash", hash]);
+      }
+
+      const attrStr = attrPairs.map(([k, v]) => `${k}="${v}"`).join(" ");
       if (content) {
         scriptParts.push(`<script${attrStr ? ` ${attrStr}` : ""}>${content}</script>`);
       } else if (attrs.src) {
