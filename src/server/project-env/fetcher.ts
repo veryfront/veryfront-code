@@ -8,10 +8,13 @@ import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
 
 const logger = getBaseLogger("PROJECT-ENV");
 
+/** Max env vars per request. API enforces a hard cap of 100. */
+const ENV_VARS_FETCH_LIMIT = 100;
+
 /**
  * Fetch environment variables for a project from the Veryfront API.
  *
- * Calls: GET {apiBaseUrl}/{projectSlug}/env-vars?environment_id={environmentId}&limit=100
+ * Calls: GET {apiBaseUrl}/{projectSlug}/env-vars?environment_id={environmentId}&limit=200
  * Response: { data: [{ key: string, value: string }] }
  */
 export async function fetchProjectEnvVars(
@@ -22,7 +25,7 @@ export async function fetchProjectEnvVars(
 ): Promise<Record<string, string>> {
   const url = `${apiBaseUrl}/${encodeURIComponent(projectSlug)}/env-vars?environment_id=${
     encodeURIComponent(environmentId)
-  }&limit=100`;
+  }&limit=${ENV_VARS_FETCH_LIMIT}`;
 
   try {
     const response = await fetch(url, {
