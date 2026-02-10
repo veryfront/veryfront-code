@@ -21,8 +21,12 @@ type FsWrapper = {
   ) => Promise<T>;
 };
 
-/** Tracks which projects have had AI discovery run (agents, tools, etc.). */
-const discoveredProjects = new Set<string>();
+/**
+ * Tracks in-flight and completed AI discovery per project.
+ * Using a Map<string, Promise> deduplicates concurrent requests and
+ * allows retry on failure (the key is deleted if discovery rejects).
+ */
+const discoveredProjects = new Map<string, Promise<void>>();
 
 /**
  * Run AI discovery (agents, tools) for a project if not already done.
@@ -32,11 +36,11 @@ const discoveredProjects = new Set<string>();
  */
 async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void> {
   const key = ctx.projectSlug ?? ctx.projectDir;
-  if (discoveredProjects.has(key)) return;
 
-  discoveredProjects.add(key);
+  const existing = discoveredProjects.get(key);
+  if (existing) return existing;
 
-  try {
+  const promise = (async () => {
     const { discoverAll } = await import("#veryfront/discovery");
     const result = await discoverAll({
       baseDir: ctx.projectDir,
@@ -49,8 +53,16 @@ async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void> {
       agents: result.agents.size,
       tools: result.tools.size,
     });
+  })();
+
+  discoveredProjects.set(key, promise);
+
+  try {
+    await promise;
   } catch (error) {
-    serverLogger.debug("[API-Wrapper] AI discovery skipped", {
+    // Allow retry on next request
+    discoveredProjects.delete(key);
+    serverLogger.debug("[API-Wrapper] AI discovery failed (will retry)", {
       projectSlug: ctx.projectSlug,
       error: error instanceof Error ? error.message : String(error),
     });

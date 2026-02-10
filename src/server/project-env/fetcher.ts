@@ -14,7 +14,7 @@ const ENV_VARS_FETCH_LIMIT = 100;
 /**
  * Fetch environment variables for a project from the Veryfront API.
  *
- * Calls: GET {apiBaseUrl}/{projectSlug}/env-vars?environment_id={environmentId}&limit=200
+ * Calls: GET {apiBaseUrl}/projects/{projectSlug}/env-vars?environment_id={environmentId}&limit=100
  * Response: { data: [{ key: string, value: string }] }
  */
 export async function fetchProjectEnvVars(

@@ -39,7 +39,7 @@ const providerConfigFactories: ProviderConfigFactory[] = [
       // is frozen at startup and does not reflect per-request project env vars.
       const apiKey = getEnv("OPENAI_API_KEY");
       if (!apiKey) return undefined;
-      const baseURL = getEnv("OPENAI_BASE_URL");
+      const baseURL = getEnv("OPENAI_BASE_URL") || undefined;
       return () =>
         new OpenAIProvider({
           apiKey,
@@ -57,7 +57,7 @@ const providerConfigFactories: ProviderConfigFactory[] = [
     fromEnv() {
       const apiKey = getEnv("ANTHROPIC_API_KEY");
       if (!apiKey) return undefined;
-      const baseURL = getEnv("ANTHROPIC_BASE_URL");
+      const baseURL = getEnv("ANTHROPIC_BASE_URL") || undefined;
       return () =>
         new AnthropicProvider({
           apiKey,
