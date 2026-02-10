@@ -220,7 +220,11 @@ export class HTMLGenerator {
     // Scripts go at TOP of head (before CSS) to prevent flash
     for (const script of head.scripts ?? []) {
       const { content, ...attrs } = script;
-      const attrPairs = Object.entries(attrs).filter(([, v]) => v != null);
+      const attrPairs: [string, string][] = [["data-vf-head", "true"]];
+
+      for (const [k, v] of Object.entries(attrs)) {
+        if (v != null) attrPairs.push([k, v]);
+      }
 
       // For inline scripts without id, add hash for client-side deduplication
       if (content && !attrs.id) {
@@ -228,13 +232,12 @@ export class HTMLGenerator {
         for (let i = 0; i < Math.min(content.length, 200); i++) {
           sum = ((sum << 5) - sum + content.charCodeAt(i)) | 0;
         }
-        const hash = "vf" + Math.abs(sum).toString(36);
-        attrPairs.push(["data-vf-hash", hash]);
+        attrPairs.push(["data-vf-hash", "vf" + Math.abs(sum).toString(36)]);
       }
 
       const attrStr = attrPairs.map(([k, v]) => `${k}="${v}"`).join(" ");
       if (content) {
-        scriptParts.push(`<script${attrStr ? ` ${attrStr}` : ""}>${content}</script>`);
+        scriptParts.push(`<script ${attrStr}>${content}</script>`);
       } else if (attrs.src) {
         scriptParts.push(`<script ${attrStr}></script>`);
       }

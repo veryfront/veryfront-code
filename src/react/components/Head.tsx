@@ -86,35 +86,35 @@ export function Head({ children }: { children: React.ReactNode }): React.ReactEl
 
       const element = document.createElement(type);
 
-      // For scripts, check if already exists to avoid double execution after SSR
+      // For scripts, check if already SSR'd via <Head> to avoid double execution
       if (type === "script") {
         const src = props.src as string | undefined;
         const id = props.id as string | undefined;
 
-        // Check by id first (most reliable)
-        if (id && document.getElementById(id)) {
+        // Check by id (look for SSR'd script with data-vf-head marker)
+        if (id && document.querySelector(`script[data-vf-head][id="${id}"]`)) {
           return;
         }
         // Check by src for external scripts
-        if (src && document.querySelector(`script[src="${src}"]`)) {
+        if (src && document.querySelector(`script[data-vf-head][src="${src}"]`)) {
           return;
         }
-        // For inline scripts without id, generate hash from content
+        // For inline scripts without id, check by content hash
         const content = typeof props.children === "string"
           ? props.children
           : (props.dangerouslySetInnerHTML as { __html?: string })?.__html;
         if (content && !id) {
-          // Simple hash: sum of char codes, then convert to base36
           let sum = 0;
           for (let i = 0; i < Math.min(content.length, 200); i++) {
             sum = ((sum << 5) - sum + content.charCodeAt(i)) | 0;
           }
           const hash = "vf" + Math.abs(sum).toString(36);
-          if (document.querySelector(`script[data-vf-hash="${hash}"]`)) {
+          if (document.querySelector(`script[data-vf-head][data-vf-hash="${hash}"]`)) {
             return;
           }
           element.setAttribute("data-vf-hash", hash);
         }
+        element.setAttribute("data-vf-head", "true");
       }
 
       for (const [key, value] of Object.entries(props)) {

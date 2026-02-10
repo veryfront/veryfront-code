@@ -78,7 +78,14 @@ export function collectHead(data: Partial<CollectedHead>): void {
 
   if (data.links?.length) collected.links.push(...data.links);
   if (data.styles?.length) collected.styles.push(...data.styles);
-  if (data.scripts?.length) collected.scripts.push(...data.scripts);
+  for (const script of data.scripts ?? []) {
+    // Dedupe by id or src
+    const isDupe = collected.scripts.some((s) =>
+      (script.id && s.id === script.id) ||
+      (script.src && s.src === script.src)
+    );
+    if (!isDupe) collected.scripts.push(script);
+  }
 }
 
 export function hasCollectedHead(): boolean {
