@@ -50,6 +50,10 @@ export interface ToolConfig<TInput = any, TOutput = any> {
 export interface ToolExecutionContext {
   /** ID of the agent calling the tool (if any) */
   agentId?: string;
+  /** Project identity used by integration token resolution */
+  projectId?: string;
+  /** End-user identity for per-user token resolution in integration tools */
+  endUserId?: string;
   /** Additional context */
   [key: string]: unknown;
   /** Blob storage access (if configured in workflow) */

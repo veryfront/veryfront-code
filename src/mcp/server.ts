@@ -1,5 +1,6 @@
-import { getMCPRegistry } from "./registry.ts";
+import { getMCPRegistry, registerTool } from "./registry.ts";
 import { executeTool } from "#veryfront/tool";
+import type { ToolExecutionContext } from "#veryfront/tool";
 import { zodToJsonSchema } from "#veryfront/tool/schema/index.ts";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
@@ -9,6 +10,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { validateContentType } from "#veryfront/security/input-validation/limits.ts";
 import { VeryfrontError } from "#veryfront/security/input-validation/errors.ts";
+import type { IntegrationRuntimeConfig } from "../integrations/types.ts";
 
 type JSONRPCParams = Record<string, unknown> | unknown[];
 
@@ -35,19 +37,36 @@ interface JSONRPCResponse {
   };
 }
 
+export interface IntegrationLoaderConfig {
+  integrations: Record<string, IntegrationRuntimeConfig | undefined>;
+  apiBaseUrl: string;
+  apiToken?: string;
+}
+
 export class MCPServer {
   private config: MCPServerConfig;
+  private integrationLoader?: IntegrationLoaderConfig;
+  private integrationsLoaded = false;
 
   constructor(config: MCPServerConfig) {
     this.config = config;
   }
 
-  handleRequest(request: JSONRPCRequest): Promise<JSONRPCResponse> {
+  /**
+   * Configure integration tools to be lazily loaded on first tools/list call.
+   * Integration tools are fetched from the API and registered in the global tool registry.
+   */
+  setIntegrationLoader(config: IntegrationLoaderConfig): void {
+    this.integrationLoader = config;
+    this.integrationsLoaded = false;
+  }
+
+  handleRequest(request: JSONRPCRequest, context?: ToolExecutionContext): Promise<JSONRPCResponse> {
     return withSpan(
       "mcp.handleRequest",
       async () => {
         try {
-          const result = await this.dispatch(request.method, request.params);
+          const result = await this.dispatch(request.method, request.params, context);
           return { jsonrpc: "2.0", id: request.id, result };
         } catch (error) {
           return {
@@ -64,12 +83,16 @@ export class MCPServer {
     );
   }
 
-  private dispatch(method: string, params: JSONRPCParams | undefined): Promise<unknown> {
+  private dispatch(
+    method: string,
+    params: JSONRPCParams | undefined,
+    context?: ToolExecutionContext,
+  ): Promise<unknown> {
     switch (method) {
       case "tools/list":
         return this.listTools();
       case "tools/call":
-        return this.callTool(params);
+        return this.callTool(params, context);
       case "resources/list":
         return this.listResources();
       case "resources/read":
@@ -102,7 +125,17 @@ export class MCPServer {
     });
   }
 
-  private listTools(): Promise<{ tools: Array<Record<string, unknown>> }> {
+  private async listTools(): Promise<{ tools: Array<Record<string, unknown>> }> {
+    // Lazily load integration tools on first call
+    if (this.integrationLoader && !this.integrationsLoaded) {
+      try {
+        this.integrationsLoaded = await this.loadIntegrationTools(this.integrationLoader);
+      } catch {
+        // Non-fatal: integration tools won't be available.
+        // Keep integrationsLoaded=false so a later tools/list can retry.
+      }
+    }
+
     const registry = getMCPRegistry();
     const tools: Array<Record<string, unknown>> = [];
 
@@ -116,10 +149,13 @@ export class MCPServer {
       });
     }
 
-    return Promise.resolve({ tools });
+    return { tools };
   }
 
-  private callTool(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
+  private callTool(
+    params: JSONRPCParams | undefined,
+    context?: ToolExecutionContext,
+  ): Promise<Record<string, unknown>> {
     const { name, arguments: args } = asParamsRecord(params);
 
     if (!name) {
@@ -136,7 +172,7 @@ export class MCPServer {
     return withSpan(
       "mcp.callTool",
       async () => {
-        const result = await executeTool(toolName, args);
+        const result = await executeTool(toolName, args, context);
 
         return {
           content: [
@@ -305,7 +341,9 @@ export class MCPServer {
         );
       }
 
-      const rpcResponse = await this.handleRequest(rpcRequest);
+      // Extract end-user identity from request headers for per-user token flows
+      const context = this.extractRequestContext(request);
+      const rpcResponse = await this.handleRequest(rpcRequest, context);
 
       return new Response(JSON.stringify(rpcResponse), {
         headers: {
@@ -314,6 +352,24 @@ export class MCPServer {
         },
       });
     };
+  }
+
+  private extractRequestContext(request: Request): ToolExecutionContext | undefined {
+    const context: ToolExecutionContext = {};
+
+    const endUserId = request.headers.get("x-end-user-id");
+    // Allowlist: alphanumeric, hyphens, underscores, dots, @ (for email-style IDs)
+    if (endUserId && endUserId.length <= 255 && /^[a-zA-Z0-9._@-]+$/.test(endUserId)) {
+      context.endUserId = endUserId;
+    }
+
+    const projectId = request.headers.get("x-project-id");
+    // Keep project IDs strict but compatible with UUID/slug formats.
+    if (projectId && projectId.length <= 255 && /^[a-zA-Z0-9._-]+$/.test(projectId)) {
+      context.projectId = projectId;
+    }
+
+    return Object.keys(context).length > 0 ? context : undefined;
   }
 
   private async validateAuth(request: Request): Promise<boolean> {
@@ -343,8 +399,35 @@ export class MCPServer {
     return {
       "Access-Control-Allow-Origin": origin,
       "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, X-End-User-Id, X-Project-Id",
     };
+  }
+
+  private async loadIntegrationTools(config: IntegrationLoaderConfig): Promise<boolean> {
+    const { fetchConnector } = await import("../integrations/connector-fetcher.ts");
+    const { createIntegrationTools } = await import("../integrations/tool-factory.ts");
+    const { integrations, apiBaseUrl, apiToken } = config;
+    let allConnectorsLoaded = true;
+
+    for (const [name, integrationConfig] of Object.entries(integrations)) {
+      const connector = await fetchConnector(name, apiBaseUrl, apiToken);
+      if (!connector) {
+        allConnectorsLoaded = false;
+        continue;
+      }
+
+      const tools = createIntegrationTools(
+        connector,
+        integrationConfig ?? {},
+        apiBaseUrl,
+        apiToken,
+      );
+      for (const tool of tools) {
+        registerTool(tool.id, tool);
+      }
+    }
+
+    return allConnectorsLoaded;
   }
 }
 

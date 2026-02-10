@@ -54,3 +54,10 @@ export function getConnectorNames(): readonly string[] {
 export function getIcon(name: IntegrationName | string): string | undefined {
   return iconMap.get(name);
 }
+
+// Runtime integration tools (connector fetching, tool generation, MCP registration)
+export { clearConnectorCache, fetchConnector } from "./connector-fetcher.ts";
+export { createIntegrationTools } from "./tool-factory.ts";
+export { executeEndpoint } from "./endpoint-executor.ts";
+export { type IntegrationMCPConfig, registerIntegrationMCP } from "./mcp-registration.ts";
+export type { IntegrationConnector, IntegrationRuntimeConfig, IntegrationTool } from "./types.ts";
