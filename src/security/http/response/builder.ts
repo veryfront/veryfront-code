@@ -7,14 +7,14 @@ import * as staticHelpers from "./static-helpers.ts";
 import { generateNonce } from "./security-handler.ts";
 
 export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsContext {
-  public headers: Headers = new Headers();
-  public status: number = 200;
-  public securityConfig: SecurityConfig | null;
-  public isDev: boolean;
-  public nonce: string;
-  public cspUserHeader: string | null;
-  public adapter: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter | undefined;
-  public isVeryfrontDomain: boolean;
+  headers: Headers = new Headers();
+  status: number = 200;
+  securityConfig: SecurityConfig | null;
+  isDev: boolean;
+  nonce: string;
+  cspUserHeader: string | null;
+  adapter: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter | undefined;
+  isVeryfrontDomain: boolean;
 
   constructor(config?: ResponseBuilderConfig) {
     this.securityConfig = config?.securityConfig ?? null;
@@ -50,7 +50,12 @@ export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsCon
   static stream = staticHelpers.stream;
 }
 
-staticHelpers.setResponseBuilderClass(ResponseBuilder);
+// Type assertion: ResponseBuilder fully implements the interface at runtime,
+// but TS can't verify this because property-assigned methods with generic
+// `this` parameters resolve to the constraint type, not the class type.
+staticHelpers.setResponseBuilderClass(
+  ResponseBuilder as unknown as Parameters<typeof staticHelpers.setResponseBuilderClass>[0],
+);
 
 export function createResponseBuilder(config?: ResponseBuilderConfig): ResponseBuilder {
   return new ResponseBuilder(config);

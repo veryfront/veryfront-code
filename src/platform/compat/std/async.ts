@@ -1,5 +1,5 @@
 import { isDeno } from "../runtime.ts";
-import { scaleMs } from "../../../testing/timing.ts";
+import { scaleMs } from "#veryfront/testing/timing.ts";
 
 function nodeDelay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, scaleMs(ms)));

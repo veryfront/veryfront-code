@@ -10,7 +10,7 @@ import {
   GitHubTreeResponseSchema,
 } from "./schemas/index.ts";
 
-const LOG_PREFIX = "[GitHubAPIClient]";
+const LOG_PREFIX = "[GitHubApiClient]";
 
 interface RateLimitInfo {
   limit: number;
@@ -21,7 +21,7 @@ interface RateLimitInfo {
 
 type APIError = Error & { statusCode?: number; endpoint?: string; repo?: string };
 
-export class GitHubAPIClient {
+export class GitHubApiClient {
   private readonly baseUrl = "https://api.github.com";
   private rateLimitInfo: RateLimitInfo | null = null;
 

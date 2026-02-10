@@ -63,7 +63,7 @@ describe(
 
         const h = await fetch(`http://127.0.0.1:${port}/healthz`);
         assertEquals(h.status, 200);
-        assertEquals(await h.text(), "ok");
+        assertEquals(await h.json(), { service: "veryfront-server", status: "ok" });
 
         const r = await fetch(`http://127.0.0.1:${port}/readyz`);
         assertEquals(r.status, 200);

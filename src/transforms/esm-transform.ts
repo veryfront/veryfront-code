@@ -1,7 +1,6 @@
 export type { TransformContext, TransformOptions } from "./esm/types.ts";
 export {
   addDepsToEsmShUrls,
-  computeContentHash,
   computeShortContentHash,
   getLoaderFromPath,
   needsTransform,

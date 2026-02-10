@@ -20,6 +20,7 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import {
   getMaxConcurrentTransforms,
   getTransformPerProjectLimit,
+  resetCachedTransformLimits,
   SSR_TMP_DIRS_MAX_ENTRIES,
 } from "../constants.ts";
 import { Semaphore } from "../concurrency/semaphore.ts";
@@ -204,6 +205,12 @@ export function clearSSRModuleCache(): void {
   failedComponents.clear();
   projectTransformCounts.clear();
   verifiedHttpBundlePaths.clear();
+
+  // Reset the transform semaphore and cached limits so leaked permits
+  // from prior operations don't starve subsequent callers, and env var
+  // changes (e.g. in tests) take effect.
+  _transformSemaphore = undefined;
+  resetCachedTransformLimits();
 
   logger.info("[SSR-MODULE-LOADER] ✓ Global cache cleared", {
     modulesCleared: moduleCount,

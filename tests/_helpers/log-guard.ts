@@ -208,6 +208,10 @@ const allowedWarnings: string[] = [
   "loading.tsx",
   "error.tsx",
 
+  // AI discovery warnings (expected when test projects have no agents/tools)
+  "[API-Wrapper] AI discovery found 0 agents and 0 tools",
+  "[API-Wrapper] AI discovery failed",
+
   // ReloadNotifier errors (expected in tests that verify error handling)
   "[ReloadNotifier] Listener error",
   "Listener error",

@@ -27,7 +27,7 @@ import { withTestContext } from "../../_helpers/context.ts";
 import { clearLayoutDiscoveryCache } from "../../../src/rendering/layouts/utils/discovery.ts";
 import {
   computeCodeHash,
-  computeContentHash,
+  computeHash,
   InMemoryBundleManifestStore,
 } from "../../../src/utils/bundle-manifest.ts";
 
@@ -420,7 +420,7 @@ describe(
         const store = new InMemoryBundleManifestStore();
 
         const bundleKey = "component:Card.tsx";
-        const depsHash = await computeContentHash("dep1-content" + "dep2-content");
+        const depsHash = await computeHash("dep1-content" + "dep2-content");
 
         await store.setBundleMetadata(bundleKey, {
           hash: "bundle-hash-v1",
@@ -440,9 +440,9 @@ describe(
       });
 
       it("different depsHash produces different cache key lookup", async () => {
-        const hash1 = await computeContentHash("dependency-content-v1");
-        const hash2 = await computeContentHash("dependency-content-v2");
-        const hash3 = await computeContentHash("dependency-content-v1");
+        const hash1 = await computeHash("dependency-content-v1");
+        const hash2 = await computeHash("dependency-content-v2");
+        const hash3 = await computeHash("dependency-content-v1");
 
         assertNotEquals(hash1, hash2, "Different content should produce different hashes");
         assertEquals(hash1, hash3, "Same content should produce same hash");
@@ -469,7 +469,7 @@ describe(
           mode: "development",
           meta: {
             type: "component",
-            depsHash: await computeContentHash("/app/components/Card.tsx-content"),
+            depsHash: await computeHash("/app/components/Card.tsx-content"),
           },
         });
 

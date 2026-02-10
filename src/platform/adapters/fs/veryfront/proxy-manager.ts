@@ -2,25 +2,23 @@ import { logger } from "#veryfront/utils";
 import { buildProxyManagerCacheKey } from "#veryfront/cache";
 import { VeryfrontFSAdapter } from "./index.ts";
 import type { CacheStats, FSAdapterConfig, ResolvedContentContext } from "./types.ts";
-import { ReloadNotifier } from "../../../../server/reload-notifier.ts";
 import {
   clearSSRModuleCache,
   clearSSRModuleCacheForProject,
-} from "../../../../modules/react-loader/ssr-module-loader/cache/index.ts";
+} from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
 import {
   clearRouterDetectionCache,
   clearRouterDetectionCacheForProject,
-} from "../../../../rendering/router-detection.ts";
+} from "#veryfront/rendering/router-detection.ts";
 import {
   clearModulePathCache,
   invalidateModulePaths,
-} from "../../../../transforms/mdx/esm-module-loader/cache/index.ts";
+} from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import {
   clearSnippetCache,
   clearSnippetCacheForProject,
-} from "../../../../rendering/snippet-renderer.ts";
-import { clearRendererCacheForProject } from "../../../../rendering/renderer.ts";
-import { clearDomainCache } from "../../../../server/utils/domain-lookup.ts";
+} from "#veryfront/rendering/snippet-renderer.ts";
+import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
 import { GetAdapterParamsSchema } from "./schemas/index.ts";
 
 interface ProjectAdapter {
@@ -316,9 +314,7 @@ export class ProxyFSAdapterManager {
         clearRouterDetectionCacheForProject,
         clearSnippetCacheForProject,
         clearRendererCacheForProject,
-        clearDomainCache,
-        triggerReload: (changedPaths, project) =>
-          ReloadNotifier.triggerReload(changedPaths, project),
+        ...this.baseConfig.invalidationCallbacks,
       },
     };
 

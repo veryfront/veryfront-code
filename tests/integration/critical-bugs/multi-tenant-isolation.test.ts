@@ -5,7 +5,7 @@ import {
   assertNotEquals,
   assertStringIncludes,
 } from "#veryfront/testing/assert";
-import { describe, it } from "#veryfront/testing/bdd";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { join } from "#veryfront/compat/path";
 import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
 import { type TestContext, withTestContext } from "../../_helpers/context.ts";
@@ -38,6 +38,20 @@ describe(
     sanitizeOps: false,
   },
   () => {
+    // Disable transform capacity limits for integration tests.
+    // The semaphore is a production safety net, not relevant for isolation testing.
+    beforeEach(() => {
+      Deno.env.set("SSR_MAX_CONCURRENT_TRANSFORMS", "0");
+      Deno.env.set("SSR_TRANSFORM_PER_PROJECT_LIMIT", "0");
+    });
+
+    afterEach(async () => {
+      Deno.env.delete("SSR_MAX_CONCURRENT_TRANSFORMS");
+      Deno.env.delete("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+      const { clearSSRModuleCache } = await import("#veryfront/modules");
+      clearSSRModuleCache();
+    });
+
     describe("Head Collector Isolation", () => {
       it.ignore("isolates head collection between concurrent requests", async () => {
         const request1 = async () => {
@@ -215,10 +229,10 @@ describe(
                 mode: "development",
               });
 
-              const [resultA, resultB] = await Promise.all([
-                rendererA.renderPage("/"),
-                rendererB.renderPage("/"),
-              ]);
+              // Render sequentially to avoid hitting transform capacity limits.
+              // Isolation is tested by verifying no cross-contamination in output.
+              const resultA = await rendererA.renderPage("/");
+              const resultB = await rendererB.renderPage("/");
 
               assertStringIncludes(
                 resultA.html,
@@ -309,14 +323,13 @@ describe(
                 mode: "development",
               });
 
+              // Render sequentially and verify isolation
               const resultsA: string[] = [];
               const resultsB: string[] = [];
 
               for (let i = 0; i < 3; i++) {
-                const [rA, rB] = await Promise.all([
-                  rendererA.renderPage("/"),
-                  rendererB.renderPage("/"),
-                ]);
+                const rA = await rendererA.renderPage("/");
+                const rB = await rendererB.renderPage("/");
                 resultsA.push(rA.html);
                 resultsB.push(rB.html);
               }

@@ -7,17 +7,17 @@ import { isBun, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
-import { buildConfigCacheKey } from "../cache/keys.ts";
+import { buildConfigCacheKey } from "#veryfront/cache/keys.ts";
 import { DEFAULT_PORT } from "./defaults.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { getErrorMessage } from "../errors/veryfront-error.ts";
-import { CONFIG_VALIDATION_FAILED } from "../errors/error-registry.ts";
-import { VeryfrontError } from "../errors/types.ts";
+import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { CONFIG_VALIDATION_FAILED } from "#veryfront/errors/error-registry.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { registerLRUCache } from "../cache/registry.ts";
+import { registerLRUCache } from "#veryfront/cache/registry.ts";
 
 export type { VeryfrontConfig } from "./schemas/index.ts";
 

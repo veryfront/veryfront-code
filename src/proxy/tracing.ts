@@ -4,7 +4,7 @@
  */
 
 import type { Context, Span, Tracer } from "@opentelemetry/api";
-import denoConfig from "../../deno.json" with { type: "json" };
+import denoConfig from "#deno-config" with { type: "json" };
 import { getEnv } from "./env.ts";
 
 // Get version from environment variable or root deno.json

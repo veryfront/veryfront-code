@@ -19,7 +19,7 @@ describe("fs/github/index.ts exports", () => {
   }
 
   it("should export GitHubFSAdapter", () => assertExport("GitHubFSAdapter", "function"));
-  it("should export GitHubAPIClient", () => assertExport("GitHubAPIClient", "function"));
+  it("should export GitHubApiClient", () => assertExport("GitHubApiClient", "function"));
   it("should export GitHubStatOperations", () => assertExport("GitHubStatOperations", "function"));
   it("should export GitHubReadOperations", () => assertExport("GitHubReadOperations", "function"));
   it("should export GitHubDirectoryOperations", () =>

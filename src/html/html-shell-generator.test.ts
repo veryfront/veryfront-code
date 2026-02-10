@@ -108,6 +108,26 @@ describe("html-generation/html-shell-generator", () => {
       assertStringIncludes(result, "https://cdn.example.com/lib.js");
     });
 
+    it("should preload react/jsx-runtime to eliminate waterfall delay", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions(),
+      );
+
+      // jsx-runtime must be modulepreloaded so the browser fetches it early,
+      // rather than discovering it late when modules execute (~500ms saving)
+      assertStringIncludes(result, 'rel="modulepreload"');
+      assertStringIncludes(result, "jsx-runtime");
+      // Verify it appears BEFORE the body tag (in <head>)
+      const preloadIndex = result.indexOf("jsx-runtime");
+      const bodyIndex = result.indexOf("<body");
+      assert(
+        preloadIndex < bodyIndex,
+        "jsx-runtime preload should be in <head>, before <body>",
+      );
+    });
+
     it("should include Tailwind CSS link in development mode", async () => {
       const result = await wrapInHTMLShell(
         "<div>Content</div>",

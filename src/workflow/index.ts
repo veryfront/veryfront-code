@@ -49,7 +49,17 @@
 // =============================================================================
 // Core Types
 // =============================================================================
-export type { WorkflowDefinition, WorkflowRun, WorkflowStatus } from "./types.ts";
+export type {
+  CapturedTenantContext,
+  WorkflowContext,
+  WorkflowDefinition,
+  WorkflowNode,
+  WorkflowNodeConfig,
+  WorkflowRun,
+  WorkflowStatus,
+} from "./types.ts";
+
+export { generateId, parseDuration } from "./types.ts";
 
 // =============================================================================
 // DSL Builders
@@ -93,6 +103,7 @@ export type {
 // Backend
 // =============================================================================
 export type { BackendConfig, WorkflowBackend } from "./backends/types.ts";
+export { hasWorkerSupport } from "./backends/types.ts";
 
 export { MemoryBackend } from "./backends/memory.ts";
 
@@ -126,3 +137,18 @@ export type {
   UseWorkflowStartOptions,
   UseWorkflowStartResult,
 } from "#veryfront/workflow/react";
+
+// =============================================================================
+// Executor
+// =============================================================================
+export {
+  WorkflowExecutor,
+  type WorkflowExecutorConfig,
+  type WorkflowHandle,
+} from "./executor/workflow-executor.ts";
+export { getWorkflowTenant } from "./executor/step-executor.ts";
+
+// =============================================================================
+// Context-Aware API
+// =============================================================================
+export { api } from "./api.ts";

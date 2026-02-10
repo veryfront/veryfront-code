@@ -1,5 +1,5 @@
 import { getCacheNamespace } from "#veryfront/utils/cache/keys/namespace.ts";
-import { COMPILATION_ERROR, wrapError } from "#veryfront/errors/index.ts";
+import { COMPILATION_ERROR, wrapWithContext } from "#veryfront/errors/index.ts";
 // Direct import from registry.ts to avoid circular dependency through barrel
 import { getLocalAdapter, runtime } from "#veryfront/platform/adapters/registry.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
@@ -50,7 +50,7 @@ export async function loadMDXModule(modulePath: string): Promise<MDXModule> {
 
     return module;
   } catch (error) {
-    throw wrapError(error, `Failed to load MDX module: ${modulePath}`, { modulePath });
+    throw wrapWithContext(error, `Failed to load MDX module: ${modulePath}`, { modulePath });
   }
 }
 
@@ -69,7 +69,7 @@ export async function loadCompiledMDXModule(
 
     return await loadViaTempFile(compiledCode, cacheKey, key);
   } catch (error) {
-    throw wrapError(error, "Failed to load compiled MDX module", { cacheKey });
+    throw wrapWithContext(error, "Failed to load compiled MDX module", { cacheKey });
   }
 }
 

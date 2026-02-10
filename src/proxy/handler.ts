@@ -11,6 +11,7 @@ export const INTERNAL_PROXY_HEADERS = [
   "x-token",
   "x-project-slug",
   "x-environment",
+  "x-environment-id",
   "x-content-source-id",
   "x-forwarded-host",
   "x-project-path",
@@ -112,6 +113,7 @@ export interface ProxyContext {
   releaseId?: string;
   branchId?: string;
   branchName?: string;
+  environmentId?: string;
   environment: "preview" | "production";
   contentSourceId: string;
   localPath?: string;
@@ -246,8 +248,20 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     envMatcher: (env: NonNullable<DomainLookupResult["environments"]>[number]) => boolean,
     logContext: Record<string, unknown>,
   ): Promise<
-    | { slug: string; projectId: string; releaseId?: string; serverHostname?: string }
-    | { slug?: undefined; projectId?: undefined; releaseId?: undefined; serverHostname?: undefined }
+    | {
+      slug: string;
+      projectId: string;
+      releaseId?: string;
+      environmentId?: string;
+      serverHostname?: string;
+    }
+    | {
+      slug?: undefined;
+      projectId?: undefined;
+      releaseId?: undefined;
+      environmentId?: undefined;
+      serverHostname?: undefined;
+    }
     | { error: { status: number; message: string; redirectUrl?: string } }
   > {
     const lookupResult = await lookupProjectByDomain(lookupKey, config.apiBaseUrl, token, logger);
@@ -278,6 +292,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       slug: lookupResult.slug,
       projectId: lookupResult.id,
       releaseId: matchingEnv.active_release_id ?? undefined,
+      environmentId: matchingEnv.id,
       serverHostname: matchingEnv.server_hostname ?? undefined,
     };
   }
@@ -290,6 +305,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     let projectSlug = parsedDomain.slug ?? undefined;
     let projectId: string | undefined;
     let releaseId: string | undefined;
+    let environmentId: string | undefined;
     let serverHostname: string | undefined;
 
     const isCustomDomain = !projectSlug && !parsedDomain.isVeryfrontDomain;
@@ -384,6 +400,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         projectSlug = resolved.slug;
         projectId = resolved.projectId;
         releaseId = resolved.releaseId;
+        environmentId = resolved.environmentId;
         serverHostname = resolved.serverHostname;
 
         logger?.info("Resolved custom domain to project", {
@@ -417,12 +434,14 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         projectId = resolved.projectId;
         releaseId = resolved.releaseId;
+        environmentId = resolved.environmentId;
         serverHostname = resolved.serverHostname;
 
         logger?.info("Resolved veryfront domain to project", {
           projectSlug,
           projectId,
           releaseId,
+          environmentId,
           serverHostname,
           targetEnvName: parsedDomain.environment,
         });
@@ -438,6 +457,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         if (lookupResult) {
           projectId = lookupResult.id;
+
+          // Find preview environment for env var resolution
+          const previewEnv = lookupResult.environments?.find(
+            (env) => env.name.toLowerCase() === "preview",
+          );
+          environmentId = previewEnv?.id;
 
           logger?.info("Resolved preview project", {
             projectSlug,
@@ -474,6 +499,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       projectSlug,
       projectId,
       releaseId,
+      environmentId,
       contentSourceId,
       environment: scope,
       localPath,
@@ -546,6 +572,8 @@ export function injectContextHeaders(req: Request, ctx: ProxyContext): Request {
 
   if (ctx.projectId) headers.set("x-project-id", ctx.projectId);
   if (ctx.releaseId) headers.set("x-release-id", ctx.releaseId);
+  if (ctx.environmentId) headers.set("x-environment-id", ctx.environmentId);
+
   if (ctx.branchId) headers.set("x-branch-id", ctx.branchId);
   if (ctx.branchName) headers.set("x-branch-name", ctx.branchName);
 

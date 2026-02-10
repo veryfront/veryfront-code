@@ -235,5 +235,3 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
     </RouterProvider>
   );
 }
-
-export default ClientApp;

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { type ConfigContext, createError, toError } from "../../errors/veryfront-error.ts";
+import { type ConfigContext, createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 // Sub-schemas
 const corsSchema = z.union([z.boolean(), z.object({ origin: z.string().optional() }).strict()]);

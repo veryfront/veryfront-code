@@ -1,5 +1,6 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { InvalidationProjectContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { clearConfigCache, getConfig } from "#veryfront/config";
 import {
   getEnvironmentConfig,
@@ -18,6 +19,8 @@ import {
   markEnvLoaded,
   supportsEnvFiles,
 } from "#veryfront/utils/env-loader.ts";
+import { ReloadNotifier } from "./reload-notifier.ts";
+import { clearDomainCache } from "./utils/domain-lookup.ts";
 
 export interface BootstrapResult {
   /** Enhanced runtime adapter (with FSAdapter if configured) */
@@ -107,7 +110,23 @@ export async function bootstrap(
   }
 
   logger.debug("[Bootstrap] Initializing FSAdapter", { type: fsType });
-  const enhancedAdapter = await enhanceAdapterWithFS(adapter, config, projectDir);
+
+  // Inject server-layer callbacks into FS config so the platform layer
+  // doesn't need to import from the server layer
+  const fsWithCallbacks = {
+    ...config.fs,
+    invalidationCallbacks: {
+      triggerReload: (changedPaths?: string[], project?: InvalidationProjectContext) =>
+        ReloadNotifier.triggerReload(changedPaths, project),
+      clearDomainCache,
+    },
+  };
+
+  const enhancedAdapter = await enhanceAdapterWithFS(
+    adapter,
+    { ...config, fs: fsWithCallbacks },
+    projectDir,
+  );
 
   if (enhancedAdapter === adapter) {
     logger.debug("[Bootstrap] Framework initialized successfully", {

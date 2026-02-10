@@ -22,7 +22,7 @@ import {
   enableSSRClientOnlyFetching,
   enableSSRFetchInterception,
   setSSRServerPort,
-} from "../rendering/ssr-globals.ts";
+} from "#veryfront/rendering/ssr-globals.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
 /** Configuration for AI primitives discovery during server startup */

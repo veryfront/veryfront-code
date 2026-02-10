@@ -7,7 +7,7 @@ import { VeryfrontError } from "#veryfront/errors/types.ts";
 /** Default timeout for token storage API requests (30 seconds) */
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
-export class TokenStorageAPIClient {
+export class TokenStorageApiClient {
   private config: VeryfrontTokenConfig;
 
   constructor(config: VeryfrontTokenConfig) {
@@ -119,7 +119,7 @@ export class TokenStorageAPIClient {
 
       const message = error instanceof Error ? error.message : String(error);
 
-      logger.error("[TokenStorageAPIClient] List failed", {
+      logger.error("[TokenStorageApiClient] List failed", {
         prefix,
         error: message,
       });
@@ -164,7 +164,7 @@ export class TokenStorageAPIClient {
 
     const message = error instanceof Error ? error.message : String(error);
 
-    logger.error(`[TokenStorageAPIClient] ${action} failed`, { key, error: message });
+    logger.error(`[TokenStorageApiClient] ${action} failed`, { key, error: message });
 
     return TOKEN_STORAGE_ERROR.create({ detail: `${prefixMessage}: ${message}` });
   }
@@ -202,7 +202,7 @@ export class TokenStorageAPIClient {
 
         const isTimeout = error instanceof Error && error.name === "AbortError";
         if (isTimeout) {
-          logger.warn("[TokenStorageAPIClient] Request timed out", {
+          logger.warn("[TokenStorageApiClient] Request timed out", {
             url: url.replace(/token=[^&]+/, "token=***"),
             timeoutMs,
             attempt: attempt + 1,
@@ -215,7 +215,7 @@ export class TokenStorageAPIClient {
 
         const delay = Math.min(initialDelay * Math.pow(2, attempt), maxDelay);
 
-        logger.warn("[TokenStorageAPIClient] Request failed, retrying...", {
+        logger.warn("[TokenStorageApiClient] Request failed, retrying...", {
           attempt: attempt + 1,
           maxRetries,
           delay,

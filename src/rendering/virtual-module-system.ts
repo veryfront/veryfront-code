@@ -1,5 +1,5 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { createError, toError } from "../errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import { transformJsx } from "#veryfront/platform/compat/transform.ts";
 

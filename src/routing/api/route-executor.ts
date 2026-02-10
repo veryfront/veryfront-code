@@ -13,9 +13,39 @@ import {
   createAppRouteMethodNotAllowed,
   createPagesRouteMethodNotAllowed,
 } from "./method-validator.ts";
-import { handleAPIError } from "./error-handler.ts";
 import { isAbsolute, join } from "#veryfront/compat/path/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-boundary.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import { isDevelopment as isDevelopmentEnv } from "#veryfront/build/config/environment.ts";
+import type { HandlerContext } from "#veryfront/types";
+
+function isDevelopment(adapter: RuntimeAdapter): boolean {
+  const env = adapter.env.get("MODE") ??
+    adapter.env.get("NODE_ENV") ??
+    adapter.env.get("DENO_ENV");
+
+  if (!env) return isDevelopmentEnv();
+
+  const normalized = env.toLowerCase();
+  return normalized === "development" || normalized === "dev";
+}
+
+/**
+ * Convert an error to RFC 9457 error response with environment-aware filtering.
+ * Delegates to the shared errorToRFC9457Response from http-error-boundary.
+ */
+function handleAPIError(
+  error: unknown,
+  pathname: string,
+  adapter: RuntimeAdapter,
+): Response {
+  logger.error(`API route error in ${pathname}:`, error);
+
+  const ctx = { isLocalProject: isDevelopment(adapter) } as HandlerContext;
+  const req = new Request(`http://localhost${pathname}`);
+  return errorToRFC9457Response(error, ctx, req);
+}
 
 function createProjectScopedFs(fs: FileSystemAdapter, projectDir: string): FileSystemAdapter {
   const resolvePath = (path: string): string => (isAbsolute(path) ? path : join(projectDir, path));

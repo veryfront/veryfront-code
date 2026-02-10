@@ -1,7 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
-import { createProxyHandler } from "./handler.ts";
+import { createProxyHandler, injectContextHeaders, type ProxyContext } from "./handler.ts";
 
 function createTokenResponse(): Response {
   return Response.json({
@@ -607,6 +607,59 @@ describe("Proxy Handler", () => {
       } finally {
         await server.shutdown();
       }
+    });
+  });
+
+  describe("injectContextHeaders", () => {
+    it("includes x-environment-id when environmentId is present", () => {
+      const req = new Request("http://example.com/api/test");
+      const ctx: ProxyContext = {
+        token: "test-token",
+        projectSlug: "my-project",
+        projectId: "proj-123",
+        releaseId: "rel-456",
+        environmentId: "env-789",
+        environment: "production",
+        contentSourceId: "cs-123",
+        host: "example.com",
+        parsedDomain: {
+          slug: "my-project",
+          branch: null,
+          environment: "production",
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        isLocalProject: false,
+      };
+
+      const injected = injectContextHeaders(req, ctx);
+      assertEquals(injected.headers.get("x-environment-id"), "env-789");
+      assertEquals(injected.headers.get("x-project-id"), "proj-123");
+      assertEquals(injected.headers.get("x-release-id"), "rel-456");
+    });
+
+    it("does not include x-environment-id when environmentId is absent", () => {
+      const req = new Request("http://example.com/api/test");
+      const ctx: ProxyContext = {
+        token: "test-token",
+        projectSlug: "my-project",
+        environment: "preview",
+        contentSourceId: "cs-123",
+        host: "example.com",
+        parsedDomain: {
+          slug: "my-project",
+          branch: null,
+          environment: "preview",
+          isVeryfrontDomain: true,
+          isDraft: true,
+          allowIframeEmbed: true,
+        },
+        isLocalProject: false,
+      };
+
+      const injected = injectContextHeaders(req, ctx);
+      assertEquals(injected.headers.get("x-environment-id"), null);
     });
   });
 });

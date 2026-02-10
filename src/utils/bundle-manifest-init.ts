@@ -1,6 +1,18 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { VeryfrontConfig } from "#veryfront/config";
 import { serverLogger as logger } from "./logger/index.ts";
+
+/** Minimal config interface to avoid importing from config layer */
+interface BundleManifestConfig {
+  cache?: {
+    bundleManifest?: {
+      enabled?: boolean;
+      type?: string;
+      redisUrl?: string;
+      keyPrefix?: string;
+      ttl?: number;
+    };
+  };
+}
 import {
   type BundleManifestStore,
   InMemoryBundleManifestStore,
@@ -9,7 +21,7 @@ import {
 import { BUNDLE_MANIFEST_DEV_TTL_MS, BUNDLE_MANIFEST_PROD_TTL_MS } from "./constants/cache.ts";
 
 export async function initializeBundleManifest(
-  config: VeryfrontConfig,
+  config: BundleManifestConfig,
   mode: "development" | "production",
   adapter?: RuntimeAdapter,
 ): Promise<void> {
@@ -47,7 +59,7 @@ export async function initializeBundleManifest(
 
 async function createStore(
   storeType: string,
-  cacheConfig: VeryfrontConfig["cache"],
+  cacheConfig: BundleManifestConfig["cache"],
   adapter?: RuntimeAdapter,
 ): Promise<BundleManifestStore> {
   const bundleManifest = cacheConfig?.bundleManifest;
@@ -94,7 +106,7 @@ async function createStore(
 }
 
 export function getBundleManifestTTL(
-  config: VeryfrontConfig,
+  config: BundleManifestConfig,
   mode: "development" | "production",
 ): number | undefined {
   const ttl = config.cache?.bundleManifest?.ttl;

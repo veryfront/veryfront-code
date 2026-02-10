@@ -6,7 +6,7 @@ describe("veryfront-api-client/index.ts exports", () => {
     const mod = await import("./index.ts");
 
     const expected: Array<[string, string]> = [
-      ["VeryfrontAPIClient", "function"],
+      ["VeryfrontApiClient", "function"],
       ["VeryfrontAPIOperations", "function"],
       ["requestWithRetry", "function"],
       ["API_CLIENT_ERROR", "object"],

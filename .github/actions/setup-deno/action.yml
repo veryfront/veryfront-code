@@ -19,4 +19,4 @@ runs:
     - name: Warm esm.sh cache
       if: inputs.warm-cache == 'true'
       shell: bash
-      run: deno cache --reload=https://esm.sh src/mod.ts || true
+      run: deno cache --reload=https://esm.sh src/index.ts || true

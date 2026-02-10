@@ -10,13 +10,17 @@ export interface RequestContext {
 
 export function createRequestContext(req: Request): RequestContext {
   const { hostname } = new URL(req.url);
-  const parsed = parseProjectDomain(hostname);
+  const forwardedHost = req.headers.get("x-forwarded-host");
+  const hostHeader = req.headers.get("host");
+
+  // In proxy mode, req.url hostname may be 127.0.0.1 while the real domain
+  // is in the Host header (e.g., "flow-ops.lvh.me:3010"). Prefer Host header.
+  const effectiveHost = forwardedHost ?? hostHeader ?? hostname;
+  const parsed = parseProjectDomain(effectiveHost);
 
   const xEnvironment = req.headers.get("x-environment");
-  const forwardedHost = req.headers.get("x-forwarded-host");
 
-  const mode: "preview" | "production" = hostname.includes(".preview.") ||
-      forwardedHost?.includes(".preview.") ||
+  const mode: "preview" | "production" = effectiveHost.includes(".preview.") ||
       xEnvironment === "preview"
     ? "preview"
     : "production";

@@ -59,6 +59,8 @@ export interface RequestHeaders {
   branchName: string | undefined;
   /** Environment from x-environment header */
   environment: string | undefined;
+  /** Environment ID from x-environment-id header (for env var resolution) */
+  environmentId: string | undefined;
   /** Token from authorization header */
   token: string | undefined;
   /** Content source ID from x-content-source-id header */
@@ -79,6 +81,7 @@ export function extractRequestHeaders(req: Request, url: URL): RequestHeaders {
     branchName: req.headers.get("x-branch-name") ?? undefined,
     environment: req.headers.get("x-environment") ?? url.searchParams.get("x-environment") ??
       undefined,
+    environmentId: req.headers.get("x-environment-id") ?? undefined,
     token: undefined, // Extracted separately from request context
     contentSourceId: req.headers.get("x-content-source-id") ?? undefined,
     projectPath: req.headers.get("x-project-path") ?? undefined,
@@ -200,12 +203,15 @@ export async function resolveProject(
   }
 
   // Veryfront domain release lookup (for production domains without releaseId)
+  // Check headers.releaseId to skip if proxy already resolved it
+  const proxyAlreadyResolvedRelease = !!headers.releaseId;
+
   if (
     parsedDomain.isVeryfrontDomain &&
     parsedDomain.isDraft === false &&
     projectSlug &&
     !releaseId &&
-    !opts.reqCtx.token &&
+    !proxyAlreadyResolvedRelease &&
     opts.config?.fs?.veryfront &&
     !shouldSkipDomainLookup
   ) {
@@ -225,7 +231,7 @@ export async function resolveProject(
 
       if (lookupResult?.release_id) {
         releaseId = lookupResult.release_id;
-        projectId = projectId ?? lookupResult.project_id;
+        projectId = lookupResult.project_id;
         environmentName = environmentName ?? lookupResult.environment?.name;
         proxyEnv = "production";
 

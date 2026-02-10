@@ -110,7 +110,7 @@ veryfront dev
 
 ```bash
 # Build all platforms at once
-node scripts/build-all.js
+node scripts/build/build-all.js
 ```
 
 This creates binaries in `dist/`:
@@ -187,7 +187,7 @@ deno task release 0.1.0
 
 ```bash
 # Build for all platforms
-node scripts/build-all.js
+node scripts/build/build-all.js
 
 # Verify all binaries exist
 ls -lh dist/

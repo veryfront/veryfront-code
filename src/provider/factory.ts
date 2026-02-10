@@ -38,15 +38,11 @@ const providerConfigFactories: ProviderConfigFactory[] = [
       return () => new OpenAIProvider(openaiConfig);
     },
     fromEnv() {
-      const openaiEnv = getOpenAIEnvConfig();
-      if (!openaiEnv.apiKey) return undefined;
-      const apiKey = openaiEnv.apiKey;
-      return () =>
-        new OpenAIProvider({
-          apiKey,
-          baseURL: openaiEnv.baseURL,
-          organizationId: openaiEnv.organizationId,
-        });
+      if (!getOpenAIEnvConfig().apiKey) return undefined;
+      return () => {
+        const { apiKey, baseURL } = getOpenAIEnvConfig();
+        return new OpenAIProvider({ apiKey: apiKey!, baseURL });
+      };
     },
   },
   {
@@ -57,14 +53,11 @@ const providerConfigFactories: ProviderConfigFactory[] = [
       return () => new AnthropicProvider(anthropicConfig);
     },
     fromEnv() {
-      const anthropicEnv = getAnthropicEnvConfig();
-      if (!anthropicEnv.apiKey) return undefined;
-      const apiKey = anthropicEnv.apiKey;
-      return () =>
-        new AnthropicProvider({
-          apiKey,
-          baseURL: anthropicEnv.baseURL,
-        });
+      if (!getAnthropicEnvConfig().apiKey) return undefined;
+      return () => {
+        const { apiKey, baseURL } = getAnthropicEnvConfig();
+        return new AnthropicProvider({ apiKey: apiKey!, baseURL });
+      };
     },
   },
   {
@@ -75,10 +68,11 @@ const providerConfigFactories: ProviderConfigFactory[] = [
       return () => new GoogleProvider(googleConfig);
     },
     fromEnv() {
-      const googleEnv = getGoogleGenAIEnvConfig();
-      if (!googleEnv.apiKey) return undefined;
-      const apiKey = googleEnv.apiKey;
-      return () => new GoogleProvider({ apiKey });
+      if (!getGoogleGenAIEnvConfig().apiKey) return undefined;
+      return () => {
+        const { apiKey } = getGoogleGenAIEnvConfig();
+        return new GoogleProvider({ apiKey: apiKey! });
+      };
     },
   },
 ];

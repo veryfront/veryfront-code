@@ -220,6 +220,43 @@ describe("MemoryBackend", () => {
     });
   });
 
+  describe("Stalled Run Recovery", () => {
+    it("should find stalled running runs", async () => {
+      await backend.createRun(
+        createTestRun("run-fresh", {
+          status: "running",
+          startedAt: new Date(Date.now() - 120_000),
+          heartbeatAt: new Date(),
+        }),
+      );
+      await backend.createRun(
+        createTestRun("run-stalled", {
+          status: "running",
+          startedAt: new Date(Date.now() - 120_000),
+        }),
+      );
+
+      const stalled = await backend.findStalledRuns(60_000);
+      assertEquals(stalled.map((run) => run.id), ["run-stalled"]);
+    });
+
+    it("should claim a stalled run only once", async () => {
+      await backend.createRun(
+        createTestRun("run-claim", {
+          status: "running",
+          startedAt: new Date(Date.now() - 120_000),
+        }),
+      );
+
+      assertEquals(await backend.claimStalledRun("run-claim", "worker-a", 60_000), true);
+      assertEquals(await backend.claimStalledRun("run-claim", "worker-b", 60_000), false);
+
+      const run = await backend.getRun("run-claim");
+      assertEquals(run?.workerId, "worker-a");
+      assertExists(run?.heartbeatAt);
+    });
+  });
+
   describe("Cleanup", () => {
     it("should destroy without errors", async () => {
       await backend.createRun(createTestRun("temp", {

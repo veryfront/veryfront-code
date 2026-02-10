@@ -1,4 +1,7 @@
-import type { BuildManifest, ManifestChunkInfo } from "../build/production-build/manifest.ts";
+import type {
+  BuildManifest,
+  ManifestChunkInfo,
+} from "#veryfront/build/production-build/manifest.ts";
 import { normalizeChunkPath } from "./utils/chunk-utils.ts";
 
 function sanitizeCacheKey(value: string): string {

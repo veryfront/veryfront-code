@@ -177,6 +177,7 @@ jobs:
           deno-version: lts
 
       - run: deno run -A scripts/build/generate-templates-manifest.ts
+      - run: deno run -A scripts/build/prepare-framework-sources.ts
 
       - name: Compile binary
         shell: bash
@@ -184,6 +185,9 @@ jobs:
           # React is fetched at runtime through the module server (SSR transform pipeline)
           # Include Tailwind CSS v4 plugins (versions must match PINNED_PLUGIN_VERSIONS in tailwind-compiler.ts)
           deno compile --allow-all --unstable-net \
+            --include src/platform/polyfills \
+            --include src/proxy/main.ts \
+            --include dist/framework-src \
             --include "https://esm.sh/tailwindcss-animate@1.0.7" \
             --include "https://esm.sh/@tailwindcss/typography@0.5.19" \
             --include "https://esm.sh/@tailwindcss/forms@0.5.11" \
@@ -242,6 +246,13 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           GH_TOKEN: ${{ secrets.GH_PAT_VERYFRONT }}
         run: |
+          # Collect available binaries dynamically (Windows build is optional)
+          BINARIES=""
+          for f in binaries/veryfront-*/veryfront-*; do
+            [ -f "$f" ] && BINARIES="$BINARIES $f"
+          done
+          echo "Available binaries: $BINARIES"
+
           # Public repo release
           gh release create "v${VERSION}" \
             --repo veryfront/veryfront \
@@ -249,11 +260,7 @@ jobs:
             --notes '```bash
           npx veryfront@'"${VERSION}"'
           ```' \
-            binaries/veryfront-macos-arm64/veryfront-macos-arm64 \
-            binaries/veryfront-macos-x64/veryfront-macos-x64 \
-            binaries/veryfront-linux-x64/veryfront-linux-x64 \
-            binaries/veryfront-linux-arm64/veryfront-linux-arm64 \
-            binaries/veryfront-windows-x64.exe/veryfront-windows-x64.exe \
+            $BINARIES \
             scripts/install.sh
 
       - name: Create source repo release
@@ -332,6 +339,13 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           GH_TOKEN: ${{ secrets.GH_PAT_VERYFRONT }}
         run: |
+          # Collect available binaries dynamically (Windows build is optional)
+          BINARIES=""
+          for f in binaries/veryfront-*/veryfront-*; do
+            [ -f "$f" ] && BINARIES="$BINARIES $f"
+          done
+          echo "Available binaries: $BINARIES"
+
           # Public repo release with binaries and install scripts
           gh release create "v${VERSION}" \
             --repo veryfront/veryfront \
@@ -345,11 +359,7 @@ jobs:
           # npm
           npm install -g veryfront
           ```' \
-            binaries/veryfront-macos-arm64/veryfront-macos-arm64 \
-            binaries/veryfront-macos-x64/veryfront-macos-x64 \
-            binaries/veryfront-linux-x64/veryfront-linux-x64 \
-            binaries/veryfront-linux-arm64/veryfront-linux-arm64 \
-            binaries/veryfront-windows-x64.exe/veryfront-windows-x64.exe \
+            $BINARIES \
             scripts/install.sh \
             scripts/install.ps1
 

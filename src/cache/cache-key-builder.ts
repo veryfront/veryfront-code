@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { HandlerContext } from "../types/server.ts";
+import type { HandlerContext } from "#veryfront/types";
 import { type CacheKeyContext, CacheKeyContextSchema } from "./schemas/index.ts";
 import { buildContentHashCacheKey } from "./keys.ts";
 
@@ -50,8 +50,7 @@ function getRequestContextFn(): (() => MultiProjectRequestContextType | null) | 
   if (_getCurrentRequestContext !== undefined) return _getCurrentRequestContext;
 
   try {
-    // deno-lint-ignore no-explicit-any
-    const mod = (globalThis as any).__vf_multi_project_adapter;
+    const mod = globalThis.__vf_multi_project_adapter;
     _getCurrentRequestContext = mod?.getCurrentRequestContext ?? null;
   } catch {
     _getCurrentRequestContext = null;

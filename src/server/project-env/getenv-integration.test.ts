@@ -1,0 +1,49 @@
+import { assertEquals } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
+
+// Import storage to ensure globalThis.__vfProjectEnvGetter and __vfProjectEnvActiveChecker are registered
+import { runWithProjectEnv } from "./storage.ts";
+
+describe("getEnv with project env overlay", () => {
+  it("returns project env overlay when active", () => {
+    runWithProjectEnv({ CUSTOM_VAR: "custom-value" }, () => {
+      assertEquals(getEnv("CUSTOM_VAR"), "custom-value");
+    });
+  });
+
+  it("falls through to process env when no overlay", () => {
+    // PATH is always set in process env
+    const pathValue = getEnv("PATH");
+    assertEquals(typeof pathValue, "string");
+    assertEquals((pathValue?.length ?? 0) > 0, true);
+  });
+
+  it("blocks fallthrough to process env when overlay is active", () => {
+    runWithProjectEnv({ SOME_KEY: "some-value" }, () => {
+      // PATH exists in host env but must NOT leak into project scope
+      assertEquals(getEnv("PATH"), undefined);
+    });
+  });
+
+  it("overlay takes precedence over process env for matching keys", () => {
+    // This test verifies overlay precedence without modifying process env
+    runWithProjectEnv({ TEST_OVERLAY_KEY: "overlay-value" }, () => {
+      assertEquals(getEnv("TEST_OVERLAY_KEY"), "overlay-value");
+    });
+
+    // Outside overlay, should not find the key (unless it happens to be in process env)
+    // We just verify the overlay is gone
+    assertEquals(getEnv("TEST_OVERLAY_KEY"), undefined);
+  });
+
+  it("empty overlay still blocks host env access", () => {
+    runWithProjectEnv({}, () => {
+      // Even with an empty overlay, host env must not leak
+      assertEquals(getEnv("PATH"), undefined);
+      assertEquals(getEnv("HOME"), undefined);
+    });
+    // Outside overlay, host env is accessible again
+    assertEquals(typeof getEnv("PATH"), "string");
+  });
+});

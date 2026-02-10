@@ -1,4 +1,4 @@
-import { getExtensionName } from "../../../utils/path-utils.ts";
+import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 
 export function getOptimizedPath(
   src: string,

@@ -330,6 +330,7 @@ function forwardToServer(req: Request): Promise<Response> {
           if (ctx.localPath) newHeaders.set("x-project-path", ctx.localPath);
           if (ctx.projectId) newHeaders.set("x-project-id", ctx.projectId);
           if (ctx.releaseId) newHeaders.set("x-release-id", ctx.releaseId);
+          if (ctx.environmentId) newHeaders.set("x-environment-id", ctx.environmentId);
           if (ctx.branchId) newHeaders.set("x-branch-id", ctx.branchId);
           if (ctx.branchName) newHeaders.set("x-branch-name", ctx.branchName);
           newHeaders.delete("host");
@@ -539,7 +540,9 @@ function router(req: Request): Promise<Response> {
     case "/_proxy/stats":
       return handleStats();
     case "/_proxy/health":
-      return Promise.resolve(new Response("OK", { status: 200 }));
+      return Promise.resolve(
+        Response.json({ service: "veryfront-proxy", status: "ok" }),
+      );
   }
 
   if (url.pathname.startsWith("/_vf/api/")) return handleApiProxy(req);

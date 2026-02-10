@@ -14,34 +14,28 @@ import {
 import { ReloadNotifier } from "../../reload-notifier.ts";
 import { invalidateProjectCaches } from "../../context/cache-invalidation.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import {
+  addClient,
+  clearAll,
+  clientSockets,
+  getClient,
+  getClientCount,
+  getClientDetails,
+  removeClient,
+} from "./hmr-client-manager.ts";
+import { getPingIntervalMs, startPingInterval, stopPingInterval } from "./hmr-ping-keepalive.ts";
+import { broadcastUpdate, getMetrics } from "./hmr-message-router.ts";
+
+// Re-export the interface so external consumers can still access it from this module
+export type { HMRClientInfo } from "./hmr-client-manager.ts";
 
 // Priority between auth (0) and high (100)
 const PRIORITY_HMR: HandlerPriority = HandlerPriority.EARLY;
 
-/** Client metadata for observability */
-interface HMRClientInfo {
-  id: string;
-  socket: WebSocket;
-  connectedAt: number;
-  projectSlug?: string;
-  userAgent?: string;
-  lastActivity: number;
-}
-
-const PING_INTERVAL_MS = 45000;
-
 export class HMRHandler extends BaseHandler {
-  private static clientsMap = new Map<string, HMRClientInfo>();
-  private static clients = new Set<WebSocket>(); // Keep for backward compatibility with setupWebSocketHandlers
   private static rateLimiter = new RateLimiter(HMR_MAX_MESSAGES_PER_MINUTE);
   private static reloadUnsubscribe: (() => void) | null = null;
-  private static pingInterval: ReturnType<typeof setInterval> | null = null;
   private static initialized = false;
-  private static metrics = {
-    broadcastsSent: 0,
-    messagesForwarded: 0,
-    lastBroadcastTime: 0,
-  };
 
   metadata: HandlerMetadata = {
     name: "HMRHandler",
@@ -63,7 +57,7 @@ export class HMRHandler extends BaseHandler {
         projectId: project?.projectId,
         environment: project?.environment,
         branch: project?.branch,
-        clientCount: HMRHandler.clients.size,
+        clientCount: clientSockets.size,
       });
 
       const projectSlug = project?.projectSlug ?? "preview";
@@ -72,113 +66,13 @@ export class HMRHandler extends BaseHandler {
         environment: project?.environment,
         branchId: project?.branch ?? undefined,
       });
-      HMRHandler.broadcastUpdate(changedPaths);
+      broadcastUpdate(changedPaths);
     });
 
-    HMRHandler.pingInterval = setInterval(() => {
-      HMRHandler.sendPingToAllClients();
-    }, PING_INTERVAL_MS);
+    startPingInterval();
 
     logger.debug("[HMRHandler] Initialized - listening for reload events", {
-      pingIntervalMs: PING_INTERVAL_MS,
-    });
-  }
-
-  private static sendPingToAllClients(): void {
-    if (HMRHandler.clients.size === 0) return;
-
-    const pingMessage = JSON.stringify({ type: "ping", timestamp: Date.now() });
-    let sentCount = 0;
-
-    for (const client of HMRHandler.clients) {
-      if (client.readyState !== WebSocket.OPEN) continue;
-
-      try {
-        client.send(pingMessage);
-        sentCount++;
-      } catch {
-        // Client will be cleaned up on close event
-      }
-    }
-
-    logger.debug("[HMRHandler] Sent ping to clients", {
-      sentCount,
-      totalClients: HMRHandler.clients.size,
-    });
-  }
-
-  private static requiresFullReload(path: string): boolean {
-    const ext = path.split(".").pop()?.toLowerCase();
-    return ext === "mdx" || ext === "md" || path.includes("veryfront.config");
-  }
-
-  private static broadcastUpdate(changedPaths?: string[]): void {
-    const timestamp = Date.now();
-    HMRHandler.metrics.broadcastsSent++;
-    HMRHandler.metrics.lastBroadcastTime = timestamp;
-
-    logger.info("[HMRHandler] broadcastUpdate called", {
-      changedPaths,
-      totalClients: HMRHandler.clientsMap.size,
-      clientsSetSize: HMRHandler.clients.size,
-    });
-
-    const needsFullReload = !changedPaths?.length ||
-      changedPaths.some((path) => HMRHandler.requiresFullReload(path));
-
-    if (needsFullReload) {
-      const message = JSON.stringify({ type: "reload", timestamp });
-      logger.debug("[HMRHandler] Broadcasting full reload", {
-        reason: changedPaths?.length ? "server-rendered content" : "no paths",
-      });
-      HMRHandler.broadcastMessage(message);
-      HMRHandler.metrics.messagesForwarded++;
-      return;
-    }
-
-    for (const path of changedPaths) {
-      const message = JSON.stringify({ type: "update", path, timestamp });
-      logger.debug("[HMRHandler] Broadcasting update message", { path });
-      HMRHandler.broadcastMessage(message);
-      HMRHandler.metrics.messagesForwarded++;
-    }
-
-    logger.debug("[HMRHandler] Broadcast update complete", {
-      changedPaths: changedPaths.length,
-      totalClients: HMRHandler.clientsMap.size,
-    });
-  }
-
-  private static broadcastMessage(message: string): void {
-    let sentCount = 0;
-    let skippedCount = 0;
-
-    logger.info("[HMRHandler] broadcastMessage starting", {
-      message: message.substring(0, 100),
-      totalClients: HMRHandler.clients.size,
-    });
-
-    for (const client of HMRHandler.clients) {
-      if (client.readyState !== WebSocket.OPEN) {
-        skippedCount++;
-        logger.debug("[HMRHandler] Skipping client - not open", {
-          readyState: client.readyState,
-        });
-        continue;
-      }
-
-      try {
-        client.send(message);
-        sentCount++;
-      } catch (error) {
-        logger.warn("[HMRHandler] Failed to send to client", { error });
-      }
-    }
-
-    logger.info("[HMRHandler] broadcastMessage complete", {
-      sentCount,
-      skippedCount,
-      totalClients: HMRHandler.clients.size,
+      pingIntervalMs: getPingIntervalMs(),
     });
   }
 
@@ -214,24 +108,15 @@ export class HMRHandler extends BaseHandler {
     }
 
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
-      const now = Date.now();
-      const clientDetails = Array.from(HMRHandler.clientsMap.values()).map((client) => ({
-        id: client.id,
-        connectedAt: client.connectedAt,
-        projectSlug: client.projectSlug,
-        lastActivity: client.lastActivity,
-        connectionDurationMs: now - client.connectedAt,
-      }));
-
       return Promise.resolve(
         this.respond(
           new Response(
             JSON.stringify({
               status: "ok",
-              clients: HMRHandler.clientsMap.size,
-              clientDetails,
+              clients: getClientCount(),
+              clientDetails: getClientDetails(),
               metrics: {
-                ...HMRHandler.metrics,
+                ...getMetrics(),
                 reloadNotifierMetrics: ReloadNotifier.getMetrics(),
               },
               message: "HMR WebSocket endpoint - connect via WebSocket",
@@ -254,7 +139,7 @@ export class HMRHandler extends BaseHandler {
       const now = Date.now();
       const clientId = crypto.randomUUID().slice(0, 8);
 
-      HMRHandler.clientsMap.set(clientId, {
+      addClient({
         id: clientId,
         socket,
         connectedAt: now,
@@ -264,35 +149,25 @@ export class HMRHandler extends BaseHandler {
       });
 
       setupWebSocketHandlers(socket, {
-        clients: HMRHandler.clients,
+        clients: clientSockets,
         rateLimiter: HMRHandler.rateLimiter,
         maxMessageSize: HMR_MAX_MESSAGE_SIZE_BYTES,
         reactRefresh: false,
       });
 
       socket.addEventListener("close", () => {
-        const client = HMRHandler.clientsMap.get(clientId);
-        if (!client) return;
-
-        logger.debug("[HMRHandler] Client disconnected", {
-          clientId,
-          projectSlug: client.projectSlug,
-          connectionDurationMs: Date.now() - client.connectedAt,
-          totalClients: HMRHandler.clientsMap.size - 1,
-        });
-
-        HMRHandler.clientsMap.delete(clientId);
+        removeClient(clientId);
       });
 
       socket.addEventListener("message", () => {
-        const client = HMRHandler.clientsMap.get(clientId);
+        const client = getClient(clientId);
         if (client) client.lastActivity = Date.now();
       });
 
       logger.debug("[HMRHandler] Client connected", {
         clientId,
         projectSlug: ctx.projectSlug,
-        totalClients: HMRHandler.clientsMap.size,
+        totalClients: getClientCount(),
       });
 
       return Promise.resolve(this.respond(response));
@@ -325,17 +200,11 @@ export class HMRHandler extends BaseHandler {
       resolvedEnvironment,
     });
 
-    // Run a file operation within context to trigger adapter initialization.
-    // This will cause ProxyFSAdapterManager.getAdapter() to create the adapter
-    // and call WebSocketManager.connect(), enabling poke reception.
     try {
       await fs.runWithContext(
         projectSlug,
         proxyToken,
         async () => {
-          // Perform a minimal file operation to trigger adapter initialization.
-          // The exists() call will invoke MultiProjectFSAdapter.getAdapter() which
-          // initializes the VeryfrontFSAdapter and connects its WebSocketManager.
           await fs.exists("veryfront.config.ts");
           logger.info("[HMRHandler] Adapter initialized for poke reception", {
             projectSlug,
@@ -348,7 +217,6 @@ export class HMRHandler extends BaseHandler {
         },
       );
     } catch (error) {
-      // Log but don't throw - HMR connection should still work, just without poke reception
       logger.warn("[HMRHandler] Adapter initialization failed (pokes may not be received)", {
         projectSlug,
         error: error instanceof Error ? error.message : String(error),
@@ -357,7 +225,7 @@ export class HMRHandler extends BaseHandler {
   }
 
   static getClientCount(): number {
-    return HMRHandler.clientsMap.size;
+    return getClientCount();
   }
 
   static getMetrics(): {
@@ -366,28 +234,16 @@ export class HMRHandler extends BaseHandler {
     messagesForwarded: number;
     lastBroadcastTime: number;
   } {
-    return { clients: HMRHandler.clientsMap.size, ...HMRHandler.metrics };
+    return getMetrics();
   }
 
   static shutdown(): void {
     HMRHandler.reloadUnsubscribe?.();
     HMRHandler.reloadUnsubscribe = null;
 
-    if (HMRHandler.pingInterval) {
-      clearInterval(HMRHandler.pingInterval);
-      HMRHandler.pingInterval = null;
-    }
+    stopPingInterval();
+    clearAll();
 
-    for (const client of HMRHandler.clientsMap.values()) {
-      try {
-        client.socket.close();
-      } catch {
-        // Ignore close errors
-      }
-    }
-
-    HMRHandler.clientsMap.clear();
-    HMRHandler.clients.clear();
     HMRHandler.initialized = false;
 
     logger.debug("[HMRHandler] Shutdown complete");

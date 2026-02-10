@@ -1,4 +1,4 @@
-import denoConfig from "../../deno.json" with { type: "json" };
+import denoConfig from "#deno-config" with { type: "json" };
 
 function getVersionFromDeno(): string {
   return typeof denoConfig.version === "string" ? denoConfig.version : "0.0.0";

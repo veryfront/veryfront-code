@@ -16,6 +16,8 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { UNKNOWN_ERROR } from "#veryfront/errors/error-registry.ts";
+import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-boundary.ts";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 
@@ -50,7 +52,6 @@ import { OpenAPIHandler } from "../handlers/request/openapi.handler.ts";
 import { OpenAPIDocsHandler } from "../handlers/request/openapi-docs.handler.ts";
 import { DevDashboardHandler } from "../handlers/dev/dashboard/index.ts";
 import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
-import { ErrorPages } from "../utils/error-html.ts";
 
 // Extracted modules
 import {
@@ -84,13 +85,13 @@ import { localProjectCache } from "./local-project-discovery.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext, buildMinimalContext } from "./handler-context-builder.ts";
 import { handleProjectsRequest, shouldHandleProjectsUI } from "./projects-handler.ts";
+import { HTTP_GATEWAY_TIMEOUT, isLightweightPath, isMonitoringPath } from "./request-utils.ts";
+import { withRequestTimeout } from "./timeout-manager.ts";
 import {
-  getRequestTimeout,
-  HTTP_GATEWAY_TIMEOUT,
-  isLightweightPath,
-  isMonitoringPath,
-  TIMEOUT_SENTINEL,
-} from "./request-utils.ts";
+  EnvironmentVariableCache,
+  fetchProjectEnvVars,
+  runWithProjectEnv,
+} from "../project-env/index.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -144,6 +145,13 @@ export function createVeryfrontHandler(
   }
 
   const securityLoader = new SecurityConfigLoader(projectDir, adapter, opts.config);
+
+  // Per-project environment variable cache (fetches from API, caches with 60s TTL)
+  const apiBaseUrl = adapter.env.get("VERYFRONT_API_BASE_URL") ?? "https://api.veryfront.com/api";
+  const envVarCache = new EnvironmentVariableCache(
+    (environmentId, token, projectSlug) =>
+      fetchProjectEnvVars(apiBaseUrl, projectSlug, environmentId, token),
+  );
 
   let config: VeryfrontConfig | undefined = opts.config;
   const configPromise =
@@ -391,13 +399,45 @@ export function createVeryfrontHandler(
             routeRegistry: registry,
             isLocalProject: adapterRes.isLocalProject,
             moduleServerUrl: opts.moduleServerUrl,
+            environmentId: headers.environmentId,
           });
+
+          // Fetch per-project env vars for remote projects
+          let envVarsForRequest: Record<string, string> = {};
+          if (
+            !adapterRes.isLocalProject &&
+            headers.environmentId &&
+            reqCtx.token &&
+            projectRes.projectSlug
+          ) {
+            envVarsForRequest = await envVarCache.get(
+              headers.environmentId,
+              reqCtx.token,
+              projectRes.projectSlug,
+            );
+
+            logDebug("[runtime-handler] Project env vars fetched", {
+              projectSlug: projectRes.projectSlug,
+              environmentId: headers.environmentId,
+              count: Object.keys(envVarsForRequest).length,
+            });
+          }
 
           await incrementRequestMetrics();
 
+          const executeRoute = () => registry.execute(req, ctx);
+          // Only activate env isolation in proxy mode (multi-tenant).
+          // reqCtx.token indicates the request came through the proxy with auth.
+          // Without it (standalone / test), host env must remain accessible.
+          const shouldIsolateEnv = !adapterRes.isLocalProject && !!reqCtx.token;
           const response = await withSpan(
             SpanNames.HANDLER_EXECUTE,
-            () => registry.execute(req, ctx),
+            () => {
+              if (shouldIsolateEnv) {
+                return runWithProjectEnv(envVarsForRequest, executeRoute);
+              }
+              return executeRoute();
+            },
             {
               "handler.project_slug": projectRes.projectSlug || "unknown",
               "handler.path": url.pathname,
@@ -410,52 +450,19 @@ export function createVeryfrontHandler(
           logDebug("[runtime-handler] No handler produced response (unexpected)", {
             path: url.pathname,
           });
-          return new Response(ErrorPages.serverError(), {
-            status: 500,
-            headers: { "Content-Type": "text/html; charset=utf-8" },
+          // RFC 9457 error response for no handler case (env-aware filtering)
+          const noHandlerError = UNKNOWN_ERROR.create({
+            detail: "No handler available to process this request",
+            instance: url.pathname,
           });
+          return errorToRFC9457Response(noHandlerError, ctx, req);
         };
 
-        let response: Response;
-        let error: Error | undefined;
-        let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-        try {
-          response = await Promise.race([
-            executeWithTracingContext(spanInfo, executeHandler),
-            new Promise<never>((_, reject) => {
-              timeoutId = setTimeout(() => reject(TIMEOUT_SENTINEL), getRequestTimeout());
-            }),
-          ]);
-        } catch (e) {
-          if (e === TIMEOUT_SENTINEL) {
-            logger.warn("[runtime-handler] Request timed out", {
-              path: url.pathname,
-              method: req.method,
-              timeoutMs: getRequestTimeout(),
-            });
-
-            response = new Response(
-              JSON.stringify({
-                error: "Request timeout",
-                timeoutMs: getRequestTimeout(),
-                path: url.pathname,
-              }),
-              {
-                status: HTTP_GATEWAY_TIMEOUT,
-                headers: { "Content-Type": "application/json" },
-              },
-            );
-          } else {
-            error = e instanceof Error ? e : new Error(String(e));
-            response = new Response(ErrorPages.serverError(), {
-              status: 500,
-              headers: { "Content-Type": "text/html; charset=utf-8" },
-            });
-          }
-        } finally {
-          if (timeoutId !== undefined) clearTimeout(timeoutId);
-        }
+        const { response, error } = await withRequestTimeout(
+          () => executeWithTracingContext(spanInfo, executeHandler),
+          url.pathname,
+          req.method,
+        );
 
         endRequestTracing(spanInfo.span, response.status, error);
 

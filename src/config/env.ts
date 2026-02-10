@@ -1,13 +1,18 @@
 /****
  * Centralized environment accessors.
  *
- * Runtime code should depend on these helpers rather than calling getEnv directly.
- * All functions accept an optional EnvironmentConfig parameter for test isolation.
+ * Most functions read from EnvironmentConfig (cached at startup) and accept an
+ * optional EnvironmentConfig parameter for test isolation.
+ *
+ * Provider env config functions (getOpenAIEnvConfig, getAnthropicEnvConfig,
+ * getGoogleGenAIEnvConfig) read from getEnv() directly so they pick up
+ * per-request project-scoped env vars from AsyncLocalStorage.
  *
  * @module
  */
 
 import { type EnvironmentConfig, getEnvironmentConfig } from "./environment-config.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 
 export function getDisableLruIntervalEnv(env: EnvironmentConfig = getEnvironmentConfig()): boolean {
   return env.disableLruInterval;
@@ -64,32 +69,30 @@ export function getApiTokenEnv(
   return env.apiToken;
 }
 
-export function getOpenAIEnvConfig(env: EnvironmentConfig = getEnvironmentConfig()): {
-  apiKey?: string;
-  baseURL?: string;
-  organizationId?: string;
-} {
-  return {
-    apiKey: env.openaiApiKey,
-    baseURL: env.openaiBaseUrl,
-    organizationId: undefined, // Not in EnvironmentConfig, kept for interface compatibility
-  };
-}
-
-export function getAnthropicEnvConfig(env: EnvironmentConfig = getEnvironmentConfig()): {
+export function getOpenAIEnvConfig(): {
   apiKey?: string;
   baseURL?: string;
 } {
   return {
-    apiKey: env.anthropicApiKey,
-    baseURL: env.anthropicBaseUrl,
+    apiKey: getEnv("OPENAI_API_KEY"),
+    baseURL: getEnv("OPENAI_BASE_URL") || undefined,
   };
 }
 
-export function getGoogleGenAIEnvConfig(env: EnvironmentConfig = getEnvironmentConfig()): {
+export function getAnthropicEnvConfig(): {
+  apiKey?: string;
+  baseURL?: string;
+} {
+  return {
+    apiKey: getEnv("ANTHROPIC_API_KEY"),
+    baseURL: getEnv("ANTHROPIC_BASE_URL") || undefined,
+  };
+}
+
+export function getGoogleGenAIEnvConfig(): {
   apiKey?: string;
 } {
-  return { apiKey: env.googleApiKey };
+  return { apiKey: getEnv("GOOGLE_API_KEY") || getEnv("GOOGLE_GENERATIVE_AI_API_KEY") };
 }
 
 export function isDebugEnvEnabled(env: EnvironmentConfig = getEnvironmentConfig()): boolean {

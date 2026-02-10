@@ -1,4 +1,3 @@
-import { VERSION } from "#veryfront/utils";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -9,7 +8,6 @@ import {
   logWarning,
   promptUser,
   showLogo,
-  showVersion,
 } from "./index.ts";
 
 function stripAnsi(str: string): string {
@@ -64,13 +62,6 @@ describe("showLogo", () => {
   it("outputs Veryfront in cyan", () => {
     const { stdout } = captureOutput(showLogo);
     assertStringIncludes(stdout, "Veryfront");
-  });
-});
-
-describe("showVersion", () => {
-  it("displays version", () => {
-    const { stdout } = captureOutput(showVersion);
-    assertStringIncludes(stripAnsi(stdout), `veryfront v${VERSION}`);
   });
 });
 
@@ -179,7 +170,6 @@ describe("promptUser", () => {
 describe("exports", () => {
   it("all exports are available", () => {
     assertExists(showLogo);
-    assertExists(showVersion);
     assertExists(promptUser);
     assertExists(logSuccess);
     assertExists(logError);
@@ -188,7 +178,6 @@ describe("exports", () => {
     assertExists(formatBytes);
 
     assertEquals(typeof showLogo, "function");
-    assertEquals(typeof showVersion, "function");
     assertEquals(typeof promptUser, "function");
     assertEquals(typeof logSuccess, "function");
     assertEquals(typeof logError, "function");

@@ -8,8 +8,8 @@
  * @module
  */
 
-import { isBun, isDeno, isNode } from "../platform/compat/runtime.ts";
-import { deleteEnv, env as readEnv, setEnv } from "../platform/compat/process.ts";
+import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { deleteEnv, env as readEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 
 type CleanupTask = () => void | Promise<void>;
 
@@ -520,7 +520,7 @@ export async function resetAllTestState(): Promise<void> {
 
     // SSR module caches
     async () => {
-      const { clearSSRModuleCache } = await import("../modules/react-loader/index.ts");
+      const { clearSSRModuleCache } = await import("#veryfront/modules");
       clearSSRModuleCache();
     },
 

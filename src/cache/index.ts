@@ -21,7 +21,7 @@ export {
   buildStatCacheKeyPrefix,
   cacheRegistry,
   type FileOperationContext,
-} from "./keys.ts";
+} from "./keys/index.ts";
 
 // Distributed cache initialization
 export { initializeDistributedCaches } from "./distributed-cache-init.ts";

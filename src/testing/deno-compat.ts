@@ -14,7 +14,7 @@
  * @module
  */
 
-import { isDeno } from "../platform/compat/runtime.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { scaleMs } from "./timing.ts";
 
 export {
@@ -32,9 +32,16 @@ export {
   stat,
   writeFile,
   writeTextFile,
-} from "../platform/compat/fs.ts";
+} from "#veryfront/platform/compat/fs.ts";
 
-export { cwd, deleteEnv, env, getArgs, getEnv, setEnv } from "../platform/compat/process.ts";
+export {
+  cwd,
+  deleteEnv,
+  env,
+  getArgs,
+  getEnv,
+  setEnv,
+} from "#veryfront/platform/compat/process.ts";
 
 export async function makeTempFile(
   options?: { prefix?: string; suffix?: string },

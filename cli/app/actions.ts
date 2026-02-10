@@ -38,8 +38,6 @@ const IDE_NAMES: Record<IDE, string> = {
 
 const IDE_DETECTION_ORDER: IDE[] = ["cursor", "code", "zed", "idea", "webstorm"];
 
-const PROJECT_CACHE_DIRS = [".cache", "node_modules/.cache"];
-
 async function commandExists(cmd: string): Promise<boolean> {
   const whichCmd = getOsType() === "windows" ? "where" : "which";
 
@@ -129,24 +127,6 @@ export function openFileInIDE(filePath: string, ide?: IDE): Promise<ActionResult
   return openPathInIDE(filePath, ide);
 }
 
-export async function clearProjectCache(project: ProjectInfo): Promise<ActionResult> {
-  const fs = createFileSystem();
-  let cleared = 0;
-
-  for (const relativeDir of PROJECT_CACHE_DIRS) {
-    const dir = join(project.path, relativeDir);
-    try {
-      await fs.remove(dir, { recursive: true });
-      cleared++;
-    } catch {
-      // Directory doesn't exist
-    }
-  }
-
-  const message = cleared > 0 ? `Cleared ${cleared} cache directories` : "No caches to clear";
-  return { success: true, message };
-}
-
 export async function openMCPSettings(
   env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<ActionResult> {
@@ -166,21 +146,4 @@ export async function openMCPSettings(
   }
 
   return openFileInIDE(settingsPath);
-}
-
-export function quickOpen(
-  projects: Array<{ slug: string; path: string }>,
-  num: number,
-  port: number,
-): Promise<ActionResult> {
-  const index = num - 1;
-  if (index < 0 || index >= projects.length) {
-    return Promise.resolve({ success: false, message: `No project at position ${num}` });
-  }
-
-  const project = projects[index];
-  if (!project) {
-    return Promise.resolve({ success: false, message: `No project at position ${num}` });
-  }
-  return openInBrowser({ slug: project.slug, path: project.path, type: "local" }, port);
 }

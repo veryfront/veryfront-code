@@ -6,7 +6,7 @@ import {
   type BundleCode,
   type BundleMetadata,
   computeCodeHash,
-  computeContentHash,
+  computeHash,
   InMemoryBundleManifestStore,
 } from "./bundle-manifest.ts";
 
@@ -173,11 +173,11 @@ describe("InMemoryBundleManifestStore", () => {
   });
 });
 
-describe("computeContentHash", () => {
+describe("computeHash", () => {
   it("generates consistent hash", async () => {
     const content = "Hello, World!";
-    const hash1 = await computeContentHash(content);
-    const hash2 = await computeContentHash(content);
+    const hash1 = await computeHash(content);
+    const hash2 = await computeHash(content);
 
     assertEquals(hash1, hash2);
     assertEquals(hash1.length, 64);

@@ -78,5 +78,3 @@ export function LayoutShell(
 
   return <>{tree}</>;
 }
-
-export default LayoutShell;

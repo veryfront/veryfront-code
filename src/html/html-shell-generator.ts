@@ -3,11 +3,11 @@ import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolv
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
-import { isMarkdownPreview as checkMarkdownPreview } from "../transforms/md/utils.ts";
+import { isMarkdownPreview as checkMarkdownPreview } from "#veryfront/transforms/md/utils.ts";
 import {
   generateModulePreloadHintsFromManifest,
   getRouteManifest,
-} from "../modules/manifest/route-module-manifest.ts";
+} from "#veryfront/modules/manifest/route-module-manifest.ts";
 import { escapeHTML } from "./html-escape.ts";
 import {
   generateHydrationData,
@@ -200,6 +200,14 @@ async function generateHTMLShellPartsImpl(
 
   const modulePreloadHints = generateModulePreloadHints(options);
 
+  // Preload critical React dependencies to avoid waterfall delays.
+  // jsx-runtime is discovered late (only when modules execute), adding ~500ms latency.
+  const importMapData = JSON.parse(importMapJson) as { imports?: Record<string, string> };
+  const jsxRuntimeUrl = importMapData.imports?.["react/jsx-runtime"];
+  const criticalDepsPreload = jsxRuntimeUrl
+    ? `<link rel="modulepreload" href="${jsxRuntimeUrl}">`
+    : "";
+
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
 
   const hydrationErrorSuppression = useDevScripts ? "" : `<script${nonceAttr}>
@@ -284,6 +292,7 @@ async function generateHTMLShellPartsImpl(
 
   <!-- Modulepreload hints for faster cold start -->
   ${modulePreloadHints}
+  ${criticalDepsPreload}
 
   <!-- Tailwind CSS: Server-side JIT compiled -->
   ${tailwindCSSBlock}

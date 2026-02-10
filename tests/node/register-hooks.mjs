@@ -2,7 +2,7 @@
  * Node.js module registration for TypeScript/TSX hooks.
  * Uses the modern register() API (Node 20.6+).
  *
- * Usage: node --import ./scripts/node-register-hooks.mjs your-script.ts
+ * Usage: node --import ./tests/node/register-hooks.mjs your-script.ts
  */
 
 import { register } from 'node:module';

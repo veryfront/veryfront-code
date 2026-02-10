@@ -6,7 +6,7 @@ import type { EntityInfo, MdxBundle, MDXComponents, MDXModule, PageBundle } from
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { getProjectReact } from "#veryfront/react";
 import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
-import { ensureError, getErrorMessage } from "../errors/veryfront-error.ts";
+import { ensureError, getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export interface MDXPageResult {

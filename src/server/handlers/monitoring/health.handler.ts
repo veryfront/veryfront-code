@@ -2,7 +2,7 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { joinPath } from "#veryfront/utils/path-utils.ts";
 import { HTTP_OK, HTTP_UNAVAILABLE, PRIORITY_HIGH } from "#veryfront/utils/constants/index.ts";
-import { isTracingDegraded, isTracingEnabled } from "../../../observability/tracing/index.ts";
+import { isTracingDegraded, isTracingEnabled } from "#veryfront/observability/tracing/index.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 
 let serverInitialized = false;
@@ -48,7 +48,9 @@ export class HealthHandler extends BaseHandler {
       .withSecurity(ctx.securityConfig ?? undefined);
 
     if (pathname === "/healthz") {
-      return this.respond(builder.text("ok", HTTP_OK));
+      return this.respond(
+        builder.json({ service: "veryfront-server", status: "ok" }, HTTP_OK),
+      );
     }
 
     if (pathname === "/readyz") {
@@ -66,6 +68,7 @@ export class HealthHandler extends BaseHandler {
     return this.respond(
       builder.withCache("no-cache").json(
         {
+          service: "veryfront-server",
           status: tracingDegraded ? "degraded" : "ok",
           timestamp: new Date().toISOString(),
           mode: hasStaticBuild ? "static+ssr" : "ssr",

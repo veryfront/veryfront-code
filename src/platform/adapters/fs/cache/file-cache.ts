@@ -19,11 +19,11 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { CacheEntry, CacheStats, FileCacheOptions } from "./types.ts";
 import { estimateSize } from "./size-estimator.ts";
 // Direct import to avoid circular dependency through cache/index.ts barrel
-import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "../../../../cache/backend.ts";
+import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "#veryfront/cache/backend.ts";
 import {
   getCachedWithBatching,
   setInRequestCache,
-} from "../../../../cache/request-cache-batcher.ts";
+} from "#veryfront/cache/request-cache-batcher.ts";
 
 // Register with memory profiler
 // Note: entries shows backend size when available, -1 for distributed backends
@@ -84,12 +84,6 @@ export async function initializeFileCacheBackend(): Promise<boolean> {
 export function isFileCacheDistributedEnabled(): boolean {
   return cacheBackend !== null && cacheBackend.type !== "memory";
 }
-
-/** @deprecated Use initializeFileCacheBackend instead */
-export const initializeFileCacheRedis = initializeFileCacheBackend;
-
-/** @deprecated Use isFileCacheDistributedEnabled instead */
-export const isFileCacheRedisEnabled = isFileCacheDistributedEnabled;
 
 /**
  * FileCache - Backend-First with Local Fallback

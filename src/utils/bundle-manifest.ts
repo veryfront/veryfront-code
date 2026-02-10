@@ -156,4 +156,4 @@ export function getBundleManifestStore(): BundleManifestStore {
   return manifestStore;
 }
 
-export { computeCodeHash, computeContentHash } from "./hash-utils.ts";
+export { computeCodeHash, computeHash } from "./hash-utils.ts";

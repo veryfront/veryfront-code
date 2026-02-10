@@ -1,8 +1,8 @@
 import { logger } from "#veryfront/utils";
-import { getGithubEnvConfig } from "#veryfront/config/env.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import type { FSAdapter, FSAdapterConfig } from "../veryfront/types.ts";
-import { GitHubAPIClient } from "./github-api-client.ts";
+import { GitHubApiClient } from "./github-api-client.ts";
 import { GitHubDirectoryOperations } from "./directory-operations.ts";
 import { GitHubReadOperations } from "./read-operations.ts";
 import { GitHubStatOperations } from "./stat-operations.ts";
@@ -18,7 +18,7 @@ const LOG_PREFIX = "[GitHubFSAdapter]";
 
 export class GitHubFSAdapter implements FSAdapter {
   private readonly config: ResolvedGitHubConfig;
-  private readonly client: GitHubAPIClient;
+  private readonly client: GitHubApiClient;
   private readonly cache: FileCache;
   private readonly statOps: GitHubStatOperations;
   private readonly readOps: GitHubReadOperations;
@@ -35,18 +35,17 @@ export class GitHubFSAdapter implements FSAdapter {
 
     this.projectDir = adapterConfig.projectDir ?? "";
 
-    const envConfig = getGithubEnvConfig();
     const rawConfig: GitHubConfig = {
-      token: githubConfig.token ?? envConfig.token ?? "",
-      owner: githubConfig.owner ?? envConfig.owner ?? "",
-      repo: githubConfig.repo ?? envConfig.repo ?? "",
-      ref: githubConfig.ref ?? envConfig.ref ?? "main",
+      token: githubConfig.token ?? getEnv("GITHUB_TOKEN") ?? "",
+      owner: githubConfig.owner ?? getEnv("GITHUB_OWNER") ?? "",
+      repo: githubConfig.repo ?? getEnv("GITHUB_REPO") ?? "",
+      ref: githubConfig.ref ?? getEnv("GITHUB_REF") ?? "main",
       cache: githubConfig.cache,
       retry: githubConfig.retry,
     };
 
     this.config = createGitHubConfig(rawConfig);
-    this.client = new GitHubAPIClient(this.config);
+    this.client = new GitHubApiClient(this.config);
 
     this.cache = new FileCache(this.config.cache);
 

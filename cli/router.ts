@@ -4,7 +4,7 @@
  * @module cli/router
  */
 
-import { formatUserError } from "veryfront/errors";
+import { cliErrorBoundary } from "veryfront/errors";
 import { cliLogger, VERSION } from "#cli/utils";
 import { handleAnalyzeChunksCommand } from "./commands/analyze-chunks/handler.ts";
 import { handleBuildCommand } from "./commands/build/handler.ts";
@@ -28,6 +28,7 @@ import { handleServeCommand } from "./commands/serve/handler.ts";
 import { handleStartCommand } from "./commands/start/handler.ts";
 import { handleStudioCommand } from "./commands/studio/handler.ts";
 import { handleUpCommand } from "./commands/up/index.ts";
+import { handleWorkerCommand } from "./commands/worker/handler.ts";
 import { login, logout, whoami } from "./auth/index.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
 import { showCommandHelp, showMainHelp } from "./help/index.ts";
@@ -74,6 +75,7 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
   "mcp": handleMCPCommand,
   "issues": handleIssuesCommand,
   "start": handleStartCommand,
+  "worker": handleWorkerCommand,
 };
 
 /**
@@ -114,7 +116,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     return;
   }
 
-  try {
+  await cliErrorBoundary(async () => {
     if (command === "help") {
       showHelp();
       exitProcess(0);
@@ -131,11 +133,5 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     }
 
     await (handler ?? handleStartCommand)(args);
-  } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error));
-    console.log();
-    console.log(formatUserError(err));
-    console.log();
-    exitProcess(1);
-  }
+  });
 }

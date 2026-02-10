@@ -7,12 +7,6 @@ export async function computeHash(content: string): Promise<string> {
   return Array.from(new Uint8Array(hashBuffer), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** @deprecated Use computeHash directly */
-export const getContentHash = computeHash;
-
-/** @deprecated Use computeHash directly */
-export const computeContentHash = computeHash;
-
 export interface BundleCode {
   code: string;
   css?: string;

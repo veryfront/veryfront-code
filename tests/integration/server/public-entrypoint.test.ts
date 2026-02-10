@@ -72,7 +72,7 @@ describe("Server Public Entrypoints", { sanitizeResources: false, sanitizeOps: f
         await server.ready;
         const response = await fetch(`http://127.0.0.1:${port}/healthz`);
         assertEquals(response.status, 200);
-        assertEquals(await response.text(), "ok");
+        assertEquals(await response.json(), { service: "veryfront-server", status: "ok" });
       } finally {
         controller.abort();
         await server.stop();

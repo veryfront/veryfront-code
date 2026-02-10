@@ -5,6 +5,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
 import {
+  CircularModuleDependencyError,
   createModuleFetcherContext,
   endRenderSession,
   fetchAndCacheModule,
@@ -378,6 +379,77 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
 
         const result = await fetchAndCacheModule("/_vf_modules/lib/utils.js", ctx);
         assertEquals(result, null, "Should return null for missing module when strict mode is off");
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+        await remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  describe("circular imports", () => {
+    function createCircularAdapter(): any {
+      const sourceByPath = new Map<string, string>([
+        [
+          "/virtual/a.ts",
+          `import B from "./b.js"; export default function A() { return B; }`,
+        ],
+        [
+          "/virtual/b.ts",
+          `import A from "./a.js"; export default function B() { return A; }`,
+        ],
+      ]);
+
+      return {
+        env: { get: (_key: string) => undefined },
+        fs: {
+          resolveFile: (path: string) => {
+            if (path === "a") return Promise.resolve("/virtual/a.ts");
+            if (path === "b") return Promise.resolve("/virtual/b.ts");
+            return Promise.resolve(null);
+          },
+          readFile: (path: string) => {
+            const source = sourceByPath.get(path);
+            if (!source) throw new Error(`File not found: ${path}`);
+            return Promise.resolve(source);
+          },
+        },
+      };
+    }
+
+    it("throws CircularModuleDependencyError in strict mode", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-cycle-strict-cache-" });
+      const projectDir = await makeTempDir({ prefix: "vf-mdx-cycle-strict-proj-" });
+      const adapter = createCircularAdapter();
+
+      try {
+        const ctx = createModuleFetcherContext(esmCacheDir, adapter, projectDir, "proj-cycle", {
+          strictMissingModules: true,
+        });
+
+        await assertRejects(
+          () => fetchAndCacheModule("/_vf_modules/a.js", ctx),
+          CircularModuleDependencyError,
+          "Circular module dependency detected",
+        );
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("falls back to stub resolution in non-strict mode", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-cycle-nonstrict-cache-" });
+      const projectDir = await makeTempDir({ prefix: "vf-mdx-cycle-nonstrict-proj-" });
+      const adapter = createCircularAdapter();
+
+      try {
+        const ctx = createModuleFetcherContext(esmCacheDir, adapter, projectDir, "proj-cycle", {
+          strictMissingModules: false,
+        });
+
+        const result = await fetchAndCacheModule("/_vf_modules/a.js", ctx);
+        assertEquals(typeof result, "string");
+        assertEquals(result?.endsWith(".mjs"), true);
       } finally {
         await remove(esmCacheDir, { recursive: true });
         await remove(projectDir, { recursive: true });

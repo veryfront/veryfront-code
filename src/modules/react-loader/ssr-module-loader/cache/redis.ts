@@ -1,8 +1,6 @@
 /** Redis caching for cross-pod SSR module sharing */
 
 import { rendererLogger as logger } from "#veryfront/utils";
-import { type RedisClient } from "#veryfront/utils/redis-client.ts";
-import { buildRedisSSRModuleKey } from "#veryfront/cache";
 import { getSSRModuleRedisTTL } from "../constants.ts";
 import { CacheBackends, createDistributedCodeCacheAccessor } from "#veryfront/cache/backend.ts";
 
@@ -15,14 +13,6 @@ const getDistributedCodeCache = createDistributedCodeCacheAccessor(
   "SSR-MODULE-LOADER",
 );
 
-/**
- * @deprecated Legacy key builder. CacheBackend handles prefixing internally.
- * Used only for backward compatibility if needed.
- */
-export function redisKey(key: string): string {
-  return buildRedisSSRModuleKey(key);
-}
-
 /** Initialize distributed caching for SSR modules */
 export async function initializeSSRDistributedCache(): Promise<boolean> {
   return (await getDistributedCodeCache()) !== null;
@@ -31,25 +21,6 @@ export async function initializeSSRDistributedCache(): Promise<boolean> {
 /** Check if distributed caching is enabled for SSR modules */
 export function isSSRDistributedCacheEnabled(): boolean {
   return true;
-}
-
-/** @deprecated Use initializeSSRDistributedCache instead */
-export const initializeSSRRedisCache = initializeSSRDistributedCache;
-
-/** @deprecated Use isSSRDistributedCacheEnabled instead */
-export const isSSRRedisCacheEnabled = isSSRDistributedCacheEnabled;
-
-/** @deprecated Use isSSRDistributedCacheEnabled instead */
-export function getRedisEnabled(): boolean {
-  return isSSRDistributedCacheEnabled();
-}
-
-/**
- * @deprecated Direct Redis client access is deprecated. Use CacheBackend abstraction.
- * Returns null to force use of CacheBackend path in updated consumers.
- */
-export function getRedisClientInstance(): RedisClient | null {
-  return null;
 }
 
 /**

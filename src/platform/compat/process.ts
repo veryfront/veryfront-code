@@ -52,7 +52,51 @@ export function env(): Record<string, string> {
   return {};
 }
 
+// Lazy-loaded references to project-env/storage.ts functions.
+// Uses globalThis to avoid circular imports (process.ts is low-level, project-env is high-level).
+// IMPORTANT: Only cache when the real getter is found. If storage.ts hasn't loaded yet,
+// re-check globalThis on every call to avoid permanently caching the fallback.
+let _getProjectEnv: ((key: string) => string | undefined) | null = null;
+let _isProjectEnvActive: (() => boolean) | null = null;
+
+function getProjectEnvSafe(key: string): string | undefined {
+  if (_getProjectEnv === null) {
+    const mod = (globalThis as Record<string, unknown>).__vfProjectEnvGetter as
+      | ((key: string) => string | undefined)
+      | undefined;
+    if (mod) {
+      _getProjectEnv = mod;
+    } else {
+      return undefined;
+    }
+  }
+  return _getProjectEnv(key);
+}
+
+function isProjectEnvActiveSafe(): boolean {
+  if (_isProjectEnvActive === null) {
+    const mod = (globalThis as Record<string, unknown>).__vfProjectEnvActiveChecker as
+      | (() => boolean)
+      | undefined;
+    if (mod) {
+      _isProjectEnvActive = mod;
+    } else {
+      return false;
+    }
+  }
+  return _isProjectEnvActive();
+}
+
 export function getEnv(key: string): string | undefined {
+  // Check per-request project env overlay first (AsyncLocalStorage)
+  const projectValue = getProjectEnvSafe(key);
+  if (projectValue !== undefined) return projectValue;
+
+  // When a project env overlay is active (remote project request), do NOT
+  // fall through to host process env. This prevents remote projects from
+  // reading host-level secrets like AWS_SECRET_ACCESS_KEY, DATABASE_URL, etc.
+  if (isProjectEnvActiveSafe()) return undefined;
+
   if (IS_DENO) return Deno.env.get(key);
   if (hasNodeProcess) return nodeProcess!.env[key];
   return undefined;

@@ -22,15 +22,15 @@ import {
   type RenderContext,
   type Renderer,
   type RendererOptions,
-} from "../../../rendering/renderer.ts";
+} from "#veryfront/rendering/renderer.ts";
 import type {
   PageDataResponse,
   RenderOptions,
   RenderResult,
-} from "../../../rendering/orchestrator/types.ts";
+} from "#veryfront/rendering/orchestrator/types.ts";
 import type { MdxBundle } from "#veryfront/types";
-import { APICacheStore } from "../../../rendering/cache/stores/api-store.ts";
-import { computeContentSourceId } from "../../../cache/keys.ts";
+import { APICacheStore } from "#veryfront/rendering/cache/stores/api-store.ts";
+import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 
 export interface RendererAdapter {
   renderPage(slug: string, options?: RenderOptions): Promise<RenderResult>;

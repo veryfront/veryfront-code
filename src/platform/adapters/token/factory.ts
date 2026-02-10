@@ -8,7 +8,7 @@
 
 import { logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { createError, toError } from "../../../errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type { TokenStorageAdapter, TokenStorageAdapterConfig } from "./veryfront/types.ts";
 
 export function createTokenStorageAdapter(

@@ -3,7 +3,7 @@ export {
   TOKEN_STORAGE_ERROR,
   type TokenStorageAdapter,
   type TokenStorageAdapterConfig,
-  TokenStorageAPIClient,
+  TokenStorageApiClient,
   VeryfrontTokenAdapter,
   type VeryfrontTokenConfig,
 } from "./veryfront/index.ts";

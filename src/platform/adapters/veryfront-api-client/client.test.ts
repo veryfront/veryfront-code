@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { VeryfrontAPIClient } from "./client.ts";
+import { VeryfrontApiClient } from "./client.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 
 const baseConfig = {
@@ -9,11 +9,11 @@ const baseConfig = {
   projectSlug: "config-slug",
 };
 
-function createClient(config = baseConfig): VeryfrontAPIClient {
-  return new VeryfrontAPIClient(config);
+function createClient(config = baseConfig): VeryfrontApiClient {
+  return new VeryfrontApiClient(config);
 }
 
-describe("VeryfrontAPIClient", () => {
+describe("VeryfrontApiClient", () => {
   describe("token priority", () => {
     it("uses config token when no request token set", () => {
       const client = createClient();
@@ -132,6 +132,16 @@ describe("VeryfrontAPIClient", () => {
         retry: { maxRetries: 5, initialDelay: 100, maxDelay: 1000 },
       });
       assertEquals(client.isProxyMode(), false);
+    });
+  });
+
+  describe("searchFilesWithContent", () => {
+    it("should expose searchFilesWithContent method for pattern-based file search", () => {
+      const client = createClient();
+      // searchFilesWithContent uses limit: 100 (up from 20) to support projects
+      // with many files (e.g., 138 XML files) that would otherwise cause
+      // excessive cache misses and individual API round-trips.
+      assertEquals(typeof client.searchFilesWithContent, "function");
     });
   });
 

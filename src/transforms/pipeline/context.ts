@@ -123,4 +123,4 @@ export function isTypeScript(ctx: TransformContext): boolean {
   return ctx.filePath.endsWith(".ts") || ctx.filePath.endsWith(".tsx");
 }
 
-export { getExtension } from "../../utils/path-utils.ts";
+export { getExtension } from "#veryfront/utils/path-utils.ts";

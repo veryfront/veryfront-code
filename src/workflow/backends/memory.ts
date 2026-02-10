@@ -34,6 +34,7 @@ export class MemoryBackend implements WorkflowBackend {
   private approvals = new Map<string, PendingApproval[]>();
   private queue: WorkflowJob[] = [];
   private locks = new Map<string, { lockId: string; expiresAt: number }>();
+  private stalledClaims = new Map<string, { workerId: string; expiresAt: number }>();
   private config: MemoryBackendConfig;
 
   constructor(config: MemoryBackendConfig = {}) {
@@ -74,6 +75,12 @@ export class MemoryBackend implements WorkflowBackend {
     };
 
     this.runs.set(runId, updated);
+
+    // Terminal states should drop any stalled claim lease.
+    if (patch.status && patch.status !== "running") {
+      this.stalledClaims.delete(runId);
+    }
+
     return Promise.resolve();
   }
 
@@ -81,6 +88,7 @@ export class MemoryBackend implements WorkflowBackend {
     this.runs.delete(runId);
     this.checkpoints.delete(runId);
     this.approvals.delete(runId);
+    this.stalledClaims.delete(runId);
     return Promise.resolve();
   }
 
@@ -326,6 +334,55 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   // =========================================================================
+  // Stalled Run Recovery
+  // =========================================================================
+
+  findStalledRuns(stalledThreshold: number): Promise<WorkflowRun[]> {
+    const now = Date.now();
+    const stalled = Array.from(this.runs.values())
+      .filter((run) => run.status === "running")
+      .filter((run) => {
+        const lastActivity = run.heartbeatAt?.getTime() ?? run.startedAt?.getTime() ??
+          run.createdAt.getTime();
+        return now - lastActivity >= stalledThreshold;
+      })
+      .map((run) => structuredClone(run));
+
+    return Promise.resolve(stalled);
+  }
+
+  claimStalledRun(runId: string, workerId: string, stalledThreshold: number): Promise<boolean> {
+    const now = Date.now();
+    const run = this.runs.get(runId);
+    if (!run || run.status !== "running") {
+      return Promise.resolve(false);
+    }
+
+    const lastActivity = run.heartbeatAt?.getTime() ?? run.startedAt?.getTime() ??
+      run.createdAt.getTime();
+    if (now - lastActivity < stalledThreshold) {
+      return Promise.resolve(false);
+    }
+
+    const claim = this.stalledClaims.get(runId);
+    if (claim && claim.expiresAt > now) {
+      return Promise.resolve(false);
+    }
+
+    this.stalledClaims.set(runId, {
+      workerId,
+      expiresAt: now + stalledThreshold,
+    });
+
+    run.workerId = workerId;
+    run.startedAt = run.startedAt ?? new Date(now);
+    run.heartbeatAt = new Date(now);
+    this.runs.set(runId, run);
+
+    return Promise.resolve(true);
+  }
+
+  // =========================================================================
   // Lifecycle
   // =========================================================================
 
@@ -377,6 +434,7 @@ export class MemoryBackend implements WorkflowBackend {
     this.approvals.clear();
     this.queue = [];
     this.locks.clear();
+    this.stalledClaims.clear();
     return Promise.resolve();
   }
 }

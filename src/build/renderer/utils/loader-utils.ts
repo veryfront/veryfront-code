@@ -1,5 +1,5 @@
 import type * as esbuild from "esbuild";
-import { getExtensionName } from "../../../utils/path-utils.ts";
+import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 
 type FileType = "mdx" | "tsx" | "ts" | "jsx" | "js" | "css" | "json";
 
