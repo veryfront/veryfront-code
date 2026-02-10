@@ -1,0 +1,33 @@
+#!/bin/sh
+
+echo "Running pre-push checks..."
+
+# Format check
+echo "Checking formatting..."
+deno fmt --check || {
+  echo "❌ Format check failed. Run 'deno fmt' to fix."
+  exit 1
+}
+
+# Lint
+echo "Running linter..."
+deno lint || {
+  echo "❌ Lint failed."
+  exit 1
+}
+
+# Type check
+echo "Running type check..."
+deno check src/index.ts || {
+  echo "❌ Type check failed."
+  exit 1
+}
+
+# Unit tests
+echo "Running unit tests..."
+deno task test:unit || {
+  echo "❌ Tests failed."
+  exit 1
+}
+
+echo "✅ All pre-push checks passed!"
