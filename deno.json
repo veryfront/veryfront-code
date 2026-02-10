@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.7-rc.58",
+  "version": "0.1.7-rc.59",
   "nodeModulesDir": "auto",
   "exclude": [
     "npm/",
