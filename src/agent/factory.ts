@@ -157,6 +157,11 @@ export function agent(config: AgentConfig): Agent {
   return agentInstance;
 }
 
+// Register on globalThis so compiled-binary runtime shim can delegate to the
+// real factory. External temp-file modules can't import from the embedded
+// binary FS, so they use globalThis bridges instead.
+(globalThis as Record<string, unknown>).__vfAgentFactory = agent;
+
 let agentIdCounter = 0;
 
 function generateAgentId(): string {

@@ -23,7 +23,7 @@ export async function fetchProjectEnvVars(
   environmentId: string,
   token: string,
 ): Promise<Record<string, string>> {
-  const url = `${apiBaseUrl}/${encodeURIComponent(projectSlug)}/env-vars?environment_id=${
+  const url = `${apiBaseUrl}/projects/${encodeURIComponent(projectSlug)}/env-vars?environment_id=${
     encodeURIComponent(environmentId)
   }&limit=${ENV_VARS_FETCH_LIMIT}`;
 

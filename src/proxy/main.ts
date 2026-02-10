@@ -307,6 +307,7 @@ function forwardToServer(req: Request): Promise<Response> {
           if (ctx.localPath) newHeaders.set("x-project-path", ctx.localPath);
           if (ctx.projectId) newHeaders.set("x-project-id", ctx.projectId);
           if (ctx.releaseId) newHeaders.set("x-release-id", ctx.releaseId);
+          if (ctx.environmentId) newHeaders.set("x-environment-id", ctx.environmentId);
           if (ctx.branchId) newHeaders.set("x-branch-id", ctx.branchId);
           if (ctx.branchName) newHeaders.set("x-branch-name", ctx.branchName);
           newHeaders.delete("host");

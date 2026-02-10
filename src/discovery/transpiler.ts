@@ -148,12 +148,16 @@ export async function importModule(
   const { build } = await import("esbuild");
   const fileDir = pathHelper.dirname(filePath);
 
-  // For compiled binaries, don't mark relative imports as external
-  const relativeImports = isDeno && !isDenoCompiled
+  // When using fsAdapter (VFS), bundle all relative imports via the plugin.
+  // Only mark relative imports as external when running in Deno without VFS
+  // (local filesystem where Deno can resolve them natively).
+  const hasFsAdapter = !!context.fsAdapter;
+  const relativeImports = isDeno && !isDenoCompiled && !hasFsAdapter
     ? [...source.matchAll(/from\s+["'](\.\.[^"']+)["']/g)].map((m) => m[1]!).filter(Boolean)
     : [];
 
-  const plugins = !isDeno && context.fsAdapter ? [createFsAdapterPlugin(context.fsAdapter)] : [];
+  // Use fsAdapter plugin whenever a VFS adapter is available (regardless of runtime)
+  const plugins = hasFsAdapter ? [createFsAdapterPlugin(context.fsAdapter!)] : [];
 
   const result = await build({
     bundle: true,

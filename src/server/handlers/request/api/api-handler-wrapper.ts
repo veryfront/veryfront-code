@@ -8,6 +8,7 @@ import type {
 import { getApiHandler } from "./pages-api-handler.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { serverLogger } from "#veryfront/utils";
 
 type FsWrapper = {
   isMultiProjectMode?: () => boolean;
@@ -19,6 +20,42 @@ type FsWrapper = {
     options?: { productionMode?: boolean; releaseId?: string | null },
   ) => Promise<T>;
 };
+
+/** Tracks which projects have had AI discovery run (agents, tools, etc.). */
+const discoveredProjects = new Set<string>();
+
+/**
+ * Run AI discovery (agents, tools) for a project if not already done.
+ * Must be called within a runWithContext scope so the VFS can resolve
+ * the correct remote project files and the agent registry uses the
+ * correct project scope.
+ */
+async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void> {
+  const key = ctx.projectSlug ?? ctx.projectDir;
+  if (discoveredProjects.has(key)) return;
+
+  discoveredProjects.add(key);
+
+  try {
+    const { discoverAll } = await import("#veryfront/discovery");
+    const result = await discoverAll({
+      baseDir: ctx.projectDir,
+      fsAdapter: ctx.adapter.fs,
+      verbose: false,
+    });
+
+    serverLogger.debug("[API-Wrapper] Lazy AI discovery completed", {
+      projectSlug: ctx.projectSlug,
+      agents: result.agents.size,
+      tools: result.tools.size,
+    });
+  } catch (error) {
+    serverLogger.debug("[API-Wrapper] AI discovery skipped", {
+      projectSlug: ctx.projectSlug,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 export class ApiHandlerWrapper extends BaseHandler {
   private projectDir: string;
@@ -104,6 +141,10 @@ export class ApiHandlerWrapper extends BaseHandler {
       "api.handleWithContext",
       async () => {
         try {
+          // Lazy per-project AI discovery (agents, tools) on first access.
+          // Must run within runWithContext so VFS and registry scope are correct.
+          await ensureProjectDiscovery(ctx);
+
           const api = await getApiHandler(ctx);
           const apiRes = await api.handle(req);
 
