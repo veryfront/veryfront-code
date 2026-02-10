@@ -6,7 +6,7 @@
  */
 
 import { logger } from "#veryfront/utils";
-import { TokenStorageAPIClient } from "./api-client.ts";
+import { TokenStorageApiClient } from "./api-client.ts";
 import {
   createTokenConfig,
   type TokenStorageAdapter,
@@ -14,12 +14,12 @@ import {
 } from "./types.ts";
 
 export class VeryfrontTokenAdapter implements TokenStorageAdapter {
-  private client: TokenStorageAPIClient;
+  private client: TokenStorageApiClient;
   private initialized = false;
 
   constructor(config: TokenStorageAdapterConfig) {
     const tokenConfig = createTokenConfig(config);
-    this.client = new TokenStorageAPIClient(tokenConfig);
+    this.client = new TokenStorageApiClient(tokenConfig);
 
     logger.debug("[VeryfrontTokenAdapter] Created", {
       apiBaseUrl: tokenConfig.apiBaseUrl,

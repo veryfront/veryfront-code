@@ -1,17 +1,17 @@
-import type { VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
+import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { ContentSource, ResolvedContentContext } from "./types.ts";
 
 type ContextResolverClient = Pick<
-  VeryfrontAPIClient,
+  VeryfrontApiClient,
   "listEnvironmentFiles" | "lookupProjectByDomain"
 >;
 
 type FileListClient = Pick<
-  VeryfrontAPIClient,
+  VeryfrontApiClient,
   "listAllEnvironmentFiles" | "listAllFiles" | "listPublishedFiles"
 >;
 
-type ClientContextInput = Parameters<VeryfrontAPIClient["setContext"]>[0];
+type ClientContextInput = Parameters<VeryfrontApiClient["setContext"]>[0];
 
 export function isSourceFile(path: string): boolean {
   return (

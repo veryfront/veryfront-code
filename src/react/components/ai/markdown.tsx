@@ -268,5 +268,3 @@ export function Markdown({
     </div>
   );
 }
-
-export default Markdown;

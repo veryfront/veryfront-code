@@ -1,6 +1,6 @@
 import { logger } from "#veryfront/utils";
 import type { FileCache } from "../cache/file-cache.ts";
-import type { VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
+import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { ContentSource, InvalidationCallbacks, ResolvedContentContext } from "./types.ts";
 import {
   buildDirCacheKeyPrefix,
@@ -24,7 +24,7 @@ export interface WebSocketDeps {
   apiToken: string;
   projectSlug: string;
   cache: FileCache;
-  client: VeryfrontAPIClient;
+  client: VeryfrontApiClient;
   invalidationCallbacks: InvalidationCallbacks;
 
   getContentContext: () => ResolvedContentContext | null;

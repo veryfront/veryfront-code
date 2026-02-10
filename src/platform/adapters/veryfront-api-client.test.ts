@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { VeryfrontAPIClient, VeryfrontError } from "./veryfront-api-client/index.ts";
+import { VeryfrontApiClient, VeryfrontError } from "./veryfront-api-client/index.ts";
 
 function withMockFetch<T>(
   mockFetch: typeof globalThis.fetch,
@@ -19,17 +19,17 @@ function assertVeryfrontError(error: unknown): VeryfrontError {
   return error as VeryfrontError;
 }
 
-describe("VeryfrontAPIClient", () => {
+describe("VeryfrontApiClient", () => {
   const mockConfig = {
     apiBaseUrl: "https://api.test.com",
     apiToken: "test-token",
     projectSlug: "test-project",
   };
 
-  let client: VeryfrontAPIClient;
+  let client: VeryfrontApiClient;
 
   beforeEach(() => {
-    client = new VeryfrontAPIClient({
+    client = new VeryfrontApiClient({
       ...mockConfig,
       retry: {
         maxRetries: 2,
@@ -124,7 +124,7 @@ describe("VeryfrontAPIClient", () => {
     it("should respect maxRetries config", async () => {
       let callCount = 0;
 
-      const clientWithRetries = new VeryfrontAPIClient({
+      const clientWithRetries = new VeryfrontApiClient({
         ...mockConfig,
         retry: {
           maxRetries: 1,

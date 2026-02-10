@@ -49,5 +49,3 @@ export function PageContextProvider({
 export function usePageContext(): PageContextValue {
   return React.useContext(PageContextContext);
 }
-
-export default usePageContext;

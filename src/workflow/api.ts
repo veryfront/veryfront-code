@@ -21,7 +21,7 @@
 
 import { getWorkflowTenant } from "./executor/step-executor.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { VeryfrontAPIClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
+import { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 
 /**
  * Validate that a project slug is safe and well-formed.
@@ -77,13 +77,13 @@ function getTenant() {
 }
 
 /**
- * Create a VeryfrontAPIClient configured for the current tenant.
+ * Create a VeryfrontApiClient configured for the current tenant.
  * Each call creates a new client instance configured with the current tenant's credentials.
  */
-function getClient(): VeryfrontAPIClient {
+function getClient(): VeryfrontApiClient {
   const tenant = getTenant();
 
-  const client = new VeryfrontAPIClient({
+  const client = new VeryfrontApiClient({
     apiBaseUrl: Deno.env.get("VERYFRONT_API_URL") || "https://api.veryfront.com",
     proxyMode: true,
     projectId: tenant.projectId,

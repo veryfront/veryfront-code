@@ -1,6 +1,6 @@
 import { logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import type { VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
+import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { logContentMetric, type MissReason } from "./content-metrics.ts";
 import { FileListIndex } from "./file-list-index.ts";
@@ -63,7 +63,7 @@ export class ReadOperations {
   private readonly extensionResolutionCache = new Map<string, string>();
 
   constructor(
-    private readonly client: VeryfrontAPIClient,
+    private readonly client: VeryfrontApiClient,
     private readonly cache: FileCache,
     private readonly normalizer: PathNormalizer,
     private readonly contextProvider?: ContentContextProvider,

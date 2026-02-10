@@ -1,4 +1,4 @@
-export { type FileContext, VeryfrontAPIClient } from "./client.ts";
+export { type FileContext, VeryfrontApiClient } from "./client.ts";
 export {
   type FileDetail,
   type FileListResult,

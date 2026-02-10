@@ -164,5 +164,3 @@ export class PrefetchQueue {
 }
 
 export const prefetchQueue = new PrefetchQueue();
-
-export default prefetchQueue;

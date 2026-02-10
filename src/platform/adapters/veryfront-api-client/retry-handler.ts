@@ -64,7 +64,7 @@ export async function requestWithRetry(
           if (!response.ok) {
             const text = await response.text();
 
-            logger.error("[VeryfrontAPIClient] Request failed", {
+            logger.error("[VeryfrontApiClient] Request failed", {
               url: url.replace(/token=[^&]+/, "token=***"),
               status: response.status,
               statusText: response.statusText,
@@ -97,7 +97,7 @@ export async function requestWithRetry(
 
       const isTimeout = lastError.name === "AbortError";
       if (isTimeout) {
-        logger.warn("[VeryfrontAPIClient] Request timed out", {
+        logger.warn("[VeryfrontApiClient] Request timed out", {
           url: url.replace(/token=[^&]+/, "token=***"),
           timeoutMs,
           attempt: attempt + 1,
@@ -119,7 +119,7 @@ export async function requestWithRetry(
 
       recordApiRetry();
 
-      logger.warn("[VeryfrontAPIClient] Request failed, retrying...", {
+      logger.warn("[VeryfrontApiClient] Request failed, retrying...", {
         attempt: attempt + 1,
         maxRetries,
         delay,

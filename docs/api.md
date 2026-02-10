@@ -255,7 +255,7 @@ Displays agent status, tool calls, thinking state, and messages.
 import { AgentCard, useAgent } from "veryfront/chat";
 
 function AgentUI() {
-  const agent = useAgent({ api: "/api/agent" });
+  const agent = useAgent({ agent: "assistant" });
   return (
     <AgentCard
       status={agent.status}
@@ -385,7 +385,7 @@ Renders markdown strings at runtime with syntax highlighting and Mermaid diagram
 import { Markdown } from "veryfront/markdown";
 import type { MarkdownProps, CodeBlockProps } from "veryfront/markdown";
 
-<Markdown content="# Hello\n\nSome **bold** text with `code`." />
+<Markdown># Hello{"\n\n"}Some **bold** text with `code`.</Markdown>
 ```
 
 ---
@@ -422,10 +422,13 @@ Define and run AI agents with memory, tool use, and multi-agent composition.
 import { agent } from "veryfront/agent";
 
 const assistant = agent({
-  name: "assistant",
-  model: "gpt-4o",
+  id: "assistant",
+  model: "openai/gpt-4o",
   system: "You are a helpful assistant.",
-  tools: [searchTool, calculatorTool],
+  tools: {
+    search: searchTool,
+    calculator: calculatorTool,
+  },
   memory: { type: "conversation", maxMessages: 50 },
 });
 ```
@@ -504,17 +507,14 @@ Define tools that agents can call. Tools registered via `tool()` are automatical
 ```ts
 import { tool, dynamicTool, executeTool, toolRegistry } from "veryfront/tool";
 import type { Tool, ToolConfig, ToolDefinition, ToolExecutionContext, DynamicToolConfig, JsonSchema } from "veryfront/tool";
+import { z } from "zod";
 
 const searchTool = tool({
-  name: "search",
+  id: "search",
   description: "Search the web",
-  parameters: {
-    type: "object",
-    properties: {
-      query: { type: "string", description: "Search query" },
-    },
-    required: ["query"],
-  },
+  inputSchema: z.object({
+    query: z.string().describe("Search query"),
+  }),
   execute: async ({ query }) => {
     return { results: await search(query) };
   },
@@ -552,20 +552,24 @@ import {
   waitForEvent,
 } from "veryfront/workflow";
 
-const pipeline = workflow("data-pipeline")
-  .step(agentStep("extract", { agent: "extractor" }))
-  .step(
-    branch({
-      condition: (ctx) => ctx.data.length > 100,
-      then: parallel([
-        agentStep("chunk-1", { agent: "processor" }),
-        agentStep("chunk-2", { agent: "processor" }),
-      ]),
-      otherwise: agentStep("process", { agent: "processor" }),
-    })
-  )
-  .step(waitForApproval({ approver: "admin" }))
-  .step(agentStep("publish", { agent: "publisher" }));
+const pipeline = workflow({
+  id: "data-pipeline",
+  steps: [
+    agentStep("extract", "extractor"),
+    branch("route-by-size", {
+      condition: (ctx) => Boolean(ctx.data?.largeInput),
+      then: [
+        parallel("chunk-processing", [
+          agentStep("chunk-1", "processor"),
+          agentStep("chunk-2", "processor"),
+        ]),
+      ],
+      else: [agentStep("process", "processor")],
+    }),
+    waitForApproval("approval", { approvers: ["admin"] }),
+    agentStep("publish", "publisher"),
+  ],
+});
 ```
 
 ### Backends
@@ -581,7 +585,8 @@ import type { WorkflowBackend, BackendConfig, RedisBackendConfig, RedisAdapter }
 import { createWorkflowClient, WorkflowClient } from "veryfront/workflow";
 import type { WorkflowClientConfig } from "veryfront/workflow";
 
-const client = createWorkflowClient({ baseUrl: "/api/workflows" });
+const client = createWorkflowClient();
+client.register(pipeline);
 const handle = await client.start("data-pipeline", { input: data });
 const result = await handle.result();
 ```
@@ -597,13 +602,13 @@ import {
 } from "veryfront/workflow";
 
 function WorkflowDashboard() {
-  const { workflows } = useWorkflowList();
-  const { start } = useWorkflowStart("data-pipeline");
+  const { runs } = useWorkflowList({ workflowId: "data-pipeline" });
+  const { start } = useWorkflowStart({ workflowId: "data-pipeline" });
   return (
     <div>
       <button onClick={() => start({ input: data })}>Run Pipeline</button>
-      {workflows.map((w) => (
-        <div key={w.id}>{w.status}</div>
+      {runs.map((run) => (
+        <div key={run.id}>{run.status}</div>
       ))}
     </div>
   );
@@ -658,8 +663,9 @@ import { prompt, promptRegistry } from "veryfront/prompt";
 import type { Prompt, PromptConfig } from "veryfront/prompt";
 
 const summarize = prompt({
-  name: "summarize",
-  template: "Summarize the following text in {{style}} style:\n\n{{text}}",
+  id: "summarize",
+  description: "Summarize text in a chosen style",
+  content: "Summarize the following text in {style} style:\n\n{text}",
 });
 ```
 
@@ -672,13 +678,16 @@ Data resources for MCP servers. Resources registered via `resource()` are automa
 ```ts
 import { resource, resourceRegistry } from "veryfront/resource";
 import type { Resource, ResourceConfig } from "veryfront/resource";
+import { z } from "zod";
 
 const docs = resource({
-  name: "documentation",
-  uri: "docs://api",
+  pattern: "docs/:section",
   description: "API documentation",
-  load: async () => {
-    return { content: await readDocs() };
+  paramsSchema: z.object({
+    section: z.string(),
+  }),
+  load: async ({ section }) => {
+    return { content: await readDocs(section) };
   },
 });
 ```
@@ -694,15 +703,16 @@ import { createMCPServer, MCPServer, registerTool, registerPrompt, registerResou
 import type { MCPServerConfig, MCPStats, MCPTool } from "veryfront/mcp";
 
 const server = createMCPServer({
-  name: "my-mcp-server",
-  version: "1.0.0",
+  enabled: true,
+  auth: { type: "none" },
+  cors: { enabled: true, origins: ["*"] },
 });
 
 // Tools, prompts, resources registered via their own modules
 // are automatically discovered. Or register manually:
-registerTool(myTool);
-registerPrompt(myPrompt);
-registerResource(myResource);
+registerTool(myTool.id, myTool);
+registerPrompt(myPrompt.id, myPrompt);
+registerResource(myResource.id, myResource);
 ```
 
 ---
@@ -727,17 +737,21 @@ import { cors, rateLimit, logger, timeout } from "veryfront/middleware";
 cors({ origin: "https://example.com", methods: ["GET", "POST"] });
 
 // Rate limiting
-rateLimit({ max: 100, window: "1m" });
+rateLimit({ maxRequests: 100, windowMs: 60_000 });
 
 // Rate limiting with Redis
 import { RedisRateLimitStore } from "veryfront/middleware";
-rateLimit({ max: 100, window: "1m", store: new RedisRateLimitStore({ /* redis config */ }) });
+rateLimit({
+  maxRequests: 100,
+  windowMs: 60_000,
+  store: new RedisRateLimitStore({ /* redis config */ }),
+});
 
 // Logging
 logger({ format: "combined" });
 
 // Timeout
-timeout({ ms: 30000 });
+timeout({ timeoutMs: 30_000 });
 ```
 
 ### Types
@@ -780,7 +794,7 @@ import type { OAuthInitHandlerOptions, OAuthCallbackHandlerOptions } from "veryf
 ```ts
 import {
   githubConfig,
-  googleCalendarConfig,  // calendarConfig
+  calendarConfig,
   slackConfig,
   notionConfig,
   linearConfig,
@@ -816,14 +830,8 @@ import { createOAuthInitHandler, createOAuthCallbackHandler, githubConfig, Memor
 
 const tokenStore = new MemoryTokenStore();
 
-export const GET = createOAuthInitHandler({
-  provider: githubConfig,
-  clientId: getEnv("GITHUB_CLIENT_ID"),
-  clientSecret: getEnv("GITHUB_CLIENT_SECRET"),
-  redirectUri: "https://example.com/auth/github/callback",
-  tokenStore,
-  scopes: ["read:user", "repo"],
-});
+export const GET = createOAuthInitHandler(githubConfig, { tokenStore });
+export const GET_CALLBACK = createOAuthCallbackHandler(githubConfig, { tokenStore });
 ```
 
 ### Types
@@ -862,7 +870,7 @@ initializeProviders({
 const provider = getProvider("openai");
 
 // Get a provider from a model string
-const provider = getProviderFromModel("gpt-4o"); // returns OpenAI provider
+const resolved = getProviderFromModel("openai/gpt-4o"); // { provider, model }
 ```
 
 ### Provider Classes

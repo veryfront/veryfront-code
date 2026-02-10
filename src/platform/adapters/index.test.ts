@@ -53,8 +53,8 @@ describe("adapters/index.ts exports", () => {
   });
 
   describe("API Client", () => {
-    it("should export VeryfrontAPIClient", async () => {
-      await assertExport("VeryfrontAPIClient", "function");
+    it("should export VeryfrontApiClient", async () => {
+      await assertExport("VeryfrontApiClient", "function");
     });
 
     it("should export API_CLIENT_ERROR", async () => {

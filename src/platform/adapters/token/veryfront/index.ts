@@ -1,4 +1,4 @@
-export { TokenStorageAPIClient } from "./api-client.ts";
+export { TokenStorageApiClient } from "./api-client.ts";
 export { VeryfrontTokenAdapter } from "./adapter.ts";
 export { MemoryTokenAdapter } from "./memory-adapter.ts";
 export {

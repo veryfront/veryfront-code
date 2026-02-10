@@ -6,7 +6,7 @@ import {
   buildGitHubTreeCacheKey,
 } from "#veryfront/cache";
 import type { FileCache } from "../cache/file-cache.ts";
-import type { GitHubAPIClient } from "./github-api-client.ts";
+import type { GitHubApiClient } from "./github-api-client.ts";
 import type { FileIndexEntry, FileInfo, GitHubTreeEntry, ResolvedGitHubConfig } from "./types.ts";
 import { normalizeGitHubPath } from "./path-utils.ts";
 
@@ -15,7 +15,7 @@ const RESOLVE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"];
 
 export class GitHubStatOperations {
   private readonly config: ResolvedGitHubConfig;
-  private readonly client: GitHubAPIClient;
+  private readonly client: GitHubApiClient;
   private readonly cache: FileCache;
   private readonly projectDir: string;
 
@@ -26,7 +26,7 @@ export class GitHubStatOperations {
 
   constructor(
     config: ResolvedGitHubConfig,
-    client: GitHubAPIClient,
+    client: GitHubApiClient,
     cache: FileCache,
     projectDir: string = "",
   ) {

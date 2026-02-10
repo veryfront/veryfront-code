@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { VeryfrontAPIClient } from "./client.ts";
+import { VeryfrontApiClient } from "./client.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 
 const baseConfig = {
@@ -9,11 +9,11 @@ const baseConfig = {
   projectSlug: "config-slug",
 };
 
-function createClient(config = baseConfig): VeryfrontAPIClient {
-  return new VeryfrontAPIClient(config);
+function createClient(config = baseConfig): VeryfrontApiClient {
+  return new VeryfrontApiClient(config);
 }
 
-describe("VeryfrontAPIClient", () => {
+describe("VeryfrontApiClient", () => {
   describe("token priority", () => {
     it("uses config token when no request token set", () => {
       const client = createClient();

@@ -62,5 +62,3 @@ export const compilePlugin: TransformPlugin = {
     }
   },
 };
-
-export default compilePlugin;

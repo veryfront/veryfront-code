@@ -51,12 +51,12 @@ export class NodeServerAdapter implements ServerAdapter {
 
 export class NodeWebSocket {
   private ws: WSWebSocket | null = null;
-  public readyState = 0; // CONNECTING
+  readyState = 0; // CONNECTING
 
-  public onopen: ((event: Event) => void) | null = null;
-  public onclose: ((event: CloseEvent) => void) | null = null;
-  public onerror: ((event: Event) => void) | null = null;
-  public onmessage: ((event: MessageEvent) => void) | null = null;
+  onopen: ((event: Event) => void) | null = null;
+  onclose: ((event: CloseEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
 
   static readonly CONNECTING = 0;
   static readonly OPEN = 1;

@@ -15,7 +15,7 @@ describe("token/index.ts exports", () => {
 
   it("should export MemoryTokenAdapter", () => assertExportedFunction("MemoryTokenAdapter"));
   it("should export VeryfrontTokenAdapter", () => assertExportedFunction("VeryfrontTokenAdapter"));
-  it("should export TokenStorageAPIClient", () => assertExportedFunction("TokenStorageAPIClient"));
+  it("should export TokenStorageApiClient", () => assertExportedFunction("TokenStorageApiClient"));
   it("should export TOKEN_STORAGE_ERROR", async () => {
     const mod = await getModule();
     const value = mod["TOKEN_STORAGE_ERROR" as keyof typeof mod];

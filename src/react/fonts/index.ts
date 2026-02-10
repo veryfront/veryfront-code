@@ -81,5 +81,3 @@ export function GoogleFonts({ fonts = [] }: GoogleFontsProps): React.ReactElemen
     cssVariables ? React.createElement("style", null, cssVariables) : null,
   );
 }
-
-export default GoogleFonts;

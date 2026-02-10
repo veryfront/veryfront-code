@@ -85,7 +85,7 @@ export {
   type LookupDomainResponse,
   type Project,
   type ProjectFile,
-  VeryfrontAPIClient,
+  VeryfrontApiClient,
   type VeryfrontAPIConfig,
   VeryfrontError,
 } from "./veryfront-api-client/index.ts";
@@ -100,7 +100,7 @@ export {
   TOKEN_STORAGE_ERROR,
   type TokenStorageAdapter,
   type TokenStorageAdapterConfig,
-  TokenStorageAPIClient,
+  TokenStorageApiClient,
   VeryfrontTokenAdapter,
   type VeryfrontTokenConfig,
 } from "./token/index.ts";

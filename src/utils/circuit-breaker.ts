@@ -23,12 +23,17 @@ export interface CircuitBreakerOptions {
 }
 
 export class CircuitBreakerOpen extends Error {
+  readonly breakerName: string;
+  readonly nextAttemptMs: number;
+
   constructor(
-    public readonly breakerName: string,
-    public readonly nextAttemptMs: number,
+    breakerName: string,
+    nextAttemptMs: number,
   ) {
     super(`Circuit breaker '${breakerName}' is open. Retry after ${nextAttemptMs}ms`);
     this.name = "CircuitBreakerOpen";
+    this.breakerName = breakerName;
+    this.nextAttemptMs = nextAttemptMs;
   }
 }
 

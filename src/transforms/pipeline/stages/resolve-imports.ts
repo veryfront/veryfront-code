@@ -46,5 +46,3 @@ export const resolveImportsPlugin: TransformPlugin = {
     return rewriteImports(ctx.code, rewriteCtx);
   },
 };
-
-export default resolveImportsPlugin;

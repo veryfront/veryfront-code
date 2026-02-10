@@ -27,5 +27,3 @@ export const parsePlugin: TransformPlugin = {
     return result.compiledCode;
   },
 };
-
-export default parsePlugin;
