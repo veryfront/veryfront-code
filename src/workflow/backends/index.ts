@@ -1,5 +1,4 @@
 /**
- * @module
  * Workflow Backend Exports
  */
 

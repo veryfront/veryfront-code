@@ -1,5 +1,4 @@
 /**
- * @module
  * useChat Hook - Public API
  *
  * Complete chat state management with zero UI.

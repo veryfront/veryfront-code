@@ -1,5 +1,4 @@
 /**
- * @module
  * Workflow Worker Module
  *
  * Provides distributed workflow execution support.

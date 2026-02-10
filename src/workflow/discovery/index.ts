@@ -1,5 +1,4 @@
 /**
- * @module
  * Workflow Discovery Module
  *
  * Provides utilities for discovering workflow definitions from user code.

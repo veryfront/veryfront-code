@@ -1,5 +1,4 @@
 /**
- * @module
  * Cross-runtime console styling
  *
  * Provides terminal colors that work in Deno, Node.js, and Bun.

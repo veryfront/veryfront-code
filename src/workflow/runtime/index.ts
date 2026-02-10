@@ -1,5 +1,4 @@
 /**
- * @module
  * Workflow Runtime Exports
  */
 

@@ -1,5 +1,4 @@
 /**
- * @module
  * Claude Agent SDK Integration
  *
  * Provides Claude Code agentic capabilities within Veryfront workflows.

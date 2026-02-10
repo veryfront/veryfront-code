@@ -1,5 +1,4 @@
 /**
- * @module
  * Job Executors
  *
  * Abstraction layer for executing workflow jobs in different environments.

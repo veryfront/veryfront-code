@@ -1,5 +1,4 @@
 /**
- * @module
  * SSR VF Modules Stage - resolves /_vf_modules/_veryfront/ paths to framework source.
  *
  * The SSR import map rewrites "veryfront/head" -> "/_vf_modules/_veryfront/react/components/Head.js?ssr=true"
