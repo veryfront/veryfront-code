@@ -415,6 +415,12 @@ export function createVeryfrontHandler(
               reqCtx.token,
               projectRes.projectSlug,
             );
+
+            logDebug("[runtime-handler] Project env vars fetched", {
+              projectSlug: projectRes.projectSlug,
+              environmentId: headers.environmentId,
+              count: Object.keys(envVarsForRequest).length,
+            });
           }
 
           await incrementRequestMetrics();

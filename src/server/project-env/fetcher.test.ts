@@ -8,7 +8,7 @@ describe("project-env/fetcher", () => {
     const { server, port } = createMockServer((req: Request) => {
       const url = new URL(req.url);
 
-      assertEquals(url.pathname, "/my-project/env-vars");
+      assertEquals(url.pathname, "/projects/my-project/env-vars");
       assertEquals(url.searchParams.get("environment_id"), "env-123");
       assertEquals(url.searchParams.get("limit"), "100");
       assertEquals(req.headers.get("authorization"), "Bearer test-token");

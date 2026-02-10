@@ -360,6 +360,21 @@ async function loadModuleFromCode(
   const tempFile = pathHelper.join(tempDir, "handler.mjs");
 
   const transformedCode = await rewriteExternalImports(code, projectDir, fs);
+
+  // In compiled Deno binaries, external modules loaded from temp files cannot
+  // resolve "veryfront" since the source is embedded in the binary's virtual FS.
+  // Write a runtime shim that provides the framework's public API via globalThis bridges.
+  if (isDeno && isCompiledBinary()) {
+    // Ensure agent factory globalThis bridge is registered before loading user code.
+    // This dynamic import is FROM embedded source, so it resolves normally.
+    await import("#veryfront/agent/factory.ts");
+
+    await fs.writeTextFile(
+      pathHelper.join(tempDir, "_vf_runtime.mjs"),
+      VERYFRONT_RUNTIME_SHIM,
+    );
+  }
+
   await fs.writeTextFile(tempFile, transformedCode);
 
   try {
@@ -544,6 +559,31 @@ async function rewriteExternalImports(
     for (const { pattern, replacement } of rewrites) {
       transformed = transformed.replace(pattern, replacement);
     }
+
+    // In compiled binaries, "veryfront" resolves to embedded source that can't be
+    // imported from external temp files. Rewrite to use a local runtime shim.
+    if (isCompiledBinary()) {
+      // Static imports: from "veryfront"
+      transformed = transformed.replace(
+        /from\s+["']veryfront["']/g,
+        'from "./_vf_runtime.mjs"',
+      );
+      // Dynamic imports: import("veryfront")
+      transformed = transformed.replace(
+        /import\s*\(\s*["']veryfront["']\s*\)/g,
+        'import("./_vf_runtime.mjs")',
+      );
+      // Subpath static imports: from "veryfront/agent" etc.
+      transformed = transformed.replace(
+        /from\s+["']veryfront\/([^"']+)["']/g,
+        'from "./_vf_runtime.mjs"',
+      );
+      // Subpath dynamic imports: import("veryfront/agent") etc.
+      transformed = transformed.replace(
+        /import\s*\(\s*["']veryfront\/([^"']+)["']\s*\)/g,
+        'import("./_vf_runtime.mjs")',
+      );
+    }
   }
 
   return transformed;
@@ -563,3 +603,75 @@ function extractAPIRouteHandlers(module: unknown): APIRoute {
 
   return handler;
 }
+
+/**
+ * Runtime shim for the "veryfront" package when running in a compiled Deno binary.
+ *
+ * In compiled binaries, source files are embedded and can't be imported from
+ * external temp files. This shim provides the public API by delegating to
+ * globalThis bridges registered by the server's project-env/storage.ts module.
+ */
+const VERYFRONT_RUNTIME_SHIM = `
+// Auto-generated veryfront runtime shim for compiled binary.
+// Delegates to real framework functions registered on globalThis by
+// the server process (composition.ts, factory.ts, storage.ts).
+
+// --- Environment ---
+function getEnv(key) {
+  const getter = globalThis.__vfProjectEnvGetter;
+  if (getter) {
+    const val = getter(key);
+    if (val !== undefined) return val;
+  }
+  const isActive = globalThis.__vfProjectEnvActiveChecker;
+  if (isActive && isActive()) return undefined;
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+  return undefined;
+}
+
+// --- Config ---
+function defineConfig(config) { return config; }
+
+// --- HTTP helpers ---
+function json(data, init) { return Response.json(data, init); }
+function notFound(msg) { return new Response(msg || "Not Found", { status: 404 }); }
+function badRequest(msg) { return new Response(msg || "Bad Request", { status: 400 }); }
+function unauthorized(msg) { return new Response(msg || "Unauthorized", { status: 401 }); }
+function forbidden(msg) { return new Response(msg || "Forbidden", { status: 403 }); }
+function serverError(msg) { return new Response(msg || "Internal Server Error", { status: 500 }); }
+function redirect(url, permanent) {
+  return Response.redirect(url, permanent ? 301 : 302);
+}
+function apiNotFound(msg) { return notFound(msg); }
+function apiRedirect(url, permanent) { return redirect(url, permanent); }
+
+// --- Agent module (veryfront/agent) ---
+// Delegates to real implementations registered on globalThis by the server.
+function agent(config) {
+  const factory = globalThis.__vfAgentFactory;
+  if (!factory) throw new Error("Agent runtime not available in this context");
+  return factory(config);
+}
+function getAgent(id) { return globalThis.__vfGetAgent?.(id) ?? undefined; }
+function registerAgent(id, agentInstance) { return globalThis.__vfRegisterAgent?.(id, agentInstance); }
+function getAllAgentIds() { return globalThis.__vfGetAllAgentIds?.() ?? []; }
+
+export {
+  getEnv,
+  defineConfig,
+  json,
+  notFound,
+  badRequest,
+  unauthorized,
+  forbidden,
+  serverError,
+  redirect,
+  apiNotFound,
+  apiRedirect,
+  agent,
+  getAgent,
+  registerAgent,
+  getAllAgentIds,
+};
+`;

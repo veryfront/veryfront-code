@@ -1,5 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import type { EnvironmentConfig } from "./environment-config.ts";
 import {
   getAnthropicEnvConfig,
@@ -203,38 +204,62 @@ describe("config/env", () => {
   });
 
   describe("getOpenAIEnvConfig", () => {
+    const keys = ["OPENAI_API_KEY", "OPENAI_BASE_URL"];
+    afterEach(() => {
+      for (const k of keys) {
+        try {
+          deleteEnv(k);
+        } catch { /* ignore */ }
+      }
+    });
+
     it("should return empty config by default", () => {
-      const config = getOpenAIEnvConfig(createMockEnv());
+      const config = getOpenAIEnvConfig();
       assertEquals(config.apiKey, undefined);
       assertEquals(config.baseURL, undefined);
-      assertEquals(config.organizationId, undefined);
     });
 
     it("should return populated config", () => {
-      const config = getOpenAIEnvConfig(
-        createMockEnv({ openaiApiKey: "sk-test", openaiBaseUrl: "https://api.openai.com" }),
-      );
+      setEnv("OPENAI_API_KEY", "sk-test");
+      setEnv("OPENAI_BASE_URL", "https://api.openai.com");
+      const config = getOpenAIEnvConfig();
       assertEquals(config.apiKey, "sk-test");
       assertEquals(config.baseURL, "https://api.openai.com");
     });
   });
 
   describe("getAnthropicEnvConfig", () => {
+    const keys = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"];
+    afterEach(() => {
+      for (const k of keys) {
+        try {
+          deleteEnv(k);
+        } catch { /* ignore */ }
+      }
+    });
+
     it("should return populated config", () => {
-      const config = getAnthropicEnvConfig(
-        createMockEnv({
-          anthropicApiKey: "sk-ant-test",
-          anthropicBaseUrl: "https://api.anthropic.com",
-        }),
-      );
+      setEnv("ANTHROPIC_API_KEY", "sk-ant-test");
+      setEnv("ANTHROPIC_BASE_URL", "https://api.anthropic.com");
+      const config = getAnthropicEnvConfig();
       assertEquals(config.apiKey, "sk-ant-test");
       assertEquals(config.baseURL, "https://api.anthropic.com");
     });
   });
 
   describe("getGoogleGenAIEnvConfig", () => {
+    const keys = ["GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"];
+    afterEach(() => {
+      for (const k of keys) {
+        try {
+          deleteEnv(k);
+        } catch { /* ignore */ }
+      }
+    });
+
     it("should return api key when set", () => {
-      const config = getGoogleGenAIEnvConfig(createMockEnv({ googleApiKey: "AIza-test" }));
+      setEnv("GOOGLE_API_KEY", "AIza-test");
+      const config = getGoogleGenAIEnvConfig();
       assertEquals(config.apiKey, "AIza-test");
     });
   });

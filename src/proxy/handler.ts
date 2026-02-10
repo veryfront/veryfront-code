@@ -409,6 +409,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           projectSlug,
           projectId,
           releaseId,
+          environmentId,
           targetEnvName: parsedDomain.environment,
         });
       } else if (projectSlug && scope === "preview" && token) {
@@ -538,6 +539,7 @@ export function injectContextHeaders(req: Request, ctx: ProxyContext): Request {
   if (ctx.projectId) headers.set("x-project-id", ctx.projectId);
   if (ctx.releaseId) headers.set("x-release-id", ctx.releaseId);
   if (ctx.environmentId) headers.set("x-environment-id", ctx.environmentId);
+
   if (ctx.branchId) headers.set("x-branch-id", ctx.branchId);
   if (ctx.branchName) headers.set("x-branch-name", ctx.branchName);
 

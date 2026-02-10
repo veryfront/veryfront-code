@@ -54,6 +54,8 @@ export function env(): Record<string, string> {
 
 // Lazy-loaded references to project-env/storage.ts functions.
 // Uses globalThis to avoid circular imports (process.ts is low-level, project-env is high-level).
+// IMPORTANT: Only cache when the real getter is found. If storage.ts hasn't loaded yet,
+// re-check globalThis on every call to avoid permanently caching the fallback.
 let _getProjectEnv: ((key: string) => string | undefined) | null = null;
 let _isProjectEnvActive: (() => boolean) | null = null;
 
@@ -62,7 +64,11 @@ function getProjectEnvSafe(key: string): string | undefined {
     const mod = (globalThis as Record<string, unknown>).__vfProjectEnvGetter as
       | ((key: string) => string | undefined)
       | undefined;
-    _getProjectEnv = mod ?? (() => undefined);
+    if (mod) {
+      _getProjectEnv = mod;
+    } else {
+      return undefined;
+    }
   }
   return _getProjectEnv(key);
 }
@@ -72,7 +78,11 @@ function isProjectEnvActiveSafe(): boolean {
     const mod = (globalThis as Record<string, unknown>).__vfProjectEnvActiveChecker as
       | (() => boolean)
       | undefined;
-    _isProjectEnvActive = mod ?? (() => false);
+    if (mod) {
+      _isProjectEnvActive = mod;
+    } else {
+      return false;
+    }
   }
   return _isProjectEnvActive();
 }

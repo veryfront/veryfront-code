@@ -144,6 +144,13 @@ export function getAllAgentIds(): string[] {
   return agentRegistry.getAllIds();
 }
 
+// Register on globalThis so compiled-binary runtime shim can delegate to the
+// real registry. External temp-file modules can't import from the embedded
+// binary FS, so they use globalThis bridges instead.
+(globalThis as Record<string, unknown>).__vfGetAgent = getAgent;
+(globalThis as Record<string, unknown>).__vfRegisterAgent = registerAgent;
+(globalThis as Record<string, unknown>).__vfGetAllAgentIds = getAllAgentIds;
+
 export function getAgentsAsTools(descriptions?: Record<string, string>): Record<string, Tool> {
   const tools: Record<string, Tool> = {};
 
