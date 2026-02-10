@@ -1,6 +1,10 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { FileCache, initializeFileCacheRedis, isFileCacheRedisEnabled } from "./file-cache.ts";
+import {
+  FileCache,
+  initializeFileCacheBackend,
+  isFileCacheDistributedEnabled,
+} from "./file-cache.ts";
 
 describe("FileCache", () => {
   let cache: FileCache;
@@ -139,26 +143,26 @@ describe("FileCache", () => {
   });
 });
 
-describe("Redis functions", () => {
-  describe("initializeFileCacheRedis", () => {
-    it("should export initializeFileCacheRedis function", () => {
-      assertExists(initializeFileCacheRedis);
-      assertEquals(typeof initializeFileCacheRedis, "function");
+describe("Distributed cache functions", () => {
+  describe("initializeFileCacheBackend", () => {
+    it("should export initializeFileCacheBackend function", () => {
+      assertExists(initializeFileCacheBackend);
+      assertEquals(typeof initializeFileCacheBackend, "function");
     });
 
     it("should return boolean", async () => {
-      assertEquals(typeof (await initializeFileCacheRedis()), "boolean");
+      assertEquals(typeof (await initializeFileCacheBackend()), "boolean");
     });
   });
 
-  describe("isFileCacheRedisEnabled", () => {
-    it("should export isFileCacheRedisEnabled function", () => {
-      assertExists(isFileCacheRedisEnabled);
-      assertEquals(typeof isFileCacheRedisEnabled, "function");
+  describe("isFileCacheDistributedEnabled", () => {
+    it("should export isFileCacheDistributedEnabled function", () => {
+      assertExists(isFileCacheDistributedEnabled);
+      assertEquals(typeof isFileCacheDistributedEnabled, "function");
     });
 
     it("should return boolean", () => {
-      assertEquals(typeof isFileCacheRedisEnabled(), "boolean");
+      assertEquals(typeof isFileCacheDistributedEnabled(), "boolean");
     });
   });
 });

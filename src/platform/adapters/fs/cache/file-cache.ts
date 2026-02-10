@@ -85,12 +85,6 @@ export function isFileCacheDistributedEnabled(): boolean {
   return cacheBackend !== null && cacheBackend.type !== "memory";
 }
 
-/** @deprecated Use initializeFileCacheBackend instead */
-export const initializeFileCacheRedis = initializeFileCacheBackend;
-
-/** @deprecated Use isFileCacheDistributedEnabled instead */
-export const isFileCacheRedisEnabled = isFileCacheDistributedEnabled;
-
 /**
  * FileCache - Backend-First with Local Fallback
  *

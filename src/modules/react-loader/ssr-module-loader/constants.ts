@@ -13,9 +13,6 @@ export const SSR_TMP_DIRS_MAX_ENTRIES = 100;
 
 export const REDIS_KEY_PREFIX = "veryfront:ssr-module:";
 
-/** @deprecated Use getSSRModuleRedisTTL() for environment-aware TTL */
-export const REDIS_TTL_SECONDS = DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC;
-
 /** Get environment-aware Redis TTL for SSR modules */
 export function getSSRModuleRedisTTL(isProduction: boolean): number {
   return getDistributedCacheTTL("ssr-module", isProduction);

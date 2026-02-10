@@ -2,11 +2,10 @@
  * Tests for app actions
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type ActionResult,
-  clearProjectCache,
   detectIDEs,
   getPreferredIDE,
   type IDE,
@@ -15,7 +14,6 @@ import {
   openInIDE,
   openInStudio,
   openMCPSettings,
-  quickOpen,
 } from "./actions.ts";
 
 describe("app/actions", () => {
@@ -44,38 +42,8 @@ describe("app/actions", () => {
       assertEquals(typeof openFileInIDE, "function");
     });
 
-    it("clearProjectCache is a function", () => {
-      assertEquals(typeof clearProjectCache, "function");
-    });
-
     it("openMCPSettings is a function", () => {
       assertEquals(typeof openMCPSettings, "function");
-    });
-
-    it("quickOpen is a function", () => {
-      assertEquals(typeof quickOpen, "function");
-    });
-  });
-
-  describe("quickOpen", () => {
-    it("returns failure for invalid index", async () => {
-      const result = await quickOpen([], 1, 8080);
-      assertEquals(result.success, false);
-      assertExists(result.message);
-    });
-
-    it("returns failure for out-of-bounds index", async () => {
-      const projects = [{ slug: "test", path: "/test" }];
-      const result = await quickOpen(projects, 5, 8080);
-      assertEquals(result.success, false);
-      assertEquals(result.message, "No project at position 5");
-    });
-
-    it("returns failure for zero index", async () => {
-      const projects = [{ slug: "test", path: "/test" }];
-      const result = await quickOpen(projects, 0, 8080);
-      assertEquals(result.success, false);
-      assertEquals(result.message, "No project at position 0");
     });
   });
 

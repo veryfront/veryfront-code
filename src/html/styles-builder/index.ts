@@ -4,7 +4,6 @@ export { generateThemeVariables } from "./theme-variables.ts";
 export {
   cacheCSSAsync,
   clearCSSCache,
-  compileGlobalsCSS,
   extractCandidates,
   extractCandidatesFromFiles,
   formatCSSError,
