@@ -6,7 +6,6 @@ import { extractCandidates, hashCSS } from "./candidate-extractor.ts";
 import { formatCSSErrorMessage } from "./tailwind-compiler-utils.ts";
 import { getCompiler } from "./tailwind-compiler-cache.ts";
 import {
-  cacheCSSAsync,
   type CSSCacheEntry,
   DEFAULT_STYLESHEET,
   persistRegeneratedCSSEntry,
@@ -96,16 +95,11 @@ export async function getProjectCSS(
   }
 
   const hash = hashCSS(result.css);
-  storeProjectCSS(
+  await storeProjectCSS(
     context,
     { css: result.css, hash, candidatesHash: context.candidatesHash },
     candidates,
   );
-
-  // Store in hash-level cache so other pods can serve /_vf/css/{hash}.css
-  // immediately. Without this, the browser's CSS request may hit a different
-  // pod before the project-level cache propagates, causing a 404.
-  await cacheCSSAsync(result.css, hash, { candidates, stylesheet: context.stylesheet });
 
   logger.debug("[tailwind] Project CSS generated", {
     projectSlug: context.projectSlug,

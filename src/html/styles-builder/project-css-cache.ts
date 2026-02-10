@@ -231,11 +231,11 @@ export async function tryGetProjectCSSFromDistributedCache(
 // Store generated CSS
 // ============================================================================
 
-export function storeProjectCSS(
+export async function storeProjectCSS(
   context: ProjectCSSRequestContext,
   entry: ProjectCSSCacheEntry,
   candidates: Set<string>,
-): void {
+): Promise<void> {
   if (projectCSSBackend) {
     projectCSSBackend.set(context.cacheKey, JSON.stringify(entry), PROJECT_CSS_CACHE_TTL_SECONDS)
       .catch((error) => {
@@ -247,7 +247,11 @@ export function storeProjectCSS(
   }
 
   setProjectCSSLocalFallback(context.cacheKey, entry);
-  cacheProjectCSSEntryByHash(entry, candidates, context.stylesheet).catch(() => {});
+
+  // Await the hash-level cache write so other pods can serve
+  // /_vf/css/{hash}.css immediately. Without awaiting, the browser's
+  // CSS request may hit a different pod before the write completes.
+  await cacheProjectCSSEntryByHash(entry, candidates, context.stylesheet);
 }
 
 /**
