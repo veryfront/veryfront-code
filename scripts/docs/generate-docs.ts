@@ -66,7 +66,7 @@ async function collectModules(): Promise<ModuleInfo[]> {
 }
 
 /** Read the generated index.html and extract the shell (head + nav) to reuse. */
-async function extractShell(): Promise<{ head: string; navOpen: string; navClose: string }> {
+async function extractShell(): Promise<{ head: string; navOpen: string }> {
   const original = await Deno.readTextFile(`${DOCS_DIR}/index.html`);
 
   // Extract <head>...</head> and fix asset paths that may be relative
@@ -75,10 +75,13 @@ async function extractShell(): Promise<{ head: string; navOpen: string; navClose
 
   // Extract the full nav block including search
   const navStart = original.indexOf("<nav id=\"topnav\">");
-  const searchResultsEnd = original.indexOf("</div>", original.indexOf("<div id=\"searchResults\">")) + 6;
+  if (navStart === -1) throw new Error("Could not find <nav id=\"topnav\"> in generated docs");
+  const searchResultsIdx = original.indexOf("<div id=\"searchResults\">");
+  if (searchResultsIdx === -1) throw new Error("Could not find <div id=\"searchResults\"> in generated docs");
+  const searchResultsEnd = original.indexOf("</div>", searchResultsIdx) + 6;
   const navOpen = original.slice(navStart, searchResultsEnd);
 
-  return { head, navOpen, navClose: "" };
+  return { head, navOpen };
 }
 
 /** Count exported symbols from a barrel file (type exports + value exports). */
@@ -95,7 +98,7 @@ async function countExports(moduleName: string): Promise<number> {
 
 function generateIndexHTML(
   modules: (ModuleInfo & { exportCount: number })[],
-  shell: { head: string; navOpen: string },
+  shell: { head: string; navOpen: string; },
 ): string {
   const moduleItems = modules.map((m) => {
     const badge = m.exportCount > 0

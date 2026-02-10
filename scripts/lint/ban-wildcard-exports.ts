@@ -34,6 +34,8 @@ async function main(): Promise<void> {
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
+      const trimmedLine = line.trimStart();
+      if (trimmedLine.startsWith("//") || trimmedLine.startsWith("*")) continue;
       if (WILDCARD_PATTERN.test(line)) {
         violations.push({
           file: entry.path,

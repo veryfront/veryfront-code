@@ -1,7 +1,8 @@
 /**
- * Index.ts
+ * Root entry point re-exporting the user-facing framework API — configuration,
+ * server bootstrap, routing helpers, data fetching, and input validation.
  *
- * @module index.ts
+ * @module veryfront
  */
 
 export { defineConfig } from "#veryfront/config";
