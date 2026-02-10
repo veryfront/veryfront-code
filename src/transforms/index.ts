@@ -1,7 +1,6 @@
 // ESM transforms
 export {
   addDepsToEsmShUrls,
-  computeContentHash,
   computeShortContentHash,
   getLoaderFromPath,
   needsTransform,

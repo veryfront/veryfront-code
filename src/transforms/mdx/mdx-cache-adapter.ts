@@ -3,7 +3,7 @@ import {
   type BundleCode,
   type BundleMetadata,
   computeCodeHash,
-  computeContentHash,
+  computeHash,
   getBundleManifestStore,
 } from "#veryfront/utils";
 import { getBundleManifestTTL } from "#veryfront/utils/bundle-manifest-init.ts";
@@ -46,7 +46,7 @@ export class MDXCacheAdapter {
   }
 
   computeHash(content: string): Promise<string> {
-    return computeContentHash(content);
+    return computeHash(content);
   }
 
   async getCachedBundle(
