@@ -135,6 +135,16 @@ describe("VeryfrontAPIClient", () => {
     });
   });
 
+  describe("searchFilesWithContent", () => {
+    it("should expose searchFilesWithContent method for pattern-based file search", () => {
+      const client = createClient();
+      // searchFilesWithContent uses limit: 100 (up from 20) to support projects
+      // with many files (e.g., 138 XML files) that would otherwise cause
+      // excessive cache misses and individual API round-trips.
+      assertEquals(typeof client.searchFilesWithContent, "function");
+    });
+  });
+
   describe("published content guards", () => {
     it("throws when listPublishedFiles called without releaseId or environmentName", () => {
       const client = createClient();

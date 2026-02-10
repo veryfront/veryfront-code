@@ -365,7 +365,7 @@ export class VeryfrontAPIClient {
   async searchFilesWithContent(
     pattern: string,
   ): Promise<Array<{ path: string; content: string }>> {
-    const result = await this.listFiles({ pattern, limit: 20 });
+    const result = await this.listFiles({ pattern, limit: 100 });
 
     const filesWithContent: Array<{ path: string; content: string }> = [];
     const filesNeedingContent: string[] = [];
