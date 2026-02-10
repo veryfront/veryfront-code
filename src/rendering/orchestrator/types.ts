@@ -40,6 +40,8 @@ export interface RenderOptions {
   colorScheme?: "light" | "dark";
   /** Whether colorScheme was set via color_mode URL param (needs localStorage persistence) */
   colorSchemeFromParam?: boolean;
+  /** Whether colorScheme was set via Sec-CH-Prefers-Color-Scheme header */
+  colorSchemeFromHeader?: boolean;
   /** Deployment environment (preview or production) */
   environment?: "preview" | "production";
   /** Project slug for HTTP fallback in multi-project mode */

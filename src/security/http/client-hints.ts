@@ -10,6 +10,7 @@ export type ColorScheme = "light" | "dark";
 export interface ColorSchemeResult {
   scheme: ColorScheme;
   fromParam: boolean;
+  fromHeader: boolean;
 }
 
 export function getColorSchemeFromRequest(
@@ -23,7 +24,7 @@ export function getColorSchemeFromRequest(
     .toLowerCase();
 
   if (colorModeParam === "dark" || colorModeParam === "light") {
-    return { scheme: colorModeParam, fromParam: true };
+    return { scheme: colorModeParam, fromParam: true, fromHeader: false };
   }
 
   const headerValue = request.headers
@@ -32,9 +33,9 @@ export function getColorSchemeFromRequest(
     .trim()
     .toLowerCase();
 
-  if (headerValue === "dark") {
-    return { scheme: "dark", fromParam: false };
+  if (headerValue === "dark" || headerValue === "light") {
+    return { scheme: headerValue, fromParam: false, fromHeader: true };
   }
 
-  return { scheme: "light", fromParam: false };
+  return { scheme: "light", fromParam: false, fromHeader: false };
 }

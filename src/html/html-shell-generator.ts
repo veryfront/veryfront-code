@@ -231,10 +231,14 @@ async function generateHTMLShellPartsImpl(
 </script>`;
 
   const colorScheme = options.colorScheme ?? "light";
+  // Only set data-theme/color-scheme when explicitly set via URL param (?color_mode=dark|light).
+  const hasExplicitTheme = options.colorSchemeFromParam;
+  const themeAttrs = hasExplicitTheme
+    ? [`data-theme="${colorScheme}"`, `style="color-scheme: ${colorScheme};"`]
+    : [];
   const htmlAttrs = [
     `lang="${escapeHTML(lang)}"`,
-    `data-theme="${colorScheme}"`,
-    `style="color-scheme: ${colorScheme};"`,
+    ...themeAttrs,
     "suppressHydrationWarning",
   ].join(" ");
 

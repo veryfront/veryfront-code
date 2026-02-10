@@ -187,19 +187,43 @@ export class HTMLGenerator {
       reactContent,
     );
 
-    const headElements = this.buildHeadElements(head);
-    if (!headElements) return { start, end };
+    const { scripts, other } = this.buildHeadElements(head);
+    if (!scripts && !other) return { start, end };
 
-    return {
-      start: start.replace("</head>", `  ${headElements}\n</head>`),
-      end,
-    };
+    let modifiedStart = start;
+
+    // Inject blocking scripts at TOP of <head> (after opening tag, before meta/CSS)
+    if (scripts) {
+      modifiedStart = modifiedStart.replace("<head>", `<head>\n  ${scripts}`);
+    }
+
+    // Inject other head elements at BOTTOM of <head> (before closing tag)
+    if (other) {
+      modifiedStart = modifiedStart.replace("</head>", `  ${other}\n</head>`);
+    }
+
+    return { start: modifiedStart, end };
   }
 
-  private buildHeadElements(head?: CollectedHead): string {
-    if (!head) return "";
+  private buildHeadElements(head?: CollectedHead): { scripts: string; other: string } {
+    if (!head) return { scripts: "", other: "" };
 
-    const parts: string[] = [];
+    const scriptParts: string[] = [];
+    const otherParts: string[] = [];
+
+    // Scripts go at TOP of head (before CSS) to prevent flash
+    for (const script of head.scripts ?? []) {
+      const { content, ...attrs } = script;
+      const attrStr = Object.entries(attrs)
+        .filter(([, v]) => v != null)
+        .map(([k, v]) => `${k}="${v}"`)
+        .join(" ");
+      if (content) {
+        scriptParts.push(`<script${attrStr ? ` ${attrStr}` : ""}>${content}</script>`);
+      } else if (attrs.src) {
+        scriptParts.push(`<script ${attrStr}></script>`);
+      }
+    }
 
     for (const meta of head.metas) {
       if (meta.name === "description") continue;
@@ -208,7 +232,7 @@ export class HTMLGenerator {
       if (meta.name) attrs.push(`name="${meta.name}"`);
       if (meta.property) attrs.push(`property="${meta.property}"`);
       if (meta.content) attrs.push(`content="${meta.content}"`);
-      if (attrs.length) parts.push(`<meta ${attrs.join(" ")}>`);
+      if (attrs.length) otherParts.push(`<meta ${attrs.join(" ")}>`);
     }
 
     for (const link of head.links) {
@@ -216,14 +240,17 @@ export class HTMLGenerator {
         .filter(([, v]) => v != null)
         .map(([k, v]) => `${k}="${v}"`)
         .join(" ");
-      if (attrs) parts.push(`<link ${attrs}>`);
+      if (attrs) otherParts.push(`<link ${attrs}>`);
     }
 
     for (const style of head.styles) {
-      parts.push(`<style>${style}</style>`);
+      otherParts.push(`<style>${style}</style>`);
     }
 
-    return parts.join("\n  ");
+    return {
+      scripts: scriptParts.join("\n  "),
+      other: otherParts.join("\n  "),
+    };
   }
 
   private mergeFrontmatter(context: HTMLGenerationContext): MDXFrontmatter {
@@ -312,6 +339,7 @@ export class HTMLGenerator {
       sourceHash,
       colorScheme: context.options?.colorScheme,
       colorSchemeFromParam: context.options?.colorSchemeFromParam,
+      colorSchemeFromHeader: context.options?.colorSchemeFromHeader,
       environment: context.options?.environment,
       headings: context.pageBundle.headings,
       projectClasses,

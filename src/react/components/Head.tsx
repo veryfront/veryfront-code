@@ -44,6 +44,23 @@ export function Head({ children }: { children: React.ReactNode }): React.ReactEl
 
       if (type === "style") {
         collectHead({ styles: [String(props.children ?? "")] });
+        return;
+      }
+
+      if (type === "script") {
+        const script: Record<string, string | undefined> = {};
+        for (const [key, value] of Object.entries(props)) {
+          if (key === "children" || key === "dangerouslySetInnerHTML") continue;
+          if (value != null) script[key] = String(value);
+        }
+        // Handle inline script content
+        if (props.dangerouslySetInnerHTML) {
+          const html = props.dangerouslySetInnerHTML as { __html?: string };
+          if (html.__html) script.content = html.__html;
+        } else if (typeof props.children === "string") {
+          script.content = props.children;
+        }
+        collectHead({ scripts: [script] });
       }
     });
   }
