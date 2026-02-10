@@ -13,6 +13,7 @@ import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
+import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 
 const transpileCache = new Map<string, unknown>();
 
@@ -82,40 +83,50 @@ function createFsAdapterPlugin(fsAdapter: FileSystemAdapter): Plugin {
   return {
     name: "veryfront-fsadapter",
     setup(build: PluginBuild) {
-      build.onResolve({ filter: /^\.\.?\// }, async (args) => {
-        const importerDir = args.importer ? pathHelper.dirname(args.importer) : args.resolveDir;
-        const basePath = pathHelper.resolve(importerDir, args.path);
+      // Wrap callbacks with wrapWithCurrentContext to preserve the
+      // MultiProjectFSAdapter AsyncLocalStorage context across esbuild's
+      // child-process message boundary. Without this, fsAdapter.exists()
+      // and fsAdapter.readFile() cannot resolve the per-project adapter.
+      build.onResolve(
+        { filter: /^\.\.?\// },
+        wrapWithCurrentContext(async (args) => {
+          const importerDir = args.importer ? pathHelper.dirname(args.importer) : args.resolveDir;
+          const basePath = pathHelper.resolve(importerDir, args.path);
 
-        const resolvedPath = await resolveWithExtensions(basePath);
-        if (resolvedPath) return { path: resolvedPath, namespace: "fsadapter" };
+          const resolvedPath = await resolveWithExtensions(basePath);
+          if (resolvedPath) return { path: resolvedPath, namespace: "fsadapter" };
 
-        return {
-          errors: [
-            {
-              text: `Could not resolve "${args.path}" from "${importerDir}" via fsAdapter`,
-            },
-          ],
-        };
-      });
-
-      build.onLoad({ filter: /.*/, namespace: "fsadapter" }, async (args) => {
-        try {
-          const content = await fsAdapter.readFile(args.path);
-          return {
-            contents: content,
-            loader: getEsbuildLoader(args.path),
-            resolveDir: pathHelper.dirname(args.path),
-          };
-        } catch (error) {
           return {
             errors: [
               {
-                text: `Failed to load "${args.path}" from fsAdapter: ${error}`,
+                text: `Could not resolve "${args.path}" from "${importerDir}" via fsAdapter`,
               },
             ],
           };
-        }
-      });
+        }),
+      );
+
+      build.onLoad(
+        { filter: /.*/, namespace: "fsadapter" },
+        wrapWithCurrentContext(async (args) => {
+          try {
+            const content = await fsAdapter.readFile(args.path);
+            return {
+              contents: content,
+              loader: getEsbuildLoader(args.path),
+              resolveDir: pathHelper.dirname(args.path),
+            };
+          } catch (error) {
+            return {
+              errors: [
+                {
+                  text: `Failed to load "${args.path}" from fsAdapter: ${error}`,
+                },
+              ],
+            };
+          }
+        }),
+      );
     },
   };
 }

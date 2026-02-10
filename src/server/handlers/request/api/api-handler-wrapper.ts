@@ -69,12 +69,23 @@ async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void> {
       verbose: false,
     });
 
-    serverLogger.debug("[API-Wrapper] Lazy AI discovery completed", {
+    const logData = {
       projectSlug: ctx.projectSlug,
       releaseId: ctx.releaseId,
       agents: result.agents.size,
       tools: result.tools.size,
-    });
+      errors: result.errors.length,
+    };
+
+    if (result.agents.size === 0 && result.tools.size === 0) {
+      serverLogger.warn("[API-Wrapper] AI discovery found 0 agents and 0 tools", {
+        ...logData,
+        errorMessages: result.errors.map((e) => e.error.message).slice(0, 5),
+        baseDir: ctx.projectDir,
+      });
+    } else {
+      serverLogger.info("[API-Wrapper] AI discovery completed", logData);
+    }
   })();
 
   discoveredProjects.set(key, promise);
@@ -84,9 +95,10 @@ async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void> {
   } catch (error) {
     // Allow retry on next request
     discoveredProjects.delete(key);
-    serverLogger.debug("[API-Wrapper] AI discovery failed (will retry)", {
+    serverLogger.warn("[API-Wrapper] AI discovery failed (will retry)", {
       projectSlug: ctx.projectSlug,
       error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
     });
   }
 }
