@@ -81,10 +81,8 @@ export { VERSION } from "./version.ts";
 export {
   type BundleCode as HashBundleCode,
   computeCodeHash,
-  computeContentHash,
   computeHash,
   fnv1aHash,
-  getContentHash,
   shortHash,
   simpleHash,
 } from "./hash-utils.ts";

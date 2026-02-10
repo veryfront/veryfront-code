@@ -19,6 +19,7 @@ src/                      # Source code with colocated unit tests
 tests/
 ├── _helpers/             # Shared test utilities (TestContext, etc.)
 ├── _examples/            # Example tests demonstrating best practices
+├── e2e/                  # End-to-end tests (Playwright)
 ├── fixtures/             # Test data and mock implementations
 └── integration/          # Integration tests (multiple components, I/O, servers)
 ```
@@ -27,7 +28,7 @@ tests/
 
 - **Unit tests** (pure functions, no I/O, no external dependencies) are **colocated** with source code in `src/`
 - **Integration tests** (servers, databases, file systems, multiple components) live in `tests/integration/`
-- No separate `e2e/` directory yet - add when needed for full end-to-end user flows
+- **E2E tests** live in `tests/e2e/` when full user-flow coverage is needed
 
 ### File Naming
 

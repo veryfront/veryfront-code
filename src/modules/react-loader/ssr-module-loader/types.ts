@@ -36,5 +36,5 @@ export interface SSRModuleCacheStats {
   memoryEntries: number;
   maxEntries: number;
   tmpDirs: number;
-  redisEnabled: boolean;
+  distributedCacheEnabled: boolean;
 }

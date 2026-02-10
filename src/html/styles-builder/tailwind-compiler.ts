@@ -228,10 +228,3 @@ export async function generateTailwind4CSS(html: string): Promise<string> {
   const result = await generateTailwindCSS(undefined, candidates);
   return result.css;
 }
-
-/** @deprecated Use generateTailwindCSS instead */
-export async function compileGlobalsCSS(css: string): Promise<string> {
-  const result = await generateTailwindCSS(css, []);
-  if (result.error) throw new Error(result.error);
-  return result.css;
-}

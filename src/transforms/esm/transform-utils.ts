@@ -9,9 +9,6 @@ export function computeShortContentHash(content: string): Promise<string> {
   return shortHash(content);
 }
 
-/** @deprecated Use computeShortContentHash instead to avoid naming collision with full hash version */
-export const computeContentHash = computeShortContentHash;
-
 const EXTENSION_LOADERS: Record<string, Loader> = {
   ".tsx": "tsx",
   ".ts": "ts",

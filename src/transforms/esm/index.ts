@@ -10,12 +10,7 @@ export type {
   TransformResult,
 } from "../pipeline/types.ts";
 
-export {
-  computeContentHash,
-  computeShortContentHash,
-  getLoaderFromPath,
-  needsTransform,
-} from "./transform-utils.ts";
+export { computeShortContentHash, getLoaderFromPath, needsTransform } from "./transform-utils.ts";
 
 export { addDepsToEsmShUrls, resolveReactImports } from "./react-imports.ts";
 export { resolvePathAliases, resolveRelativeImports } from "./path-resolver.ts";

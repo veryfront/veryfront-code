@@ -1,13 +1,6 @@
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  computeCodeHash,
-  computeContentHash,
-  computeHash,
-  getContentHash,
-  shortHash,
-  simpleHash,
-} from "./hash-utils.ts";
+import { computeCodeHash, computeHash, shortHash, simpleHash } from "./hash-utils.ts";
 
 describe("hash-utils", () => {
   describe("computeHash", () => {
@@ -38,24 +31,6 @@ describe("hash-utils", () => {
     it("should handle unicode content", async () => {
       const hash = await computeHash("こんにちは世界");
       assertEquals(hash.length, 64);
-    });
-  });
-
-  describe("getContentHash (deprecated alias)", () => {
-    it("should be an alias for computeHash", async () => {
-      const input = "test";
-      const hash1 = await computeHash(input);
-      const hash2 = await getContentHash(input);
-      assertEquals(hash1, hash2);
-    });
-  });
-
-  describe("computeContentHash (deprecated alias)", () => {
-    it("should be an alias for computeHash", async () => {
-      const input = "test";
-      const hash1 = await computeHash(input);
-      const hash2 = await computeContentHash(input);
-      assertEquals(hash1, hash2);
     });
   });
 

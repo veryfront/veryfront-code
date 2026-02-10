@@ -1,8 +1,6 @@
 export {
   computeCodeHash,
-  computeContentHash,
   computeHash,
-  getContentHash,
   type HashBundleCode as BundleCode,
   shortHash,
   simpleHash,

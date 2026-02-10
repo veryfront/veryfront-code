@@ -80,10 +80,6 @@ ${muted("──────────────────────")}
 `);
 }
 
-export function showVersion(): void {
-  console.log(`  veryfront v${VERSION}`);
-}
-
 export function logSuccess(message: string): void {
   console.log(`  ${successColor("✓")} ${message}`);
 }
@@ -131,11 +127,6 @@ export function isVerbose(): boolean {
 
 export function isQuiet(): boolean {
   return _quietMode;
-}
-
-export function logVerbose(message: string): void {
-  if (!_verboseMode) return;
-  cliLogger.info(dim(`[verbose] ${message}`));
 }
 
 export function promptUser(message: string): Promise<string> {
