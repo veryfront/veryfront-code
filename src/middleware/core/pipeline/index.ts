@@ -1,3 +1,9 @@
+/**
+ * Core - Pipeline
+ *
+ * @module middleware/core/pipeline
+ */
+
 export type { MiddlewarePipelineOptions } from "./types.ts";
 export { MiddlewarePipeline } from "./pipeline.ts";
 export { composeMiddleware } from "./composer.ts";

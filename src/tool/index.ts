@@ -1,3 +1,9 @@
+/**
+ * Tool
+ *
+ * @module tool
+ */
+
 export type { Tool, ToolConfig, ToolDefinition, ToolExecutionContext } from "./types.ts";
 
 export { dynamicTool, tool } from "./factory.ts";

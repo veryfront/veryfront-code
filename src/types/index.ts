@@ -1,3 +1,9 @@
+/**
+ * Types
+ *
+ * @module types
+ */
+
 import type * as React from "react";
 
 export type {

@@ -1,3 +1,9 @@
+/**
+ * Adapters - Fs
+ *
+ * @module platform/adapters/fs
+ */
+
 export { FileCache } from "./cache/file-cache.ts";
 export type { FileCacheOptions } from "./cache/types.ts";
 export { createFSAdapter } from "./factory.ts";

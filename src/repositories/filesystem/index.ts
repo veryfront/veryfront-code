@@ -1,3 +1,9 @@
+/**
+ * Repositories Filesystem
+ *
+ * @module repositories/filesystem
+ */
+
 export {
   createFileSystemRepository,
   SecureFsRepository,

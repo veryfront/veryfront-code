@@ -1,3 +1,9 @@
+/**
+ * Server Context
+ *
+ * @module server/context
+ */
+
 export {
   createRequestContext,
   getCacheStrategy,

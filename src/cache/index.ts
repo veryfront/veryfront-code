@@ -1,3 +1,9 @@
+/**
+ * Cache
+ *
+ * @module cache
+ */
+
 // Cache path tokenization
 export { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "./paths.ts";
 

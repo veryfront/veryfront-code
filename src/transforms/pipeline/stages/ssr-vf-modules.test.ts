@@ -12,7 +12,8 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { buildReactUrl, getReactImportMap } from "../../import-rewriter/url-builder.ts";
-import { _testExports, ssrVfModulesPlugin } from "./ssr-vf-modules.ts";
+import { ssrVfModulesPlugin } from "./ssr-vf-modules.ts";
+import { _testExports } from "./ssr-vf-modules/index.ts";
 import type { TransformContext } from "../types.ts";
 
 const { findVfModuleImports, FRAMEWORK_ROOT, EXTENSIONS } = _testExports;

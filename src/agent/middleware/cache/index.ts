@@ -4,4 +4,4 @@
  * @module veryfront/agent/middleware/cache
  */
 
-export * from "./cache.ts";
+export { type CacheConfig, type CacheEntry, cacheMiddleware, createCache } from "./cache.ts";

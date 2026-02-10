@@ -1,3 +1,9 @@
+/**
+ * Ssr Module Loader - Cache
+ *
+ * @module modules/react-loader/ssr-module-loader/cache
+ */
+
 export {
   acquireTransformSlot,
   clearSSRModuleCache,

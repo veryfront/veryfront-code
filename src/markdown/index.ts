@@ -1,3 +1,9 @@
+/**
+ * Markdown
+ *
+ * @module markdown
+ */
+
 // veryfront/markdown — Markdown rendering component
 //
 // Renders markdown strings at runtime with syntax highlighting and

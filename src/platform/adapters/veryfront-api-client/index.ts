@@ -1,3 +1,9 @@
+/**
+ * Adapters - Veryfront Api Client
+ *
+ * @module platform/adapters/veryfront-api-client
+ */
+
 export { type FileContext, VeryfrontApiClient } from "./client.ts";
 export {
   type FileDetail,

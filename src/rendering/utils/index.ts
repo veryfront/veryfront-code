@@ -1,3 +1,9 @@
+/**
+ * Rendering Utils
+ *
+ * @module rendering/utils
+ */
+
 export {
   computeCodeHash,
   computeHash,
@@ -6,5 +12,11 @@ export {
   simpleHash,
 } from "#veryfront/utils";
 
-export * from "./react-helpers.ts";
-export * from "./stream-utils.ts";
+export { createDefaultMDXComponents, normalizeChild } from "./react-helpers.ts";
+export {
+  StreamTimeoutError,
+  streamToString,
+  TimeoutError,
+  withTimeout,
+  withTimeoutThrow,
+} from "./stream-utils.ts";

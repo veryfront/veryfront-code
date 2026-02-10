@@ -1,3 +1,9 @@
+/**
+ * Transforms Esm
+ *
+ * @module transforms/esm
+ */
+
 export { runPipeline, TransformStage, transformToESM } from "../pipeline/index.ts";
 
 export type { TransformContext, TransformOptions } from "./types.ts";

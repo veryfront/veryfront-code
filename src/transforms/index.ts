@@ -1,3 +1,9 @@
+/**
+ * Transforms
+ *
+ * @module transforms
+ */
+
 // ESM transforms
 export {
   addDepsToEsmShUrls,

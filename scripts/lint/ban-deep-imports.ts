@@ -36,21 +36,30 @@ const root = "src";
 
 // Modules with barrel files that should not have deep imports from outside
 const BARREL_MODULES = [
+  "agent/middleware",
   "api",
   "cli",
   "components",
   "data",
   "dev",
+  "html/hydration-script-builder/templates",
   "modules",
+  "platform/adapters/runtime",
+  "provider/adapters",
+  "rendering/cache",
+  "rendering/cache/stores",
+  "rendering/client",
+  "rendering/rsc/actions",
+  "rendering/shared/constants",
+  "rendering/utils",
+  "security/http",
   "server/build",
   "server/build/build",
   "server/modules",
-  "rendering/cache",
-  "rendering/cache/stores",
-  "rendering/utils",
-  "rendering/adapters",
-  "rendering/rsc/actions",
-  "rendering/shared/constants",
+  "utils/cache",
+  "utils/cache/stores/memory",
+  "utils/constants",
+  "utils/logger",
 ];
 
 function shouldSkip(path: string): boolean {

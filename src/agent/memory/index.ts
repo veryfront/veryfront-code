@@ -1,3 +1,9 @@
+/**
+ * Agent Memory
+ *
+ * @module agent/memory
+ */
+
 export {
   estimateTokens,
   type Memory,

@@ -1,3 +1,9 @@
+/**
+ * Components - Optimized Image
+ *
+ * @module react/components/optimized-image
+ */
+
 export { OptimizedBackgroundImage } from "./OptimizedBackgroundImage.tsx";
 export { OptimizedImage } from "./OptimizedImage.tsx";
 export type { OptimizedImageProps } from "./OptimizedImage.tsx";

@@ -1,3 +1,9 @@
+/**
+ * Modules React Loader
+ *
+ * @module modules/react-loader
+ */
+
 export { loadComponentFromSource } from "./component-loader.ts";
 export { loadComponentsUnified } from "./unified-loader.ts";
 export { clearSSRModuleCache, clearSSRModuleCacheForProject } from "./ssr-module-loader/index.ts";

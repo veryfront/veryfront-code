@@ -1,3 +1,9 @@
+/**
+ * Compat - Version Detector
+ *
+ * @module react/compat/version-detector
+ */
+
 export type {
   CompatibilityCheckResult,
   ParsedVersion,
@@ -8,7 +14,6 @@ export type {
 export { parseVersion } from "./version-parser.ts";
 export { detectReactVersion, detectReactVersionFromProject } from "./feature-detector.ts";
 export {
-  __resetReactVersionCacheForTests,
   clearProjectVersionCache,
   getReactVersionInfo,
   getReactVersionInfoForProject,

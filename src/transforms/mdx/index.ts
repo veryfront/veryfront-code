@@ -1,3 +1,9 @@
+/**
+ * Transforms Mdx
+ *
+ * @module transforms/mdx
+ */
+
 import { rendererLogger as logger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "#veryfront/utils/constants/cache.ts";

@@ -1,3 +1,9 @@
+/**
+ * Ai - Icons
+ *
+ * @module react/components/ai/icons
+ */
+
 import * as React from "react";
 import { cn } from "../theme.ts";
 

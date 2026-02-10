@@ -1,3 +1,9 @@
+/**
+ * Routing
+ *
+ * @module routing
+ */
+
 export type { Route, RouteMatch } from "./matchers/index.ts";
 export {
   DynamicRouter,

@@ -1,3 +1,9 @@
+/**
+ * Fs
+ *
+ * @module fs
+ */
+
 // veryfront/fs — Filesystem operations + path utilities
 //
 // Slim public surface for file I/O, path manipulation, and

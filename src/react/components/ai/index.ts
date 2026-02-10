@@ -1,4 +1,17 @@
-export * from "./theme.ts";
+/**
+ * Components - Ai
+ *
+ * @module react/components/ai
+ */
+
+export {
+  type AgentTheme,
+  type ChatTheme,
+  cn,
+  defaultAgentTheme,
+  defaultChatTheme,
+  mergeThemes,
+} from "./theme.ts";
 
 export { Chat, ChatComponents, ChatFooter, ChatHeader, ChatInput, ChatMessages } from "./chat.tsx";
 export type { ChatProps } from "./chat.tsx";

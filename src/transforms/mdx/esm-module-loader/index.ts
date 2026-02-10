@@ -1,3 +1,9 @@
+/**
+ * Mdx - Esm Module Loader
+ *
+ * @module transforms/mdx/esm-module-loader
+ */
+
 // Cache exports
 export { clearESMDiskCache, clearModulePathCache, invalidateModulePaths } from "./cache/index.ts";
 

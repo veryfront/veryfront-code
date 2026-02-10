@@ -18,7 +18,6 @@ import { delay } from "#std/async.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 
 import {
-  __resetAutoInstrumentForTests,
   initAutoInstrumentation,
   instrument,
   instrumentBatch,
@@ -29,6 +28,7 @@ import {
   instrumentSync,
   isAutoInstrumentEnabled,
 } from "./auto-instrument/index.ts";
+import { __resetAutoInstrumentForTests } from "./auto-instrument/orchestrator.ts";
 
 beforeEach((): void => {
   __resetAutoInstrumentForTests();

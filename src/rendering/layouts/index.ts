@@ -1,3 +1,9 @@
+/**
+ * Rendering Layouts
+ *
+ * @module rendering/layouts
+ */
+
 export {
   type LayoutCollectionResult,
   LayoutCollector,

@@ -1,3 +1,9 @@
+/**
+ * Build
+ *
+ * @module build
+ */
+
 export { compileMDXToJS } from "./compiler/mdx-to-js.ts";
 export { compileAllMDX, watchMDX } from "./compiler/mdx-compiler/index.ts";
 export { buildProduction } from "./production-build/build/build-orchestrator.ts";

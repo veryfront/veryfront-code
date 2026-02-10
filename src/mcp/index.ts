@@ -1,3 +1,9 @@
+/**
+ * Mcp
+ *
+ * @module mcp
+ */
+
 export type { MCPServerConfig, MCPStats, MCPTool } from "./types.ts";
 
 export {

@@ -1,3 +1,9 @@
+/**
+ * Repositories Cache
+ *
+ * @module repositories/cache
+ */
+
 export {
   buildScopedKey,
   createMemoryCacheRepository,

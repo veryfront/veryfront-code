@@ -1,3 +1,9 @@
+/**
+ * Compat - Path
+ *
+ * @module platform/compat/path
+ */
+
 export type { NodePathModule, PathObject } from "./types.ts";
 
 export { delimiter, hasNodePath, isDeno, nodePath, sep, sep as SEPARATOR } from "./runtime.ts";

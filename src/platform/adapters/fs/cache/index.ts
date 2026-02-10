@@ -1,3 +1,9 @@
+/**
+ * Fs - Cache
+ *
+ * @module platform/adapters/fs/cache
+ */
+
 export { FileCache } from "./file-cache.ts";
 export { createFileCache } from "./factory.ts";
 export { estimateSize } from "./size-estimator.ts";

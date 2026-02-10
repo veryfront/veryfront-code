@@ -1,3 +1,9 @@
+/**
+ * Request - Module
+ *
+ * @module server/handlers/request/module
+ */
+
 export { ModuleHandler } from "./module.handler.ts";
 export { getRendererForProject } from "../../../shared/renderer-factory.ts";
 export { handleModuleServer } from "./module-server-handler.ts";

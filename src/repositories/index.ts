@@ -1,3 +1,9 @@
+/**
+ * Repositories
+ *
+ * @module repositories
+ */
+
 export type {
   CacheRepository,
   CacheRepositoryOptions,

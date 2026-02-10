@@ -1,3 +1,9 @@
+/**
+ * Build Utils
+ *
+ * @module build/utils
+ */
+
 export {
   calculateAspectRatio,
   CSS_EXTENSIONS,
@@ -12,5 +18,10 @@ export {
   isPseudoSelector,
 } from "./asset-utils.ts";
 
-export * from "../renderer/utils/import-utils.ts";
-export * from "../renderer/utils/loader-utils.ts";
+export {
+  extractImports,
+  findComponent,
+  processImports,
+  resolveImportPath,
+} from "../renderer/utils/import-utils.ts";
+export { getFileType, getLoaderFromPath, getSlugFromPath } from "../renderer/utils/loader-utils.ts";

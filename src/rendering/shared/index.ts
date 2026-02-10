@@ -1,3 +1,9 @@
+/**
+ * Rendering Shared
+ *
+ * @module rendering/shared
+ */
+
 export {
   areSharedServicesInitialized,
   destroySharedServices,

@@ -1,3 +1,9 @@
+/**
+ * Dev Server - Error Overlay
+ *
+ * @module server/dev-server/error-overlay
+ */
+
 export { ErrorOverlay } from "./overlay-renderer.ts";
 export {
   type ErrorInfo,

@@ -1,3 +1,9 @@
+/**
+ * Config
+ *
+ * @module config
+ */
+
 export {
   clearConfigCache,
   getCachedConfigSync,

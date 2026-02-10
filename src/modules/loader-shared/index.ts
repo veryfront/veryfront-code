@@ -1,1 +1,20 @@
-export * from "./patterns.ts";
+/**
+ * Modules Loader Shared
+ *
+ * @module modules/loader-shared
+ */
+
+export {
+  DYNAMIC_IMPORT_PATTERN,
+  escapeRegExp,
+  EXPORT_FROM_PATTERN,
+  JSX_IMPORT_PATTERN,
+  MODULE_EXTENSIONS,
+  MODULE_SERVER_IMPORT_PATTERN,
+  PROJECT_ALIAS_IMPORT_PATTERN,
+  REACT_IMPORT_PATTERN,
+  RELATIVE_IMPORT_PATTERN,
+  STATIC_IMPORT_PATTERN,
+  UNRESOLVED_VF_MODULES_PATTERN,
+  VF_MODULE_IMPORT_PATTERN,
+} from "./patterns.ts";

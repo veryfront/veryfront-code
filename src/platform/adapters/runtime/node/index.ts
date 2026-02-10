@@ -1,3 +1,9 @@
+/**
+ * Runtime - Node
+ *
+ * @module platform/adapters/runtime/node
+ */
+
 export { NodeAdapter, nodeAdapter } from "./adapter.ts";
 export { NodeFileSystemAdapter } from "./filesystem-adapter.ts";
 export { NodeEnvironmentAdapter } from "./environment-adapter.ts";

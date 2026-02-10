@@ -1,3 +1,9 @@
+/**
+ * Rendering Orchestrator
+ *
+ * @module rendering/orchestrator
+ */
+
 export { ConfigurationManager } from "./config.ts";
 export type { ConfigurationOptions } from "./config.ts";
 

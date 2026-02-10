@@ -1,3 +1,9 @@
+/**
+ * Cache Backends
+ *
+ * @module cache/backends
+ */
+
 // Re-export CacheBackend interface from types
 export type { CacheBackend } from "../types.ts";
 

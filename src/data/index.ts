@@ -1,3 +1,9 @@
+/**
+ * Data
+ *
+ * @module data
+ */
+
 export type {
   CacheEntry,
   DataContext,

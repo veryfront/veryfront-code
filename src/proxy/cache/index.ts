@@ -1,3 +1,9 @@
+/**
+ * Proxy Cache
+ *
+ * @module proxy/cache
+ */
+
 export type {
   CacheOptions,
   CacheStats,

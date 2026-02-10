@@ -1,3 +1,9 @@
+/**
+ * Schemas
+ *
+ * @module schemas
+ */
+
 export {
   CommonSchemas,
   type DateRange,

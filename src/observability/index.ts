@@ -1,3 +1,9 @@
+/**
+ * Observability
+ *
+ * @module observability
+ */
+
 export {
   addSpanEvent,
   createChildSpan,

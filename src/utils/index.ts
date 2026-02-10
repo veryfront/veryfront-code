@@ -1,3 +1,9 @@
+/**
+ * Utils
+ *
+ * @module utils
+ */
+
 export {
   type GlobalWithBun,
   type GlobalWithDeno,

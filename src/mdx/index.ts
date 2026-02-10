@@ -1,3 +1,9 @@
+/**
+ * Mdx
+ *
+ * @module mdx
+ */
+
 // veryfront/mdx — MDX provider and component overrides
 //
 // For customizing how .mdx pages render components.

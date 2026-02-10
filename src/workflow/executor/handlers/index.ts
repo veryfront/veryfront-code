@@ -1,3 +1,9 @@
+/**
+ * Executor - Handlers
+ *
+ * @module workflow/executor/handlers
+ */
+
 export {
   BaseNodeHandler,
   type INodeHandler,

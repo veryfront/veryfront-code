@@ -1,3 +1,9 @@
+/**
+ * Workflow Dsl
+ *
+ * @module workflow/dsl
+ */
+
 export { dag, dependsOn, sequence, workflow } from "./workflow.ts";
 export type { Workflow, WorkflowOptions } from "./workflow.ts";
 

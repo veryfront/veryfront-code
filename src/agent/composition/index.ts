@@ -1,3 +1,9 @@
+/**
+ * Agent Composition
+ *
+ * @module agent/composition
+ */
+
 export {
   agentAsTool,
   agentRegistry,

@@ -1,3 +1,9 @@
+/**
+ * Platform
+ *
+ * @module platform
+ */
+
 // Adapters
 export { getAdapter } from "./adapters/detect.ts";
 export { getLocalAdapter, runtime } from "./adapters/registry.ts";

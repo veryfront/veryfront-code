@@ -1,3 +1,9 @@
+/**
+ * Asset Pipeline - Css Optimizer
+ *
+ * @module build/asset-pipeline/css-optimizer
+ */
+
 export type {
   BrowserTargets,
   CriticalCSSResult,

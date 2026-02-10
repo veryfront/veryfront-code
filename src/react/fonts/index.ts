@@ -1,3 +1,9 @@
+/**
+ * React Fonts
+ *
+ * @module react/fonts
+ */
+
 import React from "react";
 import { Head } from "../components/Head.tsx";
 

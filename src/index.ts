@@ -1,3 +1,9 @@
+/**
+ * Index.ts
+ *
+ * @module index.ts
+ */
+
 export { defineConfig } from "#veryfront/config";
 export type { VeryfrontConfig } from "#veryfront/config";
 

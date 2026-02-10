@@ -1,3 +1,9 @@
+/**
+ * Import Rewriter - Strategies
+ *
+ * @module transforms/import-rewriter/strategies
+ */
+
 export { AliasStrategy, aliasStrategy } from "./alias-strategy.ts";
 export { BareStrategy, bareStrategy } from "./bare-strategy.ts";
 export { NodeBuiltinStrategy, nodeBuiltinStrategy } from "./node-builtin-strategy.ts";

@@ -1,3 +1,9 @@
+/**
+ * Middleware Builtin
+ *
+ * @module middleware/builtin
+ */
+
 export {
   type AnyMiddlewareContext,
   type CorsOptions,

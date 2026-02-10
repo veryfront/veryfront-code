@@ -1,3 +1,9 @@
+/**
+ * Chat
+ *
+ * @module chat
+ */
+
 // veryfront/chat — Chat UI components + hooks
 //
 // Merges components/ai (UI) and agent/react (hooks) into a single

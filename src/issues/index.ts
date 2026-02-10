@@ -1,3 +1,9 @@
+/**
+ * Issues
+ *
+ * @module issues
+ */
+
 export type {
   CreateIssueOptions,
   Issue,

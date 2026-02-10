@@ -1,3 +1,9 @@
+/**
+ * Html
+ *
+ * @module html
+ */
+
 export { getDevStyles } from "./dev-scripts.ts";
 export { isFullHTMLDocument } from "./html-detection.ts";
 export { buildAttributes, escapeHTML, escapeHtml } from "./html-escape.ts";

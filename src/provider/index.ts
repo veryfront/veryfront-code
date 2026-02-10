@@ -1,3 +1,9 @@
+/**
+ * Provider
+ *
+ * @module provider
+ */
+
 export type {
   AnthropicConfig,
   CompletionRequest,

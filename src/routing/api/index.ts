@@ -1,3 +1,9 @@
+/**
+ * Routing Api
+ *
+ * @module routing/api
+ */
+
 export { APIRouteHandler } from "./handler.ts";
 export type { APIContext, APIHandler, APIResponse, APIRoute } from "./handler.ts";
 

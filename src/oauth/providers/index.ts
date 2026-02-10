@@ -1,3 +1,9 @@
+/**
+ * Oauth Providers
+ *
+ * @module oauth/providers
+ */
+
 export { type EnvReader, OAuthProvider, OAuthService } from "./base.ts";
 
 export {

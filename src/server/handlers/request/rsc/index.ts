@@ -1,3 +1,9 @@
+/**
+ * Request - Rsc
+ *
+ * @module server/handlers/request/rsc
+ */
+
 import { BaseHandler } from "../../response/base.ts";
 import type {
   HandlerContext,

@@ -1,3 +1,9 @@
+/**
+ * Compat - Http
+ *
+ * @module platform/compat/http
+ */
+
 export type {
   Handler,
   HttpServer,
@@ -18,4 +24,22 @@ export { NodeHttpServer } from "./node-server.ts";
 export { convertNodeRequestToWebRequest } from "./request-adapter.ts";
 export { createHttpServer } from "./factory.ts";
 export { isWebSocketUpgrade, upgradeWebSocket } from "./websocket.ts";
-export * from "./responses.ts";
+export {
+  badGateway,
+  badRequest,
+  created,
+  errorResponse,
+  forbidden,
+  HttpStatus,
+  type HttpStatusCode,
+  internalServerError,
+  jsonErrorResponse,
+  jsonResponse,
+  methodNotAllowed,
+  noContent,
+  notFound,
+  ok,
+  redirectResponse,
+  serviceUnavailable,
+  unauthorized,
+} from "./responses.ts";

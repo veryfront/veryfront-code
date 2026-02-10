@@ -1,3 +1,9 @@
+/**
+ * Rendering Rsc
+ *
+ * @module rendering/rsc
+ */
+
 export { hydrateRSC, RSCHydrator } from "./client-hydrator.ts";
 export { analyzeComponent, buildClientManifest } from "./component-analyzer.ts";
 export { extractExportNames } from "./export-extractor.ts";

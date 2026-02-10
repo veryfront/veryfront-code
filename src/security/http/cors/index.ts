@@ -1,3 +1,9 @@
+/**
+ * Http - Cors
+ *
+ * @module security/http/cors
+ */
+
 import { applyCORSHeaders, applyCORSHeadersSync, shouldApplyCORS } from "./headers.ts";
 import { validateCORSConfig, validateOrigin, validateOriginSync } from "./validators.ts";
 

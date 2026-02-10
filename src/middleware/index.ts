@@ -1,3 +1,9 @@
+/**
+ * Middleware
+ *
+ * @module middleware
+ */
+
 export {
   MiddlewareContext,
   MiddlewarePipeline,

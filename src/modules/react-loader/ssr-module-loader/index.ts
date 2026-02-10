@@ -1,3 +1,9 @@
+/**
+ * React Loader - Ssr Module Loader
+ *
+ * @module modules/react-loader/ssr-module-loader
+ */
+
 export { SSRModuleLoader } from "./loader.ts";
 
 export type {

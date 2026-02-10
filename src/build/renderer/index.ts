@@ -1,3 +1,9 @@
+/**
+ * Build Renderer
+ *
+ * @module build/renderer
+ */
+
 // Main bundler exports
 //
 // NOTE: This barrel has zero external consumers. All imports within build/

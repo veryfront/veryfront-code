@@ -1,3 +1,9 @@
+/**
+ * Modules
+ *
+ * @module modules
+ */
+
 export {
   type ComponentExports,
   type ComponentInfo,

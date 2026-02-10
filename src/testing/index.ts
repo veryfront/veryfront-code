@@ -1,3 +1,9 @@
+/**
+ * Testing
+ *
+ * @module testing
+ */
+
 // Initialize test environment before any other imports
 import "./init.ts";
 

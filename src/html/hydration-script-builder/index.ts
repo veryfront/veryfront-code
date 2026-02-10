@@ -1,3 +1,9 @@
+/**
+ * Html Hydration Script Builder
+ *
+ * @module html/hydration-script-builder
+ */
+
 export type { HydrationDataStructure, HydrationLayout } from "./types.ts";
 
 export { generateHydrationData } from "./hydration-data-generator.ts";

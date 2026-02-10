@@ -1,3 +1,9 @@
+/**
+ * Pipeline - Stages
+ *
+ * @module transforms/pipeline/stages
+ */
+
 export { parsePlugin } from "./parse.ts";
 export { compilePlugin } from "./compile.ts";
 export { resolveImportsPlugin } from "./resolve-imports.ts";

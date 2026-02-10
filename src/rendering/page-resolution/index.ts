@@ -1,3 +1,9 @@
+/**
+ * Rendering Page Resolution
+ *
+ * @module rendering/page-resolution
+ */
+
 export { PageResolver, type PageResolverOptions } from "./page-resolver.ts";
 
 export {

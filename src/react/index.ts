@@ -1,3 +1,9 @@
+/**
+ * React
+ *
+ * @module react
+ */
+
 // SSR adapters (used by internal rendering pipeline + advanced users)
 export {
   getProjectReact,

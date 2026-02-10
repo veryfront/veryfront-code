@@ -1,7 +1,6 @@
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  __resetReactVersionCacheForTests,
   checkVersionCompatibility,
   detectReactVersion,
   getReactVersionInfo,
@@ -9,6 +8,7 @@ import {
   hasFeature,
   parseVersion,
 } from "./index.ts";
+import { __resetReactVersionCacheForTests } from "./version-cache.ts";
 
 describe("React Version Detector", () => {
   describe("Version Parsing", () => {

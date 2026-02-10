@@ -1,3 +1,9 @@
+/**
+ * Rendering
+ *
+ * @module rendering
+ */
+
 export type { PageDataResponse, RendererOptions, RenderResult } from "./orchestrator/types.ts";
 export { VeryfrontRenderer } from "./orchestrator/ssr.ts";
 

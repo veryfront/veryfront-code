@@ -1,3 +1,9 @@
+/**
+ * Dev - Projects
+ *
+ * @module server/handlers/dev/projects
+ */
+
 import { BaseHandler } from "../../response/base.ts";
 import type {
   HandlerContext,

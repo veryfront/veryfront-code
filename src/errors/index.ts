@@ -1,3 +1,9 @@
+/**
+ * Errors
+ *
+ * @module errors
+ */
+
 export { defineError, VeryfrontError } from "./types.ts";
 export type {
   ErrorCategory,

@@ -1,3 +1,9 @@
+/**
+ * Request - Api
+ *
+ * @module server/handlers/request/api
+ */
+
 export { ApiHandlerWrapper } from "./api-handler-wrapper.ts";
 export { handleAppRouter } from "./app-router-handler.ts";
 export { resolveAppRouteFile } from "./app-router-resolver.ts";

@@ -1,3 +1,9 @@
+/**
+ * Agent React
+ *
+ * @module agent/react
+ */
+
 export { useChat } from "./use-chat/index.ts";
 export type {
   DynamicToolUIPart,
