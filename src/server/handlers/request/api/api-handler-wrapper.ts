@@ -22,11 +22,22 @@ type FsWrapper = {
 };
 
 /**
- * Tracks in-flight and completed AI discovery per project.
+ * Tracks in-flight and completed AI discovery per project+release.
+ *
+ * Key: `{projectSlug}:{releaseId}` for production, `{projectSlug}:preview` for preview.
+ * This ensures a new deployment triggers re-discovery of agents/tools.
+ *
  * Using a Map<string, Promise> deduplicates concurrent requests and
  * allows retry on failure (the key is deleted if discovery rejects).
  */
 const discoveredProjects = new Map<string, Promise<void>>();
+
+/** Build a discovery cache key that incorporates the release/version. */
+function discoveryKey(ctx: HandlerContext): string {
+  const slug = ctx.projectSlug ?? ctx.projectDir;
+  const version = ctx.releaseId ?? "preview";
+  return `${slug}:${version}`;
+}
 
 /**
  * Run AI discovery (agents, tools) for a project if not already done.
@@ -35,13 +46,23 @@ const discoveredProjects = new Map<string, Promise<void>>();
  * correct project scope.
  */
 async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void> {
-  const key = ctx.projectSlug ?? ctx.projectDir;
+  const key = discoveryKey(ctx);
 
   const existing = discoveredProjects.get(key);
   if (existing) return existing;
 
   const promise = (async () => {
     const { discoverAll } = await import("#veryfront/discovery");
+    const { agentRegistry } = await import(
+      "#veryfront/agent/composition/composition.ts"
+    );
+    const { toolRegistry } = await import("#veryfront/tool/registry.ts");
+
+    // Clear stale entries for this project scope before re-discovery.
+    // This prevents agents/tools removed in a new release from lingering.
+    agentRegistry.clear();
+    toolRegistry.clear();
+
     const result = await discoverAll({
       baseDir: ctx.projectDir,
       fsAdapter: ctx.adapter.fs,
@@ -50,6 +71,7 @@ async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void> {
 
     serverLogger.debug("[API-Wrapper] Lazy AI discovery completed", {
       projectSlug: ctx.projectSlug,
+      releaseId: ctx.releaseId,
       agents: result.agents.size,
       tools: result.tools.size,
     });
