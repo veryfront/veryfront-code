@@ -23,16 +23,29 @@ export interface HeadLink {
   [key: string]: string | undefined;
 }
 
+export interface HeadScript {
+  /** Inline script content */
+  content?: string;
+  /** Script src URL */
+  src?: string;
+  /** Script type (default: text/javascript) */
+  type?: string;
+  /** Additional attributes */
+  [key: string]: string | undefined;
+}
+
 export interface CollectedHead {
   title?: string;
   description?: string;
   metas: HeadMeta[];
   links: HeadLink[];
   styles: string[];
+  /** Blocking scripts - injected at top of <head> before CSS */
+  scripts: HeadScript[];
 }
 
 function createEmpty(): CollectedHead {
-  return { metas: [], links: [], styles: [] };
+  return { metas: [], links: [], styles: [], scripts: [] };
 }
 
 const headStorage = new AsyncLocalStorage<CollectedHead>();
@@ -65,6 +78,14 @@ export function collectHead(data: Partial<CollectedHead>): void {
 
   if (data.links?.length) collected.links.push(...data.links);
   if (data.styles?.length) collected.styles.push(...data.styles);
+  for (const script of data.scripts ?? []) {
+    // Dedupe by id or src
+    const isDupe = collected.scripts.some((s) =>
+      (script.id && s.id === script.id) ||
+      (script.src && s.src === script.src)
+    );
+    if (!isDupe) collected.scripts.push(script);
+  }
 }
 
 export function hasCollectedHead(): boolean {
@@ -76,7 +97,8 @@ export function hasCollectedHead(): boolean {
       collected.description ||
       collected.metas.length ||
       collected.links.length ||
-      collected.styles.length,
+      collected.styles.length ||
+      collected.scripts.length,
   );
 }
 
@@ -86,6 +108,7 @@ function clearCollectedHead(store: CollectedHead): void {
   store.metas = [];
   store.links = [];
   store.styles = [];
+  store.scripts = [];
 }
 
 export function resetHeadCollector(): void {
@@ -103,6 +126,7 @@ export function flushHeadCollector(): CollectedHead {
     metas: [...store.metas],
     links: [...store.links],
     styles: [...store.styles],
+    scripts: [...store.scripts],
   };
 
   clearCollectedHead(store);

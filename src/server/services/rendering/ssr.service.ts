@@ -99,7 +99,11 @@ export class SSRService {
       startRenderSession(renderSessionId, ctx.projectSlug, slug);
 
       const renderer = await this.getRenderer(ctx);
-      const { scheme: colorScheme, fromParam: colorSchemeFromParam } = getColorSchemeFromRequest(
+      const {
+        scheme: colorScheme,
+        fromParam: colorSchemeFromParam,
+        fromHeader: colorSchemeFromHeader,
+      } = getColorSchemeFromRequest(
         request,
         url,
       );
@@ -122,6 +126,7 @@ export class SSRService {
           pageId,
           colorScheme,
           colorSchemeFromParam,
+          colorSchemeFromHeader,
           environment: ctx.requestContext?.mode,
           projectSlug: ctx.projectSlug,
           noHmr,

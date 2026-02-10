@@ -187,19 +187,61 @@ export class HTMLGenerator {
       reactContent,
     );
 
-    const headElements = this.buildHeadElements(head);
-    if (!headElements) return { start, end };
+    const { scripts, other } = this.buildHeadElements(head);
+    if (!scripts && !other) return { start, end };
 
-    return {
-      start: start.replace("</head>", `  ${headElements}\n</head>`),
-      end,
-    };
+    let modifiedStart = start;
+
+    // Inject blocking scripts at TOP of <head> (after opening tag, before meta/CSS)
+    if (scripts) {
+      modifiedStart = modifiedStart.replace("<head>", `<head>\n  ${scripts}`);
+    }
+
+    // Inject other head elements at BOTTOM of <head> (before closing tag)
+    // Use lastIndexOf to avoid matching </head> inside inline script content
+    if (other) {
+      const headCloseIdx = modifiedStart.lastIndexOf("</head>");
+      if (headCloseIdx !== -1) {
+        modifiedStart = modifiedStart.slice(0, headCloseIdx) +
+          `  ${other}\n` +
+          modifiedStart.slice(headCloseIdx);
+      }
+    }
+
+    return { start: modifiedStart, end };
   }
 
-  private buildHeadElements(head?: CollectedHead): string {
-    if (!head) return "";
+  private buildHeadElements(head?: CollectedHead): { scripts: string; other: string } {
+    if (!head) return { scripts: "", other: "" };
 
-    const parts: string[] = [];
+    const scriptParts: string[] = [];
+    const otherParts: string[] = [];
+
+    // Scripts go at TOP of head (before CSS) to prevent flash
+    for (const script of head.scripts ?? []) {
+      const { content, ...attrs } = script;
+      const attrPairs: [string, string][] = [["data-vf-head", "true"]];
+
+      for (const [k, v] of Object.entries(attrs)) {
+        if (v != null) attrPairs.push([k, v]);
+      }
+
+      // For inline scripts without id, add hash for client-side deduplication
+      if (content && !attrs.id) {
+        let sum = 0;
+        for (let i = 0; i < Math.min(content.length, 200); i++) {
+          sum = ((sum << 5) - sum + content.charCodeAt(i)) | 0;
+        }
+        attrPairs.push(["data-vf-hash", "vf" + Math.abs(sum).toString(36)]);
+      }
+
+      const attrStr = attrPairs.map(([k, v]) => `${k}="${v}"`).join(" ");
+      if (content) {
+        scriptParts.push(`<script ${attrStr}>${content}</script>`);
+      } else if (attrs.src) {
+        scriptParts.push(`<script ${attrStr}></script>`);
+      }
+    }
 
     for (const meta of head.metas) {
       if (meta.name === "description") continue;
@@ -208,7 +250,7 @@ export class HTMLGenerator {
       if (meta.name) attrs.push(`name="${meta.name}"`);
       if (meta.property) attrs.push(`property="${meta.property}"`);
       if (meta.content) attrs.push(`content="${meta.content}"`);
-      if (attrs.length) parts.push(`<meta ${attrs.join(" ")}>`);
+      if (attrs.length) otherParts.push(`<meta ${attrs.join(" ")}>`);
     }
 
     for (const link of head.links) {
@@ -216,14 +258,17 @@ export class HTMLGenerator {
         .filter(([, v]) => v != null)
         .map(([k, v]) => `${k}="${v}"`)
         .join(" ");
-      if (attrs) parts.push(`<link ${attrs}>`);
+      if (attrs) otherParts.push(`<link ${attrs}>`);
     }
 
     for (const style of head.styles) {
-      parts.push(`<style>${style}</style>`);
+      otherParts.push(`<style>${style}</style>`);
     }
 
-    return parts.join("\n  ");
+    return {
+      scripts: scriptParts.join("\n  "),
+      other: otherParts.join("\n  "),
+    };
   }
 
   private mergeFrontmatter(context: HTMLGenerationContext): MDXFrontmatter {
@@ -312,6 +357,7 @@ export class HTMLGenerator {
       sourceHash,
       colorScheme: context.options?.colorScheme,
       colorSchemeFromParam: context.options?.colorSchemeFromParam,
+      colorSchemeFromHeader: context.options?.colorSchemeFromHeader,
       environment: context.options?.environment,
       headings: context.pageBundle.headings,
       projectClasses,

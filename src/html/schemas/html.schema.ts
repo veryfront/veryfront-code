@@ -33,6 +33,7 @@ export const HTMLGenerationOptionsSchema = z.object({
   sourceHash: z.string().optional(),
   colorScheme: colorSchemeSchema.optional(),
   colorSchemeFromParam: z.boolean().optional(),
+  colorSchemeFromHeader: z.boolean().optional(),
   environment: environmentSchema.optional(),
   headings: z
     .array(
