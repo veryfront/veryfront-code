@@ -1,13 +1,13 @@
-export interface ApiSearchCircuitBreakerOptions {
+export interface APISearchCircuitBreakerOptions {
   threshold: number;
   cooldownMs: number;
 }
 
-export class ApiSearchCircuitBreaker {
+export class APISearchCircuitBreaker {
   private failures = 0;
   private disabledUntil = 0;
 
-  constructor(private readonly options: ApiSearchCircuitBreakerOptions) {}
+  constructor(private readonly options: APISearchCircuitBreakerOptions) {}
 
   canSearch(now = Date.now()): boolean {
     return now >= this.disabledUntil;

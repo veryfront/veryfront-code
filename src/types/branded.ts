@@ -23,6 +23,6 @@ export type MessageId = Brand<string, "MessageId">;
 
 export type AuthToken = Brand<string, "AuthToken">;
 export type CsrfToken = Brand<string, "CsrfToken">;
-export type ApiKey = Brand<string, "ApiKey">;
+export type APIKey = Brand<string, "ApiKey">;
 
 export type Unbrand<T> = T extends Brand<infer U, string> ? U : T;

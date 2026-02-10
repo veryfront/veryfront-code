@@ -20,13 +20,13 @@ type FsWrapper = {
   ) => Promise<T>;
 };
 
-export class ApiHandlerWrapper extends BaseHandler {
+export class APIHandlerWrapper extends BaseHandler {
   private projectDir: string;
   private adapter: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
   private initPromise: Promise<void> | null = null;
 
   metadata: HandlerMetadata = {
-    name: "ApiHandlerWrapper",
+    name: "APIHandlerWrapper",
     priority: PRIORITY_MEDIUM_API as HandlerPriority,
   };
 

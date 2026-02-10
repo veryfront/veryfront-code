@@ -4,7 +4,7 @@ export type { CacheBackend } from "../types.ts";
 // Backend implementations
 export { MemoryCacheBackend } from "./memory.ts";
 export { RedisCacheBackend } from "./redis.ts";
-export { ApiCacheBackend } from "./api.ts";
+export { APICacheBackend } from "./api.ts";
 
 // Factory functions and config
 export {

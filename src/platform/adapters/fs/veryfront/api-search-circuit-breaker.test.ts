@@ -1,10 +1,10 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ApiSearchCircuitBreaker } from "./api-search-circuit-breaker.ts";
+import { APISearchCircuitBreaker } from "./api-search-circuit-breaker.ts";
 
 describe("veryfront/api-search-circuit-breaker", () => {
   it("stays closed until threshold failures, then opens", () => {
-    const breaker = new ApiSearchCircuitBreaker({
+    const breaker = new APISearchCircuitBreaker({
       threshold: 3,
       cooldownMs: 1000,
     });
@@ -18,7 +18,7 @@ describe("veryfront/api-search-circuit-breaker", () => {
   });
 
   it("resets failure count on success", () => {
-    const breaker = new ApiSearchCircuitBreaker({
+    const breaker = new APISearchCircuitBreaker({
       threshold: 3,
       cooldownMs: 1000,
     });

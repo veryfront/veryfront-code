@@ -1,7 +1,7 @@
 export { APIRouteHandler } from "./handler.ts";
 export type { APIContext, APIHandler, APIResponse, APIRoute } from "./handler.ts";
 
-export { ApiRouteMatcher, DynamicRouter } from "./api-route-matcher.ts";
+export { APIRouteMatcher, DynamicRouter } from "./api-route-matcher.ts";
 export type { Route, RouteMatch } from "./api-route-matcher.ts";
 
 export {

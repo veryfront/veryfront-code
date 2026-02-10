@@ -8,7 +8,7 @@ import { createErrorInstruments } from "./error-instruments.ts";
 import { createHttpInstruments } from "./http-instruments.ts";
 import { createMemoryInstruments } from "./memory-instruments.ts";
 import { createRenderInstruments } from "./render-instruments.ts";
-import { createRscInstruments } from "./rsc-instruments.ts";
+import { createRSCInstruments } from "./rsc-instruments.ts";
 
 export function initializeInstruments(
   meter: Meter,
@@ -55,7 +55,7 @@ export function initializeInstruments(
       ...createHttpInstruments(meter, config),
       ...createCacheInstruments(meter, config, runtimeState),
       ...createRenderInstruments(meter, config),
-      ...createRscInstruments(meter, config),
+      ...createRSCInstruments(meter, config),
       ...createBuildInstruments(meter, config),
       ...createDataInstruments(meter, config),
       ...createMemoryInstruments(meter, config),

@@ -18,7 +18,7 @@ import {
   sortPathsByExtensionPriority,
   stripKnownExtension,
 } from "./stat-operations-helpers.ts";
-import { ApiSearchCircuitBreaker } from "./api-search-circuit-breaker.ts";
+import { APISearchCircuitBreaker } from "./api-search-circuit-breaker.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
@@ -33,7 +33,7 @@ export class StatOperations extends VeryfrontOperationsBase {
 
   private pathMapping: Map<string, string> = new Map();
 
-  private readonly apiSearchCircuitBreaker = new ApiSearchCircuitBreaker({
+  private readonly apiSearchCircuitBreaker = new APISearchCircuitBreaker({
     threshold: 5,
     cooldownMs: 30000,
   });

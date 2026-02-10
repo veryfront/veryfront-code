@@ -50,7 +50,7 @@ export type { AppProps } from "./app.ts";
 
 export type {
   AgentId,
-  ApiKey,
+  APIKey,
   AuthToken,
   Brand,
   CsrfToken,

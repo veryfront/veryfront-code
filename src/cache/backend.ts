@@ -5,7 +5,7 @@
  * Actual implementations live in ./backends/ directory:
  *   - backends/memory.ts  — MemoryCacheBackend
  *   - backends/redis.ts   — RedisCacheBackend
- *   - backends/api.ts     — ApiCacheBackend
+ *   - backends/api.ts     — APICacheBackend
  *   - backends/factory.ts — createCacheBackend, CacheBackends, etc.
  *
  * @module cache/backend
@@ -13,7 +13,7 @@
 
 // Re-export everything from the backends barrel
 export {
-  ApiCacheBackend,
+  APICacheBackend,
   type CacheBackendConfig,
   CacheBackends,
   createCacheBackend,

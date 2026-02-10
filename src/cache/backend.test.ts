@@ -1,7 +1,7 @@
 /**
  * Cache Backend Tests
  *
- * Tests MemoryCacheBackend, ApiCacheBackend, RedisCacheBackend,
+ * Tests MemoryCacheBackend, APICacheBackend, RedisCacheBackend,
  * isDistributedBackend, createDistributedCacheAccessor, and
  * CacheBackends factory functions.
  *
@@ -27,7 +27,7 @@ Deno.test({
 
     assertExists(mod.MemoryCacheBackend);
     assertExists(mod.RedisCacheBackend);
-    assertExists(mod.ApiCacheBackend);
+    assertExists(mod.APICacheBackend);
     assertExists(mod.createCacheBackend);
     assertExists(mod.CacheBackends);
     assertExists(mod.isApiCacheAvailable);
@@ -198,77 +198,77 @@ Deno.test("MemoryCacheBackend set overwrites existing entry without eviction", a
   assertEquals(await cache.get("b"), "2");
 });
 
-Deno.test("ApiCacheBackend requires auth and project context", async () => {
-  const { ApiCacheBackend } = await importBackend();
+Deno.test("APICacheBackend requires auth and project context", async () => {
+  const { APICacheBackend } = await importBackend();
 
-  const cache = new ApiCacheBackend({});
+  const cache = new APICacheBackend({});
   assertEquals(await cache.get("test-key"), null);
 });
 
-Deno.test("ApiCacheBackend type property", async () => {
-  const { ApiCacheBackend } = await importBackend();
+Deno.test("APICacheBackend type property", async () => {
+  const { APICacheBackend } = await importBackend();
 
-  const cache = new ApiCacheBackend({});
+  const cache = new APICacheBackend({});
   assertEquals(cache.type, "api");
 });
 
-Deno.test("ApiCacheBackend set returns without auth context", async () => {
-  const { ApiCacheBackend } = await importBackend();
+Deno.test("APICacheBackend set returns without auth context", async () => {
+  const { APICacheBackend } = await importBackend();
 
-  const cache = new ApiCacheBackend({});
+  const cache = new APICacheBackend({});
   await cache.set("key", "value"); // Should not throw
 });
 
-Deno.test("ApiCacheBackend del returns without auth context", async () => {
-  const { ApiCacheBackend } = await importBackend();
+Deno.test("APICacheBackend del returns without auth context", async () => {
+  const { APICacheBackend } = await importBackend();
 
-  const cache = new ApiCacheBackend({});
+  const cache = new APICacheBackend({});
   await cache.del("key"); // Should not throw
 });
 
-Deno.test("ApiCacheBackend delByPattern returns 0 without auth context", async () => {
-  const { ApiCacheBackend } = await importBackend();
+Deno.test("APICacheBackend delByPattern returns 0 without auth context", async () => {
+  const { APICacheBackend } = await importBackend();
 
-  const cache = new ApiCacheBackend({});
+  const cache = new APICacheBackend({});
   assertEquals(await cache.delByPattern("prefix:*"), 0);
 });
 
-Deno.test("ApiCacheBackend getBatch returns nulls without auth context", async () => {
-  const { ApiCacheBackend } = await importBackend();
+Deno.test("APICacheBackend getBatch returns nulls without auth context", async () => {
+  const { APICacheBackend } = await importBackend();
 
-  const cache = new ApiCacheBackend({});
+  const cache = new APICacheBackend({});
   const results = await cache.getBatch(["k1", "k2"]);
   // Should return empty map or map with nulls
   assertEquals(results.size === 0 || results.get("k1") === null, true);
 });
 
-Deno.test("ApiCacheBackend getBatch returns empty map for empty keys", async () => {
-  const { ApiCacheBackend } = await importBackend();
+Deno.test("APICacheBackend getBatch returns empty map for empty keys", async () => {
+  const { APICacheBackend } = await importBackend();
 
-  const cache = new ApiCacheBackend({});
+  const cache = new APICacheBackend({});
   const results = await cache.getBatch([]);
   assertEquals(results.size, 0);
 });
 
-Deno.test("ApiCacheBackend setBatch returns without auth context", async () => {
-  const { ApiCacheBackend } = await importBackend();
+Deno.test("APICacheBackend setBatch returns without auth context", async () => {
+  const { APICacheBackend } = await importBackend();
 
-  const cache = new ApiCacheBackend({});
+  const cache = new APICacheBackend({});
   await cache.setBatch([{ key: "k", value: "v" }]); // Should not throw
 });
 
-Deno.test("ApiCacheBackend setBatch returns for empty entries", async () => {
-  const { ApiCacheBackend } = await importBackend();
+Deno.test("APICacheBackend setBatch returns for empty entries", async () => {
+  const { APICacheBackend } = await importBackend();
 
-  const cache = new ApiCacheBackend({});
+  const cache = new APICacheBackend({});
   await cache.setBatch([]); // Should not throw
 });
 
-Deno.test("ApiCacheBackend uses custom keyPrefix", async () => {
-  const { ApiCacheBackend } = await importBackend();
+Deno.test("APICacheBackend uses custom keyPrefix", async () => {
+  const { APICacheBackend } = await importBackend();
 
   // Just verify it can be constructed with a prefix
-  const cache = new ApiCacheBackend({ keyPrefix: "custom-prefix" });
+  const cache = new APICacheBackend({ keyPrefix: "custom-prefix" });
   assertExists(cache);
   assertEquals(cache.type, "api");
 });
@@ -367,12 +367,12 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
-    const { isDistributedBackend, MemoryCacheBackend, RedisCacheBackend, ApiCacheBackend } =
+    const { isDistributedBackend, MemoryCacheBackend, RedisCacheBackend, APICacheBackend } =
       await importBackend();
 
     assertEquals(isDistributedBackend(new MemoryCacheBackend()), false);
     assertEquals(isDistributedBackend(new RedisCacheBackend()), true);
-    assertEquals(isDistributedBackend(new ApiCacheBackend({})), true);
+    assertEquals(isDistributedBackend(new APICacheBackend({})), true);
   },
 });
 
@@ -436,10 +436,10 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
-    const { createDistributedCacheAccessor, ApiCacheBackend } = await importBackend();
+    const { createDistributedCacheAccessor, APICacheBackend } = await importBackend();
 
     let callCount = 0;
-    const apiBackend = new ApiCacheBackend({});
+    const apiBackend = new APICacheBackend({});
 
     const accessor = createDistributedCacheAccessor(
       () => {

@@ -18,7 +18,7 @@ export interface RouteEntry {
  * Uses LRU caching for performance and self-contained regex compilation.
  * Suitable for API routes in /api/* and /app/api/* paths.
  */
-export class ApiRouteMatcher {
+export class APIRouteMatcher {
   private _routes: Map<string, RouteEntry> = new Map();
   private routeCache: LRUCache<string, RouteMatch | null>;
 
@@ -177,8 +177,8 @@ export class ApiRouteMatcher {
   }
 }
 
-/** @deprecated Use ApiRouteMatcher instead - kept for backwards compatibility */
-export { ApiRouteMatcher as DynamicRouter };
+/** @deprecated Use APIRouteMatcher instead - kept for backwards compatibility */
+export { APIRouteMatcher as DynamicRouter };
 
 function shouldDisableLruInterval(): boolean {
   if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) return true;

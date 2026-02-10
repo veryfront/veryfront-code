@@ -2,7 +2,7 @@ import type { Counter, Histogram, Meter } from "@opentelemetry/api";
 import { DURATION_HISTOGRAM_BOUNDARIES_MS } from "#veryfront/config/defaults.ts";
 import type { MetricsConfig } from "../metrics/types.ts";
 
-export interface RscInstruments {
+export interface RSCInstruments {
   rscRenderDuration: Histogram | null;
   rscStreamDuration: Histogram | null;
   rscManifestCounter: Counter | null;
@@ -12,10 +12,10 @@ export interface RscInstruments {
   rscErrorCounter: Counter | null;
 }
 
-export function createRscInstruments(
+export function createRSCInstruments(
   meter: Meter,
   config: MetricsConfig,
-): RscInstruments {
+): RSCInstruments {
   const prefix = `${config.prefix}.rsc`;
   const advice = {
     explicitBucketBoundaries: [...DURATION_HISTOGRAM_BOUNDARIES_MS],

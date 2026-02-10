@@ -7,4 +7,4 @@ export { recordError } from "./error-instruments.ts";
 export type { HttpInstruments } from "./http-instruments.ts";
 export type { MemoryInstruments } from "./memory-instruments.ts";
 export type { RenderInstruments } from "./render-instruments.ts";
-export type { RscInstruments } from "./rsc-instruments.ts";
+export type { RSCInstruments } from "./rsc-instruments.ts";

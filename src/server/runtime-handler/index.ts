@@ -43,7 +43,7 @@ import { LibModulesHandler } from "../handlers/request/lib-modules.handler.ts";
 import { CSSHandler } from "../handlers/request/css.handler.ts";
 import { RSCHandler } from "../handlers/request/rsc/index.ts";
 import { ModuleHandler } from "../handlers/request/module/index.ts";
-import { ApiHandlerWrapper } from "../handlers/request/api/index.ts";
+import { APIHandlerWrapper } from "../handlers/request/api/index.ts";
 import { SSRHandler } from "../handlers/request/ssr/index.ts";
 import { NotFoundHandler } from "../handlers/response/not-found.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
@@ -160,7 +160,7 @@ export function createVeryfrontHandler(
     enableMetrics: true,
   });
 
-  const apiHandler = new ApiHandlerWrapper(projectDir, adapter);
+  const apiHandler = new APIHandlerWrapper(projectDir, adapter);
 
   registry.registerAll([
     new AuthHandler(),

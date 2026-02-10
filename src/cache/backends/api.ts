@@ -17,7 +17,7 @@ function getCurrentRequestContext(): CacheRequestContext | null {
   return (mod?.getCurrentRequestContext?.() as CacheRequestContext | undefined) ?? null;
 }
 
-export class ApiCacheBackend implements CacheBackend {
+export class APICacheBackend implements CacheBackend {
   readonly type = "api" as const;
   private apiBaseUrl: string;
   private keyPrefix: string;
@@ -64,7 +64,7 @@ export class ApiCacheBackend implements CacheBackend {
       tryGetCacheKeyContext()?.projectId || null;
 
     if (!token || !projectRef) {
-      logger.debug("[ApiCacheBackend] Missing auth or project context", {
+      logger.debug("[APICacheBackend] Missing auth or project context", {
         tokenSource,
         hasProjectRef: !!projectRef,
       });
@@ -116,7 +116,7 @@ export class ApiCacheBackend implements CacheBackend {
       });
     } catch (error) {
       if (error instanceof CircuitBreakerOpen) {
-        logger.info("[ApiCacheBackend] Circuit breaker open, failing fast", {
+        logger.info("[APICacheBackend] Circuit breaker open, failing fast", {
           path,
           nextAttemptMs: error.nextAttemptMs,
         });
@@ -125,7 +125,7 @@ export class ApiCacheBackend implements CacheBackend {
 
       const isTimeout = error instanceof Error && error.name === "AbortError";
       const errorMsg = error instanceof Error ? error.message : String(error);
-      logger.info(`[ApiCacheBackend] Request ${isTimeout ? "timeout" : "error"}`, {
+      logger.info(`[APICacheBackend] Request ${isTimeout ? "timeout" : "error"}`, {
         path,
         error: errorMsg,
         isTimeout,
@@ -156,7 +156,7 @@ export class ApiCacheBackend implements CacheBackend {
     );
 
     if (!response?.values) {
-      logger.debug("[ApiCacheBackend] Batch endpoint failed, falling back to individual gets", {
+      logger.debug("[APICacheBackend] Batch endpoint failed, falling back to individual gets", {
         keyCount: keys.length,
       });
       return this.getIndividually(keys);

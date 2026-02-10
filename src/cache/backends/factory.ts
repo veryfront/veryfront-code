@@ -11,7 +11,7 @@ import {
 } from "../tokenizing-gateway.ts";
 import { MemoryCacheBackend } from "./memory.ts";
 import { isRedisConfigured, RedisCacheBackend } from "./redis.ts";
-import { ApiCacheBackend } from "./api.ts";
+import { APICacheBackend } from "./api.ts";
 import { getEnvValue } from "./helpers.ts";
 
 // Re-export gateway types for backward compatibility
@@ -54,7 +54,7 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
       if (shouldUseApi) {
         logger.debug("[CacheBackend] Using API backend (centralized cache)");
         span?.setAttribute("cache.backend.type", "api");
-        return new ApiCacheBackend({ keyPrefix, apiBaseUrl, circuitBreakerName });
+        return new APICacheBackend({ keyPrefix, apiBaseUrl, circuitBreakerName });
       }
 
       const shouldUseRedis = preferredBackend === "redis" ||
