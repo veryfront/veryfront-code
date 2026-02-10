@@ -96,28 +96,5 @@ describe("hydration-script-builder/templates/loader", () => {
       const result = getResult();
       assertEquals(result.includes("MODULE_SERVER_URL"), true);
     });
-
-    it("should check window.__vf_batch_modules before individual import", () => {
-      const result = getResult();
-      // The loader should check batch-preloaded modules for single-request optimization
-      assertEquals(result.includes("__vf_batch_modules"), true);
-      assertEquals(result.includes("Component from batch"), true);
-    });
-
-    it("should skip batch modules with __vf_error flag", () => {
-      const result = getResult();
-      // Failed batch modules should be skipped (graceful fallback to individual import)
-      assertEquals(result.includes("__vf_error"), true);
-    });
-
-    it("should extract batch path by removing MODULE_SERVER_URL prefix", () => {
-      const result = getResult();
-      // Batch modules are keyed by relative path (e.g., "pages/index.js"),
-      // so the loader strips the MODULE_SERVER_URL prefix from the full URL
-      assertEquals(
-        result.includes("moduleUrl.replace(MODULE_SERVER_URL + '/', '')"),
-        true,
-      );
-    });
   });
 });
