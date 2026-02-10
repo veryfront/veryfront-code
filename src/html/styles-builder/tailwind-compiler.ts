@@ -95,7 +95,7 @@ export async function getProjectCSS(
   }
 
   const hash = hashCSS(result.css);
-  storeProjectCSS(
+  await storeProjectCSS(
     context,
     { css: result.css, hash, candidatesHash: context.candidatesHash },
     candidates,
