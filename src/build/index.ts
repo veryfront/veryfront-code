@@ -1,5 +1,6 @@
 /**
- * Build
+ * Production build orchestration, MDX compilation, and multi-runtime
+ * output generation for Deno, Node.js, and Bun targets.
  *
  * @module build
  */

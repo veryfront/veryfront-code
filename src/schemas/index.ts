@@ -1,5 +1,6 @@
 /**
- * Schemas
+ * Reusable Zod validation schemas — common types (email, slug, URL, UUID,
+ * pagination) and primitives (file paths, hex colors, semver, timestamps).
  *
  * @module schemas
  */

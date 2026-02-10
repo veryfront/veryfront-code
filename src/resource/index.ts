@@ -1,5 +1,6 @@
 /**
- * Resource
+ * Resource definition and registry. Provides a factory function to declare
+ * resources that are discoverable and exposable over MCP.
  *
  * @module resource
  */

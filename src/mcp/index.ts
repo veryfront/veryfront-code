@@ -1,5 +1,6 @@
 /**
- * Mcp
+ * Model Context Protocol server implementation. Provides tool, prompt,
+ * and resource registries exposed over the MCP transport.
  *
  * @module mcp
  */

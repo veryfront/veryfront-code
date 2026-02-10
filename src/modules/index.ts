@@ -1,5 +1,6 @@
 /**
- * Modules
+ * ESM module system — component registry, import map resolution and merging,
+ * SSR module caching, and path resolution for framework and user modules.
  *
  * @module modules
  */

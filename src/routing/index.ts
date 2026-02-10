@@ -1,5 +1,6 @@
 /**
- * Routing
+ * File-system routing — dynamic route matching, slug/path mapping, API route
+ * handlers with CORS/cookie support, and client-side navigation utilities.
  *
  * @module routing
  */

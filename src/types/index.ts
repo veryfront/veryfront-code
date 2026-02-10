@@ -1,5 +1,6 @@
 /**
- * Types
+ * Shared type definitions — server/handler types, branded IDs, React component
+ * contracts, page/request contexts, bundler config, and cache entry shapes.
  *
  * @module types
  */

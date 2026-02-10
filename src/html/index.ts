@@ -1,5 +1,6 @@
 /**
- * Html
+ * HTML document generation utilities — shell templates, hydration scripts,
+ * metadata extraction, security escaping, and tag generators for SSR output.
  *
  * @module html
  */

@@ -1,5 +1,6 @@
 /**
- * Prompt
+ * Prompt definition and registry. Provides a factory function to declare
+ * prompts that are discoverable and exposable over MCP.
  *
  * @module prompt
  */

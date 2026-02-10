@@ -1,5 +1,6 @@
 /**
- * Rendering
+ * SSR rendering engine — page rendering with VeryfrontRenderer, chunk analysis,
+ * multi-tier cache coordination (API, filesystem, KV, memory, Redis), and layouts.
  *
  * @module rendering
  */

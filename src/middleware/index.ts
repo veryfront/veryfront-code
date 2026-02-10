@@ -1,5 +1,6 @@
 /**
- * Middleware
+ * HTTP middleware pipeline — CORS, rate limiting (memory and Redis),
+ * request logging, and timeout handling for dev and production servers.
  *
  * @module middleware
  */

@@ -1,5 +1,6 @@
 /**
- * Provider
+ * LLM provider abstractions with implementations for Anthropic, Google,
+ * and OpenAI. Normalizes completion requests and responses across vendors.
  *
  * @module provider
  */

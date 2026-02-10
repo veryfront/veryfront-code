@@ -1,5 +1,6 @@
 /**
- * Config
+ * Configuration loading, validation, and runtime access. Provides project
+ * config resolution, environment initialization, and network/port defaults.
  *
  * @module config
  */

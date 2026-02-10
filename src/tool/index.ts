@@ -1,5 +1,6 @@
 /**
- * Tool
+ * Tool definition and execution. Provides factory functions for static and
+ * dynamic tools, a tool registry, and JSON schema integration for MCP.
  *
  * @module tool
  */

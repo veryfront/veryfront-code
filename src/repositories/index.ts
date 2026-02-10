@@ -1,5 +1,6 @@
 /**
- * Repositories
+ * Repository pattern for data access — filesystem and cache backends,
+ * multi-tier cache coordination, and context/stats tracking per request.
  *
  * @module repositories
  */

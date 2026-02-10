@@ -1,5 +1,6 @@
 /**
- * Platform
+ * Cross-runtime abstraction layer — adapter detection, process/env/signal
+ * compat, filesystem and KV abstractions for Deno, Node.js, and Bun.
  *
  * @module platform
  */
