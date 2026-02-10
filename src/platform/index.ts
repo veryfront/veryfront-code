@@ -57,4 +57,4 @@ export { isDeno } from "./compat/runtime.ts";
 export { createFSAdapter, VeryfrontFSAdapter } from "./adapters/fs/index.ts";
 
 // Adapters: API client
-export { VeryfrontAPIClient } from "./adapters/veryfront-api-client/index.ts";
+export { VeryfrontApiClient } from "./adapters/veryfront-api-client/index.ts";

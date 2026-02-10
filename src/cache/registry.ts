@@ -27,10 +27,14 @@ function deleteWhereFromKeys(
 }
 
 export class MapCacheStore implements CacheStore {
+  readonly name: string;
+
   constructor(
-    public readonly name: string,
+    name: string,
     private readonly map: Map<string, unknown>,
-  ) {}
+  ) {
+    this.name = name;
+  }
 
   get(key: string): unknown {
     return this.map.get(key);
@@ -57,10 +61,14 @@ interface LRULike {
 }
 
 export class LRUCacheStore implements CacheStore {
+  readonly name: string;
+
   constructor(
-    public readonly name: string,
+    name: string,
     private readonly cache: LRULike,
-  ) {}
+  ) {
+    this.name = name;
+  }
 
   get(key: string): unknown {
     return this.cache.get(key);

@@ -19,7 +19,7 @@ export type FileContext =
   | { type: "environment"; name: string }
   | { type: "release"; version: string };
 
-export class VeryfrontAPIClient {
+export class VeryfrontApiClient {
   private config: VeryfrontAPIConfig & {
     retry: Required<NonNullable<VeryfrontAPIConfig["retry"]>>;
   };
@@ -130,17 +130,17 @@ export class VeryfrontAPIClient {
 
   async initialize(): Promise<void> {
     const slug = this.getProjectSlug();
-    logger.debug("[VeryfrontAPIClient] initialize() called", {
+    logger.debug("[VeryfrontApiClient] initialize() called", {
       slug,
       initialized: this.initialized,
       hasPendingPromise: !!this.initializingPromise,
     });
 
     if (this.initializingPromise) {
-      logger.debug("[VeryfrontAPIClient] Waiting for pending initialization", { slug });
+      logger.debug("[VeryfrontApiClient] Waiting for pending initialization", { slug });
       const waitStart = performance.now();
       await this.initializingPromise;
-      logger.debug("[VeryfrontAPIClient] Pending initialization resolved", {
+      logger.debug("[VeryfrontApiClient] Pending initialization resolved", {
         slug,
         waitDuration: `${(performance.now() - waitStart).toFixed(2)}ms`,
       });
@@ -148,7 +148,7 @@ export class VeryfrontAPIClient {
     }
 
     if (this.initialized) {
-      logger.debug("[VeryfrontAPIClient] Already initialized", { slug });
+      logger.debug("[VeryfrontApiClient] Already initialized", { slug });
       return;
     }
 
@@ -163,7 +163,7 @@ export class VeryfrontAPIClient {
   private async doInitialize(): Promise<void> {
     const initStartTime = performance.now();
     const slug = this.getProjectSlug();
-    logger.debug("[VeryfrontAPIClient] doInitialize START", { slug });
+    logger.debug("[VeryfrontApiClient] doInitialize START", { slug });
 
     if (!slug) {
       throw API_CLIENT_ERROR.create({
@@ -173,7 +173,7 @@ export class VeryfrontAPIClient {
     }
 
     if (this.config.projectId) {
-      logger.debug("[VeryfrontAPIClient] Using known projectId", {
+      logger.debug("[VeryfrontApiClient] Using known projectId", {
         slug,
         projectId: this.config.projectId,
         duration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
@@ -185,10 +185,10 @@ export class VeryfrontAPIClient {
 
     // Use getProject directly instead of listProjects - more efficient and works
     // with tokens that have project access but not list access
-    logger.debug("[VeryfrontAPIClient] Calling getProject API", { slug });
+    logger.debug("[VeryfrontApiClient] Calling getProject API", { slug });
     const getProjectStart = performance.now();
     const project = await this.operations.getProject(slug);
-    logger.debug("[VeryfrontAPIClient] getProject API completed", {
+    logger.debug("[VeryfrontApiClient] getProject API completed", {
       slug,
       projectId: project.id,
       apiDuration: `${(performance.now() - getProjectStart).toFixed(2)}ms`,
@@ -199,7 +199,7 @@ export class VeryfrontAPIClient {
     this.cachedProjectData = project;
     this.operations.setProjectId(project.id);
     this.initialized = true;
-    logger.debug("[VeryfrontAPIClient] doInitialize DONE", {
+    logger.debug("[VeryfrontApiClient] doInitialize DONE", {
       slug,
       projectId: project.id,
       totalDuration: `${(performance.now() - initStartTime).toFixed(2)}ms`,

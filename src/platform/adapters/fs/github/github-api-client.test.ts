@@ -1,6 +1,6 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { GitHubAPIClient } from "./github-api-client.ts";
+import { GitHubApiClient } from "./github-api-client.ts";
 
 const mockConfig = {
   owner: "test-owner",
@@ -16,21 +16,21 @@ const mockConfig = {
   cache: { enabled: true, ttl: 60000, maxSize: 1000, maxMemory: 104857600 },
 };
 
-function createClient(): GitHubAPIClient {
-  return new GitHubAPIClient(mockConfig);
+function createClient(): GitHubApiClient {
+  return new GitHubApiClient(mockConfig);
 }
 
-function assertMethod(client: GitHubAPIClient, name: keyof GitHubAPIClient): void {
+function assertMethod(client: GitHubApiClient, name: keyof GitHubApiClient): void {
   const value = client[name];
   assertExists(value);
   assertEquals(typeof value, "function");
 }
 
-describe("GitHubAPIClient", () => {
+describe("GitHubApiClient", () => {
   describe("class", () => {
-    it("should export GitHubAPIClient class", () => {
-      assertExists(GitHubAPIClient);
-      assertEquals(typeof GitHubAPIClient, "function");
+    it("should export GitHubApiClient class", () => {
+      assertExists(GitHubApiClient);
+      assertEquals(typeof GitHubApiClient, "function");
     });
 
     it("should be instantiable with config", () => {

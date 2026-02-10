@@ -24,10 +24,10 @@ describe("platform/index.ts exports", () => {
       assertEquals(typeof VeryfrontFSAdapter, "function");
     });
 
-    it("should export VeryfrontAPIClient", async () => {
-      const { VeryfrontAPIClient } = await importIndex();
-      assertExists(VeryfrontAPIClient);
-      assertEquals(typeof VeryfrontAPIClient, "function");
+    it("should export VeryfrontApiClient", async () => {
+      const { VeryfrontApiClient } = await importIndex();
+      assertExists(VeryfrontApiClient);
+      assertEquals(typeof VeryfrontApiClient, "function");
     });
   });
 

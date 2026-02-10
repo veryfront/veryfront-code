@@ -18,5 +18,3 @@ export const finalizePlugin: TransformPlugin = {
     );
   },
 };
-
-export default finalizePlugin;

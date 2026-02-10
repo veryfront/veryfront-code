@@ -95,15 +95,15 @@ export interface VeryfrontErrorOptions extends ErrorCreateOptions {
  * Veryfront Error class with slug-based error identity
  */
 export class VeryfrontError extends Error {
-  public slug: string;
-  public category: ErrorCategory;
-  public status: number;
-  public title: string;
-  public suggestion?: string;
-  public detail?: string;
-  public override cause?: unknown;
-  public instance?: string;
-  public context?: unknown;
+  slug: string;
+  category: ErrorCategory;
+  status: number;
+  title: string;
+  suggestion?: string;
+  detail?: string;
+  override cause?: unknown;
+  instance?: string;
+  context?: unknown;
 
   constructor(message: string, options: VeryfrontErrorOptions) {
     super(message);

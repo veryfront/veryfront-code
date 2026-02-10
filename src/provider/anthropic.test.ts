@@ -3,21 +3,21 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AnthropicProvider } from "./anthropic.ts";
 
 class TestableAnthropicProvider extends AnthropicProvider {
-  public testGetHeaders(): Record<string, string> {
+  testGetHeaders(): Record<string, string> {
     return this.getHeaders();
   }
 
-  public testGetEndpoint(path: string): string {
+  testGetEndpoint(path: string): string {
     return this.getEndpoint(path);
   }
 
-  public testTransformRequest(
+  testTransformRequest(
     request: Parameters<AnthropicProvider["transformRequest"]>[0],
   ): ReturnType<AnthropicProvider["transformRequest"]> {
     return this.transformRequest(request);
   }
 
-  public testTransformResponse(
+  testTransformResponse(
     response: Parameters<AnthropicProvider["transformResponse"]>[0],
   ): ReturnType<AnthropicProvider["transformResponse"]> {
     return this.transformResponse(response);

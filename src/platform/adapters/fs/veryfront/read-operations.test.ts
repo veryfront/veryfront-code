@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
+import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { runWithRequestContext } from "./multi-project-adapter.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
@@ -10,14 +10,14 @@ import type { ContentContextProvider } from "./read-operations.ts";
 // deno-lint-ignore no-explicit-any
 function createMockClient(
   overrides: Record<string, any> = {},
-): VeryfrontAPIClient {
+): VeryfrontApiClient {
   return {
     getRequestBranch: () => "main",
     getFileContent: () => Promise.resolve("file content"),
     getPublishedFileContent: () => Promise.resolve("published content"),
     resolveFileWithExtension: () => Promise.resolve(null),
     ...overrides,
-  } as unknown as VeryfrontAPIClient;
+  } as unknown as VeryfrontApiClient;
 }
 
 function createBranchContext(): ContentContextProvider {
@@ -47,7 +47,7 @@ function createReleaseContext(releaseId = "release-123"): ContentContextProvider
 }
 
 function createReadOps(
-  client: VeryfrontAPIClient,
+  client: VeryfrontApiClient,
   cacheEnabled: boolean,
   contextProvider?: ContentContextProvider,
   pathResolver?: (path: string) => string,

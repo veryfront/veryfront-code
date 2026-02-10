@@ -2,7 +2,7 @@ import { logger } from "#veryfront/utils";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import type { FSAdapter, FSAdapterConfig } from "../veryfront/types.ts";
-import { GitHubAPIClient } from "./github-api-client.ts";
+import { GitHubApiClient } from "./github-api-client.ts";
 import { GitHubDirectoryOperations } from "./directory-operations.ts";
 import { GitHubReadOperations } from "./read-operations.ts";
 import { GitHubStatOperations } from "./stat-operations.ts";
@@ -18,7 +18,7 @@ const LOG_PREFIX = "[GitHubFSAdapter]";
 
 export class GitHubFSAdapter implements FSAdapter {
   private readonly config: ResolvedGitHubConfig;
-  private readonly client: GitHubAPIClient;
+  private readonly client: GitHubApiClient;
   private readonly cache: FileCache;
   private readonly statOps: GitHubStatOperations;
   private readonly readOps: GitHubReadOperations;
@@ -45,7 +45,7 @@ export class GitHubFSAdapter implements FSAdapter {
     };
 
     this.config = createGitHubConfig(rawConfig);
-    this.client = new GitHubAPIClient(this.config);
+    this.client = new GitHubApiClient(this.config);
 
     this.cache = new FileCache(this.config.cache);
 

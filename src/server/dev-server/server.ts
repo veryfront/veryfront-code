@@ -50,7 +50,7 @@ export class DevServer {
   private server?: Server;
   private appConfig: VeryfrontConfig | undefined;
   private requestHandler?: RequestHandler;
-  public readonly ready: Promise<void>;
+  readonly ready: Promise<void>;
   private _resolveReady!: () => void;
   private _isReady = false;
   private reloadUnsubscribe?: () => void;

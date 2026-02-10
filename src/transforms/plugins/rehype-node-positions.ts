@@ -83,5 +83,3 @@ function addPositionAttributes(
     properties["data-node-file"] = filePath;
   }
 }
-
-export default rehypeNodePositions;

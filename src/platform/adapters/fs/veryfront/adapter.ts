@@ -10,7 +10,7 @@ import type {
   ResolvedContentContext,
 } from "./types.ts";
 import type { FileInfo } from "../../base.ts";
-import { VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
+import { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { Project } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import type { FileCacheOptions } from "../cache/types.ts";
@@ -30,7 +30,7 @@ import {
 } from "./adapter-content-context.ts";
 
 export class VeryfrontFSAdapter implements FSAdapter {
-  private client: VeryfrontAPIClient;
+  private client: VeryfrontApiClient;
   private cache: FileCache;
   private normalizer: PathNormalizer;
   private readOps: ReadOperations;
@@ -85,7 +85,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       ...vf.retry,
     };
 
-    this.client = new VeryfrontAPIClient({
+    this.client = new VeryfrontApiClient({
       apiBaseUrl: this.apiBaseUrl,
       apiToken: this.apiToken,
       projectSlug: this.projectSlug,
@@ -581,7 +581,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.contentContext;
   }
 
-  getClient(): VeryfrontAPIClient {
+  getClient(): VeryfrontApiClient {
     return this.client;
   }
 
