@@ -13,7 +13,11 @@ import { AnthropicProvider } from "./anthropic.ts";
 import { GoogleProvider } from "./google.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  getAnthropicEnvConfig,
+  getGoogleGenAIEnvConfig,
+  getOpenAIEnvConfig,
+} from "#veryfront/config/env.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/ai/registry-manager.ts";
 
 const providerManager = new ProjectScopedRegistryManager<Provider>("provider");
@@ -34,17 +38,11 @@ const providerConfigFactories: ProviderConfigFactory[] = [
       return () => new OpenAIProvider(openaiConfig);
     },
     fromEnv() {
-      // Use getEnv() directly to read live env vars (including project-scoped
-      // vars from AsyncLocalStorage). The cached getEnvironmentConfig() snapshot
-      // is frozen at startup and does not reflect per-request project env vars.
-      const apiKey = getEnv("OPENAI_API_KEY");
-      if (!apiKey) return undefined;
-      const baseURL = getEnv("OPENAI_BASE_URL") || undefined;
-      return () =>
-        new OpenAIProvider({
-          apiKey,
-          baseURL,
-        });
+      if (!getOpenAIEnvConfig().apiKey) return undefined;
+      return () => {
+        const { apiKey, baseURL } = getOpenAIEnvConfig();
+        return new OpenAIProvider({ apiKey: apiKey!, baseURL });
+      };
     },
   },
   {
@@ -55,14 +53,11 @@ const providerConfigFactories: ProviderConfigFactory[] = [
       return () => new AnthropicProvider(anthropicConfig);
     },
     fromEnv() {
-      const apiKey = getEnv("ANTHROPIC_API_KEY");
-      if (!apiKey) return undefined;
-      const baseURL = getEnv("ANTHROPIC_BASE_URL") || undefined;
-      return () =>
-        new AnthropicProvider({
-          apiKey,
-          baseURL,
-        });
+      if (!getAnthropicEnvConfig().apiKey) return undefined;
+      return () => {
+        const { apiKey, baseURL } = getAnthropicEnvConfig();
+        return new AnthropicProvider({ apiKey: apiKey!, baseURL });
+      };
     },
   },
   {
@@ -73,9 +68,11 @@ const providerConfigFactories: ProviderConfigFactory[] = [
       return () => new GoogleProvider(googleConfig);
     },
     fromEnv() {
-      const apiKey = getEnv("GOOGLE_API_KEY") || getEnv("GOOGLE_GENERATIVE_AI_API_KEY");
-      if (!apiKey) return undefined;
-      return () => new GoogleProvider({ apiKey });
+      if (!getGoogleGenAIEnvConfig().apiKey) return undefined;
+      return () => {
+        const { apiKey } = getGoogleGenAIEnvConfig();
+        return new GoogleProvider({ apiKey: apiKey! });
+      };
     },
   },
 ];

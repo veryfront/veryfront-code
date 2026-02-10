@@ -1,6 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { providerRegistry } from "./factory.ts";
 
 describe("ProviderRegistry", () => {
@@ -42,7 +43,6 @@ describe("ProviderRegistry", () => {
     });
 
     it("does not register provider when key is absent", () => {
-      // Ensure no API keys are set
       for (const key of envKeys) {
         try {
           deleteEnv(key);
@@ -54,15 +54,17 @@ describe("ProviderRegistry", () => {
       assertEquals(providerRegistry.hasProvider("anthropic"), false);
     });
 
-    it("reads live env vars, not cached config", () => {
-      // First call: no key set
+    it("picks up project-scoped env vars from AsyncLocalStorage", () => {
+      // No host env key set
       assertEquals(providerRegistry.hasProvider("anthropic"), false);
 
-      // Now set the key (simulating project env overlay)
-      setEnv("ANTHROPIC_API_KEY", "sk-ant-test-key");
+      // Simulate per-request project env overlay
+      runWithProjectEnv({ ANTHROPIC_API_KEY: "sk-ant-project-key" }, () => {
+        assertEquals(providerRegistry.hasProvider("anthropic"), true);
+      });
 
-      // Should pick up the newly set key on next access
-      assertEquals(providerRegistry.hasProvider("anthropic"), true);
+      // Outside the overlay, provider should not be available
+      assertEquals(providerRegistry.hasProvider("anthropic"), false);
     });
   });
 });
