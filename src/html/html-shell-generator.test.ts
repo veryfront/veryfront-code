@@ -271,8 +271,8 @@ describe("html-generation/html-shell-generator", () => {
       );
 
       assertStringIncludes(result, 'lang="ja"');
-      assertStringIncludes(result, 'data-theme="light"');
-      assertStringIncludes(result, "color-scheme: light");
+      // data-theme/color-scheme only set when colorSchemeFromParam is true
+      assert(!result.includes('data-theme="light"'));
     });
 
     it("should use default language when not specified", async () => {
@@ -283,7 +283,19 @@ describe("html-generation/html-shell-generator", () => {
       );
 
       assertStringIncludes(result, 'lang="en"');
-      assertStringIncludes(result, 'data-theme="light"');
+      // data-theme only set when colorSchemeFromParam is true
+      assert(!result.includes('data-theme="light"'));
+    });
+
+    it("should set data-theme when colorSchemeFromParam is true", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({ colorScheme: "dark", colorSchemeFromParam: true }),
+      );
+
+      assertStringIncludes(result, 'data-theme="dark"');
+      assertStringIncludes(result, "color-scheme: dark");
     });
 
     it("should add body class if specified", async () => {

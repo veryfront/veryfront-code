@@ -99,7 +99,11 @@ export class SSRService {
       startRenderSession(renderSessionId, ctx.projectSlug, slug);
 
       const renderer = await this.getRenderer(ctx);
-      const { scheme: colorScheme, fromParam: colorSchemeFromParam, fromHeader: colorSchemeFromHeader } = getColorSchemeFromRequest(
+      const {
+        scheme: colorScheme,
+        fromParam: colorSchemeFromParam,
+        fromHeader: colorSchemeFromHeader,
+      } = getColorSchemeFromRequest(
         request,
         url,
       );
