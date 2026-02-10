@@ -1,4 +1,5 @@
 /**
+ * @module
  * Discovery Module
  *
  * Automatic discovery and registration of tools, agents, resources,

@@ -1,4 +1,5 @@
 /**
+ * @module
  * Discovery Handlers
  *
  * Type-specific handlers for discovering tools, agents, resources, prompts, and workflows.

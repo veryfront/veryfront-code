@@ -1,4 +1,5 @@
 /**
+ * @module
  * Veryfront Workflow Module
  *
  * Durable, DAG-based agentic workflows with human-in-the-loop support.

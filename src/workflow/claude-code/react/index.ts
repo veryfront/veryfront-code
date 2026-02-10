@@ -1,4 +1,5 @@
 /**
+ * @module
  * React hooks for Claude Code streaming
  */
 

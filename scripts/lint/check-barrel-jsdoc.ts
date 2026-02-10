@@ -25,7 +25,8 @@ async function main(): Promise<void> {
     const content = await Deno.readTextFile(entry.path);
     const trimmed = content.trimStart();
 
-    if (!trimmed.startsWith("/**")) {
+    const jsdocEnd = trimmed.indexOf("*/");
+    if (!trimmed.startsWith("/**") || jsdocEnd === -1 || !trimmed.slice(0, jsdocEnd).includes("@module")) {
       missing.push(entry.path);
     }
   }

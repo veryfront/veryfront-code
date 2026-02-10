@@ -1,4 +1,5 @@
 /**
+ * @module
  * Error handling middleware
  *
  * Provides unified error boundaries for HTTP and CLI boundaries.
