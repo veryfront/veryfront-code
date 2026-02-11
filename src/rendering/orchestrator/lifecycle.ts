@@ -1,5 +1,5 @@
 import { join } from "#veryfront/compat/path";
-import { isCompiledBinary, rendererLogger as logger } from "#veryfront/utils";
+import { isCompiledBinary, rendererLogger } from "#veryfront/utils";
 import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
 import { ComponentRegistry } from "../ssr/component-registry.ts";
@@ -22,6 +22,8 @@ import type { ConfigurationManager } from "./config.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { MdxBundle } from "#veryfront/types";
 import { CompilerService } from "./compiler-service.ts";
+
+const logger = rendererLogger.component("lifecycle");
 
 export interface LifecycleOptions {
   configManager: ConfigurationManager;
@@ -255,7 +257,7 @@ export class RendererLifecycle {
     if (!services) return;
 
     services.cacheCoordinator.clearAll().catch((error) => {
-      logger.warn("[Lifecycle] Failed to clear all caches", { error: String(error) });
+      logger.warn("Failed to clear all caches", { error: String(error) });
     });
     services.virtualModules.clear();
     services.componentRegistry.clear();
@@ -266,7 +268,7 @@ export class RendererLifecycle {
     if (!services) return;
 
     services.cacheCoordinator.clearSlug(slug).catch((error) => {
-      logger.warn("[Lifecycle] Failed to clear slug cache", { slug, error: String(error) });
+      logger.warn("Failed to clear slug cache", { slug, error: String(error) });
     });
   }
 

@@ -1,11 +1,13 @@
 import type { Pluggable } from "unified";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { getRehypePlugins, getRemarkPlugins } from "../../plugins/plugin-loader.ts";
 import { extractFrontmatter } from "./frontmatter-extractor.ts";
 import { rewriteBodyImports, rewriteCompiledImports } from "./import-rewriter.ts";
 import type { CompilationMode, CompilationTarget, MdxRuntimeBundle } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+
+const logger = rendererLogger.component("mdx-compiler");
 
 type PluggableList = Pluggable[];
 
@@ -38,7 +40,7 @@ export function compileMDXRuntime(
           ? rewriteBodyImports(extractedBody, { filePath: filePath!, target, baseUrl, projectDir })
           : extractedBody;
 
-        logger.debug("[MDX Compiler] Body metrics:", {
+        logger.debug("Body metrics:", {
           filePath,
           target,
           contentLength: content.length,
@@ -84,7 +86,7 @@ export function compileMDXRuntime(
           nodeMap: new Map(),
         };
       } catch (error) {
-        logger.error("[MDX Compiler] Compilation failed:", {
+        logger.error("Compilation failed:", {
           filePath,
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,

@@ -7,7 +7,9 @@
  * @module utils/circuit-breaker
  */
 
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
+
+const logger = baseLogger.component("circuit-breaker");
 
 export type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
@@ -123,7 +125,7 @@ export class CircuitBreaker {
       this.halfOpenAttempts = 0;
     }
 
-    logger.info(`[CircuitBreaker] ${this.breakerName}: ${oldState} → ${newState}`);
+    logger.info(`${this.breakerName}: ${oldState} → ${newState}`);
   }
 
   getState(): CircuitState {
@@ -174,13 +176,13 @@ function evictStaleBreakers(): void {
 
     breakers.delete(name);
     evicted++;
-    logger.debug(`[CircuitBreaker] Evicted stale breaker: ${name}`, {
+    logger.debug(`Evicted stale breaker: ${name}`, {
       age: Math.round(age / 1000),
     });
   }
 
   if (evicted > 0) {
-    logger.info(`[CircuitBreaker] Evicted ${evicted} stale breakers, ${breakers.size} remaining`);
+    logger.info(`Evicted ${evicted} stale breakers, ${breakers.size} remaining`);
   }
 }
 

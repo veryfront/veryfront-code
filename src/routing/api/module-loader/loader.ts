@@ -1,4 +1,4 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import type { BuildResult, Plugin } from "esbuild";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -15,6 +15,8 @@ import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isCompiledBinary } from "#veryfront/utils";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+
+const logger = serverLogger.component("api");
 
 const FILE_EXTENSIONS: string[] = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs"];
 
@@ -74,7 +76,7 @@ function loadModule(args: {
   return fs.exists(modulePath).then((fileExistsLocally) => {
     if (fileExistsLocally) return loadTSModuleDirect(modulePath);
 
-    logger.debug(`[API] File not local, using adapter-based loading: ${modulePath}`);
+    logger.debug(`File not local, using adapter-based loading: ${modulePath}`);
     return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
   });
 }
@@ -90,7 +92,7 @@ function loadTSModuleDirect(modulePath: string): Promise<APIRoute> {
     ? `${modulePath}${cacheBuster}`
     : `file://${modulePath}${cacheBuster}`;
 
-  logger.debug(`[API] Direct import (Deno): ${url}`);
+  logger.debug(`Direct import (Deno): ${url}`);
   return import(url);
 }
 
@@ -108,7 +110,7 @@ function createImportMapPlugin(
 
   if (importMapEntries.length === 0) return { name: "import-map", setup() {} };
 
-  logger.info(`[API] Using import map with ${importMapEntries.length} entries`);
+  logger.info(`Using import map with ${importMapEntries.length} entries`);
 
   return {
     name: "import-map",
@@ -152,7 +154,7 @@ function createImportMapPlugin(
         if (!resolvedPath) return undefined;
 
         if (resolvedPath.startsWith("http://") || resolvedPath.startsWith("https://")) {
-          logger.debug(`[API] Import map resolved to HTTP URL: ${args.path} -> ${resolvedPath}`);
+          logger.debug(`Import map resolved to HTTP URL: ${args.path} -> ${resolvedPath}`);
           return undefined;
         }
 
@@ -160,7 +162,7 @@ function createImportMapPlugin(
           ? resolvedPath
           : pathHelper.resolve(projectDir, resolvedPath);
 
-        logger.debug(`[API] Import map resolved: ${args.path} -> ${absolutePath}`);
+        logger.debug(`Import map resolved: ${args.path} -> ${absolutePath}`);
 
         return { path: absolutePath, namespace: "import-map" };
       });
@@ -182,7 +184,7 @@ function createImportMapPlugin(
             };
           } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
-            logger.error(`[API] Failed to load file via import map: ${args.path}`, error);
+            logger.error(`Failed to load file via import map: ${args.path}`, error);
             return { errors: [{ text: `Failed to load: ${msg}` }] };
           }
         }),
@@ -233,7 +235,7 @@ function createAdapterResolvePlugin(adapter: RuntimeAdapter): Plugin {
             };
           } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
-            logger.error(`[API] Failed to load via adapter: ${args.path}`, error);
+            logger.error(`Failed to load via adapter: ${args.path}`, error);
             return { errors: [{ text: `Failed to load: ${msg}` }] };
           }
         }),
@@ -318,9 +320,9 @@ function loadAndTranspileModule(
         );
       }
 
-      logger.info(`[API] built handler ${resolvedPath}`);
+      logger.info(`built handler ${resolvedPath}`);
       const js = result.outputFiles?.[0]?.text ?? "export {}";
-      logger.debug(`[API] transpiled size ${js.length} bytes`);
+      logger.debug(`transpiled size ${js.length} bytes`);
 
       return loadModuleFromCode(js, projectDir, fs);
     },
@@ -395,7 +397,7 @@ async function loadModuleFromCode(
     return await import(`file://${tempFile}?v=${Date.now()}`);
   } catch (e: unknown) {
     const errorMessage = e instanceof Error && e.stack ? e.stack : String(e);
-    logger.error(`[API] dynamic import failed ${tempFile}: ${errorMessage}`);
+    logger.error(`dynamic import failed ${tempFile}: ${errorMessage}`);
     throw e;
   } finally {
     await fs.remove(tempDir, { recursive: true });
@@ -413,7 +415,7 @@ async function rewriteExternalImports(
     try {
       const { pathToFileURL } = await import("node:url");
 
-      logger.debug(`[API] Rewriting external imports for Node.js, projectDir: ${projectDir}`);
+      logger.debug(`Rewriting external imports for Node.js, projectDir: ${projectDir}`);
 
       const resolvePackageToFileUrl = async (packageName: string): Promise<string | null> => {
         const packagePath = pathHelper.join(projectDir, "node_modules", packageName);
@@ -465,12 +467,12 @@ async function rewriteExternalImports(
 
         if (needsStatic) {
           transformed = transformed.replace(staticImportRegex, `from "${resolvedUrl}"`);
-          logger.debug(`[API] Resolved ${pkg} -> ${resolvedUrl}`);
+          logger.debug(`Resolved ${pkg} -> ${resolvedUrl}`);
         }
 
         if (needsDynamic) {
           transformed = transformed.replace(dynamicImportRegex, `import("${resolvedUrl}")`);
-          logger.debug(`[API] Resolved dynamic import ${pkg} -> ${resolvedUrl}`);
+          logger.debug(`Resolved dynamic import ${pkg} -> ${resolvedUrl}`);
         }
       }
 
@@ -482,7 +484,7 @@ async function rewriteExternalImports(
         const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
         exportsMap = pkgJson.exports || {};
       } catch {
-        logger.debug(`[API] Could not read veryfront package.json: `);
+        logger.debug(`Could not read veryfront package.json: `);
       }
 
       transformed = transformed.replace(
@@ -491,12 +493,12 @@ async function rewriteExternalImports(
           const subpath = "./" + fullSpecifier.replace("veryfront/", "");
           const exportEntry = exportsMap[subpath];
           if (!exportEntry?.import) {
-            logger.warn(`[API] No export found for ${subpath}`);
+            logger.warn(`No export found for ${subpath}`);
             return match;
           }
 
           const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
-          logger.debug(`[API] Resolved ${fullSpecifier} -> ${resolvedPath}`);
+          logger.debug(`Resolved ${fullSpecifier} -> ${resolvedPath}`);
           return `from "${pathToFileURL(resolvedPath).href}"`;
         },
       );
@@ -506,11 +508,11 @@ async function rewriteExternalImports(
         if (!exportEntry?.import) return 'from "veryfront"';
 
         const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
-        logger.debug(`[API] Resolved veryfront -> ${resolvedPath}`);
+        logger.debug(`Resolved veryfront -> ${resolvedPath}`);
         return `from "${pathToFileURL(resolvedPath).href}"`;
       });
     } catch (e) {
-      logger.warn(`[API] Failed to import node:module: ${e}`);
+      logger.warn(`Failed to import node:module: ${e}`);
     }
   }
 

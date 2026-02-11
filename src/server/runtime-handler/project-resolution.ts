@@ -18,7 +18,9 @@ import { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environmen
 import { SpanNames, withSpan } from "./tracing.ts";
 import { isInternalHost } from "./request-utils.ts";
 
-const logger = getBaseLogger("SERVER");
+const baseLogger = getBaseLogger("SERVER");
+
+const logger = baseLogger.component("project-resolution");
 
 /**
  * Injection interface for testing project resolution dependencies
@@ -167,7 +169,7 @@ export async function resolveProject(
     const baseUrl = opts.config.fs.veryfront.apiBaseUrl ?? "https://api.veryfront.com";
 
     if (effectiveToken) {
-      logger.debug("[project-resolution] Custom domain detected, looking up project", {
+      logger.debug("Custom domain detected, looking up project", {
         host,
         forwardedHost,
       });
@@ -190,14 +192,14 @@ export async function resolveProject(
 
         if (!proxyEnv) proxyEnv = deps.getEnvironmentType(lookupResult);
 
-        logger.debug("[project-resolution] Domain lookup successful", {
+        logger.debug("Domain lookup successful", {
           domain: host,
           projectSlug: lookupResult.project_slug,
           projectId: lookupResult.project_id,
           environment: proxyEnv,
         });
       } else {
-        logger.warn("[project-resolution] No project found for domain", { host });
+        logger.warn("No project found for domain", { host });
       }
     }
   }
@@ -235,7 +237,7 @@ export async function resolveProject(
         environmentName = environmentName ?? lookupResult.environment?.name;
         proxyEnv = "production";
 
-        logger.debug("[project-resolution] Veryfront domain release lookup successful", {
+        logger.debug("Veryfront domain release lookup successful", {
           projectSlug,
           releaseId,
           projectId,

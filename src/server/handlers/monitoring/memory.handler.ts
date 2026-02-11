@@ -13,7 +13,9 @@ import {
   getHeapStats,
   getMemorySnapshot,
 } from "#veryfront/utils/memory/index.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
+
+const logger = rendererLogger.component("memory-debug-handler");
 
 export class MemoryDebugHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -46,7 +48,7 @@ export class MemoryDebugHandler extends BaseHandler {
           return this.continue();
       }
     } catch (error) {
-      logger.error("[MemoryDebugHandler] Error", { error });
+      logger.error("Error", { error });
 
       const response = ResponseBuilder.error(
         HTTP_INTERNAL_SERVER_ERROR,

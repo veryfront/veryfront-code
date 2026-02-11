@@ -1,4 +1,4 @@
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { NETWORK_ERROR } from "#veryfront/errors/index.ts";
 import { parsePageDataFromHTML } from "./dom-utils.ts";
 
@@ -11,6 +11,8 @@ export type {
   SpaPageData,
 } from "./types.ts";
 import type { RouteData, SpaPageData } from "./types.ts";
+
+const logger = rendererLogger.component("veryfront");
 
 const MAX_CACHE_SIZE = 50;
 
@@ -73,7 +75,7 @@ export class PageLoader {
       if (!response.ok) return null;
       return await response.json();
     } catch (error) {
-      logger.debug(`[Veryfront] JSON fetch failed for ${path}, falling back to HTML:`, error);
+      logger.debug(`JSON fetch failed for ${path}, falling back to HTML:`, error);
       return null;
     }
   }
@@ -100,17 +102,17 @@ export class PageLoader {
   loadPage(path: string): Promise<RouteData> {
     const cachedData = this.getCached(path);
     if (cachedData) {
-      logger.debug(`[Veryfront] Loading ${path} from cache`);
+      logger.debug(`Loading ${path} from cache`);
       return Promise.resolve(cachedData);
     }
 
     const pending = this.pendingRequests.get(path);
     if (pending) {
-      logger.debug(`[Veryfront] Reusing pending request for ${path}`);
+      logger.debug(`Reusing pending request for ${path}`);
       return pending;
     }
 
-    logger.debug(`[Veryfront] Creating pending request for ${path}`);
+    logger.debug(`Creating pending request for ${path}`);
 
     return this.createPendingRequest(path, this.pendingRequests, async () => {
       const data = await this.fetchPageData(path);
@@ -122,7 +124,7 @@ export class PageLoader {
   async prefetch(path: string): Promise<void> {
     if (this.isCached(path)) return;
 
-    logger.debug(`[Veryfront] Prefetching ${path}`);
+    logger.debug(`Prefetching ${path}`);
 
     try {
       const data = await this.fetchPageData(path);
@@ -139,7 +141,7 @@ export class PageLoader {
     const normalizedPath = path === "/" ? "" : path.replace(/^\//, "");
     const endpoint = `/_veryfront/page-data/${normalizedPath}.json`;
 
-    logger.debug(`[Veryfront] Fetching SPA page data from ${endpoint}`);
+    logger.debug(`Fetching SPA page data from ${endpoint}`);
 
     const response = await fetch(endpoint, {
       headers: { "X-Veryfront-Navigation": "spa" },
@@ -159,17 +161,17 @@ export class PageLoader {
   loadSpaPageData(path: string): Promise<SpaPageData> {
     const cachedData = this.getSpaCached(path);
     if (cachedData) {
-      logger.debug(`[Veryfront] Loading SPA data for ${path} from cache`);
+      logger.debug(`Loading SPA data for ${path} from cache`);
       return Promise.resolve(cachedData);
     }
 
     const pending = this.pendingSpaRequests.get(path);
     if (pending) {
-      logger.debug(`[Veryfront] Reusing pending SPA request for ${path}`);
+      logger.debug(`Reusing pending SPA request for ${path}`);
       return pending;
     }
 
-    logger.debug(`[Veryfront] Creating pending SPA request for ${path}`);
+    logger.debug(`Creating pending SPA request for ${path}`);
 
     return this.createPendingRequest(path, this.pendingSpaRequests, async () => {
       const data = await this.fetchSpaPageData(path);
@@ -181,7 +183,7 @@ export class PageLoader {
   async prefetchSpaPageData(path: string): Promise<void> {
     if (this.isSpaDataCached(path)) return;
 
-    logger.debug(`[Veryfront] Prefetching SPA page data for ${path}`);
+    logger.debug(`Prefetching SPA page data for ${path}`);
 
     try {
       const data = await this.fetchSpaPageData(path);

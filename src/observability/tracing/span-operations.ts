@@ -1,5 +1,7 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import type { Context, OpenTelemetryAPI, Span, SpanKind, SpanOptions, Tracer } from "./types.ts";
+
+const logger = serverLogger.component("tracing");
 
 export class SpanOperations {
   constructor(
@@ -18,7 +20,7 @@ export class SpanOperations {
         options.parent as Context | undefined,
       );
     } catch (error) {
-      logger.debug("[tracing] Failed to start span", { name, error });
+      logger.debug("Failed to start span", { name, error });
       return null;
     }
   }
@@ -39,7 +41,7 @@ export class SpanOperations {
 
       span.end();
     } catch (error) {
-      logger.debug("[tracing] Failed to end span", error);
+      logger.debug("Failed to end span", error);
     }
   }
 
@@ -49,7 +51,7 @@ export class SpanOperations {
     try {
       span.setAttributes(attributes);
     } catch (error) {
-      logger.debug("[tracing] Failed to set span attributes", error);
+      logger.debug("Failed to set span attributes", error);
     }
   }
 
@@ -63,7 +65,7 @@ export class SpanOperations {
     try {
       span.addEvent(name, attributes);
     } catch (error) {
-      logger.debug("[tracing] Failed to add span event", error);
+      logger.debug("Failed to add span event", error);
     }
   }
 
@@ -74,7 +76,7 @@ export class SpanOperations {
       const parentContext = this.api.trace.setSpan(this.api.context.active(), parentSpan);
       return this.startSpan(name, { ...options, parent: parentContext });
     } catch (error) {
-      logger.debug("[tracing] Failed to create child span", error);
+      logger.debug("Failed to create child span", error);
       return null;
     }
   }

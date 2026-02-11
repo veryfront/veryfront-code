@@ -24,6 +24,8 @@ import {
 } from "../shared/watcher-queue.ts";
 import { stopManagedServer } from "../shared/server-lifecycle.ts";
 
+const logger = serverLogger.component("deno");
+
 /** Default server port. Defined locally to keep adapters module isolated. */
 const DEFAULT_PORT = 3000;
 const DEFAULT_POLL_INTERVAL_MS = 200;
@@ -224,7 +226,7 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
       try {
         snapshot = await collectFileSnapshot(pathArray, recursive);
       } catch (error) {
-        serverLogger.debug("[Deno] Initial file snapshot failed", { error });
+        logger.debug("Initial file snapshot failed", { error });
       }
 
       while (!closed && !signal?.aborted) {
@@ -235,7 +237,7 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
         try {
           nextSnapshot = await collectFileSnapshot(pathArray, recursive);
         } catch (error) {
-          serverLogger.debug("[Deno] File snapshot failed", { error });
+          logger.debug("File snapshot failed", { error });
           continue;
         }
 
@@ -335,7 +337,7 @@ class DenoServer implements Server {
       this.abortController?.abort();
       await this.server.shutdown();
     } catch (error) {
-      serverLogger.debug("[Deno] Server shutdown failed", { error });
+      logger.debug("Server shutdown failed", { error });
     }
   }
 

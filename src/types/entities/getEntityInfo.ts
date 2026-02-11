@@ -10,7 +10,9 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { withFallback } from "#veryfront/platform/adapters/fallback-wrapper.ts";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
+
+const logger = baseLogger.component("get-entity-by-slug");
 
 const entityInfoScope = createErrorScope("getEntityInfo");
 const fs = createFileSystem();
@@ -168,7 +170,7 @@ export async function getEntityBySlug(
       const isVeryfrontRoute = slug.startsWith(".veryfront/") || slug === ".veryfront";
       const resolveFile = adapter?.fs.resolveFile;
 
-      logger.debug("[getEntityBySlug] START", {
+      logger.debug("START", {
         slug,
         projectDir,
         isVeryfrontRoute,
@@ -183,14 +185,14 @@ export async function getEntityBySlug(
           basePaths.unshift(pathHelper.join(projectDir, "pages", "index"));
         }
 
-        logger.debug("[getEntityBySlug] Checking paths (resolveFile branch)", {
+        logger.debug("Checking paths (resolveFile branch)", {
           slug,
           basePaths,
         });
 
         const pathResults = await parallelMap(basePaths, async (basePath) => {
           const resolvedPath = await resolveFile.call(adapter.fs, basePath);
-          logger.debug("[getEntityBySlug] resolveFile result", {
+          logger.debug("resolveFile result", {
             basePath,
             resolvedPath,
           });
@@ -200,7 +202,7 @@ export async function getEntityBySlug(
 
         for (const info of pathResults) {
           if (info?.entity.isPage) {
-            logger.debug("[getEntityBySlug] Found page via resolveFile", {
+            logger.debug("Found page via resolveFile", {
               slug,
               path: info.entity.path,
             });
@@ -252,7 +254,7 @@ export async function getEntityBySlug(
           }
         }
 
-        logger.debug("[getEntityBySlug] No page found via resolveFile branch", { slug });
+        logger.debug("No page found via resolveFile branch", { slug });
         return null;
       }
 

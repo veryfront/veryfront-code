@@ -3,8 +3,10 @@
  * @module
  */
 
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import type { ObservabilityMetrics } from "./types.ts";
+
+const logger = serverLogger.component("metrics");
 
 let loadingPromise: Promise<ObservabilityMetrics | null> | null = null;
 
@@ -35,7 +37,7 @@ export async function getObservabilityMetrics(): Promise<ObservabilityMetrics | 
         recordRSCStream: mod.recordRSCStream,
       };
     } catch (error) {
-      logger.debug("[metrics] Observability module not available (metrics disabled)", { error });
+      logger.debug("Observability module not available (metrics disabled)", { error });
       return null;
     }
   })();

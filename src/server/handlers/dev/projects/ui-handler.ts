@@ -1,7 +1,9 @@
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { transformUiModule } from "../shared/ui-module-transform.ts";
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
+
+const logger = baseLogger.component("projects");
 
 const moduleCache = new Map<string, { code: string; timestamp: number }>();
 const CACHE_TTL = 5000;
@@ -76,7 +78,7 @@ export function handleProjectsUI(req: Request): Promise<Response | null> {
         moduleCache.set(filePath, { code, timestamp: now });
         return new Response(code, { headers: JS_HEADERS });
       } catch (error) {
-        logger.error("[Projects] Transform error", { filePath, error });
+        logger.error("Transform error", { filePath, error });
         return new Response(
           `// Transform error: ${error instanceof Error ? error.message : String(error)}`,
           { status: 500, headers: JS_HEADERS },

@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { RSCProductionOptimizer } from "#veryfront/rendering/rsc/production-optimizer.ts";
 import type { RSCRenderer } from "#veryfront/rendering/rsc/server-renderer/index.ts";
 import type { RSCPayload } from "#veryfront/rendering/rsc/types.ts";
@@ -9,6 +9,8 @@ import { createErrorResponse } from "#veryfront/errors/http-error.ts";
 import { wrapUnknownError } from "#veryfront/errors/middleware/wrap-unknown.ts";
 import { extractParams, resolveComponentPath } from "./component-resolver.ts";
 import type { RenderProps } from "./types.ts";
+
+const logger = serverLogger.component("rsc");
 
 export class RenderHandler {
   constructor(
@@ -128,7 +130,7 @@ export class RenderHandler {
   }
 
   private createErrorResponse(error: unknown): Response {
-    logger.error("[RSC] Render error:", error);
+    logger.error("Render error:", error);
 
     const message = getErrorMessage(error);
     let vfError;

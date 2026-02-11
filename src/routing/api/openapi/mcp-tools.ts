@@ -9,9 +9,11 @@
 
 import { dynamicTool } from "#veryfront/tool";
 import type { Tool } from "#veryfront/tool";
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { z } from "zod";
 import type { OpenAPIOperation, OpenAPIParameter, OpenAPISpec } from "./types.ts";
+
+const logger = baseLogger.component("open-api-mcp");
 
 const HTTP_METHODS = ["get", "post", "put", "patch", "delete", "head", "options"] as const;
 type HttpMethod = (typeof HTTP_METHODS)[number];
@@ -63,7 +65,7 @@ export function generateMCPToolsFromSpec(spec: OpenAPISpec, config: MCPToolsConf
     }
   }
 
-  logger.debug("[OpenAPI MCP] Generated tools", { count: tools.length });
+  logger.debug("Generated tools", { count: tools.length });
   return tools;
 }
 
@@ -178,7 +180,7 @@ async function executeAPICall(
     requestInit.body = JSON.stringify(input.body);
   }
 
-  logger.debug("[OpenAPI MCP] Executing API call", { method, url });
+  logger.debug("Executing API call", { method, url });
 
   try {
     const response = await fetch(url, requestInit);
@@ -197,7 +199,7 @@ async function executeAPICall(
       data,
     };
   } catch (error) {
-    logger.error("[OpenAPI MCP] API call failed", { method, url, error: String(error) });
+    logger.error("API call failed", { method, url, error: String(error) });
     return {
       error: true,
       message: error instanceof Error ? error.message : String(error),

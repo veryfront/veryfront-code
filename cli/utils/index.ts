@@ -24,6 +24,7 @@ export const cliLogger: {
   warn: LoggerMethod;
   error: LoggerMethod;
   child: (_context: Record<string, unknown>) => typeof cliLogger;
+  component: (_name: string) => typeof cliLogger;
 } = {
   debug: (...args) => {
     if (!debugEnabled()) return;
@@ -33,6 +34,8 @@ export const cliLogger: {
   warn: (...args) => console.warn(...args),
   error: (...args) => console.error(...args),
   child: () => cliLogger,
+  // CLI logger uses plain text output; component names are intentionally ignored.
+  component: () => cliLogger,
 };
 
 export const VERSION = typeof denoConfig.version === "string" ? denoConfig.version : "0.0.0";

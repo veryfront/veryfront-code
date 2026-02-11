@@ -5,8 +5,10 @@
  * Each workflow runs in an ephemeral pod with complete isolation.
  */
 
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import type { JobConfig, JobExecutor, JobInfo, JobStatus } from "./types.ts";
+
+const logger = baseLogger.component("k8s-job-executor");
 
 /**
  * K8s Job Executor configuration
@@ -203,7 +205,7 @@ export class K8sJobExecutor implements JobExecutor {
     await this.k8sClient.createJob(this.config.namespace, job);
 
     if (debug || this.config.debug) {
-      logger.info(`[K8sJobExecutor] Created job ${jobName} for run ${run.id}`);
+      logger.info(`Created job ${jobName} for run ${run.id}`);
     }
 
     return jobId;
@@ -241,10 +243,10 @@ export class K8sJobExecutor implements JobExecutor {
       await this.k8sClient.deleteJob(this.config.namespace, jobName);
 
       if (this.config.debug) {
-        logger.info(`[K8sJobExecutor] Deleted job ${jobName}`);
+        logger.info(`Deleted job ${jobName}`);
       }
     } catch (error) {
-      logger.warn(`[K8sJobExecutor] Failed to delete job ${jobName}:`, error);
+      logger.warn(`Failed to delete job ${jobName}:`, error);
     }
   }
 

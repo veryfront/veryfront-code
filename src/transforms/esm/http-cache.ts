@@ -63,6 +63,9 @@ import {
   recoverHttpBundleByHash as recoverHttpBundleByHashImpl,
 } from "./bundle-recovery.ts";
 
+const httpCacheLog = logger.component("http-cache");
+const contentMetricsLog = logger.component("content-metrics");
+
 // Re-export for backwards compatibility
 export {
   CACHE_DIR_TOKEN,
@@ -101,7 +104,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     if (deps.length > 0) {
       const depsValid = await validateBundleDepsExist(deps, cacheDir);
       if (!depsValid) {
-        logger.warn("[HTTP-CACHE] Local cache has missing deps, will re-fetch", {
+        httpCacheLog.warn("Local cache has missing deps, will re-fetch", {
           url: normalizedUrl,
           hash,
           missingDeps: deps.length,
@@ -129,11 +132,11 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
   const processingStack = getProcessingStack();
   if (processingStack.has(normalizedUrl)) {
     if (await exists(cachePath)) {
-      logger.debug("[HTTP-CACHE] Circular dependency detected, file exists", {
+      httpCacheLog.debug("Circular dependency detected, file exists", {
         url: normalizedUrl,
       });
     } else {
-      logger.debug("[HTTP-CACHE] Circular dependency detected, file pending write", {
+      httpCacheLog.debug("Circular dependency detected, file pending write", {
         url: normalizedUrl,
         cachePath,
       });
@@ -163,7 +166,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       if (deps.length > 0) {
         const depsExist = await validateBundleDepsExist(deps, cacheDir);
         if (!depsExist) {
-          logger.warn("[HTTP-CACHE] Cached code has missing bundle deps, will re-fetch", {
+          httpCacheLog.warn("Cached code has missing bundle deps, will re-fetch", {
             url: normalizedUrl,
             hash,
             missingDeps: deps.length,
@@ -207,13 +210,13 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         return cachePath;
       }
     } else if (cacheResult.failReason && cacheResult.failReason !== "not_found") {
-      logger.debug("[HTTP-CACHE] Distributed cache get failed", {
+      httpCacheLog.debug("Distributed cache get failed", {
         url: normalizedUrl,
         reason: cacheResult.failReason,
       });
     }
 
-    logger.debug("[HTTP-CACHE] Fetching from network", { url: normalizedUrl });
+    httpCacheLog.debug("Fetching from network", { url: normalizedUrl });
 
     const urlObj = new URL(normalizedUrl);
     const controller = new AbortController();
@@ -240,7 +243,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     clearTimeout(timeout);
 
     const httpFetchDuration = Math.round(performance.now() - httpFetchStartTime);
-    logger.info("[ContentMetrics] HTTP_MODULE_FETCH", {
+    contentMetricsLog.info("HTTP_MODULE_FETCH", {
       url: normalizedUrl.substring(0, 120),
       host: urlObj.host,
       duration_ms: httpFetchDuration,
@@ -300,7 +303,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
         throw error;
       }
-      logger.debug("[HTTP-CACHE] Distributed cache set failed", { url: normalizedUrl, error });
+      httpCacheLog.debug("Distributed cache set failed", { url: normalizedUrl, error });
     }
 
     getCachedPaths().set(cacheKey, cachePath);
@@ -351,7 +354,7 @@ export function cacheHttpImportsToLocal(
     const replacements = await buildReplacements(code, undefined, options, cacheHttpModule);
     if (replacements.size === 0) return { code };
 
-    logger.debug("[HTTP-CACHE] Cached HTTP imports", { count: replacements.size });
+    httpCacheLog.debug("Cached HTTP imports", { count: replacements.size });
 
     const rewrittenCode = await replaceSpecifiers(
       code,
@@ -364,13 +367,13 @@ export function cacheHttpImportsToLocal(
     try {
       const manifest = await createBundleManifest(bundles);
       await storeBundleManifest(manifest);
-      logger.debug("[HTTP-CACHE] Created bundle manifest", {
+      httpCacheLog.debug("Created bundle manifest", {
         manifestId: manifest.manifestId.slice(0, 12),
         bundleCount: bundles.length,
       });
       return { code: rewrittenCode, bundleManifestId: manifest.manifestId };
     } catch (error) {
-      logger.debug("[HTTP-CACHE] Failed to create bundle manifest", { error });
+      httpCacheLog.debug("Failed to create bundle manifest", { error });
       return { code: rewrittenCode };
     }
   });

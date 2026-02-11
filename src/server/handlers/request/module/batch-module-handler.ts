@@ -1,8 +1,10 @@
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import { handleModuleBatch } from "#veryfront/modules/server/module-batch-handler.ts";
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+
+const logger = serverLogger.component("batch-module-handler");
 
 export function handleBatchModuleEndpoint(
   req: Request,
@@ -13,7 +15,7 @@ export function handleBatchModuleEndpoint(
   return withSpan(
     "module.batch.handle",
     async () => {
-      logger.debug("[BatchModuleHandler] Handling batch request", {
+      logger.debug("Handling batch request", {
         projectSlug: ctx.projectSlug,
         url: req.url,
       });

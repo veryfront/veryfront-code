@@ -10,7 +10,9 @@
 import plugin from "tailwindcss/plugin";
 import defaultTheme from "tailwindcss/defaultTheme";
 import colors from "tailwindcss/colors";
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
+
+const logger = serverLogger.component("tailwind");
 
 // Provide localStorage shim for plugins that use util-deprecate (which checks localStorage)
 // This prevents "LocalStorage is not supported in this context" errors in Deno.
@@ -56,7 +58,7 @@ try {
  */
 export async function loadModuleFromEsmSh(packageName: string): Promise<unknown> {
   const stubUrl = `https://esm.sh/${packageName}?bundle&external=tailwindcss&target=denonext`;
-  logger.debug("[tailwind] Fetching esm.sh stub", { url: stubUrl });
+  logger.debug("Fetching esm.sh stub", { url: stubUrl });
 
   const stubResponse = await fetch(stubUrl);
   if (!stubResponse.ok) {
@@ -70,7 +72,7 @@ export async function loadModuleFromEsmSh(packageName: string): Promise<unknown>
   }
 
   const bundleUrl = `https://esm.sh${bundleMatch[1]}`;
-  logger.debug("[tailwind] Fetching actual bundle", { url: bundleUrl });
+  logger.debug("Fetching actual bundle", { url: bundleUrl });
 
   const bundleResponse = await fetch(bundleUrl);
   if (!bundleResponse.ok) {
@@ -96,7 +98,7 @@ export async function loadModuleFromEsmSh(packageName: string): Promise<unknown>
       "g",
     );
     code = code.replace(importRegex, (_, varName) => {
-      logger.debug(`[tailwind] Rewrote ${importPath} import to use global shim`, { varName });
+      logger.debug(`Rewrote ${importPath} import to use global shim`, { varName });
       return `const ${varName} = globalThis.${shimName}`;
     });
   }
@@ -110,7 +112,7 @@ export async function loadModuleFromEsmSh(packageName: string): Promise<unknown>
   // Step 5: Write to temp file and import
   const tempPath = `/tmp/tw_plugin_${crypto.randomUUID()}.mjs`;
   await Deno.writeTextFile(tempPath, code);
-  logger.debug("[tailwind] Wrote plugin to temp file", { path: tempPath });
+  logger.debug("Wrote plugin to temp file", { path: tempPath });
 
   try {
     return await import(`file://${tempPath}`);
@@ -136,15 +138,15 @@ export async function loadPlugin(
     let mod: unknown;
 
     if (isDeno) {
-      logger.debug("[tailwind] Loading plugin via dynamic esm.sh fetch", { id });
+      logger.debug("Loading plugin via dynamic esm.sh fetch", { id });
       mod = await loadModuleFromEsmSh(id);
     } else {
-      logger.debug("[tailwind] Loading plugin from node_modules", { id });
+      logger.debug("Loading plugin from node_modules", { id });
       try {
         mod = await import(id);
       } catch {
         const errorMsg = `Failed to load plugin "${id}": plugin not installed`;
-        logger.warn("[tailwind] Plugin not installed", { id });
+        logger.warn("Plugin not installed", { id });
         pluginErrors.set(id, errorMsg);
         pluginCache.set(id, null);
         throw new Error(errorMsg);
@@ -158,7 +160,7 @@ export async function loadPlugin(
     const errorMsg = `Failed to load plugin "${id}": ${
       error instanceof Error ? error.message : String(error)
     }`;
-    logger.warn(`[tailwind] ${errorMsg}`);
+    logger.warn(`${errorMsg}`);
     pluginErrors.set(id, errorMsg);
     throw new Error(errorMsg);
   }

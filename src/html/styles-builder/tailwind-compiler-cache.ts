@@ -9,11 +9,13 @@
  */
 
 import { compile } from "tailwindcss";
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { hashString } from "./candidate-extractor.ts";
 import { loadPlugin } from "./plugin-loader.ts";
+
+const logger = serverLogger.component("tailwind");
 
 /**
  * LRU cache for Tailwind compilers, keyed by stylesheet hash.
@@ -41,7 +43,7 @@ async function getTailwindBaseCSS(): Promise<string> {
   if (tailwindBaseCSS) return tailwindBaseCSS;
 
   const url = getTailwindCSSUrl();
-  logger.debug("[tailwind] Fetching base CSS", { url });
+  logger.debug("Fetching base CSS", { url });
 
   const response = await fetch(url);
   if (!response.ok) {
@@ -68,7 +70,7 @@ function evictOldestCompiler(): void {
   if (!oldestKey) return;
 
   compilerCache.delete(oldestKey);
-  logger.debug("[tailwind] Evicted oldest compiler from cache", { hash: oldestKey });
+  logger.debug("Evicted oldest compiler from cache", { hash: oldestKey });
 }
 
 export async function getCompiler(
@@ -78,11 +80,11 @@ export async function getCompiler(
 
   const cached = compilerCache.get(hash);
   if (cached) {
-    logger.debug("[tailwind] Compiler cache hit", { hash });
+    logger.debug("Compiler cache hit", { hash });
     return cached.compiler;
   }
 
-  logger.debug("[tailwind] Creating new compiler", { hash });
+  logger.debug("Creating new compiler", { hash });
 
   const tailwindBase = await getTailwindBaseCSS();
   const pluginCache = new Map<string, unknown>();
@@ -94,7 +96,7 @@ export async function getCompiler(
       if (id === "tailwindcss") {
         return Promise.resolve({ content: tailwindBase, base: "/", path: "/" });
       }
-      logger.debug("[tailwind] Unknown stylesheet import", { id });
+      logger.debug("Unknown stylesheet import", { id });
       return Promise.resolve({ content: "", base: "/", path: "/" });
     },
     loadModule: async (id: string) => {
@@ -119,7 +121,7 @@ export async function getCompiler(
 
 export function invalidateCompiler(): void {
   compilerCache.clear();
-  logger.debug("[tailwind] All compilers invalidated");
+  logger.debug("All compilers invalidated");
 }
 
 /**

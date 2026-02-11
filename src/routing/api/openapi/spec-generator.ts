@@ -20,7 +20,9 @@ import {
   type WrappedHandler,
 } from "./types.ts";
 import { extractPathParams, generateOperationId, toOpenAPIPath } from "./path-utils.ts";
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
+
+const logger = baseLogger.component("open-api");
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 type HttpMethod = (typeof HTTP_METHODS)[number];
@@ -68,7 +70,7 @@ export async function generateOpenAPISpec(
 
       spec.paths[toOpenAPIPath(pattern)] = pathItem;
     } catch (error) {
-      logger.warn(`[OpenAPI] Failed to process route ${pattern}:`, { error: String(error) });
+      logger.warn(`Failed to process route ${pattern}:`, { error: String(error) });
     }
   }
 

@@ -1,7 +1,9 @@
 import type { CachePayload, CacheStore } from "../types.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { MemoryCacheStore } from "./memory-store.ts";
+
+const logger = rendererLogger.component("redis");
 
 interface RedisClient {
   connect(): Promise<void>;
@@ -49,7 +51,7 @@ export class RedisCacheStore implements CacheStore {
       maxEntries: 100,
       ttlMs: this.ttlSeconds * 1000,
     });
-    logger.warn("[redis] Redis unavailable, using memory cache fallback");
+    logger.warn("Redis unavailable, using memory cache fallback");
     return this.fallbackStore;
   }
 
@@ -77,7 +79,7 @@ export class RedisCacheStore implements CacheStore {
     client.on?.("error", (err: unknown) => {
       // Only log the first error to avoid flooding logs during reconnection attempts
       if (!this.errorLogged) {
-        logger.error("[redis] client error", err);
+        logger.error("client error", err);
         this.errorLogged = true;
       }
       this.redisUnavailable = true;
@@ -124,11 +126,11 @@ export class RedisCacheStore implements CacheStore {
       this.markRedisUnavailable();
 
       if (!this.enableFallback) {
-        logger.warn("[redis] get failed, skipping fallback", { key, error });
+        logger.warn("get failed, skipping fallback", { key, error });
         return undefined;
       }
 
-      logger.warn("[redis] get failed, using fallback", { key, error });
+      logger.warn("get failed, using fallback", { key, error });
       return this.getFallbackStore().get(key);
     }
   }
@@ -145,11 +147,11 @@ export class RedisCacheStore implements CacheStore {
       this.markRedisUnavailable();
 
       if (!this.enableFallback) {
-        logger.warn("[redis] set failed, skipping fallback", { key, error });
+        logger.warn("set failed, skipping fallback", { key, error });
         return;
       }
 
-      logger.warn("[redis] set failed, using fallback", { key, error });
+      logger.warn("set failed, using fallback", { key, error });
       await this.getFallbackStore().set(key, value);
     }
   }
@@ -165,11 +167,11 @@ export class RedisCacheStore implements CacheStore {
       this.markRedisUnavailable();
 
       if (!this.enableFallback) {
-        logger.warn("[redis] delete failed, skipping fallback", { key, error });
+        logger.warn("delete failed, skipping fallback", { key, error });
         return;
       }
 
-      logger.warn("[redis] delete failed, using fallback", { key, error });
+      logger.warn("delete failed, using fallback", { key, error });
       await this.getFallbackStore().delete(key);
     }
   }
@@ -202,11 +204,11 @@ export class RedisCacheStore implements CacheStore {
       this.markRedisUnavailable();
 
       if (!this.enableFallback) {
-        logger.warn("[redis] deleteByPrefix failed, skipping fallback", { prefix, error });
+        logger.warn("deleteByPrefix failed, skipping fallback", { prefix, error });
         return localDeleted;
       }
 
-      logger.warn("[redis] deleteByPrefix failed, using fallback", { prefix, error });
+      logger.warn("deleteByPrefix failed, using fallback", { prefix, error });
       return localDeleted;
     }
   }
@@ -235,11 +237,11 @@ export class RedisCacheStore implements CacheStore {
       this.markRedisUnavailable();
 
       if (!this.enableFallback) {
-        logger.warn("[redis] clear failed, skipping fallback", { error });
+        logger.warn("clear failed, skipping fallback", { error });
         return;
       }
 
-      logger.warn("[redis] clear failed", { error });
+      logger.warn("clear failed", { error });
     }
   }
 

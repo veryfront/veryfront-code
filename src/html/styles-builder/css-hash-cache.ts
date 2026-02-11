@@ -13,12 +13,14 @@ import {
   createCacheBackend,
   MemoryCacheBackend,
 } from "#veryfront/cache/backend.ts";
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { hashCSS } from "./candidate-extractor.ts";
 import { buildCSSCacheEntry, parseCSSCacheEntry } from "./tailwind-compiler-utils.ts";
 import { resolveStylesheet } from "./tailwind-compiler-utils.ts";
+
+const logger = serverLogger.component("tailwind");
 
 // ============================================================================
 // Types
@@ -209,7 +211,7 @@ export async function cacheCSSAsync(
     const cache = await getCssCache();
     await cache.set(resolvedHash, JSON.stringify(entry), CSS_CACHE_TTL_SECONDS);
   } catch (error) {
-    logger.debug("[tailwind] Failed to store CSS in distributed cache", {
+    logger.debug("Failed to store CSS in distributed cache", {
       hash: resolvedHash,
       error,
     });
@@ -245,10 +247,10 @@ export async function getCSSByHashAsync(hash: string): Promise<string | undefine
         const entry = parseCSSCacheEntry(raw, DEFAULT_STYLESHEET);
 
         storeInLocalCache(hash, entry);
-        logger.debug("[tailwind] CSS cache hit from distributed cache", { hash });
+        logger.debug("CSS cache hit from distributed cache", { hash });
         return entry.css;
       } catch (error) {
-        logger.debug("[tailwind] Failed to read from distributed CSS cache", { hash, error });
+        logger.debug("Failed to read from distributed CSS cache", { hash, error });
         return undefined;
       }
     },
@@ -280,7 +282,7 @@ export async function cacheCSSInputsAsync(
     const cache = await getCssInputsCache();
     await cache.set(hash, JSON.stringify(entry), CSS_CACHE_TTL_SECONDS);
   } catch (error) {
-    logger.debug("[tailwind] Failed to store CSS inputs in distributed cache", {
+    logger.debug("Failed to store CSS inputs in distributed cache", {
       hash,
       error,
     });
@@ -311,7 +313,7 @@ async function getCSSCacheEntry(hash: string): Promise<CSSCacheEntry | undefined
     storeInLocalCache(hash, entry);
     return entry;
   } catch (error) {
-    logger.debug("[tailwind] Failed to read CSS cache entry", { hash, error });
+    logger.debug("Failed to read CSS cache entry", { hash, error });
   }
 
   return undefined;
@@ -331,10 +333,10 @@ async function getCSSInputsByHash(hash: string): Promise<CSSInputsCacheEntry | u
 
     const entry = JSON.parse(raw) as CSSInputsCacheEntry;
     storeInLocalCssInputsCache(hash, entry);
-    logger.debug("[tailwind] CSS inputs cache hit from distributed cache", { hash });
+    logger.debug("CSS inputs cache hit from distributed cache", { hash });
     return entry;
   } catch (error) {
-    logger.debug("[tailwind] Failed to read CSS inputs from distributed cache", { hash, error });
+    logger.debug("Failed to read CSS inputs from distributed cache", { hash, error });
     return undefined;
   }
 }
@@ -358,7 +360,7 @@ export async function resolveRegenerationInputs(
   const unifiedEntry = await getCSSCacheEntry(expectedHash);
   const unifiedInputs = toCSSInputsEntry(unifiedEntry);
   if (unifiedInputs) {
-    logger.debug("[tailwind] Found inputs in unified CSS cache", { hash: expectedHash });
+    logger.debug("Found inputs in unified CSS cache", { hash: expectedHash });
     return unifiedInputs;
   }
 

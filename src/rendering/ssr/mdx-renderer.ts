@@ -1,9 +1,11 @@
 import { COMPILATION_ERROR } from "#veryfront/errors/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { computeHash, rendererLogger as logger } from "#veryfront/utils";
+import { computeHash, rendererLogger } from "#veryfront/utils";
 import * as React from "react";
 import { loadCompiledMDXModule } from "./mdx-module-loader.ts";
 import type { MDXRenderOptions } from "./types.ts";
+
+const logger = rendererLogger.component("mdx");
 
 export function renderMDXToReactAsync(
   compiledCode: string,
@@ -38,7 +40,7 @@ export function renderMDXToReactAsync(
           mergedProps,
         );
       } catch (error) {
-        logger.error("[MDX] Render error:", error);
+        logger.error("Render error:", error);
         return createErrorElement(error);
       }
     },

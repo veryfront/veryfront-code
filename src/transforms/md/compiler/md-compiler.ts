@@ -9,7 +9,7 @@ import rehypeStringify from "rehype-stringify";
 import { visit } from "unist-util-visit";
 import { toString } from "mdast-util-to-string";
 import type { Heading, Root as MdastRoot } from "mdast";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { extractFrontmatter } from "../../mdx/compiler/frontmatter-extractor.ts";
 import type {
   CompilationMode,
@@ -20,6 +20,8 @@ import { isMarkdownPreview as checkMarkdownPreview } from "../utils.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import Slugger from "github-slugger";
+
+const logger = rendererLogger.component("md-compiler");
 
 interface ExtractedHeading {
   id: string;
@@ -98,7 +100,7 @@ export function compileMarkdownRuntime(
         const result = await processor.process(body);
         const html = String(result);
 
-        logger.debug("[MD Compiler] Compiled markdown:", {
+        logger.debug("Compiled markdown:", {
           filePath,
           htmlLength: html.length,
           headingsCount: headings.length,
@@ -124,7 +126,7 @@ export function compileMarkdownRuntime(
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
 
-        logger.error("[MD Compiler] Compilation failed:", {
+        logger.error("Compilation failed:", {
           filePath,
           error: err.message,
           stack: err.stack,

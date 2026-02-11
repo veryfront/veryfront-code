@@ -1,4 +1,4 @@
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { Span } from "@opentelemetry/api";
@@ -13,6 +13,8 @@ import { MemoryCacheBackend } from "./memory.ts";
 import { isRedisConfigured, RedisCacheBackend } from "./redis.ts";
 import { ApiCacheBackend } from "./api.ts";
 import { getEnvValue } from "./helpers.ts";
+
+const logger = baseLogger.component("cache-backend");
 
 // Re-export gateway types for backward compatibility
 export type { CodeCacheGateway, TokenizingCacheGateway };
@@ -52,7 +54,7 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
       const shouldUseApi = preferredBackend === "api" ||
         (!preferredBackend && isApiCacheAvailable());
       if (shouldUseApi) {
-        logger.debug("[CacheBackend] Using API backend (centralized cache)");
+        logger.debug("Using API backend (centralized cache)");
         span?.setAttribute("cache.backend.type", "api");
         return new ApiCacheBackend({ keyPrefix, apiBaseUrl, circuitBreakerName });
       }
@@ -62,13 +64,13 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
       if (shouldUseRedis) {
         const redisBackend = new RedisCacheBackend(keyPrefix ? `vf:${keyPrefix}:` : "vf:cache:");
         if (await redisBackend.initialize()) {
-          logger.debug("[CacheBackend] Using Redis backend");
+          logger.debug("Using Redis backend");
           span?.setAttribute("cache.backend.type", "redis");
           return redisBackend;
         }
       }
 
-      logger.debug("[CacheBackend] Using memory backend");
+      logger.debug("Using memory backend");
       span?.setAttribute("cache.backend.type", "memory");
       return new MemoryCacheBackend(memoryMaxEntries);
     },

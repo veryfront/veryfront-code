@@ -5,7 +5,7 @@ import {
   shouldRejectDueToMemory,
 } from "../../shared/renderer-factory.ts";
 import { getHeapStats } from "#veryfront/utils/memory/index.ts";
-import { serverLogger as logger, timeAsync } from "#veryfront/utils";
+import { serverLogger, timeAsync } from "#veryfront/utils";
 import { computeSSRETag } from "../../handlers/request/ssr/etag-handler.ts";
 import { VeryfrontError } from "#veryfront/errors/index.ts";
 import { getColorSchemeFromRequest } from "#veryfront/security/http/client-hints.ts";
@@ -23,6 +23,8 @@ import {
   HTTP_UNAVAILABLE,
 } from "#veryfront/utils/constants/index.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
+
+const logger = serverLogger.component("ssr-service");
 
 export interface SSRRenderResult {
   status: number;
@@ -86,7 +88,7 @@ export class SSRService {
     const preRenderHeap = getHeapStats();
 
     if (preRenderHeap.heapUsedPercent > 30) {
-      logger.debug("[SSRService] Pre-render memory", {
+      logger.debug("Pre-render memory", {
         projectSlug: ctx.projectSlug,
         slug,
         heapUsedMB: preRenderHeap.usedHeapSizeMB,
@@ -108,7 +110,7 @@ export class SSRService {
         url,
       );
 
-      logger.debug("[SSRService] renderPage START", {
+      logger.debug("renderPage START", {
         projectSlug: ctx.projectSlug,
         projectId,
         slug,
@@ -132,7 +134,7 @@ export class SSRService {
           noHmr,
         }));
 
-      logger.debug("[SSRService] renderPage DONE", {
+      logger.debug("renderPage DONE", {
         projectSlug: ctx.projectSlug,
         slug,
         duration: `${(performance.now() - renderStartTime).toFixed(2)}ms`,
@@ -146,7 +148,7 @@ export class SSRService {
       const heapGrowthMB = postRenderHeap.usedHeapSizeMB - preRenderHeap.usedHeapSizeMB;
 
       if (heapGrowthMB > 50 || postRenderHeap.heapUsedPercent > 50) {
-        logger.debug("[SSRService] Post-render memory", {
+        logger.debug("Post-render memory", {
           projectSlug: ctx.projectSlug,
           slug,
           heapUsedMB: postRenderHeap.usedHeapSizeMB,
@@ -185,7 +187,7 @@ export class SSRService {
     const isDev = ctx.isLocalProject || ctx.requestContext?.mode === "preview";
 
     if (error instanceof VeryfrontError && error.slug === "file-not-found") {
-      logger.debug("[SSRService] Page not found", { slug, error: errorObj.message });
+      logger.debug("Page not found", { slug, error: errorObj.message });
       return {
         status: HTTP_NOT_FOUND,
         html: ErrorPages.notFound(slug || "/"),
@@ -208,7 +210,7 @@ export class SSRService {
         (apiUrl.includes("/environments/") || apiUrl.includes("/branches/"));
 
       if (isFileListRequest) {
-        logger.debug("[SSRService] Project not deployed", {
+        logger.debug("Project not deployed", {
           projectSlug: ctx.projectSlug,
           apiUrl,
         });
@@ -223,7 +225,7 @@ export class SSRService {
       }
     }
 
-    logger.error("[SSRService] Render failed", {
+    logger.error("Render failed", {
       slug,
       error: errorObj.message,
       stack: errorObj.stack,

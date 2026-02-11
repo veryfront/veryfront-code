@@ -1,9 +1,11 @@
 import type * as React from "react";
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { ClientComponentMeta, RSCPayload, RSCRendererOptions } from "../types.ts";
 import { treeToHTML } from "./html-generator.ts";
 import { renderTree } from "./tree-processor.ts";
+
+const logger = serverLogger.component("rsc");
 
 export class RSCRenderer {
   private clientManifest: Map<string, ClientComponentMeta>;
@@ -34,7 +36,7 @@ export class RSCRenderer {
             tree: this.mode === "development" ? tree : undefined,
           };
         } catch (error) {
-          logger.error("[RSC] Render error:", error);
+          logger.error("Render error:", error);
           throw error;
         }
       },

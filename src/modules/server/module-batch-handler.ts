@@ -21,7 +21,7 @@ import {
   HTTP_NOT_FOUND,
   HTTP_OK,
   MAX_BATCH_SIZE,
-  serverLogger as logger,
+  serverLogger,
 } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSecureFs } from "#veryfront/security";
@@ -34,6 +34,8 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
+
+const logger = serverLogger.component("module-batch");
 
 /** Slow request threshold in milliseconds */
 
@@ -146,7 +148,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         throwOnError: false,
       });
 
-      logger.debug("[ModuleBatch] Processing batch request", {
+      logger.debug("Processing batch request", {
         moduleCount: paths.length,
         isSSR,
         projectSlug,
@@ -192,7 +194,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
             const errorMsg = error instanceof Error ? error.message : String(error);
             const transformDurationMs = performance.now() - moduleStart;
 
-            logger.warn("[ModuleBatch] Module transform failed", {
+            logger.warn("Module transform failed", {
               path: modulePath,
               error: errorMsg,
               durationMs: Math.round(transformDurationMs),
@@ -233,7 +235,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         r.transformDurationMs > SLOW_TRANSFORM_THRESHOLD_MS
       );
       if (slowModules.length > 0) {
-        logger.warn("[ModuleBatch] Slow module transforms detected", {
+        logger.warn("Slow module transforms detected", {
           count: slowModules.length,
           modules: slowModules.map((m) => ({
             path: m.path,
@@ -420,7 +422,7 @@ function transformExportsForBundle(code: string): string {
 export function clearBatchCache(projectSlug?: string): void {
   if (!projectSlug) {
     transformCache.clear();
-    logger.debug("[ModuleBatch] Cleared all cache");
+    logger.debug("Cleared all cache");
     return;
   }
 
@@ -428,7 +430,7 @@ export function clearBatchCache(projectSlug?: string): void {
   for (const key of [...transformCache.keys()]) {
     if (key.startsWith(prefix)) transformCache.delete(key);
   }
-  logger.debug("[ModuleBatch] Cleared cache for project", { projectSlug });
+  logger.debug("Cleared cache for project", { projectSlug });
 }
 
 /**

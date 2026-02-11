@@ -1,4 +1,4 @@
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { detectRuntime } from "./runtime-detection.ts";
@@ -11,7 +11,7 @@ export { detectRuntime } from "./runtime-detection.ts";
 export { runtime } from "./registry.ts";
 
 function throwConfigError(message: string): never {
-  logger.error("[Adapter Detection]", message);
+  logger.error("", message);
   throw toError(createError({ type: "config", message }));
 }
 
@@ -83,3 +83,5 @@ export type {
   RuntimeCapabilities,
   RuntimeId,
 } from "./base.ts";
+
+const logger = baseLogger.component("adapter-detection");

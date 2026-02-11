@@ -1,4 +1,4 @@
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
@@ -6,6 +6,8 @@ import type { CacheStore } from "../cache/types.ts";
 import { MemoryCacheStore, type MemoryCacheStoreOptions } from "../cache/stores/index.ts";
 import type { RenderContext } from "../context/render-context.ts";
 import { createCacheKey } from "../context/render-context.ts";
+
+const logger = rendererLogger.component("context-aware-cache");
 
 export interface ContextAwareCacheOptions {
   store?: CacheStore;
@@ -55,7 +57,7 @@ export class ContextAwareCacheCoordinator {
         const cached = (await this.store.get(cacheKey)) as CachePayload | undefined;
 
         if (!cached) {
-          logger.debug("[ContextAwareCache] Cache miss", {
+          logger.debug("Cache miss", {
             slug,
             cacheKey,
             projectId: ctx.projectId,
@@ -67,12 +69,12 @@ export class ContextAwareCacheCoordinator {
         if (this.isExpired(cached)) {
           await this.store.delete(cacheKey);
 
-          logger.debug("[ContextAwareCache] Cache expired", {
+          logger.debug("Cache expired", {
             slug,
             projectId: ctx.projectId,
           });
 
-          logger.debug("[ContextAwareCache] Cache miss", {
+          logger.debug("Cache miss", {
             slug,
             cacheKey,
             projectId: ctx.projectId,
@@ -82,7 +84,7 @@ export class ContextAwareCacheCoordinator {
           return { cacheKey, hit: false };
         }
 
-        logger.debug("[ContextAwareCache] Cache hit", {
+        logger.debug("Cache hit", {
           slug,
           projectId: ctx.projectId,
           environment: ctx.environment,
@@ -123,7 +125,7 @@ export class ContextAwareCacheCoordinator {
       expiresAt: this.ttlMs ? now + this.ttlMs : undefined,
     });
 
-    logger.debug("[ContextAwareCache] Cached result", {
+    logger.debug("Cached result", {
       slug,
       projectId: ctx.projectId,
       environment: ctx.environment,
@@ -135,14 +137,14 @@ export class ContextAwareCacheCoordinator {
     const startTime = Date.now();
 
     if (!this.store.deleteByPrefix) {
-      logger.warn("[ContextAwareCache] Store does not support prefix deletion", {
+      logger.warn("Store does not support prefix deletion", {
         projectId: ctx.projectId,
         cachePrefix: ctx.cachePrefix,
       });
       return;
     }
 
-    logger.debug("[ContextAwareCache] Clearing cache for context", {
+    logger.debug("Clearing cache for context", {
       projectId: ctx.projectId,
       environment: ctx.environment,
       cachePrefix: ctx.cachePrefix,
@@ -150,7 +152,7 @@ export class ContextAwareCacheCoordinator {
 
     const deleted = await this.store.deleteByPrefix(ctx.cachePrefix);
 
-    logger.debug("[ContextAwareCache] ✓ Cleared cache for context", {
+    logger.debug("✓ Cleared cache for context", {
       projectId: ctx.projectId,
       entriesDeleted: deleted,
       durationMs: Date.now() - startTime,
@@ -162,15 +164,15 @@ export class ContextAwareCacheCoordinator {
     const prefix = `${projectId}:`;
 
     if (!this.store.deleteByPrefix) {
-      logger.warn("[ContextAwareCache] Store does not support prefix deletion", { projectId });
+      logger.warn("Store does not support prefix deletion", { projectId });
       return;
     }
 
-    logger.debug("[ContextAwareCache] Clearing cache for project", { projectId, prefix });
+    logger.debug("Clearing cache for project", { projectId, prefix });
 
     const deleted = await this.store.deleteByPrefix(prefix);
 
-    logger.debug("[ContextAwareCache] ✓ Cleared cache for project", {
+    logger.debug("✓ Cleared cache for project", {
       projectId,
       entriesDeleted: deleted,
       durationMs: Date.now() - startTime,
@@ -181,7 +183,7 @@ export class ContextAwareCacheCoordinator {
     if (this.store.deleteByPrefix) {
       const prefix = createCacheKey(ctx, `page:${slug}`);
       await this.store.deleteByPrefix(prefix);
-      logger.debug("[ContextAwareCache] Cleared slug from cache by prefix", {
+      logger.debug("Cleared slug from cache by prefix", {
         slug,
         projectId: ctx.projectId,
         prefix,
@@ -197,7 +199,7 @@ export class ContextAwareCacheCoordinator {
 
     await Promise.all(keys.map((key) => this.store.delete(key)));
 
-    logger.debug("[ContextAwareCache] Cleared slug from cache (all variants)", {
+    logger.debug("Cleared slug from cache (all variants)", {
       slug,
       projectId: ctx.projectId,
       keys,
@@ -206,7 +208,7 @@ export class ContextAwareCacheCoordinator {
 
   async clearAll(): Promise<void> {
     await this.store.clear();
-    logger.debug("[ContextAwareCache] Cleared all cached data");
+    logger.debug("Cleared all cached data");
   }
 
   async destroy(): Promise<void> {

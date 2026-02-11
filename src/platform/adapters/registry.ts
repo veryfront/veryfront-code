@@ -1,7 +1,9 @@
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { RuntimeAdapter, RuntimeId } from "./base.ts";
 import { detectRuntime } from "./runtime-detection.ts";
+
+const logger = baseLogger.component("registry");
 
 type AdapterLoader = () => Promise<RuntimeAdapter>;
 
@@ -121,7 +123,7 @@ class AdapterRegistry {
           try {
             await oldAdapter.shutdown?.();
           } catch (shutdownError) {
-            logger.warn("[Registry] Failed to shutdown old adapter", shutdownError);
+            logger.warn("Failed to shutdown old adapter", shutdownError);
           }
         } catch (error) {
           this.instance = oldAdapter;
@@ -153,7 +155,7 @@ class AdapterRegistry {
         try {
           await this.instance.shutdown?.();
         } catch (error) {
-          logger.warn("[Registry] Failed to shutdown adapter during reset", error);
+          logger.warn("Failed to shutdown adapter during reset", error);
         }
       }
 

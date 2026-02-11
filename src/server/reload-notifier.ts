@@ -1,4 +1,6 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
+
+const logger = serverLogger.component("reload-notifier");
 
 export interface ReloadProjectInfo {
   projectSlug?: string;
@@ -43,7 +45,7 @@ class ReloadNotifierImpl {
 
     const projectInfo = normalizeProjectInfo(project);
 
-    logger.info("[ReloadNotifier] triggerReload called", {
+    logger.info("triggerReload called", {
       invalidateListeners: this.invalidateListeners.size,
       reloadListeners: this.listeners.size,
       changedPaths,
@@ -68,7 +70,7 @@ class ReloadNotifierImpl {
       this.pendingChangedPaths.clear();
       this.pendingProject = undefined;
 
-      logger.debug("[ReloadNotifier] Debounce complete, notifying reload listeners", {
+      logger.debug("Debounce complete, notifying reload listeners", {
         listenerCount: this.listeners.size,
         changedPaths: paths,
         project: pendingProject,
@@ -79,7 +81,7 @@ class ReloadNotifierImpl {
   }
 
   private notifyInvalidateListeners(): void {
-    logger.debug("[ReloadNotifier] Notifying invalidate listeners", {
+    logger.debug("Notifying invalidate listeners", {
       count: this.invalidateListeners.size,
     });
 
@@ -87,7 +89,7 @@ class ReloadNotifierImpl {
       try {
         listener();
       } catch (error) {
-        logger.error("[ReloadNotifier] Invalidate listener error:", error);
+        logger.error("Invalidate listener error:", error);
       }
     }
   }
@@ -95,7 +97,7 @@ class ReloadNotifierImpl {
   private notifyListeners(changedPaths?: string[], project?: ReloadProjectInfo): void {
     this.metrics.broadcastsSent++;
 
-    logger.debug("[ReloadNotifier] Notifying reload listeners", {
+    logger.debug("Notifying reload listeners", {
       count: this.listeners.size,
       changedPaths,
       project,
@@ -105,7 +107,7 @@ class ReloadNotifierImpl {
       try {
         listener(changedPaths, project);
       } catch (error) {
-        logger.error("[ReloadNotifier] Listener error:", error);
+        logger.error("Listener error:", error);
       }
     }
   }

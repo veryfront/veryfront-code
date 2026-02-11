@@ -1,4 +1,6 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
+
+const logger = serverLogger.component("rsc");
 
 export function serializeProps(props: Record<string, unknown>): Record<string, unknown> {
   const serializable: Record<string, unknown> = {};
@@ -7,7 +9,7 @@ export function serializeProps(props: Record<string, unknown>): Record<string, u
     if (key === "children") continue;
 
     if (!isSerializable(value)) {
-      logger.warn(`[RSC] Skipping non-serializable prop: ${key}`);
+      logger.warn(`Skipping non-serializable prop: ${key}`);
       continue;
     }
 

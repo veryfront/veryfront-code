@@ -1,4 +1,4 @@
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
@@ -23,6 +23,8 @@ export {
   resetContentMetrics,
   startRequestMetrics,
 } from "./content-metrics.ts";
+
+const logger = baseLogger.component("read-operations");
 
 export interface ContentContextProvider {
   isProductionMode: () => boolean;
@@ -101,7 +103,7 @@ export class ReadOperations {
       "fs.veryfront.readTextFile",
       () => {
         const normalizedPath = this.normalizer.normalize(path);
-        logger.debug("[ReadOperations] readTextFile called", { path, normalizedPath });
+        logger.debug("readTextFile called", { path, normalizedPath });
         return this.fetchContent(normalizedPath);
       },
       { "fs.path": path },
@@ -121,7 +123,7 @@ export class ReadOperations {
       mode: ctx?.sourceType ?? "unknown",
       cacheKey,
     });
-    logger.debug("[ReadOperations] REQUEST_CACHE_HIT", {
+    logger.debug("REQUEST_CACHE_HIT", {
       path: normalizedPath,
       cacheKey,
       contentLength: requestCached.length,
@@ -141,7 +143,7 @@ export class ReadOperations {
     ctx: ResolvedContentContext | null,
   ): Promise<string | null> {
     if (isProduction && skipPersistentCaches) {
-      logger.info("[ReadOperations] PERSISTENT_CACHE_SKIPPED - cache invalidation in progress", {
+      logger.info("PERSISTENT_CACHE_SKIPPED - cache invalidation in progress", {
         path: normalizedPath,
         cacheKey,
         cacheKeyPrefix,
@@ -162,7 +164,7 @@ export class ReadOperations {
       mode: ctx?.sourceType ?? "unknown",
       cacheKey,
     });
-    logger.debug("[ReadOperations] PERSISTENT_CACHE_HIT", {
+    logger.debug("PERSISTENT_CACHE_HIT", {
       path: normalizedPath,
       cacheKey,
       contentLength: cached.length,
@@ -213,7 +215,7 @@ export class ReadOperations {
       missReason: "invalidation" as MissReason,
       isPreviewMode,
     });
-    logger.debug("[ReadOperations] Skipping file list cache due to invalidation", {
+    logger.debug("Skipping file list cache due to invalidation", {
       path: normalizedPath,
       cacheKeyPrefix,
     });
@@ -231,12 +233,12 @@ export class ReadOperations {
   ): Promise<string> {
     const cleanupResult = this.inFlightRequests.cleanup();
     if (cleanupResult) {
-      logger.warn("[ReadOperations] Cleaned up in-flight requests", cleanupResult);
+      logger.warn("Cleaned up in-flight requests", cleanupResult);
     }
 
     const existingEntry = this.inFlightRequests.get(cacheKey);
     if (existingEntry) {
-      logger.debug("[ReadOperations] Deduplicating request - joining existing fetch", {
+      logger.debug("Deduplicating request - joining existing fetch", {
         path: normalizedPath,
         cacheKey,
         ageMs: Date.now() - existingEntry.startedAt,
@@ -262,7 +264,7 @@ export class ReadOperations {
       isPreviewMode,
     });
 
-    logger.debug("[ReadOperations] fetchContent decision", {
+    logger.debug("fetchContent decision", {
       path: normalizedPath,
       isPublished,
       willFetch: isPublished ? "published (environment)" : "draft (branch)",
@@ -317,7 +319,7 @@ export class ReadOperations {
       const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, cachedResolvedPath);
       const cached = this.cache.get<string>(resolvedCacheKey) ?? this.cache.get<string>(cacheKey);
       if (cached) {
-        logger.debug("[ReadOperations] Extension resolution cache hit", {
+        logger.debug("Extension resolution cache hit", {
           basePath: apiPath,
           resolvedPath: cachedResolvedPath,
         });
@@ -339,7 +341,7 @@ export class ReadOperations {
       // Cache the path mapping to avoid future API resolution calls
       this.extensionResolutionCache.set(apiPath, resolvedPath);
 
-      logger.debug("[ReadOperations] Resolved extension for base path", {
+      logger.debug("Resolved extension for base path", {
         basePath: apiPath,
         resolvedPath,
         cacheKey,
@@ -358,7 +360,7 @@ export class ReadOperations {
 
       return resolved.content;
     } catch (error) {
-      logger.debug("[ReadOperations] resolveFileWithExtension failed", {
+      logger.debug("resolveFileWithExtension failed", {
         basePath: apiPath,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -390,7 +392,7 @@ export class ReadOperations {
       getOriginalApiPath: this.getOriginalApiPath,
     });
 
-    logger.debug("[ReadOperations] fetchContent context", {
+    logger.debug("fetchContent context", {
       path: normalizedPath,
       hasContextProvider: !!this.contextProvider,
       hasContext: !!ctx,
@@ -457,7 +459,7 @@ export class ReadOperations {
     environmentName: string | null,
     shouldCache: boolean,
   ): Promise<string> {
-    logger.debug("[ReadOperations] Fetching published content", {
+    logger.debug("Fetching published content", {
       path: normalizedPath,
       apiPath,
       cacheKey,
@@ -471,7 +473,7 @@ export class ReadOperations {
         environmentName ?? undefined,
       );
 
-      logger.debug("[ReadOperations] Fetched published content", {
+      logger.debug("Fetched published content", {
         path: normalizedPath,
         contentLength: content.length,
         releaseId,
@@ -485,7 +487,7 @@ export class ReadOperations {
       const is404Error = isNotFoundLikeError(error);
 
       if (!is404Error) {
-        logger.error("[ReadOperations] Failed to fetch published content", {
+        logger.error("Failed to fetch published content", {
           path: normalizedPath,
           apiPath,
           releaseId,
@@ -503,7 +505,7 @@ export class ReadOperations {
       );
       if (fallbackContent !== null) return fallbackContent;
 
-      logger.debug("[ReadOperations] File not found (expected for optional files)", {
+      logger.debug("File not found (expected for optional files)", {
         path: normalizedPath,
         apiPath,
       });
@@ -523,7 +525,7 @@ export class ReadOperations {
 
     const { originalExtension: originalExt, basePath } = pathParts;
 
-    logger.debug("[ReadOperations] Searching for file with pattern", {
+    logger.debug("Searching for file with pattern", {
       originalPath: apiPath,
       pattern: `${basePath}.*`,
     });
@@ -532,7 +534,7 @@ export class ReadOperations {
       const result = await this.client.resolveFileWithExtension(basePath, [...EXTENSION_PRIORITY]);
       if (!result) return null;
 
-      logger.debug("[ReadOperations] Pattern search found file", {
+      logger.debug("Pattern search found file", {
         originalPath: apiPath,
         foundPath: result.path,
         contentLength: result.content.length,
@@ -542,7 +544,7 @@ export class ReadOperations {
       setRequestScopedFile(cacheKey, result.content);
       return result.content;
     } catch (error) {
-      logger.debug("[ReadOperations] Pattern search failed, trying sequential fallback", {
+      logger.debug("Pattern search failed, trying sequential fallback", {
         originalPath: apiPath,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -594,7 +596,7 @@ export class ReadOperations {
         const fallbackPath = basePath + ext;
         const durationMs = Math.round(performance.now() - startTime);
 
-        logger.debug("[ReadOperations] Parallel fallback succeeded", {
+        logger.debug("Parallel fallback succeeded", {
           originalPath: apiPath,
           fallbackPath,
           contentLength: content.length,
@@ -620,7 +622,7 @@ export class ReadOperations {
     cacheKey: string,
     shouldCache: boolean,
   ): Promise<string> {
-    logger.info("[ReadOperations] API_FETCH_START - fetching draft from API", {
+    logger.info("API_FETCH_START - fetching draft from API", {
       path: normalizedPath,
       apiPath,
       cacheKey,
@@ -628,7 +630,7 @@ export class ReadOperations {
 
     const content = await this.client.getFileContent(apiPath);
 
-    logger.info("[ReadOperations] API_FETCH_DONE - got content from API", {
+    logger.info("API_FETCH_DONE - got content from API", {
       path: normalizedPath,
       contentLength: content.length,
       preview: previewText(content).replace(/\n/g, "\\n"),

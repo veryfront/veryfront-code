@@ -10,7 +10,9 @@
  * @module module-system/manifest/route-module-manifest
  */
 
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
+
+const logger = serverLogger.component("route-module-manifest");
 
 interface ModuleEntry {
   path: string;
@@ -101,7 +103,7 @@ export function finishModuleCollection(
   const manifest = buildManifest(route, mergedModules, existing?.renderCount);
   manifestStore.set(key, manifest);
 
-  logger.debug("[RouteModuleManifest] Updated manifest", {
+  logger.debug("Updated manifest", {
     key,
     moduleCount: manifest.moduleCount,
     renderCount: manifest.renderCount,
@@ -115,7 +117,7 @@ export function getRouteManifest(
   const key = buildKey(projectSlug, route);
   const manifest = manifestStore.get(key);
 
-  logger.debug("[RouteModuleManifest] Get manifest", {
+  logger.debug("Get manifest", {
     key,
     found: !!manifest,
     moduleCount: manifest?.moduleCount ?? 0,
@@ -178,7 +180,7 @@ export function recordSSRModules(
   const manifest = buildManifest(route, existingModules, existing?.renderCount);
   manifestStore.set(key, manifest);
 
-  logger.debug("[RouteModuleManifest] Recorded SSR modules", {
+  logger.debug("Recorded SSR modules", {
     key,
     inputModules: modules.length,
     newModulesAdded: addedCount,
@@ -229,11 +231,11 @@ export function clearProjectManifests(projectSlug: string): void {
     manifestStore.delete(key);
   }
 
-  logger.debug("[RouteModuleManifest] Cleared manifests for project", { projectSlug });
+  logger.debug("Cleared manifests for project", { projectSlug });
 }
 
 export function clearAllManifests(): void {
   manifestStore.clear();
   pendingCollections.clear();
-  logger.debug("[RouteModuleManifest] Cleared all manifests");
+  logger.debug("Cleared all manifests");
 }

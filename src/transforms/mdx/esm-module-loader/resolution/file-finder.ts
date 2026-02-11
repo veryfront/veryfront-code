@@ -1,5 +1,5 @@
 import { join } from "#veryfront/compat/path";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   DIRECTORY_PREFIXES,
@@ -9,11 +9,13 @@ import {
 } from "../constants.ts";
 import { getLocalFs } from "../cache/index.ts";
 
+const logger = rendererLogger.component("file-finder");
+
 // Embedded source directory for compiled binaries (created by prepare-framework-sources.ts)
 const EMBEDDED_SRC_DIR = join(FRAMEWORK_ROOT, "dist", "framework-src");
 
 // Log framework paths on first load for debugging
-logger.debug("[file-finder] Module loaded with framework paths", {
+logger.debug("Module loaded with framework paths", {
   FRAMEWORK_ROOT,
   EMBEDDED_SRC_DIR,
 });

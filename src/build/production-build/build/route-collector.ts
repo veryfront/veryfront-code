@@ -7,10 +7,12 @@
  * - Route filtering based on include/exclude patterns
  */
 
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { collectAppRoutes, collectPagesRoutes } from "#veryfront/server/build-routes.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
+
+const logger = serverLogger.component("build");
 
 export interface CollectedRoutes {
   pages: RouteInfo[];
@@ -25,7 +27,7 @@ export async function collectAllRoutes(
   exclude?: string[],
 ): Promise<CollectedRoutes> {
   if (!ssg) {
-    logger.info("[BUILD] SSG disabled, skipping route collection");
+    logger.info("SSG disabled, skipping route collection");
     return { pages: [], app: [] };
   }
 
@@ -34,13 +36,13 @@ export async function collectAllRoutes(
     collectAppRoutes(adapter, projectDir, include, exclude),
   ]);
 
-  logger.info(`[BUILD] Collected routes: ${pages.length} pages, ${app.length} app`);
+  logger.info(`Collected routes: ${pages.length} pages, ${app.length} app`);
 
   if (app.length === 0) {
     return { pages, app };
   }
 
-  logger.info(`[BUILD] App routes: ${app.map((r) => r.path).join(", ")}`);
+  logger.info(`App routes: ${app.map((r) => r.path).join(", ")}`);
 
   return { pages, app };
 }

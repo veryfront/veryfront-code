@@ -2,6 +2,8 @@ import * as React from "react";
 import type { DependencyList, Dispatch, EffectCallback, SetStateAction } from "react";
 import { rendererLogger } from "#veryfront/utils";
 
+const logger = rendererLogger.component("veryfront");
+
 export interface StateStore {
   get<T = unknown>(key: string): T | undefined;
   set<T>(key: string, value: T): void;
@@ -130,11 +132,11 @@ class StateBridge implements StateStore {
       }
       throw new Error("Persisted state is not an object");
     } catch (error) {
-      rendererLogger.error("[Veryfront] Failed to parse state from sessionStorage:", error);
+      logger.error("Failed to parse state from sessionStorage:", error);
       try {
         sessionStorage.removeItem("veryfront-state");
       } catch (clearError) {
-        rendererLogger.error("[Veryfront] Failed to clear corrupted state:", clearError);
+        logger.error("Failed to clear corrupted state:", clearError);
       }
       return null;
     }

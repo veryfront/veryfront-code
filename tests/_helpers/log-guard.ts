@@ -33,17 +33,12 @@ const allowedWarnings: string[] = [
   "Failed to build index",
   "Page not found: broken",
   "Failed to build about: VeryfrontError: Page not found: about",
-  "[SERVER] ERROR: Failed to build about:",
   "Failed to build about:",
-  "[SERVER] ERROR: Failed to build error:",
   "Failed to build error:",
-  "[SERVER] ERROR: Server error for /",
   "Server error for /",
   "IsADirectory: Is a directory",
   "readfile",
-  "[RENDERER] ERROR: renderToReadableStream failed",
   "renderToReadableStream failed",
-  "[RENDERER] ERROR: SSR renderToString failed",
   "SSR renderToString failed",
   "Expected component `UndefinedComponent` to be defined:",
   "SSR failed - no output",
@@ -56,27 +51,20 @@ const allowedWarnings: string[] = [
   "React streaming error Error: boom",
   "React streaming error",
   // Remote import security errors (expected in security tests)
-  "[SERVER] ERROR: Server error for /api/ext",
   "Server error for /api/ext",
-  "[API] fail to log load error",
-  "[SERVER] ERROR: Failed to load API handler",
+  "fail to log load error",
   "Failed to load API handler",
   "Remote import blocked by allow-list",
   "[prod] API handler failed",
-  "[API] error log failed",
-  "[SERVER] ERROR: [API] handler module failed to load:",
-  "[API] handler module failed to load:",
+  "error log failed",
+  "handler module failed to load:",
   // API route build errors
-  "[SERVER] ERROR: Failed to build api/echo:",
   "Failed to build api/echo:",
   "Page not found: api/echo",
-  "[SERVER] ERROR: Failed to build api/hello:",
   "Failed to build api/hello:",
   "Failed to render TS/JS page: Script page must export a 'render(ctx)' function, a default function, or a string HTML",
   // RSC component errors
-  "[SERVER] ERROR: [RSC] Render error:",
-  "[RSC] Render error:",
-  "[RENDERER] ERROR: Failed to load MDX module",
+  "Render error:",
   "Failed to load MDX module",
   // RSC action parsing warnings (expected during validation tests)
   "[ActionParser] Zod validation failed",
@@ -90,19 +78,15 @@ const allowedWarnings: string[] = [
   "Each child in a list should have a unique",
   "Warning: Each child in a list",
   // React pipeable stream errors that wrap other allowed errors
-  "[RENDERER] ERROR: React pipeable stream error",
   "React pipeable stream error",
-  "[RENDERER] ERROR: String rendering fallback also failed",
   "String rendering fallback also failed",
   "[Bootstrap:Prod] Initialization failed",
   "[VERYFRONT] ERROR:",
   "VERYFRONT  ✖",
   // Pipeable stream errors
-  "[RENDERER] ERROR: renderToPipeableStream failed",
   "renderToPipeableStream failed",
 
   // SSR renderToReadableStream errors (expected in error boundary tests)
-  "[RENDERER] ERROR: SSR renderToReadableStream error",
   "SSR renderToReadableStream error",
   // FS integration fallback (expected when veryfront-api adapter fails)
   "[FSIntegration] Falling back to local filesystem",
@@ -110,7 +94,7 @@ const allowedWarnings: string[] = [
   "VERYFRONT  ▲",
 
   // Custom domain lookup without API token (expected in local/test environments)
-  "[runtime-handler] Cannot look up custom domain - no API token available",
+  "Cannot look up custom domain - no API token available",
 
   // Node.js experimental feature warnings (expected when using --experimental-transform-types)
   "ExperimentalWarning: Transform Types is an experimental feature",
@@ -147,11 +131,9 @@ const allowedWarnings: string[] = [
 
   // App route build errors (expected in tests that verify error handling)
   "Failed to build app route",
-  "[SERVER] ERROR: Failed to build app route",
 
   // API Server page rendering errors (expected in tests that verify error handling)
   "Error rendering page data",
-  "[SERVER] ERROR: Error rendering page data",
 
   // Renderer/server errors that are expected in various test scenarios
   "Page not found:",
@@ -209,11 +191,10 @@ const allowedWarnings: string[] = [
   "error.tsx",
 
   // AI discovery warnings (expected when test projects have no agents/tools)
-  "[API-Wrapper] AI discovery found 0 agents and 0 tools",
-  "[API-Wrapper] AI discovery failed",
+  "AI discovery found 0 agents and 0 tools",
+  "AI discovery failed",
 
   // ReloadNotifier errors (expected in tests that verify error handling)
-  "[ReloadNotifier] Listener error",
   "Listener error",
 
   // HMR server errors (expected in port conflict tests)
@@ -226,30 +207,24 @@ const allowedWarnings: string[] = [
 
   // Request timeout warnings (expected in tests that simulate slow operations)
   "Request timed out",
-  "[runtime-handler] Request timed out",
   "Server error:",
+  "Server error for /",
 
   // Root element not found (expected in prefetch tests without DOM)
   "Root element not found",
-  "[RENDERER] ERROR: Root element not found",
 
   // Pipeline errors (expected in tests that verify error handling)
   "[PIPELINE:resolve-bare] Stage failed",
-  "[RENDERER] ERROR: [PIPELINE:resolve-bare] Stage failed",
   "[PIPELINE:ssr-vf-modules] Stage failed",
-  "[RENDERER] ERROR: [PIPELINE:ssr-vf-modules] Stage failed",
 
   // SSR VF Modules initialization (expected in RSC streaming tests)
   "[SSR-VF-MODULES] Initialized",
-  "[RENDERER] WARN: [SSR-VF-MODULES] Initialized",
 
   // Layout orchestrator errors (expected in tests without valid layouts)
-  "[LayoutOrchestrator] Failed to preload TSX layout",
-  "[RENDERER] ERROR: [LayoutOrchestrator] Failed to preload TSX layout",
+  "Failed to preload TSX layout",
 
   // React config generation errors (expected in tests with malformed config)
   "Failed to detect React version from config",
-  "[RENDERER] ERROR: Failed to detect React version from config",
 
   // Prefetch warnings (expected in tests without DOM)
   "[PREFETCH] WARN:",

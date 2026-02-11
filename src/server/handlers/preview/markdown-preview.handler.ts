@@ -9,7 +9,7 @@
 
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { HTTP_OK } from "#veryfront/utils/constants/index.ts";
 import { compileMarkdownRuntime } from "#veryfront/transforms/md/compiler/md-compiler.ts";
 import { extract } from "#std/front-matter/yaml.ts";
@@ -17,6 +17,8 @@ import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts"
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { tryNotFoundFallback } from "../request/ssr/not-found-fallback.ts";
 import { generateMarkdownHtml } from "./markdown-html-generator.ts";
+
+const logger = serverLogger.component("markdown-preview-handler");
 
 // Priority 900: between MEDIUM (600) and LOW/SSR (1000)
 const PRIORITY_MARKDOWN_PREVIEW = 900 as HandlerPriority;
@@ -34,7 +36,7 @@ export class MarkdownPreviewHandler extends BaseHandler {
     const pathname = url.pathname;
 
     if (!pathname.endsWith(".md")) {
-      logger.debug("[MarkdownPreviewHandler] Skipping - no .md extension", { pathname });
+      logger.debug("Skipping - no .md extension", { pathname });
       return this.continue();
     }
 
@@ -45,7 +47,7 @@ export class MarkdownPreviewHandler extends BaseHandler {
     const filePath = pathname.replace(/^\//, "");
     const fsAdapter = ctx.adapter.fs;
 
-    logger.debug("[MarkdownPreviewHandler] Attempting to serve", {
+    logger.debug("Attempting to serve", {
       pathname,
       filePath,
       projectDir: ctx.projectDir,
@@ -95,14 +97,14 @@ export class MarkdownPreviewHandler extends BaseHandler {
       const resolvedPath = resolveFile ? await resolveFile.call(ctx.adapter.fs, filePath) : null;
 
       if (resolveFile) {
-        logger.debug("[MarkdownPreviewHandler] resolveFile result", { filePath, resolvedPath });
+        logger.debug("resolveFile result", { filePath, resolvedPath });
       }
 
       let content: string;
       try {
         content = await ctx.adapter.fs.readFile(resolvedPath ?? filePath);
       } catch {
-        logger.debug("[MarkdownPreviewHandler] File not found", { filePath, resolvedPath });
+        logger.debug("File not found", { filePath, resolvedPath });
 
         const builder = this.createResponseBuilder(ctx);
         const notFoundResponse = await tryNotFoundFallback(req, filePath, ctx, builder);
@@ -123,7 +125,7 @@ export class MarkdownPreviewHandler extends BaseHandler {
       }
 
       if (frontmatter.prose === false) {
-        logger.debug("[MarkdownPreviewHandler] Skipping - prose: false", { filePath });
+        logger.debug("Skipping - prose: false", { filePath });
         return this.continue();
       }
 
@@ -150,14 +152,14 @@ export class MarkdownPreviewHandler extends BaseHandler {
         .withCache("no-cache")
         .withContentType("text/html; charset=utf-8", html, HTTP_OK);
 
-      logger.debug("[MarkdownPreviewHandler] Serving markdown preview", {
+      logger.debug("Serving markdown preview", {
         filePath,
         htmlLength: html.length,
       });
 
       return this.respond(responseBuilder);
     } catch (error) {
-      logger.error("[MarkdownPreviewHandler] Error rendering markdown", {
+      logger.error("Error rendering markdown", {
         filePath,
         error: error instanceof Error ? error.message : String(error),
       });

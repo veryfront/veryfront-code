@@ -24,6 +24,8 @@ import {
   workflowHandler,
 } from "./handlers/index.ts";
 
+const logger = agentLogger.component("discovery");
+
 /**
  * Discover items of a specific type in a directory
  */
@@ -37,7 +39,7 @@ async function discoverItems<T>(
   const files = await findTypeScriptFiles(dir, context);
 
   if (verbose) {
-    agentLogger.info(`[Discovery] Found ${files.length} ${handler.typeName} files in ${dir}`);
+    logger.info(`Found ${files.length} ${handler.typeName} files in ${dir}`);
   }
 
   for (const file of files) {
@@ -47,7 +49,7 @@ async function discoverItems<T>(
 
       if (!handler.validate(item)) {
         if (verbose) {
-          agentLogger.warn(`[Discovery] ${file} does not export a valid ${handler.typeName}`);
+          logger.warn(`${file} does not export a valid ${handler.typeName}`);
         }
         continue;
       }
@@ -57,13 +59,13 @@ async function discoverItems<T>(
       handler.getResultMap(result).set(id, registered);
 
       if (verbose) {
-        agentLogger.info(`[Discovery] Registered ${handler.typeName}: ${id}`);
+        logger.info(`Registered ${handler.typeName}: ${id}`);
       }
     } catch (error) {
       result.errors.push({ file, error: ensureError(error) });
 
       if (verbose) {
-        agentLogger.error(`[Discovery] Error loading ${file}:`, error);
+        logger.error(`Error loading ${file}:`, error);
       }
     }
   }

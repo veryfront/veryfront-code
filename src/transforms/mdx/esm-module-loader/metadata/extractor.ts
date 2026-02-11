@@ -1,6 +1,8 @@
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import type { FrontmatterMetadata, LogContext, MDXModule } from "../../module-loader/types.ts";
 import { extractBalancedBlock, parseJsonish } from "./string-parser.ts";
+
+const logger = rendererLogger.component("mdx");
 
 export function extractFrontmatter(moduleCode: string): FrontmatterMetadata | undefined {
   const fmIndex = moduleCode.search(/(?:export\s+)?const\s+frontmatter\s*=\s*/);
@@ -19,7 +21,7 @@ export function extractFrontmatter(moduleCode: string): FrontmatterMetadata | un
   try {
     return JSON.parse(jsonish) as FrontmatterMetadata;
   } catch (e) {
-    logger.debug("[mdx] frontmatter JSON parse failed", e as LogContext);
+    logger.debug("frontmatter JSON parse failed", e as LogContext);
     return undefined;
   }
 }

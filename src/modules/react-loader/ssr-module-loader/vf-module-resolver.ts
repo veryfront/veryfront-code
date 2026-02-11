@@ -6,13 +6,15 @@
 
 import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import {
   createModuleFetcherContext,
   fetchAndCacheModule,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 import { VF_MODULE_IMPORT_PATTERN } from "#veryfront/transforms/mdx/esm-module-loader/constants.ts";
+
+const logger = rendererLogger.component("ssr-module-loader");
 
 interface VfModuleImport {
   original: string;
@@ -59,7 +61,7 @@ export async function resolveVfModuleImports(
   const imports = findVfModuleImports(code);
   if (imports.length === 0) return code;
 
-  logger.debug("[SSR-MODULE-LOADER] Processing _vf_modules imports", {
+  logger.debug("Processing _vf_modules imports", {
     file: options.filePath.slice(-40),
     count: imports.length,
     paths: imports.map((i) => i.path).slice(0, 5),
@@ -93,7 +95,7 @@ export async function resolveVfModuleImports(
     if (cachedFilePath) {
       transformed = transformed.replace(original, `from "file://${cachedFilePath}"`);
     } else {
-      logger.warn("[SSR-MODULE-LOADER] Failed to resolve _vf_modules import", {
+      logger.warn("Failed to resolve _vf_modules import", {
         file: options.filePath.slice(-40),
         path,
       });

@@ -33,15 +33,25 @@ export interface LogEntry {
   service: string;
   veryfrontVersion: string;
   message: string;
+  // Component that produced this log entry (e.g., "config", "cors", "discovery")
+  component?: string;
   // Optional structured context
   context?: Record<string, unknown>;
   // Error details if applicable
   error?: SerializedError;
   // Request context (when available)
+  /** @deprecated Use `request_id` instead. Kept for Grafana dashboard transition. */
   requestId?: string;
+  /** @deprecated Use `trace_id` instead. Kept for Grafana dashboard transition. */
   traceId?: string;
+  /** @deprecated Use `span_id` instead. Kept for Grafana dashboard transition. */
+  spanId?: string;
+  /** @deprecated Use `project_slug` instead. Kept for Grafana dashboard transition. */
   projectSlug?: string;
-  // Standard fields for Loki filtering (snake_case for consistency)
+  // Standard fields for Loki filtering (snake_case)
+  request_id?: string;
+  trace_id?: string;
+  span_id?: string;
   project_slug?: string;
   request_url?: string;
   domain?: string;
@@ -50,7 +60,9 @@ export interface LogEntry {
   branch_id?: string;
   branch_name?: string;
   // Duration for timed operations
+  /** @deprecated Use `duration_ms` instead. Kept for Grafana dashboard transition. */
   durationMs?: number;
+  duration_ms?: number;
 }
 
 export interface Logger {
@@ -63,6 +75,12 @@ export interface Logger {
    * Create a child logger with additional context bound to all log entries.
    */
   child(context: Record<string, unknown>): Logger;
+  /**
+   * Create a component-scoped logger. The component name is included as a
+   * structured `component` field in JSON output and rendered as `[component]`
+   * in text output.
+   */
+  component(name: string): Logger;
 }
 
 type LoggerConfig = {
@@ -203,16 +221,23 @@ function extractToEntryField(
 
 class ConsoleLogger implements Logger {
   private boundContext: Record<string, unknown>;
+  private componentName?: string;
 
   constructor(
     private prefix: string,
     boundContext?: Record<string, unknown>,
+    componentName?: string,
   ) {
     this.boundContext = boundContext ?? {};
+    this.componentName = componentName;
   }
 
   child(context: Record<string, unknown>): Logger {
-    return new ConsoleLogger(this.prefix, { ...this.boundContext, ...context });
+    return new ConsoleLogger(this.prefix, { ...this.boundContext, ...context }, this.componentName);
+  }
+
+  component(name: string): Logger {
+    return new ConsoleLogger(this.prefix, { ...this.boundContext }, name);
   }
 
   private formatJson(level: LogEntry["level"], message: string, args: unknown[]): string {
@@ -227,13 +252,28 @@ class ConsoleLogger implements Logger {
       message,
     };
 
+    if (this.componentName) entry.component = this.componentName;
+
     // Extract known fields to top level for easier Grafana filtering
     extractToEntryField(entry, mergedContext, "requestId", (v) => String(v));
     extractToEntryField(entry, mergedContext, "traceId", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "spanId", (v) => String(v));
     extractToEntryField(entry, mergedContext, "projectSlug", (v) => String(v));
     extractToEntryField(entry, mergedContext, "durationMs", (v) => Number(v));
 
-    // Extract standard fields for Loki filtering
+    // Auto-inject trace context from OTel when not already set
+    if (traceContextGetter && !entry.traceId) {
+      const traceCtx = traceContextGetter();
+      if (traceCtx.traceId) {
+        entry.traceId = traceCtx.traceId;
+        entry.spanId = traceCtx.spanId;
+      }
+    }
+
+    // Extract standard snake_case fields for Loki filtering
+    extractToEntryField(entry, mergedContext, "request_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "trace_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "span_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "project_slug", (v) => String(v));
     extractToEntryField(entry, mergedContext, "request_url", (v) => String(v));
     extractToEntryField(entry, mergedContext, "domain", (v) => String(v));
@@ -241,6 +281,14 @@ class ConsoleLogger implements Logger {
     extractToEntryField(entry, mergedContext, "release_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "branch_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "branch_name", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "duration_ms", (v) => Number(v));
+
+    // Emit snake_case aliases for camelCase fields (transition period)
+    if (entry.requestId && !entry.request_id) entry.request_id = entry.requestId;
+    if (entry.traceId && !entry.trace_id) entry.trace_id = entry.traceId;
+    if (entry.spanId && !entry.span_id) entry.span_id = entry.spanId;
+    if (entry.projectSlug && !entry.project_slug) entry.project_slug = entry.projectSlug;
+    if (entry.durationMs != null && entry.duration_ms == null) entry.duration_ms = entry.durationMs;
 
     if (Object.keys(mergedContext).length > 0) entry.context = mergedContext;
     if (error) entry.error = error;
@@ -256,9 +304,12 @@ class ConsoleLogger implements Logger {
     const timestamp = colorize(formatTimestamp(), ANSI.dim, enableColor);
     const tag = colorize(padTag(this.prefix), TAG_COLORS[this.prefix] ?? ANSI.cyan, enableColor);
     const glyph = colorize(LEVEL_GLYPHS[level], LEVEL_COLORS[level], enableColor);
+    const componentTag = this.componentName
+      ? ` ${colorize(`[${this.componentName}]`, ANSI.dim, enableColor)}`
+      : "";
     const contextText = formatContextText(mergedContext, error, enableColor);
 
-    return `${timestamp}  ${tag} ${glyph} ${message}${contextText}`;
+    return `${timestamp}  ${tag} ${glyph}${componentTag} ${message}${contextText}`;
   }
 
   private log(
@@ -367,6 +418,33 @@ export function __registerRequestContextGetter(
   requestContextGetter = getter;
 }
 
+/**
+ * Trace context getter - set by trace-bridge.ts to avoid importing OTel
+ * directly in the logger module. Returns the active span's traceId/spanId
+ * when OTel is initialized.
+ */
+let traceContextGetter: (() => { traceId?: string; spanId?: string }) | null = null;
+
+/**
+ * Register the trace context getter.
+ * Called by trace-bridge.ts after OTLP initialization.
+ * @internal
+ */
+export function __registerTraceContextGetter(
+  getter: () => { traceId?: string; spanId?: string },
+): void {
+  traceContextGetter = getter;
+}
+
+/**
+ * Reset the trace context getter.
+ * Only intended for testing purposes.
+ * @internal
+ */
+export function __resetTraceContextGetterForTests(): void {
+  traceContextGetter = null;
+}
+
 function withRequestLogger(base: Logger): Logger {
   const ctx = requestContextGetter?.();
   return ctx?.logger ?? base;
@@ -395,6 +473,41 @@ function createContextAwareLogger(base: ConsoleLogger): Logger {
     },
     child(context: Record<string, unknown>): Logger {
       return withRequestLogger(base).child(context);
+    },
+    component(name: string): Logger {
+      return createComponentAwareLogger(base, name);
+    },
+  };
+}
+
+/**
+ * Create a component-scoped logger that still defers request-context
+ * resolution to call time. This avoids eagerly binding to whatever
+ * context exists at module load — critical because component loggers
+ * are typically created as top-level constants.
+ */
+function createComponentAwareLogger(base: ConsoleLogger, componentName: string): Logger {
+  return {
+    debug(message: string, ...args: unknown[]): void {
+      withRequestLogger(base).component(componentName).debug(message, ...args);
+    },
+    info(message: string, ...args: unknown[]): void {
+      withRequestLogger(base).component(componentName).info(message, ...args);
+    },
+    warn(message: string, ...args: unknown[]): void {
+      withRequestLogger(base).component(componentName).warn(message, ...args);
+    },
+    error(message: string, ...args: unknown[]): void {
+      withRequestLogger(base).component(componentName).error(message, ...args);
+    },
+    time<T>(label: string, fn: () => Promise<T>): Promise<T> {
+      return withRequestLogger(base).component(componentName).time(label, fn);
+    },
+    child(context: Record<string, unknown>): Logger {
+      return withRequestLogger(base).component(componentName).child(context);
+    },
+    component(name: string): Logger {
+      return createComponentAwareLogger(base, name);
     },
   };
 }

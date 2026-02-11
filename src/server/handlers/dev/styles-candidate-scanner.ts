@@ -9,10 +9,12 @@
  */
 
 import { extractCandidates } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import type { HandlerContext } from "../types.ts";
+
+const logger = serverLogger.component("styles-candidate-scanner");
 
 const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
 const SKIP_DIRS = new Set(["node_modules", ".cache", ".git", "dist", "build", ".vscode"]);
@@ -101,12 +103,12 @@ async function scanLocalFiles(projectDir: string, ctx: HandlerContext): Promise<
 
   try {
     await scanDir(projectDir);
-    logger.debug("[StylesCandidateScanner] Local file scan complete", {
+    logger.debug("Local file scan complete", {
       projectDir,
       candidates: candidates.size,
     });
   } catch (error) {
-    logger.warn("[StylesCandidateScanner] Failed to scan local files", {
+    logger.warn("Failed to scan local files", {
       projectDir,
       error: error instanceof Error ? error.message : String(error),
     });

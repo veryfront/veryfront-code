@@ -1,4 +1,4 @@
-import { computeHash, rendererLogger as logger } from "#veryfront/utils";
+import { computeHash, rendererLogger } from "#veryfront/utils";
 import type { RenderMetadata } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { wrapInHTMLShell } from "#veryfront/html/html-shell-generator.ts";
@@ -11,6 +11,8 @@ import {
   MemoryCacheBackend,
 } from "#veryfront/cache/backend.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+
+const logger = rendererLogger.component("snippet-renderer");
 
 const SNIPPET_CACHE_MAX_ENTRIES = 500;
 const SNIPPET_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -64,7 +66,7 @@ function getDistributedSnippetCache(): Promise<CacheBackend> {
   distributedCacheInitPromise = createCacheBackend({ keyPrefix: "snippet" })
     .then((backend) => {
       distributedSnippetCache = backend;
-      logger.debug("[SnippetRenderer] Distributed cache initialized", {
+      logger.debug("Distributed cache initialized", {
         type: backend.type,
       });
       return backend;
@@ -98,12 +100,12 @@ export async function getCompiledSnippetAsync(
 
     const entry = JSON.parse(cached) as SnippetCacheEntry;
     snippetCache.set(hash, entry);
-    logger.debug("[SnippetRenderer] Snippet cache hit from distributed cache", {
+    logger.debug("Snippet cache hit from distributed cache", {
       hash,
     });
     return entry.code;
   } catch (error) {
-    logger.debug("[SnippetRenderer] Failed to read from distributed cache", {
+    logger.debug("Failed to read from distributed cache", {
       hash,
       error,
     });
@@ -119,7 +121,7 @@ export function clearSnippetCache(): void {
   const keysToDelete = [...snippetCache.keys()];
   const entriesCleared = keysToDelete.length;
   snippetCache.clear();
-  logger.debug("[SnippetRenderer] ✓ Global snippet cache cleared", { entriesCleared });
+  logger.debug("✓ Global snippet cache cleared", { entriesCleared });
 
   if (keysToDelete.length === 0) return;
 
@@ -143,7 +145,7 @@ export function clearSnippetCacheForProject(projectSlug: string): void {
     snippetCache.delete(key);
   }
 
-  logger.debug("[SnippetRenderer] ✓ Snippet cache cleared for project", {
+  logger.debug("✓ Snippet cache cleared for project", {
     projectSlug,
     entriesCleared: keysToDelete.length,
   });
@@ -184,7 +186,7 @@ export function renderSnippet(
   return withSpan(
     "rendering.renderSnippet",
     async () => {
-      logger.debug("[SnippetRenderer] Starting render", {
+      logger.debug("Starting render", {
         contentLength: mdxContent.length,
         filePath: options.filePath,
       });
@@ -202,7 +204,7 @@ export function renderSnippet(
           options.filePath,
         );
 
-        logger.debug("[SnippetRenderer] MDX compiled", {
+        logger.debug("MDX compiled", {
           codeLength: bundle.compiledCode.length,
           hasFrontmatter: !!bundle.frontmatter,
         });
@@ -236,7 +238,7 @@ export function renderSnippet(
             // Ignore - local cache is sufficient
           });
 
-        logger.debug("[SnippetRenderer] Snippet cached", {
+        logger.debug("Snippet cached", {
           hash,
           projectSlug: options.projectSlug,
           codePreview: bundle.compiledCode.substring(0, 300),
@@ -247,7 +249,7 @@ export function renderSnippet(
         const snippetUrl =
           `${moduleServerBase}/_vf_modules/_snippets/${hash}.js?ssr=true&v=${cacheBuster}`;
 
-        logger.debug("[SnippetRenderer] Loading snippet module", {
+        logger.debug("Loading snippet module", {
           snippetUrl,
           moduleServerBase,
           providedUrl: options.moduleServerUrl,
@@ -265,7 +267,7 @@ export function renderSnippet(
         const element = React.createElement(MDXContent, { frontmatter });
         const bodyHtml = renderToString(element);
 
-        logger.debug("[SnippetRenderer] SSR complete", {
+        logger.debug("SSR complete", {
           bodyHtmlLength: bodyHtml.length,
         });
 
@@ -297,7 +299,7 @@ export function renderSnippet(
 
         return { html, frontmatter };
       } catch (error) {
-        logger.error("[SnippetRenderer] Render failed", {
+        logger.error("Render failed", {
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
         });

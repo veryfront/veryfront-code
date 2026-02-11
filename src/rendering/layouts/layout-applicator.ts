@@ -1,5 +1,5 @@
 import { dirname, join } from "#veryfront/compat/path";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
@@ -21,6 +21,8 @@ import { getProjectReact } from "#veryfront/react";
 import { extract } from "#std/front-matter/yaml.ts";
 import { RouterProvider } from "veryfront/router";
 import { PageContextProvider } from "veryfront/context";
+
+const logger = rendererLogger.component("layout-applicator");
 
 export interface LayoutApplicationOptions {
   projectDir: string;
@@ -115,7 +117,7 @@ export class LayoutApplicator {
           mdxHeadings: headingsArray,
         };
 
-        logger.debug("[LayoutApplicator] PageContext", {
+        logger.debug("PageContext", {
           frontmatterKeys: Object.keys(pageContext.frontmatter),
           headingsCount: headingsArray.length,
         });
@@ -310,7 +312,7 @@ export class LayoutApplicator {
         },
       );
     } catch (error) {
-      logger.error("[LayoutApplicator] Failed to compile MDX app component:", error);
+      logger.error("Failed to compile MDX app component:", error);
       return null;
     }
   }

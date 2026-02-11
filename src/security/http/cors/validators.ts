@@ -3,6 +3,8 @@ import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { recordCorsRejection } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
+const logger = serverLogger.component("cors");
+
 const NO_CORS_RESULT: CORSValidationResult = { allowedOrigin: null, allowCredentials: false };
 
 /** Early validation checks common to sync and async paths */
@@ -25,7 +27,7 @@ function validateEarly(
   if (config.origin !== "*") return null;
 
   if (config.credentials) {
-    serverLogger.warn("[CORS] Cannot use credentials with wildcard origin - denying");
+    logger.warn("Cannot use credentials with wildcard origin - denying");
     return {
       allowedOrigin: null,
       allowCredentials: false,
@@ -46,7 +48,7 @@ function validateStaticOrigin(requestOrigin: string, corsConfig: CORSConfig): CO
     if (!allowed) {
       recordCorsRejection();
       // Log at debug level - this is expected in dev when CORS config doesn't match request origin
-      serverLogger.debug("[CORS] Origin not in allowlist", { requestOrigin });
+      logger.debug("Origin not in allowlist", { requestOrigin });
     }
 
     return {
@@ -62,7 +64,7 @@ function validateStaticOrigin(requestOrigin: string, corsConfig: CORSConfig): CO
     if (!allowed) {
       recordCorsRejection();
       // Log at debug level - this is expected in dev when CORS config doesn't match request origin
-      serverLogger.debug("[CORS] Origin does not match", { requestOrigin, expectedOrigin: origin });
+      logger.debug("Origin does not match", { requestOrigin, expectedOrigin: origin });
     }
 
     return {
@@ -113,7 +115,7 @@ export function validateOrigin(
           const result = await corsConfig.origin(origin);
           return processFunctionResult(result, origin, credentials);
         } catch (error) {
-          serverLogger.error("[CORS] Origin validation function error", error);
+          logger.error("Origin validation function error", error);
           return { allowedOrigin: null, allowCredentials: false, error: "Origin validation error" };
         }
       }
@@ -144,7 +146,7 @@ export function validateOriginSync(
     const result = corsConfig.origin(origin);
 
     if (result instanceof Promise) {
-      serverLogger.warn("[CORS] Async origin validators are not supported in synchronous contexts");
+      logger.warn("Async origin validators are not supported in synchronous contexts");
       return {
         allowedOrigin: null,
         allowCredentials: false,
@@ -154,7 +156,7 @@ export function validateOriginSync(
 
     return processFunctionResult(result, origin, credentials);
   } catch (error) {
-    serverLogger.error("[CORS] Origin validation function error", error);
+    logger.error("Origin validation function error", error);
     return { allowedOrigin: null, allowCredentials: false, error: "Origin validation error" };
   }
 }

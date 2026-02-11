@@ -3,7 +3,9 @@ import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { cacheModuleToLocal } from "#veryfront/transforms/esm/http-cache.ts";
 import { getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
+
+const logger = rendererLogger.component("server-loader");
 
 export interface ReactDOMServer {
   renderToString: typeof import("react-dom/server").renderToString;
@@ -26,7 +28,7 @@ export function resetReactCache(): void {
 async function loadFromCachedHttpModule<T>(url: string, label: string): Promise<T> {
   const cacheDir = getHttpBundleCacheDir();
   const cachedPath = await cacheModuleToLocal(url, cacheDir);
-  logger.debug(`[server-loader] Loading ${label} from cached HTTP module`, { cachedPath });
+  logger.debug(`Loading ${label} from cached HTTP module`, { cachedPath });
   return (await import(cachedPath)) as T;
 }
 

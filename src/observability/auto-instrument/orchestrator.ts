@@ -1,9 +1,11 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { initTracing } from "../tracing/index.ts";
 import { initMetrics } from "../metrics/index.ts";
 import type { AutoInstrumentConfig } from "./types.ts";
 import { mergeConfig } from "./configurator.ts";
+
+const logger = serverLogger.component("auto-instrument");
 
 let initialized = false;
 
@@ -12,7 +14,7 @@ export async function initAutoInstrumentation(
   adapter?: RuntimeAdapter,
 ): Promise<void> {
   if (initialized) {
-    logger.debug("[auto-instrument] Already initialized");
+    logger.debug("Already initialized");
     return;
   }
 
@@ -29,7 +31,7 @@ export async function initAutoInstrumentation(
 
     logInitialization(finalConfig);
   } catch (error) {
-    logger.warn("[auto-instrument] Failed to initialize auto-instrumentation", error);
+    logger.warn("Failed to initialize auto-instrumentation", error);
   } finally {
     initialized = true;
   }
@@ -48,7 +50,7 @@ export function __resetAutoInstrumentForTests(): void {
 }
 
 function logInitialization(config: AutoInstrumentConfig): void {
-  logger.info("[auto-instrument] Auto-instrumentation initialized", {
+  logger.info("Auto-instrumentation initialized", {
     tracing: config.tracing?.enabled ?? false,
     metrics: config.metrics?.enabled ?? false,
     http: config.instrumentHttp,

@@ -1,4 +1,4 @@
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import type * as React from "react";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -9,6 +9,8 @@ import { computeHash } from "../utils/index.ts";
 import type { HTMLGenerationContext, HTMLGenerator } from "./html.ts";
 import type { RenderOptions } from "./types.ts";
 import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
+
+const logger = rendererLogger.component("ssr-orchestrator");
 
 export interface SSROrchestratorConfig {
   mode: "development" | "production";
@@ -44,7 +46,7 @@ export class SSROrchestrator {
     generationContext: Omit<HTMLGenerationContext, "html" | "ssrHash">,
     options?: RenderOptions,
   ): Promise<SSRRenderingResult> {
-    logger.debug("[SSROrchestrator] performSSRRendering called", {
+    logger.debug("performSSRRendering called", {
       elementType: getElementTypeName(pageElement),
       hasChildren: !!(pageElement.props as Record<string, unknown>)?.children,
     });
@@ -54,7 +56,7 @@ export class SSROrchestrator {
       this.config.debugMode,
     );
 
-    logger.debug("[SSROrchestrator] Element validated", {
+    logger.debug("Element validated", {
       validatedType: getElementTypeName(validatedElement),
     });
 
@@ -91,7 +93,7 @@ export class SSROrchestrator {
     if (stream && wantsStream) {
       const ssrHash = html ? await computeHash(html) : `stream-${Date.now()}`;
 
-      logger.debug("[SSROrchestrator] True streaming mode - sending HTML shell immediately", {
+      logger.debug("True streaming mode - sending HTML shell immediately", {
         hasBufferedHtml: !!html,
         ssrHash,
       });

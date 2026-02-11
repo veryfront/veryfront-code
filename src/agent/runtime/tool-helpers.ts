@@ -9,7 +9,9 @@
 import type { Tool, ToolDefinition } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
+
+const logger = serverLogger.component("agent");
 
 /**
  * Result of parsing tool arguments.
@@ -93,7 +95,7 @@ export function getAvailableTools(
 
   if (toolsConfig === true) {
     const allTools = toolRegistry.getAll();
-    logger.debug(`[AGENT] Loading all ${allTools.size} tools from registry`);
+    logger.debug(`Loading all ${allTools.size} tools from registry`);
 
     return Array.from(allTools, ([name, tool]) => {
       const def = toolToProviderDefinition(tool);

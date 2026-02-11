@@ -1,6 +1,8 @@
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { generateHash } from "./cache.ts";
+
+const logger = rendererLogger.component("module-loader");
 
 type PathResolver = (path: string) => string;
 
@@ -54,7 +56,7 @@ export async function fetchEsmModule(
   const cached = esmCache.get(url);
   if (cached) return cached;
 
-  logger.debug("[ModuleLoader] Fetching esm.sh module:", url);
+  logger.debug("Fetching esm.sh module:", url);
 
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.status}`);

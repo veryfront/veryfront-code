@@ -1,7 +1,9 @@
-import { computeHash, rendererLogger as logger } from "#veryfront/utils";
+import { computeHash, rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle } from "#veryfront/types";
 import { compileMDXLayouts } from "./utils/compiler.ts";
+
+const logger = rendererLogger.component("layout-compiler");
 
 export interface LayoutCompilerOptions {
   adapter: RuntimeAdapter;
@@ -66,7 +68,7 @@ export class LayoutCompiler {
 
       return depParts.join(":");
     } catch (e) {
-      logger.debug("[LayoutCompiler] dep hash computation failed", e as Error);
+      logger.debug("dep hash computation failed", e as Error);
       return "";
     }
   }

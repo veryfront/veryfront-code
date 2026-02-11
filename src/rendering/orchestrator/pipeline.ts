@@ -66,6 +66,10 @@ import {
   SSR_RENDER_TIMEOUT_MS,
 } from "./module-collection.ts";
 
+const renderPageLog = logger.component("render-page");
+const renderPipelineLog = logger.component("render-pipeline");
+const resolvePageDataLog = logger.component("resolve-page-data");
+
 // Re-export test helper for backward compatibility
 export { __injectCssCacheForTests } from "./css-cache.ts";
 
@@ -153,14 +157,14 @@ export class RenderPipeline {
 
       if (result.type === "page") {
         criticalFailures.push({ path: result.path, error: errorMessage });
-        logger.error("[renderPage] Critical page module failed to load", {
+        renderPageLog.error("Critical page module failed to load", {
           path: result.path,
           error: errorMessage,
         });
         continue;
       }
 
-      logger.warn("[renderPage] Layout module failed to load (non-critical)", {
+      renderPageLog.warn("Layout module failed to load (non-critical)", {
         path: result.path,
         error: errorMessage,
       });
@@ -202,7 +206,7 @@ export class RenderPipeline {
     }
 
     if (Object.keys(params).length === 0) {
-      logger.debug("[renderPage] Extracting route params", {
+      renderPageLog.debug("Extracting route params", {
         slug,
         pagePath,
       });
@@ -210,7 +214,7 @@ export class RenderPipeline {
       const extracted = extractRouteParamsShared(pagePath, slug);
       if (extracted.matched) {
         params = extracted.params;
-        logger.debug("[renderPage] Extracted route params", { slug, params });
+        renderPageLog.debug("Extracted route params", { slug, params });
       }
     }
 
@@ -319,7 +323,7 @@ export class RenderPipeline {
       timing.cacheCheck = Math.round(performance.now() - cacheCheckStart);
 
       if (cacheResult?.cachedResult) {
-        logger.info("[RenderPipeline] Cache HIT", { slug, projectSlug, timing });
+        renderPipelineLog.info("Cache HIT", { slug, projectSlug, timing });
         return cacheResult.cachedResult;
       }
     }
@@ -384,7 +388,7 @@ export class RenderPipeline {
               } catch (error) {
                 if (error instanceof VeryfrontError) throw error;
 
-                logger.error("[renderPage] Data fetching error", {
+                renderPageLog.error("Data fetching error", {
                   slug,
                   error: error instanceof Error ? error.message : String(error),
                 });
@@ -502,12 +506,12 @@ export class RenderPipeline {
 
         if (shouldCache && !options?.skipCachePersist) {
           this.config.cacheCoordinator.persistResult(result, slug, cacheKey).catch((error) => {
-            logger.warn("[RenderPipeline] Cache persist failed", { slug, error: String(error) });
+            renderPipelineLog.warn("Cache persist failed", { slug, error: String(error) });
           });
         }
 
         timing.total = Math.round(performance.now() - pipelineStartTime);
-        logger.debug("[RenderPipeline] Complete", { slug, timing });
+        renderPipelineLog.debug("Complete", { slug, timing });
 
         return result;
       },
@@ -622,7 +626,7 @@ export class RenderPipeline {
     const cachedCss = getCachedPageCss(cssCacheKey);
     if (cachedCss) {
       css = cachedCss;
-      logger.debug("[resolvePageData] CSS cache hit", { slug, cssLength: css.length });
+      resolvePageDataLog.debug("CSS cache hit", { slug, cssLength: css.length });
     } else {
       try {
         const renderResult = await withTimeout(
@@ -640,7 +644,7 @@ export class RenderPipeline {
           css = await generateTailwind4CSS(renderResult.html);
           if (css) cachePageCss(cssCacheKey, css);
 
-          logger.debug("[resolvePageData] Generated and cached CSS", {
+          resolvePageDataLog.debug("Generated and cached CSS", {
             slug,
             htmlLength: renderResult.html.length,
             cssLength: css?.length || 0,
@@ -651,7 +655,7 @@ export class RenderPipeline {
         // Surface CSS generation failures instead of silently swallowing them.
         // This allows clients to show a warning or fall back gracefully.
         cssError = `CSS generation failed: ${errorMessage}`;
-        logger.error("[resolvePageData] CSS generation failed", {
+        resolvePageDataLog.error("CSS generation failed", {
           slug,
           error: errorMessage,
           projectId: options?.projectId,
@@ -659,7 +663,7 @@ export class RenderPipeline {
       }
     }
 
-    logger.debug("[resolvePageData] Resolved page data", {
+    resolvePageDataLog.debug("Resolved page data", {
       slug,
       pagePath,
       pageType,

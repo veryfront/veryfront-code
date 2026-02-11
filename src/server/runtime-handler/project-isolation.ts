@@ -1,5 +1,7 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { getEnvNumber, unrefTimer } from "#veryfront/compat/process.ts";
+
+const logger = serverLogger.component("project-isolation");
 
 export interface ProjectIsolationConfig {
   maxConcurrentPerProject: number;
@@ -91,7 +93,7 @@ export class ProjectIsolationManager {
       if (elapsed < this.config.circuitResetTimeMs) {
         const waitTimeMs = this.config.circuitResetTimeMs - elapsed;
 
-        logger.warn("[ProjectIsolation] Circuit open, rejecting request", {
+        logger.warn("Circuit open, rejecting request", {
           projectSlug,
           waitTimeMs,
           recentFailures: state.failures.length,
@@ -102,11 +104,11 @@ export class ProjectIsolationManager {
 
       state.circuitOpenedAt = 0;
       state.failures = [];
-      logger.info("[ProjectIsolation] Circuit reset", { projectSlug });
+      logger.info("Circuit reset", { projectSlug });
     }
 
     if (state.inFlight >= this.config.maxConcurrentPerProject) {
-      logger.warn("[ProjectIsolation] Max concurrent requests reached", {
+      logger.warn("Max concurrent requests reached", {
         projectSlug,
         inFlight: state.inFlight,
         maxConcurrent: this.config.maxConcurrentPerProject,
@@ -145,7 +147,7 @@ export class ProjectIsolationManager {
     if (state.failures.length < this.config.circuitBreakerThreshold) return;
 
     state.circuitOpenedAt = now;
-    logger.error("[ProjectIsolation] Circuit opened due to failures", {
+    logger.error("Circuit opened due to failures", {
       projectSlug,
       recentFailures: state.failures.length,
       threshold: this.config.circuitBreakerThreshold,

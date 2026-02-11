@@ -1,4 +1,6 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
+
+const logger = serverLogger.component("hmr-handler");
 
 /** Client metadata for observability */
 export interface HMRClientInfo {
@@ -40,7 +42,7 @@ export function removeClient(clientId: string): void {
   const client = clientsMap.get(clientId);
   if (!client) return;
 
-  logger.debug("[HMRHandler] Client disconnected", {
+  logger.debug("Client disconnected", {
     clientId,
     projectSlug: client.projectSlug,
     connectionDurationMs: Date.now() - client.connectedAt,

@@ -1,4 +1,4 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { minifyCSS } from "#veryfront/build/asset-pipeline/tailwind-processor/css-utils.ts";
@@ -42,6 +42,8 @@ export {
   isProjectCSSCacheDistributed,
 } from "./project-css-cache.ts";
 
+const logger = serverLogger.component("tailwind");
+
 export interface TailwindResult {
   css: string;
   error?: string;
@@ -84,7 +86,7 @@ export async function getProjectCSS(
 
   if (result.error) {
     const formatted = formatCSSError(result.error);
-    logger.error("[tailwind] Project CSS generation failed", {
+    logger.error("Project CSS generation failed", {
       projectSlug: context.projectSlug,
       error: formatted.message,
       suggestion: formatted.suggestion,
@@ -101,7 +103,7 @@ export async function getProjectCSS(
     candidates,
   );
 
-  logger.debug("[tailwind] Project CSS generated", {
+  logger.debug("Project CSS generated", {
     projectSlug: context.projectSlug,
     hash,
     cssLength: result.css.length,
@@ -131,7 +133,7 @@ export async function regenerateCSSByHash(expectedHash: string): Promise<string 
     async () => {
       const inputs = await resolveRegenerationInputs(expectedHash);
       if (!inputs || inputs.candidates.length === 0) {
-        logger.debug("[tailwind] Cannot regenerate CSS - no cached inputs", { hash: expectedHash });
+        logger.debug("Cannot regenerate CSS - no cached inputs", { hash: expectedHash });
         return undefined;
       }
 
@@ -140,7 +142,7 @@ export async function regenerateCSSByHash(expectedHash: string): Promise<string 
       });
 
       if (result.error) {
-        logger.warn("[tailwind] CSS regeneration failed", {
+        logger.warn("CSS regeneration failed", {
           hash: expectedHash,
           error: result.error,
         });
@@ -149,7 +151,7 @@ export async function regenerateCSSByHash(expectedHash: string): Promise<string 
 
       const regeneratedHash = hashCSS(result.css);
       if (regeneratedHash !== expectedHash) {
-        logger.debug("[tailwind] CSS regeneration hash mismatch", {
+        logger.debug("CSS regeneration hash mismatch", {
           expected: expectedHash,
           got: regeneratedHash,
         });
@@ -163,7 +165,7 @@ export async function regenerateCSSByHash(expectedHash: string): Promise<string 
       };
       await persistRegeneratedCSSEntry(regeneratedHash, regeneratedEntry);
 
-      logger.info("[tailwind] CSS regenerated via JIT", {
+      logger.info("CSS regenerated via JIT", {
         hash: expectedHash,
         cssLength: result.css.length,
         candidateCount: inputs.candidates.length,
@@ -197,7 +199,7 @@ export async function generateTailwindCSS(
 
         if (options?.minify) output = minifyCSS(output);
 
-        logger.debug("[tailwind] Generated CSS", {
+        logger.debug("Generated CSS", {
           candidateCount: candidateArray.length,
           outputLength: output.length,
         });
@@ -205,7 +207,7 @@ export async function generateTailwindCSS(
         return { css: output };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        logger.error("[tailwind] Compilation failed", { error: errorMessage });
+        logger.error("Compilation failed", { error: errorMessage });
         return { css: "", error: errorMessage };
       }
     },

@@ -7,7 +7,7 @@
  * @module transforms/esm/http-cache-invariants
  */
 
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import type { BundleHash, LocalModuleCode, PortableModuleCode } from "./http-cache-types.ts";
 import {
   CACHE_DIR_TOKEN,
@@ -15,6 +15,8 @@ import {
   hasHardcodedCachePaths as baseHasHardcodedCachePaths,
 } from "#veryfront/cache/paths.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+
+const logger = rendererLogger.component("http-cache");
 
 /**
  * Portable cache directory token for cross-environment compatibility.
@@ -54,7 +56,7 @@ export function assertPortable(code: PortableModuleCode): void {
   const codeStr = code as unknown as string;
 
   if (hasHardcodedCachePaths(codeStr)) {
-    logger.error("[HTTP-CACHE] Invariant violation: hardcoded paths in portable code", {
+    logger.error("Invariant violation: hardcoded paths in portable code", {
       preview: codeStr.substring(0, 200),
     });
 
@@ -76,7 +78,7 @@ export function assertLocal(code: LocalModuleCode): void {
   const codeStr = code as unknown as string;
 
   if (hasPortableTokens(codeStr)) {
-    logger.error("[HTTP-CACHE] Invariant violation: portable tokens in local code", {
+    logger.error("Invariant violation: portable tokens in local code", {
       tokenCount: (codeStr.match(new RegExp(CACHE_DIR_TOKEN, "g")) || []).length,
       preview: codeStr.substring(0, 200),
     });

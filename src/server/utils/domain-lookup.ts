@@ -7,11 +7,13 @@
  * @module server/utils/domain-lookup
  */
 
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
+
+const logger = baseLogger.component("domain-lookup");
 
 export interface DomainLookupResult {
   project_id: string;
@@ -63,7 +65,7 @@ async function getCachedResult(
     if (!cached) return undefined;
 
     const result = JSON.parse(cached) as DomainLookupResult | null;
-    logger.debug("[DomainLookup] Repository cache hit", {
+    logger.debug("Repository cache hit", {
       domain,
       projectSlug: result?.project_slug,
     });
@@ -73,7 +75,7 @@ async function getCachedResult(
   const cached = domainCache.get(cacheKey);
   if (!cached) return undefined;
 
-  logger.debug("[DomainLookup] Cache hit", {
+  logger.debug("Cache hit", {
     domain,
     projectSlug: cached.result?.project_slug,
   });
@@ -105,7 +107,7 @@ export function lookupProjectByDomain(
 
       const inFlight = inFlightRequests.get(cacheKey);
       if (inFlight) {
-        logger.debug("[DomainLookup] Waiting for in-flight request", { domain });
+        logger.debug("Waiting for in-flight request", { domain });
         return inFlight;
       }
 
@@ -149,7 +151,7 @@ function fetchDomainLookup(
       const normalizedDomain = domainWithoutPort.toLowerCase();
       const url = `${config.apiBaseUrl}/projects/${encodeURIComponent(domainWithoutPort)}`;
 
-      logger.debug("[DomainLookup] Fetching from API", { domain, url });
+      logger.debug("Fetching from API", { domain, url });
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), DOMAIN_LOOKUP_TIMEOUT_MS);
@@ -164,12 +166,12 @@ function fetchDomainLookup(
         const response = await fetch(url, { headers, signal: controller.signal });
 
         if (response.status === 404) {
-          logger.debug("[DomainLookup] No project found for domain", { domain });
+          logger.debug("No project found for domain", { domain });
           return null;
         }
 
         if (!response.ok) {
-          logger.error("[DomainLookup] API error", {
+          logger.error("API error", {
             domain,
             status: response.status,
             statusText: response.statusText,
@@ -191,7 +193,7 @@ function fetchDomainLookup(
           release_id: matchingEnv?.active_release_id ?? null,
         };
 
-        logger.debug("[DomainLookup] Domain lookup result", {
+        logger.debug("Domain lookup result", {
           domain,
           projectSlug: result.project_slug,
           environment: result.environment?.name,
@@ -200,7 +202,7 @@ function fetchDomainLookup(
         return result;
       } catch (error) {
         const isTimeout = error instanceof Error && error.name === "AbortError";
-        logger.error("[DomainLookup] Failed to lookup domain", {
+        logger.error("Failed to lookup domain", {
           domain,
           error: error instanceof Error ? error.message : String(error),
           timeout: isTimeout,
@@ -220,7 +222,7 @@ export function clearDomainCache(): void {
 
   if (injectedCacheRepo?.clear) void injectedCacheRepo.clear();
 
-  logger.debug("[DomainLookup] Cache cleared");
+  logger.debug("Cache cleared");
 }
 
 export function getDomainCacheStats(): { size: number; maxSize: number } {

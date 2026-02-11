@@ -1,6 +1,8 @@
 import { getEnv } from "#veryfront/platform/compat/process.ts";
-import { serverLogger as logger } from "../../logger/logger.ts";
+import { serverLogger } from "../../logger/logger.ts";
 import type { GlobalWithVeryFrontCache } from "#veryfront/types/global-guards.ts";
+
+const logger = serverLogger.component("cache");
 
 const globalCache = globalThis as GlobalWithVeryFrontCache;
 
@@ -13,7 +15,7 @@ export function setCacheNamespace(namespace?: string): void {
   try {
     globalCache.__VF_CACHE_NAMESPACE__ = cacheNamespace;
   } catch (e) {
-    logger.debug("[cache] setCacheNamespace failed", e);
+    logger.debug("setCacheNamespace failed", e);
   }
 }
 

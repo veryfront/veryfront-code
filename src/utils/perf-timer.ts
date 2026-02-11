@@ -1,6 +1,8 @@
 import { serverLogger } from "#veryfront/utils";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 
+const logger = serverLogger.component("perf");
+
 interface TimingEntry {
   label: string;
   startMs: number;
@@ -123,7 +125,7 @@ export function endRequest(requestId: string): void {
     return item;
   });
 
-  serverLogger.debug(`[PERF] Request ${requestId}`, {
+  logger.debug(`Request ${requestId}`, {
     requestId,
     totalMs: formatMs(total),
     breakdown,

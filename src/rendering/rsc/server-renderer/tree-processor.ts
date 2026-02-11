@@ -1,5 +1,5 @@
 import * as React from "react";
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { renderToStringAdapter } from "#veryfront/react";
 import type { ClientComponentMeta, RSCNode } from "../types.ts";
 import {
@@ -10,6 +10,8 @@ import {
 } from "./component-detector.ts";
 import { renderAttributes, treeToHTML } from "./html-generator.ts";
 import { serializeProps } from "./prop-serializer.ts";
+
+const logger = serverLogger.component("rsc");
 
 /** Recursively renders a component tree to RSC nodes */
 export async function renderTree(
@@ -53,7 +55,7 @@ export async function renderTree(
 
     return { type: "html", html: String(element) };
   } catch (error) {
-    logger.error("[RSC] Error rendering component:", error);
+    logger.error("Error rendering component:", error);
     throw error;
   }
 }

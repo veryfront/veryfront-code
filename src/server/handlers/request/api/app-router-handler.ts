@@ -12,6 +12,8 @@ import { applyCORSHeaders } from "#veryfront/security";
 import { serverLogger } from "#veryfront/utils";
 import { methodNotAllowed } from "#veryfront/http/responses";
 
+const logger = serverLogger.component("app-router-api-handler");
+
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 
 function getAllowedMethods(mod: RouteHandlerModule): string[] {
@@ -60,7 +62,7 @@ export async function handleAppRouter(
 
     return new Response(res.body, { status: res.status, headers });
   } catch (error) {
-    serverLogger.error("[AppRouterAPIHandler] Failed to handle request", error);
+    logger.error("Failed to handle request", error);
     return null;
   }
 }

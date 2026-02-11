@@ -18,13 +18,15 @@ import type {
   MDXFrontmatter,
   PageBundle,
 } from "#veryfront/types";
-import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "#veryfront/utils";
+import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
 import type { RenderOptions } from "./types.ts";
 import { injectElementSelectors } from "#veryfront/studio/element-selector-injector.ts";
 import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
 import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
 import { StreamTimeoutError, streamToString } from "../utils/stream-utils.ts";
+
+const logger = rendererLogger.component("html-generator");
 
 export interface HTMLGeneratorConfig {
   projectDir: string;
@@ -60,7 +62,7 @@ export class HTMLGenerator {
 
     if (!context.options?.studioEmbed) return html;
 
-    logger.debug("[HTMLGenerator] Injected element selectors for Studio");
+    logger.debug("Injected element selectors for Studio");
     return injectElementSelectors(html);
   }
 
@@ -78,7 +80,7 @@ export class HTMLGenerator {
     } catch (error) {
       if (!(error instanceof StreamTimeoutError)) throw error;
 
-      logger.warn("[HTMLGenerator] Stream timed out, using partial content", {
+      logger.warn("Stream timed out, using partial content", {
         partialLength: error.partialContent.length,
       });
       reactContent = error.partialContent.trim();
@@ -130,7 +132,7 @@ export class HTMLGenerator {
       const isClientPage = /^\s*['"]use client['"];?\s*$/m.test(pageContent);
 
       if (isClientPage) {
-        logger.debug(`[HTMLGenerator] Detected 'use client' page: ${pagePath}`);
+        logger.debug(`Detected 'use client' page: ${pagePath}`);
       }
 
       return isClientPage;
@@ -291,10 +293,10 @@ export class HTMLGenerator {
     try {
       const filePath = join(this.config.projectDir, filename);
       const content = await this.config.adapter.fs.readFile(filePath);
-      logger.debug(`[HTMLGenerator] Loaded ${filename}`, { length: content.length });
+      logger.debug(`Loaded ${filename}`, { length: content.length });
       return content;
     } catch {
-      logger.debug(`[HTMLGenerator] No ${filename} found, using default`);
+      logger.debug(`No ${filename} found, using default`);
       return undefined;
     }
   }
@@ -310,7 +312,7 @@ export class HTMLGenerator {
       this.extractProjectClasses(),
     ]);
 
-    logger.debug("[HTMLGenerator] App component resolution", {
+    logger.debug("App component resolution", {
       appComponentPath,
       projectDir: this.config.projectDir,
       hasConfig: !!this.config.config,
@@ -397,7 +399,7 @@ export class HTMLGenerator {
       }
     }
 
-    logger.debug("[HTMLGenerator] extractProjectClasses", {
+    logger.debug("extractProjectClasses", {
       filesProcessed,
       totalClasses: classes.size,
     });

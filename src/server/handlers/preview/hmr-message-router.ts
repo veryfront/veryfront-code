@@ -1,5 +1,7 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { clientSockets, getClientCount } from "./hmr-client-manager.ts";
+
+const logger = serverLogger.component("hmr-handler");
 
 export interface HMRMetrics {
   broadcastsSent: number;
@@ -27,7 +29,7 @@ export function broadcastUpdate(changedPaths?: string[]): void {
   metrics.broadcastsSent++;
   metrics.lastBroadcastTime = timestamp;
 
-  logger.info("[HMRHandler] broadcastUpdate called", {
+  logger.info("broadcastUpdate called", {
     changedPaths,
     totalClients: getClientCount(),
     clientsSetSize: clientSockets.size,
@@ -38,7 +40,7 @@ export function broadcastUpdate(changedPaths?: string[]): void {
 
   if (needsFullReload) {
     const message = JSON.stringify({ type: "reload", timestamp });
-    logger.debug("[HMRHandler] Broadcasting full reload", {
+    logger.debug("Broadcasting full reload", {
       reason: changedPaths?.length ? "server-rendered content" : "no paths",
     });
     broadcastMessage(message);
@@ -48,12 +50,12 @@ export function broadcastUpdate(changedPaths?: string[]): void {
 
   for (const path of changedPaths) {
     const message = JSON.stringify({ type: "update", path, timestamp });
-    logger.debug("[HMRHandler] Broadcasting update message", { path });
+    logger.debug("Broadcasting update message", { path });
     broadcastMessage(message);
     metrics.messagesForwarded++;
   }
 
-  logger.debug("[HMRHandler] Broadcast update complete", {
+  logger.debug("Broadcast update complete", {
     changedPaths: changedPaths.length,
     totalClients: getClientCount(),
   });
@@ -63,7 +65,7 @@ export function broadcastMessage(message: string): void {
   let sentCount = 0;
   let skippedCount = 0;
 
-  logger.info("[HMRHandler] broadcastMessage starting", {
+  logger.info("broadcastMessage starting", {
     message: message.substring(0, 100),
     totalClients: clientSockets.size,
   });
@@ -71,7 +73,7 @@ export function broadcastMessage(message: string): void {
   for (const client of clientSockets) {
     if (client.readyState !== WebSocket.OPEN) {
       skippedCount++;
-      logger.debug("[HMRHandler] Skipping client - not open", {
+      logger.debug("Skipping client - not open", {
         readyState: client.readyState,
       });
       continue;
@@ -81,11 +83,11 @@ export function broadcastMessage(message: string): void {
       client.send(message);
       sentCount++;
     } catch (error) {
-      logger.warn("[HMRHandler] Failed to send to client", { error });
+      logger.warn("Failed to send to client", { error });
     }
   }
 
-  logger.info("[HMRHandler] broadcastMessage complete", {
+  logger.info("broadcastMessage complete", {
     sentCount,
     skippedCount,
     totalClients: clientSockets.size,

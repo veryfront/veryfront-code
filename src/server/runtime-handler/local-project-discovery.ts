@@ -13,7 +13,9 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 
-const logger = getBaseLogger("SERVER");
+const baseLogger = getBaseLogger("SERVER");
+
+const logger = baseLogger.component("runtime-handler");
 
 /** Cache of local adapters by project directory */
 export const localAdapterCache = new LRUCache<string, RuntimeAdapter>({
@@ -70,12 +72,12 @@ export async function findLocalProjectPath(
         localProjectCache.set(slug, absolutePath);
         return absolutePath;
       }
-      logger.warn("[runtime-handler] Ignoring invalid x-project-path override", {
+      logger.warn("Ignoring invalid x-project-path override", {
         slug,
         path: normalizedPath,
       });
     } catch {
-      logger.warn("[runtime-handler] Failed to validate x-project-path override", {
+      logger.warn("Failed to validate x-project-path override", {
         slug,
         path: headerPath,
       });
@@ -93,7 +95,7 @@ export async function findLocalProjectPath(
 
       const absolutePath = projectPath.startsWith("/") ? projectPath : `${cwd()}/${projectPath}`;
       localProjectCache.set(slug, absolutePath);
-      logger.debug("[runtime-handler] Discovered local project", { slug, path: absolutePath });
+      logger.debug("Discovered local project", { slug, path: absolutePath });
       return absolutePath;
     } catch {
       // Directory doesn't exist, continue

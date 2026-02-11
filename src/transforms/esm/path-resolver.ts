@@ -1,11 +1,13 @@
 import { replaceSpecifiers } from "./lexer.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { stat } from "#veryfront/platform/compat/fs.ts";
 import { withSpan, withSpanSync } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   isCrossProjectImport,
   parseCrossProjectImport,
 } from "#veryfront/transforms/shared/cross-project-import.ts";
+
+const logger = rendererLogger.component("cross-project-import");
 
 export interface BlockExternalUrlResult {
   code: string;
@@ -39,7 +41,7 @@ export function resolveCrossProjectImports(
           const projectRef = version === "latest" ? projectSlug : `${projectSlug}@${version}`;
           const moduleServerUrl = `/_vf_modules/_cross/${projectRef}/@/${modulePath}`;
 
-          logger.debug("[CrossProjectImport] Rewriting", { from: specifier, to: moduleServerUrl });
+          logger.debug("Rewriting", { from: specifier, to: moduleServerUrl });
 
           return moduleServerUrl;
         });

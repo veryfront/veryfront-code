@@ -5,7 +5,7 @@
  * Handles: myproject@1.0.0/@/path, myproject/@/path
  */
 
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import type {
   ImportRewriteStrategy,
   ImportSpecifierInfo,
@@ -17,6 +17,8 @@ import {
   isCrossProjectImport,
   parseCrossProjectImport,
 } from "#veryfront/transforms/shared/cross-project-import.ts";
+
+const logger = rendererLogger.component("cross-project-import");
 
 export { isCrossProjectImport, parseCrossProjectImport };
 
@@ -40,7 +42,7 @@ export class CrossProjectStrategy implements ImportRewriteStrategy {
       parsed.path,
     );
 
-    logger.debug("[CrossProjectImport] Rewriting", {
+    logger.debug("Rewriting", {
       from: info.specifier,
       to: url,
     });

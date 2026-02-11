@@ -1,5 +1,7 @@
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import type { FrontmatterData, PageData } from "./types.ts";
+
+const logger = rendererLogger.component("veryfront");
 
 export function isInternalLink(target: HTMLAnchorElement): boolean {
   const href = target.getAttribute("href");
@@ -120,7 +122,7 @@ export function manageFocus(container: HTMLElement): void {
 
     focusElement?.focus?.({ preventScroll: true });
   } catch (error) {
-    logger.warn("[Veryfront] focus management failed", error);
+    logger.warn("focus management failed", error);
   }
 }
 
@@ -132,13 +134,13 @@ export function extractPageDataFromScript(): PageData | null {
     const content = pageDataScript.textContent;
 
     if (!content) {
-      logger.warn("[Veryfront] Page data script has no content");
+      logger.warn("Page data script has no content");
       return {};
     }
 
     return JSON.parse(content) as PageData;
   } catch (error) {
-    logger.error("[Veryfront] Failed to parse page data:", error);
+    logger.error("Failed to parse page data:", error);
     return null;
   }
 }
@@ -159,12 +161,12 @@ export function parsePageDataFromHTML(html: string): { content: string; pageData
       const scriptContent = pageDataScript.textContent;
 
       if (!scriptContent) {
-        logger.warn("[Veryfront] Page data script in HTML has no content");
+        logger.warn("Page data script in HTML has no content");
       } else {
         pageData = JSON.parse(scriptContent) as PageData;
       }
     } catch (error) {
-      logger.error("[Veryfront] Failed to parse page data from HTML:", error);
+      logger.error("Failed to parse page data from HTML:", error);
     }
   }
 

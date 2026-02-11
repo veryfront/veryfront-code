@@ -1,5 +1,5 @@
 import { registerCache } from "#veryfront/utils/memory/index.ts";
-import { logger } from "#veryfront/utils/logger/logger.ts";
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import { buildTransformCacheKey } from "#veryfront/cache/keys.ts";
 import {
   type CacheBackend,
@@ -9,6 +9,8 @@ import {
 } from "#veryfront/cache/backend.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "#veryfront/cache/paths.ts";
+
+const logger = baseLogger.component("transform-cache");
 
 const DEFAULT_TTL_SECONDS = 300; // 5 minutes
 const FALLBACK_MAX_ENTRIES = 500;
@@ -109,9 +111,9 @@ export async function initializeTransformCache(): Promise<boolean> {
     try {
       // Use TokenizingCacheGateway for consistent interface and isDistributed() checks
       cacheGateway = await CacheBackends.codeStore("TRANSFORM-CACHE", { keyPrefix: "transform" });
-      logger.info("[TransformCache] Initialized with gateway", { backend: cacheGateway.type });
+      logger.info("Initialized with gateway", { backend: cacheGateway.type });
     } catch (error) {
-      logger.warn("[TransformCache] Backend init failed, using memory", { error });
+      logger.warn("Backend init failed, using memory", { error });
       // Fallback to memory backend wrapped in gateway for consistent interface
       const memBackend = new MemoryCacheBackend(FALLBACK_MAX_ENTRIES);
       const { createTokenizingGateway } = await import("../../cache/tokenizing-gateway.ts");
@@ -165,7 +167,7 @@ export async function getCachedTransformAsync(
       if (raw) {
         const entry = JSON.parse(raw) as TransformCacheEntry;
         if (!entry.code) {
-          logger.warn("[TransformCache] Cache entry has empty code, discarding", { key });
+          logger.warn("Cache entry has empty code, discarding", { key });
           return undefined;
         }
         // Detokenize code from distributed cache
@@ -179,7 +181,7 @@ export async function getCachedTransformAsync(
         return entry;
       }
     } catch (error) {
-      logger.debug("[TransformCache] Backend get failed", { key, error });
+      logger.debug("Backend get failed", { key, error });
     }
   }
 
@@ -215,7 +217,7 @@ export async function setCachedTransformAsync(
       await gateway.set(key, JSON.stringify(entryToStore), normalizeTtl(ttlSeconds));
       return;
     } catch (error) {
-      logger.debug("[TransformCache] Backend set failed", { key, error });
+      logger.debug("Backend set failed", { key, error });
     }
   }
 
@@ -243,7 +245,7 @@ export function setCachedTransform(
     : gateway.type !== "memory";
   const entryToStore = isDistributed ? { ...entry, code: tokenizeAllVeryFrontPaths(code) } : entry;
   gateway.set(key, JSON.stringify(entryToStore), normalizeTtl(ttlSeconds)).catch((error) => {
-    logger.debug("[TransformCache] Backend set failed", { key, error });
+    logger.debug("Backend set failed", { key, error });
   });
 
   if (gateway.type === "memory") setLocalFallback(key, entry);
@@ -302,23 +304,23 @@ export async function getOrComputeTransform(
     // If they're still present, the cache is stale and we need to recompute.
     if (UNRESOLVED_VF_MODULES_PATTERN.test(cached.code)) {
       const match = cached.code.match(UNRESOLVED_VF_MODULES_PATTERN);
-      logger.warn("[TransformCache] Cache contains unresolved _vf_modules import, invalidating", {
+      logger.warn("Cache contains unresolved _vf_modules import, invalidating", {
         key: key.slice(-60),
         unresolvedImport: match?.[1]?.slice(0, 60),
       });
       // Fall through to recompute
     } else {
-      logger.debug("[TransformCache] Cache hit", { key });
+      logger.debug("Cache hit", { key });
       return { code: cached.code, bundleManifestId: cached.bundleManifestId, cacheHit: true };
     }
   }
 
-  logger.debug("[TransformCache] Cache miss, computing", { key });
+  logger.debug("Cache miss, computing", { key });
   const code = await computeFn();
 
   const hash = hashCodeHex(code).slice(0, 16);
   setCachedTransformAsync(key, code, hash, ttlSeconds).catch((error) => {
-    logger.debug("[TransformCache] Failed to cache computed transform", { key, error });
+    logger.debug("Failed to cache computed transform", { key, error });
   });
 
   return { code, cacheHit: false };
@@ -362,7 +364,7 @@ export async function warmupTransformCache(
   await initializeTransformCache();
 
   if (!isDistributedCacheEnabled()) {
-    logger.warn("[TransformCache] Warmup skipped - no distributed cache available");
+    logger.warn("Warmup skipped - no distributed cache available");
     return {
       success: 0,
       failed: 0,
@@ -396,13 +398,13 @@ export async function warmupTransformCache(
     for (const result of results) {
       if (result.status === "rejected") {
         failed++;
-        logger.debug("[TransformCache] Warmup entry failed", { error: result.reason });
+        logger.debug("Warmup entry failed", { error: result.reason });
       }
     }
   }
 
   const durationMs = Math.round(performance.now() - start);
-  logger.info("[TransformCache] Warmup complete", {
+  logger.info("Warmup complete", {
     success,
     failed,
     skipped,
@@ -422,7 +424,7 @@ export async function prewarmProjectTransforms(
   const gateway = getEffectiveCacheGateway();
 
   if (!gateway || gateway.type === "memory") {
-    logger.debug("[TransformCache] Prewarm skipped - no distributed cache");
+    logger.debug("Prewarm skipped - no distributed cache");
     return 0;
   }
 
@@ -442,11 +444,11 @@ export async function prewarmProjectTransforms(
         prewarmed++;
       }
     } catch (error) {
-      logger.debug("[TransformCache] Prewarm failed for path", { projectId, filePath, error });
+      logger.debug("Prewarm failed for path", { projectId, filePath, error });
     }
   }
 
-  logger.debug("[TransformCache] Prewarm complete", {
+  logger.debug("Prewarm complete", {
     projectId,
     prewarmed,
     total: filePaths.length,

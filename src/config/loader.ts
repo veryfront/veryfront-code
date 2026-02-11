@@ -19,6 +19,8 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache/registry.ts";
 
+const logger = serverLogger.component("config");
+
 export type { VeryfrontConfig } from "./schemas/index.ts";
 
 /**
@@ -42,14 +44,14 @@ function getDefaultFsConfig(): VeryfrontConfig["fs"] {
   const isProxyMode = proxyModeEnv === "1";
   const apiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
 
-  serverLogger.info("[CONFIG] getDefaultFsConfig called", {
+  logger.info("getDefaultFsConfig called", {
     proxyModeEnv,
     isProxyMode,
     apiBaseUrl: apiBaseUrl ? apiBaseUrl.slice(0, 30) : "(not set)",
   });
 
   if (isProxyMode && apiBaseUrl) {
-    serverLogger.info("[CONFIG] Using veryfront-api filesystem (proxy mode)");
+    logger.info("Using veryfront-api filesystem (proxy mode)");
     return {
       type: "veryfront-api",
       veryfront: {
@@ -61,7 +63,7 @@ function getDefaultFsConfig(): VeryfrontConfig["fs"] {
     };
   }
 
-  serverLogger.info("[CONFIG] Using local filesystem (no proxy mode)");
+  logger.info("Using local filesystem (no proxy mode)");
   return { type: "local" };
 }
 
@@ -239,7 +241,7 @@ function validateAndCacheConfig(userConfig: unknown, cacheKey: string): Veryfron
   const merged = mergeConfigs(userConfig as Partial<VeryfrontConfig>);
 
   if (merged.react?.version) {
-    serverLogger.debug("[CONFIG] React version from config", { version: merged.react.version });
+    logger.debug("React version from config", { version: merged.react.version });
   }
 
   configCacheByProject.set(cacheKey, { revision: cacheRevision, config: merged });
@@ -308,10 +310,10 @@ function loadConfigFromVirtualFS(
   return withSpan(
     SpanNames.CONFIG_LOAD_PROJECT,
     async () => {
-      serverLogger.info("[CONFIG] Loading config from virtual filesystem (API)", { configPath });
+      logger.info("Loading config from virtual filesystem (API)", { configPath });
       const content = await adapter.fs.readFile(configPath);
       const source = typeof content === "string" ? content : new TextDecoder().decode(content);
-      serverLogger.info("[CONFIG] Got config source from API", {
+      logger.info("Got config source from API", {
         configPath,
         sourceLength: source.length,
         sourcePreview: source.slice(0, 200),
@@ -323,7 +325,7 @@ function loadConfigFromVirtualFS(
         (tempFile) => `file://${tempFile}?v=${Date.now()}`,
       );
 
-      serverLogger.info("[CONFIG] Loaded config from virtual filesystem", {
+      logger.info("Loaded config from virtual filesystem", {
         configPath,
         hasApp: !!(userConfig as Record<string, unknown>)?.app,
         hasLayout: !!(userConfig as Record<string, unknown>)?.layout,
@@ -343,7 +345,7 @@ async function loadAndMergeConfig(
   adapter: RuntimeAdapter,
 ): Promise<VeryfrontConfig> {
   const isVirtualFS = isVirtualFilesystem(adapter.fs);
-  serverLogger.info("[CONFIG] loadAndMergeConfig called", {
+  logger.info("loadAndMergeConfig called", {
     configPath,
     cacheKey,
     isVirtualFS,
@@ -352,14 +354,14 @@ async function loadAndMergeConfig(
   });
 
   if (isVirtualFS) {
-    serverLogger.info("[CONFIG] Using virtual filesystem (API) for config", { configPath });
+    logger.info("Using virtual filesystem (API) for config", { configPath });
     return loadConfigFromVirtualFS(configPath, cacheKey, adapter);
   }
 
   // Bun and compiled Deno binaries can't dynamically import TypeScript files directly.
   // We need to read the source, write to a temp file, and import from there.
   if (isBun || isDenoCompiled) {
-    serverLogger.info("[CONFIG] Using temp file import for Bun/compiled Deno", {
+    logger.info("Using temp file import for Bun/compiled Deno", {
       configPath,
       isBun,
       isDenoCompiled,
@@ -372,7 +374,7 @@ async function loadAndMergeConfig(
       configPath,
       (tempFile) => `file://${tempFile}`,
     );
-    serverLogger.info("[CONFIG] Successfully loaded config via temp file", {
+    logger.info("Successfully loaded config via temp file", {
       configPath,
       hasApp: !!(userConfig as Record<string, unknown>)?.app,
       hasRouter: !!(userConfig as Record<string, unknown>)?.router,
@@ -406,7 +408,7 @@ export function getConfig(
   const getConfigStartTime = performance.now();
   const cacheKeyForLog = options?.cacheKey || "unknown";
 
-  serverLogger.debug("[CONFIG] getConfig START", { projectDir, cacheKey: cacheKeyForLog });
+  logger.debug("getConfig START", { projectDir, cacheKey: cacheKeyForLog });
 
   return withSpan(
     SpanNames.CONFIG_LOAD,
@@ -417,7 +419,7 @@ export function getConfig(
         isVirtualFS && !!options?.cacheKey,
       );
 
-      serverLogger.debug("[CONFIG] Cache key built", {
+      logger.debug("Cache key built", {
         effectiveCacheKey,
         isVirtualFS,
         cacheKey: cacheKeyForLog,
@@ -425,7 +427,7 @@ export function getConfig(
 
       const cached = configCacheByProject.get(effectiveCacheKey);
       if (cached?.revision === cacheRevision) {
-        serverLogger.info("[CONFIG] Cache HIT - using cached config", {
+        logger.info("Cache HIT - using cached config", {
           cacheKey: effectiveCacheKey,
           isVirtualFS,
           hasApp: !!cached.config.app,
@@ -435,7 +437,7 @@ export function getConfig(
         return cached.config;
       }
 
-      serverLogger.debug("[CONFIG] Cache MISS - loading config", {
+      logger.debug("Cache MISS - loading config", {
         cacheKey: effectiveCacheKey,
         isVirtualFS,
       });
@@ -448,12 +450,12 @@ export function getConfig(
       for (const configFile of configFiles) {
         const configPath = join(configBaseDir, configFile);
         const exists = await adapter.fs.exists(configPath);
-        serverLogger.info("[CONFIG] Checking config file", { configPath, exists, isVirtualFS });
+        logger.info("Checking config file", { configPath, exists, isVirtualFS });
         if (!exists) continue;
 
         try {
           const merged = await loadAndMergeConfig(configPath, effectiveCacheKey, adapter);
-          serverLogger.info("[CONFIG] Successfully loaded config", {
+          logger.info("Successfully loaded config", {
             configFile,
             hasApp: !!merged.app,
             hasLayout: !!(merged as Record<string, unknown>).layout,
@@ -461,14 +463,14 @@ export function getConfig(
           });
           return merged;
         } catch (error) {
-          serverLogger.warn(`[CONFIG] Failed to load ${configFile}, trying next:`, {
+          logger.warn(`Failed to load ${configFile}, trying next:`, {
             error: getErrorMessage(error),
           });
           if (isConfigError(error)) throw error;
         }
       }
 
-      serverLogger.warn("[CONFIG] No config file found, using defaults", {
+      logger.warn("No config file found, using defaults", {
         effectiveCacheKey,
         projectDir,
         isVirtualFS,

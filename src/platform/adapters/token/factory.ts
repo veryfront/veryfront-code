@@ -6,10 +6,12 @@
  * from token/integration.ts instead.
  */
 
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type { TokenStorageAdapter, TokenStorageAdapterConfig } from "./veryfront/types.ts";
+
+const logger = baseLogger.component("token-adapter-factory");
 
 export function createTokenStorageAdapter(
   config: TokenStorageAdapterConfig,
@@ -19,7 +21,7 @@ export function createTokenStorageAdapter(
   return withSpan(
     "platform.token.createAdapter",
     async () => {
-      logger.debug("[TokenAdapterFactory] Creating adapter", { type });
+      logger.debug("Creating adapter", { type });
 
       if (type === "memory") {
         const { MemoryTokenAdapter } = await import("./veryfront/memory-adapter.ts");

@@ -9,13 +9,15 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { HTTP_MODULE_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { httpBundleCache } from "./http-cache-wrapper.ts";
 import { asLocalModuleCode } from "./http-cache-invariants.ts";
 import type { BundleEntry } from "./bundle-manifest.ts";
 import { getManifestIdForHash, refreshManifestTTL } from "./bundle-manifest.ts";
 import type { HttpCacheLike } from "./http-cache-helpers.ts";
+
+const logger = rendererLogger.component("http-cache");
 
 export const DISTRIBUTED_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
@@ -54,7 +56,7 @@ export async function waitForInFlightFetch(
   let timeoutId: ReturnType<typeof setTimeout>;
   const timeoutPromise = new Promise<undefined>((resolve) => {
     timeoutId = setTimeout(() => {
-      logger.warn("[HTTP-CACHE] In-flight fetch wait timed out, will retry", {
+      logger.warn("In-flight fetch wait timed out, will retry", {
         cacheKey,
         timeoutMs,
       });
@@ -95,23 +97,23 @@ export function refreshDistributedCacheAsync(
           HTTP_MODULE_DISTRIBUTED_TTL_SEC,
         );
         getLastDistributedRefresh().set(hashStr, now);
-        logger.debug("[HTTP-CACHE] Refreshed distributed cache TTL", { hash });
+        logger.debug("Refreshed distributed cache TTL", { hash });
 
         const manifestId = getManifestIdForHash(hashStr);
         if (manifestId) {
           refreshManifestTTL(manifestId).catch((err) => {
-            logger.debug("[HTTP-CACHE] Manifest TTL refresh failed", {
+            logger.debug("Manifest TTL refresh failed", {
               manifestId: manifestId.slice(0, 12),
               err,
             });
           });
         }
       } catch (error) {
-        logger.debug("[HTTP-CACHE] Distributed cache refresh failed", { hash, error });
+        logger.debug("Distributed cache refresh failed", { hash, error });
       }
     }
   })().catch((err) => {
-    logger.debug("[HTTP-CACHE] Distributed cache async refresh error", { err });
+    logger.debug("Distributed cache async refresh error", { err });
   });
 }
 

@@ -6,11 +6,13 @@ import { discoverAppRoutes, discoverPagesRoutes } from "#veryfront/routing/api/r
 import { generateOpenAPISpec, specToYaml } from "#veryfront/routing/api/openapi/spec-generator.ts";
 import type { OpenAPISpec } from "#veryfront/routing/api/openapi/types.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import {
   type ExtendedFileSystemAdapter,
   isExtendedFSAdapter,
 } from "#veryfront/platform/adapters/fs/wrapper.ts";
+
+const logger = baseLogger.component("open-api");
 
 const DEFAULT_JSON_PATH = "/_openapi.json";
 const DEFAULT_YAML_PATH = "/_openapi.yaml";
@@ -59,7 +61,7 @@ export class OpenAPIHandler extends BaseHandler {
 
       return this.respond(response);
     } catch (error) {
-      logger.error("[OpenAPI] Failed to generate spec:", { error: String(error) });
+      logger.error("Failed to generate spec:", { error: String(error) });
 
       const errorResponse = this.createResponseBuilder(ctx)
         .withCache("no-cache")
@@ -146,7 +148,7 @@ export class OpenAPIHandler extends BaseHandler {
       this.cacheKey = currentKey;
     }
 
-    logger.debug("[OpenAPI] Generated spec", {
+    logger.debug("Generated spec", {
       pathCount: Object.keys(spec.paths).length,
       isDev,
     });

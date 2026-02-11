@@ -5,7 +5,7 @@
  * Supports both local file imports and remote file transpilation via esbuild.
  */
 
-import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "#veryfront/utils";
+import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
@@ -25,6 +25,8 @@ import { type HTMLGenerationOptions, wrapInHTMLShell } from "#veryfront/html";
 import { extractHTMLMetadata, injectHTMLContent, isFullHTMLDocument } from "#veryfront/html";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
+
+const logger = rendererLogger.component("script");
 
 type ScriptModuleOutput =
   | string
@@ -168,7 +170,7 @@ export async function handleScriptPage(
   options: ScriptPageOptions,
 ): Promise<RenderResult> {
   try {
-    logger.debug(`[Script] Loading TS/JS page module: ${pageInfo.entity.path}`);
+    logger.debug(`Loading TS/JS page module: ${pageInfo.entity.path}`);
 
     const mod = await loadScriptModule(pageInfo.entity.path, options.projectDir, options.adapter);
     const ctx = buildPageContext(pageInfo, slug, options.params);
@@ -382,21 +384,21 @@ async function loadScriptModule(
   const fs = createFileSystem();
   const normalizedPath = normalizeModulePath(modulePath, projectDir);
 
-  logger.debug(`[Script] Checking if file exists locally: ${normalizedPath}`);
+  logger.debug(`Checking if file exists locally: ${normalizedPath}`);
 
   if (await fs.exists(normalizedPath)) {
-    logger.debug(`[Script] File exists locally, using direct import: ${normalizedPath}`);
+    logger.debug(`File exists locally, using direct import: ${normalizedPath}`);
     return (await import(createFileUrl(normalizedPath))) as ScriptPageModule;
   }
 
-  logger.debug(`[Script] File not local, using adapter-based loading: ${modulePath}`);
+  logger.debug(`File not local, using adapter-based loading: ${modulePath}`);
 
   const source = await readFileWithFallback(adapter, modulePath, normalizedPath);
-  logger.debug(`[Script] Read ${source.length} bytes from adapter`);
+  logger.debug(`Read ${source.length} bytes from adapter`);
 
   const resolveDir = dirname(normalizedPath) || projectDir;
   const transpiled = await transpileWithEsbuild(source, modulePath, resolveDir);
-  logger.debug(`[Script] Transpiled ${modulePath}`);
+  logger.debug(`Transpiled ${modulePath}`);
 
   return importFromTempFile(fs, rewriteNpmImports(transpiled));
 }

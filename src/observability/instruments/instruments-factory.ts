@@ -1,5 +1,5 @@
 import type { Meter } from "@opentelemetry/api";
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import type { MetricsConfig, MetricsInstruments, RuntimeState } from "../metrics/types.ts";
 import { createBuildInstruments } from "./build-instruments.ts";
 import { createCacheInstruments } from "./cache-instruments.ts";
@@ -9,6 +9,8 @@ import { createHttpInstruments } from "./http-instruments.ts";
 import { createMemoryInstruments } from "./memory-instruments.ts";
 import { createRenderInstruments } from "./render-instruments.ts";
 import { createRscInstruments } from "./rsc-instruments.ts";
+
+const logger = serverLogger.component("metrics");
 
 export function initializeInstruments(
   meter: Meter,
@@ -62,7 +64,7 @@ export function initializeInstruments(
       ...createErrorInstruments(meter, config),
     });
   } catch (error) {
-    logger.warn("[metrics] Failed to initialize metric instruments", error);
+    logger.warn("Failed to initialize metric instruments", error);
   }
 
   return Promise.resolve(instruments);
