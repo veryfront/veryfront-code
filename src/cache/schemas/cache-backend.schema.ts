@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const CacheBackendTypeSchema = z.enum(["memory", "redis", "api"]);
+export const CacheBackendTypeSchema = z.enum(["memory", "redis", "api", "disk"]);
 
 export const CacheSetBatchEntrySchema = z.object({
   key: z.string(),

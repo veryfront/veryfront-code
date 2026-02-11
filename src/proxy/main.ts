@@ -19,6 +19,7 @@
 
 import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
 import { resolveServerBaseUrl } from "./server-url.ts";
+import { RendererRouter } from "./renderer-router.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
 import { isRetryableConnectionError } from "./retry.ts";
 import {
@@ -70,6 +71,16 @@ function resolveProxyBinding(): { hostname: string; port: number } {
 
 const PRODUCTION_SERVER_URL = getEnv("VERYFRONT_SERVER_URL") || "http://localhost:3001";
 const { hostname: HOST, port: PORT } = resolveProxyBinding();
+
+// Sticky session routing: resolve per-project pod via jump consistent hash
+const headlessService = getEnv("VERYFRONT_SERVER_HEADLESS_SERVICE");
+const rendererRouter = headlessService
+  ? new RendererRouter(
+    headlessService,
+    PRODUCTION_SERVER_URL,
+    parseInt(getEnv("VERYFRONT_SERVER_POD_REFRESH_MS") || "15000"),
+  )
+  : null;
 const WS_CONNECT_TIMEOUT_MS = 30000;
 // Timeout for forwarding requests to production server (SSR can take time on cold start)
 const VERYFRONT_SERVER_REQUEST_TIMEOUT_MS = parseInt(
@@ -337,10 +348,11 @@ function forwardToServer(req: Request): Promise<Response> {
 
           injectContext(newHeaders);
 
-          const serverUrl = new URL(
-            url.pathname + url.search,
-            resolveServerUrl(ctx.serverHostname),
-          );
+          // Dedicated server hostname takes priority; otherwise use sticky routing
+          const baseUrl = ctx.serverHostname
+            ? resolveServerUrl(ctx.serverHostname)
+            : (rendererRouter?.resolve(ctx.projectSlug) ?? PRODUCTION_SERVER_URL);
+          const serverUrl = new URL(url.pathname + url.search, baseUrl);
 
           // Only retry idempotent methods (GET, HEAD, OPTIONS)
           const isIdempotent = ["GET", "HEAD", "OPTIONS"].includes(req.method);
@@ -553,6 +565,7 @@ function router(req: Request): Promise<Response> {
 // Graceful shutdown
 async function shutdown(): Promise<void> {
   proxyLogger.info("Shutting down");
+  rendererRouter?.close();
   await proxyHandler.close();
   await shutdownOTLP();
   proxyLogger.info("Closed connections");
