@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.7-rc.60",
+  "version": "0.1.7-rc.61",
   "nodeModulesDir": "auto",
   "exclude": [
     "npm/",
@@ -35,7 +35,8 @@
     "./middleware": "./src/middleware/index.ts",
     "./oauth": "./src/oauth/index.ts",
     "./provider": "./src/provider/index.ts",
-    "./fs": "./src/fs/index.ts"
+    "./fs": "./src/fs/index.ts",
+    "./integrations": "./src/integrations/index.ts"
   },
   "imports": {
     "veryfront/head": "./src/react/components/Head.tsx",
@@ -272,8 +273,8 @@
     "proxy": "deno run --allow-all cli/main.ts serve --mode=proxy",
     "dev": "deno run --allow-all cli/main.ts dev",
     "production": "deno run --allow-all cli/main.ts serve --mode=production",
-    "build": "deno run -A scripts/build/generate-templates-manifest.ts && deno run -A scripts/build/generate-dev-ui-manifest.ts && deno run -A scripts/build/prepare-framework-sources.ts && deno compile --allow-all --include src/platform/polyfills --include src/proxy/main.ts --include dist/framework-src --output ./bin/veryfront cli/main.ts",
-    "build:npm": "deno run -A scripts/build/build-npm-dnt.ts",
+    "build": "deno run -A scripts/build/generate-integrations-module.ts && deno run -A scripts/build/generate-templates-manifest.ts && deno run -A scripts/build/generate-dev-ui-manifest.ts && deno run -A scripts/build/prepare-framework-sources.ts && deno compile --allow-all --include src/platform/polyfills --include src/proxy/main.ts --include dist/framework-src --output ./bin/veryfront cli/main.ts",
+    "build:npm": "deno run -A scripts/build/generate-integrations-module.ts && deno run -A scripts/build/build-npm-dnt.ts",
     "release": "deno run -A scripts/release.ts",
     "test": "VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --allow-all '--ignore=tests/e2e,tests/integration/compiled-binary-e2e.test.ts' --unstable-worker-options --unstable-net",
     "test:unit": "VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --allow-all --v8-flags=--max-old-space-size=8192 '--ignore=tests,src/ai/workflow/__tests__' --unstable-worker-options --unstable-net $(find src cli -name '*.test.ts' ! -name '*.integration.test.ts')",
