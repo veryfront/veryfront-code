@@ -1,7 +1,19 @@
 /**
- * React Fonts
+ * Load Google Fonts as a React component.
  *
- * @module react/fonts
+ * @module fonts
+ *
+ * @example
+ * ```tsx
+ * import { GoogleFonts } from "veryfront/fonts";
+ *
+ * <GoogleFonts
+ *   fonts={[
+ *     { name: "Inter", weights: [400, 500, 700], variable: "--font-inter" },
+ *     { name: "Fira Code", weights: [400], variable: "--font-mono" },
+ *   ]}
+ * />
+ * ```
  */
 
 import React from "react";

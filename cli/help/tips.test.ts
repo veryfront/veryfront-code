@@ -38,7 +38,17 @@ describe("cli/help/tips", () => {
   describe("getInitTemplates", () => {
     it("should list all templates", () => {
       const templates = getInitTemplates();
-      for (const template of ["ai", "app", "blog", "docs", "minimal"]) {
+      for (
+        const template of [
+          "chat",
+          "rag",
+          "multi-agent",
+          "workflow",
+          "coding-agent",
+          "saas",
+          "minimal",
+        ]
+      ) {
         assertEquals(templates.includes(template), true);
       }
     });
@@ -60,7 +70,7 @@ describe("cli/help/tips", () => {
     it("should return init templates for 'init' command", () => {
       const tips = getCommandTips("init");
       assertEquals(typeof tips, "string");
-      assertEquals(tips?.includes("ai"), true);
+      assertEquals(tips?.includes("chat"), true);
     });
 
     it("should return undefined for unknown command", () => {

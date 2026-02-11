@@ -1,7 +1,24 @@
 /**
- * Fs
+ * Filesystem operations and path utilities.
  *
  * @module fs
+ *
+ * @example File operations
+ * ```ts
+ * import { readTextFile, writeTextFile, mkdir, exists } from "veryfront/fs";
+ *
+ * const content = await readTextFile("./data/config.json");
+ * await writeTextFile("./output/result.json", JSON.stringify(data));
+ * await mkdir("./output", { recursive: true });
+ * ```
+ *
+ * @example Path utilities
+ * ```ts
+ * import { join, resolve, dirname, basename, extname } from "veryfront/fs";
+ *
+ * const filePath = join("src", "pages", "index.tsx");
+ * const dir = dirname(filePath); // "src/pages"
+ * ```
  */
 
 // veryfront/fs — Filesystem operations + path utilities

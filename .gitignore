@@ -71,7 +71,10 @@ scripts/code-optimize/output/*
 scripts/code-optimize/.venv/
 
 # Generated API docs
+# - docs/api: legacy deno doc HTML output
+# - docs/api-reference: Mintlify MDX output
 docs/api/
+docs/api-reference/
 
 # Claude Octopus plugin state
 .claude-octopus/

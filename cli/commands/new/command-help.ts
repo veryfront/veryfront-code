@@ -7,8 +7,9 @@ export const newHelp: CommandHelp = {
   options: [
     {
       flag: "-t, --template <name>",
-      description: "Project template (ai | app | blog | docs | minimal)",
-      default: "ai",
+      description:
+        "Project template (chat | rag | multi-agent | workflow | coding-agent | saas | minimal)",
+      default: "chat",
     },
     {
       flag: "-p, --port <number>",
@@ -30,7 +31,7 @@ export const newHelp: CommandHelp = {
   ],
   examples: [
     "veryfront new my-agent",
-    "veryfront new my-blog -t blog",
+    "veryfront new my-rag -t rag",
     "veryfront new my-app --deploy",
     "veryfront new my-app --port 8080",
   ],
@@ -38,6 +39,6 @@ export const newHelp: CommandHelp = {
     "Lightning-fast project creation for pro coders",
     "Creates project, starts dev server, and deploys with one command",
     "Press Enter to deploy after preview, Ctrl+C to exit",
-    "Uses AI template by default with placeholder env values",
+    "Uses chat template by default with placeholder env values",
   ],
 };

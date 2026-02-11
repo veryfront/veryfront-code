@@ -27,57 +27,49 @@ const EXAMPLES: ExampleInfo[] = [
   {
     name: "ai-assistant",
     description: "Personal AI assistant with Gmail, Slack, and Calendar integrations",
-    template: "ai",
+    template: "chat",
     integrations: ["gmail", "slack", "calendar"],
     features: ["Chat UI", "Tool calling", "OAuth"],
     difficulty: "beginner",
   },
   {
     name: "developer-agent",
-    description: "AI agent for developers with GitHub, Jira, and Linear",
-    template: "ai",
+    description: "AI coding agent with GitHub, Jira, and Linear",
+    template: "coding-agent",
     integrations: ["github", "jira", "linear"],
     features: ["Code review", "Issue tracking", "PR management"],
     difficulty: "intermediate",
   },
   {
     name: "support-bot",
-    description: "Customer support agent with Zendesk and Slack",
-    template: "ai",
+    description: "Multi-agent customer support with Zendesk and Slack",
+    template: "multi-agent",
     integrations: ["zendesk", "slack", "notion"],
     features: ["Ticket management", "Knowledge base", "Escalation"],
     difficulty: "intermediate",
   },
   {
     name: "data-analyst",
-    description: "AI data analyst with Sheets and Snowflake",
-    template: "ai",
+    description: "RAG-powered data analyst with Sheets and Snowflake",
+    template: "rag",
     integrations: ["sheets", "snowflake", "notion"],
-    features: ["SQL queries", "Chart generation", "Reports"],
+    features: ["Document search", "Chart generation", "Reports"],
     difficulty: "advanced",
   },
   {
-    name: "blog-starter",
-    description: "MDX blog with syntax highlighting and RSS",
-    template: "blog",
-    integrations: [],
-    features: ["MDX", "RSS feed", "SEO", "Dark mode"],
-    difficulty: "beginner",
-  },
-  {
-    name: "docs-site",
-    description: "Documentation site with search and versioning",
-    template: "docs",
-    integrations: [],
-    features: ["Search", "Sidebar nav", "Code blocks", "Versioning"],
-    difficulty: "beginner",
+    name: "content-pipeline",
+    description: "AI workflow for research, writing, and publishing",
+    template: "workflow",
+    integrations: ["notion", "slack"],
+    features: ["Multi-step pipeline", "Approvals", "Parallel tasks"],
+    difficulty: "intermediate",
   },
   {
     name: "saas-starter",
-    description: "Full-stack SaaS with auth, billing, and dashboard",
-    template: "app",
+    description: "Full-stack AI SaaS with auth, billing, and per-user memory",
+    template: "saas",
     integrations: ["stripe"],
-    features: ["Auth", "Billing", "Dashboard", "API"],
+    features: ["Auth", "Per-user memory", "Dashboard", "API"],
     difficulty: "advanced",
   },
 ];
@@ -91,29 +83,39 @@ interface TemplateInfo {
 
 const TEMPLATES: TemplateInfo[] = [
   {
-    name: "ai",
-    description: "AI agent template with chat interface and tool calling",
-    features: ["Chat UI", "AI tools", "Agent runtime", "Prompt templates"],
+    name: "chat",
+    description: "AI chatbot with agent, tools, and streaming chat UI",
+    features: ["Chat UI", "AI tools", "Agent runtime", "Streaming"],
     recommended: true,
   },
   {
-    name: "app",
-    description: "Full-stack app with authentication and database",
-    features: ["Auth", "API routes", "Database ready", "Dashboard"],
+    name: "rag",
+    description: "Chat with your docs using retrieval-augmented generation",
+    features: ["Document search", "Source citations", "File-based knowledge"],
   },
   {
-    name: "blog",
-    description: "Content-focused blog with MDX support",
-    features: ["MDX pages", "RSS feed", "SEO optimized", "Syntax highlighting"],
+    name: "multi-agent",
+    description: "Agents that delegate to each other as tools",
+    features: ["Agent composition", "Orchestrator pattern", "Specialized agents"],
   },
   {
-    name: "docs",
-    description: "Documentation site with navigation and search",
-    features: ["Sidebar nav", "Search", "Versioning", "Code blocks"],
+    name: "workflow",
+    description: "Multi-step AI pipeline with approvals and parallelism",
+    features: ["Step sequencing", "Approvals", "Parallel tasks", "React hooks"],
+  },
+  {
+    name: "coding-agent",
+    description: "AI code assistant with file read/write/edit tools",
+    features: ["File tools", "Code generation", "Code review"],
+  },
+  {
+    name: "saas",
+    description: "AI SaaS with auth, per-user chat, and memory",
+    features: ["Auth", "Per-user memory", "Dashboard", "API routes"],
   },
   {
     name: "minimal",
-    description: "Bare-bones starter for custom projects",
+    description: "Blank canvas with no extras",
     features: ["App Router", "Tailwind CSS", "TypeScript"],
   },
 ];
@@ -403,9 +405,9 @@ export const vfListUsecases: MCPTool<ListUsecasesInput, UsecaseInfo[]> = {
 const createProjectInput = z.object({
   name: z.string().describe("Project name (will be converted to slug for directory)"),
   template: z
-    .enum(["ai", "app", "blog", "docs", "minimal"])
+    .enum(["chat", "rag", "multi-agent", "workflow", "coding-agent", "saas", "minimal"])
     .optional()
-    .default("ai")
+    .default("chat")
     .describe("Project template to use"),
   integrations: z
     .array(z.string())

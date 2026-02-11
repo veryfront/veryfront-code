@@ -1,7 +1,72 @@
 /**
- * Agent module - First-class agent runtime
+ * AI agents with memory, tools, and multi-agent composition.
  *
- * @module veryfront/agent
+ * @module agent
+ *
+ * @example Basic agent
+ * ```ts
+ * import { agent } from "veryfront/agent";
+ *
+ * const assistant = agent({
+ *   model: "openai/gpt-4o",
+ *   system: "You are a helpful assistant.",
+ * });
+ * ```
+ *
+ * @example Agent with tools
+ * ```ts
+ * import { agent } from "veryfront/agent";
+ * import { tool } from "veryfront/tool";
+ * import { z } from "zod";
+ *
+ * const searchTool = tool({
+ *   id: "search",
+ *   description: "Search the knowledge base",
+ *   inputSchema: z.object({ query: z.string() }),
+ *   execute: async ({ query }) => ({ results: [] }),
+ * });
+ *
+ * const assistant = agent({
+ *   model: "openai/gpt-4o",
+ *   system: "You are a helpful assistant.",
+ *   tools: [searchTool],
+ *   memory: { type: "conversation", maxMessages: 50 },
+ * });
+ * ```
+ *
+ * @example Streaming API route
+ * ```ts
+ * // app/api/chat/route.ts
+ * import { agent } from "veryfront/agent";
+ *
+ * const assistant = agent({
+ *   model: "openai/gpt-4o",
+ *   system: "You are a helpful assistant.",
+ * });
+ *
+ * export async function POST(req: Request) {
+ *   const { messages } = await req.json();
+ *   const result = await assistant.stream({ messages });
+ *   return result.toDataStreamResponse();
+ * }
+ * ```
+ *
+ * @example Multi-agent composition
+ * ```ts
+ * import { agent, registerAgent, getAgentsAsTools } from "veryfront/agent";
+ *
+ * const researcher = agent({ model: "openai/gpt-4o", system: "Research topics thoroughly." });
+ * const writer = agent({ model: "openai/gpt-4o", system: "Write clear prose." });
+ *
+ * registerAgent(researcher);
+ * registerAgent(writer);
+ *
+ * const orchestrator = agent({
+ *   model: "openai/gpt-4o",
+ *   system: "Coordinate research and writing.",
+ *   tools: getAgentsAsTools(["researcher", "writer"]),
+ * });
+ * ```
  */
 
 export type {

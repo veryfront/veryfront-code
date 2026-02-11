@@ -1,0 +1,87 @@
+---
+title: "Quickstart"
+sidebarTitle: "Quickstart"
+description: "Create and run a Veryfront project in under 2 minutes."
+---
+
+## Install
+
+```bash
+npm install -g veryfront
+```
+
+## Create a project
+
+```bash
+veryfront init my-app
+cd my-app
+```
+
+The CLI walks you through template selection:
+
+- **minimal** — single page, no extras
+- **app** — dashboard with auth and API routes
+- **blog** — MDX content with file-based posts
+- **ai** — agent with tools, prompts, and a chat UI
+
+You can also add features interactively: AI, auth, MDX, Redis, workflows.
+
+## Start the dev server
+
+```bash
+veryfront dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). Changes to any file reload instantly.
+
+## Project overview
+
+After `init`, your project looks like this:
+
+```
+my-app/
+  app/
+    layout.tsx      # Root layout wrapping all pages
+    page.tsx        # Home page (/)
+  package.json
+```
+
+If you picked the **ai** template, you also get:
+
+```
+my-app/
+  agents/
+    assistant.ts    # AI agent definition
+  tools/
+    calculator.ts   # Tool the agent can call
+  prompts/
+    assistant.ts    # System prompt
+  app/
+    layout.tsx
+    page.tsx        # Chat UI
+    api/
+      chat/
+        route.ts    # Streaming chat endpoint
+```
+
+Pages live in `app/`. Agents, tools, prompts, and workflows live at the project root — they're auto-discovered by the framework.
+
+## Build for production
+
+```bash
+veryfront build
+veryfront start
+```
+
+## Deploy
+
+```bash
+veryfront deploy
+```
+
+Deploys to Veryfront Cloud. Your site is live at `https://<slug>.veryfront.com`.
+
+## Next
+
+- [Project Structure](/code/guides/project-structure) — understand the full directory layout
+- [API Reference](/code/api) — complete API documentation

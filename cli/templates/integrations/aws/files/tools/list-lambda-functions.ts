@@ -3,10 +3,10 @@ import { z } from 'zod';
 import { getAWSClient } from '../../lib/aws-client';
 
 export const listLambdaFunctionsTool = tool({
-  name: 'list-lambda-functions',
+  id: 'list-lambda-functions',
   description:
     'List all Lambda functions in your AWS account. Returns function details including name, ARN, runtime, and configuration.',
-  input: z.object({
+  inputSchema: z.object({
     region: z
       .string()
       .optional()

@@ -3,10 +3,10 @@ import { z } from 'zod';
 import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
 
 export const listAPIKeys = tool({
-  name: 'list_api_keys',
+  id: 'list_api_keys',
   description:
     'List all API keys for the organization or a specific workspace. Returns key metadata including name, status, type, and usage information. The actual key values are not returned for security reasons.',
-  parameters: z.object({
+  inputSchema: z.object({
     workspaceId: z
       .string()
       .optional()

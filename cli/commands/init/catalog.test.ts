@@ -17,9 +17,17 @@ import {
 describe("catalog", () => {
   describe("TEMPLATES", () => {
     it("contains expected templates", () => {
-      assertEquals(TEMPLATES.length, 5);
+      assertEquals(TEMPLATES.length, 7);
       const ids = TEMPLATES.map((t) => t.id);
-      assertEquals(ids, ["ai", "app", "blog", "docs", "minimal"]);
+      assertEquals(ids, [
+        "chat",
+        "rag",
+        "multi-agent",
+        "workflow",
+        "coding-agent",
+        "saas",
+        "minimal",
+      ]);
     });
 
     it("each template has required properties", () => {

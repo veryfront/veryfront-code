@@ -17,7 +17,7 @@ export interface ScaffoldResult {
 
 export async function scaffoldProjectFast(
   projectDir: string,
-  template: InitTemplate = "ai",
+  template: InitTemplate = "chat",
   slug: string,
   integrations: IntegrationName[] = [],
 ): Promise<ScaffoldResult> {
@@ -77,23 +77,19 @@ function dedupeFilesByPath(files: TemplateFile[]): TemplateFile[] {
 }
 
 function createVeryfrontConfig(slug: string, template: InitTemplate): TemplateFile {
-  const usesAppRouter = ["ai", "minimal", "app", "blog", "docs"].includes(template);
+  const usesAppRouter = [
+    "chat",
+    "rag",
+    "multi-agent",
+    "workflow",
+    "coding-agent",
+    "saas",
+    "minimal",
+  ].includes(template);
 
   const routerConfig = usesAppRouter ? `\n  router: "app",` : "";
 
-  const extras = template === "app"
-    ? `
-  // Theme
-  theme: {
-    colors: {
-      primary: "#6366F1",
-      secondary: "#EC4899",
-      success: "#10B981",
-      danger: "#EF4444",
-    },
-  },
-`
-    : "";
+  const extras = "";
 
   return {
     path: "veryfront.config.ts",
@@ -119,7 +115,7 @@ function createEnvFile(
 ): TemplateFile {
   const envVars: Record<string, string> = {};
 
-  if (template === "ai") envVars.OPENAI_API_KEY = "sk-your-openai-api-key";
+  if (template !== "minimal") envVars.OPENAI_API_KEY = "sk-your-openai-api-key";
 
   for (const { name, placeholder } of integrationEnvVars) {
     envVars[name] = placeholder;
@@ -144,7 +140,7 @@ function createEnvExampleFile(
     "",
   ];
 
-  if (template === "ai") {
+  if (template !== "minimal") {
     lines.push("# OpenAI API key (https://platform.openai.com/api-keys)");
     lines.push("OPENAI_API_KEY=sk-...");
     lines.push("");

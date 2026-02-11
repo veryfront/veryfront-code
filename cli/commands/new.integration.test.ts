@@ -84,7 +84,7 @@ describe("new command integration", () => {
       assertEquals(await exists(join(projectDir, "veryfront.config.ts")), true);
     });
 
-    it("should use AI template by default", async () => {
+    it("should use chat template by default", async () => {
       await runNewCommand(projectName, []);
 
       assertEquals(await pathIsDirectory(join(projectDir, "agents")), true);
@@ -148,7 +148,7 @@ describe("new command integration", () => {
     it("should scaffold project with single integration", async () => {
       const result = await runNewCommand(projectName, [
         "-t",
-        "ai",
+        "chat",
         "--integrations",
         "github",
       ]);
@@ -168,7 +168,7 @@ describe("new command integration", () => {
     it("should scaffold project with multiple integrations (comma-separated)", async () => {
       const result = await runNewCommand(projectName, [
         "-t",
-        "ai",
+        "chat",
         "--integrations",
         "github,slack",
       ]);
@@ -182,7 +182,7 @@ describe("new command integration", () => {
     it("should include integration env vars in .env", async () => {
       const result = await runNewCommand(projectName, [
         "-t",
-        "ai",
+        "chat",
         "--integrations",
         "github",
       ]);
@@ -198,7 +198,7 @@ describe("new command integration", () => {
     it("should include integration env vars in .env.example", async () => {
       const result = await runNewCommand(projectName, [
         "-t",
-        "ai",
+        "chat",
         "--integrations",
         "github",
       ]);

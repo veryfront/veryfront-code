@@ -1,7 +1,5 @@
 /**
- * OAuth Module
- *
- * Reusable OAuth 2.0 infrastructure for Veryfront integrations.
+ * OAuth 2.0 with 37 pre-configured providers.
  *
  * @example
  * ```typescript

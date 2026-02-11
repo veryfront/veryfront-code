@@ -32,7 +32,8 @@ import type { IntegrationName } from "../../templates/types.ts";
 // ============================================================================
 
 export const NewArgsSchema = z.object({
-  template: z.enum(["ai", "app", "blog", "docs", "minimal"]).optional(),
+  template: z.enum(["chat", "rag", "multi-agent", "workflow", "coding-agent", "saas", "minimal"])
+    .optional(),
   integrations: z.string().optional(),
   port: z.number().default(3000),
   /** Opt-in to cloud deployment (requires authentication) */
@@ -138,7 +139,7 @@ export async function newCommand(
     integrations = result.integrations;
   }
 
-  template ??= "ai";
+  template ??= "chat";
 
   const projectDir = join(cwd(), name);
   const slug = `${name}-${randomSuffix()}`;

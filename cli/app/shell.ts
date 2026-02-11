@@ -108,11 +108,13 @@ export function createApp(config: AppConfig): App {
   }
 
   state = setTemplates([
-    { id: "minimal", name: "Minimal", description: "Bare-bones starter with just the essentials" },
-    { id: "app", name: "App", description: "Full-featured app with routing and layouts" },
-    { id: "ai", name: "AI", description: "AI-powered app with chat and agents" },
-    { id: "blog", name: "Blog", description: "MDX-powered blog with syntax highlighting" },
-    { id: "docs", name: "Docs", description: "Documentation site with search" },
+    { id: "chat", name: "AI Chatbot", description: "Agent + chat UI + streaming" },
+    { id: "rag", name: "Chat with Docs", description: "RAG with source citations" },
+    { id: "multi-agent", name: "Multi-Agent", description: "Agents that delegate to each other" },
+    { id: "workflow", name: "AI Workflow", description: "Steps + approvals + parallelism" },
+    { id: "coding-agent", name: "Coding Agent", description: "AI code assistant with file tools" },
+    { id: "saas", name: "AI SaaS", description: "Auth + chat + per-user memory" },
+    { id: "minimal", name: "Minimal", description: "Blank canvas" },
   ])(state);
 
   state = updateServer({

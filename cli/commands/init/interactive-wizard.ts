@@ -42,7 +42,7 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
     return { template: "minimal", integrations: [], skipped: false };
   }
 
-  if (template !== "ai") {
+  if (template !== "chat") {
     const templateLabel = TEMPLATES.find((t) => t.id === template)?.label ?? template;
     console.log("");
     console.log(green("Got it!") + ` Creating a ${templateLabel} project.`);
@@ -72,7 +72,7 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
   }
   console.log("");
 
-  return { template: "ai", integrations, skipped: false };
+  return { template: "chat", integrations, skipped: false };
 }
 
 export function shouldRunWizard(options: { template?: string; integrations?: string[] }): boolean {

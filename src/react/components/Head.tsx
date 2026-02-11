@@ -1,3 +1,25 @@
+/**
+ * Declarative `<head>` metadata management.
+ *
+ * @module head
+ *
+ * @example
+ * ```tsx
+ * import { Head } from "veryfront/head";
+ *
+ * export default function Page() {
+ *   return (
+ *     <>
+ *       <Head>
+ *         <title>My Page</title>
+ *         <meta name="description" content="Page description" />
+ *       </Head>
+ *       <main>Content</main>
+ *     </>
+ *   );
+ * }
+ * ```
+ */
 import React, { useEffect, useRef } from "react";
 import { collectHead } from "#veryfront/react/head-collector.ts";
 import { isServerEnvironment } from "#veryfront/platform/compat/runtime.ts";

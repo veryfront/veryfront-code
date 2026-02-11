@@ -16,6 +16,7 @@ export function executeMiddlewarePipeline(
   env?: Record<string, unknown>,
   executionCtx?: ExecutionContext,
   adapter?: RuntimeAdapter,
+  finalHandler?: (req: Request) => Response | Promise<Response>,
 ): Promise<Response> {
   return withSpan(
     "middleware.pipeline.execute",
@@ -23,9 +24,13 @@ export function executeMiddlewarePipeline(
       const context = new MiddlewareContext(req, env ?? {}, executionCtx);
 
       try {
+        const next = finalHandler
+          ? () => Promise.resolve(finalHandler(req))
+          : () => Promise.resolve(notFoundResponse());
+
         const response = await composedMiddleware(
           context,
-          () => Promise.resolve(notFoundResponse()),
+          next,
         );
 
         return response ?? notFoundResponse();

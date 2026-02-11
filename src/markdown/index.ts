@@ -1,7 +1,14 @@
 /**
- * Markdown
+ * Markdown rendering with syntax highlighting and diagrams.
  *
  * @module markdown
+ *
+ * @example
+ * ```tsx
+ * import { Markdown } from "veryfront/markdown";
+ *
+ * <Markdown># Hello{"\n\n"}Some **bold** text with `code`.</Markdown>
+ * ```
  */
 
 // veryfront/markdown — Markdown rendering component

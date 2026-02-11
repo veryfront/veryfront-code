@@ -27,7 +27,7 @@ You already have Read/Write/Edit/Bash. The MCP tools give you:
 
 | Tool                   | What it does                                       |
 | ---------------------- | -------------------------------------------------- |
-| `vf_list_templates`    | Available templates (ai, app, blog, docs, minimal) |
+| `vf_list_templates`    | Available templates (chat, rag, multi-agent, workflow, coding-agent, saas, minimal) |
 | `vf_list_integrations` | Service integrations (Gmail, Slack, GitHub, 50+)   |
 | `vf_list_usecases`     | Pre-configured use-case bundles                    |
 | `vf_create_project`    | Create new project from template                   |
@@ -50,7 +50,7 @@ You already have Read/Write/Edit/Bash. The MCP tools give you:
 ```
 1. vf_list_templates() → see what's available
 2. vf_list_integrations() → browse integrations
-3. vf_create_project({ name: "my-agent", template: "ai", integrations: ["gmail", "slack"] })
+3. vf_create_project({ name: "my-agent", template: "chat", integrations: ["gmail", "slack"] })
 4. cd my-agent && deno task dev
 ```
 

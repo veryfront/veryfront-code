@@ -10,7 +10,15 @@ import type { InitOptions, InitTemplate } from "./types.ts";
 
 describe("InitCommand Types", () => {
   describe("InitTemplate", () => {
-    const templates: InitTemplate[] = ["ai", "app", "blog", "docs", "minimal"];
+    const templates: InitTemplate[] = [
+      "chat",
+      "rag",
+      "multi-agent",
+      "workflow",
+      "coding-agent",
+      "saas",
+      "minimal",
+    ];
 
     for (const template of templates) {
       it(`should support '${template}' template`, () => {
@@ -31,8 +39,8 @@ describe("InitCommand Types", () => {
     });
 
     it("should allow template option", () => {
-      const options: InitOptions = { template: "ai" };
-      assertEquals(options.template, "ai");
+      const options: InitOptions = { template: "chat" };
+      assertEquals(options.template, "chat");
     });
 
     it("should allow skipInstall option", () => {
@@ -58,7 +66,7 @@ describe("InitCommand Types", () => {
     it("should allow combined options", () => {
       const options: InitOptions = {
         name: "my-ai-app",
-        template: "ai",
+        template: "chat",
         skipInstall: false,
         skipEnvPrompt: false,
         features: [],
@@ -66,7 +74,7 @@ describe("InitCommand Types", () => {
       };
 
       assertEquals(options.name, "my-ai-app");
-      assertEquals(options.template, "ai");
+      assertEquals(options.template, "chat");
       assertEquals(options.skipInstall, false);
       assertEquals(options.skipEnvPrompt, false);
       assertExists(options.features);

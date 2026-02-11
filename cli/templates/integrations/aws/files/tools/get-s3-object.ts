@@ -3,9 +3,9 @@ import { z } from 'zod';
 import { getAWSClient } from '../../lib/aws-client';
 
 export const getS3ObjectTool = tool({
-  name: 'get-s3-object',
+  id: 'get-s3-object',
   description: 'Get the contents of an object from an S3 bucket. Returns the object content as a string.',
-  input: z.object({
+  inputSchema: z.object({
     bucket: z.string().describe('The name of the S3 bucket'),
     key: z.string().describe('The key (path) of the object to retrieve'),
   }),

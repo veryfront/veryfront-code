@@ -185,7 +185,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     template = wizardResult.template;
     if (wizardResult.integrations.length) integrations = wizardResult.integrations;
   } else {
-    template = options.template ?? "ai";
+    template = options.template ?? "chat";
   }
 
   const projectDir = name ? join(cwd(), name) : cwd();
@@ -365,27 +365,12 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   log(`  veryfront dev`);
 
-  if (template === "blog") {
-    log(`\n${cyan("Blog tips:")}`);
-    log(`  - Add posts to content/posts/`);
-    log(`  - Customize layout in app/layout.tsx`);
-    log(`  - Configure blog settings in veryfront.config.js`);
-  } else if (template === "docs") {
-    log(`\n${cyan("Documentation tips:")}`);
-    log(`  - Add docs to app/docs/`);
-    log(`  - Update navigation in components/Sidebar.tsx`);
-    log(`  - Enable search in veryfront.config.js`);
-  } else if (template === "app") {
-    log(`\n${cyan("App tips:")}`);
-    log(`  - Default login: demo@example.com / password`);
-    log(`  - Add API routes in app/api/`);
-    log(`  - Configure auth in lib/auth.ts`);
-  } else if (template === "ai") {
-    log(`\n${cyan("AI Starter tips:")}`);
+  if (template !== "minimal") {
+    log(`\n${cyan("Tips:")}`);
     log(`  - Add your OPENAI_API_KEY to .env`);
-    log(`  - Add tools in ai/tools/ (auto-discovered)`);
-    log(`  - Add agents in ai/agents/ (auto-discovered)`);
-    log(`  - Add prompts in ai/prompts/ (auto-discovered)`);
+    log(`  - Add tools in tools/ (auto-discovered)`);
+    log(`  - Add agents in agents/ (auto-discovered)`);
+    log(`  - Run veryfront dev to start building`);
   }
 
   const displayFeatureTips = (options as InitOptions & { _featureTips?: string[] })._featureTips;

@@ -46,6 +46,35 @@ export class MiddlewarePipeline {
     );
   }
 
+  /**
+   * Run the middleware pipeline with a final request handler.
+   * Unlike {@link execute}, which returns a 404 when no middleware responds,
+   * `handle` invokes the given handler as the terminal step so middleware
+   * can add headers, validate auth, etc. before the handler runs.
+   *
+   * ```ts
+   * const pipeline = new MiddlewarePipeline().use(cors({ origin: "*" }));
+   * export function GET(req: Request) {
+   *   return pipeline.handle(req, () =>
+   *     Response.json({ ok: true })
+   *   );
+   * }
+   * ```
+   */
+  handle(
+    req: Request,
+    handler: (req: Request) => Response | Promise<Response>,
+  ): Promise<Response> {
+    return executeMiddlewarePipeline(
+      req,
+      this.compose(),
+      undefined,
+      undefined,
+      undefined,
+      handler,
+    );
+  }
+
   async teardown(): Promise<void> {
     const callbacks = this.teardownCallbacks;
     this.teardownCallbacks = [];
