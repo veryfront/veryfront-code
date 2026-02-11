@@ -439,6 +439,23 @@ export const veryfrontConfigSchema = z
       })
       .partial()
       .optional(),
+    /** Third-party integration configuration (e.g., Slack, GitHub) */
+    integrations: z
+      .record(
+        z.string(),
+        z
+          .object({
+            /** Enable per-user tokens (pass endUserId). Default: project-level token. */
+            perUser: z.boolean().optional(),
+            /** Allowlist of tool IDs to expose. When set, only these tools are registered.
+             * This keeps the MCP context narrow by excluding unused tools.
+             * @example ["list-issues", "create-issue"] */
+            tools: z.array(z.string()).optional(),
+          })
+          .partial()
+          .optional(),
+      )
+      .optional(),
     /** OpenAPI documentation configuration */
     openapi: z
       .object({

@@ -8,7 +8,7 @@
  */
 
 import { dynamicTool } from "#veryfront/tool";
-import type { Tool } from "#veryfront/tool";
+import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { logger as baseLogger } from "#veryfront/utils";
 import { z } from "zod";
 import type { OpenAPIOperation, OpenAPIParameter, OpenAPISpec } from "./types.ts";
@@ -57,8 +57,15 @@ export function generateMCPToolsFromSpec(spec: OpenAPISpec, config: MCPToolsConf
           id: `${toolPrefix}:${operation.operationId}`,
           description: buildToolDescription(operation, method, path),
           inputSchema: buildInputSchema(operation),
-          execute: (input) =>
-            executeAPICall(config, method, path, input as Record<string, unknown>, operation),
+          execute: (input, context?) =>
+            executeAPICall(
+              config,
+              method,
+              path,
+              input as Record<string, unknown>,
+              operation,
+              context,
+            ),
           mcp: { enabled: true },
         }),
       );
@@ -142,6 +149,7 @@ async function executeAPICall(
   path: string,
   input: Record<string, unknown>,
   operation: OpenAPIOperation,
+  context?: ToolExecutionContext,
 ): Promise<unknown> {
   let url = `${config.baseUrl}${path}`;
 
@@ -170,6 +178,12 @@ async function executeAPICall(
     ...config.headers,
     ...((input.headers as Record<string, string> | undefined) ?? {}),
   };
+
+  // Propagate end-user identity for per-user token resolution
+  const endUserId = context?.endUserId;
+  if (typeof endUserId === "string" && endUserId.length > 0) {
+    headers["X-End-User-Id"] = endUserId;
+  }
 
   const requestInit: RequestInit = {
     method: method.toUpperCase(),
