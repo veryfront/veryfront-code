@@ -7,6 +7,8 @@ import type { MCPServerConfig } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
+import { validateContentType } from "#veryfront/security/input-validation/limits.ts";
+import { VeryfrontError } from "#veryfront/security/input-validation/errors.ts";
 
 type JSONRPCParams = Record<string, unknown> | unknown[];
 
@@ -272,12 +274,15 @@ export class MCPServer {
         if (!authorized) return new Response("Unauthorized", { status: 401 });
       }
 
-      const ct = request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
-      if (ct !== "application/json") {
+      try {
+        validateContentType(request, "application/json");
+      } catch (error) {
+        const message = error instanceof VeryfrontError ? error.message : "Invalid Content-Type";
         return new Response(
           JSON.stringify({
             jsonrpc: "2.0",
-            error: { code: -32700, message: "Invalid Content-Type" },
+            id: null,
+            error: { code: -32700, message },
           }),
           { status: 400, headers: { "Content-Type": "application/json" } },
         );
@@ -290,6 +295,7 @@ export class MCPServer {
         return new Response(
           JSON.stringify({
             jsonrpc: "2.0",
+            id: null,
             error: { code: -32700, message: "Parse error" },
           }),
           {

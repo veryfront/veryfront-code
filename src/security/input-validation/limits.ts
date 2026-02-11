@@ -53,15 +53,17 @@ function validateHeaderSize(request: Request, maxSize: number): void {
   });
 }
 
-export function validateContentType(request: Request, expected: string): void {
+export function validateContentType(request: Request, expected: string | string[]): void {
+  const allowed = Array.isArray(expected) ? expected : [expected];
+  const label = allowed.join(" or ");
   const contentType = request.headers.get("content-type");
   if (!contentType) {
-    throw createValidationError(`Missing Content-Type header, expected ${expected}`);
+    throw createValidationError(`Missing Content-Type header, expected ${label}`);
   }
   const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
-  if (mediaType !== expected) {
-    throw createValidationError(`Invalid Content-Type: expected ${expected}`, {
-      expected,
+  if (!allowed.includes(mediaType)) {
+    throw createValidationError(`Invalid Content-Type: expected ${label}`, {
+      expected: allowed,
       actual: contentType,
     });
   }

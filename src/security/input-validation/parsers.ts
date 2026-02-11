@@ -47,13 +47,7 @@ export async function parseFormData<T>(
 ): Promise<T> {
   validateRequestLimits(request, options?.limits);
 
-  const ct = request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ?? "";
-  if (ct !== "multipart/form-data" && ct !== "application/x-www-form-urlencoded") {
-    throw createValidationError(
-      "Invalid Content-Type: expected multipart/form-data or application/x-www-form-urlencoded",
-      { actual: request.headers.get("content-type") },
-    );
-  }
+  validateContentType(request, ["multipart/form-data", "application/x-www-form-urlencoded"]);
 
   try {
     const formData = await request.formData();
