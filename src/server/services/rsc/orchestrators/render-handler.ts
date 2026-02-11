@@ -10,6 +10,8 @@ import { wrapUnknownError } from "#veryfront/errors/middleware/wrap-unknown.ts";
 import { extractParams, resolveComponentPath } from "./component-resolver.ts";
 import type { RenderProps } from "./types.ts";
 
+const log = logger.component("rsc");
+
 export class RenderHandler {
   constructor(
     private projectDir: string,
@@ -128,7 +130,7 @@ export class RenderHandler {
   }
 
   private createErrorResponse(error: unknown): Response {
-    logger.error("[RSC] Render error:", error);
+    log.error("Render error:", error);
 
     const message = getErrorMessage(error);
     let vfError;

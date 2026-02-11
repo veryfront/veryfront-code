@@ -21,6 +21,8 @@ import {
 } from "#veryfront/modules/server/index.ts";
 import { generateHMRRuntimeScript } from "./hmr/index.ts";
 
+const log = logger.component("hmr-server");
+
 // Re-export types for backward compatibility
 export type { HMRServerOptions, HMRUpdate } from "./hmr-types.ts";
 
@@ -145,7 +147,7 @@ export class HMRServer {
       await this.server?.stop();
       logger.debug("HMR server stopped");
     } catch (error) {
-      logger.debug("[HMRServer] Server shutdown failed", { error });
+      log.debug("Server shutdown failed", { error });
     }
   }
 
@@ -156,7 +158,7 @@ export class HMRServer {
   sendUpdate(update: HMRUpdate): void {
     const message = JSON.stringify(update);
 
-    logger.debug("[HMRServer] sendUpdate called", {
+    log.debug("sendUpdate called", {
       type: update.type,
       connectedClients: this.clients.size,
     });
@@ -168,7 +170,7 @@ export class HMRServer {
       sentCount++;
     }
 
-    logger.debug("[HMRServer] Update sent to clients", {
+    log.debug("Update sent to clients", {
       sentCount,
       totalClients: this.clients.size,
     });

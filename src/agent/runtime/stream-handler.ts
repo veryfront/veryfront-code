@@ -6,6 +6,8 @@ import { isDynamicTool, parseToolArgs } from "./tool-helpers.ts";
 import { MAX_STREAM_BUFFER_SIZE } from "./constants.ts";
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
+const log = logger.component("agent");
+
 export interface StreamingToolCall {
   id: string;
   name: string;
@@ -147,14 +149,14 @@ export function processStreamData(
         const parseResult = AgentStreamEventSchema.safeParse(rawEvent);
 
         if (!parseResult.success) {
-          logger.warn("[AGENT] Invalid stream event received:", parseResult.error);
+          log.warn("Invalid stream event received:", parseResult.error);
           return;
         }
 
         eventCount++;
         handleStreamEvent(parseResult.data, state, controller, encoder, textPartId, callbacks);
       } catch (e) {
-        logger.warn("[AGENT] Failed to parse stream line:", e);
+        log.warn("Failed to parse stream line:", e);
       }
     }
 
@@ -178,7 +180,7 @@ export function processStreamData(
       partial += decoder.decode(value, { stream: true });
 
       if (partial.length > MAX_STREAM_BUFFER_SIZE) {
-        logger.warn("[AGENT] Stream buffer exceeded max size, truncating");
+        log.warn("Stream buffer exceeded max size, truncating");
         partial = partial.slice(-MAX_STREAM_BUFFER_SIZE / 2);
       }
 

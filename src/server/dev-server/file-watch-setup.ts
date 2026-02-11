@@ -8,6 +8,9 @@ import type { RouteDiscovery } from "./route-discovery.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
 import type { DevServer } from "./server.ts";
 
+const hmrLog = logger.component("hmr");
+const fileWatchSetupLog = logger.component("file-watch-setup");
+
 const METRICS_LOG_INTERVAL = 10;
 
 /** Default AI primitive directories (used when no custom paths configured) */
@@ -60,7 +63,7 @@ export class FileWatchSetup {
     try {
       const watchPaths = await this.getWatchPaths();
       if (watchPaths.length === 0) {
-        logger.warn("[HMR] No directories found to watch");
+        hmrLog.warn("No directories found to watch");
         return;
       }
 
@@ -82,7 +85,7 @@ export class FileWatchSetup {
       this.fileWatcher = watcher;
       this.processFileWatcher(watcher, this.watcherController.signal);
     } catch (error) {
-      logger.warn("[HMR] Failed to setup file watcher", error);
+      hmrLog.warn("Failed to setup file watcher", error);
     }
   }
 
@@ -106,7 +109,7 @@ export class FileWatchSetup {
         const stat = await this.adapter.fs.stat(path);
         if (stat.isDirectory) watchPaths.push(path);
       } catch (error) {
-        logger.debug(`[HMR] Directory not found, skipping: ${path}`, error);
+        hmrLog.debug(`Directory not found, skipping: ${path}`, error);
       }
     }
 
@@ -133,12 +136,12 @@ export class FileWatchSetup {
 
           await this.handleImmediateFileChange(relevantPaths);
         } catch (error) {
-          logger.error("[HMR] Failed to handle file change", error);
+          hmrLog.error("Failed to handle file change", error);
         }
       }
     } catch (error) {
       if (!signal.aborted) {
-        logger.error("[HMR] File watcher task failed unexpectedly", error);
+        hmrLog.error("File watcher task failed unexpectedly", error);
       }
     }
   }
@@ -179,13 +182,13 @@ export class FileWatchSetup {
     await this.refreshAndReload(changes, "");
 
     const duration = (performance.now() - startTime).toFixed(0);
-    logger.debug(`[HMR] Batch processed ${changes.length} file changes in ${duration}ms`, {
+    hmrLog.debug(`Batch processed ${changes.length} file changes in ${duration}ms`, {
       files: changes.map((p) => p.replace(this.projectDir, ".")).join(", "),
     });
 
     this.batchCount++;
     if (this.optimizedWatcher && this.batchCount % METRICS_LOG_INTERVAL === 0) {
-      logger.debug("[HMR] Performance metrics", this.optimizedWatcher.getMetrics());
+      hmrLog.debug("Performance metrics", this.optimizedWatcher.getMetrics());
     }
   }
 
@@ -206,7 +209,7 @@ export class FileWatchSetup {
     try {
       this.fileWatcher.close();
     } catch (error) {
-      logger.debug("[FileWatchSetup] Error closing file watcher (non-critical)", error);
+      fileWatchSetupLog.debug("Error closing file watcher (non-critical)", error);
     }
   }
 }

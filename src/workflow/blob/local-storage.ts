@@ -4,6 +4,8 @@ import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { agentLogger as logger } from "#veryfront/utils";
 
+const log = logger.component("local-blob-storage");
+
 export class LocalBlobStorage implements BlobStorage {
   private rootDir: string;
   private baseUrl?: string;
@@ -158,7 +160,7 @@ export class LocalBlobStorage implements BlobStorage {
 
           if (!blobRef?.expiresAt || blobRef.expiresAt >= now) continue;
 
-          logger.debug(`[LocalBlobStorage] Deleting expired blob: ${id}`);
+          log.debug(`Deleting expired blob: ${id}`);
           await this.delete(id);
         }
       } catch {

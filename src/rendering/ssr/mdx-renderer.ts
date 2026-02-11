@@ -5,6 +5,8 @@ import * as React from "react";
 import { loadCompiledMDXModule } from "./mdx-module-loader.ts";
 import type { MDXRenderOptions } from "./types.ts";
 
+const log = logger.component("mdx");
+
 export function renderMDXToReactAsync(
   compiledCode: string,
   options: MDXRenderOptions = {},
@@ -38,7 +40,7 @@ export function renderMDXToReactAsync(
           mergedProps,
         );
       } catch (error) {
-        logger.error("[MDX] Render error:", error);
+        log.error("Render error:", error);
         return createErrorElement(error);
       }
     },

@@ -4,6 +4,9 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { recordApiRequest, recordApiRetry } from "#veryfront/observability/simple-metrics/index.ts";
 import { API_CLIENT_ERROR, VeryfrontError } from "./types.ts";
 
+const apiLog = logger.component("api");
+const veryfrontApiClientLog = logger.component("veryfront-api-client");
+
 export interface RetryConfig {
   maxRetries: number;
   initialDelay: number;
@@ -55,7 +58,7 @@ export async function requestWithRetry(
 
           recordApiRequest(response.status);
 
-          logger.debug("[API] Request completed", {
+          apiLog.debug("Request completed", {
             path: urlPath,
             status: response.status,
             durationMs: Math.round(duration),
@@ -64,7 +67,7 @@ export async function requestWithRetry(
           if (!response.ok) {
             const text = await response.text();
 
-            logger.error("[VeryfrontApiClient] Request failed", {
+            veryfrontApiClientLog.error("Request failed", {
               url: url.replace(/token=[^&]+/, "token=***"),
               status: response.status,
               statusText: response.statusText,
@@ -97,7 +100,7 @@ export async function requestWithRetry(
 
       const isTimeout = lastError.name === "AbortError";
       if (isTimeout) {
-        logger.warn("[VeryfrontApiClient] Request timed out", {
+        veryfrontApiClientLog.warn("Request timed out", {
           url: url.replace(/token=[^&]+/, "token=***"),
           timeoutMs,
           attempt: attempt + 1,
@@ -119,7 +122,7 @@ export async function requestWithRetry(
 
       recordApiRetry();
 
-      logger.warn("[VeryfrontApiClient] Request failed, retrying...", {
+      veryfrontApiClientLog.warn("Request failed, retrying...", {
         attempt: attempt + 1,
         maxRetries,
         delay,

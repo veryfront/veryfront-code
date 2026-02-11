@@ -11,6 +11,8 @@ import { hasWorkerSupport } from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
 import { generateId } from "../types.ts";
 
+const log = logger.component("workflow-worker");
+
 /**
  * Configuration for the workflow worker
  */
@@ -135,7 +137,7 @@ export class WorkflowWorker {
     this.stats.startedAt = new Date();
 
     if (this.config.debug) {
-      logger.info(`[WorkflowWorker] Started worker ${this.config.workerId}`);
+      log.info(`Started worker ${this.config.workerId}`);
     }
 
     // Start polling loop
@@ -154,7 +156,7 @@ export class WorkflowWorker {
     this.stats.status = "stopping";
 
     if (this.config.debug) {
-      logger.info(`[WorkflowWorker] Stopping worker ${this.config.workerId}...`);
+      log.info(`Stopping worker ${this.config.workerId}...`);
     }
 
     // Clear scheduled poll
@@ -177,7 +179,7 @@ export class WorkflowWorker {
     this.stats.status = "stopped";
 
     if (this.config.debug) {
-      logger.info(`[WorkflowWorker] Worker ${this.config.workerId} stopped`);
+      log.info(`Worker ${this.config.workerId} stopped`);
     }
   }
 
@@ -241,7 +243,7 @@ export class WorkflowWorker {
       }
 
       if (this.config.debug) {
-        logger.info(`[WorkflowWorker] Found ${stalledRuns.length} stalled runs`);
+        log.info(`Found ${stalledRuns.length} stalled runs`);
       }
 
       // Try to claim and resume stalled runs (up to concurrency limit)
@@ -266,7 +268,7 @@ export class WorkflowWorker {
       }
     } catch (error) {
       this.recordError(error);
-      logger.error(`[WorkflowWorker] Poll error:`, error);
+      log.error(`Poll error:`, error);
     }
   }
 
@@ -279,7 +281,7 @@ export class WorkflowWorker {
     (async () => {
       try {
         if (this.config.debug) {
-          logger.info(`[WorkflowWorker] Resuming stalled run ${run.id}`);
+          log.info(`Resuming stalled run ${run.id}`);
         }
 
         await this.config.resumeFn(run.id);
@@ -287,11 +289,11 @@ export class WorkflowWorker {
         this.stats.resumeCount++;
 
         if (this.config.debug) {
-          logger.info(`[WorkflowWorker] Successfully resumed run ${run.id}`);
+          log.info(`Successfully resumed run ${run.id}`);
         }
       } catch (error) {
         this.recordError(error);
-        logger.error(`[WorkflowWorker] Failed to resume run ${run.id}:`, error);
+        log.error(`Failed to resume run ${run.id}:`, error);
       } finally {
         this.activeResumes.delete(run.id);
       }

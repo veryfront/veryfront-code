@@ -25,6 +25,9 @@ import {
 } from "#veryfront/rendering/ssr-globals.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
+const serverLog = logger.component("server");
+const globalLog = logger.component("global");
+
 /** Configuration for AI primitives discovery during server startup */
 export interface DiscoveryOptions {
   baseDir: string;
@@ -145,7 +148,7 @@ export function startProductionServer(
             });
           }
         } catch (error) {
-          logger.debug("[Server] AI discovery skipped:", error);
+          serverLog.debug("AI discovery skipped:", error);
         }
       }
 
@@ -221,7 +224,7 @@ if (import.meta.main) {
       error.message.includes("out of memory") ||
       error.message.includes("allocation failed");
 
-    logger.error(`[GLOBAL] ${type}: Application error caught`, {
+    globalLog.error(`${type}: Application error caught`, {
       message: error.message,
       stack: error.stack,
       type,
@@ -229,7 +232,7 @@ if (import.meta.main) {
     });
 
     if (isFatal) {
-      logger.error("[GLOBAL] Fatal error detected, allowing process exit for clean restart");
+      globalLog.error("Fatal error detected, allowing process exit for clean restart");
       return false;
     }
 

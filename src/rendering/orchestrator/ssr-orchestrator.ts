@@ -10,6 +10,8 @@ import type { HTMLGenerationContext, HTMLGenerator } from "./html.ts";
 import type { RenderOptions } from "./types.ts";
 import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
 
+const log = logger.component("ssr-orchestrator");
+
 export interface SSROrchestratorConfig {
   mode: "development" | "production";
   debugMode: boolean;
@@ -44,7 +46,7 @@ export class SSROrchestrator {
     generationContext: Omit<HTMLGenerationContext, "html" | "ssrHash">,
     options?: RenderOptions,
   ): Promise<SSRRenderingResult> {
-    logger.debug("[SSROrchestrator] performSSRRendering called", {
+    log.debug("performSSRRendering called", {
       elementType: getElementTypeName(pageElement),
       hasChildren: !!(pageElement.props as Record<string, unknown>)?.children,
     });
@@ -54,7 +56,7 @@ export class SSROrchestrator {
       this.config.debugMode,
     );
 
-    logger.debug("[SSROrchestrator] Element validated", {
+    log.debug("Element validated", {
       validatedType: getElementTypeName(validatedElement),
     });
 
@@ -91,7 +93,7 @@ export class SSROrchestrator {
     if (stream && wantsStream) {
       const ssrHash = html ? await computeHash(html) : `stream-${Date.now()}`;
 
-      logger.debug("[SSROrchestrator] True streaming mode - sending HTML shell immediately", {
+      log.debug("True streaming mode - sending HTML shell immediately", {
         hasBufferedHtml: !!html,
         ssrHash,
       });

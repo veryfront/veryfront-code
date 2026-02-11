@@ -1,6 +1,8 @@
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { logger } from "./logger/logger.ts";
 
+const log = logger.component("redis");
+
 export interface RedisClient {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
@@ -46,7 +48,7 @@ export async function getRedisClient(options: RedisClientOptions = {}): Promise<
   try {
     sharedClient = await connectionPromise;
     connectionFailed = false;
-    logger.info("[Redis] Connected successfully");
+    log.info("Connected successfully");
     return sharedClient;
   } catch (error) {
     connectionFailed = true;
@@ -75,16 +77,16 @@ async function createClient(options: RedisClientOptions): Promise<RedisClient> {
 
   if (typeof client.on === "function") {
     client.on("error", (err: unknown) => {
-      logger.error("[Redis] Client error", err);
+      log.error("Client error", err);
       connectionFailed = true;
     });
 
     client.on("reconnecting", () => {
-      logger.info("[Redis] Reconnecting...");
+      log.info("Reconnecting...");
     });
 
     client.on("ready", () => {
-      logger.info("[Redis] Ready");
+      log.info("Ready");
       connectionFailed = false;
     });
   }

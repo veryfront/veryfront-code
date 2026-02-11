@@ -59,13 +59,16 @@ const allowedWarnings: string[] = [
   "[SERVER] ERROR: Server error for /api/ext",
   "Server error for /api/ext",
   "[API] fail to log load error",
+  "fail to log load error",
   "[SERVER] ERROR: Failed to load API handler",
   "Failed to load API handler",
   "Remote import blocked by allow-list",
   "[prod] API handler failed",
   "[API] error log failed",
+  "error log failed",
   "[SERVER] ERROR: [API] handler module failed to load:",
   "[API] handler module failed to load:",
+  "handler module failed to load:",
   // API route build errors
   "[SERVER] ERROR: Failed to build api/echo:",
   "Failed to build api/echo:",
@@ -111,6 +114,7 @@ const allowedWarnings: string[] = [
 
   // Custom domain lookup without API token (expected in local/test environments)
   "[runtime-handler] Cannot look up custom domain - no API token available",
+  "Cannot look up custom domain - no API token available",
 
   // Node.js experimental feature warnings (expected when using --experimental-transform-types)
   "ExperimentalWarning: Transform Types is an experimental feature",
@@ -210,10 +214,13 @@ const allowedWarnings: string[] = [
 
   // AI discovery warnings (expected when test projects have no agents/tools)
   "[API-Wrapper] AI discovery found 0 agents and 0 tools",
+  "AI discovery found 0 agents and 0 tools",
   "[API-Wrapper] AI discovery failed",
+  "AI discovery failed",
 
   // ReloadNotifier errors (expected in tests that verify error handling)
   "[ReloadNotifier] Listener error",
+  "[reload-notifier] Listener error",
   "Listener error",
 
   // HMR server errors (expected in port conflict tests)
@@ -228,6 +235,7 @@ const allowedWarnings: string[] = [
   "Request timed out",
   "[runtime-handler] Request timed out",
   "Server error:",
+  "Server error for /",
 
   // Root element not found (expected in prefetch tests without DOM)
   "Root element not found",

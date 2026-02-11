@@ -27,6 +27,8 @@ import { Semaphore } from "../concurrency/semaphore.ts";
 import { verifiedHttpBundlePaths } from "../http-bundle-helpers.ts";
 import type { FailureRecord, ModuleCacheEntry } from "../types.ts";
 
+const log = logger.component("ssr-module-loader");
+
 /** Maximum entries for temp path tracking (small, just pointers) */
 const TEMP_PATH_CACHE_MAX_ENTRIES = 500;
 
@@ -212,7 +214,7 @@ export function clearSSRModuleCache(): void {
   _transformSemaphore = undefined;
   resetCachedTransformLimits();
 
-  logger.info("[SSR-MODULE-LOADER] ✓ Global cache cleared", {
+  log.info("✓ Global cache cleared", {
     modulesCleared: moduleCount,
     failedComponentsCleared: failedCount,
     transformSlotsCleared: transformSlotsCount,
@@ -263,7 +265,7 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
   // so full clear is needed. This just forces re-verification on next access.
   verifiedHttpBundlePaths.clear();
 
-  logger.debug("[SSR-MODULE-LOADER] ✓ Project cache cleared", {
+  log.debug("✓ Project cache cleared", {
     projectId,
     entriesCleared: cleared,
     remainingModules: globalModuleCache.size,

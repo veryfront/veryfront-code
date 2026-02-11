@@ -9,6 +9,8 @@ import {
 } from "#veryfront/utils";
 import type { Message, Plugin } from "esbuild";
 
+const log = logger.component("api");
+
 export interface HTTPPluginOptions {
   allowedHosts: string[];
   lockfile?: LockfileManager;
@@ -69,7 +71,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
       build.onResolve({ filter: /^react\/(jsx-runtime|jsx-dev-runtime)$/ }, (args) => {
         const runtime = args.path.split("/")[1];
         const reactUrl = `https://esm.sh/react@18/${runtime}`;
-        logger.debug(`[API][http] map '${args.path}' -> '${reactUrl}'`);
+        log.debug(`[http] map '${args.path}' -> '${reactUrl}'`);
         return { path: reactUrl, namespace: "http-url" };
       });
 
@@ -78,7 +80,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         if (!mapped) return undefined;
 
         nodeMapped.push({ from: args.path, to: mapped });
-        logger.debug(`[API][http] map '${args.path}' -> '${mapped}'`);
+        log.debug(`[http] map '${args.path}' -> '${mapped}'`);
         return { path: mapped, namespace: "http-url" };
       });
 
@@ -122,7 +124,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
             }
             u.searchParams.set("target", "es2020");
             u.searchParams.set("bundle", "true");
-            logger.debug(`[API][http] esm.sh rewrite: ${args.path} -> ${u.toString()}`);
+            log.debug(`[http] esm.sh rewrite: ${args.path} -> ${u.toString()}`);
             requestUrl = u.toString();
           }
         } catch (e) {
@@ -132,7 +134,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         if (lockfile) {
           const cached = await lockfile.get(args.path);
           if (cached) {
-            logger.debug(`[API][http] lockfile hit: ${args.path}`);
+            log.debug(`[http] lockfile hit: ${args.path}`);
             try {
               const res = await fetchWithTimeout(cached.resolved);
               if (res.ok) {
@@ -154,10 +156,10 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
                   };
                 }
 
-                logger.warn(`[API][http] integrity mismatch, refetching: ${args.path}`);
+                log.warn(`[http] integrity mismatch, refetching: ${args.path}`);
               }
             } catch {
-              logger.warn(`[API][http] cached URL failed, refetching: ${args.path}`);
+              log.warn(`[http] cached URL failed, refetching: ${args.path}`);
             }
           }
         }
@@ -167,7 +169,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         });
 
         if (!res.ok) {
-          logger.error(`[API][http] fetch failed ${requestUrl} ${res.status}`);
+          log.error(`[http] fetch failed ${requestUrl} ${res.status}`);
           return {
             errors: [
               {
@@ -188,7 +190,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
             fetchedAt: new Date().toISOString(),
           });
           await lockfile.flush();
-          logger.debug(`[API][http] lockfile updated: ${args.path} -> ${resolvedUrl}`);
+          log.debug(`[http] lockfile updated: ${args.path} -> ${resolvedUrl}`);
         }
 
         return { contents: text, loader: "js" } as const;

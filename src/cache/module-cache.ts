@@ -12,6 +12,8 @@ import {
 } from "#veryfront/utils/constants/cache.ts";
 import { registerLRUCache } from "./registry.ts";
 
+const log = logger.component("module-cache");
+
 let moduleCache: LRUCache<string, string> | null = null;
 let esmCache: LRUCache<string, string> | null = null;
 
@@ -172,7 +174,7 @@ export function getModuleCacheStats(): ModuleCacheStats {
 export function clearModuleCaches(): void {
   moduleCache?.clear();
   esmCache?.clear();
-  logger.info("[ModuleCache] All module caches cleared");
+  log.info("All module caches cleared");
 }
 
 export function clearModuleCacheForProject(projectId: string): number {
@@ -187,7 +189,7 @@ export function clearModuleCacheForProject(projectId: string): number {
   }
 
   if (cleared > 0) {
-    logger.info("[ModuleCache] Cleared module cache for project", { projectId, cleared });
+    log.info("Cleared module cache for project", { projectId, cleared });
   }
 
   return cleared;
@@ -198,5 +200,5 @@ export function destroyModuleCaches(): void {
   esmCache?.destroy();
   moduleCache = null;
   esmCache = null;
-  logger.info("[ModuleCache] Module caches destroyed");
+  log.info("Module caches destroyed");
 }

@@ -13,6 +13,8 @@ import {
   type TokenStorageAdapterConfig,
 } from "./types.ts";
 
+const log = logger.component("veryfront-token-adapter");
+
 export class VeryfrontTokenAdapter implements TokenStorageAdapter {
   private client: TokenStorageApiClient;
   private initialized = false;
@@ -21,7 +23,7 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
     const tokenConfig = createTokenConfig(config);
     this.client = new TokenStorageApiClient(tokenConfig);
 
-    logger.debug("[VeryfrontTokenAdapter] Created", {
+    log.debug("Created", {
       apiBaseUrl: tokenConfig.apiBaseUrl,
       projectSlug: tokenConfig.projectSlug,
     });
@@ -30,7 +32,7 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    logger.debug("[VeryfrontTokenAdapter] Initializing...");
+    log.debug("Initializing...");
 
     const connected = await this.client.ping();
     if (!connected) {
@@ -38,35 +40,35 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
     }
 
     this.initialized = true;
-    logger.debug("[VeryfrontTokenAdapter] Initialized successfully");
+    log.debug("Initialized successfully");
   }
 
   async get(key: string): Promise<string | null> {
     await this.initialize();
-    logger.debug("[VeryfrontTokenAdapter] Get", { key });
+    log.debug("Get", { key });
     return this.client.get(key);
   }
 
   async set(key: string, value: string): Promise<void> {
     await this.initialize();
-    logger.debug("[VeryfrontTokenAdapter] Set", { key, valueLength: value.length });
+    log.debug("Set", { key, valueLength: value.length });
     await this.client.set(key, value);
   }
 
   async delete(key: string): Promise<void> {
     await this.initialize();
-    logger.debug("[VeryfrontTokenAdapter] Delete", { key });
+    log.debug("Delete", { key });
     await this.client.delete(key);
   }
 
   async list(prefix?: string): Promise<string[]> {
     await this.initialize();
-    logger.debug("[VeryfrontTokenAdapter] List", { prefix });
+    log.debug("List", { prefix });
     return this.client.list(prefix);
   }
 
   dispose(): void {
     this.initialized = false;
-    logger.debug("[VeryfrontTokenAdapter] Disposed");
+    log.debug("Disposed");
   }
 }

@@ -6,6 +6,8 @@ import { ContextPropagation } from "./context-propagation.ts";
 import { SpanOperations } from "./span-operations.ts";
 import type { OpenTelemetryAPI, TracingConfig, TracingState } from "./types.ts";
 
+const log = logger.component("tracing");
+
 /**
  * Tracing manager class
  * Exported for testing - use tracingManager singleton for production
@@ -24,7 +26,7 @@ export class TracingManager {
 
   async initialize(config: Partial<TracingConfig> = {}, adapter?: RuntimeAdapter): Promise<void> {
     if (this.state.initialized) {
-      logger.debug("[tracing] Already initialized");
+      log.debug("Already initialized");
       return;
     }
 
@@ -32,14 +34,14 @@ export class TracingManager {
     this.state.initialized = true;
 
     if (!finalConfig.enabled) {
-      logger.debug("[tracing] Tracing disabled");
+      log.debug("Tracing disabled");
       return;
     }
 
     try {
       await this.initializeTracer(finalConfig);
 
-      logger.info("[tracing] OpenTelemetry tracing initialized", {
+      log.info("OpenTelemetry tracing initialized", {
         exporter: finalConfig.exporter,
         serviceName: finalConfig.serviceName,
         endpoint: finalConfig.endpoint,
@@ -92,9 +94,9 @@ export class TracingManager {
     if (!this.state.initialized) return;
 
     try {
-      logger.info("[tracing] Tracing shutdown initiated");
+      log.info("Tracing shutdown initiated");
     } catch (error) {
-      logger.warn("[tracing] Error during tracing shutdown", error);
+      log.warn("Error during tracing shutdown", error);
     }
   }
 }

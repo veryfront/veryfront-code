@@ -6,6 +6,8 @@ import {
   isReactElement,
 } from "../../element-validator/primitive-checks.ts";
 
+const log = logger.component("ensure-valid-child");
+
 /**
  * Returns the child unchanged if valid, or null if invalid.
  *
@@ -18,7 +20,7 @@ export function ensureValidChild(
   _React?: unknown,
 ): BundledReact.ReactNode {
   if (isReactElement(child)) {
-    logger.debug("[ensureValidChild] Valid React element", {
+    log.debug("Valid React element", {
       type: getElementTypeName(child as BundledReact.ReactElement),
       isValidElement: true,
     });
@@ -31,14 +33,14 @@ export function ensureValidChild(
     typeof child === "number" ||
     Array.isArray(child)
   ) {
-    logger.debug("[ensureValidChild] Valid primitive or array", { type: typeof child });
+    log.debug("Valid primitive or array", { type: typeof child });
     return child;
   }
 
   if (typeof child !== "object") return null;
 
   const debugInfo = getElementDebugInfo(child);
-  logger.error("[ensureValidChild] Invalid child: object is not a React element", {
+  log.error("Invalid child: object is not a React element", {
     keys: Object.keys(child).slice(0, 10),
     hasSymbol: debugInfo.hasSymbol,
     symbolValue: debugInfo.symbolValue,

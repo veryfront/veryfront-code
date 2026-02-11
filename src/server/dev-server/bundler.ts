@@ -3,6 +3,8 @@ import type { Plugin } from "esbuild";
 import { dirname, join, resolve as pathResolve } from "#veryfront/compat/path/index.ts";
 import type { ShellAdapter } from "#veryfront/platform/adapters/base.ts";
 
+const log = logger.component("dev-bundler");
+
 export class Bundler {
   constructor(
     private projectDir: string,
@@ -83,7 +85,7 @@ function createRelativeFsPlugin(projectDir: string, shell: ShellAdapter): Plugin
           const contents = shell.readFileSync(args.path);
           return { contents, loader: getLoaderForPath(args.path) };
         } catch (error) {
-          logger.debug("[DevBundler] Failed to read file contents", { path: args.path, error });
+          log.debug("Failed to read file contents", { path: args.path, error });
           return { contents: "", loader: "js" };
         }
       });

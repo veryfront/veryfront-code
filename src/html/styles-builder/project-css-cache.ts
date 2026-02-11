@@ -19,6 +19,9 @@ import {
 } from "./tailwind-compiler-utils.ts";
 import { cacheCSSAsync, DEFAULT_STYLESHEET } from "./css-hash-cache.ts";
 
+const projectCssCacheLog = logger.component("project-css-cache");
+const tailwindLog = logger.component("tailwind");
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -82,9 +85,9 @@ export async function initializeProjectCSSCache(): Promise<boolean> {
     projectCSSInitPromise = (async () => {
       try {
         projectCSSBackend = await CacheBackends.projectCSS();
-        logger.debug("[ProjectCSSCache] Initialized", { backend: projectCSSBackend.type });
+        projectCssCacheLog.debug("Initialized", { backend: projectCSSBackend.type });
       } catch (error) {
-        logger.warn("[ProjectCSSCache] Backend init failed, using memory", { error });
+        projectCssCacheLog.warn("Backend init failed, using memory", { error });
         projectCSSBackend = new MemoryCacheBackend(100);
       } finally {
         projectCSSInitialized = true;
@@ -174,7 +177,7 @@ export async function tryGetProjectCSSFromLocalFallback(
 
   if (localState !== "hit" || !localCached) return undefined;
 
-  logger.debug("[tailwind] Project CSS cache hit (local)", {
+  tailwindLog.debug("Project CSS cache hit (local)", {
     projectSlug: context.projectSlug,
     hash: localCached.hash,
   });
@@ -195,14 +198,14 @@ export async function tryGetProjectCSSFromDistributedCache(
 
     const entry = parseProjectCSSCacheEntry(raw);
     if (!entry) {
-      logger.debug("[tailwind] Project CSS cache entry was malformed", {
+      tailwindLog.debug("Project CSS cache entry was malformed", {
         cacheKey: context.cacheKey,
       });
       return undefined;
     }
 
     if (entry.candidatesHash !== context.candidatesHash) {
-      logger.debug("[tailwind] Project CSS cache miss (candidates changed)", {
+      tailwindLog.debug("Project CSS cache miss (candidates changed)", {
         projectSlug: context.projectSlug,
         cachedCandidatesHash: entry.candidatesHash,
         currentCandidatesHash: context.candidatesHash,
@@ -210,7 +213,7 @@ export async function tryGetProjectCSSFromDistributedCache(
       return undefined;
     }
 
-    logger.debug("[tailwind] Project CSS cache hit (distributed)", {
+    tailwindLog.debug("Project CSS cache hit (distributed)", {
       projectSlug: context.projectSlug,
       hash: entry.hash,
     });
@@ -219,7 +222,7 @@ export async function tryGetProjectCSSFromDistributedCache(
     await cacheProjectCSSEntryByHash(entry, candidates, context.stylesheet);
     return { css: entry.css, hash: entry.hash, fromCache: true };
   } catch (error) {
-    logger.debug("[tailwind] Failed to read from project CSS cache", {
+    tailwindLog.debug("Failed to read from project CSS cache", {
       cacheKey: context.cacheKey,
       error,
     });
@@ -239,7 +242,7 @@ export async function storeProjectCSS(
   if (projectCSSBackend) {
     projectCSSBackend.set(context.cacheKey, JSON.stringify(entry), PROJECT_CSS_CACHE_TTL_SECONDS)
       .catch((error) => {
-        logger.debug("[tailwind] Failed to store in project CSS cache", {
+        tailwindLog.debug("Failed to store in project CSS cache", {
           cacheKey: context.cacheKey,
           error,
         });
@@ -276,7 +279,7 @@ export function invalidateProjectCSS(projectSlug: string): void {
   }
 
   invalidateProjectCSSAsync(projectSlug).catch((error) => {
-    logger.debug("[tailwind] Failed to invalidate project CSS cache", { projectSlug, error });
+    tailwindLog.debug("Failed to invalidate project CSS cache", { projectSlug, error });
   });
 }
 
@@ -288,8 +291,8 @@ export async function invalidateProjectCSSAsync(projectSlug: string): Promise<vo
 
   try {
     const deleted = await projectCSSBackend.delByPattern(`${projectSlug}:*`);
-    logger.debug("[tailwind] Cleared project CSS cache", { projectSlug, deleted });
+    tailwindLog.debug("Cleared project CSS cache", { projectSlug, deleted });
   } catch (error) {
-    logger.debug("[tailwind] Failed to clear project CSS cache", { projectSlug, error });
+    tailwindLog.debug("Failed to clear project CSS cache", { projectSlug, error });
   }
 }

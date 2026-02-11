@@ -34,6 +34,8 @@ import type { WorkflowBackend } from "../backends/types.ts";
 import { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { CapturedTenantContext } from "../types.ts";
 
+const log = logger.component("dynamic-job");
+
 /**
  * Exit codes for the job
  */
@@ -95,19 +97,19 @@ export async function runDynamicWorkflowJob(
   // Get workflow run ID from environment
   const runId = Deno.env.get("WORKFLOW_RUN_ID");
   if (!runId) {
-    logger.error("[DynamicJob] Missing WORKFLOW_RUN_ID environment variable");
+    log.error("Missing WORKFLOW_RUN_ID environment variable");
     return DYNAMIC_EXIT_CODES.CONFIG_ERROR;
   }
 
   if (debug) {
-    logger.info(`[DynamicJob] Starting execution for run: ${runId}`);
+    log.info(`Starting execution for run: ${runId}`);
   }
 
   try {
     // Fetch the workflow run
     const run = await backend.getRun(runId);
     if (!run) {
-      logger.error(`[DynamicJob] Workflow run not found: ${runId}`);
+      log.error(`Workflow run not found: ${runId}`);
       return DYNAMIC_EXIT_CODES.NOT_FOUND;
     }
 
@@ -115,13 +117,13 @@ export async function runDynamicWorkflowJob(
     const tenant = getTenantFromEnv() ?? run._tenant;
 
     if (!tenant) {
-      logger.error("[DynamicJob] No tenant context available");
+      log.error("No tenant context available");
       return DYNAMIC_EXIT_CODES.CONFIG_ERROR;
     }
 
     if (debug) {
-      logger.info(`[DynamicJob] Executing workflow: ${run.workflowId}`);
-      logger.info(`[DynamicJob] Tenant: ${tenant.projectSlug}`);
+      log.info(`Executing workflow: ${run.workflowId}`);
+      log.info(`Tenant: ${tenant.projectSlug}`);
     }
 
     // Execute with tenant context
@@ -151,7 +153,7 @@ export async function runDynamicWorkflowJob(
         const adapter = await enhanceAdapterWithFS(denoAdapter, fsConfig);
 
         if (debug) {
-          logger.info("[DynamicJob] FS adapter initialized");
+          log.info("FS adapter initialized");
         }
 
         // Discover workflows from user's project
@@ -163,11 +165,11 @@ export async function runDynamicWorkflowJob(
         });
 
         if (discoveryResult.errors.length > 0 && debug) {
-          logger.warn("[DynamicJob] Some workflow files failed to load:", discoveryResult.errors);
+          log.warn("Some workflow files failed to load:", discoveryResult.errors);
         }
 
         if (discoveryResult.workflows.length === 0) {
-          logger.error("[DynamicJob] No workflows discovered");
+          log.error("No workflows discovered");
           return DYNAMIC_EXIT_CODES.DISCOVERY_FAILED;
         }
 
@@ -181,7 +183,7 @@ export async function runDynamicWorkflowJob(
         // Find the matching workflow
         const workflow = discoveryResult.workflows.find((w) => w.id === run.workflowId);
         if (!workflow) {
-          logger.error(`[DynamicJob] Workflow not found: ${run.workflowId}`);
+          log.error(`Workflow not found: ${run.workflowId}`);
           logger.error(
             `[DynamicJob] Available workflows: ${
               discoveryResult.workflows.map((w) => w.id).join(", ")
@@ -191,7 +193,7 @@ export async function runDynamicWorkflowJob(
         }
 
         if (debug) {
-          logger.info(`[DynamicJob] Found workflow "${workflow.id}" at ${workflow.filePath}`);
+          log.info(`Found workflow "${workflow.id}" at ${workflow.filePath}`);
         }
 
         // Create executor and register the workflow
@@ -212,26 +214,26 @@ export async function runDynamicWorkflowJob(
           switch (status) {
             case "completed":
               if (debug) {
-                logger.info(`[DynamicJob] Workflow completed successfully: ${runId}`);
+                log.info(`Workflow completed successfully: ${runId}`);
               }
               return DYNAMIC_EXIT_CODES.SUCCESS;
 
             case "failed":
-              logger.error(`[DynamicJob] Workflow failed: ${runId}`, finalRun?.error);
+              log.error(`Workflow failed: ${runId}`, finalRun?.error);
               return DYNAMIC_EXIT_CODES.WORKFLOW_FAILED;
 
             case "waiting":
               if (debug) {
-                logger.info(`[DynamicJob] Workflow paused (waiting): ${runId}`);
+                log.info(`Workflow paused (waiting): ${runId}`);
               }
               return DYNAMIC_EXIT_CODES.SUCCESS;
 
             default:
-              logger.warn(`[DynamicJob] Unexpected final status: ${status}`);
+              log.warn(`Unexpected final status: ${status}`);
               return DYNAMIC_EXIT_CODES.SUCCESS;
           }
         } catch (error) {
-          logger.error("[DynamicJob] Execution error:", error);
+          log.error("Execution error:", error);
 
           await backend.updateRun(runId, {
             status: "failed",
@@ -247,7 +249,7 @@ export async function runDynamicWorkflowJob(
       },
     );
   } catch (error) {
-    logger.error("[DynamicJob] Fatal error:", error);
+    log.error("Fatal error:", error);
     return DYNAMIC_EXIT_CODES.WORKFLOW_FAILED;
   }
 }

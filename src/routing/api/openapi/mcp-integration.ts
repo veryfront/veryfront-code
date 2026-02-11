@@ -4,6 +4,8 @@ import { createOpenAPIResource } from "./mcp-resource.ts";
 import { generateMCPToolsFromSpec } from "./mcp-tools.ts";
 import type { OpenAPISpec } from "./types.ts";
 
+const log = logger.component("open-api-mcp");
+
 export interface OpenAPIMCPConfig {
   baseUrl: string;
   resource?: boolean;
@@ -23,9 +25,9 @@ export async function registerOpenAPIMCP(
       const resource = createOpenAPIResource(getSpec);
       registerResource("openapi_spec", resource);
       result.resourceId = "openapi_spec";
-      logger.debug("[OpenAPI MCP] Registered openapi://spec resource");
+      log.debug("Registered openapi://spec resource");
     } catch (error) {
-      logger.warn("[OpenAPI MCP] Failed to register resource:", { error: String(error) });
+      log.warn("Failed to register resource:", { error: String(error) });
     }
   }
 
@@ -46,12 +48,12 @@ export async function registerOpenAPIMCP(
       result.toolIds.push(tool.id);
     }
 
-    logger.info("[OpenAPI MCP] Registered API tools", {
+    log.info("Registered API tools", {
       count: tools.length,
       prefix: config.toolPrefix ?? "api",
     });
   } catch (error) {
-    logger.warn("[OpenAPI MCP] Failed to generate tools:", { error: String(error) });
+    log.warn("Failed to generate tools:", { error: String(error) });
   }
 
   return result;

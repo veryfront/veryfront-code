@@ -1,5 +1,7 @@
 import { serverLogger as logger } from "./logger/index.ts";
 
+const log = logger.component("bundle-manifest");
+
 export interface BundleMetadata {
   hash: string;
   codeHash: string;
@@ -147,7 +149,7 @@ let manifestStore: BundleManifestStore = new InMemoryBundleManifestStore();
 
 export function setBundleManifestStore(store: BundleManifestStore): void {
   manifestStore = store;
-  logger.info("[bundle-manifest] Bundle manifest store configured", {
+  log.info("Bundle manifest store configured", {
     type: store.constructor.name,
   });
 }

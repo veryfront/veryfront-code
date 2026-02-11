@@ -1,6 +1,8 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { serverLogger } from "#veryfront/utils";
 
+const log = serverLogger.component("script-handlers");
+
 function shouldStopEsbuild(): boolean {
   return !(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild;
 }
@@ -45,7 +47,7 @@ async function buildOrServeScript(
       try {
         esbuild?.stop?.();
       } catch (stopError) {
-        serverLogger.debug("[ScriptHandlers] esbuild stop failed", stopError);
+        log.debug("esbuild stop failed", stopError);
       }
     }
   }

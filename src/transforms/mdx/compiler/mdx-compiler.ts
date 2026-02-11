@@ -7,6 +7,8 @@ import type { CompilationMode, CompilationTarget, MdxRuntimeBundle } from "./typ
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
+const log = logger.component("mdx-compiler");
+
 type PluggableList = Pluggable[];
 
 export function compileMDXRuntime(
@@ -38,7 +40,7 @@ export function compileMDXRuntime(
           ? rewriteBodyImports(extractedBody, { filePath: filePath!, target, baseUrl, projectDir })
           : extractedBody;
 
-        logger.debug("[MDX Compiler] Body metrics:", {
+        log.debug("Body metrics:", {
           filePath,
           target,
           contentLength: content.length,
@@ -84,7 +86,7 @@ export function compileMDXRuntime(
           nodeMap: new Map(),
         };
       } catch (error) {
-        logger.error("[MDX Compiler] Compilation failed:", {
+        log.error("Compilation failed:", {
           filePath,
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,

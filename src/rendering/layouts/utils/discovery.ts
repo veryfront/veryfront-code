@@ -6,6 +6,9 @@ import { LAYOUT_EXTENSIONS } from "../types.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 
+const discoveryLog = logger.component("discovery");
+const layoutLog = logger.component("layout");
+
 interface CacheEntry {
   layouts: LayoutItem[];
   accessedAt: number;
@@ -22,7 +25,7 @@ registerLRUCache("layout-discovery-cache", layoutDiscoveryCache);
 
 export function clearLayoutDiscoveryCache(projectDir?: string): void {
   if (!projectDir) {
-    logger.debug("[discovery] Clearing entire layout discovery cache", {
+    discoveryLog.debug("Clearing entire layout discovery cache", {
       size: layoutDiscoveryCache.size,
     });
     layoutDiscoveryCache.clear();
@@ -38,7 +41,7 @@ export function clearLayoutDiscoveryCache(projectDir?: string): void {
     }
   }
 
-  logger.debug("[discovery] Cleared layout discovery cache for project", {
+  discoveryLog.debug("Cleared layout discovery cache for project", {
     projectDir,
     cleared,
     remaining: layoutDiscoveryCache.size,
@@ -59,7 +62,7 @@ export async function discoverNestedLayouts(
   const cached = layoutDiscoveryCache.get(key);
   if (cached) {
     cached.accessedAt = Date.now();
-    logger.info("[discovery] Layout cache HIT", {
+    discoveryLog.info("Layout cache HIT", {
       pageFilePath,
       rootDir,
       layoutCount: cached.layouts.length,
@@ -68,7 +71,7 @@ export async function discoverNestedLayouts(
     return cached.layouts;
   }
 
-  logger.info("[discovery] Layout cache MISS, discovering layouts", {
+  discoveryLog.info("Layout cache MISS, discovering layouts", {
     pageFilePath,
     rootDir,
     projectDir,
@@ -76,7 +79,7 @@ export async function discoverNestedLayouts(
 
   const layouts = await discoverNestedLayoutsImpl(pageFilePath, rootDir, adapter);
 
-  logger.info("[discovery] Found layouts", {
+  discoveryLog.info("Found layouts", {
     pageFilePath,
     layoutCount: layouts.length,
     layoutPaths: layouts.map((l) => l.path),
@@ -158,7 +161,7 @@ async function resolveExistingFiles(
     }
 
     if (result.status === "rejected") {
-      logger.debug("[layout] stat layout candidate failed", result.reason as Error);
+      layoutLog.debug("stat layout candidate failed", result.reason as Error);
     }
   }
 
@@ -231,10 +234,10 @@ async function addMissedAncestorLayouts(
       }
 
       if (result.status === "rejected") {
-        logger.debug("[layout] stat nested tsx/jsx layout failed", result.reason as Error);
+        layoutLog.debug("stat nested tsx/jsx layout failed", result.reason as Error);
       }
     }
   } catch (e) {
-    logger.debug("[layout] nested layout fallback scan failed", e as Error);
+    layoutLog.debug("nested layout fallback scan failed", e as Error);
   }
 }

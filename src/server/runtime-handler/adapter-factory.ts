@@ -20,6 +20,8 @@ import type { ParsedDomain } from "../utils/domain-parser.ts";
 
 const logger = getBaseLogger("SERVER");
 
+const log = logger.component("adapter-factory");
+
 export interface AdapterResolutionResult {
   /** The effective project directory to use */
   projectDir: string;
@@ -84,7 +86,7 @@ export async function resolveAdapter(
   if (isLocalProject && localProjectPath) {
     effectiveProjectDir = localProjectPath;
 
-    logger.debug("[adapter-factory] Using local project (filesystem-first)", {
+    log.debug("Using local project (filesystem-first)", {
       projectSlug: opts.projectSlug,
       projectDir: effectiveProjectDir,
     });
@@ -93,7 +95,7 @@ export async function resolveAdapter(
     if (!localAdapterCache.has(effectiveProjectDir)) {
       const baseAdapter = await runtime.get();
       localAdapterCache.set(effectiveProjectDir, baseAdapter);
-      logger.debug("[adapter-factory] Created local adapter for project", {
+      log.debug("Created local adapter for project", {
         projectSlug: opts.projectSlug,
         projectDir: effectiveProjectDir,
       });
@@ -108,14 +110,14 @@ export async function resolveAdapter(
         () => getConfig(effectiveProjectDir, effectiveAdapter),
       );
 
-      logger.debug("[adapter-factory] Loaded project-specific config", {
+      log.debug("Loaded project-specific config", {
         projectSlug: opts.projectSlug,
         projectDir: effectiveProjectDir,
         layout: effectiveConfig?.layout,
         router: effectiveConfig?.router,
       });
     } catch (error) {
-      logger.warn("[adapter-factory] Failed to load project config, using defaults", {
+      log.warn("Failed to load project config, using defaults", {
         projectSlug: opts.projectSlug,
         projectDir: effectiveProjectDir,
         error: getErrorMessage(error),
@@ -149,14 +151,14 @@ export async function resolveAdapter(
         });
       });
 
-      logger.debug("[adapter-factory] Loaded config in proxy mode", {
+      log.debug("Loaded config in proxy mode", {
         projectSlug: opts.projectSlug,
         hasConfig: !!effectiveConfig,
         layout: effectiveConfig?.layout,
         router: effectiveConfig?.router,
       });
     } catch (error) {
-      logger.warn("[adapter-factory] Failed to load proxy config, using defaults", {
+      log.warn("Failed to load proxy config, using defaults", {
         projectSlug: opts.projectSlug,
         error: getErrorMessage(error),
       });

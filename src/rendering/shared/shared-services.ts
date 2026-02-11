@@ -18,6 +18,8 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { ElementValidator, type ValidationOptions } from "../element-validator/index.ts";
 import { type CompileMDXFunction, CompilerService } from "../orchestrator/compiler-service.ts";
 
+const log = logger.component("shared-services");
+
 export interface SharedServicesOptions {
   debugMode?: boolean;
   maxValidationDepth?: number;
@@ -43,12 +45,12 @@ export async function initializeSharedServices(
   initializationPromise = withSpan(
     SpanNames.SHARED_SERVICES_INIT,
     async (): Promise<SharedServices> => {
-      logger.debug("[SharedServices] Initializing shared renderer services");
+      log.debug("Initializing shared renderer services");
       const startTime = performance.now();
 
       // Initialize JSX transform (esbuild in dev, sucrase in deno compile)
       await initializeTransform();
-      logger.debug("[SharedServices] Transform initialized", {
+      log.debug("Transform initialized", {
         backend: isUsingEsbuild() ? "esbuild" : "sucrase",
       });
 
@@ -62,7 +64,7 @@ export async function initializeSharedServices(
         compilerService: new CompilerService(),
       };
 
-      logger.debug("[SharedServices] Shared services initialized", {
+      log.debug("Shared services initialized", {
         duration: `${(performance.now() - startTime).toFixed(2)}ms`,
       });
 
@@ -103,5 +105,5 @@ export function getSharedCompileMDX(): CompileMDXFunction {
 export function destroySharedServices(): void {
   sharedServices = null;
   initializationPromise = null;
-  logger.debug("[SharedServices] Shared services destroyed");
+  log.debug("Shared services destroyed");
 }

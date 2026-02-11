@@ -18,6 +18,8 @@ import { addHMRTimestamps } from "#veryfront/transforms/esm/import-rewriter.ts";
 import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
 import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 
+const log = logger.component("module-server");
+
 /**
  * Embedded polyfills for compiled Deno binaries.
  *
@@ -76,11 +78,11 @@ export async function validateEmbeddedPolyfills(): Promise<void> {
       missing.map((p: string) => `  - ${p}`).join("\n") +
       `\n\nAdd these to EMBEDDED_POLYFILLS in src/modules/server/module-server.ts`;
 
-    logger.error("[ModuleServer] " + errorMsg);
+    log.error("" + errorMsg);
     throw new Error(errorMsg);
   }
 
-  logger.info(`[ModuleServer] Validated ${embeddedPaths.size} embedded polyfills`);
+  log.info(`Validated ${embeddedPaths.size} embedded polyfills`);
 }
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
@@ -147,7 +149,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         throwOnError: false,
         onSecurityEvent: (event) => {
           if (event.type !== "validation-failed") return;
-          logger.warn("[ModuleServer] Security validation failed", {
+          log.warn("Security validation failed", {
             operation: event.operation,
             path: event.path,
             error: event.error,
@@ -156,7 +158,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       });
 
       const debugUserAgent = req.headers.get("user-agent") ?? "";
-      logger.debug("[ModuleServer] Request", {
+      log.debug("Request", {
         pathname: url.pathname,
         userAgent: debugUserAgent.slice(0, 50),
       });
@@ -184,7 +186,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         const snippetCode = await getCompiledSnippetAsync(hash);
 
         if (!snippetCode) {
-          logger.warn("[ModuleServer] Snippet not found in cache", { hash });
+          log.warn("Snippet not found in cache", { hash });
           return createModuleResponse(method, "Snippet not found", HTTP_NOT_FOUND, {
             "Content-Type": "text/plain; charset=utf-8",
             "Cache-Control": "no-cache",
@@ -196,7 +198,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         const userAgent = req.headers.get("user-agent") ?? "";
         const isSSR = url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
 
-        logger.debug("[ModuleServer] Transforming snippet", {
+        log.debug("Transforming snippet", {
           hash,
           isSSR,
           snippetProjectSlug,
@@ -219,7 +221,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             });
           }
 
-          logger.debug("[ModuleServer] Snippet transformed", {
+          log.debug("Snippet transformed", {
             hash,
             isSSR,
             transformedLength: transformedCode.length,
@@ -231,7 +233,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           });
         } catch (error) {
           const errorMsg = getErrorMessage(error);
-          logger.error("[ModuleServer] Snippet transform error", { hash, error: errorMsg });
+          log.error("Snippet transform error", { hash, error: errorMsg });
           return createModuleResponse(
             method,
             `// Transform Error\nthrow new Error(${JSON.stringify(errorMsg)});`,
@@ -263,7 +265,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           ? crossProjectSlug
           : `${crossProjectSlug}@${crossVersion}`;
 
-        logger.debug("[ModuleServer] Cross-project import", {
+        log.debug("Cross-project import", {
           projectRef,
           path: crossPath,
           isLatest: crossVersion === "latest",
@@ -303,7 +305,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             "Cache-Control": "no-cache",
           });
         } catch (error) {
-          logger.error("[ModuleServer] Cross-project error", { projectRef, error: String(error) });
+          log.error("Cross-project error", { projectRef, error: String(error) });
           return createModuleResponse(method, `// Error: ${String(error)}`, HTTP_SERVER_ERROR, {
             "Content-Type": "application/javascript; charset=utf-8",
             "Cache-Control": "no-cache",
@@ -352,7 +354,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           let source: string;
           if (embeddedContent) {
             source = embeddedContent;
-            logger.debug("[ModuleServer] Using embedded polyfill content", {
+            log.debug("Using embedded polyfill content", {
               path: sourceFile,
               contentLength: embeddedContent.length,
             });
@@ -372,7 +374,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             source = injectNodePositions(source, { filePath: sourceFile });
           }
 
-          logger.debug("[ModuleServer] SSR mode check", {
+          log.debug("SSR mode check", {
             isSSR,
             isDenoRequest: userAgent.startsWith("Deno/"),
             hasSSRParam: url.searchParams.get("ssr") === "true",
@@ -396,7 +398,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           const hmrTimestamp = url.searchParams.get("t");
           if (hmrTimestamp) {
             code = await addHMRTimestamps(code, hmrTimestamp);
-            logger.debug("[ModuleServer] HMR timestamp injection", {
+            log.debug("HMR timestamp injection", {
               path: modulePath,
               timestamp: hmrTimestamp,
             });
@@ -404,7 +406,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         }
 
         const headers = getDevModuleHeaders(modulePath);
-        logger.debug("[ModuleServer] Request complete", {
+        log.debug("Request complete", {
           path: modulePath,
           durationMs: (performance.now() - startTime).toFixed(1),
         });
@@ -457,7 +459,7 @@ async function findSourceFile(
     ".md", // Regular sources
   ];
 
-  logger.debug("[ModuleServer] findSourceFile called", { projectDir, basePath });
+  log.debug("findSourceFile called", { projectDir, basePath });
 
   const hasKnownExt = extensions.some((ext) => basePath.endsWith(ext));
   const rawBasePathWithoutExt = hasKnownExt
@@ -484,7 +486,7 @@ async function findSourceFile(
     if (isDenoCompiled) {
       const embeddedContent = EMBEDDED_POLYFILLS[basePathWithoutExt];
       if (embeddedContent) {
-        logger.debug("[ModuleServer] Using embedded polyfill for compiled binary", {
+        log.debug("Using embedded polyfill for compiled binary", {
           basePath: basePathWithoutExt,
         });
         return {
@@ -509,7 +511,7 @@ async function findSourceFile(
         try {
           const stat = await platformFs.stat(frameworkPath);
           if (stat.isFile) {
-            logger.debug(`[ModuleServer] Found framework ${label} file`, {
+            log.debug(`Found framework ${label} file`, {
               basePath: basePathWithoutExt,
               resolvedPath: frameworkPath,
             });
@@ -531,7 +533,7 @@ async function findSourceFile(
     }
 
     // Framework path not found locally - log warning and fall back to project lookups
-    logger.warn("[ModuleServer] Framework file not found locally", {
+    log.warn("Framework file not found locally", {
       basePath: basePathWithoutExt,
       frameworkRoot: FRAMEWORK_ROOT,
     });
@@ -542,7 +544,7 @@ async function findSourceFile(
     try {
       const stat = await secureFs.stat(fullPath);
       if (stat?.isFile) {
-        logger.debug("[ModuleServer] Found file with existing extension", {
+        log.debug("Found file with existing extension", {
           basePath,
           resolvedPath: fullPath,
         });
@@ -559,7 +561,7 @@ async function findSourceFile(
     try {
       const stat = await secureFs.stat(fullPath);
       if (stat.isFile) {
-        logger.debug("[ModuleServer] Found file", { basePath, resolvedPath: fullPath });
+        log.debug("Found file", { basePath, resolvedPath: fullPath });
         return { path: fullPath, isFrameworkFile: false };
       }
     } catch {
@@ -577,7 +579,7 @@ async function findSourceFile(
       try {
         const stat = await secureFs.stat(fullPath);
         if (stat.isFile) {
-          logger.debug("[ModuleServer] Found file after stripping prefix", {
+          log.debug("Found file after stripping prefix", {
             originalPath: basePathWithoutExt,
             strippedPath,
             resolvedPath: fullPath,
@@ -595,7 +597,7 @@ async function findSourceFile(
     try {
       const stat = await secureFs.stat(fullPath);
       if (stat.isFile) {
-        logger.debug("[ModuleServer] Found index file", {
+        log.debug("Found index file", {
           basePath: basePathWithoutExt,
           resolvedPath: fullPath,
         });
@@ -614,7 +616,7 @@ async function findSourceFile(
       try {
         const stat = await secureFs.stat(fullPath);
         if (stat.isFile) {
-          logger.debug("[ModuleServer] Found file in common directory", {
+          log.debug("Found file in common directory", {
             basePath,
             resolvedPath: fullPath,
           });
@@ -703,7 +705,7 @@ async function fetchCrossProjectSource(
 
   const response = await fetch(registryUrl, { headers });
   if (!response.ok) {
-    logger.warn("[ModuleServer] Cross-project fetch failed", {
+    log.warn("Cross-project fetch failed", {
       registryUrl,
       status: response.status,
     });

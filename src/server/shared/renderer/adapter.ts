@@ -32,6 +32,8 @@ import type { MdxBundle } from "#veryfront/types";
 import { APICacheStore } from "#veryfront/rendering/cache/stores/api-store.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 
+const log = logger.component("renderer-adapter");
+
 export interface RendererAdapter {
   renderPage(slug: string, options?: RenderOptions): Promise<RenderResult>;
   resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse>;
@@ -71,7 +73,7 @@ async function getOrInitRenderer(): Promise<Renderer> {
   // Only use API-backed cache when both PROXY_MODE=1 and API URL is configured
   if (isProxyMode && apiBaseUrl) {
     const renderCacheTtlSeconds = 3600;
-    logger.debug("[RendererAdapter] Using API-backed distributed render cache");
+    log.debug("Using API-backed distributed render cache");
     options.cache = {
       store: new APICacheStore({
         keyPrefix: "render",
@@ -84,7 +86,7 @@ async function getOrInitRenderer(): Promise<Renderer> {
   }
 
   const useApiCache = isProxyMode && !!apiBaseUrl;
-  logger.debug("[RendererAdapter] Initializing renderer", {
+  log.debug("Initializing renderer", {
     proxyMode: isProxyMode,
     hasApiUrl: !!apiBaseUrl,
     cacheType: useApiCache ? "api-distributed" : "memory",
@@ -115,14 +117,14 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
   const projectSlug = ctx.projectSlug ?? "unknown";
 
   if (ctx.enriched) {
-    logger.debug("[RendererAdapter] Using pre-built EnrichedContext", { projectSlug });
+    log.debug("Using pre-built EnrichedContext", { projectSlug });
     return createRenderContextFromEnriched(ctx.enriched);
   }
 
   let config = ctx.config;
   if (!config) {
     const cacheKey = ctx.projectId ?? ctx.projectSlug;
-    logger.debug("[RendererAdapter] Loading config from adapter START", {
+    log.debug("Loading config from adapter START", {
       projectDir: ctx.projectDir,
       projectSlug,
       projectId: ctx.projectId,
@@ -131,7 +133,7 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
 
     const configStartTime = performance.now();
     config = await getConfig(ctx.projectDir, ctx.adapter, { cacheKey });
-    logger.debug("[RendererAdapter] Loading config from adapter DONE", {
+    log.debug("Loading config from adapter DONE", {
       projectSlug,
       duration: `${(performance.now() - configStartTime).toFixed(2)}ms`,
     });
@@ -183,7 +185,7 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
   ctx.enriched = enriched;
 
   const renderContext = createRenderContextFromEnriched(enriched);
-  logger.debug("[RendererAdapter] createRenderContext DONE (built EnrichedContext)", {
+  log.debug("createRenderContext DONE (built EnrichedContext)", {
     projectSlug,
     duration: `${(performance.now() - contextStartTime).toFixed(2)}ms`,
   });
@@ -211,7 +213,7 @@ class RendererAdapterImpl implements RendererAdapter {
 
   clearCache(slug?: string): void {
     this.renderer.clearCache(this.ctx, slug).catch((error) => {
-      logger.warn("[RendererAdapter] Failed to clear cache", { error: String(error), slug });
+      log.warn("Failed to clear cache", { error: String(error), slug });
     });
   }
 
@@ -226,7 +228,7 @@ class RendererAdapterImpl implements RendererAdapter {
     getModule(id: string): unknown;
     clear(): void;
   } {
-    logger.warn("[RendererAdapter] getVirtualModuleSystem called - not supported");
+    log.warn("getVirtualModuleSystem called - not supported");
     return {
       handleRequest: () => null,
       register: async () => "",
@@ -267,29 +269,29 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
   const startTime = performance.now();
   const projectSlug = ctx.projectSlug ?? "unknown";
 
-  logger.debug("[RendererAdapter] getRendererForProject START", {
+  log.debug("getRendererForProject START", {
     projectSlug,
     projectId: ctx.projectId,
     hasConfig: !!ctx.config,
   });
 
   const rendererStartTime = performance.now();
-  logger.debug("[RendererAdapter] getOrInitRenderer START", { projectSlug });
+  log.debug("getOrInitRenderer START", { projectSlug });
   const renderer = await getOrInitRenderer();
-  logger.debug("[RendererAdapter] getOrInitRenderer DONE", {
+  log.debug("getOrInitRenderer DONE", {
     projectSlug,
     duration: `${(performance.now() - rendererStartTime).toFixed(2)}ms`,
   });
 
   const contextStartTime = performance.now();
-  logger.debug("[RendererAdapter] createContextFromHandler START", { projectSlug });
+  log.debug("createContextFromHandler START", { projectSlug });
   const renderCtx = await createContextFromHandler(ctx);
-  logger.debug("[RendererAdapter] createContextFromHandler DONE", {
+  log.debug("createContextFromHandler DONE", {
     projectSlug,
     duration: `${(performance.now() - contextStartTime).toFixed(2)}ms`,
   });
 
-  logger.debug("[RendererAdapter] getRendererForProject DONE", {
+  log.debug("getRendererForProject DONE", {
     projectId: renderCtx.projectId,
     projectSlug: renderCtx.projectSlug,
     duration: `${(performance.now() - startTime).toFixed(2)}ms`,

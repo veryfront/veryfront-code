@@ -17,6 +17,8 @@ import type {
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
 import { requeueRun } from "./shared/requeue-run.ts";
 
+const log = logger.component("memory-backend");
+
 /**
  * Memory backend configuration
  */
@@ -51,7 +53,7 @@ export class MemoryBackend implements WorkflowBackend {
   // =========================================================================
 
   createRun(run: WorkflowRun): Promise<void> {
-    logger.debug(`[MemoryBackend] Creating run: ${run.id}`);
+    log.debug(`Creating run: ${run.id}`);
     this.runs.set(run.id, structuredClone(run));
     return Promise.resolve();
   }
@@ -65,7 +67,7 @@ export class MemoryBackend implements WorkflowBackend {
     const run = this.runs.get(runId);
     if (!run) throw new Error(`Run not found: ${runId}`);
 
-    logger.debug(`[MemoryBackend] Updating run: ${runId}`, patch);
+    log.debug(`Updating run: ${runId}`, patch);
 
     const updated: WorkflowRun = {
       ...run,
@@ -133,7 +135,7 @@ export class MemoryBackend implements WorkflowBackend {
   // =========================================================================
 
   saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
-    logger.debug("[MemoryBackend] Saving checkpoint", { checkpointId: checkpoint.id, runId });
+    log.debug("Saving checkpoint", { checkpointId: checkpoint.id, runId });
     const checkpoints = this.checkpoints.get(runId) ?? [];
     checkpoints.push(structuredClone(checkpoint));
     this.checkpoints.set(runId, checkpoints);
@@ -161,7 +163,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (index === -1) return Promise.resolve();
 
     checkpoints.splice(index, 1);
-    logger.debug(`[MemoryBackend] Deleted checkpoint: ${checkpointId}`);
+    log.debug(`Deleted checkpoint: ${checkpointId}`);
     return Promise.resolve();
   }
 
@@ -172,7 +174,7 @@ export class MemoryBackend implements WorkflowBackend {
     const idsToDelete = new Set(checkpointIds);
     this.checkpoints.set(runId, checkpoints.filter((c) => !idsToDelete.has(c.id)));
 
-    logger.debug("[MemoryBackend] Deleted checkpoints", { count: checkpointIds.length });
+    log.debug("Deleted checkpoints", { count: checkpointIds.length });
     return Promise.resolve();
   }
 
@@ -181,7 +183,7 @@ export class MemoryBackend implements WorkflowBackend {
   // =========================================================================
 
   savePendingApproval(runId: string, approval: PendingApproval): Promise<void> {
-    logger.debug("[MemoryBackend] Saving approval", { approvalId: approval.id, runId });
+    log.debug("Saving approval", { approvalId: approval.id, runId });
     const approvals = this.approvals.get(runId) ?? [];
     approvals.push(structuredClone(approval));
     this.approvals.set(runId, approvals);
@@ -212,7 +214,7 @@ export class MemoryBackend implements WorkflowBackend {
     const approval = approvals.find((a) => a.id === approvalId);
     if (!approval) throw new Error(`Approval not found: ${approvalId}`);
 
-    logger.debug("[MemoryBackend] Updating approval", { approvalId, decision });
+    log.debug("Updating approval", { approvalId, decision });
     approval.status = decision.approved ? "approved" : "rejected";
     approval.decidedBy = decision.approver;
     approval.decidedAt = new Date();
@@ -267,7 +269,7 @@ export class MemoryBackend implements WorkflowBackend {
       );
     }
 
-    logger.debug(`[MemoryBackend] Enqueueing job: ${job.runId}`);
+    log.debug(`Enqueueing job: ${job.runId}`);
 
     const priority = job.priority ?? 0;
     const insertIndex = this.queue.findIndex((j) => (j.priority ?? 0) < priority);
@@ -288,7 +290,7 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   acknowledge(runId: string): Promise<void> {
-    logger.debug(`[MemoryBackend] Acknowledging job: ${runId}`);
+    log.debug(`Acknowledging job: ${runId}`);
     return Promise.resolve();
   }
 
@@ -306,14 +308,14 @@ export class MemoryBackend implements WorkflowBackend {
 
     if (existing && existing.expiresAt > now) return Promise.resolve(false);
 
-    logger.debug(`[MemoryBackend] Acquiring lock for: ${runId}`);
+    log.debug(`Acquiring lock for: ${runId}`);
 
     this.locks.set(runId, { lockId: crypto.randomUUID(), expiresAt: now + duration });
     return Promise.resolve(true);
   }
 
   releaseLock(runId: string): Promise<void> {
-    logger.debug(`[MemoryBackend] Releasing lock for: ${runId}`);
+    log.debug(`Releasing lock for: ${runId}`);
     this.locks.delete(runId);
     return Promise.resolve();
   }
@@ -387,7 +389,7 @@ export class MemoryBackend implements WorkflowBackend {
   // =========================================================================
 
   initialize(): Promise<void> {
-    logger.debug("[MemoryBackend] Initialized");
+    log.debug("Initialized");
     return Promise.resolve();
   }
 
@@ -398,7 +400,7 @@ export class MemoryBackend implements WorkflowBackend {
   destroy(): Promise<void> {
     this.clear();
 
-    logger.debug("[MemoryBackend] Destroyed");
+    log.debug("Destroyed");
     return Promise.resolve();
   }
 

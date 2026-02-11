@@ -30,6 +30,8 @@ import { collectFiles } from "#veryfront/utils/file-discovery.ts";
 import { loadHandlerModule } from "#veryfront/routing/api/module-loader/loader.ts";
 import type { WorkflowDefinition } from "../types.ts";
 
+const log = logger.component("workflow-discovery");
+
 /**
  * Discovered workflow info
  */
@@ -136,7 +138,7 @@ export async function discoverWorkflows(
   const baseDir = useRelativePaths ? workflowsDir : join(projectDir, workflowsDir);
 
   if (debug) {
-    logger.info(`[WorkflowDiscovery] Scanning ${baseDir} for workflows`);
+    log.info(`Scanning ${baseDir} for workflows`);
   }
 
   try {
@@ -144,7 +146,7 @@ export async function discoverWorkflows(
     const dirExists = await adapter.fs.exists(baseDir);
     if (!dirExists) {
       if (debug) {
-        logger.info(`[WorkflowDiscovery] No workflows directory found at ${baseDir}`);
+        log.info(`No workflows directory found at ${baseDir}`);
       }
       return { workflows, errors };
     }
@@ -159,7 +161,7 @@ export async function discoverWorkflows(
     });
 
     if (debug) {
-      logger.info(`[WorkflowDiscovery] Found ${files.length} potential workflow files`);
+      log.info(`Found ${files.length} potential workflow files`);
     }
 
     // Load and extract workflows from each file
@@ -199,19 +201,19 @@ export async function discoverWorkflows(
         errors.push({ filePath: file.path, error: errorMsg });
 
         if (debug) {
-          logger.warn(`[WorkflowDiscovery] Failed to load ${file.path}: ${errorMsg}`);
+          log.warn(`Failed to load ${file.path}: ${errorMsg}`);
         }
       }
     }
 
     if (debug) {
-      logger.info(`[WorkflowDiscovery] Discovered ${workflows.length} workflows`);
+      log.info(`Discovered ${workflows.length} workflows`);
     }
 
     return { workflows, errors };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    logger.error(`[WorkflowDiscovery] Discovery failed: ${errorMsg}`);
+    log.error(`Discovery failed: ${errorMsg}`);
     errors.push({ filePath: baseDir, error: errorMsg });
     return { workflows, errors };
   }

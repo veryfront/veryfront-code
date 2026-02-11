@@ -26,6 +26,8 @@ import {
 import { getPingIntervalMs, startPingInterval, stopPingInterval } from "./hmr-ping-keepalive.ts";
 import { broadcastUpdate, getMetrics } from "./hmr-message-router.ts";
 
+const log = logger.component("hmr-handler");
+
 // Re-export the interface so external consumers can still access it from this module
 export type { HMRClientInfo } from "./hmr-client-manager.ts";
 
@@ -48,10 +50,10 @@ export class HMRHandler extends BaseHandler {
     if (HMRHandler.initialized) return;
     HMRHandler.initialized = true;
 
-    logger.info("[HMRHandler] Subscribing to ReloadNotifier");
+    log.info("Subscribing to ReloadNotifier");
 
     HMRHandler.reloadUnsubscribe = ReloadNotifier.subscribe((changedPaths, project) => {
-      logger.info("[HMRHandler] ReloadNotifier callback triggered", {
+      log.info("ReloadNotifier callback triggered", {
         changedPaths,
         projectSlug: project?.projectSlug,
         projectId: project?.projectId,
@@ -71,7 +73,7 @@ export class HMRHandler extends BaseHandler {
 
     startPingInterval();
 
-    logger.debug("[HMRHandler] Initialized - listening for reload events", {
+    log.debug("Initialized - listening for reload events", {
       pingIntervalMs: getPingIntervalMs(),
     });
   }
@@ -85,7 +87,7 @@ export class HMRHandler extends BaseHandler {
     const isLocal = !!ctx.isLocalProject;
 
     if (!isPreviewMode && !isLocal) {
-      logger.debug("[HMRHandler] Skipping - not preview or local dev", {
+      log.debug("Skipping - not preview or local dev", {
         mode: ctx.requestContext?.mode,
         queryEnv,
         isLocalProject: ctx.isLocalProject,
@@ -100,7 +102,7 @@ export class HMRHandler extends BaseHandler {
     // because adapters are lazily created only when page requests come in.
     if (ctx.projectSlug && ctx.proxyToken && ctx.adapter?.fs) {
       this.ensureAdapterInitialized(ctx).catch((error) => {
-        logger.warn("[HMRHandler] Failed to ensure adapter initialization", {
+        log.warn("Failed to ensure adapter initialization", {
           projectSlug: ctx.projectSlug,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -164,7 +166,7 @@ export class HMRHandler extends BaseHandler {
         if (client) client.lastActivity = Date.now();
       });
 
-      logger.debug("[HMRHandler] Client connected", {
+      log.debug("Client connected", {
         clientId,
         projectSlug: ctx.projectSlug,
         totalClients: getClientCount(),
@@ -172,7 +174,7 @@ export class HMRHandler extends BaseHandler {
 
       return Promise.resolve(this.respond(response));
     } catch (error) {
-      logger.error("[HMRHandler] WebSocket upgrade failed", { error });
+      log.error("WebSocket upgrade failed", { error });
       return Promise.resolve(
         this.respond(new Response("WebSocket upgrade failed", { status: 500 })),
       );
@@ -195,7 +197,7 @@ export class HMRHandler extends BaseHandler {
     const isPreview = resolvedEnvironment === "preview";
     if (!isPreview) return;
 
-    logger.debug("[HMRHandler] Ensuring adapter initialized for preview HMR", {
+    log.debug("Ensuring adapter initialized for preview HMR", {
       projectSlug,
       resolvedEnvironment,
     });
@@ -206,7 +208,7 @@ export class HMRHandler extends BaseHandler {
         proxyToken,
         async () => {
           await fs.exists("veryfront.config.ts");
-          logger.info("[HMRHandler] Adapter initialized for poke reception", {
+          log.info("Adapter initialized for poke reception", {
             projectSlug,
           });
         },
@@ -217,7 +219,7 @@ export class HMRHandler extends BaseHandler {
         },
       );
     } catch (error) {
-      logger.warn("[HMRHandler] Adapter initialization failed (pokes may not be received)", {
+      log.warn("Adapter initialization failed (pokes may not be received)", {
         projectSlug,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -246,6 +248,6 @@ export class HMRHandler extends BaseHandler {
 
     HMRHandler.initialized = false;
 
-    logger.debug("[HMRHandler] Shutdown complete");
+    log.debug("Shutdown complete");
   }
 }

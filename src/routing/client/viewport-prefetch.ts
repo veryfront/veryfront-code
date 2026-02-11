@@ -1,5 +1,7 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 
+const log = logger.component("veryfront");
+
 export class ViewportPrefetch {
   private observer: IntersectionObserver | null = null;
   private prefetchCallback: (path: string) => void;
@@ -21,7 +23,7 @@ export class ViewportPrefetch {
       this.createObserver();
       this.observeLinks(root);
     } catch (error) {
-      logger.debug("[Veryfront] setupViewportPrefetch failed", error);
+      log.debug("setupViewportPrefetch failed", error);
     }
   }
 
@@ -70,7 +72,7 @@ export class ViewportPrefetch {
     try {
       this.observer.disconnect();
     } catch (error) {
-      logger.warn("[Veryfront] prefetchObserver.disconnect failed", error);
+      log.warn("prefetchObserver.disconnect failed", error);
     } finally {
       this.observer = null;
     }

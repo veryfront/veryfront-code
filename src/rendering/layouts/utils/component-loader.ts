@@ -13,6 +13,10 @@ import { getProjectReact } from "#veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
 import { buildLayoutComponentCacheKey, CacheKeyPrefix } from "#veryfront/cache/keys.ts";
 
+const loadMdxLayoutLog = logger.component("load-mdx-layout");
+const applyTsxLayoutLog = logger.component("apply-tsx-layout");
+const applyMdxLayoutLog = logger.component("apply-mdx-layout");
+
 export interface LayoutComponentCache {
   get(key: string): BundledReact.ComponentType | undefined;
   set(key: string, value: BundledReact.ComponentType): void;
@@ -124,18 +128,18 @@ export function loadMDXLayout(
   return withSpan(
     SpanNames.LAYOUT_LOAD_MDX,
     async () => {
-      logger.debug("[loadMDXLayout] START", {
+      loadMdxLayoutLog.debug("START", {
         projectSlug,
         hasPreloadedImportMap: !!preloadedImportMap,
       });
 
       const map = preloadedImportMap ?? (await preloadImportMap(projectDir, adapter));
       if (preloadedImportMap) {
-        logger.debug("[loadMDXLayout] Using preloaded import map", { projectSlug });
+        loadMdxLayoutLog.debug("Using preloaded import map", { projectSlug });
       }
 
       const code = transformImportsWithMap(bundle.compiledCode, map);
-      logger.debug("[loadMDXLayout] Loading module via loadModuleESM START", {
+      loadMdxLayoutLog.debug("Loading module via loadModuleESM START", {
         projectSlug,
         codeLength: code.length,
       });
@@ -149,7 +153,7 @@ export function loadMDXLayout(
         contentSourceId,
       )) as MDXModule;
 
-      logger.debug("[loadMDXLayout] loadModuleESM DONE", {
+      loadMdxLayoutLog.debug("loadModuleESM DONE", {
         projectSlug,
         exports: Object.keys(mod),
       });
@@ -188,7 +192,7 @@ export async function applyTSXLayout(
   contentSourceId: string,
 ): Promise<BundledReact.ReactElement> {
   const start = performance.now();
-  logger.debug("[applyTSXLayout] START", {
+  applyTsxLayoutLog.debug("START", {
     componentPath: item.componentPath,
     projectId,
     projectSlug,
@@ -197,7 +201,7 @@ export async function applyTSXLayout(
   const React = await getProjectReact();
 
   try {
-    logger.debug("[applyTSXLayout] loadTSXComponent START", { componentPath: item.componentPath });
+    applyTsxLayoutLog.debug("loadTSXComponent START", { componentPath: item.componentPath });
     const loadStart = performance.now();
 
     const LayoutComponent = await loadTSXComponent(
@@ -210,7 +214,7 @@ export async function applyTSXLayout(
       contentSourceId,
     );
 
-    logger.debug("[applyTSXLayout] loadTSXComponent DONE", {
+    applyTsxLayoutLog.debug("loadTSXComponent DONE", {
       componentPath: item.componentPath,
       duration: `${(performance.now() - loadStart).toFixed(2)}ms`,
     });
@@ -221,7 +225,7 @@ export async function applyTSXLayout(
       element,
     ) as BundledReact.ReactElement;
 
-    logger.debug("[applyTSXLayout] DONE", {
+    applyTsxLayoutLog.debug("DONE", {
       componentPath: item.componentPath,
       totalDuration: `${(performance.now() - start).toFixed(2)}ms`,
     });
@@ -256,7 +260,7 @@ export async function applyMDXLayout(
   );
 
   if (!LayoutFn) {
-    logger.debug("[applyMDXLayout] No layout function found");
+    applyMdxLayoutLog.debug("No layout function found");
     return element;
   }
 

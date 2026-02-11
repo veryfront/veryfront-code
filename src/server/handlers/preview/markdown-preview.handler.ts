@@ -18,6 +18,8 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { tryNotFoundFallback } from "../request/ssr/not-found-fallback.ts";
 import { generateMarkdownHtml } from "./markdown-html-generator.ts";
 
+const log = logger.component("markdown-preview-handler");
+
 // Priority 900: between MEDIUM (600) and LOW/SSR (1000)
 const PRIORITY_MARKDOWN_PREVIEW = 900 as HandlerPriority;
 
@@ -34,7 +36,7 @@ export class MarkdownPreviewHandler extends BaseHandler {
     const pathname = url.pathname;
 
     if (!pathname.endsWith(".md")) {
-      logger.debug("[MarkdownPreviewHandler] Skipping - no .md extension", { pathname });
+      log.debug("Skipping - no .md extension", { pathname });
       return this.continue();
     }
 
@@ -45,7 +47,7 @@ export class MarkdownPreviewHandler extends BaseHandler {
     const filePath = pathname.replace(/^\//, "");
     const fsAdapter = ctx.adapter.fs;
 
-    logger.debug("[MarkdownPreviewHandler] Attempting to serve", {
+    log.debug("Attempting to serve", {
       pathname,
       filePath,
       projectDir: ctx.projectDir,
@@ -95,14 +97,14 @@ export class MarkdownPreviewHandler extends BaseHandler {
       const resolvedPath = resolveFile ? await resolveFile.call(ctx.adapter.fs, filePath) : null;
 
       if (resolveFile) {
-        logger.debug("[MarkdownPreviewHandler] resolveFile result", { filePath, resolvedPath });
+        log.debug("resolveFile result", { filePath, resolvedPath });
       }
 
       let content: string;
       try {
         content = await ctx.adapter.fs.readFile(resolvedPath ?? filePath);
       } catch {
-        logger.debug("[MarkdownPreviewHandler] File not found", { filePath, resolvedPath });
+        log.debug("File not found", { filePath, resolvedPath });
 
         const builder = this.createResponseBuilder(ctx);
         const notFoundResponse = await tryNotFoundFallback(req, filePath, ctx, builder);
@@ -123,7 +125,7 @@ export class MarkdownPreviewHandler extends BaseHandler {
       }
 
       if (frontmatter.prose === false) {
-        logger.debug("[MarkdownPreviewHandler] Skipping - prose: false", { filePath });
+        log.debug("Skipping - prose: false", { filePath });
         return this.continue();
       }
 
@@ -150,14 +152,14 @@ export class MarkdownPreviewHandler extends BaseHandler {
         .withCache("no-cache")
         .withContentType("text/html; charset=utf-8", html, HTTP_OK);
 
-      logger.debug("[MarkdownPreviewHandler] Serving markdown preview", {
+      log.debug("Serving markdown preview", {
         filePath,
         htmlLength: html.length,
       });
 
       return this.respond(responseBuilder);
     } catch (error) {
-      logger.error("[MarkdownPreviewHandler] Error rendering markdown", {
+      log.error("Error rendering markdown", {
         filePath,
         error: error instanceof Error ? error.message : String(error),
       });

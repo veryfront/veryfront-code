@@ -10,6 +10,8 @@ import {
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
+const log = serverLogger.component("cors");
+
 export function handleCORSPreflight(options: CORSPreflightOptions): Promise<Response> {
   return withSpan(
     "security.cors.preflight",
@@ -24,7 +26,7 @@ export function handleCORSPreflight(options: CORSPreflightOptions): Promise<Resp
           return new Response(null, { status: HTTP_NO_CONTENT });
         }
 
-        serverLogger.warn("[CORS] Preflight rejected", {
+        log.warn("Preflight rejected", {
           origin,
           error: validation.error,
         });

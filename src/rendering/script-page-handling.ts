@@ -26,6 +26,8 @@ import { extractHTMLMetadata, injectHTMLContent, isFullHTMLDocument } from "#ver
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 
+const log = logger.component("script");
+
 type ScriptModuleOutput =
   | string
   | Response
@@ -168,7 +170,7 @@ export async function handleScriptPage(
   options: ScriptPageOptions,
 ): Promise<RenderResult> {
   try {
-    logger.debug(`[Script] Loading TS/JS page module: ${pageInfo.entity.path}`);
+    log.debug(`Loading TS/JS page module: ${pageInfo.entity.path}`);
 
     const mod = await loadScriptModule(pageInfo.entity.path, options.projectDir, options.adapter);
     const ctx = buildPageContext(pageInfo, slug, options.params);
@@ -382,21 +384,21 @@ async function loadScriptModule(
   const fs = createFileSystem();
   const normalizedPath = normalizeModulePath(modulePath, projectDir);
 
-  logger.debug(`[Script] Checking if file exists locally: ${normalizedPath}`);
+  log.debug(`Checking if file exists locally: ${normalizedPath}`);
 
   if (await fs.exists(normalizedPath)) {
-    logger.debug(`[Script] File exists locally, using direct import: ${normalizedPath}`);
+    log.debug(`File exists locally, using direct import: ${normalizedPath}`);
     return (await import(createFileUrl(normalizedPath))) as ScriptPageModule;
   }
 
-  logger.debug(`[Script] File not local, using adapter-based loading: ${modulePath}`);
+  log.debug(`File not local, using adapter-based loading: ${modulePath}`);
 
   const source = await readFileWithFallback(adapter, modulePath, normalizedPath);
-  logger.debug(`[Script] Read ${source.length} bytes from adapter`);
+  log.debug(`Read ${source.length} bytes from adapter`);
 
   const resolveDir = dirname(normalizedPath) || projectDir;
   const transpiled = await transpileWithEsbuild(source, modulePath, resolveDir);
-  logger.debug(`[Script] Transpiled ${modulePath}`);
+  log.debug(`Transpiled ${modulePath}`);
 
   return importFromTempFile(fs, rewriteNpmImports(transpiled));
 }

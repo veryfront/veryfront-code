@@ -13,6 +13,8 @@ import { getOtelTracingConfig } from "#veryfront/config/env.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
 
+const log = logger.component("otel");
+
 interface ShutdownableProvider {
   shutdown(): Promise<void>;
 }
@@ -83,20 +85,20 @@ function setSpanErrorStatus(span: import("@opentelemetry/api").Span, error: unkn
 
 export async function initializeOTLP(): Promise<void> {
   if (initialized) {
-    logger.debug("[otel] Already initialized");
+    log.debug("Already initialized");
     return;
   }
 
   const config = getConfig();
 
   if (!config.enabled) {
-    logger.debug("[otel] Tracing disabled (OTEL_TRACES_ENABLED != true)");
+    log.debug("Tracing disabled (OTEL_TRACES_ENABLED != true)");
     initialized = true;
     return;
   }
 
   if (!config.endpoint) {
-    logger.warn("[otel] No OTEL_EXPORTER_OTLP_ENDPOINT configured, skipping");
+    log.warn("No OTEL_EXPORTER_OTLP_ENDPOINT configured, skipping");
     initialized = true;
     return;
   }
@@ -136,15 +138,21 @@ export async function initializeOTLP(): Promise<void> {
     traceApi = await import("@opentelemetry/api");
 
     initialized = true;
-    logger.info("[otel] OpenTelemetry OTLP tracing initialized", {
+    log.info("OpenTelemetry OTLP tracing initialized", {
       serviceName: config.serviceName,
       endpoint: config.endpoint,
     });
 
     traceApi.trace.getTracer(config.serviceName);
-    logger.debug("[otel] Tracer obtained", { name: config.serviceName });
+    log.debug("Tracer obtained", { name: config.serviceName });
+
+    // Bridge trace context into the logger so every JSON log entry
+    // automatically includes traceId/spanId from the active span.
+    // Imported here (rather than per-entrypoint) so all callers of
+    // initializeOTLP benefit — CLI serve, production-server, proxy, etc.
+    await import("#veryfront/utils/logger/trace-bridge.ts");
   } catch (error) {
-    logger.error("[otel] Failed to initialize OTLP tracing", { error });
+    log.error("Failed to initialize OTLP tracing", { error });
     initialized = true; // Mark as initialized to prevent retries
   }
 }
@@ -154,9 +162,9 @@ export async function shutdownOTLP(): Promise<void> {
 
   try {
     await tracerProvider.shutdown();
-    logger.info("[otel] Tracer provider shutdown complete");
+    log.info("Tracer provider shutdown complete");
   } catch (error) {
-    logger.warn("[otel] Error during tracer shutdown", { error });
+    log.warn("Error during tracer shutdown", { error });
   }
 }
 

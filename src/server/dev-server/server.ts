@@ -24,6 +24,12 @@ import { setEnv } from "#veryfront/platform/compat/process.ts";
 import { clearTranspileCache, discoverAll } from "#veryfront/discovery";
 import type { DiscoveryConfig } from "#veryfront/discovery";
 
+const rscLog = logger.component("rsc");
+const fsAdapterLog = logger.component("fs-adapter");
+const devServerLog = logger.component("dev-server");
+const devLog = logger.component("dev");
+const hmrLog = logger.component("hmr");
+
 function normalizeSlug(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
@@ -73,7 +79,7 @@ export class DevServer {
       const { isRSCEnabled } = await import("#veryfront/utils/feature-flags.ts");
       const rsc = isRSCEnabled(this.appConfig);
       const stub = this.adapter.env.get("VERYFRONT_FORCE_FLIGHT_STUB") === "1" ? " (stub)" : "";
-      logger.debug(`[RSC] ${rsc ? "enabled" : "disabled"}${rsc ? stub : ""}`);
+      rscLog.debug(`${rsc ? "enabled" : "disabled"}${rsc ? stub : ""}`);
     } catch {
       /* optional */
     }
@@ -99,7 +105,7 @@ export class DevServer {
     }
 
     if (bootstrap.usingFSAdapter) {
-      logger.debug(`[FSAdapter] Using ${bootstrap.fsAdapterType} backend`);
+      fsAdapterLog.debug(`Using ${bootstrap.fsAdapterType} backend`);
     }
 
     logger.debug("Starting dev server", {
@@ -141,17 +147,17 @@ export class DevServer {
 
       // Subscribe to immediate invalidation for cache clearing (fires immediately)
       this.invalidateUnsubscribe = ReloadNotifier.subscribeInvalidate(() => {
-        logger.debug("[DevServer] INVALIDATE callback triggered - clearing runtime handler");
+        devServerLog.debug("INVALIDATE callback triggered - clearing runtime handler");
         this.requestHandler?.invalidateRuntimeHandler();
       });
 
       // Subscribe to debounced reload for browser refresh (batches rapid changes)
       this.reloadUnsubscribe = ReloadNotifier.subscribe(() => {
-        logger.debug("[DevServer] RELOAD callback triggered - sending HMR reload to browser");
+        devServerLog.debug("RELOAD callback triggered - sending HMR reload to browser");
         this.hmrServer?.sendUpdate({ type: "reload", timestamp: Date.now() });
       });
 
-      logger.debug("[DevServer] ReloadNotifier subscriptions registered", {
+      devServerLog.debug("ReloadNotifier subscriptions registered", {
         hasHmrServer: !!this.hmrServer,
       });
     }
@@ -175,7 +181,7 @@ export class DevServer {
 
     const isProxyMode = this.appConfig?.fs?.veryfront?.proxyMode === true;
     if (isProxyMode) {
-      logger.debug("[DevServer] Skipping component/route discovery in proxy mode");
+      devServerLog.debug("Skipping component/route discovery in proxy mode");
     } else {
       await Promise.all([this.componentRegistry.discover(), routeDiscovery.discoverRoutes()]);
     }
@@ -231,7 +237,7 @@ export class DevServer {
           this._isReady = true;
           this._resolveReady();
         } catch (error) {
-          logger.debug("[dev] mark ready failed", error);
+          devLog.debug("mark ready failed", error);
         }
       },
     });
@@ -266,7 +272,7 @@ export class DevServer {
         );
       }
     } catch (error) {
-      logger.debug("[DevServer] AI discovery skipped:", error);
+      devServerLog.debug("AI discovery skipped:", error);
     }
   }
 
@@ -317,7 +323,7 @@ export class DevServer {
         `[HMR] Re-discovered AI primitives: ${result.tools.size} tools, ${result.agents.size} agents, ${result.workflows.size} workflows`,
       );
     } catch (error) {
-      logger.warn("[HMR] AI re-discovery failed:", error);
+      hmrLog.warn("AI re-discovery failed:", error);
     }
   }
 
@@ -326,7 +332,7 @@ export class DevServer {
 
     const isProxyMode = this.appConfig?.fs?.veryfront?.proxyMode === true;
     if (isProxyMode) {
-      logger.debug("[DevServer] Skipping file watchers in proxy mode");
+      devServerLog.debug("Skipping file watchers in proxy mode");
       return;
     }
 
@@ -373,7 +379,7 @@ export class DevServer {
     if (this.fileWatchSetup) {
       const metrics = this.fileWatchSetup.getMetrics();
       if (metrics) {
-        logger.debug("[HMR] Final performance metrics", metrics);
+        hmrLog.debug("Final performance metrics", metrics);
       }
       this.fileWatchSetup.cleanup();
     }
@@ -393,7 +399,7 @@ export class DevServer {
     try {
       await this.pipeline.teardown();
     } catch (error) {
-      logger.debug("[DevServer] Pipeline teardown error (non-critical)", error);
+      devServerLog.debug("Pipeline teardown error (non-critical)", error);
     }
   }
 }

@@ -16,6 +16,8 @@ import {
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SECURITY_VIOLATION } from "#veryfront/errors/error-registry.ts";
 
+const log = logger.component("secure-fs");
+
 export type SecurityContext =
   | "user-input"
   | "static-serving"
@@ -280,7 +282,7 @@ export class SecureFs {
   }
 
   getUnsafeAdapter(): RuntimeAdapter {
-    logger.warn("[SecureFs] Using unsafe adapter - security checks bypassed!");
+    log.warn("Using unsafe adapter - security checks bypassed!");
     return this.config.adapter;
   }
 

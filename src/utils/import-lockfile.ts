@@ -2,6 +2,8 @@ import { computeHash } from "./hash-utils.ts";
 import { serverLogger as logger } from "./logger/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
+const log = logger.component("lockfile");
+
 export interface LockfileEntry {
   resolved: string;
   integrity: string;
@@ -94,7 +96,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
       cache = parsed;
       return cache;
     } catch (e) {
-      logger.debug(`[lockfile] Could not read lockfile: ${e}`);
+      log.debug(`Could not read lockfile: ${e}`);
       return null;
     }
   }
@@ -111,7 +113,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
 
     await fs.writeFile(lockfilePath, `${JSON.stringify(sorted, null, 2)}\n`);
     dirty = false;
-    logger.debug(`[lockfile] Written ${Object.keys(data.imports).length} entries`);
+    log.debug(`Written ${Object.keys(data.imports).length} entries`);
   }
 
   async function get(url: string): Promise<LockfileEntry | null> {
@@ -173,7 +175,7 @@ export async function fetchWithLock(options: FetchWithLockOptions): Promise<Fetc
   const entry = await lockfile.get(url);
 
   if (entry) {
-    logger.debug(`[lockfile] Cache hit for ${url}`);
+    log.debug(`Cache hit for ${url}`);
 
     const res = await fetchFn(entry.resolved, { headers: USER_AGENT_HEADERS });
 
@@ -183,7 +185,7 @@ export async function fetchWithLock(options: FetchWithLockOptions): Promise<Fetc
           `Lockfile entry stale: ${url} resolved to ${entry.resolved} returned ${res.status}`,
         );
       }
-      logger.warn(`[lockfile] Cached URL ${entry.resolved} returned ${res.status}, refetching`);
+      log.warn(`Cached URL ${entry.resolved} returned ${res.status}, refetching`);
     } else {
       const content = await res.text();
       const currentIntegrity = await computeIntegrity(content);
@@ -202,11 +204,11 @@ export async function fetchWithLock(options: FetchWithLockOptions): Promise<Fetc
           `Integrity mismatch for ${url}: expected ${entry.integrity}, got ${currentIntegrity}`,
         );
       }
-      logger.warn(`[lockfile] Integrity mismatch for ${url}, updating lockfile`);
+      log.warn(`Integrity mismatch for ${url}, updating lockfile`);
     }
   }
 
-  logger.debug(`[lockfile] Fetching fresh: ${url}`);
+  log.debug(`Fetching fresh: ${url}`);
   const res = await fetchFn(url, { headers: USER_AGENT_HEADERS, redirect: "follow" });
 
   if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);

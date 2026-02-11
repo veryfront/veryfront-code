@@ -9,6 +9,8 @@ import {
 } from "./cache-keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
+const log = logger.component("directory-operations");
+
 interface DirNode {
   files: Map<string, ProjectFile>;
   dirs: Set<string>;
@@ -28,7 +30,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
 
         const cached = this.cache.get<DirectoryEntry[]>(cacheKey);
         if (cached) {
-          logger.debug("[DirectoryOperations] Cache hit (readdir)", { path: normalizedPath });
+          log.debug("Cache hit (readdir)", { path: normalizedPath });
           return cached;
         }
 
@@ -61,7 +63,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
 
         this.cache.set(cacheKey, entries);
 
-        logger.debug("[DirectoryOperations] Listed directory", {
+        log.debug("Listed directory", {
           path: normalizedPath,
           entries: entries.length,
         });
@@ -101,7 +103,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
           if (file.path.endsWith("/")) {
             const ext = file.type === "page" ? ".mdx" : ".tsx";
             normalizedPath = `${normalizedPath}/index${ext}`;
-            logger.debug("[DirectoryOperations] Normalized trailing slash path", {
+            log.debug("Normalized trailing slash path", {
               original: file.path,
               normalized: normalizedPath,
             });
@@ -140,7 +142,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
         }
 
         this.dirTree = tree;
-        logger.debug("[DirectoryOperations] Tree built", { directories: tree.size });
+        log.debug("Tree built", { directories: tree.size });
       },
       { "fs.tree.fileCount": "lazy" },
     );
@@ -164,7 +166,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
 
       if (adapterFiles) {
         const cacheMs = Math.round(performance.now() - cacheStart);
-        logger.debug("[DirectoryOperations] getAllFilesRaw - from adapter cache", {
+        log.debug("getAllFilesRaw - from adapter cache", {
           cacheMs,
           fileCount: adapterFiles.length,
         });
@@ -174,7 +176,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
       const cacheKey = buildFileListCacheKey(ctx);
 
       if (skipPersistentCache) {
-        logger.debug("[DirectoryOperations] getAllFilesRaw - skipping persistent cache", {
+        log.debug("getAllFilesRaw - skipping persistent cache", {
           cacheKey,
           cacheKeyPrefix,
         });
@@ -186,7 +188,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
 
       const cacheMs = Math.round(performance.now() - cacheStart);
       if (cached) {
-        logger.debug("[DirectoryOperations] getAllFilesRaw - fallback cache HIT", {
+        log.debug("getAllFilesRaw - fallback cache HIT", {
           cacheKey,
           cacheMs,
           fileCount: cached.length,
@@ -194,13 +196,13 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
         return cached;
       }
 
-      logger.warn("[DirectoryOperations] getAllFilesRaw - cache MISS, fetching from API", {
+      log.warn("getAllFilesRaw - cache MISS, fetching from API", {
         cacheKey,
         cacheMs,
       });
 
       const isPublished = ctx?.sourceType !== "branch";
-      logger.debug("[DirectoryOperations] Fetching files from API", {
+      log.debug("Fetching files from API", {
         sourceType: ctx?.sourceType,
         cacheKey,
       });

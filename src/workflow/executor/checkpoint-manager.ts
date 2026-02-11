@@ -3,6 +3,8 @@ import type { Checkpoint, NodeState, WorkflowContext, WorkflowNode } from "../ty
 import { generateId } from "../types.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 
+const log = logger.component("checkpoint-manager");
+
 export interface CheckpointManagerConfig {
   backend: WorkflowBackend;
   debug?: boolean;
@@ -23,7 +25,7 @@ export class CheckpointManager {
   }
 
   async save(runId: string, checkpoint: Checkpoint): Promise<void> {
-    logger.debug("[CheckpointManager] Saving checkpoint", { checkpointId: checkpoint.id, runId });
+    log.debug("Saving checkpoint", { checkpointId: checkpoint.id, runId });
     await this.config.backend.saveCheckpoint(runId, checkpoint);
   }
 
@@ -137,7 +139,7 @@ export class CheckpointManager {
     const idsToDelete = all.slice(keepCount).map((c) => c.id);
     if (idsToDelete.length === 0) return;
 
-    logger.debug("[CheckpointManager] Cleaning up old checkpoints", {
+    log.debug("Cleaning up old checkpoints", {
       count: idsToDelete.length,
       runId,
     });

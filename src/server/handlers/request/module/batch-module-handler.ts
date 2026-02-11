@@ -4,6 +4,8 @@ import { handleModuleBatch } from "#veryfront/modules/server/module-batch-handle
 import { serverLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
+const log = logger.component("batch-module-handler");
+
 export function handleBatchModuleEndpoint(
   req: Request,
   ctx: HandlerContext,
@@ -13,7 +15,7 @@ export function handleBatchModuleEndpoint(
   return withSpan(
     "module.batch.handle",
     async () => {
-      logger.debug("[BatchModuleHandler] Handling batch request", {
+      log.debug("Handling batch request", {
         projectSlug: ctx.projectSlug,
         url: req.url,
       });

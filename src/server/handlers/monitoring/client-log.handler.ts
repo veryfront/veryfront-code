@@ -5,6 +5,8 @@ import { serverLogger } from "#veryfront/utils";
 import { HTTP_OK, PRIORITY_HIGH_CLIENT_LOG } from "#veryfront/utils/constants/index.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 
+const log = serverLogger.component("client-log-handler");
+
 export class ClientLogHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "ClientLogHandler",
@@ -75,7 +77,7 @@ export class ClientLogHandler extends BaseHandler {
       "[ClientLogHandler] Raw body received (first 500 chars):",
       body.slice(0, 500),
     );
-    serverLogger.error("[ClientLogHandler] Body length:", body.length);
+    log.error("Body length:", body.length);
 
     // Try to identify the problematic character for SyntaxError
     if (!(e instanceof SyntaxError) || !e.message.includes("position")) {
@@ -91,7 +93,7 @@ export class ClientLogHandler extends BaseHandler {
     const start = Math.max(0, pos - 20);
     const end = Math.min(body.length, pos + 20);
 
-    serverLogger.error("[ClientLogHandler] Context around error position:", body.slice(start, end));
+    log.error("Context around error position:", body.slice(start, end));
     serverLogger.error(
       "[ClientLogHandler] Character at position:",
       body.charCodeAt(pos),

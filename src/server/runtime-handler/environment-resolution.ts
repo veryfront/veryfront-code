@@ -12,6 +12,8 @@ import type { ProxyEnvironment } from "./proxy-environment.ts";
 
 const logger = getBaseLogger("SERVER");
 
+const log = logger.component("environment-resolution");
+
 export interface EnvironmentResolutionResult {
   /** Resolved environment (preview/production) */
   resolvedEnvironment: "preview" | "production" | undefined;
@@ -72,7 +74,7 @@ export function resolveEnvironment(
     !opts.isLocalProject &&
     !isWebSocketOrHMR
   ) {
-    logger.error("[environment-resolution] Missing releaseId in proxy mode (production)", {
+    log.error("Missing releaseId in proxy mode (production)", {
       projectSlug: opts.projectSlug,
       projectId: opts.projectId,
       environmentName: opts.environmentName,

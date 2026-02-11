@@ -8,6 +8,8 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { sanitizeVendorExportName } from "../shared/vendor-export-name.ts";
 
+const log = logger.component("esm");
+
 export function addHMRTimestamps(code: string, timestamp: string | number): Promise<string> {
   return withSpan(
     "transforms.esm.addHMRTimestamps",
@@ -52,7 +54,7 @@ function warnUnversionedImport(specifier: string, projectId?: string): void {
   const parts = specifier.split("/");
   const packageName = isScoped ? parts.slice(0, 2).join("/") : (parts[0] ?? "");
 
-  logger.warn("[ESM] Unversioned import may cause reproducibility issues", {
+  log.warn("Unversioned import may cause reproducibility issues", {
     import: specifier,
     projectId,
     suggestion: `Pin version: import '${packageName}@x.y.z'`,

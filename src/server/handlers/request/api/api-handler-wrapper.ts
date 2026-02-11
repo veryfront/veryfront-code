@@ -10,6 +10,8 @@ import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { serverLogger } from "#veryfront/utils";
 
+const log = serverLogger.component("api-wrapper");
+
 type FsWrapper = {
   isMultiProjectMode?: () => boolean;
   runWithContext?: <T>(
@@ -78,13 +80,13 @@ async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void> {
     };
 
     if (result.agents.size === 0 && result.tools.size === 0) {
-      serverLogger.warn("[API-Wrapper] AI discovery found 0 agents and 0 tools", {
+      log.warn("AI discovery found 0 agents and 0 tools", {
         ...logData,
         errorMessages: result.errors.map((e) => e.error.message).slice(0, 5),
         baseDir: ctx.projectDir,
       });
     } else {
-      serverLogger.info("[API-Wrapper] AI discovery completed", logData);
+      log.info("AI discovery completed", logData);
     }
   })();
 
@@ -95,7 +97,7 @@ async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void> {
   } catch (error) {
     // Allow retry on next request
     discoveredProjects.delete(key);
-    serverLogger.warn("[API-Wrapper] AI discovery failed (will retry)", {
+    log.warn("AI discovery failed (will retry)", {
       projectSlug: ctx.projectSlug,
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,

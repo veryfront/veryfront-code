@@ -1,5 +1,7 @@
 import { logger } from "#veryfront/utils";
 
+const log = logger.component("read-operations");
+
 interface FileListCacheEntry {
   path: string;
   content?: string;
@@ -35,7 +37,7 @@ export class FileListIndex {
     const size = this.index.size;
     this.index = null;
     this.indexKey = null;
-    logger.debug("[ReadOperations] Cleared file list index", { entriesCleared: size });
+    log.debug("Cleared file list index", { entriesCleared: size });
   }
 
   async lookup(normalizedPath: string): Promise<string | undefined> {
@@ -43,26 +45,26 @@ export class FileListIndex {
       try {
         await this.readyPromise;
       } catch {
-        logger.debug("[ReadOperations] File list initialization failed, will fetch individually");
+        log.debug("File list initialization failed, will fetch individually");
       }
     }
 
     const index = await this.getOrBuild();
     if (!index) {
-      logger.debug("[ReadOperations] No file list cache available");
+      log.debug("No file list cache available");
       return undefined;
     }
 
     const content = index.get(normalizedPath);
     if (!content) {
-      logger.debug("[ReadOperations] Content not in file list index", {
+      log.debug("Content not in file list index", {
         path: normalizedPath,
         indexSize: index.size,
       });
       return undefined;
     }
 
-    logger.debug("[ReadOperations] FILE_LIST_CACHE_HIT - serving from file list cache", {
+    log.debug("FILE_LIST_CACHE_HIT - serving from file list cache", {
       path: normalizedPath,
       contentLength: content.length,
       contentHash: hashPreview(content),
@@ -74,7 +76,7 @@ export class FileListIndex {
 
   private async getOrBuild(): Promise<Map<string, string> | null> {
     if (!this.getFileListCache) {
-      logger.debug("[ReadOperations] getOrBuildFileListIndex: no getFileListCache function");
+      log.debug("getOrBuildFileListIndex: no getFileListCache function");
       return null;
     }
 
@@ -87,7 +89,7 @@ export class FileListIndex {
     }
 
     const cacheCheckSample = fileList.find((f) => /welcome/i.test(f.path));
-    logger.debug("[ReadOperations] getOrBuildFileListIndex: got file list from cache", {
+    log.debug("getOrBuildFileListIndex: got file list from cache", {
       fileListSize: fileList.length,
       filesWithContent: fileList.filter((f) => f.content).length,
       sampleFilePath: cacheCheckSample?.path,
@@ -110,7 +112,7 @@ export class FileListIndex {
 
     const sampleFile = fileList.find((f) => /welcome/i.test(f.path));
     const sampleContent = sampleFile?.content;
-    logger.debug("[ReadOperations] Built file list index", {
+    log.debug("Built file list index", {
       fileListSize: fileList.length,
       indexedWithContent: index.size,
       sampleFilePath: sampleFile?.path,

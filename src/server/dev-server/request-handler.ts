@@ -17,6 +17,8 @@ import { clearLayoutDiscoveryCache } from "#veryfront/rendering/layouts/index.ts
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 
+const log = logger.component("dev");
+
 export class RequestHandler {
   private runtimeHandler?: (req: Request) => Promise<Response>;
 
@@ -144,7 +146,7 @@ export class RequestHandler {
     try {
       return runtimeProvider.getHMRRuntime();
     } catch (error) {
-      logger.debug("[dev] failed to read HMR runtime from server", error);
+      log.debug("failed to read HMR runtime from server", error);
       return null;
     }
   }
@@ -170,7 +172,7 @@ export class RequestHandler {
     this.runtimeHandler = undefined;
 
     resetApiHandler(this.projectDir).catch((error) => {
-      logger.debug("[dev] resetApiHandler failed", error);
+      log.debug("resetApiHandler failed", error);
     });
 
     clearConfigCache();

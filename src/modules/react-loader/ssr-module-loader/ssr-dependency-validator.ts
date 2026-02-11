@@ -16,6 +16,8 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { MAX_TRANSFORM_DEPTH, TRANSFORM_BATCH_SIZE } from "./constants.ts";
 import { globalModuleCache } from "./cache/index.ts";
 
+const log = logger.component("ssr-module-loader");
+
 /**
  * Manages dependency validation for SSR module loading:
  * - Pre-flight checks for local file existence
@@ -53,7 +55,7 @@ export class SSRDependencyValidator {
       .map((m) => `  - ${m.specifier} (from ${m.fromFile.slice(-40)}): ${m.reason}`)
       .join("\n");
 
-    logger.error("[SSR-MODULE-LOADER] Missing dependencies detected", {
+    log.error("Missing dependencies detected", {
       file: filePath.slice(-60),
       missing: this.missingDependencies.length,
       details: this.missingDependencies,

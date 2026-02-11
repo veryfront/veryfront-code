@@ -7,6 +7,8 @@ import {
   parseCrossProjectImport,
 } from "#veryfront/transforms/shared/cross-project-import.ts";
 
+const log = logger.component("cross-project-import");
+
 export interface BlockExternalUrlResult {
   code: string;
   blockedUrls: string[];
@@ -39,7 +41,7 @@ export function resolveCrossProjectImports(
           const projectRef = version === "latest" ? projectSlug : `${projectSlug}@${version}`;
           const moduleServerUrl = `/_vf_modules/_cross/${projectRef}/@/${modulePath}`;
 
-          logger.debug("[CrossProjectImport] Rewriting", { from: specifier, to: moduleServerUrl });
+          log.debug("Rewriting", { from: specifier, to: moduleServerUrl });
 
           return moduleServerUrl;
         });

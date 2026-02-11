@@ -1,6 +1,8 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import { clientSockets } from "./hmr-client-manager.ts";
 
+const log = logger.component("hmr-handler");
+
 const PING_INTERVAL_MS = 45000;
 
 let pingInterval: ReturnType<typeof setInterval> | null = null;
@@ -40,7 +42,7 @@ function sendPingToAllClients(): void {
     }
   }
 
-  logger.debug("[HMRHandler] Sent ping to clients", {
+  log.debug("Sent ping to clients", {
     sentCount,
     totalClients: clientSockets.size,
   });

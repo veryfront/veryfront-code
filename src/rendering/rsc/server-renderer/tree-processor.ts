@@ -11,6 +11,8 @@ import {
 import { renderAttributes, treeToHTML } from "./html-generator.ts";
 import { serializeProps } from "./prop-serializer.ts";
 
+const log = logger.component("rsc");
+
 /** Recursively renders a component tree to RSC nodes */
 export async function renderTree(
   Component: React.ComponentType<any> | React.ReactElement | string | number | null | undefined,
@@ -53,7 +55,7 @@ export async function renderTree(
 
     return { type: "html", html: String(element) };
   } catch (error) {
-    logger.error("[RSC] Error rendering component:", error);
+    log.error("Error rendering component:", error);
     throw error;
   }
 }

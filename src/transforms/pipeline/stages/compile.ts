@@ -4,6 +4,8 @@ import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { getLoaderFromPath } from "../../esm/transform-utils.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
+const log = logger.component("esm-transform");
+
 export const compilePlugin: TransformPlugin = {
   name: "esbuild-compile",
   stage: TransformStage.COMPILE,
@@ -47,14 +49,14 @@ export const compilePlugin: TransformPlugin = {
         .map((line, i) => `${String(i + 1).padStart(3, " ")}| ${line}`)
         .join("\n");
 
-      logger.error("[ESM-TRANSFORM] Transform failed", {
+      log.error("Transform failed", {
         filePath: ctx.filePath,
         loader,
         sourceLength: ctx.code.length,
         isMdx,
         error: errorMsg,
       });
-      logger.error("[ESM-TRANSFORM] Source preview (first 10 lines):\n" + sourcePreview);
+      log.error("Source preview (first 10 lines):\n" + sourcePreview);
 
       getErrorCollector().addCompileError(errorMsg, ctx.filePath);
 

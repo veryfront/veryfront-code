@@ -5,6 +5,8 @@ import { normalizeChild } from "../utils/index.ts";
 import { deepInspectElement, type InspectionOptions } from "./element-inspector.ts";
 import { getElementTypeName, isReactElement } from "./primitive-checks.ts";
 
+const log = logger.component("validator");
+
 export interface NormalizationOptions {
   inspectionEnabled?: boolean;
   debugMode?: boolean;
@@ -37,7 +39,7 @@ function performDeepInspection(
   element: React.ReactNode,
   inspectionOptions: InspectionOptions,
 ): void {
-  logger.debug("[VALIDATOR] Starting deep React element tree inspection before SSR");
+  log.debug("Starting deep React element tree inspection before SSR");
 
   try {
     deepInspectElement(element, "root", 0, inspectionOptions);
@@ -46,7 +48,7 @@ function performDeepInspection(
     );
   } catch (error) {
     const normalizedError = ensureError(error);
-    logger.error("[VALIDATOR] Deep inspection failed", {
+    log.error("Deep inspection failed", {
       error: normalizedError.message,
       stack: normalizedError.stack,
     });

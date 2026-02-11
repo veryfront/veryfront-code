@@ -17,6 +17,8 @@ import {
 } from "#veryfront/utils/import-lockfile.ts";
 import { serverLogger as logger } from "#veryfront/utils/logger/index.ts";
 
+const log = logger.component("bare-ext");
+
 type EsbuildLoader = "tsx" | "ts" | "jsx" | "js";
 
 function getLoaderForPath(path: string): EsbuildLoader {
@@ -121,7 +123,7 @@ async function loadFromLockfile(
   const cached = await lockfile.get(url);
   if (!cached) return null;
 
-  logger.debug(`[bare-ext] lockfile hit: ${url}`);
+  log.debug(`lockfile hit: ${url}`);
 
   try {
     const response = await fetch(cached.resolved);
@@ -143,10 +145,10 @@ async function loadFromLockfile(
       };
     }
 
-    logger.warn(`[bare-ext] integrity mismatch, refetching: ${url}`);
+    log.warn(`integrity mismatch, refetching: ${url}`);
     return null;
   } catch {
-    logger.warn(`[bare-ext] cached URL failed, refetching: ${url}`);
+    log.warn(`cached URL failed, refetching: ${url}`);
     return null;
   }
 }
@@ -195,7 +197,7 @@ export function createBareExternalPlugin(
               fetchedAt: new Date().toISOString(),
             });
             await lockfile.flush();
-            logger.debug(`[bare-ext] lockfile updated: ${args.path} -> ${resolvedUrl}`);
+            log.debug(`lockfile updated: ${args.path} -> ${resolvedUrl}`);
           }
 
           return { contents, loader: "js" };

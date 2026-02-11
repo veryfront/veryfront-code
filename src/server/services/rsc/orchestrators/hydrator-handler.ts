@@ -4,6 +4,8 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { serverLogger as logger } from "#veryfront/utils";
 
+const log = logger.component("rsc");
+
 const compatFs = createFileSystem();
 
 export class HydratorHandler {
@@ -19,7 +21,7 @@ export class HydratorHandler {
       const bundled = await this.bundleHydrator(hydratorPath);
       return this.createJavaScriptResponse(bundled);
     } catch (error) {
-      logger.error("[RSC] Hydrator bundling failed:", error);
+      log.error("Hydrator bundling failed:", error);
       return this.fallbackToSource(hydratorPath);
     }
   }
@@ -68,7 +70,7 @@ export class HydratorHandler {
         );
       }
 
-      logger.debug("[RSC] Hydrator bundled successfully", { size: outputText.length });
+      log.debug("Hydrator bundled successfully", { size: outputText.length });
       return outputText;
     } finally {
       if (!("__vfTestPreserveEsbuild" in globalThis)) {
@@ -82,7 +84,7 @@ export class HydratorHandler {
       const source = await this.readHydratorFile(filePath);
       return this.createJavaScriptResponse(source);
     } catch (readError) {
-      logger.error("[RSC] Failed to read hydrator file:", readError);
+      log.error("Failed to read hydrator file:", readError);
       return this.createFallbackResponse();
     }
   }

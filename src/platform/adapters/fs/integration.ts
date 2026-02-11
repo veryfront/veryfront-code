@@ -5,6 +5,8 @@ import { wrapFSAdapter } from "./wrapper.ts";
 import { logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
+const log = logger.component("fs-integration");
+
 /**
  * Minimal config interface for FS integration.
  * Defined locally to keep adapters module isolated from core/config.
@@ -23,7 +25,7 @@ export function enhanceAdapterWithFS(
   projectDir?: string,
 ): Promise<RuntimeAdapter> {
   if (isLocalFS(config)) {
-    logger.debug("[FSIntegration] Using local filesystem (default)");
+    log.debug("Using local filesystem (default)");
     return Promise.resolve(adapter);
   }
 
@@ -33,7 +35,7 @@ export function enhanceAdapterWithFS(
     "platform.fs.enhanceAdapterWithFS",
     async () => {
       try {
-        logger.debug("[FSIntegration] Initializing FSAdapter", {
+        log.debug("Initializing FSAdapter", {
           type: fsType,
           projectSlug: config.fs?.veryfront?.projectSlug,
         });
@@ -55,18 +57,18 @@ export function enhanceAdapterWithFS(
           },
         });
 
-        logger.debug("[FSIntegration] FSAdapter initialized successfully", {
+        log.debug("FSAdapter initialized successfully", {
           type: fsType,
         });
 
         return enhancedAdapter;
       } catch (error) {
-        logger.error("[FSIntegration] Failed to initialize FSAdapter", {
+        log.error("Failed to initialize FSAdapter", {
           error: error instanceof Error ? error.message : String(error),
           type: fsType,
         });
 
-        logger.warn("[FSIntegration] Falling back to local filesystem");
+        log.warn("Falling back to local filesystem");
         return adapter;
       }
     },

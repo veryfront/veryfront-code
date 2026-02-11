@@ -4,6 +4,8 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { getSSRModuleRedisTTL } from "../constants.ts";
 import { CacheBackends, createDistributedCodeCacheAccessor } from "#veryfront/cache/backend.ts";
 
+const log = logger.component("ssr-module-loader");
+
 /**
  * Lazy-loaded distributed cache gateway for cross-pod sharing.
  * Uses TokenizingCacheGateway to automatically handle tokenization/detokenization.
@@ -35,7 +37,7 @@ export async function getFromRedis(cacheKey: string): Promise<string | null> {
     // Use getCode() for automatic detokenization
     return await gateway.getCode(cacheKey);
   } catch (error) {
-    logger.debug("[SSR-MODULE-LOADER] Distributed cache get failed", { key: cacheKey, error });
+    log.debug("Distributed cache get failed", { key: cacheKey, error });
     return null;
   }
 }
@@ -58,6 +60,6 @@ export async function setInRedis(
     // Use setCode() for automatic tokenization
     await gateway.setCode(cacheKey, code, ttl);
   } catch (error) {
-    logger.debug("[SSR-MODULE-LOADER] Distributed cache set failed", { key: cacheKey, error });
+    log.debug("Distributed cache set failed", { key: cacheKey, error });
   }
 }

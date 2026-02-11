@@ -10,6 +10,8 @@
 import { logger } from "#veryfront/utils";
 import type { JobConfig, JobExecutor, JobInfo, JobStatus } from "./types.ts";
 
+const log = logger.component("process-job-executor");
+
 /**
  * Process Job Executor configuration
  */
@@ -130,7 +132,7 @@ export class ProcessJobExecutor implements JobExecutor {
     this.activeJobs.set(jobId, job);
 
     if (debug || this.config.debug) {
-      logger.info(`[ProcessJobExecutor] Spawned process for job ${jobId}, run ${run.id}`);
+      log.info(`Spawned process for job ${jobId}, run ${run.id}`);
     }
 
     // Monitor the process in background
@@ -178,7 +180,7 @@ export class ProcessJobExecutor implements JobExecutor {
     this.activeJobs.delete(jobId);
 
     if (this.config.debug) {
-      logger.info(`[ProcessJobExecutor] Deleted job ${jobId}`);
+      log.info(`Deleted job ${jobId}`);
     }
 
     return Promise.resolve();
@@ -214,7 +216,7 @@ export class ProcessJobExecutor implements JobExecutor {
           job.error = `Job timed out after ${timeout}ms`;
           job.completedAt = new Date();
 
-          logger.warn(`[ProcessJobExecutor] Job ${job.jobId} timed out`);
+          log.warn(`Job ${job.jobId} timed out`);
         } catch {
           // Process may already be dead
         }
@@ -236,13 +238,13 @@ export class ProcessJobExecutor implements JobExecutor {
         job.status = "succeeded";
 
         if (this.config.debug) {
-          logger.info(`[ProcessJobExecutor] Job ${job.jobId} succeeded`);
+          log.info(`Job ${job.jobId} succeeded`);
         }
       } else {
         job.status = "failed";
         job.error = `Process exited with code ${status.code}`;
 
-        logger.error(`[ProcessJobExecutor] Job ${job.jobId} failed with code ${status.code}`);
+        log.error(`Job ${job.jobId} failed with code ${status.code}`);
       }
     }).catch((error) => {
       clearTimeout(timeoutId);
@@ -251,7 +253,7 @@ export class ProcessJobExecutor implements JobExecutor {
       job.error = error instanceof Error ? error.message : String(error);
       job.completedAt = new Date();
 
-      logger.error(`[ProcessJobExecutor] Job ${job.jobId} error:`, error);
+      log.error(`Job ${job.jobId} error:`, error);
     });
 
     // Log stdout/stderr in debug mode

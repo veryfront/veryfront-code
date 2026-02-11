@@ -22,6 +22,10 @@ import {
 import { ReloadNotifier } from "./reload-notifier.ts";
 import { clearDomainCache } from "./utils/domain-lookup.ts";
 
+const bootstrapLog = logger.component("bootstrap");
+const bootstrapDevLog = logger.component("bootstrap-dev");
+const bootstrapProdLog = logger.component("bootstrap-prod");
+
 export interface BootstrapResult {
   /** Enhanced runtime adapter (with FSAdapter if configured) */
   adapter: RuntimeAdapter;
@@ -52,7 +56,7 @@ async function ensureEnvLoaded(projectDir: string, adapter: RuntimeAdapter): Pro
       });
       refreshEnvironmentConfig();
     } catch (error) {
-      logger.warn("[Bootstrap] Failed to load .env files", {
+      bootstrapLog.warn("Failed to load .env files", {
         error: getErrorMessage(error),
       });
     }
@@ -70,13 +74,13 @@ function logEnvConfig(): void {
   const apiTokenSource = getEnvSource("VERYFRONT_API_TOKEN");
 
   if (apiBaseUrlSource.source === "env-file") {
-    logger.info(`[Bootstrap] VERYFRONT_API_BASE_URL loaded from ${apiBaseUrlSource.file}`);
+    bootstrapLog.info(`VERYFRONT_API_BASE_URL loaded from ${apiBaseUrlSource.file}`);
   }
   if (apiTokenSource.source === "env-file") {
-    logger.info(`[Bootstrap] VERYFRONT_API_TOKEN loaded from ${apiTokenSource.file}`);
+    bootstrapLog.info(`VERYFRONT_API_TOKEN loaded from ${apiTokenSource.file}`);
   }
 
-  logger.info("[Bootstrap] API base URL", {
+  bootstrapLog.info("API base URL", {
     apiBaseUrl: envConfig.apiBaseUrl,
     apiBaseUrlSource,
     apiTokenPresent: Boolean(envConfig.apiToken),
@@ -88,7 +92,7 @@ export async function bootstrap(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<BootstrapResult> {
-  logger.debug("[Bootstrap] Starting framework initialization", {
+  bootstrapLog.debug("Starting framework initialization", {
     projectDir,
     runtime: adapter.id,
   });
@@ -98,18 +102,18 @@ export async function bootstrap(
   await initializeEsbuild();
   await ensureEnvLoaded(projectDir, adapter);
 
-  logger.debug("[Bootstrap] Loading config with base adapter");
+  bootstrapLog.debug("Loading config with base adapter");
   let config = await getConfig(projectDir, adapter);
 
   const fsType = config.fs?.type;
   const needsFSAdapter = fsType != null && fsType !== "local";
 
   if (!needsFSAdapter) {
-    logger.debug("[Bootstrap] Using local filesystem (no FSAdapter needed)");
+    bootstrapLog.debug("Using local filesystem (no FSAdapter needed)");
     return { adapter, config, usingFSAdapter: false };
   }
 
-  logger.debug("[Bootstrap] Initializing FSAdapter", { type: fsType });
+  bootstrapLog.debug("Initializing FSAdapter", { type: fsType });
 
   // Inject server-layer callbacks into FS config so the platform layer
   // doesn't need to import from the server layer
@@ -129,7 +133,7 @@ export async function bootstrap(
   );
 
   if (enhancedAdapter === adapter) {
-    logger.debug("[Bootstrap] Framework initialized successfully", {
+    bootstrapLog.debug("Framework initialized successfully", {
       projectDir,
       runtime: adapter.id,
       fsAdapter: "local",
@@ -142,11 +146,11 @@ export async function bootstrap(
   const isProductionMode = config.fs?.veryfront?.productionMode === true;
 
   if (isProxyMode) {
-    logger.debug("[Bootstrap] Skipping config reload in proxy mode (using local config)");
+    bootstrapLog.debug("Skipping config reload in proxy mode (using local config)");
   } else if (isProductionMode) {
-    logger.debug("[Bootstrap] Skipping config reload in production mode (using local config)");
+    bootstrapLog.debug("Skipping config reload in production mode (using local config)");
   } else {
-    logger.debug("[Bootstrap] Reloading config with FSAdapter");
+    bootstrapLog.debug("Reloading config with FSAdapter");
     clearConfigCache();
 
     const originalConfig = config;
@@ -157,14 +161,14 @@ export async function bootstrap(
       !reloadedConfig.dev?.hmr;
 
     if (usesDefaultDevConfig && originalConfig.dev) {
-      logger.debug("[Bootstrap] Keeping original config (FSAdapter returned defaults)");
+      bootstrapLog.debug("Keeping original config (FSAdapter returned defaults)");
       config = originalConfig;
     } else {
       config = reloadedConfig;
     }
   }
 
-  logger.debug("[Bootstrap] Framework initialized successfully", {
+  bootstrapLog.debug("Framework initialized successfully", {
     projectDir,
     runtime: adapter.id,
     fsAdapter: fsType,
@@ -182,12 +186,12 @@ export async function bootstrapDev(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<BootstrapResult> {
-  logger.debug("[Bootstrap:Dev] Starting development mode initialization");
+  bootstrapDevLog.debug("Starting development mode initialization");
 
   const result = await bootstrap(projectDir, adapter);
 
   if (result.usingFSAdapter) {
-    logger.debug("[Bootstrap:Dev] FSAdapter active", {
+    bootstrapDevLog.debug("FSAdapter active", {
       type: result.fsAdapterType,
       projectSlug: result.config.fs?.veryfront?.projectSlug,
     });
@@ -200,7 +204,7 @@ export async function bootstrapProd(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<BootstrapResult> {
-  logger.debug("[Bootstrap:Prod] Starting production mode initialization");
+  bootstrapProdLog.debug("Starting production mode initialization");
 
   await ensureEnvLoaded(projectDir, adapter);
 
@@ -212,14 +216,14 @@ export async function bootstrapProd(
     const result = await bootstrap(projectDir, adapter);
 
     if (result.usingFSAdapter) {
-      logger.debug("[Bootstrap:Prod] FSAdapter initialized", {
+      bootstrapProdLog.debug("FSAdapter initialized", {
         type: result.fsAdapterType,
       });
     }
 
     return result;
   } catch (error) {
-    logger.error("[Bootstrap:Prod] Initialization failed", {
+    bootstrapProdLog.error("Initialization failed", {
       error: getErrorMessage(error),
     });
     throw error;
@@ -258,7 +262,7 @@ function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
   }
 
   // Log effective configuration for debugging
-  logger.debug("[Bootstrap:Prod] Environment configuration", {
+  bootstrapProdLog.debug("Environment configuration", {
     nodeEnv: nodeEnv ?? "(unset)",
     proxyMode: proxyMode ?? "0",
   });

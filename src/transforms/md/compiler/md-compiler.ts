@@ -21,6 +21,8 @@ import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import Slugger from "github-slugger";
 
+const log = logger.component("md-compiler");
+
 interface ExtractedHeading {
   id: string;
   text: string;
@@ -98,7 +100,7 @@ export function compileMarkdownRuntime(
         const result = await processor.process(body);
         const html = String(result);
 
-        logger.debug("[MD Compiler] Compiled markdown:", {
+        log.debug("Compiled markdown:", {
           filePath,
           htmlLength: html.length,
           headingsCount: headings.length,
@@ -124,7 +126,7 @@ export function compileMarkdownRuntime(
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
 
-        logger.error("[MD Compiler] Compilation failed:", {
+        log.error("Compilation failed:", {
           filePath,
           error: err.message,
           stack: err.stack,

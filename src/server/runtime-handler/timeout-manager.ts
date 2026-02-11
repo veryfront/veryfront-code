@@ -12,6 +12,8 @@ import { ErrorPages } from "../utils/error-html.ts";
 
 const logger = getBaseLogger("SERVER");
 
+const log = logger.component("runtime-handler");
+
 /**
  * Execute a handler with a timeout, returning a timeout response if exceeded.
  *
@@ -38,7 +40,7 @@ export async function withRequestTimeout(
     return { response };
   } catch (e) {
     if (e === TIMEOUT_SENTINEL) {
-      logger.warn("[runtime-handler] Request timed out", {
+      log.warn("Request timed out", {
         path: pathname,
         method,
         timeoutMs: getRequestTimeout(),

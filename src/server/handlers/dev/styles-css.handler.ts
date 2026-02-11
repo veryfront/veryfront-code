@@ -16,6 +16,8 @@ import {
 import { serverLogger as logger } from "#veryfront/utils";
 import { extractProjectCandidates } from "./styles-candidate-scanner.ts";
 
+const log = logger.component("styles-css-handler");
+
 export class StylesCSSHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "StylesCSSHandler",
@@ -34,7 +36,7 @@ export class StylesCSSHandler extends BaseHandler {
         try {
           rawCss = await this.loadStylesheet(ctx);
         } catch (error) {
-          logger.error("[StylesCSSHandler] Failed to load stylesheet", {
+          log.error("Failed to load stylesheet", {
             error: error instanceof Error ? error.message : String(error),
           });
           rawCss = `@import "tailwindcss";`;
@@ -44,7 +46,7 @@ export class StylesCSSHandler extends BaseHandler {
         try {
           candidates = await extractProjectCandidates(ctx);
         } catch (error) {
-          logger.error("[StylesCSSHandler] Failed to extract candidates", {
+          log.error("Failed to extract candidates", {
             error: error instanceof Error ? error.message : String(error),
           });
           candidates = new Set<string>();
@@ -53,7 +55,7 @@ export class StylesCSSHandler extends BaseHandler {
 
         if (result.error) {
           const formatted = formatCSSError(result.error);
-          logger.error("[StylesCSSHandler] Tailwind error", {
+          log.error("Tailwind error", {
             error: formatted.message,
             suggestion: formatted.suggestion,
           });
@@ -89,12 +91,12 @@ body::before {
         }
 
         if (!result.css && candidates.size > 0) {
-          logger.warn("[StylesCSSHandler] CSS is empty despite having candidates", {
+          log.warn("CSS is empty despite having candidates", {
             candidates: candidates.size,
           });
         }
 
-        logger.debug("[StylesCSSHandler] CSS generated", {
+        log.debug("CSS generated", {
           candidates: candidates.size,
           cssLength: result.css.length,
         });
@@ -106,7 +108,7 @@ body::before {
     } catch (error) {
       // Ensure the handler never throws — an uncaught error causes the route registry
       // to skip this handler silently and fall through to the 404 handler.
-      logger.error("[StylesCSSHandler] Unhandled error in CSS handler", {
+      log.error("Unhandled error in CSS handler", {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
@@ -132,7 +134,7 @@ body::before {
     try {
       return await ctx.adapter.fs.readFile(globalsPath);
     } catch {
-      logger.debug("[StylesCSSHandler] No stylesheet found, using default");
+      log.debug("No stylesheet found, using default");
       return `@import "tailwindcss";
 @custom-variant dark (&:is(.dark, [data-theme="dark"]) *, &:is(.dark, [data-theme="dark"]));`;
     }

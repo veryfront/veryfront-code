@@ -8,6 +8,8 @@
 import { logger } from "#veryfront/utils";
 import type { JobConfig, JobExecutor, JobInfo, JobStatus } from "./types.ts";
 
+const log = logger.component("k8s-job-executor");
+
 /**
  * K8s Job Executor configuration
  */
@@ -203,7 +205,7 @@ export class K8sJobExecutor implements JobExecutor {
     await this.k8sClient.createJob(this.config.namespace, job);
 
     if (debug || this.config.debug) {
-      logger.info(`[K8sJobExecutor] Created job ${jobName} for run ${run.id}`);
+      log.info(`Created job ${jobName} for run ${run.id}`);
     }
 
     return jobId;
@@ -241,10 +243,10 @@ export class K8sJobExecutor implements JobExecutor {
       await this.k8sClient.deleteJob(this.config.namespace, jobName);
 
       if (this.config.debug) {
-        logger.info(`[K8sJobExecutor] Deleted job ${jobName}`);
+        log.info(`Deleted job ${jobName}`);
       }
     } catch (error) {
-      logger.warn(`[K8sJobExecutor] Failed to delete job ${jobName}:`, error);
+      log.warn(`Failed to delete job ${jobName}:`, error);
     }
   }
 

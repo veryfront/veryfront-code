@@ -11,6 +11,7 @@ import {
   runWithRequestContextAsync,
 } from "#veryfront/utils/logger/request-context.ts";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
+import { generateRequestId } from "#veryfront/utils/request-id.ts";
 
 type MiddlewareFunction = (
   c: { req: Request; var: Record<string, unknown> },
@@ -18,6 +19,8 @@ type MiddlewareFunction = (
 ) => Promise<Response | undefined> | Response | undefined;
 
 const logger = getBaseLogger("SERVER");
+
+const log = logger.component("middleware");
 
 export function createRequestLoggerMiddleware(): MiddlewareFunction {
   return async (c, next) => {
@@ -106,7 +109,7 @@ async function loadMiddlewareFile(
     if (!(await adapter.fs.exists(middlewarePath))) continue;
 
     try {
-      logger.debug(`[MIDDLEWARE] Loading ${middlewareFile}`);
+      log.debug(`Loading ${middlewareFile}`);
 
       if (isVirtualFilesystem(adapter.fs)) {
         return await loadMiddlewareFromVirtualFS(middlewarePath, adapter);
@@ -117,7 +120,7 @@ async function loadMiddlewareFile(
       return normalizeMiddlewareExport(middlewareModule);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.warn(`[MIDDLEWARE] Failed to load ${middlewareFile}: ${errorMessage}`);
+      log.warn(`Failed to load ${middlewareFile}: ${errorMessage}`);
     }
   }
 
@@ -199,11 +202,11 @@ export async function setupMiddleware(
   }
 
   if (config.fs?.veryfront?.proxyMode === true) {
-    logger.debug("[MIDDLEWARE] Skipping file middleware in proxy mode");
+    log.debug("Skipping file middleware in proxy mode");
   } else if (projectDir && adapter) {
     const fileMiddlewares = await loadMiddlewareFile(projectDir, adapter);
     for (const middleware of fileMiddlewares) {
-      logger.debug("[MIDDLEWARE] Registered middleware from file");
+      log.debug("Registered middleware from file");
       pipeline.use(middleware);
     }
   }
@@ -216,14 +219,6 @@ export async function setupMiddleware(
   }
 
   pipeline.use((c) => requestHandler(c.req));
-}
-
-function generateRequestId(incomingId: string): string {
-  if (incomingId) return incomingId;
-
-  return crypto
-    .getRandomValues(new Uint32Array(2))
-    .reduce((acc, n) => acc + n.toString(16).padStart(8, "0"), "");
 }
 
 async function enrichSpanWithRequestInfo(

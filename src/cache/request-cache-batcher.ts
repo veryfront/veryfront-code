@@ -4,6 +4,8 @@ import { logger } from "#veryfront/utils";
 import { MAX_BATCH_SIZE } from "#veryfront/utils/constants/limits.ts";
 import type { CacheBackend } from "./backend.ts";
 
+const log = logger.component("request-cache-batcher");
+
 interface PendingRequest {
   key: string;
   resolve: (value: string | null) => void;
@@ -94,7 +96,7 @@ async function flushBatch(ctx: RequestCacheContext, backend: CacheBackend): Prom
 
   const uniqueKeys = [...new Set(requests.map((r) => r.key))];
 
-  logger.debug("[RequestCacheBatcher] Flushing batch", {
+  log.debug("Flushing batch", {
     requested: requests.length,
     unique: uniqueKeys.length,
     dedupeRatio: (requests.length / uniqueKeys.length).toFixed(2),

@@ -11,6 +11,8 @@ import {
   isValidPrimitive,
 } from "./primitive-checks.ts";
 
+const log = logger.component("deep-inspect");
+
 export interface InspectionOptions {
   maxDepth: number;
   debugMode: boolean;
@@ -44,7 +46,7 @@ export function deepInspectElement(
 
   if (isValidPrimitive(element)) {
     if (options.debugMode) {
-      logger.debug(`[DEEP INSPECT] ✓ Valid primitive at ${path}`, { type: typeof element, depth });
+      log.debug(`✓ Valid primitive at ${path}`, { type: typeof element, depth });
     }
     return;
   }
@@ -67,7 +69,7 @@ function inspectReactElement(
   visited: WeakSet<object>,
 ): void {
   if (options.debugMode) {
-    logger.debug(`[DEEP INSPECT] ✓ Valid React element at ${path}`, {
+    log.debug(`✓ Valid React element at ${path}`, {
       type: getElementTypeName(element),
       depth,
     });
@@ -137,7 +139,7 @@ function inspectArray(
   visited: WeakSet<object>,
 ): void {
   if (options.debugMode) {
-    logger.debug(`[DEEP INSPECT] ✓ Array at ${path}`, { length: arr.length, depth });
+    log.debug(`✓ Array at ${path}`, { length: arr.length, depth });
   }
 
   for (let i = 0; i < arr.length; i++) {
@@ -150,7 +152,7 @@ function handleInvalidObject(element: object, path: string, depth: number): void
   const keys = getObjectKeys(element);
 
   if (hasReactSymbol(obj)) {
-    logger.debug(`[DEEP INSPECT] ? Skipping object with React symbol at ${path}`, {
+    log.debug(`? Skipping object with React symbol at ${path}`, {
       keys,
       symbolValue: obj.$$typeof,
     });

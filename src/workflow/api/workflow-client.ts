@@ -22,6 +22,8 @@ import {
 import { ApprovalManager, type ApprovalManagerConfig } from "../runtime/approval-manager.ts";
 import type { Workflow } from "../dsl/workflow.ts";
 
+const log = logger.component("workflow-client");
+
 export interface WorkflowClientConfig {
   /** Backend for persistence (default: MemoryBackend) */
   backend?: WorkflowBackend;
@@ -55,7 +57,7 @@ export class WorkflowClient {
           | undefined;
 
         if (!input) {
-          logger.debug("[WorkflowClient] No wait config found for node", { nodeId });
+          log.debug("No wait config found for node", { nodeId });
           userOnWaiting?.(run, nodeId);
           return;
         }
@@ -74,9 +76,9 @@ export class WorkflowClient {
 
         try {
           await this.approvalManager.createApproval(run, nodeId, waitConfig, run.context);
-          logger.debug("[WorkflowClient] Created approval for node", { nodeId });
+          log.debug("Created approval for node", { nodeId });
         } catch (error) {
-          logger.error("[WorkflowClient] Failed to create approval", error);
+          log.error("Failed to create approval", error);
         }
 
         userOnWaiting?.(run, nodeId);
@@ -94,7 +96,7 @@ export class WorkflowClient {
   register(workflow: Workflow | WorkflowDefinition): void {
     const definition = "definition" in workflow ? workflow.definition : workflow;
     this.executor.register(definition);
-    logger.debug("[WorkflowClient] Registered workflow", { workflowId: definition.id });
+    log.debug("Registered workflow", { workflowId: definition.id });
   }
 
   registerAll(workflows: Array<Workflow | WorkflowDefinition>): void {
@@ -170,7 +172,7 @@ export class WorkflowClient {
   async destroy(): Promise<void> {
     this.approvalManager.stop();
     await this.backend.destroy();
-    logger.debug("[WorkflowClient] Destroyed");
+    log.debug("Destroyed");
   }
 }
 

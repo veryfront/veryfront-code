@@ -6,6 +6,8 @@ import type { VeryfrontRenderer } from "#veryfront/rendering/index.ts";
 import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
 import type { ChunkManifest } from "#veryfront/build/bundler/index.ts";
 
+const log = logger.component("build");
+
 export interface BuildExecutorOptions {
   adapter: RuntimeAdapter;
   projectDir: string;
@@ -35,10 +37,10 @@ export async function executeBuild(
 
   logger.info("Building pages...");
   const pagesStats = await buildPagesRoutes(pagesRoutes, options);
-  logger.info(`[BUILD] pagesStats: ${pagesStats.pages} pages built`);
+  log.info(`pagesStats: ${pagesStats.pages} pages built`);
 
   const appStats = await buildAppRoutes(appRoutes, options);
-  logger.info(`[BUILD] appStats: ${appStats.pages} pages built`);
+  log.info(`appStats: ${appStats.pages} pages built`);
 
   return {
     pages: pagesStats.pages + appStats.pages,

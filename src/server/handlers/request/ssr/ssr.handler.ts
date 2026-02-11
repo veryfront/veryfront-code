@@ -28,6 +28,8 @@ import { type SSRRenderResult, SSRService } from "../../../services/rendering/ss
 import { ErrorPages } from "../../../utils/error-html.ts";
 import { buildSSRResponse } from "./ssr-response-builder.ts";
 
+const log = logger.component("ssr");
+
 /**
  * Determine if request should serve production (released) content.
  * Uses resolvedEnvironment (from domain lookup) with fallback to requestContext.mode.
@@ -106,7 +108,7 @@ export class SSRHandler extends BaseHandler {
         const branch = ctx.parsedDomain?.branch ?? null;
         const effectiveToken = ctx.proxyToken || getEnv("VERYFRONT_API_TOKEN") || "";
 
-        logger.debug("[SSR] Using multi-project context", {
+        log.debug("Using multi-project context", {
           projectSlug: ctx.projectSlug,
           productionMode: prodMode,
           slug,

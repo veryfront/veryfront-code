@@ -8,6 +8,8 @@ import { logger } from "#veryfront/utils/logger/logger.ts";
 import { isRedisConfigured } from "#veryfront/utils/redis-client.ts";
 import { isApiCacheAvailable } from "./backend.ts";
 
+const log = logger.component("distributed-cache");
+
 export interface DistributedCacheStatus {
   backend: "api" | "redis" | "memory";
   transformCache: boolean;
@@ -42,7 +44,7 @@ export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
   return withSpan(
     SpanNames.CACHE_DISTRIBUTED_INIT,
     async (): Promise<DistributedCacheStatus> => {
-      logger.info("[DistributedCache] Initializing caches...", { backend });
+      log.info("Initializing caches...", { backend });
 
       const results = await Promise.allSettled([
         initializeTransformCache(),
@@ -65,13 +67,13 @@ export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
         Number(status.projectCSSCache);
 
       if (enabled === 0) {
-        logger.warn("[DistributedCache] No caches enabled despite backend being available", {
+        log.warn("No caches enabled despite backend being available", {
           backend,
         });
         return status;
       }
 
-      logger.info("[DistributedCache] Initialization complete", {
+      log.info("Initialization complete", {
         backend,
         enabled,
         transform: status.transformCache,

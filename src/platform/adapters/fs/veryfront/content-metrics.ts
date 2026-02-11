@@ -4,6 +4,8 @@ import {
   recordContentNetworkFetch,
 } from "#veryfront/observability/simple-metrics/index.ts";
 
+const log = logger.component("content-metrics");
+
 type FileType = "page" | "layout" | "component" | "api" | "data" | "config" | "other";
 export type MissReason = "cold_start" | "not_in_filelist" | "invalidation" | "no_filelist_cache";
 
@@ -93,7 +95,7 @@ export function endRequestMetrics(
 
   recordContentNetworkFetch(req.networkMs, req.isPreviewMode ?? false);
 
-  logger.info("[ContentMetrics] REQUEST_SUMMARY", {
+  log.info("REQUEST_SUMMARY", {
     ...requestContext,
     durationMs,
     networkMs: req.networkMs,
@@ -171,7 +173,7 @@ export function logContentMetric(
     }
   }
 
-  logger.debug(`[ContentMetrics] ${event}`, details);
+  log.debug(`${event}`, details);
 }
 
 export function getContentMetricsSnapshot(): CumulativeMetrics & {

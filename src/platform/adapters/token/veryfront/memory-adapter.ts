@@ -8,6 +8,8 @@
 import { logger } from "#veryfront/utils";
 import type { TokenStorageAdapter } from "./types.ts";
 
+const log = logger.component("memory-token-adapter");
+
 const STORAGE_KEY = "__veryfront_token_storage__" as const;
 
 interface GlobalWithTokenStorage {
@@ -55,7 +57,7 @@ export class MemoryTokenAdapter implements TokenStorageAdapter {
   }
 
   dispose(): void {
-    logger.debug("[MemoryTokenAdapter] Disposed");
+    log.debug("Disposed");
   }
 
   get size(): number {

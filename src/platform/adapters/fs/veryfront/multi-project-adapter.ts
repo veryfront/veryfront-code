@@ -6,6 +6,8 @@ import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 import type { VeryfrontFSAdapter } from "./index.ts";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
 
+const log = logger.component("multi-project-fs-adapter");
+
 interface RequestContext {
   projectSlug: string;
   projectId?: string;
@@ -39,7 +41,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       maxIdleMs: 30 * 60 * 1000,
     });
 
-    logger.debug("[MultiProjectFSAdapter] Created", {
+    log.debug("Created", {
       proxyMode: config.veryfront?.proxyMode,
     });
   }
@@ -62,7 +64,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const branch = options?.branch ?? null;
     const environmentName = options?.environmentName ?? null;
 
-    logger.debug("[MultiProjectFSAdapter] runWithContext START", {
+    log.debug("runWithContext START", {
       projectSlug,
       hasToken: !!token,
       productionMode,
@@ -82,17 +84,17 @@ export class MultiProjectFSAdapter implements FSAdapter {
       fileCache: new Map<string, string>(),
     };
 
-    logger.debug("[MultiProjectFSAdapter] asyncLocalStorage.run START", { projectSlug });
+    log.debug("asyncLocalStorage.run START", { projectSlug });
 
     return asyncLocalStorage.run(context, async () => {
-      logger.debug("[MultiProjectFSAdapter] Inside asyncLocalStorage.run callback", {
+      log.debug("Inside asyncLocalStorage.run callback", {
         projectSlug,
         duration: `${(performance.now() - startTime).toFixed(2)}ms`,
       });
 
       const result = await runWithCacheBatching(fn);
 
-      logger.debug("[MultiProjectFSAdapter] runWithContext callback complete", {
+      log.debug("runWithContext callback complete", {
         projectSlug,
         totalDuration: `${(performance.now() - startTime).toFixed(2)}ms`,
       });
@@ -118,7 +120,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const context = asyncLocalStorage.getStore();
 
     if (!context) {
-      logger.debug("[MultiProjectFSAdapter] No context available", {
+      log.debug("No context available", {
         hasDefaultAdapter: !!this.defaultAdapter,
       });
 
@@ -134,7 +136,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const releaseId = context.releaseId ?? null;
     const environmentName = context.environmentName ?? null;
 
-    logger.debug("[MultiProjectFSAdapter] getAdapter RELEASE_ID_CHECK", {
+    log.debug("getAdapter RELEASE_ID_CHECK", {
       projectSlug: context.projectSlug,
       productionMode,
       releaseId,
@@ -153,7 +155,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       context.branch,
     );
 
-    logger.debug("[MultiProjectFSAdapter] getAdapter DONE", {
+    log.debug("getAdapter DONE", {
       projectSlug: context.projectSlug,
       duration: `${(performance.now() - startTime).toFixed(2)}ms`,
     });
@@ -166,7 +168,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
   }
 
   initialize(): Promise<void> {
-    logger.debug("[MultiProjectFSAdapter] Initialized (lazy per-project initialization)");
+    log.debug("Initialized (lazy per-project initialization)");
     return Promise.resolve();
   }
 
@@ -215,7 +217,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     this.manager.dispose();
     this.defaultAdapter?.dispose();
     this.defaultAdapter = undefined;
-    logger.debug("[MultiProjectFSAdapter] Disposed");
+    log.debug("Disposed");
   }
 
   getManagerStats(): ReturnType<ProxyFSAdapterManager["getStats"]> {
@@ -246,7 +248,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       const files = (await adapter.getAllSourceFiles?.()) ?? [];
 
       if (files.length === 0) {
-        logger.debug("[MultiProjectFSAdapter] getAllSourceFiles returned empty", {
+        log.debug("getAllSourceFiles returned empty", {
           hasAdapter: !!adapter,
           hasMethod: typeof adapter.getAllSourceFiles === "function",
         });
@@ -254,7 +256,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
       return files;
     } catch (error) {
-      logger.warn("[MultiProjectFSAdapter] getAllSourceFiles failed", {
+      log.warn("getAllSourceFiles failed", {
         error: error instanceof Error ? error.message : String(error),
       });
       return [];

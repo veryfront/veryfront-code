@@ -98,6 +98,8 @@ export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environmen
 
 const logger = getBaseLogger("SERVER");
 
+const log = logger.component("runtime-handler");
+
 export interface RuntimeHandlerOptions {
   projectDir: string;
   /** When true, expose additional debug logging. */
@@ -161,7 +163,7 @@ export function createVeryfrontHandler(
         return c;
       })
       .catch((error) => {
-        logger.warn("[runtime-handler] Failed to load config, using defaults", {
+        log.warn("Failed to load config, using defaults", {
           error: getErrorMessage(error),
         });
         return undefined;
@@ -206,7 +208,7 @@ export function createVeryfrontHandler(
   const isProxyMode = opts.config?.fs?.veryfront?.proxyMode === true;
 
   const readyPromise = isProxyMode ? Promise.resolve() : apiHandler.initialize().catch((error) => {
-    logger.error("[runtime-handler] API handler initialization failed", {
+    log.error("API handler initialization failed", {
       error: getErrorMessage(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
@@ -214,7 +216,7 @@ export function createVeryfrontHandler(
   });
 
   if (isProxyMode) {
-    logger.debug("[runtime-handler] Running in proxy mode - lazy initialization enabled");
+    log.debug("Running in proxy mode - lazy initialization enabled");
   }
 
   const handler = async (req: Request): Promise<Response> => {

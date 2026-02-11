@@ -11,6 +11,8 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type { TokenStorageAdapter, TokenStorageAdapterConfig } from "./veryfront/types.ts";
 
+const log = logger.component("token-adapter-factory");
+
 export function createTokenStorageAdapter(
   config: TokenStorageAdapterConfig,
 ): Promise<TokenStorageAdapter> {
@@ -19,7 +21,7 @@ export function createTokenStorageAdapter(
   return withSpan(
     "platform.token.createAdapter",
     async () => {
-      logger.debug("[TokenAdapterFactory] Creating adapter", { type });
+      log.debug("Creating adapter", { type });
 
       if (type === "memory") {
         const { MemoryTokenAdapter } = await import("./veryfront/memory-adapter.ts");

@@ -4,12 +4,14 @@ import {
   DEFAULT_RETRY_MAX_ATTEMPTS,
   DEFAULT_RETRY_MAX_DELAY_MS,
 } from "#veryfront/utils/constants/retry.ts";
+const log = serverLogger.component("errors");
+
 function safeLog(logFn: () => void): void {
   try {
     logFn();
   } catch (error) {
     try {
-      serverLogger.warn("[errors] Logging failed:", error);
+      log.warn("Logging failed:", error);
     } catch {
       // Silently ignore if even warning fails
     }

@@ -14,6 +14,8 @@ import {
   removePendingInvalidation,
 } from "./invalidation-state.ts";
 
+const log = logger.component("web-socket-manager");
+
 const INVALIDATION_DEBOUNCE_MS = 100;
 const WS_RECONNECT_DELAY_MS = 5000;
 const WS_HEARTBEAT_INTERVAL_MS = 60000;
@@ -74,7 +76,7 @@ export class WebSocketManager {
       .replace(/\/api$/, "");
     const url = `${wsUrl}/ws/${projectId}/events?token=${this.deps.apiToken}`;
 
-    logger.debug("[WebSocketManager] Connecting to WebSocket", {
+    log.debug("Connecting to WebSocket", {
       url: url.replace(this.deps.apiToken, "***"),
     });
 
@@ -83,7 +85,7 @@ export class WebSocketManager {
       this.wsConnectionId = crypto.randomUUID().slice(0, 8);
 
       this.ws.onopen = () => {
-        logger.debug("[WebSocketManager] WebSocket connected to events channel", {
+        log.debug("WebSocket connected to events channel", {
           projectId,
           connectionId: this.wsConnectionId,
           contentSource: this.deps.getContentSource(),
@@ -95,12 +97,12 @@ export class WebSocketManager {
 
       this.ws.onmessage = (event) => {
         this.wsLastPong = Date.now();
-        logger.info("[WebSocketManager] WebSocket message received:", { data: event.data });
+        log.info("WebSocket message received:", { data: event.data });
         this.handlePokeMessage(event);
       };
 
       this.ws.onclose = () => {
-        logger.debug("[WebSocketManager] WebSocket closed, reconnecting", {
+        log.debug("WebSocket closed, reconnecting", {
           delayMs: WS_RECONNECT_DELAY_MS,
           connectionId: this.wsConnectionId,
           totalPokesReceived: this.pokeMetrics.received,
@@ -111,10 +113,10 @@ export class WebSocketManager {
       };
 
       this.ws.onerror = (error) => {
-        logger.warn("[WebSocketManager] WebSocket error", { error });
+        log.warn("WebSocket error", { error });
       };
     } catch (error) {
-      logger.warn("[WebSocketManager] Failed to connect WebSocket", { error });
+      log.warn("Failed to connect WebSocket", { error });
       this.wsReconnectTimer = setTimeout(() => this.connect(projectId), WS_RECONNECT_DELAY_MS);
     }
   }
@@ -137,7 +139,7 @@ export class WebSocketManager {
     try {
       this.ws.close();
     } catch (error) {
-      logger.warn("[WebSocketManager] Error closing WebSocket", { error });
+      log.warn("Error closing WebSocket", { error });
     } finally {
       this.ws = null;
     }
@@ -174,7 +176,7 @@ export class WebSocketManager {
       const hasBranchScope = !!normalizedBranchName || !!normalizedBranchId;
       const isProductionPoke = !hasBranchScope;
 
-      logger.debug("[WebSocketManager] POKE RECEIVED - checking environment scope", {
+      log.debug("POKE RECEIVED - checking environment scope", {
         type: data.type,
         pokeBranchId: normalizedBranchId,
         pokeBranchName: normalizedBranchName,
@@ -258,7 +260,7 @@ export class WebSocketManager {
           ? pokeEnvironmentName
           : contentContext?.environmentName ?? (isProductionMode ? "production" : undefined);
 
-      logger.info("[WebSocketManager] POKE ACCEPTED - triggering cache invalidation", {
+      log.info("POKE ACCEPTED - triggering cache invalidation", {
         changedPathsCount: changedPaths?.length || 0,
         changedPaths: changedPaths || [],
         projectSlug: this.deps.projectSlug,
@@ -271,7 +273,7 @@ export class WebSocketManager {
 
       this.deps.invalidationCallbacks.clearDomainCache?.();
       this.deps.clearMemoryCaches();
-      logger.debug("[WebSocketManager] All in-memory caches cleared immediately on POKE");
+      log.debug("All in-memory caches cleared immediately on POKE");
 
       if (isPublishPoke && this.deps.projectSlug) {
         this.clearPersistentCacheForPublish(normalizedPokeReleaseId, normalizedPokeEnvironment);
@@ -282,10 +284,10 @@ export class WebSocketManager {
         return;
       }
 
-      logger.debug("[WebSocketManager] No changedPaths provided - using full invalidation");
+      log.debug("No changedPaths provided - using full invalidation");
       this.scheduleInvalidation();
     } catch (error) {
-      logger.debug("[WebSocketManager] WebSocket message parse error", { error });
+      log.debug("WebSocket message parse error", { error });
     }
   }
 
@@ -340,7 +342,7 @@ export class WebSocketManager {
 
     for (const prefix of pendingPrefixes) addPendingInvalidation(prefix);
 
-    logger.info("[WebSocketManager] PUBLISH POKE - clearing persistent cache", {
+    log.info("PUBLISH POKE - clearing persistent cache", {
       projectSlug: this.deps.projectSlug,
       releaseId,
       environmentName,
@@ -356,14 +358,14 @@ export class WebSocketManager {
         );
         const totalDeleted = results.reduce((sum, count) => sum + count, 0);
 
-        logger.info("[WebSocketManager] PUBLISH POKE - persistent cache cleared", {
+        log.info("PUBLISH POKE - persistent cache cleared", {
           projectSlug: this.deps.projectSlug,
           releaseId,
           environmentName,
           totalDeleted,
         });
       } catch (error) {
-        logger.warn("[WebSocketManager] PUBLISH POKE - failed to clear persistent cache", {
+        log.warn("PUBLISH POKE - failed to clear persistent cache", {
           projectSlug: this.deps.projectSlug,
           releaseId,
           environmentName,
@@ -372,7 +374,7 @@ export class WebSocketManager {
       } finally {
         for (const prefix of pendingPrefixes) removePendingInvalidation(prefix);
 
-        logger.debug("[WebSocketManager] PUBLISH POKE - cache invalidation complete", {
+        log.debug("PUBLISH POKE - cache invalidation complete", {
           projectSlug: this.deps.projectSlug,
           pendingInvalidations: getPendingInvalidationsCount(),
         });
@@ -383,7 +385,7 @@ export class WebSocketManager {
   private scheduleInvalidation(): void {
     if (this.invalidationTimer) clearTimeout(this.invalidationTimer);
 
-    logger.debug("[WebSocketManager] Scheduling invalidation", {
+    log.debug("Scheduling invalidation", {
       debounceMs: INVALIDATION_DEBOUNCE_MS,
     });
 
@@ -398,7 +400,7 @@ export class WebSocketManager {
 
     if (this.selectiveInvalidationTimer) clearTimeout(this.selectiveInvalidationTimer);
 
-    logger.debug("[WebSocketManager] Scheduling selective invalidation", {
+    log.debug("Scheduling selective invalidation", {
       newPaths: changedPaths.length,
       totalPending: this.pendingChangedPaths.size,
       debounceMs: INVALIDATION_DEBOUNCE_MS,
@@ -417,7 +419,7 @@ export class WebSocketManager {
 
     const contentContext = this.deps.getContentContext();
 
-    logger.debug("[WebSocketManager] Performing selective invalidation", {
+    log.debug("Performing selective invalidation", {
       changedPaths,
       count: changedPaths.length,
     });
@@ -451,7 +453,7 @@ export class WebSocketManager {
 
     await Promise.all(deletionPromises);
 
-    logger.debug("[WebSocketManager] Cache entries deleted for changed paths", {
+    log.debug("Cache entries deleted for changed paths", {
       changedPaths,
       parentDirs: Array.from(parentDirs),
       prefixes: ["file:", "stat:", "dir:"],
@@ -460,7 +462,7 @@ export class WebSocketManager {
     this.deps.invalidationCallbacks.invalidateModulePaths?.(changedPaths);
 
     const projectId = this.deps.client.getProjectId();
-    logger.debug("[WebSocketManager] Clearing SSR module cache for HMR", {
+    log.debug("Clearing SSR module cache for HMR", {
       changedPaths,
       projectId,
       usePerProject: !!this.deps.invalidationCallbacks.clearSSRModuleCacheForProject,
@@ -488,12 +490,12 @@ export class WebSocketManager {
         await this.deps.setFileListCache(cacheKey, files);
         this.deps.clearFileListIndex();
 
-        logger.debug("[WebSocketManager] Fresh files cached (memory + Redis)", {
+        log.debug("Fresh files cached (memory + Redis)", {
           cacheKey,
           fileCount: files.length,
         });
       } catch (error) {
-        logger.warn("[WebSocketManager] Failed to fetch files during selective invalidation", {
+        log.warn("Failed to fetch files during selective invalidation", {
           error,
         });
       }
@@ -524,7 +526,7 @@ export class WebSocketManager {
 
     this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
 
-    logger.info("[WebSocketManager] Selective invalidation complete - HMR triggered", {
+    log.info("Selective invalidation complete - HMR triggered", {
       changedPaths,
       durationMs: Date.now() - startTime,
       totalInvalidations: this.pokeMetrics.invalidationsTriggered,
@@ -537,7 +539,7 @@ export class WebSocketManager {
     const startTime = Date.now();
     const contentContext = this.deps.getContentContext();
 
-    logger.debug("[WebSocketManager] CACHE INVALIDATION STARTED - clearing all caches");
+    log.debug("CACHE INVALIDATION STARTED - clearing all caches");
 
     const [
       fileBranchCount,
@@ -608,7 +610,7 @@ export class WebSocketManager {
     const totalDirCount = dirBranchCount + dirReleaseCount + dirEnvCount;
     const totalFilesListCount = filesBranchCount + filesReleaseCount + filesEnvCount;
 
-    logger.debug("[WebSocketManager] CACHES CLEARED (memory + Redis)", {
+    log.debug("CACHES CLEARED (memory + Redis)", {
       fileCacheCleared: totalFileCount,
       statCacheCleared: totalStatCount,
       dirCacheCleared: totalDirCount,
@@ -622,18 +624,18 @@ export class WebSocketManager {
         await this.deps.setFileListCache(cacheKey, files);
         this.deps.clearFileListIndex();
 
-        logger.debug("[WebSocketManager] FRESH FILES FETCHED", {
+        log.debug("FRESH FILES FETCHED", {
           cacheKey,
           fileCount: files.length,
         });
       } catch (error) {
-        logger.warn("[WebSocketManager] Failed to fetch files during invalidation", { error });
+        log.warn("Failed to fetch files during invalidation", { error });
       }
     }
 
     this.pokeMetrics.invalidationsTriggered++;
 
-    logger.info("[WebSocketManager] TRIGGERING FULL BROWSER RELOAD via ReloadNotifier", {
+    log.info("TRIGGERING FULL BROWSER RELOAD via ReloadNotifier", {
       projectSlug: this.deps.projectSlug,
       projectId: this.deps.client.getProjectId(),
       hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
@@ -652,7 +654,7 @@ export class WebSocketManager {
 
     this.deps.invalidationCallbacks.triggerReload?.(undefined, projectContext);
 
-    logger.debug("[WebSocketManager] CACHE INVALIDATION COMPLETE", {
+    log.debug("CACHE INVALIDATION COMPLETE", {
       fileCacheCleared: totalFileCount,
       statCacheCleared: totalStatCount,
       dirCacheCleared: totalDirCount,
@@ -669,7 +671,7 @@ export class WebSocketManager {
       const timeSinceLastPong = Date.now() - this.wsLastPong;
       if (timeSinceLastPong <= WS_HEARTBEAT_TIMEOUT_MS) return;
 
-      logger.warn("[WebSocketManager] WebSocket heartbeat timeout, reconnecting", {
+      log.warn("WebSocket heartbeat timeout, reconnecting", {
         timeSinceLastPong,
       });
 
@@ -713,12 +715,12 @@ export class WebSocketManager {
         }),
       );
 
-      logger.debug("[WebSocketManager] Poke acknowledgment sent", {
+      log.debug("Poke acknowledgment sent", {
         type,
         changedPathsCount: changedPaths?.length ?? 0,
       });
     } catch (error) {
-      logger.warn("[WebSocketManager] Failed to send poke acknowledgment", { error });
+      log.warn("Failed to send poke acknowledgment", { error });
     }
   }
 }

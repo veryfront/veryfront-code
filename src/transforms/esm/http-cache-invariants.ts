@@ -16,6 +16,8 @@ import {
 } from "#veryfront/cache/paths.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 
+const log = logger.component("http-cache");
+
 /**
  * Portable cache directory token for cross-environment compatibility.
  * Absolute file:// paths are replaced with this token before storing in Redis.
@@ -54,7 +56,7 @@ export function assertPortable(code: PortableModuleCode): void {
   const codeStr = code as unknown as string;
 
   if (hasHardcodedCachePaths(codeStr)) {
-    logger.error("[HTTP-CACHE] Invariant violation: hardcoded paths in portable code", {
+    log.error("Invariant violation: hardcoded paths in portable code", {
       preview: codeStr.substring(0, 200),
     });
 
@@ -76,7 +78,7 @@ export function assertLocal(code: LocalModuleCode): void {
   const codeStr = code as unknown as string;
 
   if (hasPortableTokens(codeStr)) {
-    logger.error("[HTTP-CACHE] Invariant violation: portable tokens in local code", {
+    log.error("Invariant violation: portable tokens in local code", {
       tokenCount: (codeStr.match(new RegExp(CACHE_DIR_TOKEN, "g")) || []).length,
       preview: codeStr.substring(0, 200),
     });

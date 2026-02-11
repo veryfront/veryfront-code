@@ -5,6 +5,8 @@ import type { ClientComponentMeta, RSCPayload, RSCRendererOptions } from "../typ
 import { treeToHTML } from "./html-generator.ts";
 import { renderTree } from "./tree-processor.ts";
 
+const log = logger.component("rsc");
+
 export class RSCRenderer {
   private clientManifest: Map<string, ClientComponentMeta>;
   private mode: "development" | "production";
@@ -34,7 +36,7 @@ export class RSCRenderer {
             tree: this.mode === "development" ? tree : undefined,
           };
         } catch (error) {
-          logger.error("[RSC] Render error:", error);
+          log.error("Render error:", error);
           throw error;
         }
       },

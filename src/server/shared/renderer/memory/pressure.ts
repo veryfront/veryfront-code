@@ -18,6 +18,9 @@ import { rendererLogger } from "#veryfront/utils";
 import { getHeapStats } from "#veryfront/utils/memory/index.ts";
 import { getEnvNumber, getEnvString } from "#veryfront/compat/process.ts";
 
+const memoryPressureLog = rendererLogger.component("memory-pressure");
+const rendererLog = rendererLogger.component("renderer");
+
 export type MemoryPressureLevel = "normal" | "warning" | "high" | "critical";
 
 function parseEnvThreshold(name: string, fallback: number): number {
@@ -29,7 +32,7 @@ function parseEnvThreshold(name: string, fallback: number): number {
     return parsed;
   }
 
-  rendererLogger.warn(`[MemoryPressure] Invalid ${name}=${value}, using default ${fallback}`);
+  memoryPressureLog.warn(`Invalid ${name}=${value}, using default ${fallback}`);
   return fallback;
 }
 
@@ -53,7 +56,7 @@ export function shouldRejectDueToMemory(): boolean {
   const { level, heapUsedPercent } = getMemoryPressure();
   if (level !== "critical") return false;
 
-  rendererLogger.warn("[Renderer] Rejecting request - memory critical", { heapUsedPercent });
+  rendererLog.warn("Rejecting request - memory critical", { heapUsedPercent });
   return true;
 }
 

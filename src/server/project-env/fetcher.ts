@@ -8,6 +8,8 @@ import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
 
 const logger = getBaseLogger("PROJECT-ENV");
 
+const log = logger.component("project-env");
+
 /** Max env vars per request. API enforces a hard cap of 100. */
 const ENV_VARS_FETCH_LIMIT = 100;
 
@@ -37,7 +39,7 @@ export async function fetchProjectEnvVars(
 
     if (!response.ok) {
       await response.body?.cancel();
-      logger.warn("[project-env] Failed to fetch env vars", {
+      log.warn("Failed to fetch env vars", {
         projectSlug,
         environmentId,
         status: response.status,
@@ -56,7 +58,7 @@ export async function fetchProjectEnvVars(
       }
     }
 
-    logger.debug("[project-env] Fetched env vars", {
+    log.debug("Fetched env vars", {
       projectSlug,
       environmentId,
       count: Object.keys(result).length,
@@ -67,7 +69,7 @@ export async function fetchProjectEnvVars(
     if (error instanceof Error && error.message.startsWith("Failed to fetch env vars")) {
       throw error;
     }
-    logger.error("[project-env] Env var fetch error", {
+    log.error("Env var fetch error", {
       projectSlug,
       environmentId,
       error: error instanceof Error ? error.message : String(error),

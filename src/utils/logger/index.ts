@@ -6,6 +6,9 @@
 
 export {
   __registerRequestContextGetter,
+  __registerTraceContextGetter,
+  __resetLoggerConfigForTests,
+  __resetTraceContextGetterForTests,
   agentLogger,
   bundlerLogger,
   cliLogger,
@@ -48,3 +51,4 @@ export {
   runWithRequestContext,
   runWithRequestContextAsync,
 } from "./request-context.ts";
+export { type LogComponent, LogComponents } from "./components.ts";

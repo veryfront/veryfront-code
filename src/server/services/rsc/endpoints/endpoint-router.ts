@@ -15,6 +15,9 @@ import { getRSCHandler } from "./handler-registry.ts";
 import { handleClientScript, handleDomScript } from "./script-handlers.ts";
 import type { RSCEndpointParams } from "./types.ts";
 
+const rscEndpointRouterLog = serverLogger.component("rsc-endpoint-router");
+const rscLog = serverLogger.component("rsc");
+
 /**
  * Handle RSC endpoints
  * @param params - RSC endpoint parameters
@@ -132,10 +135,10 @@ export async function handleRSCEndpoint(
     try {
       metrics.recordRSC("error");
     } catch (metricsError) {
-      serverLogger.debug("[RSCEndpointRouter] Failed to record metrics", metricsError);
+      rscEndpointRouterLog.debug("Failed to record metrics", metricsError);
     }
 
-    serverLogger.debug("[rsc][dev] endpoint failed", e);
+    rscLog.debug("[dev] endpoint failed", e);
     return new Response("Internal Error", { status: HTTP_SERVER_ERROR });
   }
 }
@@ -186,7 +189,7 @@ async function handleModuleEndpoint({
         },
       });
     } catch (error) {
-      serverLogger.debug("[RSCEndpointRouter] module lookup failed", { modulePath, error });
+      rscEndpointRouterLog.debug("module lookup failed", { modulePath, error });
       return new Response("Internal Error", { status: HTTP_SERVER_ERROR });
     }
   }
@@ -221,7 +224,7 @@ async function handlePayloadEndpoint({
       }
     }
   } catch (error) {
-    serverLogger.debug("[RSCEndpointRouter] failed to read manifest for payload", error);
+    rscEndpointRouterLog.debug("failed to read manifest for payload", error);
   }
 
   if (modules.length === 0) {

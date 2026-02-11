@@ -8,6 +8,8 @@ import { type EnvReader, OAuthService } from "../providers/base.ts";
 import type { AuthorizationUrlOptions, OAuthServiceConfig, TokenStore } from "../types.ts";
 import { memoryTokenStore } from "../token-store/memory.ts";
 
+const log = logger.component("o-auth");
+
 export interface OAuthInitHandlerOptions {
   /** Token store to use (defaults to memory store) */
   tokenStore?: TokenStore;
@@ -55,7 +57,7 @@ export function createOAuthInitHandler(
       await tokenStore.setState(state);
       return Response.redirect(url);
     } catch (error) {
-      logger.error("[OAuth] Init error", { serviceId: config.serviceId }, error);
+      log.error("Init error", { serviceId: config.serviceId }, error);
 
       return Response.json(
         {

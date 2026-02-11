@@ -12,6 +12,8 @@ import { collectAppRoutes, collectPagesRoutes } from "#veryfront/server/build-ro
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
 
+const log = logger.component("build");
+
 export interface CollectedRoutes {
   pages: RouteInfo[];
   app: AppRouteInfo[];
@@ -25,7 +27,7 @@ export async function collectAllRoutes(
   exclude?: string[],
 ): Promise<CollectedRoutes> {
   if (!ssg) {
-    logger.info("[BUILD] SSG disabled, skipping route collection");
+    log.info("SSG disabled, skipping route collection");
     return { pages: [], app: [] };
   }
 
@@ -34,13 +36,13 @@ export async function collectAllRoutes(
     collectAppRoutes(adapter, projectDir, include, exclude),
   ]);
 
-  logger.info(`[BUILD] Collected routes: ${pages.length} pages, ${app.length} app`);
+  log.info(`Collected routes: ${pages.length} pages, ${app.length} app`);
 
   if (app.length === 0) {
     return { pages, app };
   }
 
-  logger.info(`[BUILD] App routes: ${app.map((r) => r.path).join(", ")}`);
+  log.info(`App routes: ${app.map((r) => r.path).join(", ")}`);
 
   return { pages, app };
 }

@@ -9,6 +9,8 @@ import {
 } from "@opentelemetry/api";
 import type { ErrorAttributes, HttpAttributes } from "./types.ts";
 
+const log = logger.component("auto-instrument");
+
 const tracer = trace.getTracer("veryfront-http");
 
 const headersGetter = {
@@ -24,7 +26,7 @@ function extractParentContext(headers: Headers) {
   try {
     return propagation.extract(otContext.active(), headers, headersGetter);
   } catch (error) {
-    logger.debug("[auto-instrument] Failed to extract parent context", error);
+    log.debug("Failed to extract parent context", error);
     return otContext.active();
   }
 }
@@ -117,7 +119,7 @@ export function createInstrumentedFetch(
         },
       );
     } catch (error) {
-      logger.debug("[auto-instrument] Fetch span failed, falling back to base fetch", error);
+      log.debug("Fetch span failed, falling back to base fetch", error);
       return await baseFetch(input, init);
     }
   };

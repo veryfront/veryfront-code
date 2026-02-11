@@ -2,6 +2,8 @@ import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import type { RateLimitEntry, RateLimitStore } from "./types.ts";
 
+const log = logger.component("redis-ratelimit");
+
 interface RedisClient {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
@@ -56,7 +58,7 @@ export class RedisRateLimitStore implements RateLimitStore {
       const client = createClient({ url: this.url });
 
       client.on?.("error", (err: unknown) => {
-        logger.error("[redis-ratelimit] client error", err);
+        log.error("client error", err);
       });
 
       await client.connect();

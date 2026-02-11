@@ -83,19 +83,19 @@ export class APIRouteHandler {
         const adapter = await this.ensureAdapter();
         await this.ensureConfig(adapter);
 
-        logger.debug("[API] Initializing route handler", { projectDir: this.projectDir });
+        log.debug("Initializing route handler", { projectDir: this.projectDir });
 
         const pagesDir = this.config?.directories?.pages ?? "pages";
         const apiDir = join(this.projectDir, pagesDir, "api");
         const apiDirExists = await adapter.fs.exists(apiDir);
 
-        logger.debug("[API] Checking API directory", { apiDir, exists: apiDirExists });
+        log.debug("Checking API directory", { apiDir, exists: apiDirExists });
 
         if (apiDirExists) {
           const deps = getDeps();
           await deps.discoverPagesRoutes(this.router, apiDir, "/api", adapter);
           const discoveredRoutes = this.router.listRoutes();
-          logger.debug("[API] Discovered Pages API routes", {
+          log.debug("Discovered Pages API routes", {
             count: discoveredRoutes.length,
             routes: discoveredRoutes.map((r) => ({ pattern: r.pattern, page: r.page })),
           });
@@ -105,20 +105,20 @@ export class APIRouteHandler {
         const appDir = join(this.projectDir, appDirName);
         const appDirExists = await adapter.fs.exists(appDir);
 
-        logger.debug("[API] Checking App directory", { appDir, exists: appDirExists });
+        log.debug("Checking App directory", { appDir, exists: appDirExists });
 
         if (appDirExists) {
           const deps = getDeps();
           await deps.discoverAppRoutes(this.router, appDir, "", adapter);
           const allRoutes = this.router.listRoutes();
-          logger.debug("[API] All discovered routes after App Router", {
+          log.debug("All discovered routes after App Router", {
             count: allRoutes.length,
             routes: allRoutes.map((r) => ({ pattern: r.pattern, page: r.page })),
           });
         }
 
         await this.ensureCorsConfig(adapter);
-        logger.debug("[API] Route handler initialized");
+        log.debug("Route handler initialized");
       },
       { "api.projectDir": this.projectDir },
     );
@@ -132,7 +132,7 @@ export class APIRouteHandler {
       async () => {
         const adapter = await this.ensureAdapter();
 
-        logger.debug("[API] Handling request", {
+        log.debug("Handling request", {
           pathname,
           method: request.method,
           registeredRouteCount: this.router.listRoutes().length,
@@ -149,7 +149,7 @@ export class APIRouteHandler {
 
         const match = this.router.match(pathname);
         if (!match) {
-          logger.debug("[API] No route match", {
+          log.debug("No route match", {
             pathname,
             isApiPath: pathname.startsWith("/api/"),
             availableRoutes: this.router.listRoutes().map((r) => r.pattern),
@@ -159,7 +159,7 @@ export class APIRouteHandler {
           return null;
         }
 
-        logger.debug("[API] Route matched", {
+        log.debug("Route matched", {
           pathname,
           pattern: match.route.pattern,
           page: match.route.page,
@@ -169,7 +169,7 @@ export class APIRouteHandler {
         const handler = await this.loadHandler(match);
         if (!handler) {
           try {
-            logger.error(`[API] handler module failed to load: ${match.route.page}`);
+            log.error(`handler module failed to load: ${match.route.page}`);
           } catch (e) {
             logger.warn("API error log failed", e);
           }
@@ -321,3 +321,5 @@ export {
   redirectResponse as redirect,
   unauthorized,
 } from "#veryfront/http/responses";
+
+const log = logger.component("api");

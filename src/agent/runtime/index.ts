@@ -56,6 +56,8 @@ import { getAvailableTools, isDynamicTool, parseToolArgs } from "./tool-helpers.
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 import { createStreamState, processStreamData } from "./stream-handler.ts";
 
+const log = logger.component("agent");
+
 export class AgentRuntime {
   private id: string;
   private config: AgentConfig;
@@ -365,7 +367,7 @@ export class AgentRuntime {
       for (const tc of state.toolCalls.values()) {
         const { args, error } = parseToolArgs(tc.arguments);
         if (error) {
-          logger.warn("[AGENT] Failed to parse streamed tool arguments", {
+          log.warn("Failed to parse streamed tool arguments", {
             toolCallId: tc.id,
             error,
           });
@@ -399,7 +401,7 @@ export class AgentRuntime {
         const toolCall: ToolCall = { id: tc.id, name: tc.name, args, status: "pending" };
 
         if (argError) {
-          logger.warn("[AGENT] Invalid streamed tool arguments", {
+          log.warn("Invalid streamed tool arguments", {
             toolCallId: tc.id,
             error: argError,
           });

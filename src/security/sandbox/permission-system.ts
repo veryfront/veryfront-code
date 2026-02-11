@@ -2,6 +2,8 @@ import { serverLogger } from "#veryfront/utils";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
+const log = serverLogger.component("permissions");
+
 export type Permission = "net" | "fs" | "env" | "run" | "read" | "write";
 
 export interface PermissionRequest {
@@ -64,7 +66,7 @@ function requestDenoPermission(
 
       const descriptor = createPermissionDescriptor(request);
       if (!descriptor) {
-        serverLogger.warn("[permissions] Unsupported permission request", request);
+        log.warn("Unsupported permission request", request);
         return { state: "denied" };
       }
 
@@ -91,7 +93,7 @@ export function requestPermission(
         );
         return { state: "granted" };
       } catch (error) {
-        serverLogger.warn("[permissions] Permission request failed", {
+        log.warn("Permission request failed", {
           permission: request.name,
           error,
         });

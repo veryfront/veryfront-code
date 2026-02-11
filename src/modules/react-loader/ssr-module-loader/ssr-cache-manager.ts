@@ -24,6 +24,8 @@ import {
 import { buildTempModulePath, buildTmpDirPath, getTmpDirCacheKey } from "./tmp-paths.ts";
 import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
 
+const log = logger.component("ssr-module-loader");
+
 const UNRESOLVED_VF_MODULE_IMPORT_PATTERN =
   /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/;
 
@@ -214,7 +216,7 @@ export class SSRCacheManager {
     const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
     if (failed.length === 0) return false;
 
-    logger.warn("[SSR-MODULE-LOADER] Unrecoverable HTTP bundles, re-transforming", {
+    log.warn("Unrecoverable HTTP bundles, re-transforming", {
       file: filePath.slice(-40),
       failed,
       totalBundles: bundlePaths.length,
@@ -233,7 +235,7 @@ export class SSRCacheManager {
           return true;
         }
       } catch {
-        logger.debug("[SSR-MODULE-LOADER] Redis cache has invalid local path, re-transforming", {
+        log.debug("Redis cache has invalid local path, re-transforming", {
           file: filePath.slice(-40),
           missingPath: path.slice(-60),
         });

@@ -1,6 +1,8 @@
 import { logger } from "#veryfront/utils";
 import { init, parse } from "es-module-lexer";
 
+const log = logger.component("es-module-lexer");
+
 let initPromise: Promise<void> | null = null;
 
 // Matches HTTP/HTTPS URLs in string literals (single, double, or backtick quotes)
@@ -81,7 +83,7 @@ function logParseError(error: unknown, code: string): void {
     })
     .join("\n");
 
-  logger.error("[es-module-lexer] Parse error", { line, col, context });
+  log.error("Parse error", { line, col, context });
 }
 
 export async function parseImports(code: string): Promise<readonly ImportSpecifier[]> {

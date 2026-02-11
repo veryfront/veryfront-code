@@ -9,6 +9,8 @@ import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "#veryfront/utils/
 import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 import type { MDXModule } from "./types.ts";
 
+const log = logger.component("mdx");
+
 const mdxModuleCache = new LRUCache<string, MDXModule>({
   maxEntries: MDX_RENDERER_MAX_ENTRIES,
   ttlMs: MDX_RENDERER_TTL_MS,
@@ -98,7 +100,7 @@ async function loadViaTempFile(
     });
   } finally {
     cleanupTempModule(tempModulePath).catch((error) =>
-      logger.debug("[MDX] Failed to cleanup temp module:", error)
+      log.debug("Failed to cleanup temp module:", error)
     );
   }
 }
@@ -161,7 +163,7 @@ async function ensureTempDir(): Promise<string> {
     await adapter.fs.mkdir(tempDir, { recursive: true });
     return tempDir;
   } catch (error) {
-    logger.warn("[MDX] Failed to create temp directory, using system temp:", error);
+    log.warn("Failed to create temp directory, using system temp:", error);
     const os = await import("node:os");
     const path = await import("node:path");
     const systemTempDir = path.join(os.tmpdir(), `veryfront-mdx-${Date.now()}`);

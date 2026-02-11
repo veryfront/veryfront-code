@@ -32,6 +32,8 @@ export type { RedisBackendConfig } from "./types.ts";
 
 import type { RedisBackendConfig, RedisBackendInternalConfig } from "./types.ts";
 
+const log = logger.component("redis-backend");
+
 export class RedisBackend implements WorkflowBackend {
   private client: RedisAdapter | null = null;
   private connectionPromise: Promise<RedisAdapter> | null = null;
@@ -217,12 +219,12 @@ export class RedisBackend implements WorkflowBackend {
     try {
       await client.xgroupCreate(this.config.streamKey, this.config.groupName, "0", true);
       if (this.config.debug) {
-        logger.debug(`[RedisBackend] Created consumer group: ${this.config.groupName}`);
+        log.debug(`Created consumer group: ${this.config.groupName}`);
       }
     } catch (e) {
       const msg = String(e instanceof Error ? e.message : e);
       if (!msg.includes("BUSYGROUP")) {
-        logger.error("[RedisBackend] Error creating consumer group:", e);
+        log.error("Error creating consumer group:", e);
       }
     }
 

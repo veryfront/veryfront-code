@@ -12,6 +12,8 @@ import {
 } from "#veryfront/cache/backend.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
+const log = logger.component("snippet-renderer");
+
 const SNIPPET_CACHE_MAX_ENTRIES = 500;
 const SNIPPET_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const SNIPPET_DISTRIBUTED_CACHE_TTL_SECONDS = 600; // 10 minutes for distributed cache
@@ -64,7 +66,7 @@ function getDistributedSnippetCache(): Promise<CacheBackend> {
   distributedCacheInitPromise = createCacheBackend({ keyPrefix: "snippet" })
     .then((backend) => {
       distributedSnippetCache = backend;
-      logger.debug("[SnippetRenderer] Distributed cache initialized", {
+      log.debug("Distributed cache initialized", {
         type: backend.type,
       });
       return backend;
@@ -98,12 +100,12 @@ export async function getCompiledSnippetAsync(
 
     const entry = JSON.parse(cached) as SnippetCacheEntry;
     snippetCache.set(hash, entry);
-    logger.debug("[SnippetRenderer] Snippet cache hit from distributed cache", {
+    log.debug("Snippet cache hit from distributed cache", {
       hash,
     });
     return entry.code;
   } catch (error) {
-    logger.debug("[SnippetRenderer] Failed to read from distributed cache", {
+    log.debug("Failed to read from distributed cache", {
       hash,
       error,
     });
@@ -119,7 +121,7 @@ export function clearSnippetCache(): void {
   const keysToDelete = [...snippetCache.keys()];
   const entriesCleared = keysToDelete.length;
   snippetCache.clear();
-  logger.debug("[SnippetRenderer] ✓ Global snippet cache cleared", { entriesCleared });
+  log.debug("✓ Global snippet cache cleared", { entriesCleared });
 
   if (keysToDelete.length === 0) return;
 
@@ -143,7 +145,7 @@ export function clearSnippetCacheForProject(projectSlug: string): void {
     snippetCache.delete(key);
   }
 
-  logger.debug("[SnippetRenderer] ✓ Snippet cache cleared for project", {
+  log.debug("✓ Snippet cache cleared for project", {
     projectSlug,
     entriesCleared: keysToDelete.length,
   });
@@ -184,7 +186,7 @@ export function renderSnippet(
   return withSpan(
     "rendering.renderSnippet",
     async () => {
-      logger.debug("[SnippetRenderer] Starting render", {
+      log.debug("Starting render", {
         contentLength: mdxContent.length,
         filePath: options.filePath,
       });
@@ -202,7 +204,7 @@ export function renderSnippet(
           options.filePath,
         );
 
-        logger.debug("[SnippetRenderer] MDX compiled", {
+        log.debug("MDX compiled", {
           codeLength: bundle.compiledCode.length,
           hasFrontmatter: !!bundle.frontmatter,
         });
@@ -236,7 +238,7 @@ export function renderSnippet(
             // Ignore - local cache is sufficient
           });
 
-        logger.debug("[SnippetRenderer] Snippet cached", {
+        log.debug("Snippet cached", {
           hash,
           projectSlug: options.projectSlug,
           codePreview: bundle.compiledCode.substring(0, 300),
@@ -247,7 +249,7 @@ export function renderSnippet(
         const snippetUrl =
           `${moduleServerBase}/_vf_modules/_snippets/${hash}.js?ssr=true&v=${cacheBuster}`;
 
-        logger.debug("[SnippetRenderer] Loading snippet module", {
+        log.debug("Loading snippet module", {
           snippetUrl,
           moduleServerBase,
           providedUrl: options.moduleServerUrl,
@@ -265,7 +267,7 @@ export function renderSnippet(
         const element = React.createElement(MDXContent, { frontmatter });
         const bodyHtml = renderToString(element);
 
-        logger.debug("[SnippetRenderer] SSR complete", {
+        log.debug("SSR complete", {
           bodyHtmlLength: bodyHtml.length,
         });
 
@@ -297,7 +299,7 @@ export function renderSnippet(
 
         return { html, frontmatter };
       } catch (error) {
-        logger.error("[SnippetRenderer] Render failed", {
+        log.error("Render failed", {
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
         });

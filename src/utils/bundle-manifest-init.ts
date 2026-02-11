@@ -20,6 +20,8 @@ import {
 } from "./bundle-manifest.ts";
 import { BUNDLE_MANIFEST_DEV_TTL_MS, BUNDLE_MANIFEST_PROD_TTL_MS } from "./constants/cache.ts";
 
+const log = logger.component("bundle-manifest");
+
 export async function initializeBundleManifest(
   config: BundleManifestConfig,
   mode: "development" | "production",
@@ -29,7 +31,7 @@ export async function initializeBundleManifest(
   const enabled = manifestConfig?.enabled ?? mode === "production";
 
   if (!enabled) {
-    logger.info("[bundle-manifest] Bundle manifest disabled");
+    log.info("Bundle manifest disabled");
     setBundleManifestStore(new InMemoryBundleManifestStore());
     return;
   }
@@ -37,7 +39,7 @@ export async function initializeBundleManifest(
   const storeType = manifestConfig?.type ?? adapter?.env.get("VERYFRONT_BUNDLE_MANIFEST_TYPE") ??
     "memory";
 
-  logger.info("[bundle-manifest] Initializing bundle manifest", { type: storeType, mode });
+  log.info("Initializing bundle manifest", { type: storeType, mode });
 
   try {
     const store = await createStore(storeType, config.cache, adapter);
@@ -45,12 +47,12 @@ export async function initializeBundleManifest(
 
     try {
       const stats = await store.getStats();
-      logger.info("[bundle-manifest] Store statistics", stats);
+      log.info("Store statistics", stats);
     } catch (error) {
-      logger.debug("[bundle-manifest] Failed to get stats", { error });
+      log.debug("Failed to get stats", { error });
     }
   } catch (error) {
-    logger.error("[bundle-manifest] Failed to initialize store, using in-memory fallback", {
+    log.error("Failed to initialize store, using in-memory fallback", {
       error,
     });
     setBundleManifestStore(new InMemoryBundleManifestStore());
@@ -78,11 +80,11 @@ async function createStore(
     );
 
     if (!(await store.isAvailable())) {
-      logger.warn("[bundle-manifest] Redis not available, falling back to in-memory");
+      log.warn("Redis not available, falling back to in-memory");
       return new InMemoryBundleManifestStore();
     }
 
-    logger.info("[bundle-manifest] Redis store initialized");
+    log.info("Redis store initialized");
     return store;
   }
 
@@ -93,15 +95,15 @@ async function createStore(
     });
 
     if (!(await store.isAvailable())) {
-      logger.warn("[bundle-manifest] KV not available, falling back to in-memory");
+      log.warn("KV not available, falling back to in-memory");
       return new InMemoryBundleManifestStore();
     }
 
-    logger.info("[bundle-manifest] KV store initialized");
+    log.info("KV store initialized");
     return store;
   }
 
-  logger.info("[bundle-manifest] In-memory store initialized");
+  log.info("In-memory store initialized");
   return new InMemoryBundleManifestStore();
 }
 
@@ -120,7 +122,7 @@ export async function warmupBundleManifest(
   store: BundleManifestStore,
   keys: string[],
 ): Promise<void> {
-  logger.info("[bundle-manifest] Warming up cache", { keys: keys.length });
+  log.info("Warming up cache", { keys: keys.length });
 
   let loaded = 0;
   let failed = 0;
@@ -133,10 +135,10 @@ export async function warmupBundleManifest(
       await store.getBundleCode(metadata.codeHash);
       loaded++;
     } catch (error) {
-      logger.debug("[bundle-manifest] Failed to warm up key", { key, error });
+      log.debug("Failed to warm up key", { key, error });
       failed++;
     }
   }
 
-  logger.info("[bundle-manifest] Cache warmup complete", { loaded, failed });
+  log.info("Cache warmup complete", { loaded, failed });
 }

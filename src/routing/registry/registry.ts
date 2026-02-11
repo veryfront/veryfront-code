@@ -3,6 +3,8 @@ import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-boundary.ts";
 
+const log = serverLogger.component("route-registry");
+
 export class RouteRegistry {
   private handlers: Handler[] = [];
   private config: RouteRegistryConfig;
@@ -44,7 +46,7 @@ export class RouteRegistry {
         const startTime = Date.now();
 
         if (this.config.debug) {
-          serverLogger.debug(`[RouteRegistry] Processing ${req.method} ${url.pathname}`);
+          log.debug(`Processing ${req.method} ${url.pathname}`);
         }
 
         for (const handler of this.handlers) {

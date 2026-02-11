@@ -22,6 +22,8 @@ import { extract } from "#std/front-matter/yaml.ts";
 import { RouterProvider } from "veryfront/router";
 import { PageContextProvider } from "veryfront/context";
 
+const log = logger.component("layout-applicator");
+
 export interface LayoutApplicationOptions {
   projectDir: string;
   projectId: string;
@@ -115,7 +117,7 @@ export class LayoutApplicator {
           mdxHeadings: headingsArray,
         };
 
-        logger.debug("[LayoutApplicator] PageContext", {
+        log.debug("PageContext", {
           frontmatterKeys: Object.keys(pageContext.frontmatter),
           headingsCount: headingsArray.length,
         });
@@ -310,7 +312,7 @@ export class LayoutApplicator {
         },
       );
     } catch (error) {
-      logger.error("[LayoutApplicator] Failed to compile MDX app component:", error);
+      log.error("Failed to compile MDX app component:", error);
       return null;
     }
   }

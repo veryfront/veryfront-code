@@ -8,6 +8,8 @@ import { buildErrorPageCacheKey } from "#veryfront/cache";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { generateErrorHtml } from "../../../utils/error-html.ts";
 
+const log = logger.component("error-page-fallback");
+
 type ErrorPageType = "404" | "500" | "_error";
 
 interface ErrorPageOptions {
@@ -56,7 +58,7 @@ export async function tryErrorPageFallback(
     if (specificPage) {
       const ErrorComponent = await tryLoadErrorPage(pagesDir, specificPage, ctx);
       if (ErrorComponent) {
-        logger.debug(`[ErrorPageFallback] Found pages/${specificPage}.tsx`);
+        log.debug(`Found pages/${specificPage}.tsx`);
         return renderErrorPage(
           req,
           ctx,
@@ -72,7 +74,7 @@ export async function tryErrorPageFallback(
     const GenericErrorComponent = await tryLoadErrorPage(pagesDir, "_error", ctx);
     if (!GenericErrorComponent) return null;
 
-    logger.debug("[ErrorPageFallback] Found pages/_error.tsx");
+    log.debug("Found pages/_error.tsx");
     return renderErrorPage(
       req,
       ctx,
@@ -83,7 +85,7 @@ export async function tryErrorPageFallback(
       pathname,
     );
   } catch (e) {
-    logger.debug("[ErrorPageFallback] Failed to load error page", { error: e });
+    log.debug("Failed to load error page", { error: e });
     return null;
   }
 }
@@ -255,7 +257,7 @@ async function renderErrorPage(
       .withCache("no-cache")
       .html(html, statusCode);
   } catch (renderError) {
-    logger.debug("[ErrorPageFallback] Failed to render error component", {
+    log.debug("Failed to render error component", {
       error: renderError,
     });
 

@@ -8,6 +8,8 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import { unrefTimer } from "#veryfront/compat/process.ts";
 
+const log = logger.component("request-tracker");
+
 export interface TrackedRequest {
   requestId: string;
   projectSlug: string | undefined;
@@ -54,7 +56,7 @@ class RequestTracker {
         }))
         .sort((a, b) => b.elapsedMs - a.elapsedMs);
 
-      logger.info("[RequestTracker] In-flight requests status", {
+      log.info("In-flight requests status", {
         inFlightCount: this.inFlight.size,
         totalRequests: this.totalRequests,
         totalCompleted: this.totalCompleted,
@@ -90,7 +92,7 @@ class RequestTracker {
 
     tracked.slowTimer = setTimeout(() => {
       const elapsedMs = Math.round(performance.now() - startTime);
-      logger.warn("[RequestTracker] Slow request detected", {
+      log.warn("Slow request detected", {
         requestId,
         projectSlug,
         path,
@@ -101,7 +103,7 @@ class RequestTracker {
 
       tracked.slowTimer = setTimeout(() => {
         const verySlowElapsedMs = Math.round(performance.now() - startTime);
-        logger.error("[RequestTracker] Very slow request - likely stuck", {
+        log.error("Very slow request - likely stuck", {
           requestId,
           projectSlug,
           path,
@@ -116,7 +118,7 @@ class RequestTracker {
 
     this.inFlight.set(requestId, tracked);
 
-    logger.debug("[RequestTracker] Request started", {
+    log.debug("Request started", {
       requestId,
       projectSlug,
       path,
@@ -180,11 +182,11 @@ class RequestTracker {
     const startTime = Date.now();
 
     if (this.inFlight.size === 0) {
-      logger.info("[RequestTracker] No in-flight requests, drain complete");
+      log.info("No in-flight requests, drain complete");
       return true;
     }
 
-    logger.info("[RequestTracker] Waiting for in-flight requests to drain", {
+    log.info("Waiting for in-flight requests to drain", {
       inFlightCount: this.inFlight.size,
       timeoutMs,
     });
@@ -214,7 +216,7 @@ class RequestTracker {
       }
 
       if (elapsedMs > 0 && elapsedMs % 5000 < pollIntervalMs) {
-        logger.info("[RequestTracker] Drain progress", {
+        log.info("Drain progress", {
           inFlightCount: this.inFlight.size,
           elapsedMs,
           remainingMs: timeoutMs - elapsedMs,
@@ -224,7 +226,7 @@ class RequestTracker {
       await new Promise<void>((resolve) => setTimeout(resolve, pollIntervalMs));
     }
 
-    logger.info("[RequestTracker] All requests drained successfully", {
+    log.info("All requests drained successfully", {
       drainTimeMs: Date.now() - startTime,
     });
     return true;

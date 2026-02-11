@@ -11,7 +11,7 @@ export { detectRuntime } from "./runtime-detection.ts";
 export { runtime } from "./registry.ts";
 
 function throwConfigError(message: string): never {
-  logger.error("[Adapter Detection]", message);
+  log.error("", message);
   throw toError(createError({ type: "config", message }));
 }
 
@@ -83,3 +83,5 @@ export type {
   RuntimeCapabilities,
   RuntimeId,
 } from "./base.ts";
+
+const log = logger.component("adapter-detection");

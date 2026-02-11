@@ -14,6 +14,8 @@ import type {
 } from "../types.ts";
 import { buildEsmShUrl, TAILWIND_VERSION } from "../url-builder.ts";
 
+const log = logger.component("esm");
+
 const unversionedImportsWarned = new Set<string>();
 
 function hasVersionSpecifier(specifier: string): boolean {
@@ -34,7 +36,7 @@ function warnUnversionedImport(specifier: string, projectId: string): void {
   const parts = specifier.split("/");
   const packageName = isScoped ? parts.slice(0, 2).join("/") : (parts[0] ?? "");
 
-  logger.warn("[ESM] Unversioned import may cause reproducibility issues", {
+  log.warn("Unversioned import may cause reproducibility issues", {
     import: specifier,
     projectId,
     suggestion: `Pin version: import '${packageName}@x.y.z'`,

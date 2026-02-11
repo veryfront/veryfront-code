@@ -80,7 +80,7 @@ async function validateFrameworkBundles(
   // If they're still present, the cache is stale from a failed transform.
   if (UNRESOLVED_VF_MODULES_PATTERN.test(code)) {
     const match = code.match(UNRESOLVED_VF_MODULES_PATTERN);
-    logger.warn("[PIPELINE] Cache contains unresolved _vf_modules import, invalidating", {
+    log.warn("Cache contains unresolved _vf_modules import, invalidating", {
       cacheKey: cacheKey.slice(-40),
       unresolvedImport: match?.[1]?.slice(0, 60),
     });
@@ -103,7 +103,7 @@ async function validateFrameworkBundles(
 
   if (missing.length === 0) return true;
 
-  logger.debug("[PIPELINE] Framework bundle validation failed", {
+  log.debug("Framework bundle validation failed", {
     cacheKey: cacheKey.slice(-40),
     failedCount: missing.length,
     totalBundles: bundlePaths.length,
@@ -129,7 +129,7 @@ async function validateCachedBundles(
     const validation = await validateBundleGroup(bundleManifestId, cacheDir);
     if (validation.valid) return true;
 
-    logger.debug("[PIPELINE] Bundle manifest validation failed", {
+    log.debug("Bundle manifest validation failed", {
       cacheKey: cacheKey.slice(-40),
       manifestId: bundleManifestId.slice(0, 12),
       failedCount: validation.failedHashes.length,
@@ -144,7 +144,7 @@ async function validateCachedBundles(
   const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
   if (failed.length === 0) return true;
 
-  logger.debug("[PIPELINE] HTTP bundle validation failed", {
+  log.debug("HTTP bundle validation failed", {
     cacheKey: cacheKey.slice(-40),
     failedCount: failed.length,
     totalBundles: bundlePaths.length,
@@ -204,12 +204,12 @@ export function runPipeline(
           );
 
           if (!httpBundlesValid) {
-            logger.debug("[PIPELINE] Cache invalidated due to missing HTTP bundles", {
+            log.debug("Cache invalidated due to missing HTTP bundles", {
               file: filePath.slice(-60),
             });
             // Fall through to re-run the pipeline
           } else if (!frameworkBundlesValid) {
-            logger.debug("[PIPELINE] Cache invalidated due to missing framework bundles", {
+            log.debug("Cache invalidated due to missing framework bundles", {
               file: filePath.slice(-60),
             });
             // Fall through to re-run the pipeline
@@ -266,14 +266,14 @@ export function runPipeline(
       setCachedTransformAsync(cacheKey, ctx.code, ctx.contentHash, undefined, bundleManifestId)
         .catch(
           (error) => {
-            logger.debug("[PIPELINE] Failed to cache transform", { error });
+            log.debug("Failed to cache transform", { error });
           },
         );
 
       const totalMs = performance.now() - transformStart;
 
       if (ctx.debug) {
-        logger.debug("[PIPELINE] Transform complete", formatTimingLog(ctx));
+        log.debug("Transform complete", formatTimingLog(ctx));
       }
 
       return {
@@ -302,7 +302,7 @@ async function computeDepsHashSafe(
   try {
     return await computeDepsHash(filePath, readFile, projectDir);
   } catch (err) {
-    logger.debug("[PIPELINE] depsHash computation failed, skipping", {
+    log.debug("depsHash computation failed, skipping", {
       file: filePath.slice(-60),
       error: err instanceof Error ? err.message : String(err),
     });
@@ -382,3 +382,5 @@ export {
   isSSR,
   isTypeScript,
 } from "./context.ts";
+
+const log = logger.component("pipeline");

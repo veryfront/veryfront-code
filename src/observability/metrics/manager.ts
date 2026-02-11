@@ -12,6 +12,8 @@ import { MetricsRecorder } from "./recorder.ts";
 import type { MetricsConfig, MetricsInstruments, OpenTelemetryAPI, RuntimeState } from "./types.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 
+const log = logger.component("metrics");
+
 /**
  * Metrics manager class
  * Exported for testing - use metricsManager singleton for production
@@ -63,7 +65,7 @@ export class MetricsManager {
 
   async initialize(config: Partial<MetricsConfig> = {}, adapter?: RuntimeAdapter): Promise<void> {
     if (this.initialized) {
-      logger.debug("[metrics] Already initialized");
+      log.debug("Already initialized");
       return;
     }
 
@@ -72,7 +74,7 @@ export class MetricsManager {
     this.initialized = true;
 
     if (!finalConfig.enabled) {
-      logger.debug("[metrics] Metrics collection disabled");
+      log.debug("Metrics collection disabled");
       return;
     }
 
@@ -83,13 +85,13 @@ export class MetricsManager {
       this.instruments = await initializeInstruments(this.meter, finalConfig, this.runtimeState);
       this.recorder.instruments = this.instruments;
 
-      logger.info("[metrics] OpenTelemetry metrics initialized", {
+      log.info("OpenTelemetry metrics initialized", {
         exporter: finalConfig.exporter,
         endpoint: finalConfig.endpoint,
         prefix: finalConfig.prefix,
       });
     } catch (error) {
-      logger.warn("[metrics] Failed to initialize OpenTelemetry metrics", error);
+      log.warn("Failed to initialize OpenTelemetry metrics", error);
     }
   }
 
@@ -113,9 +115,9 @@ export class MetricsManager {
     if (!this.initialized) return;
 
     try {
-      logger.info("[metrics] Metrics shutdown initiated");
+      log.info("Metrics shutdown initiated");
     } catch (error) {
-      logger.warn("[metrics] Error during metrics shutdown", error);
+      log.warn("Error during metrics shutdown", error);
     }
   }
 }

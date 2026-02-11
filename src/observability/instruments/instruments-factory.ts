@@ -10,6 +10,8 @@ import { createMemoryInstruments } from "./memory-instruments.ts";
 import { createRenderInstruments } from "./render-instruments.ts";
 import { createRscInstruments } from "./rsc-instruments.ts";
 
+const log = logger.component("metrics");
+
 export function initializeInstruments(
   meter: Meter,
   config: MetricsConfig,
@@ -62,7 +64,7 @@ export function initializeInstruments(
       ...createErrorInstruments(meter, config),
     });
   } catch (error) {
-    logger.warn("[metrics] Failed to initialize metric instruments", error);
+    log.warn("Failed to initialize metric instruments", error);
   }
 
   return Promise.resolve(instruments);

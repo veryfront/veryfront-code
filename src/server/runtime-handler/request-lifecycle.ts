@@ -20,6 +20,7 @@ import {
   startRequestMetrics,
 } from "#veryfront/platform/adapters/fs/veryfront/read-operations.ts";
 import { requestTracker } from "./request-tracker.ts";
+import { generateRequestId } from "#veryfront/utils/request-id.ts";
 
 export interface RequestLifecycleContext {
   /** Request ID for tracking */
@@ -41,15 +42,14 @@ export function startRequestLifecycle(
   _pathname: string,
   isLightweight: boolean,
 ): RequestLifecycleContext {
+  const incomingId = req.headers.get("x-request-id");
   const perfEnabled = isPerfEnabled();
-  const perfRequestId = perfEnabled
-    ? (req.headers.get("x-request-id") ?? crypto.randomUUID())
-    : undefined;
+  const perfRequestId = perfEnabled ? generateRequestId(incomingId) : undefined;
 
   if (perfRequestId) startRequest(perfRequestId);
   const stopTotal = startTimer("total");
 
-  const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
+  const requestId = generateRequestId(incomingId);
   const shouldCheckIsolation = !isLightweight;
 
   return {

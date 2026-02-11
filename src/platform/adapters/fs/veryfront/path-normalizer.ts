@@ -1,5 +1,7 @@
 import { logger } from "#veryfront/utils";
 
+const log = logger.component("path-normalizer");
+
 export class PathNormalizer {
   constructor(private readonly projectDir?: string) {}
 
@@ -22,11 +24,11 @@ export class PathNormalizer {
     if (normalized.startsWith("@/")) {
       const original = normalized;
       normalized = normalized.slice(2);
-      logger.debug("[PathNormalizer] Stripped path alias", { original, normalized });
+      log.debug("Stripped path alias", { original, normalized });
     }
 
     if (wasAbsoluteInProject && normalized !== path) {
-      logger.debug("[PathNormalizer] Converted absolute to relative path", {
+      log.debug("Converted absolute to relative path", {
         absolute: path,
         relative: normalized,
         projectDir,

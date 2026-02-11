@@ -14,6 +14,8 @@ import type {
 } from "../types.ts";
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
 
+const log = logger.component("temporal-adapter");
+
 export interface TemporalAdapterConfig extends BackendConfig {
   /** Temporal server address */
   address?: string;
@@ -46,7 +48,7 @@ export class TemporalAdapter implements WorkflowBackend {
       ...config,
     };
 
-    logger.warn("[TemporalAdapter] Stub implementation - requires Temporal SDK and worker setup");
+    log.warn("Stub implementation - requires Temporal SDK and worker setup");
   }
 
   // Run Management

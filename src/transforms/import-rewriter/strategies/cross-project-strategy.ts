@@ -18,6 +18,8 @@ import {
   parseCrossProjectImport,
 } from "#veryfront/transforms/shared/cross-project-import.ts";
 
+const log = logger.component("cross-project-import");
+
 export { isCrossProjectImport, parseCrossProjectImport };
 
 export class CrossProjectStrategy implements ImportRewriteStrategy {
@@ -40,7 +42,7 @@ export class CrossProjectStrategy implements ImportRewriteStrategy {
       parsed.path,
     );
 
-    logger.debug("[CrossProjectImport] Rewriting", {
+    log.debug("Rewriting", {
       from: info.specifier,
       to: url,
     });

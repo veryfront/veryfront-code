@@ -11,6 +11,8 @@ import { APIRouteHandler } from "#veryfront/routing";
 import { serverLogger } from "#veryfront/utils";
 import type { HandlerContext } from "../../types.ts";
 
+const log = serverLogger.component("reset-api-handler");
+
 export interface HandlerCache<T> {
   get(key: string): T | undefined;
   set(key: string, value: T): void;
@@ -44,7 +46,7 @@ async function destroyHandler(promise?: Promise<APIRouteHandler>): Promise<void>
     handler.destroy?.();
   } catch (error) {
     try {
-      serverLogger.debug("[resetApiHandler] Failed to destroy handler", error);
+      log.debug("Failed to destroy handler", error);
     } catch {
       // noop
     }

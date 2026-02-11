@@ -1,6 +1,8 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import type { FileWatcherMetrics } from "./types.ts";
 
+const log = logger.component("hmr");
+
 export class OptimizedFileWatcher {
   private readonly changeQueue = new Set<string>();
   private debounceTimer?: ReturnType<typeof setTimeout>;
@@ -62,7 +64,7 @@ export class OptimizedFileWatcher {
     try {
       await this.processCallback(changes);
     } catch (error) {
-      logger.error("[HMR] Failed to process file changes", error);
+      log.error("Failed to process file changes", error);
     }
   }
 

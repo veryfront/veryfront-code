@@ -7,6 +7,8 @@ import type { RouteDirectory } from "./types.ts";
 import { withFallback } from "#veryfront/platform/adapters/fallback-wrapper.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
+const log = logger.component("server");
+
 /** Directories within .veryfront that should be excluded from routing */
 const VERYFRONT_EXCLUDED_DIRS = new Set([
   "cache",
@@ -45,34 +47,34 @@ export class RouteDiscovery {
     this.router.clear();
     this.router.clearCache();
 
-    logger.debug("[SERVER] Starting route discovery", {
+    log.debug("Starting route discovery", {
       useRelativePaths: this.useRelativePaths,
       fsType: this.config?.fs?.type,
     });
 
     const routeDirs = await this.resolveRouteDirectories();
-    logger.debug("[SERVER] Route directories resolved", {
+    log.debug("Route directories resolved", {
       count: routeDirs.length,
       dirs: routeDirs,
     });
 
     if (routeDirs.length === 0) {
-      logger.warn("[SERVER] No route directories found; skipping discovery");
+      log.warn("No route directories found; skipping discovery");
       return;
     }
 
     for (const routeDir of routeDirs) {
       if (routeDir.type === "app") {
-        logger.debug(`[SERVER] Discovering app routes in: ${routeDir.path}`);
+        log.debug(`Discovering app routes in: ${routeDir.path}`);
         await this.discoverAppRoutes(routeDir.path);
         continue;
       }
 
-      logger.debug(`[SERVER] Discovering pages routes in: ${routeDir.path}`);
+      log.debug(`Discovering pages routes in: ${routeDir.path}`);
       await this.discoverPagesRoutes(routeDir.path, "");
     }
 
-    logger.debug("[SERVER] Route discovery complete", {
+    log.debug("Route discovery complete", {
       routes: this.router.listRoutes().length,
     });
   }
@@ -104,13 +106,13 @@ export class RouteDiscovery {
       if (preferredRouter === "app") {
         const pagesFallback = this.useRelativePaths ? "pages" : join(this.projectDir, "pages");
         if (await this.directoryExists(pagesFallback)) {
-          logger.warn('[SERVER] router="app" but app/ directory missing; falling back to pages/');
+          log.warn('router="app" but app/ directory missing; falling back to pages/');
           results.push({ type: "pages", path: pagesFallback });
         }
       } else if (preferredRouter === "pages") {
         const appFallback = this.useRelativePaths ? "app" : join(this.projectDir, "app");
         if (await this.directoryExists(appFallback)) {
-          logger.warn('[SERVER] router="pages" but pages/ directory missing; using app/');
+          log.warn('router="pages" but pages/ directory missing; using app/');
           results.push({ type: "app", path: appFallback });
         }
       } else {
@@ -130,7 +132,7 @@ export class RouteDiscovery {
 
   private async directoryExists(path: string): Promise<boolean> {
     try {
-      logger.debug("[SERVER] Checking directory exists", {
+      log.debug("Checking directory exists", {
         path,
         useRelativePaths: this.useRelativePaths,
       });
@@ -141,17 +143,17 @@ export class RouteDiscovery {
         { operationName: "stat:routeDiscovery:directoryExists", logError: false },
       );
 
-      logger.debug("[SERVER] Directory stat result", { path, isDirectory: stat.isDirectory });
+      log.debug("Directory stat result", { path, isDirectory: stat.isDirectory });
       return stat.isDirectory;
     } catch (error) {
-      logger.debug("[SERVER] Directory check failed", { path, error: String(error) });
+      log.debug("Directory check failed", { path, error: String(error) });
       return false;
     }
   }
 
   private async discoverPagesRoutes(dir: string, prefix: string): Promise<void> {
     try {
-      logger.debug(`[SERVER] Reading directory: ${dir}`);
+      log.debug(`Reading directory: ${dir}`);
 
       for await (const entry of this.adapter.fs.readDir(dir)) {
         if (shouldSkipEntry(entry.name, dir)) continue;
@@ -163,7 +165,7 @@ export class RouteDiscovery {
         );
 
         if (routePath.length > 500) {
-          logger.warn(`[SERVER] Route path too long, skipping: ${routePath.slice(0, 100)}...`);
+          log.warn(`Route path too long, skipping: ${routePath.slice(0, 100)}...`);
           continue;
         }
 
@@ -180,10 +182,10 @@ export class RouteDiscovery {
 
         const relativePath = this.toProjectRelativePath(fullPath);
         this.router.addRoute(pattern, relativePath);
-        logger.debug(`[SERVER] Discovered route: ${pattern} -> ${relativePath}`);
+        log.debug(`Discovered route: ${pattern} -> ${relativePath}`);
       }
     } catch (error) {
-      logger.error(`[SERVER] Failed to discover routes in ${dir}:`, error);
+      log.error(`Failed to discover routes in ${dir}:`, error);
     }
   }
 
@@ -193,7 +195,7 @@ export class RouteDiscovery {
 
   private async discoverAppRoutesRecursive(dir: string, segments: string[]): Promise<void> {
     try {
-      logger.debug(`[SERVER] Reading app directory: ${dir}`);
+      log.debug(`Reading app directory: ${dir}`);
 
       for await (const entry of this.adapter.fs.readDir(dir)) {
         if (shouldSkipEntry(entry.name, dir)) continue;
@@ -212,10 +214,10 @@ export class RouteDiscovery {
         const pattern = this.buildAppRoutePattern(segments);
         const relativePath = this.toProjectRelativePath(fullPath);
         this.router.addRoute(pattern, relativePath);
-        logger.debug(`[SERVER] Discovered app route: ${pattern} -> ${relativePath}`);
+        log.debug(`Discovered app route: ${pattern} -> ${relativePath}`);
       }
     } catch (error) {
-      logger.error(`[SERVER] Failed to discover app routes in ${dir}:`, error);
+      log.error(`Failed to discover app routes in ${dir}:`, error);
     }
   }
 

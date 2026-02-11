@@ -5,6 +5,8 @@ import { initMetrics } from "../metrics/index.ts";
 import type { AutoInstrumentConfig } from "./types.ts";
 import { mergeConfig } from "./configurator.ts";
 
+const log = logger.component("auto-instrument");
+
 let initialized = false;
 
 export async function initAutoInstrumentation(
@@ -12,7 +14,7 @@ export async function initAutoInstrumentation(
   adapter?: RuntimeAdapter,
 ): Promise<void> {
   if (initialized) {
-    logger.debug("[auto-instrument] Already initialized");
+    log.debug("Already initialized");
     return;
   }
 
@@ -29,7 +31,7 @@ export async function initAutoInstrumentation(
 
     logInitialization(finalConfig);
   } catch (error) {
-    logger.warn("[auto-instrument] Failed to initialize auto-instrumentation", error);
+    log.warn("Failed to initialize auto-instrumentation", error);
   } finally {
     initialized = true;
   }
@@ -48,7 +50,7 @@ export function __resetAutoInstrumentForTests(): void {
 }
 
 function logInitialization(config: AutoInstrumentConfig): void {
-  logger.info("[auto-instrument] Auto-instrumentation initialized", {
+  log.info("Auto-instrumentation initialized", {
     tracing: config.tracing?.enabled ?? false,
     metrics: config.metrics?.enabled ?? false,
     http: config.instrumentHttp,

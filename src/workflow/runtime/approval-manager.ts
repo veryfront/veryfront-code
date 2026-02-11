@@ -10,6 +10,8 @@ import { generateId, parseDuration } from "../types.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 
+const log = logger.component("approval-manager");
+
 export type ApprovalNotifier = (
   approval: PendingApproval,
   run: WorkflowRun,
@@ -88,7 +90,7 @@ export class ApprovalManager {
       status: "pending",
     };
 
-    logger.debug("[ApprovalManager] Creating approval", {
+    log.debug("Creating approval", {
       approvalId: approval.id,
       runId: run.id,
     });
@@ -98,7 +100,7 @@ export class ApprovalManager {
     try {
       await this.config.notifier?.(approval, run);
     } catch (error) {
-      logger.error("[ApprovalManager] Failed to notify approvers", error);
+      log.error("Failed to notify approvers", error);
     }
 
     return {
@@ -135,7 +137,7 @@ export class ApprovalManager {
     approvalId: string,
     decision: ApprovalDecision,
   ): Promise<void> {
-    logger.debug("[ApprovalManager] Processing decision", {
+    log.debug("Processing decision", {
       approvalId,
       approved: decision.approved,
     });
@@ -202,7 +204,7 @@ export class ApprovalManager {
       try {
         await this.config.executor.resume(runId);
       } catch (error) {
-        logger.error("[ApprovalManager] Failed to resume workflow", error);
+        log.error("Failed to resume workflow", error);
         throw error;
       }
       return;
@@ -278,7 +280,7 @@ export class ApprovalManager {
         continue;
       }
 
-      logger.debug("[ApprovalManager] Expiring approval", {
+      log.debug("Expiring approval", {
         approvalId: approval.id,
       });
 
@@ -299,7 +301,7 @@ export class ApprovalManager {
   private startExpirationChecker(): void {
     this.expirationTimer = setInterval(() => {
       this.checkExpiredApprovals().catch((error) => {
-        logger.error("[ApprovalManager] Expiration check failed", error);
+        log.error("Expiration check failed", error);
       });
     }, this.config.expirationCheckInterval);
   }

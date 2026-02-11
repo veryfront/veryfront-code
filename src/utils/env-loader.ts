@@ -2,6 +2,8 @@ import { serverLogger as logger } from "./logger/index.ts";
 import { cwd as getCwd, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { isNotFoundError, readTextFile } from "#veryfront/platform/compat/fs.ts";
 
+const log = logger.component("env");
+
 const envSources = new Map<string, string>();
 let envLoaded = false;
 
@@ -40,7 +42,7 @@ export async function loadEnv(
           );
         }
         if (key === "VERYFRONT_API_BASE_URL") {
-          logger.info(`[env] VERYFRONT_API_BASE_URL loaded: ${value}`);
+          log.info(`VERYFRONT_API_BASE_URL loaded: ${value}`);
         }
       }
 
@@ -48,7 +50,7 @@ export async function loadEnv(
       if (debug) logger.debug(`[env] Loaded ${file}`);
     } catch (error) {
       if (isNotFoundError(error)) continue;
-      logger.warn(`[env] Failed to load ${file}:`, error);
+      log.warn(`Failed to load ${file}:`, error);
     }
   }
 

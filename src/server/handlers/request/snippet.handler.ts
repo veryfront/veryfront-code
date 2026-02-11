@@ -7,6 +7,8 @@ import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
 import { createErrorResponse } from "#veryfront/errors/http-error.ts";
 
+const log = logger.component("snippet-handler");
+
 const PRIORITY_SNIPPET = 450;
 
 export class SnippetHandler extends BaseHandler {
@@ -24,21 +26,21 @@ export class SnippetHandler extends BaseHandler {
       return Promise.resolve(this.continue());
     }
 
-    logger.debug("[SnippetHandler] Handling snippet request", {
+    log.debug("Handling snippet request", {
       pathname,
       projectSlug: ctx.projectSlug,
     });
 
     const filePath = this.resolveFilePath(pathname);
 
-    logger.debug("[SnippetHandler] Resolved file path", { filePath });
+    log.debug("Resolved file path", { filePath });
 
     return this.withProxyContext(ctx, async () => {
       try {
         const content = await ctx.adapter.fs.readFile(filePath);
 
         if (!content) {
-          logger.debug("[SnippetHandler] File not found or empty", { filePath });
+          log.debug("File not found or empty", { filePath });
           return this.respondNotFound(ctx, filePath);
         }
 
@@ -56,7 +58,7 @@ export class SnippetHandler extends BaseHandler {
           pageId,
         });
 
-        logger.debug("[SnippetHandler] Snippet rendered", {
+        log.debug("Snippet rendered", {
           htmlLength: result.html.length,
         });
 
@@ -82,9 +84,9 @@ export class SnippetHandler extends BaseHandler {
           error instanceof VeryfrontError && error.slug === "api-client-error" &&
           error.status === 404
         ) {
-          logger.debug("[SnippetHandler] Snippet file not found", { filePath });
+          log.debug("Snippet file not found", { filePath });
         } else {
-          logger.error("[SnippetHandler] Error rendering snippet", {
+          log.error("Error rendering snippet", {
             filePath,
             error: getErrorMessage(error),
             stack: error instanceof Error ? error.stack : undefined,

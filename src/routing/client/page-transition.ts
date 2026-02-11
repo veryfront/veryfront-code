@@ -4,6 +4,8 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { applyHeadDirectives, executeScripts, manageFocus, updateMetaTags } from "./dom-utils.ts";
 import type { RouteData } from "./page-loader.ts";
 
+const log = logger.component("veryfront");
+
 export class PageTransition {
   private pendingTransitionTimeout?: number;
 
@@ -59,7 +61,7 @@ export class PageTransition {
     try {
       globalThis.scrollTo(0, isPopState ? scrollY : 0);
     } catch (error) {
-      logger.warn("[Veryfront] scroll handling failed", error);
+      log.warn("scroll handling failed", error);
     }
   }
 

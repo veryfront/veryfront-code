@@ -14,6 +14,8 @@ import { httpBundleCache } from "./http-cache-wrapper.ts";
 import { extractSourceUrl } from "./source-url-embed.ts";
 import { ensureAbsoluteDir, hasIncompatibleFilePaths } from "./http-cache-helpers.ts";
 
+const log = logger.component("http-cache");
+
 /**
  * Extract bundle deps (file:// paths or relative paths to http-{hash}.mjs) from code.
  * Handles both legacy absolute paths and new portable relative paths.
@@ -90,13 +92,13 @@ export async function validateBundleDepsExist(
     // Check if distributed cache is available
     const cacheAvailable = await httpBundleCache.isAvailable();
     if (!cacheAvailable) {
-      logger.debug("[HTTP-CACHE] Cannot validate deps - no distributed cache", {
+      log.debug("Cannot validate deps - no distributed cache", {
         missing: missingDeps.map((d) => d.hash),
       });
       return false;
     }
 
-    logger.debug("[HTTP-CACHE] Recovering missing deps from Redis (batch)", {
+    log.debug("Recovering missing deps from Redis (batch)", {
       count: missingDeps.length,
       hashes: missingDeps.map((d) => d.hash),
     });
@@ -106,14 +108,14 @@ export async function validateBundleDepsExist(
     for (const { hash } of missingDeps) {
       const localCode = codes.get(hash);
       if (!localCode) {
-        logger.debug("[HTTP-CACHE] Dep cannot be recovered from Redis", { hash });
+        log.debug("Dep cannot be recovered from Redis", { hash });
         return false;
       }
 
       const code = localCode as unknown as string;
 
       if (hasIncompatibleFilePaths(code, absoluteCacheDir)) {
-        logger.debug("[HTTP-CACHE] Dep has incompatible paths, rejecting cache", { hash });
+        log.debug("Dep has incompatible paths, rejecting cache", { hash });
         return false;
       }
 
@@ -121,19 +123,19 @@ export async function validateBundleDepsExist(
       try {
         await fs.mkdir(absoluteCacheDir, { recursive: true });
         await fs.writeTextFile(canonicalPath, code);
-        logger.debug("[HTTP-CACHE] Recovered dep from Redis", { hash });
+        log.debug("Recovered dep from Redis", { hash });
 
         for (const dep of extractBundleDeps(code)) {
           if (!seen.has(dep.hash)) pending.push(dep);
         }
       } catch (error) {
-        logger.error("[HTTP-CACHE] Failed to write recovered dep", { hash, error });
+        log.error("Failed to write recovered dep", { hash, error });
         return false;
       }
     }
   }
 
-  logger.debug("[HTTP-CACHE] All deps recovered successfully", { count: seen.size });
+  log.debug("All deps recovered successfully", { count: seen.size });
   return true;
 }
 
@@ -171,7 +173,7 @@ export async function findParentBundleWithEmbeddedUrl(
       }
     }
   } catch (error) {
-    logger.debug("[HTTP-CACHE] Error scanning for parent bundle", { targetHash, error });
+    log.debug("Error scanning for parent bundle", { targetHash, error });
   }
 
   return null;

@@ -12,6 +12,8 @@ import { getElementTypeName } from "../../element-validator/primitive-checks.ts"
 import { getProjectReact } from "#veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
 
+const log = logger.component("apply-layouts-esm");
+
 export function applyLayoutsESM(
   pageElement: BundledReact.ReactElement,
   layoutBundle: MdxBundle | undefined,
@@ -31,7 +33,7 @@ export function applyLayoutsESM(
     async () => {
       let element = pageElement;
 
-      logger.debug("[applyLayoutsESM] START", {
+      log.debug("START", {
         projectSlug,
         nestedLayoutsCount: nestedLayouts.length,
         hasLayoutBundle: !!layoutBundle,
@@ -41,7 +43,7 @@ export function applyLayoutsESM(
         const item = nestedLayouts[i];
         if (!item) continue;
 
-        logger.debug("[applyLayoutsESM] Processing layout", {
+        log.debug("Processing layout", {
           projectSlug,
           index: i,
           kind: item.kind,
@@ -101,14 +103,14 @@ export function applyLayoutsESM(
         }
       }
 
-      logger.debug("[applyLayoutsESM] All nested layouts applied", { projectSlug });
+      log.debug("All nested layouts applied", { projectSlug });
 
       if (!layoutBundle) {
-        logger.debug("[applyLayoutsESM] No layoutBundle to apply");
+        log.debug("No layoutBundle to apply");
         return element;
       }
 
-      logger.debug("[applyLayoutsESM] Applying named layoutBundle (frontmatter layout)");
+      log.debug("Applying named layoutBundle (frontmatter layout)");
       element = await withSpan(
         SpanNames.LAYOUT_APPLY_MDX,
         () =>
@@ -125,7 +127,7 @@ export function applyLayoutsESM(
           ),
         { "layout.kind": "mdx", "layout.type": "named" },
       );
-      logger.debug("[applyLayoutsESM] Named layoutBundle applied successfully");
+      log.debug("Named layoutBundle applied successfully");
 
       return element;
     },

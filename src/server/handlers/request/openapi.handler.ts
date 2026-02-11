@@ -12,6 +12,8 @@ import {
   isExtendedFSAdapter,
 } from "#veryfront/platform/adapters/fs/wrapper.ts";
 
+const log = logger.component("open-api");
+
 const DEFAULT_JSON_PATH = "/_openapi.json";
 const DEFAULT_YAML_PATH = "/_openapi.yaml";
 
@@ -59,7 +61,7 @@ export class OpenAPIHandler extends BaseHandler {
 
       return this.respond(response);
     } catch (error) {
-      logger.error("[OpenAPI] Failed to generate spec:", { error: String(error) });
+      log.error("Failed to generate spec:", { error: String(error) });
 
       const errorResponse = this.createResponseBuilder(ctx)
         .withCache("no-cache")
@@ -146,7 +148,7 @@ export class OpenAPIHandler extends BaseHandler {
       this.cacheKey = currentKey;
     }
 
-    logger.debug("[OpenAPI] Generated spec", {
+    log.debug("Generated spec", {
       pathCount: Object.keys(spec.paths).length,
       isDev,
     });

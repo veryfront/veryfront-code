@@ -1,7 +1,9 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  __registerTraceContextGetter,
   __resetLoggerConfigForTests,
+  __resetTraceContextGetterForTests,
   getBaseLogger,
   getDefaultLevel,
   type LogEntry,
@@ -125,6 +127,7 @@ describe("logger", () => {
 
           const entry = JSON.parse(getOutput()) as LogEntry;
           assertEquals(entry.requestId, "test-req-123");
+          assertEquals(entry.request_id, "test-req-123");
           assertEquals(entry.project_slug, "test-project");
           assertEquals(entry.veryfrontVersion, VERSION);
         });
@@ -185,6 +188,290 @@ describe("logger", () => {
           assertEquals(entry.veryfrontVersion, VERSION);
           assertEquals(entry.message, "Test message");
           assertEquals(entry.context?.extra, "data");
+        });
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe("component() logger", () => {
+    it("should include component field in JSON output", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          const base = getBaseLogger("SERVER");
+          const comp = base.component("cors");
+          comp.info("CORS check");
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.component, "cors");
+          assertEquals(entry.message, "CORS check");
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("should not include component field when not set", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          const base = getBaseLogger("SERVER");
+          base.info("No component");
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.component, undefined);
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("should preserve bound context in component logger", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          const base = getBaseLogger("SERVER");
+          const child = base.child({ requestId: "req-1" });
+          const comp = child.component("discovery");
+          comp.info("Discovering");
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.component, "discovery");
+          assertEquals(entry.requestId, "req-1");
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("should render [component] tag in text output", () => {
+      __resetLoggerConfigForTests();
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("NO_COLOR", "1");
+
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        const base = getBaseLogger("SERVER");
+        const comp = base.component("cors");
+        comp.info("Text mode");
+
+        const output = getOutput();
+        assertEquals(output.includes("[cors]"), true);
+        assertEquals(output.includes("Text mode"), true);
+      } finally {
+        restore();
+        Deno.env.delete("LOG_FORMAT");
+        Deno.env.delete("NO_COLOR");
+        __resetLoggerConfigForTests();
+      }
+    });
+
+    it("should support component via context-aware logger proxy", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          const comp = serverLogger.component("middleware");
+          comp.info("From proxy");
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.component, "middleware");
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("should inherit request context when component logger is created at top level", async () => {
+      // Simulates the real pattern: component logger created at module scope,
+      // then used inside runWithRequestContextAsync during a request.
+      const topLevelLog = serverLogger.component("ssr");
+
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        await withJsonLogFormat(async () => {
+          const reqLogger = getBaseLogger("SERVER").child({
+            requestId: "req-42",
+            project_slug: "my-proj",
+          });
+          const ctx: RequestContext = {
+            logger: reqLogger,
+            requestId: "req-42",
+          };
+
+          await runWithRequestContextAsync(ctx, async () => {
+            topLevelLog.info("Rendering page");
+          });
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.component, "ssr");
+          assertEquals(entry.requestId, "req-42");
+          assertEquals(entry.project_slug, "my-proj");
+        });
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe("trace context bridge", () => {
+    it("should auto-inject traceId and spanId from getter", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        __registerTraceContextGetter(() => ({
+          traceId: "abc123",
+          spanId: "span456",
+        }));
+
+        withJsonLogFormat(() => {
+          const base = getBaseLogger("SERVER");
+          base.info("Traced log");
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.traceId, "abc123");
+          assertEquals(entry.spanId, "span456");
+          assertEquals(entry.trace_id, "abc123");
+          assertEquals(entry.span_id, "span456");
+        });
+      } finally {
+        __resetTraceContextGetterForTests();
+        restore();
+      }
+    });
+
+    it("should not inject when traceId is already in context", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        __registerTraceContextGetter(() => ({
+          traceId: "from-otel",
+          spanId: "from-otel-span",
+        }));
+
+        withJsonLogFormat(() => {
+          const base = getBaseLogger("SERVER");
+          base.info("Explicit trace", { traceId: "explicit-id" });
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.traceId, "explicit-id");
+        });
+      } finally {
+        __resetTraceContextGetterForTests();
+        restore();
+      }
+    });
+
+    it("should not inject when getter returns no traceId", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        __registerTraceContextGetter(() => ({}));
+
+        withJsonLogFormat(() => {
+          const base = getBaseLogger("SERVER");
+          base.info("No active span");
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.traceId, undefined);
+          assertEquals(entry.spanId, undefined);
+        });
+      } finally {
+        __resetTraceContextGetterForTests();
+        restore();
+      }
+    });
+
+    it("should not inject when getter is not registered", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        __resetTraceContextGetterForTests();
+
+        withJsonLogFormat(() => {
+          const base = getBaseLogger("SERVER");
+          base.info("No bridge");
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.traceId, undefined);
+          assertEquals(entry.spanId, undefined);
+        });
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe("snake_case field aliases", () => {
+    it("should emit request_id alias for requestId", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          const base = getBaseLogger("SERVER");
+          base.info("With request", { requestId: "req-abc" });
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.requestId, "req-abc");
+          assertEquals(entry.request_id, "req-abc");
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("should emit project_slug alias for projectSlug", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          const base = getBaseLogger("SERVER");
+          base.info("With slug", { projectSlug: "my-project" });
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.projectSlug, "my-project");
+          assertEquals(entry.project_slug, "my-project");
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("should emit duration_ms alias for durationMs", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          const base = getBaseLogger("SERVER");
+          base.info("Timed op", { durationMs: 42 });
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.durationMs, 42);
+          assertEquals(entry.duration_ms, 42);
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("should not overwrite explicit snake_case with alias", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          const base = getBaseLogger("SERVER");
+          base.info("Both forms", { requestId: "camel", request_id: "snake" });
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.requestId, "camel");
+          assertEquals(entry.request_id, "snake");
         });
       } finally {
         restore();
