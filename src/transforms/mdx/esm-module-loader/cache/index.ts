@@ -190,26 +190,44 @@ export function clearModulePathCache(): void {
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared module path cache`);
 }
 
+/**
+ * Promise for the most recent disk cleanup operation.
+ * Exposed for testing — production callers fire-and-forget.
+ */
+let _pendingDiskCleanup: Promise<void> = Promise.resolve();
+
+/** Await any in-flight disk cleanup (for testing only). */
+export function waitForDiskCleanup(): Promise<void> {
+  return _pendingDiskCleanup;
+}
+
 export function invalidateModulePaths(changedPaths: string[]): void {
   if (modulePathCaches.size === 0) return;
 
   let invalidatedCount = 0;
+  const staleMjsFiles: string[] = [];
+  const affectedCacheDirs = new Set<string>();
 
   for (const changedPath of changedPaths) {
     const normalizedChanged = changedPath.replace(/^\/+/, "").replace(/\.(tsx?|jsx?|mdx)$/, "");
 
-    for (const cache of modulePathCaches.values()) {
-      for (const cachedPath of cache.keys()) {
-        const normalizedCached = cachedPath.replace(/^_vf_modules\//, "").replace(/\.js$/, "");
+    for (const [cacheDir, cache] of modulePathCaches.entries()) {
+      for (const [cachedKey, cachedFilePath] of cache.entries()) {
+        const normalizedCached = cachedKey.replace(/^_vf_modules\//, "").replace(/\.js$/, "");
 
         if (
           normalizedCached === normalizedChanged ||
           normalizedCached.endsWith(`/${normalizedChanged}`) ||
           normalizedChanged.endsWith(`/${normalizedCached}`)
         ) {
-          cache.delete(cachedPath);
+          staleMjsFiles.push(cachedFilePath);
+          affectedCacheDirs.add(cacheDir);
+          cache.delete(cachedKey);
+          // Clear the verified-deps fast-path so lookupMdxEsmCache won't
+          // skip validation and serve a deleted .mjs file.
+          verifiedModuleDeps.delete(`${cachedFilePath}:${cachedKey}`);
           invalidatedCount++;
-          logger.debug(`${LOG_PREFIX_MDX_LOADER} Invalidated module: ${cachedPath}`);
+          logger.debug(`${LOG_PREFIX_MDX_LOADER} Invalidated module: ${cachedKey}`);
         }
       }
     }
@@ -218,6 +236,41 @@ export function invalidateModulePaths(changedPaths: string[]): void {
   logger.debug(
     `${LOG_PREFIX_MDX_LOADER} Selective invalidation: ${invalidatedCount} modules for ${changedPaths.length} files`,
   );
+
+  if (invalidatedCount === 0) return;
+
+  // Persist invalidation to disk: update _index.json and delete stale .mjs files.
+  // Fire-and-forget so callers aren't blocked, but disk state is eventually consistent.
+  // Chain onto previous cleanup to avoid lost operations on rapid sequential invalidation.
+  const cleanup = async () => {
+    const localFs = getLocalFs();
+
+    // Save updated _index.json for each affected cache dir
+    for (const cacheDir of affectedCacheDirs) {
+      try {
+        await saveModulePathCache(cacheDir);
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Persisted _index.json after invalidation`, {
+          cacheDir,
+        });
+      } catch (error) {
+        logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to persist _index.json after invalidation`, {
+          cacheDir,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Delete stale .mjs files from disk
+    for (const mjsPath of staleMjsFiles) {
+      try {
+        await localFs.remove(mjsPath);
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Deleted stale cached module`, { mjsPath });
+      } catch {
+        // File may already be gone — not an error
+      }
+    }
+  };
+  _pendingDiskCleanup = _pendingDiskCleanup.then(cleanup, cleanup);
 }
 
 export async function clearESMDiskCache(): Promise<void> {
