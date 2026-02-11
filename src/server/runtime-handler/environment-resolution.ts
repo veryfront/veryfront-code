@@ -10,9 +10,9 @@
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
 import type { ProxyEnvironment } from "./proxy-environment.ts";
 
-const logger = getBaseLogger("SERVER");
+const baseLogger = getBaseLogger("SERVER");
 
-const log = logger.component("environment-resolution");
+const logger = baseLogger.component("environment-resolution");
 
 export interface EnvironmentResolutionResult {
   /** Resolved environment (preview/production) */
@@ -74,7 +74,7 @@ export function resolveEnvironment(
     !opts.isLocalProject &&
     !isWebSocketOrHMR
   ) {
-    log.error("Missing releaseId in proxy mode (production)", {
+    logger.error("Missing releaseId in proxy mode (production)", {
       projectSlug: opts.projectSlug,
       projectId: opts.projectId,
       environmentName: opts.environmentName,

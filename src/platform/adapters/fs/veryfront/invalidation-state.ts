@@ -1,6 +1,6 @@
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 
-const log = logger.component("invalidation-state");
+const logger = baseLogger.component("invalidation-state");
 
 const STALE_INVALIDATION_THRESHOLD_MS = 5 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 30 * 1000;
@@ -28,7 +28,7 @@ function cleanupStaleInvalidations(): void {
 
   if (staleEntries.length === 0) return;
 
-  log.warn("INVALIDATION_STALE_CLEANUP - removed orphaned entries", {
+  logger.warn("INVALIDATION_STALE_CLEANUP - removed orphaned entries", {
     removedCount: staleEntries.length,
     entries: staleEntries,
     remainingCount: pendingInvalidations.size,
@@ -39,7 +39,7 @@ export function addPendingInvalidation(prefix: string): void {
   const startedAt = Date.now();
   pendingInvalidations.set(prefix, startedAt);
 
-  log.info("INVALIDATION_STARTED - cache prefix marked for invalidation", {
+  logger.info("INVALIDATION_STARTED - cache prefix marked for invalidation", {
     prefix,
     startedAt,
     totalPending: pendingInvalidations.size,
@@ -52,7 +52,7 @@ export function removePendingInvalidation(prefix: string): void {
 
   pendingInvalidations.delete(prefix);
 
-  log.info("INVALIDATION_COMPLETED - cache prefix invalidation finished", {
+  logger.info("INVALIDATION_COMPLETED - cache prefix invalidation finished", {
     prefix,
     durationMs,
     totalPending: pendingInvalidations.size,
@@ -68,7 +68,7 @@ export function isPrefixBeingInvalidated(prefix: string): boolean {
     const ageMs = Date.now() - startedAt;
     totalBlockedReads++;
 
-    log.info("CACHE_READ_BLOCKED - preventing stale cache read", {
+    logger.info("CACHE_READ_BLOCKED - preventing stale cache read", {
       requestedPrefix: prefix,
       blockingPrefix: pendingPrefix,
       invalidationAgeMs: ageMs,

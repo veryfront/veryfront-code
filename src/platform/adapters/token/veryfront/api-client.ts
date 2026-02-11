@@ -1,10 +1,10 @@
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { type VeryfrontTokenConfig } from "./types.ts";
 import { TOKEN_STORAGE_ERROR } from "#veryfront/errors/error-registry.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 
-const log = logger.component("token-storage-api-client");
+const logger = baseLogger.component("token-storage-api-client");
 
 /** Default timeout for token storage API requests (30 seconds) */
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -121,7 +121,7 @@ export class TokenStorageApiClient {
 
       const message = error instanceof Error ? error.message : String(error);
 
-      log.error("List failed", {
+      logger.error("List failed", {
         prefix,
         error: message,
       });
@@ -166,7 +166,7 @@ export class TokenStorageApiClient {
 
     const message = error instanceof Error ? error.message : String(error);
 
-    log.error(`${action} failed`, { key, error: message });
+    logger.error(`${action} failed`, { key, error: message });
 
     return TOKEN_STORAGE_ERROR.create({ detail: `${prefixMessage}: ${message}` });
   }
@@ -204,7 +204,7 @@ export class TokenStorageApiClient {
 
         const isTimeout = error instanceof Error && error.name === "AbortError";
         if (isTimeout) {
-          log.warn("Request timed out", {
+          logger.warn("Request timed out", {
             url: url.replace(/token=[^&]+/, "token=***"),
             timeoutMs,
             attempt: attempt + 1,
@@ -217,7 +217,7 @@ export class TokenStorageApiClient {
 
         const delay = Math.min(initialDelay * Math.pow(2, attempt), maxDelay);
 
-        log.warn("Request failed, retrying...", {
+        logger.warn("Request failed, retrying...", {
           attempt: attempt + 1,
           maxRetries,
           delay,

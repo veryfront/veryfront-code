@@ -10,10 +10,10 @@ import type { LayoutComponentCache } from "../layouts/utils/component-loader.ts"
 import { loadTSXComponent, preloadMDXLayoutModule } from "../layouts/utils/component-loader.ts";
 import { clearImportMapCache, preloadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-const log = logger.component("layout-orchestrator");
+const logger = rendererLogger.component("layout-orchestrator");
 
 export interface LayoutOrchestratorConfig {
   projectDir: string;
@@ -115,7 +115,7 @@ export class LayoutOrchestrator {
           };
         }
 
-        log.debug("Preloading layout modules", {
+        logger.debug("Preloading layout modules", {
           tsxCount: tsxLayouts.length,
           mdxCount: mdxLayouts.length,
           tsxPaths: tsxLayouts.map((l) => l.componentPath),
@@ -132,7 +132,7 @@ export class LayoutOrchestrator {
               })
               .catch((error) => {
                 const errorMsg = error instanceof Error ? error.message : String(error);
-                log.error("Failed to preload import map", {
+                logger.error("Failed to preload import map", {
                   error: errorMsg,
                   projectDir: this.config.projectDir,
                 });
@@ -157,7 +157,7 @@ export class LayoutOrchestrator {
               .then(() => ({ type: "tsx" as const, path: componentPath, success: true }))
               .catch((error) => {
                 const errorMsg = error instanceof Error ? error.message : String(error);
-                log.error("Failed to preload TSX layout", {
+                logger.error("Failed to preload TSX layout", {
                   path: componentPath,
                   error: errorMsg,
                   hint: "Layout will be retried during apply phase",
@@ -185,7 +185,7 @@ export class LayoutOrchestrator {
               .then(() => ({ type: "mdx" as const, path: layout.path, success: true }))
               .catch((error) => {
                 const errorMsg = error instanceof Error ? error.message : String(error);
-                log.error("Failed to preload MDX layout", {
+                logger.error("Failed to preload MDX layout", {
                   path: layout.path,
                   error: errorMsg,
                   hint: "Layout will be retried during apply phase",
@@ -230,7 +230,7 @@ export class LayoutOrchestrator {
           allSuccess: tsxFailures.length === 0 && mdxFailures.length === 0 && importMapSuccess,
         };
 
-        log.debug("Preload complete", {
+        logger.debug("Preload complete", {
           ...summary,
           duration: `${summary.durationMs}ms`,
         });
@@ -282,7 +282,7 @@ export class LayoutOrchestrator {
         });
 
         const pageType = pageElement.type;
-        log.debug("Before applyLayouts", {
+        logger.debug("Before applyLayouts", {
           pageElementType: typeof pageType === "function" ? pageType.name : typeof pageType,
         });
 
@@ -295,7 +295,7 @@ export class LayoutOrchestrator {
         );
 
         const resultType = result.type;
-        log.debug("After applyLayouts", {
+        logger.debug("After applyLayouts", {
           resultType: typeof resultType === "function" ? resultType.name : typeof resultType,
           isSameElement: result === pageElement,
         });

@@ -1,7 +1,7 @@
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 
-const log = logger.component("gcs-blob-storage");
+const logger = baseLogger.component("gcs-blob-storage");
 
 export interface GCSBlobStorageConfig {
   /** Google Cloud Project ID */
@@ -190,7 +190,7 @@ export class GCSBlobStorage implements BlobStorage {
 
       return response.body;
     } catch (e) {
-      log.error("getStream error", e);
+      logger.error("getStream error", e);
       throw e;
     }
   }

@@ -4,7 +4,7 @@ import type {
   FileWatcher,
   RuntimeAdapter,
 } from "#veryfront/platform/adapters/base.ts";
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import {
   sanitizePathForDisplay,
   validatePath,
@@ -16,7 +16,7 @@ import {
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SECURITY_VIOLATION } from "#veryfront/errors/error-registry.ts";
 
-const log = logger.component("secure-fs");
+const logger = baseLogger.component("secure-fs");
 
 export type SecurityContext =
   | "user-input"
@@ -282,7 +282,7 @@ export class SecureFs {
   }
 
   getUnsafeAdapter(): RuntimeAdapter {
-    log.warn("Using unsafe adapter - security checks bypassed!");
+    logger.warn("Using unsafe adapter - security checks bypassed!");
     return this.config.adapter;
   }
 

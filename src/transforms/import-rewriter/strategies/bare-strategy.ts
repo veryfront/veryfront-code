@@ -5,7 +5,7 @@
  * Handles: lodash, @tanstack/react-query, etc.
  */
 
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import type {
   ImportRewriteStrategy,
   ImportSpecifierInfo,
@@ -14,7 +14,7 @@ import type {
 } from "../types.ts";
 import { buildEsmShUrl, TAILWIND_VERSION } from "../url-builder.ts";
 
-const log = logger.component("esm");
+const logger = rendererLogger.component("esm");
 
 const unversionedImportsWarned = new Set<string>();
 
@@ -36,7 +36,7 @@ function warnUnversionedImport(specifier: string, projectId: string): void {
   const parts = specifier.split("/");
   const packageName = isScoped ? parts.slice(0, 2).join("/") : (parts[0] ?? "");
 
-  log.warn("Unversioned import may cause reproducibility issues", {
+  logger.warn("Unversioned import may cause reproducibility issues", {
     import: specifier,
     projectId,
     suggestion: `Pin version: import '${packageName}@x.y.z'`,

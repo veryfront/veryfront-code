@@ -15,7 +15,7 @@
 
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { isKeyForProject, registerMapCache } from "#veryfront/cache/keys.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import {
   getMaxConcurrentTransforms,
@@ -27,7 +27,7 @@ import { Semaphore } from "../concurrency/semaphore.ts";
 import { verifiedHttpBundlePaths } from "../http-bundle-helpers.ts";
 import type { FailureRecord, ModuleCacheEntry } from "../types.ts";
 
-const log = logger.component("ssr-module-loader");
+const logger = rendererLogger.component("ssr-module-loader");
 
 /** Maximum entries for temp path tracking (small, just pointers) */
 const TEMP_PATH_CACHE_MAX_ENTRIES = 500;
@@ -214,7 +214,7 @@ export function clearSSRModuleCache(): void {
   _transformSemaphore = undefined;
   resetCachedTransformLimits();
 
-  log.info("✓ Global cache cleared", {
+  logger.info("✓ Global cache cleared", {
     modulesCleared: moduleCount,
     failedComponentsCleared: failedCount,
     transformSlotsCleared: transformSlotsCount,
@@ -265,7 +265,7 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
   // so full clear is needed. This just forces re-verification on next access.
   verifiedHttpBundlePaths.clear();
 
-  log.debug("✓ Project cache cleared", {
+  logger.debug("✓ Project cache cleared", {
     projectId,
     entriesCleared: cleared,
     remainingModules: globalModuleCache.size,

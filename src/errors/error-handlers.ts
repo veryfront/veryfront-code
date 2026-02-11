@@ -4,14 +4,14 @@ import {
   DEFAULT_RETRY_MAX_ATTEMPTS,
   DEFAULT_RETRY_MAX_DELAY_MS,
 } from "#veryfront/utils/constants/retry.ts";
-const log = serverLogger.component("errors");
+const logger = serverLogger.component("errors");
 
 function safeLog(logFn: () => void): void {
   try {
     logFn();
   } catch (error) {
     try {
-      log.warn("Logging failed:", error);
+      logger.warn("Logging failed:", error);
     } catch {
       // Silently ignore if even warning fails
     }
@@ -68,7 +68,7 @@ export async function retryWithBackoff<T>(
       return await fn();
     } catch (error) {
       lastError = error;
-      safeLog(() => log.warn(`Attempt ${attempt + 1} failed, retrying...`, error));
+      safeLog(() => logger.warn(`Attempt ${attempt + 1} failed, retrying...`, error));
 
       if (attempt >= maxRetries - 1) {
         continue;

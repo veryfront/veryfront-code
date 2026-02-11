@@ -1,9 +1,9 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import type { Plugin } from "esbuild";
 import { dirname, join, resolve as pathResolve } from "#veryfront/compat/path/index.ts";
 import type { ShellAdapter } from "#veryfront/platform/adapters/base.ts";
 
-const log = logger.component("dev-bundler");
+const logger = serverLogger.component("dev-bundler");
 
 export class Bundler {
   constructor(
@@ -85,7 +85,7 @@ function createRelativeFsPlugin(projectDir: string, shell: ShellAdapter): Plugin
           const contents = shell.readFileSync(args.path);
           return { contents, loader: getLoaderForPath(args.path) };
         } catch (error) {
-          log.debug("Failed to read file contents", { path: args.path, error });
+          logger.debug("Failed to read file contents", { path: args.path, error });
           return { contents: "", loader: "js" };
         }
       });

@@ -1,4 +1,4 @@
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import * as BundledReact from "react";
 import {
   getElementDebugInfo,
@@ -6,7 +6,7 @@ import {
   isReactElement,
 } from "../../element-validator/primitive-checks.ts";
 
-const log = logger.component("ensure-valid-child");
+const logger = rendererLogger.component("ensure-valid-child");
 
 /**
  * Returns the child unchanged if valid, or null if invalid.
@@ -20,7 +20,7 @@ export function ensureValidChild(
   _React?: unknown,
 ): BundledReact.ReactNode {
   if (isReactElement(child)) {
-    log.debug("Valid React element", {
+    logger.debug("Valid React element", {
       type: getElementTypeName(child as BundledReact.ReactElement),
       isValidElement: true,
     });
@@ -33,14 +33,14 @@ export function ensureValidChild(
     typeof child === "number" ||
     Array.isArray(child)
   ) {
-    log.debug("Valid primitive or array", { type: typeof child });
+    logger.debug("Valid primitive or array", { type: typeof child });
     return child;
   }
 
   if (typeof child !== "object") return null;
 
   const debugInfo = getElementDebugInfo(child);
-  log.error("Invalid child: object is not a React element", {
+  logger.error("Invalid child: object is not a React element", {
     keys: Object.keys(child).slice(0, 10),
     hasSymbol: debugInfo.hasSymbol,
     symbolValue: debugInfo.symbolValue,

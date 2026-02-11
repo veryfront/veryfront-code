@@ -9,7 +9,7 @@ import {
   getCachedTransformAsync,
   setCachedTransformAsync,
 } from "../esm/transform-cache.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { createTransformContext, formatTimingLog, recordStageTiming } from "./context.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { computeConfigHash } from "#veryfront/cache/config-hash.ts";
@@ -80,7 +80,7 @@ async function validateFrameworkBundles(
   // If they're still present, the cache is stale from a failed transform.
   if (UNRESOLVED_VF_MODULES_PATTERN.test(code)) {
     const match = code.match(UNRESOLVED_VF_MODULES_PATTERN);
-    log.warn("Cache contains unresolved _vf_modules import, invalidating", {
+    logger.warn("Cache contains unresolved _vf_modules import, invalidating", {
       cacheKey: cacheKey.slice(-40),
       unresolvedImport: match?.[1]?.slice(0, 60),
     });
@@ -103,7 +103,7 @@ async function validateFrameworkBundles(
 
   if (missing.length === 0) return true;
 
-  log.debug("Framework bundle validation failed", {
+  logger.debug("Framework bundle validation failed", {
     cacheKey: cacheKey.slice(-40),
     failedCount: missing.length,
     totalBundles: bundlePaths.length,
@@ -129,7 +129,7 @@ async function validateCachedBundles(
     const validation = await validateBundleGroup(bundleManifestId, cacheDir);
     if (validation.valid) return true;
 
-    log.debug("Bundle manifest validation failed", {
+    logger.debug("Bundle manifest validation failed", {
       cacheKey: cacheKey.slice(-40),
       manifestId: bundleManifestId.slice(0, 12),
       failedCount: validation.failedHashes.length,
@@ -144,7 +144,7 @@ async function validateCachedBundles(
   const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
   if (failed.length === 0) return true;
 
-  log.debug("HTTP bundle validation failed", {
+  logger.debug("HTTP bundle validation failed", {
     cacheKey: cacheKey.slice(-40),
     failedCount: failed.length,
     totalBundles: bundlePaths.length,
@@ -204,12 +204,12 @@ export function runPipeline(
           );
 
           if (!httpBundlesValid) {
-            log.debug("Cache invalidated due to missing HTTP bundles", {
+            logger.debug("Cache invalidated due to missing HTTP bundles", {
               file: filePath.slice(-60),
             });
             // Fall through to re-run the pipeline
           } else if (!frameworkBundlesValid) {
-            log.debug("Cache invalidated due to missing framework bundles", {
+            logger.debug("Cache invalidated due to missing framework bundles", {
               file: filePath.slice(-60),
             });
             // Fall through to re-run the pipeline
@@ -266,14 +266,14 @@ export function runPipeline(
       setCachedTransformAsync(cacheKey, ctx.code, ctx.contentHash, undefined, bundleManifestId)
         .catch(
           (error) => {
-            log.debug("Failed to cache transform", { error });
+            logger.debug("Failed to cache transform", { error });
           },
         );
 
       const totalMs = performance.now() - transformStart;
 
       if (ctx.debug) {
-        log.debug("Transform complete", formatTimingLog(ctx));
+        logger.debug("Transform complete", formatTimingLog(ctx));
       }
 
       return {
@@ -302,7 +302,7 @@ async function computeDepsHashSafe(
   try {
     return await computeDepsHash(filePath, readFile, projectDir);
   } catch (err) {
-    log.debug("depsHash computation failed, skipping", {
+    logger.debug("depsHash computation failed, skipping", {
       file: filePath.slice(-60),
       error: err instanceof Error ? err.message : String(err),
     });
@@ -383,4 +383,4 @@ export {
   isTypeScript,
 } from "./context.ts";
 
-const log = logger.component("pipeline");
+const logger = rendererLogger.component("pipeline");

@@ -34,6 +34,7 @@ export const cliLogger: {
   warn: (...args) => console.warn(...args),
   error: (...args) => console.error(...args),
   child: () => cliLogger,
+  // CLI logger uses plain text output; component names are intentionally ignored.
   component: () => cliLogger,
 };
 

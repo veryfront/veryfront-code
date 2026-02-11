@@ -12,7 +12,7 @@
  */
 
 import { gunzipSync } from "node:zlib";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import { CacheBackends, createDistributedCacheAccessor } from "#veryfront/cache/backend.ts";
@@ -33,7 +33,7 @@ import {
 } from "./http-cache-invariants.ts";
 import { looksLikeHtmlContent as looksLikeHtml } from "./html-content.ts";
 
-const log = logger.component("http-cache-wrapper");
+const logger = rendererLogger.component("http-cache-wrapper");
 
 /** Maximum number of keys per batch request to distributed cache API */
 const BATCH_FETCH_CHUNK_SIZE = 100;
@@ -122,7 +122,7 @@ function decodeGzip(content: string): DecodeResult {
       decodeFailed: false,
     };
   } catch (error) {
-    log.debug("Failed to decode gzip content", { error });
+    logger.debug("Failed to decode gzip content", { error });
     return { code: content, wasGzipped: false, decodeFailed: true };
   }
 }
@@ -173,12 +173,12 @@ export class HttpBundleCache {
 
       const decoded = decodeGzip(rawCode);
       if (decoded.decodeFailed) {
-        log.warn("Gzip decode failed", { hash: hashStr });
+        logger.warn("Gzip decode failed", { hash: hashStr });
         return { code: null, wasGzipped: false, failReason: "gzip_decode_failed" };
       }
 
       if (looksLikeHtml(decoded.code)) {
-        log.warn("Cache contains HTML not JS", { hash: hashStr });
+        logger.warn("Cache contains HTML not JS", { hash: hashStr });
         return { code: null, wasGzipped: decoded.wasGzipped, failReason: "html_content" };
       }
 
@@ -189,7 +189,7 @@ export class HttpBundleCache {
       try {
         assertLocal(localCode);
       } catch (e) {
-        log.error("Detokenization incomplete", {
+        logger.error("Detokenization incomplete", {
           hash: hashStr,
           error: e,
         });
@@ -201,7 +201,7 @@ export class HttpBundleCache {
       if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
         throw error;
       }
-      log.debug("Get code failed", { hash: hashStr, error });
+      logger.debug("Get code failed", { hash: hashStr, error });
       return { code: null, wasGzipped: false, failReason: "error" };
     }
   }
@@ -245,7 +245,7 @@ export class HttpBundleCache {
       if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
         throw error;
       }
-      log.debug("Get code by URL failed", { hash: hashStr, error });
+      logger.debug("Get code by URL failed", { hash: hashStr, error });
       return { code: null, wasGzipped: false, failReason: "error" };
     }
   }
@@ -286,12 +286,12 @@ export class HttpBundleCache {
         distributed.set(distributedKey("hash", hashStr), urlStr, ttl),
       ]);
 
-      log.debug("Stored code in distributed cache", { hash: hashStr });
+      logger.debug("Stored code in distributed cache", { hash: hashStr });
     } catch (error) {
       if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
         throw error;
       }
-      log.debug("Set code failed", { hash: hashStr, error });
+      logger.debug("Set code failed", { hash: hashStr, error });
     }
   }
 
@@ -338,12 +338,12 @@ export class HttpBundleCache {
             assertLocal(localCode);
             results.set(hash, localCode);
           } catch {
-            log.warn("Batch item failed assertion", { hash });
+            logger.warn("Batch item failed assertion", { hash });
           }
         }
       }
     } catch (error) {
-      log.debug("Batch get failed", { error });
+      logger.debug("Batch get failed", { error });
     }
 
     return results;
@@ -389,10 +389,10 @@ export class HttpBundleCache {
         distributed.del(distributedKey("hash", hashStr)),
       ]);
 
-      log.info("Deleted bundle from distributed cache", { hash: hashStr });
+      logger.info("Deleted bundle from distributed cache", { hash: hashStr });
       return true;
     } catch (error) {
-      log.debug("Delete code failed", { hash: hashStr, error });
+      logger.debug("Delete code failed", { hash: hashStr, error });
       return false;
     }
   }

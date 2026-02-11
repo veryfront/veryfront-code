@@ -2,14 +2,14 @@ import { getCacheNamespace } from "#veryfront/utils/cache/keys/namespace.ts";
 import { COMPILATION_ERROR, wrapWithContext } from "#veryfront/errors/index.ts";
 // Direct import from registry.ts to avoid circular dependency through barrel
 import { getLocalAdapter, runtime } from "#veryfront/platform/adapters/registry.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "#veryfront/utils/constants/cache.ts";
 import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 import type { MDXModule } from "./types.ts";
 
-const log = logger.component("mdx");
+const logger = rendererLogger.component("mdx");
 
 const mdxModuleCache = new LRUCache<string, MDXModule>({
   maxEntries: MDX_RENDERER_MAX_ENTRIES,
@@ -100,7 +100,7 @@ async function loadViaTempFile(
     });
   } finally {
     cleanupTempModule(tempModulePath).catch((error) =>
-      log.debug("Failed to cleanup temp module:", error)
+      logger.debug("Failed to cleanup temp module:", error)
     );
   }
 }
@@ -163,7 +163,7 @@ async function ensureTempDir(): Promise<string> {
     await adapter.fs.mkdir(tempDir, { recursive: true });
     return tempDir;
   } catch (error) {
-    log.warn("Failed to create temp directory, using system temp:", error);
+    logger.warn("Failed to create temp directory, using system temp:", error);
     const os = await import("node:os");
     const path = await import("node:path");
     const systemTempDir = path.join(os.tmpdir(), `veryfront-mdx-${Date.now()}`);

@@ -1,7 +1,7 @@
 import {
   HMR_MAX_MESSAGE_SIZE_BYTES,
   HMR_MAX_MESSAGES_PER_MINUTE,
-  serverLogger as logger,
+  serverLogger,
 } from "#veryfront/utils";
 import { RateLimiter, setupWebSocketHandlers } from "#veryfront/modules/server/index.ts";
 import { BaseHandler } from "../response/base.ts";
@@ -26,7 +26,7 @@ import {
 import { getPingIntervalMs, startPingInterval, stopPingInterval } from "./hmr-ping-keepalive.ts";
 import { broadcastUpdate, getMetrics } from "./hmr-message-router.ts";
 
-const log = logger.component("hmr-handler");
+const logger = serverLogger.component("hmr-handler");
 
 // Re-export the interface so external consumers can still access it from this module
 export type { HMRClientInfo } from "./hmr-client-manager.ts";
@@ -50,10 +50,10 @@ export class HMRHandler extends BaseHandler {
     if (HMRHandler.initialized) return;
     HMRHandler.initialized = true;
 
-    log.info("Subscribing to ReloadNotifier");
+    logger.info("Subscribing to ReloadNotifier");
 
     HMRHandler.reloadUnsubscribe = ReloadNotifier.subscribe((changedPaths, project) => {
-      log.info("ReloadNotifier callback triggered", {
+      logger.info("ReloadNotifier callback triggered", {
         changedPaths,
         projectSlug: project?.projectSlug,
         projectId: project?.projectId,
@@ -73,7 +73,7 @@ export class HMRHandler extends BaseHandler {
 
     startPingInterval();
 
-    log.debug("Initialized - listening for reload events", {
+    logger.debug("Initialized - listening for reload events", {
       pingIntervalMs: getPingIntervalMs(),
     });
   }
@@ -87,7 +87,7 @@ export class HMRHandler extends BaseHandler {
     const isLocal = !!ctx.isLocalProject;
 
     if (!isPreviewMode && !isLocal) {
-      log.debug("Skipping - not preview or local dev", {
+      logger.debug("Skipping - not preview or local dev", {
         mode: ctx.requestContext?.mode,
         queryEnv,
         isLocalProject: ctx.isLocalProject,
@@ -102,7 +102,7 @@ export class HMRHandler extends BaseHandler {
     // because adapters are lazily created only when page requests come in.
     if (ctx.projectSlug && ctx.proxyToken && ctx.adapter?.fs) {
       this.ensureAdapterInitialized(ctx).catch((error) => {
-        log.warn("Failed to ensure adapter initialization", {
+        logger.warn("Failed to ensure adapter initialization", {
           projectSlug: ctx.projectSlug,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -166,7 +166,7 @@ export class HMRHandler extends BaseHandler {
         if (client) client.lastActivity = Date.now();
       });
 
-      log.debug("Client connected", {
+      logger.debug("Client connected", {
         clientId,
         projectSlug: ctx.projectSlug,
         totalClients: getClientCount(),
@@ -174,7 +174,7 @@ export class HMRHandler extends BaseHandler {
 
       return Promise.resolve(this.respond(response));
     } catch (error) {
-      log.error("WebSocket upgrade failed", { error });
+      logger.error("WebSocket upgrade failed", { error });
       return Promise.resolve(
         this.respond(new Response("WebSocket upgrade failed", { status: 500 })),
       );
@@ -197,7 +197,7 @@ export class HMRHandler extends BaseHandler {
     const isPreview = resolvedEnvironment === "preview";
     if (!isPreview) return;
 
-    log.debug("Ensuring adapter initialized for preview HMR", {
+    logger.debug("Ensuring adapter initialized for preview HMR", {
       projectSlug,
       resolvedEnvironment,
     });
@@ -208,7 +208,7 @@ export class HMRHandler extends BaseHandler {
         proxyToken,
         async () => {
           await fs.exists("veryfront.config.ts");
-          log.info("Adapter initialized for poke reception", {
+          logger.info("Adapter initialized for poke reception", {
             projectSlug,
           });
         },
@@ -219,7 +219,7 @@ export class HMRHandler extends BaseHandler {
         },
       );
     } catch (error) {
-      log.warn("Adapter initialization failed (pokes may not be received)", {
+      logger.warn("Adapter initialization failed (pokes may not be received)", {
         projectSlug,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -248,6 +248,6 @@ export class HMRHandler extends BaseHandler {
 
     HMRHandler.initialized = false;
 
-    log.debug("Shutdown complete");
+    logger.debug("Shutdown complete");
   }
 }

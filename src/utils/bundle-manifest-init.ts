@@ -1,5 +1,5 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { serverLogger as logger } from "./logger/index.ts";
+import { serverLogger } from "./logger/index.ts";
 
 /** Minimal config interface to avoid importing from config layer */
 interface BundleManifestConfig {
@@ -20,7 +20,7 @@ import {
 } from "./bundle-manifest.ts";
 import { BUNDLE_MANIFEST_DEV_TTL_MS, BUNDLE_MANIFEST_PROD_TTL_MS } from "./constants/cache.ts";
 
-const log = logger.component("bundle-manifest");
+const logger = serverLogger.component("bundle-manifest");
 
 export async function initializeBundleManifest(
   config: BundleManifestConfig,
@@ -31,7 +31,7 @@ export async function initializeBundleManifest(
   const enabled = manifestConfig?.enabled ?? mode === "production";
 
   if (!enabled) {
-    log.info("Bundle manifest disabled");
+    logger.info("Bundle manifest disabled");
     setBundleManifestStore(new InMemoryBundleManifestStore());
     return;
   }
@@ -39,7 +39,7 @@ export async function initializeBundleManifest(
   const storeType = manifestConfig?.type ?? adapter?.env.get("VERYFRONT_BUNDLE_MANIFEST_TYPE") ??
     "memory";
 
-  log.info("Initializing bundle manifest", { type: storeType, mode });
+  logger.info("Initializing bundle manifest", { type: storeType, mode });
 
   try {
     const store = await createStore(storeType, config.cache, adapter);
@@ -47,12 +47,12 @@ export async function initializeBundleManifest(
 
     try {
       const stats = await store.getStats();
-      log.info("Store statistics", stats);
+      logger.info("Store statistics", stats);
     } catch (error) {
-      log.debug("Failed to get stats", { error });
+      logger.debug("Failed to get stats", { error });
     }
   } catch (error) {
-    log.error("Failed to initialize store, using in-memory fallback", {
+    logger.error("Failed to initialize store, using in-memory fallback", {
       error,
     });
     setBundleManifestStore(new InMemoryBundleManifestStore());
@@ -80,11 +80,11 @@ async function createStore(
     );
 
     if (!(await store.isAvailable())) {
-      log.warn("Redis not available, falling back to in-memory");
+      logger.warn("Redis not available, falling back to in-memory");
       return new InMemoryBundleManifestStore();
     }
 
-    log.info("Redis store initialized");
+    logger.info("Redis store initialized");
     return store;
   }
 
@@ -95,15 +95,15 @@ async function createStore(
     });
 
     if (!(await store.isAvailable())) {
-      log.warn("KV not available, falling back to in-memory");
+      logger.warn("KV not available, falling back to in-memory");
       return new InMemoryBundleManifestStore();
     }
 
-    log.info("KV store initialized");
+    logger.info("KV store initialized");
     return store;
   }
 
-  log.info("In-memory store initialized");
+  logger.info("In-memory store initialized");
   return new InMemoryBundleManifestStore();
 }
 
@@ -122,7 +122,7 @@ export async function warmupBundleManifest(
   store: BundleManifestStore,
   keys: string[],
 ): Promise<void> {
-  log.info("Warming up cache", { keys: keys.length });
+  logger.info("Warming up cache", { keys: keys.length });
 
   let loaded = 0;
   let failed = 0;
@@ -135,10 +135,10 @@ export async function warmupBundleManifest(
       await store.getBundleCode(metadata.codeHash);
       loaded++;
     } catch (error) {
-      log.debug("Failed to warm up key", { key, error });
+      logger.debug("Failed to warm up key", { key, error });
       failed++;
     }
   }
 
-  log.info("Cache warmup complete", { loaded, failed });
+  logger.info("Cache warmup complete", { loaded, failed });
 }

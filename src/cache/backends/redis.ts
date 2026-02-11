@@ -1,4 +1,4 @@
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { Span } from "@opentelemetry/api";
@@ -9,7 +9,7 @@ import {
 } from "#veryfront/utils/redis-client.ts";
 import type { CacheBackend } from "../types.ts";
 
-const log = logger.component("redis-cache-backend");
+const logger = baseLogger.component("redis-cache-backend");
 
 // Re-export for use by factory
 export { isRedisConfigured };
@@ -39,7 +39,7 @@ export class RedisCacheBackend implements CacheBackend {
           return true;
         } catch (error) {
           span?.setAttribute("cache.redis.connected", false);
-          log.warn("Failed to connect", { error });
+          logger.warn("Failed to connect", { error });
           return false;
         }
       },
@@ -53,7 +53,7 @@ export class RedisCacheBackend implements CacheBackend {
     try {
       return await this.client.get(this.prefixKey(key));
     } catch (error) {
-      log.debug("Get failed", { key, error });
+      logger.debug("Get failed", { key, error });
       return null;
     }
   }
@@ -74,7 +74,7 @@ export class RedisCacheBackend implements CacheBackend {
       for (const [key, value] of fetched) results.set(key, value);
       return results;
     } catch (error) {
-      log.debug("GetBatch failed", { keyCount: keys.length, error });
+      logger.debug("GetBatch failed", { keyCount: keys.length, error });
       for (const key of keys) results.set(key, null);
       return results;
     }
@@ -86,7 +86,7 @@ export class RedisCacheBackend implements CacheBackend {
     try {
       await this.client.set(this.prefixKey(key), value, { EX: ttlSeconds });
     } catch (error) {
-      log.debug("Set failed", { key, error });
+      logger.debug("Set failed", { key, error });
     }
   }
 
@@ -96,7 +96,7 @@ export class RedisCacheBackend implements CacheBackend {
     try {
       await Promise.all(entries.map(({ key, value, ttl }) => this.set(key, value, ttl ?? 300)));
     } catch (error) {
-      log.debug("SetBatch failed", { entryCount: entries.length, error });
+      logger.debug("SetBatch failed", { entryCount: entries.length, error });
     }
   }
 
@@ -106,7 +106,7 @@ export class RedisCacheBackend implements CacheBackend {
     try {
       await this.client.del(this.prefixKey(key));
     } catch (error) {
-      log.debug("Del failed", { key, error });
+      logger.debug("Del failed", { key, error });
     }
   }
 
@@ -127,7 +127,7 @@ export class RedisCacheBackend implements CacheBackend {
       if (!keysToDelete.length) return 0;
       return await this.client.del(keysToDelete);
     } catch (error) {
-      log.debug("DelByPattern failed", { pattern, error });
+      logger.debug("DelByPattern failed", { pattern, error });
       return 0;
     }
   }

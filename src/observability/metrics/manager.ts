@@ -4,7 +4,7 @@
  */
 
 import type { Meter } from "@opentelemetry/api";
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { loadConfig } from "./config.ts";
 import { initializeInstruments } from "../instruments/index.ts";
@@ -12,7 +12,7 @@ import { MetricsRecorder } from "./recorder.ts";
 import type { MetricsConfig, MetricsInstruments, OpenTelemetryAPI, RuntimeState } from "./types.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 
-const log = logger.component("metrics");
+const logger = serverLogger.component("metrics");
 
 /**
  * Metrics manager class
@@ -65,7 +65,7 @@ export class MetricsManager {
 
   async initialize(config: Partial<MetricsConfig> = {}, adapter?: RuntimeAdapter): Promise<void> {
     if (this.initialized) {
-      log.debug("Already initialized");
+      logger.debug("Already initialized");
       return;
     }
 
@@ -74,7 +74,7 @@ export class MetricsManager {
     this.initialized = true;
 
     if (!finalConfig.enabled) {
-      log.debug("Metrics collection disabled");
+      logger.debug("Metrics collection disabled");
       return;
     }
 
@@ -85,13 +85,13 @@ export class MetricsManager {
       this.instruments = await initializeInstruments(this.meter, finalConfig, this.runtimeState);
       this.recorder.instruments = this.instruments;
 
-      log.info("OpenTelemetry metrics initialized", {
+      logger.info("OpenTelemetry metrics initialized", {
         exporter: finalConfig.exporter,
         endpoint: finalConfig.endpoint,
         prefix: finalConfig.prefix,
       });
     } catch (error) {
-      log.warn("Failed to initialize OpenTelemetry metrics", error);
+      logger.warn("Failed to initialize OpenTelemetry metrics", error);
     }
   }
 
@@ -115,9 +115,9 @@ export class MetricsManager {
     if (!this.initialized) return;
 
     try {
-      log.info("Metrics shutdown initiated");
+      logger.info("Metrics shutdown initiated");
     } catch (error) {
-      log.warn("Error during metrics shutdown", error);
+      logger.warn("Error during metrics shutdown", error);
     }
   }
 }

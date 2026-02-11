@@ -7,7 +7,7 @@ import { generateDefaultProjectId } from "../../utils/project.ts";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { startCliDevServer, startCliProxyModeServer } from "#cli/shared/server-startup";
 
-const log = cliLogger.component("global");
+const logger = cliLogger.component("global");
 
 export interface StartOptions {
   port: number;
@@ -132,7 +132,7 @@ export async function startCommand(options: StartOptions): Promise<void> {
       error.message.includes("out of memory") ||
       error.message.includes("allocation failed");
 
-    log.error(`${type}: Application error caught`, {
+    logger.error(`${type}: Application error caught`, {
       message: error.message,
       stack: error.stack,
       type,
@@ -140,7 +140,7 @@ export async function startCommand(options: StartOptions): Promise<void> {
     });
 
     if (isFatal) {
-      log.error("Fatal error detected, allowing process exit");
+      logger.error("Fatal error detected, allowing process exit");
       return false;
     }
     return true;

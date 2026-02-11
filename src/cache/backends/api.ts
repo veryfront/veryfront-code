@@ -1,4 +1,4 @@
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { tryGetCacheKeyContext } from "../cache-key-builder.ts";
@@ -6,7 +6,7 @@ import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-
 import type { CacheBackend } from "../types.ts";
 import { getEnvValue } from "./helpers.ts";
 
-const log = logger.component("api-cache-backend");
+const logger = baseLogger.component("api-cache-backend");
 
 type CacheRequestContext = {
   token?: string;
@@ -66,7 +66,7 @@ export class ApiCacheBackend implements CacheBackend {
       tryGetCacheKeyContext()?.projectId || null;
 
     if (!token || !projectRef) {
-      log.debug("Missing auth or project context", {
+      logger.debug("Missing auth or project context", {
         tokenSource,
         hasProjectRef: !!projectRef,
       });
@@ -118,7 +118,7 @@ export class ApiCacheBackend implements CacheBackend {
       });
     } catch (error) {
       if (error instanceof CircuitBreakerOpen) {
-        log.info("Circuit breaker open, failing fast", {
+        logger.info("Circuit breaker open, failing fast", {
           path,
           nextAttemptMs: error.nextAttemptMs,
         });
@@ -127,7 +127,7 @@ export class ApiCacheBackend implements CacheBackend {
 
       const isTimeout = error instanceof Error && error.name === "AbortError";
       const errorMsg = error instanceof Error ? error.message : String(error);
-      log.info(`Request ${isTimeout ? "timeout" : "error"}`, {
+      logger.info(`Request ${isTimeout ? "timeout" : "error"}`, {
         path,
         error: errorMsg,
         isTimeout,
@@ -158,7 +158,7 @@ export class ApiCacheBackend implements CacheBackend {
     );
 
     if (!response?.values) {
-      log.debug("Batch endpoint failed, falling back to individual gets", {
+      logger.debug("Batch endpoint failed, falling back to individual gets", {
         keyCount: keys.length,
       });
       return this.getIndividually(keys);

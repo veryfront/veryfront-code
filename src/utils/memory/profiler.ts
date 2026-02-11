@@ -5,10 +5,10 @@
  * tracking cache sizes, and detecting memory leaks.
  **************************/
 
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { getArgs, getEnv, memoryUsage } from "#veryfront/platform/compat/process.ts";
 
-const log = logger.component("memory-profiler");
+const logger = rendererLogger.component("memory-profiler");
 
 const cacheRegistry = new Map<string, () => CacheStats>();
 
@@ -50,7 +50,7 @@ let heapGrowthWarningThreshold = 0.8;
 
 export function registerCache(name: string, getStats: () => CacheStats): void {
   cacheRegistry.set(name, getStats);
-  log.debug(`Registered cache: ${name}`);
+  logger.debug(`Registered cache: ${name}`);
 }
 
 export function unregisterCache(name: string): void {
@@ -99,7 +99,7 @@ export function getCacheStats(): CacheStats[] {
     try {
       stats.push(getStats());
     } catch (error) {
-      log.warn(`Failed to get stats for cache ${name}:`, error);
+      logger.warn(`Failed to get stats for cache ${name}:`, error);
       stats.push({ name, entries: -1 });
     }
   }
@@ -134,13 +134,13 @@ export async function forceGC(): Promise<boolean> {
 export function startMemoryMonitoring(intervalMs = 30000): void {
   if (memoryCheckInterval) clearInterval(memoryCheckInterval);
 
-  log.info(`Starting memory monitoring (interval: ${intervalMs}ms)`);
+  logger.info(`Starting memory monitoring (interval: ${intervalMs}ms)`);
 
   memoryCheckInterval = setInterval(() => {
     const snapshot = getMemorySnapshot();
     const { heap } = snapshot;
 
-    log.info("Memory status", {
+    logger.info("Memory status", {
       heapUsedMB: heap.usedHeapSizeMB,
       heapTotalMB: heap.totalHeapSizeMB,
       heapLimitMB: heap.heapSizeLimitMB,
@@ -151,7 +151,7 @@ export function startMemoryMonitoring(intervalMs = 30000): void {
 
     const thresholdPercent = heapGrowthWarningThreshold * 100;
     if (heap.heapUsedPercent > thresholdPercent) {
-      log.warn("HIGH MEMORY USAGE", {
+      logger.warn("HIGH MEMORY USAGE", {
         heapUsedPercent: heap.heapUsedPercent,
         threshold: thresholdPercent,
         caches: snapshot.caches.map((c) => `${c.name}: ${c.entries}`).join(", "),
@@ -160,7 +160,7 @@ export function startMemoryMonitoring(intervalMs = 30000): void {
 
     const heapGrowthMB = heap.usedHeapSizeMB - lastHeapUsed;
     if (heapGrowthMB > 100) {
-      log.warn("Rapid heap growth detected", {
+      logger.warn("Rapid heap growth detected", {
         growthMB: heapGrowthMB,
         intervalMs,
       });
@@ -175,7 +175,7 @@ export function stopMemoryMonitoring(): void {
 
   clearInterval(memoryCheckInterval);
   memoryCheckInterval = undefined;
-  log.info("Memory monitoring stopped");
+  logger.info("Memory monitoring stopped");
 }
 
 export function setHeapWarningThreshold(threshold: number): void {
@@ -183,10 +183,10 @@ export function setHeapWarningThreshold(threshold: number): void {
 }
 
 export function clearAllCaches(): void {
-  log.warn("Clearing all registered caches");
+  logger.warn("Clearing all registered caches");
 
   for (const cache of getCacheStats()) {
-    log.info(`Cache to clear: ${cache.name} (${cache.entries} entries)`);
+    logger.info(`Cache to clear: ${cache.name} (${cache.entries} entries)`);
   }
 }
 
@@ -223,7 +223,7 @@ export function checkMemoryPressure(): {
   const warning = heapUsedPercent > PROFILER_WARNING_THRESHOLD;
 
   if (critical) {
-    log.error("CRITICAL MEMORY PRESSURE", {
+    logger.error("CRITICAL MEMORY PRESSURE", {
       heapUsedPercent,
       usedMB: heap.usedHeapSizeMB,
       limitMB: heap.heapSizeLimitMB,

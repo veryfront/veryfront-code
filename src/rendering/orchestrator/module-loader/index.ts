@@ -7,7 +7,7 @@
  * @module rendering/orchestrator/module-loader
  */
 
-import { parallelMap, rendererLogger as logger } from "#veryfront/utils";
+import { parallelMap, rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { findSourceFile } from "../file-resolver/index.ts";
@@ -34,7 +34,7 @@ import {
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 
-const log = logger.component("module-loader");
+const logger = rendererLogger.component("module-loader");
 
 // Re-export utilities
 export { createEsmCache, createModuleCache, generateHash } from "./cache.ts";
@@ -122,7 +122,7 @@ async function resolveRelativeImport(
   // Resolve the path relative to the file's directory and normalize to resolve ..
   const basePath = normalize(join(imp.fromDir, imp.path));
 
-  log.debug("Resolving relative import:", {
+  logger.debug("Resolving relative import:", {
     path: imp.path,
     fromDir: imp.fromDir,
     basePath,
@@ -232,7 +232,7 @@ export async function transformModuleWithDeps(
     }
 
     if (mdxCacheResult.status === "corrupted") {
-      log.warn("MDX-ESM cache corrupted, will re-transform", {
+      logger.warn("MDX-ESM cache corrupted, will re-transform", {
         filePath,
         reason: mdxCacheResult.reason,
       });
@@ -257,7 +257,7 @@ export async function transformModuleWithDeps(
     // Filter out already-transformed file:// imports
     .filter((imp) => !imp.path.includes("file://"));
 
-  log.debug("Processing file:", {
+  logger.debug("Processing file:", {
     filePath,
     aliasImportsCount: aliasImports.length,
     relativeImportsCount: relativeImports.length,
@@ -283,7 +283,7 @@ export async function transformModuleWithDeps(
   const transformedDeps = await parallelMap(
     resolvedDeps.filter((d) => d.depFilePath),
     async (dep) => {
-      log.debug("Found dependency:", {
+      logger.debug("Found dependency:", {
         path: dep.path,
         depFilePath: dep.depFilePath,
         isLocalLib: dep.isLocalLib,
@@ -303,7 +303,7 @@ export async function transformModuleWithDeps(
 
   for (const dep of transformedDeps) {
     fileContent = fileContent.replace(dep.full, `from "file://${dep.depTempPath}"`);
-    log.debug("Replaced import:", {
+    logger.debug("Replaced import:", {
       path: dep.path,
       depTempPath: dep.depTempPath,
     });
@@ -311,7 +311,7 @@ export async function transformModuleWithDeps(
 
   for (const dep of resolvedDeps) {
     if (dep.depFilePath) continue;
-    log.warn("Could not find dependency:", {
+    logger.warn("Could not find dependency:", {
       path: dep.path,
       relativePath: dep.relativePath,
       projectDir,
@@ -328,7 +328,7 @@ export async function transformModuleWithDeps(
   const transformResult = await getOrComputeTransform(
     transformCacheKey,
     () => {
-      log.debug("Transform cache miss, transforming", { filePath });
+      logger.debug("Transform cache miss, transforming", { filePath });
       return transformToESM(fileContent, filePath, projectDir, adapter, {
         projectId: effectiveProjectId,
         dev: mode === "development",
@@ -347,7 +347,7 @@ export async function transformModuleWithDeps(
   if (transformResult.cacheHit && transformResult.bundleManifestId) {
     const validation = await validateBundleGroup(transformResult.bundleManifestId, cacheDir);
     if (!validation.valid) {
-      log.warn("Bundle manifest validation failed, re-transforming", {
+      logger.warn("Bundle manifest validation failed, re-transforming", {
         filePath,
         manifestId: transformResult.bundleManifestId.slice(0, 12),
         failedHashes: validation.failedHashes,
@@ -359,7 +359,7 @@ export async function transformModuleWithDeps(
     if (bundlePaths.length > 0) {
       const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
       if (failed.length > 0) {
-        log.warn("HTTP bundle recovery failed, re-transforming", {
+        logger.warn("HTTP bundle recovery failed, re-transforming", {
           filePath,
           failed,
         });
@@ -382,7 +382,7 @@ export async function transformModuleWithDeps(
       contentHash,
       TRANSFORM_CACHE_TTL_SECONDS,
     ).catch((error) => {
-      log.debug("Failed to update transform cache after re-transform", {
+      logger.debug("Failed to update transform cache after re-transform", {
         filePath,
         error,
       });
@@ -418,7 +418,7 @@ export async function transformModuleWithDeps(
     // Check again after retry
     if (UNRESOLVED_VF_MODULES_RE.test(transformedCode)) {
       const retryMatch = transformedCode.match(UNRESOLVED_VF_MODULES_RE);
-      log.error("Transform still has unresolved _vf_modules after retry", {
+      logger.error("Transform still has unresolved _vf_modules after retry", {
         filePath: filePath.slice(-60),
         unresolvedImport: retryMatch?.[1]?.slice(0, 80) || "unknown",
         hint:
@@ -433,7 +433,7 @@ export async function transformModuleWithDeps(
         hashCodeHex(transformedCode).slice(0, 16),
         TRANSFORM_CACHE_TTL_SECONDS,
       ).catch((error) => {
-        log.debug("Failed to update cache after retry", { filePath, error });
+        logger.debug("Failed to update cache after retry", { filePath, error });
       });
     }
   }
@@ -453,7 +453,7 @@ export async function transformModuleWithDeps(
   try {
     await localAdapter.fs.writeFile(tempFilePath, transformedCode);
   } catch (error) {
-    log.error("Failed to write module:", {
+    logger.error("Failed to write module:", {
       filePath,
       tempFilePath,
       error: error instanceof Error ? error.message : String(error),
@@ -468,10 +468,10 @@ export async function transformModuleWithDeps(
     cache.set(mdxCacheKey, tempFilePath);
 
     saveModulePathCache(tmpDir).catch((err) => {
-      log.debug("Failed to save module cache", { error: String(err) });
+      logger.debug("Failed to save module cache", { error: String(err) });
     });
 
-    log.debug("Registered module in MDX-ESM cache", {
+    logger.debug("Registered module in MDX-ESM cache", {
       file: filePath.slice(-40),
       mdxCacheKey,
       tempFilePath: tempFilePath.slice(-60),
@@ -539,7 +539,7 @@ export async function loadModule(filePath: string, config: ModuleLoaderConfig): 
 
     if (bundleMatch) {
       const hash = bundleMatch[1]!;
-      log.warn("Import failed due to missing HTTP bundle, attempting recovery", {
+      logger.warn("Import failed due to missing HTTP bundle, attempting recovery", {
         filePath,
         hash,
       });
@@ -549,12 +549,12 @@ export async function loadModule(filePath: string, config: ModuleLoaderConfig): 
       const recovered = await recoverHttpBundleByHash(hash, cacheDir);
 
       if (recovered) {
-        log.info("HTTP bundle recovered, retrying import", { hash });
+        logger.info("HTTP bundle recovered, retrying import", { hash });
         return await import(`file://${tempFilePath}?t=${Date.now()}&retry=1`);
       }
     }
 
-    log.error("Failed to import module:", {
+    logger.error("Failed to import module:", {
       filePath,
       tempFilePath,
       error: error instanceof Error ? error.message : String(error),

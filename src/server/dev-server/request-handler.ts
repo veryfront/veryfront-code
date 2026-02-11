@@ -4,7 +4,7 @@ import {
   HTTP_OK,
   HTTP_SERVER_ERROR,
   HTTP_UNAVAILABLE,
-  serverLogger as logger,
+  serverLogger,
 } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -17,7 +17,7 @@ import { clearLayoutDiscoveryCache } from "#veryfront/rendering/layouts/index.ts
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 
-const log = logger.component("dev");
+const logger = serverLogger.component("dev");
 
 export class RequestHandler {
   private runtimeHandler?: (req: Request) => Promise<Response>;
@@ -146,7 +146,7 @@ export class RequestHandler {
     try {
       return runtimeProvider.getHMRRuntime();
     } catch (error) {
-      log.debug("failed to read HMR runtime from server", error);
+      logger.debug("failed to read HMR runtime from server", error);
       return null;
     }
   }
@@ -172,7 +172,7 @@ export class RequestHandler {
     this.runtimeHandler = undefined;
 
     resetApiHandler(this.projectDir).catch((error) => {
-      log.debug("resetApiHandler failed", error);
+      logger.debug("resetApiHandler failed", error);
     });
 
     clearConfigCache();

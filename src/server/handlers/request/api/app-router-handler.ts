@@ -12,7 +12,7 @@ import { applyCORSHeaders } from "#veryfront/security";
 import { serverLogger } from "#veryfront/utils";
 import { methodNotAllowed } from "#veryfront/http/responses";
 
-const log = serverLogger.component("app-router-api-handler");
+const logger = serverLogger.component("app-router-api-handler");
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 
@@ -62,7 +62,7 @@ export async function handleAppRouter(
 
     return new Response(res.body, { status: res.status, headers });
   } catch (error) {
-    log.error("Failed to handle request", error);
+    logger.error("Failed to handle request", error);
     return null;
   }
 }

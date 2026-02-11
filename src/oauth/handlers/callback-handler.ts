@@ -4,7 +4,7 @@
  * Reusable handler for OAuth callback routes.
  **************************************************/
 
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import {
   type EnvironmentConfig,
@@ -14,7 +14,7 @@ import { type EnvReader, OAuthService } from "../providers/base.ts";
 import { memoryTokenStore } from "../token-store/memory.ts";
 import type { OAuthServiceConfig, TokenStore } from "../types.ts";
 
-const log = logger.component("o-auth");
+const logger = baseLogger.component("o-auth");
 
 export interface OAuthCallbackHandlerOptions {
   /** Token store to use (defaults to memory store) */
@@ -93,7 +93,7 @@ export function createOAuthCallbackHandler(
     const appUrl = getAppUrl();
 
     if (oauthError) {
-      log.error("Callback error", {
+      logger.error("Callback error", {
         serviceId: config.serviceId,
         error: oauthError,
         description: errorDescription,
@@ -108,7 +108,7 @@ export function createOAuthCallbackHandler(
     if (state) {
       oauthState = await tokenStore.getState(state);
       if (!oauthState) {
-        log.warn("Invalid or expired state", { serviceId: config.serviceId });
+        logger.warn("Invalid or expired state", { serviceId: config.serviceId });
         // Continue anyway - some providers don't properly return state
       }
     }

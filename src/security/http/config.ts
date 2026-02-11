@@ -5,7 +5,7 @@ import { getConfig } from "#veryfront/config";
 import { serverLogger } from "#veryfront/utils";
 import { buildCSP, generateNonce } from "./response/security-handler.ts";
 
-const log = serverLogger.component("security-config-loader");
+const logger = serverLogger.component("security-config-loader");
 
 export class SecurityConfigLoader {
   private securityConfig: SecurityConfig | null = null;
@@ -33,7 +33,7 @@ export class SecurityConfigLoader {
       this.applyConfig(cfg);
     } catch (error) {
       // Config is optional, so we don't throw
-      log.debug("Failed to load config:", error);
+      logger.debug("Failed to load config:", error);
       this.isLoaded = true; // Mark as loaded even on error to prevent retry
     }
   }

@@ -1,7 +1,7 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import type { Context, OpenTelemetryAPI, Span, TextMapPropagator } from "./types.ts";
 
-const log = logger.component("tracing");
+const logger = serverLogger.component("tracing");
 
 export class ContextPropagation {
   constructor(
@@ -14,7 +14,7 @@ export class ContextPropagation {
       const carrier: Record<string, string> = Object.fromEntries(headers);
       return this.api.propagation.extract(this.api.context.active(), carrier);
     } catch (error) {
-      log.debug("Failed to extract context from headers", error);
+      logger.debug("Failed to extract context from headers", error);
       return undefined;
     }
   }
@@ -28,7 +28,7 @@ export class ContextPropagation {
         headers.set(key, value);
       }
     } catch (error) {
-      log.debug("Failed to inject context into headers", error);
+      logger.debug("Failed to inject context into headers", error);
     }
   }
 
@@ -36,7 +36,7 @@ export class ContextPropagation {
     try {
       return this.api.context.active();
     } catch (error) {
-      log.debug("Failed to get active context", error);
+      logger.debug("Failed to get active context", error);
       return undefined;
     }
   }

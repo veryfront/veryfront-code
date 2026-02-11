@@ -10,9 +10,9 @@ import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
 import { getRequestTimeout, HTTP_GATEWAY_TIMEOUT, TIMEOUT_SENTINEL } from "./request-utils.ts";
 import { ErrorPages } from "../utils/error-html.ts";
 
-const logger = getBaseLogger("SERVER");
+const baseLogger = getBaseLogger("SERVER");
 
-const log = logger.component("runtime-handler");
+const logger = baseLogger.component("runtime-handler");
 
 /**
  * Execute a handler with a timeout, returning a timeout response if exceeded.
@@ -40,7 +40,7 @@ export async function withRequestTimeout(
     return { response };
   } catch (e) {
     if (e === TIMEOUT_SENTINEL) {
-      log.warn("Request timed out", {
+      logger.warn("Request timed out", {
         path: pathname,
         method,
         timeoutMs: getRequestTimeout(),

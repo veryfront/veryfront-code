@@ -1,4 +1,4 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getConfig } from "#veryfront/config";
@@ -83,19 +83,19 @@ export class APIRouteHandler {
         const adapter = await this.ensureAdapter();
         await this.ensureConfig(adapter);
 
-        log.debug("Initializing route handler", { projectDir: this.projectDir });
+        logger.debug("Initializing route handler", { projectDir: this.projectDir });
 
         const pagesDir = this.config?.directories?.pages ?? "pages";
         const apiDir = join(this.projectDir, pagesDir, "api");
         const apiDirExists = await adapter.fs.exists(apiDir);
 
-        log.debug("Checking API directory", { apiDir, exists: apiDirExists });
+        logger.debug("Checking API directory", { apiDir, exists: apiDirExists });
 
         if (apiDirExists) {
           const deps = getDeps();
           await deps.discoverPagesRoutes(this.router, apiDir, "/api", adapter);
           const discoveredRoutes = this.router.listRoutes();
-          log.debug("Discovered Pages API routes", {
+          logger.debug("Discovered Pages API routes", {
             count: discoveredRoutes.length,
             routes: discoveredRoutes.map((r) => ({ pattern: r.pattern, page: r.page })),
           });
@@ -105,20 +105,20 @@ export class APIRouteHandler {
         const appDir = join(this.projectDir, appDirName);
         const appDirExists = await adapter.fs.exists(appDir);
 
-        log.debug("Checking App directory", { appDir, exists: appDirExists });
+        logger.debug("Checking App directory", { appDir, exists: appDirExists });
 
         if (appDirExists) {
           const deps = getDeps();
           await deps.discoverAppRoutes(this.router, appDir, "", adapter);
           const allRoutes = this.router.listRoutes();
-          log.debug("All discovered routes after App Router", {
+          logger.debug("All discovered routes after App Router", {
             count: allRoutes.length,
             routes: allRoutes.map((r) => ({ pattern: r.pattern, page: r.page })),
           });
         }
 
         await this.ensureCorsConfig(adapter);
-        log.debug("Route handler initialized");
+        logger.debug("Route handler initialized");
       },
       { "api.projectDir": this.projectDir },
     );
@@ -132,7 +132,7 @@ export class APIRouteHandler {
       async () => {
         const adapter = await this.ensureAdapter();
 
-        log.debug("Handling request", {
+        logger.debug("Handling request", {
           pathname,
           method: request.method,
           registeredRouteCount: this.router.listRoutes().length,
@@ -149,7 +149,7 @@ export class APIRouteHandler {
 
         const match = this.router.match(pathname);
         if (!match) {
-          log.debug("No route match", {
+          logger.debug("No route match", {
             pathname,
             isApiPath: pathname.startsWith("/api/"),
             availableRoutes: this.router.listRoutes().map((r) => r.pattern),
@@ -159,7 +159,7 @@ export class APIRouteHandler {
           return null;
         }
 
-        log.debug("Route matched", {
+        logger.debug("Route matched", {
           pathname,
           pattern: match.route.pattern,
           page: match.route.page,
@@ -169,7 +169,7 @@ export class APIRouteHandler {
         const handler = await this.loadHandler(match);
         if (!handler) {
           try {
-            log.error(`handler module failed to load: ${match.route.page}`);
+            logger.error(`handler module failed to load: ${match.route.page}`);
           } catch (e) {
             logger.warn("API error log failed", e);
           }
@@ -322,4 +322,4 @@ export {
   unauthorized,
 } from "#veryfront/http/responses";
 
-const log = logger.component("api");
+const logger = serverLogger.component("api");

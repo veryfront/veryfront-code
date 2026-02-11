@@ -4,11 +4,11 @@ import {
   DEFAULT_REACT_VERSION as REACT_DEFAULT_VERSION,
   TAILWIND_VERSION,
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { sanitizeVendorExportName } from "../shared/vendor-export-name.ts";
 
-const log = logger.component("esm");
+const logger = rendererLogger.component("esm");
 
 export function addHMRTimestamps(code: string, timestamp: string | number): Promise<string> {
   return withSpan(
@@ -54,7 +54,7 @@ function warnUnversionedImport(specifier: string, projectId?: string): void {
   const parts = specifier.split("/");
   const packageName = isScoped ? parts.slice(0, 2).join("/") : (parts[0] ?? "");
 
-  log.warn("Unversioned import may cause reproducibility issues", {
+  logger.warn("Unversioned import may cause reproducibility issues", {
     import: specifier,
     projectId,
     suggestion: `Pin version: import '${packageName}@x.y.z'`,

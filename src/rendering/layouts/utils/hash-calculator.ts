@@ -1,8 +1,8 @@
-import { computeHash, rendererLogger as logger } from "#veryfront/utils";
+import { computeHash, rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle } from "#veryfront/types";
 
-const log = logger.component("layout");
+const logger = rendererLogger.component("layout");
 
 export async function computeDepsHash(
   layoutBundle: MdxBundle | undefined,
@@ -27,7 +27,7 @@ export async function computeDepsHash(
             .readFile(componentPath)
             .then((src) => computeHash(src))
             .catch((e) => {
-              log.debug("reading tsx layout for dep hash failed", e as Error);
+              logger.debug("reading tsx layout for dep hash failed", e as Error);
               return "";
             }),
         );
@@ -43,7 +43,7 @@ export async function computeDepsHash(
     const depParts = await Promise.all(hashPromises);
     return depParts.filter(Boolean).join(":");
   } catch (e) {
-    log.debug("dep hash computation failed", e as Error);
+    logger.debug("dep hash computation failed", e as Error);
     return "";
   }
 }

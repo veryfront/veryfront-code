@@ -18,9 +18,9 @@ import { timeAsync } from "./request-lifecycle.ts";
 import { findLocalProjectPath, localAdapterCache } from "./local-project-discovery.ts";
 import type { ParsedDomain } from "../utils/domain-parser.ts";
 
-const logger = getBaseLogger("SERVER");
+const baseLogger = getBaseLogger("SERVER");
 
-const log = logger.component("adapter-factory");
+const logger = baseLogger.component("adapter-factory");
 
 export interface AdapterResolutionResult {
   /** The effective project directory to use */
@@ -86,7 +86,7 @@ export async function resolveAdapter(
   if (isLocalProject && localProjectPath) {
     effectiveProjectDir = localProjectPath;
 
-    log.debug("Using local project (filesystem-first)", {
+    logger.debug("Using local project (filesystem-first)", {
       projectSlug: opts.projectSlug,
       projectDir: effectiveProjectDir,
     });
@@ -95,7 +95,7 @@ export async function resolveAdapter(
     if (!localAdapterCache.has(effectiveProjectDir)) {
       const baseAdapter = await runtime.get();
       localAdapterCache.set(effectiveProjectDir, baseAdapter);
-      log.debug("Created local adapter for project", {
+      logger.debug("Created local adapter for project", {
         projectSlug: opts.projectSlug,
         projectDir: effectiveProjectDir,
       });
@@ -110,14 +110,14 @@ export async function resolveAdapter(
         () => getConfig(effectiveProjectDir, effectiveAdapter),
       );
 
-      log.debug("Loaded project-specific config", {
+      logger.debug("Loaded project-specific config", {
         projectSlug: opts.projectSlug,
         projectDir: effectiveProjectDir,
         layout: effectiveConfig?.layout,
         router: effectiveConfig?.router,
       });
     } catch (error) {
-      log.warn("Failed to load project config, using defaults", {
+      logger.warn("Failed to load project config, using defaults", {
         projectSlug: opts.projectSlug,
         projectDir: effectiveProjectDir,
         error: getErrorMessage(error),
@@ -151,14 +151,14 @@ export async function resolveAdapter(
         });
       });
 
-      log.debug("Loaded config in proxy mode", {
+      logger.debug("Loaded config in proxy mode", {
         projectSlug: opts.projectSlug,
         hasConfig: !!effectiveConfig,
         layout: effectiveConfig?.layout,
         router: effectiveConfig?.router,
       });
     } catch (error) {
-      log.warn("Failed to load proxy config, using defaults", {
+      logger.warn("Failed to load proxy config, using defaults", {
         projectSlug: opts.projectSlug,
         error: getErrorMessage(error),
       });

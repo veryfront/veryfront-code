@@ -5,13 +5,13 @@
  * Enables distributed workflow execution across multiple pods.
  */
 
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import type { WorkflowBackend } from "../backends/types.ts";
 import { hasWorkerSupport } from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
 import { generateId } from "../types.ts";
 
-const log = logger.component("workflow-worker");
+const logger = baseLogger.component("workflow-worker");
 
 /**
  * Configuration for the workflow worker
@@ -137,7 +137,7 @@ export class WorkflowWorker {
     this.stats.startedAt = new Date();
 
     if (this.config.debug) {
-      log.info(`Started worker ${this.config.workerId}`);
+      logger.info(`Started worker ${this.config.workerId}`);
     }
 
     // Start polling loop
@@ -156,7 +156,7 @@ export class WorkflowWorker {
     this.stats.status = "stopping";
 
     if (this.config.debug) {
-      log.info(`Stopping worker ${this.config.workerId}...`);
+      logger.info(`Stopping worker ${this.config.workerId}...`);
     }
 
     // Clear scheduled poll
@@ -179,7 +179,7 @@ export class WorkflowWorker {
     this.stats.status = "stopped";
 
     if (this.config.debug) {
-      log.info(`Worker ${this.config.workerId} stopped`);
+      logger.info(`Worker ${this.config.workerId} stopped`);
     }
   }
 
@@ -243,7 +243,7 @@ export class WorkflowWorker {
       }
 
       if (this.config.debug) {
-        log.info(`Found ${stalledRuns.length} stalled runs`);
+        logger.info(`Found ${stalledRuns.length} stalled runs`);
       }
 
       // Try to claim and resume stalled runs (up to concurrency limit)
@@ -268,7 +268,7 @@ export class WorkflowWorker {
       }
     } catch (error) {
       this.recordError(error);
-      log.error(`Poll error:`, error);
+      logger.error(`Poll error:`, error);
     }
   }
 
@@ -281,7 +281,7 @@ export class WorkflowWorker {
     (async () => {
       try {
         if (this.config.debug) {
-          log.info(`Resuming stalled run ${run.id}`);
+          logger.info(`Resuming stalled run ${run.id}`);
         }
 
         await this.config.resumeFn(run.id);
@@ -289,11 +289,11 @@ export class WorkflowWorker {
         this.stats.resumeCount++;
 
         if (this.config.debug) {
-          log.info(`Successfully resumed run ${run.id}`);
+          logger.info(`Successfully resumed run ${run.id}`);
         }
       } catch (error) {
         this.recordError(error);
-        log.error(`Failed to resume run ${run.id}:`, error);
+        logger.error(`Failed to resume run ${run.id}:`, error);
       } finally {
         this.activeResumes.delete(run.id);
       }

@@ -30,7 +30,7 @@
  * @module rendering/renderer
  */
 
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
 import { SERVICE_OVERLOADED } from "#veryfront/errors/error-registry.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -81,7 +81,7 @@ import {
   renderSemaphore,
 } from "./renderer-concurrency.ts";
 
-const log = logger.component("renderer");
+const logger = rendererLogger.component("renderer");
 
 /**
  * Master timeout for entire render pipeline (must be less than REQUEST_TIMEOUT_MS).
@@ -152,12 +152,12 @@ export class Renderer {
 
     this.initializationPromise = (async () => {
       const startTime = performance.now();
-      log.debug("Initializing...");
+      logger.debug("Initializing...");
 
       await initializeSharedServices(options);
 
       this.initialized = true;
-      log.debug("Initialized", {
+      logger.debug("Initialized", {
         duration: `${(performance.now() - startTime).toFixed(2)}ms`,
       });
     })();
@@ -178,7 +178,7 @@ export class Renderer {
         }
 
         const startTime = performance.now();
-        log.debug("Rendering page", {
+        logger.debug("Rendering page", {
           slug,
           projectId: ctx.projectId,
           environment: ctx.environment,
@@ -189,7 +189,7 @@ export class Renderer {
           ? await this.cache.checkCache(slug, ctx, options?.colorScheme, cacheKey)
           : { hit: false, cacheKey: "" };
         if (cacheResult.hit && cacheResult.cachedResult) {
-          log.debug("Cache hit", {
+          logger.debug("Cache hit", {
             slug,
             projectId: ctx.projectId,
             colorScheme: options?.colorScheme,
@@ -200,7 +200,7 @@ export class Renderer {
 
         if (!(await acquireProjectSlot(ctx.projectId))) {
           const activeCount = projectRenderCounts.get(ctx.projectId) ?? 0;
-          log.error("Per-project render limit reached", {
+          logger.error("Per-project render limit reached", {
             slug,
             projectId: ctx.projectId,
             activeRenders: activeCount,
@@ -221,7 +221,7 @@ export class Renderer {
         const acquired = await renderSemaphore.tryAcquire(RENDER_ACQUIRE_TIMEOUT_MS);
         if (!acquired) {
           await releaseProjectSlot(ctx.projectId);
-          log.error("Render capacity exceeded - service overloaded", {
+          logger.error("Render capacity exceeded - service overloaded", {
             slug,
             projectId: ctx.projectId,
             waiting: renderSemaphore.waiting,
@@ -329,7 +329,7 @@ export class Renderer {
         );
       } catch (error) {
         if (error instanceof TimeoutError) {
-          log.error("Render pipeline timeout - aborting", {
+          logger.error("Render pipeline timeout - aborting", {
             slug,
             projectId: ctx.projectId,
             timeoutMs: RENDER_PIPELINE_TIMEOUT_MS,
@@ -342,7 +342,7 @@ export class Renderer {
         await this.cache.persistResult(result, slug, ctx, options?.colorScheme, cacheKey);
       }
 
-      log.debug("Render complete (leader)", {
+      logger.debug("Render complete (leader)", {
         slug,
         projectId: ctx.projectId,
         duration: `${(performance.now() - startTime).toFixed(2)}ms`,
@@ -363,7 +363,7 @@ export class Renderer {
       : await runRender();
 
     if (isFollower) {
-      log.debug("Render deduplicated (follower)", {
+      logger.debug("Render deduplicated (follower)", {
         slug,
         projectId: ctx.projectId,
         duration: `${(performance.now() - startTime).toFixed(2)}ms`,
@@ -423,19 +423,19 @@ export class Renderer {
    * @deprecated Use clearCacheForProject for multi-tenant deployments
    */
   async clearAllCaches(): Promise<void> {
-    log.debug("Clearing ALL render caches (global)");
+    logger.debug("Clearing ALL render caches (global)");
     await this.cache.clearAll();
   }
 
   async clearCacheForProject(projectId: string): Promise<void> {
-    log.debug("Clearing render cache for project", { projectId });
+    logger.debug("Clearing render cache for project", { projectId });
     await this.cache.clearForProject(projectId);
   }
 
   async destroy(): Promise<void> {
     await this.cache.destroy();
     this.initialized = false;
-    log.debug("Destroyed");
+    logger.debug("Destroyed");
   }
 
   private createServicesForContext(
@@ -571,9 +571,9 @@ export async function destroyRenderer(): Promise<void> {
  * @deprecated Use clearRendererCacheForProject for multi-tenant deployments
  */
 export async function clearRendererCaches(): Promise<void> {
-  log.debug("clearRendererCaches called (global)", { hasRenderer: !!renderer });
+  logger.debug("clearRendererCaches called (global)", { hasRenderer: !!renderer });
   if (!renderer) {
-    log.debug("No renderer instance, skipping cache clear");
+    logger.debug("No renderer instance, skipping cache clear");
     return;
   }
 
@@ -581,13 +581,13 @@ export async function clearRendererCaches(): Promise<void> {
 }
 
 export async function clearRendererCacheForProject(projectId: string): Promise<void> {
-  log.debug("clearRendererCacheForProject called", {
+  logger.debug("clearRendererCacheForProject called", {
     projectId,
     hasRenderer: !!renderer,
   });
 
   if (!renderer) {
-    log.debug("No renderer instance, skipping project cache clear", { projectId });
+    logger.debug("No renderer instance, skipping project cache clear", { projectId });
     return;
   }
 

@@ -7,10 +7,10 @@
  * (Max subscription, API key, org key, etc.).
  */
 
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import type { ClaudeCodeMode, ClaudeCodeResult } from "./types.ts";
 
-const log = logger.component("agent-sdk");
+const logger = baseLogger.component("agent-sdk");
 
 /**
  * Agent configuration
@@ -95,8 +95,8 @@ export async function executeAgent(
     const { query } = await import("@anthropic-ai/claude-agent-sdk");
 
     if (config.debug) {
-      log.info("Starting task:", task);
-      log.info("Config:", {
+      logger.info("Starting task:", task);
+      logger.info("Config:", {
         model: config.model || DEFAULT_MODEL,
         cwd: config.cwd || Deno.cwd(),
         maxTurns: config.maxTurns,
@@ -147,7 +147,7 @@ export async function executeAgent(
         }
 
         if (config.debug) {
-          log.info(`Turn ${totalTurns}:`, {
+          logger.info(`Turn ${totalTurns}:`, {
             text: finalText?.slice(0, 100),
             toolCalls: message.message.content
               .filter((b: { type: string }) => b.type === "tool_use")
@@ -158,7 +158,7 @@ export async function executeAgent(
 
       if (message.type === "result") {
         if (config.debug) {
-          log.info("Complete:", {
+          logger.info("Complete:", {
             turns: message.num_turns,
             cost: message.total_cost_usd,
             duration: message.duration_ms,
@@ -198,7 +198,7 @@ export async function executeAgent(
     return result;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    log.error("Error:", errorMessage);
+    logger.error("Error:", errorMessage);
 
     const result: ClaudeCodeResult = {
       success: false,

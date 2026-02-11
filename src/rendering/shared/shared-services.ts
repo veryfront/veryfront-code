@@ -11,14 +11,14 @@
  * @module rendering/shared/shared-services
  */
 
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { initializeTransform, isUsingEsbuild } from "#veryfront/platform/compat/transform.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { ElementValidator, type ValidationOptions } from "../element-validator/index.ts";
 import { type CompileMDXFunction, CompilerService } from "../orchestrator/compiler-service.ts";
 
-const log = logger.component("shared-services");
+const logger = rendererLogger.component("shared-services");
 
 export interface SharedServicesOptions {
   debugMode?: boolean;
@@ -45,12 +45,12 @@ export async function initializeSharedServices(
   initializationPromise = withSpan(
     SpanNames.SHARED_SERVICES_INIT,
     async (): Promise<SharedServices> => {
-      log.debug("Initializing shared renderer services");
+      logger.debug("Initializing shared renderer services");
       const startTime = performance.now();
 
       // Initialize JSX transform (esbuild in dev, sucrase in deno compile)
       await initializeTransform();
-      log.debug("Transform initialized", {
+      logger.debug("Transform initialized", {
         backend: isUsingEsbuild() ? "esbuild" : "sucrase",
       });
 
@@ -64,7 +64,7 @@ export async function initializeSharedServices(
         compilerService: new CompilerService(),
       };
 
-      log.debug("Shared services initialized", {
+      logger.debug("Shared services initialized", {
         duration: `${(performance.now() - startTime).toFixed(2)}ms`,
       });
 
@@ -105,5 +105,5 @@ export function getSharedCompileMDX(): CompileMDXFunction {
 export function destroySharedServices(): void {
   sharedServices = null;
   initializationPromise = null;
-  log.debug("Shared services destroyed");
+  logger.debug("Shared services destroyed");
 }

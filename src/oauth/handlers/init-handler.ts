@@ -1,4 +1,4 @@
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import {
   type EnvironmentConfig,
   getEnvironmentConfig,
@@ -8,7 +8,7 @@ import { type EnvReader, OAuthService } from "../providers/base.ts";
 import type { AuthorizationUrlOptions, OAuthServiceConfig, TokenStore } from "../types.ts";
 import { memoryTokenStore } from "../token-store/memory.ts";
 
-const log = logger.component("o-auth");
+const logger = baseLogger.component("o-auth");
 
 export interface OAuthInitHandlerOptions {
   /** Token store to use (defaults to memory store) */
@@ -57,7 +57,7 @@ export function createOAuthInitHandler(
       await tokenStore.setState(state);
       return Response.redirect(url);
     } catch (error) {
-      log.error("Init error", { serviceId: config.serviceId }, error);
+      logger.error("Init error", { serviceId: config.serviceId }, error);
 
       return Response.json(
         {

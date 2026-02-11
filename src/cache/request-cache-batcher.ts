@@ -1,10 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { MAX_BATCH_SIZE } from "#veryfront/utils/constants/limits.ts";
 import type { CacheBackend } from "./backend.ts";
 
-const log = logger.component("request-cache-batcher");
+const logger = baseLogger.component("request-cache-batcher");
 
 interface PendingRequest {
   key: string;
@@ -96,7 +96,7 @@ async function flushBatch(ctx: RequestCacheContext, backend: CacheBackend): Prom
 
   const uniqueKeys = [...new Set(requests.map((r) => r.key))];
 
-  log.debug("Flushing batch", {
+  logger.debug("Flushing batch", {
     requested: requests.length,
     unique: uniqueKeys.length,
     dedupeRatio: (requests.length / uniqueKeys.length).toFixed(2),

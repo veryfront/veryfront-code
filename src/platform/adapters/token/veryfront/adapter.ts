@@ -5,7 +5,7 @@
  * Tokens are encrypted client-side before being sent to the API.
  */
 
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { TokenStorageApiClient } from "./api-client.ts";
 import {
   createTokenConfig,
@@ -13,7 +13,7 @@ import {
   type TokenStorageAdapterConfig,
 } from "./types.ts";
 
-const log = logger.component("veryfront-token-adapter");
+const logger = baseLogger.component("veryfront-token-adapter");
 
 export class VeryfrontTokenAdapter implements TokenStorageAdapter {
   private client: TokenStorageApiClient;
@@ -23,7 +23,7 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
     const tokenConfig = createTokenConfig(config);
     this.client = new TokenStorageApiClient(tokenConfig);
 
-    log.debug("Created", {
+    logger.debug("Created", {
       apiBaseUrl: tokenConfig.apiBaseUrl,
       projectSlug: tokenConfig.projectSlug,
     });
@@ -32,7 +32,7 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    log.debug("Initializing...");
+    logger.debug("Initializing...");
 
     const connected = await this.client.ping();
     if (!connected) {
@@ -40,35 +40,35 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
     }
 
     this.initialized = true;
-    log.debug("Initialized successfully");
+    logger.debug("Initialized successfully");
   }
 
   async get(key: string): Promise<string | null> {
     await this.initialize();
-    log.debug("Get", { key });
+    logger.debug("Get", { key });
     return this.client.get(key);
   }
 
   async set(key: string, value: string): Promise<void> {
     await this.initialize();
-    log.debug("Set", { key, valueLength: value.length });
+    logger.debug("Set", { key, valueLength: value.length });
     await this.client.set(key, value);
   }
 
   async delete(key: string): Promise<void> {
     await this.initialize();
-    log.debug("Delete", { key });
+    logger.debug("Delete", { key });
     await this.client.delete(key);
   }
 
   async list(prefix?: string): Promise<string[]> {
     await this.initialize();
-    log.debug("List", { prefix });
+    logger.debug("List", { prefix });
     return this.client.list(prefix);
   }
 
   dispose(): void {
     this.initialized = false;
-    log.debug("Disposed");
+    logger.debug("Disposed");
   }
 }

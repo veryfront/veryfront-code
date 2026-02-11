@@ -20,7 +20,7 @@ import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts"
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { shouldUseNoCacheHeadersFromHandler } from "../../../context/enriched-context.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { endRequest, startRequest } from "#veryfront/utils";
 import { tryNotFoundFallback } from "./not-found-fallback.ts";
 import { tryErrorPageFallback } from "./error-page-fallback.ts";
@@ -28,7 +28,7 @@ import { type SSRRenderResult, SSRService } from "../../../services/rendering/ss
 import { ErrorPages } from "../../../utils/error-html.ts";
 import { buildSSRResponse } from "./ssr-response-builder.ts";
 
-const log = logger.component("ssr");
+const logger = serverLogger.component("ssr");
 
 /**
  * Determine if request should serve production (released) content.
@@ -108,7 +108,7 @@ export class SSRHandler extends BaseHandler {
         const branch = ctx.parsedDomain?.branch ?? null;
         const effectiveToken = ctx.proxyToken || getEnv("VERYFRONT_API_TOKEN") || "";
 
-        log.debug("Using multi-project context", {
+        logger.debug("Using multi-project context", {
           projectSlug: ctx.projectSlug,
           productionMode: prodMode,
           slug,

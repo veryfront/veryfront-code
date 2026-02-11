@@ -27,7 +27,7 @@ import { executeTool } from "#veryfront/tool";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
 import { createMemory, type Memory } from "../memory/index.ts";
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import {
   addSpanEvent,
   setSpanAttributes,
@@ -56,7 +56,7 @@ import { getAvailableTools, isDynamicTool, parseToolArgs } from "./tool-helpers.
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 import { createStreamState, processStreamData } from "./stream-handler.ts";
 
-const log = logger.component("agent");
+const logger = serverLogger.component("agent");
 
 export class AgentRuntime {
   private id: string;
@@ -367,7 +367,7 @@ export class AgentRuntime {
       for (const tc of state.toolCalls.values()) {
         const { args, error } = parseToolArgs(tc.arguments);
         if (error) {
-          log.warn("Failed to parse streamed tool arguments", {
+          logger.warn("Failed to parse streamed tool arguments", {
             toolCallId: tc.id,
             error,
           });
@@ -401,7 +401,7 @@ export class AgentRuntime {
         const toolCall: ToolCall = { id: tc.id, name: tc.name, args, status: "pending" };
 
         if (argError) {
-          log.warn("Invalid streamed tool arguments", {
+          logger.warn("Invalid streamed tool arguments", {
             toolCallId: tc.id,
             error: argError,
           });

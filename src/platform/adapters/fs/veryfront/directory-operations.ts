@@ -1,4 +1,4 @@
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import type { DirectoryEntry } from "./types.ts";
 import type { ProjectFile } from "../../veryfront-api-client/index.ts";
 import { VeryfrontOperationsBase } from "./base-operations.ts";
@@ -9,7 +9,7 @@ import {
 } from "./cache-keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-const log = logger.component("directory-operations");
+const logger = baseLogger.component("directory-operations");
 
 interface DirNode {
   files: Map<string, ProjectFile>;
@@ -30,7 +30,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
 
         const cached = this.cache.get<DirectoryEntry[]>(cacheKey);
         if (cached) {
-          log.debug("Cache hit (readdir)", { path: normalizedPath });
+          logger.debug("Cache hit (readdir)", { path: normalizedPath });
           return cached;
         }
 
@@ -63,7 +63,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
 
         this.cache.set(cacheKey, entries);
 
-        log.debug("Listed directory", {
+        logger.debug("Listed directory", {
           path: normalizedPath,
           entries: entries.length,
         });
@@ -103,7 +103,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
           if (file.path.endsWith("/")) {
             const ext = file.type === "page" ? ".mdx" : ".tsx";
             normalizedPath = `${normalizedPath}/index${ext}`;
-            log.debug("Normalized trailing slash path", {
+            logger.debug("Normalized trailing slash path", {
               original: file.path,
               normalized: normalizedPath,
             });
@@ -142,7 +142,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
         }
 
         this.dirTree = tree;
-        log.debug("Tree built", { directories: tree.size });
+        logger.debug("Tree built", { directories: tree.size });
       },
       { "fs.tree.fileCount": "lazy" },
     );
@@ -166,7 +166,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
 
       if (adapterFiles) {
         const cacheMs = Math.round(performance.now() - cacheStart);
-        log.debug("getAllFilesRaw - from adapter cache", {
+        logger.debug("getAllFilesRaw - from adapter cache", {
           cacheMs,
           fileCount: adapterFiles.length,
         });
@@ -176,7 +176,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
       const cacheKey = buildFileListCacheKey(ctx);
 
       if (skipPersistentCache) {
-        log.debug("getAllFilesRaw - skipping persistent cache", {
+        logger.debug("getAllFilesRaw - skipping persistent cache", {
           cacheKey,
           cacheKeyPrefix,
         });
@@ -188,7 +188,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
 
       const cacheMs = Math.round(performance.now() - cacheStart);
       if (cached) {
-        log.debug("getAllFilesRaw - fallback cache HIT", {
+        logger.debug("getAllFilesRaw - fallback cache HIT", {
           cacheKey,
           cacheMs,
           fileCount: cached.length,
@@ -196,13 +196,13 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
         return cached;
       }
 
-      log.warn("getAllFilesRaw - cache MISS, fetching from API", {
+      logger.warn("getAllFilesRaw - cache MISS, fetching from API", {
         cacheKey,
         cacheMs,
       });
 
       const isPublished = ctx?.sourceType !== "branch";
-      log.debug("Fetching files from API", {
+      logger.debug("Fetching files from API", {
         sourceType: ctx?.sourceType,
         cacheKey,
       });

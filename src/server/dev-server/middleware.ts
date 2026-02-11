@@ -18,9 +18,9 @@ type MiddlewareFunction = (
   next: () => Promise<Response | undefined> | Response,
 ) => Promise<Response | undefined> | Response | undefined;
 
-const logger = getBaseLogger("SERVER");
+const baseLogger = getBaseLogger("SERVER");
 
-const log = logger.component("middleware");
+const logger = baseLogger.component("middleware");
 
 export function createRequestLoggerMiddleware(): MiddlewareFunction {
   return async (c, next) => {
@@ -109,7 +109,7 @@ async function loadMiddlewareFile(
     if (!(await adapter.fs.exists(middlewarePath))) continue;
 
     try {
-      log.debug(`Loading ${middlewareFile}`);
+      logger.debug(`Loading ${middlewareFile}`);
 
       if (isVirtualFilesystem(adapter.fs)) {
         return await loadMiddlewareFromVirtualFS(middlewarePath, adapter);
@@ -120,7 +120,7 @@ async function loadMiddlewareFile(
       return normalizeMiddlewareExport(middlewareModule);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      log.warn(`Failed to load ${middlewareFile}: ${errorMessage}`);
+      logger.warn(`Failed to load ${middlewareFile}: ${errorMessage}`);
     }
   }
 
@@ -202,11 +202,11 @@ export async function setupMiddleware(
   }
 
   if (config.fs?.veryfront?.proxyMode === true) {
-    log.debug("Skipping file middleware in proxy mode");
+    logger.debug("Skipping file middleware in proxy mode");
   } else if (projectDir && adapter) {
     const fileMiddlewares = await loadMiddlewareFile(projectDir, adapter);
     for (const middleware of fileMiddlewares) {
-      log.debug("Registered middleware from file");
+      logger.debug("Registered middleware from file");
       pipeline.use(middleware);
     }
   }

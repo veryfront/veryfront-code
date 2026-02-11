@@ -1,10 +1,10 @@
 import { PAGE_TRANSITION_DELAY_MS } from "#veryfront/config";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { applyHeadDirectives, executeScripts, manageFocus, updateMetaTags } from "./dom-utils.ts";
 import type { RouteData } from "./page-loader.ts";
 
-const log = logger.component("veryfront");
+const logger = rendererLogger.component("veryfront");
 
 export class PageTransition {
   private pendingTransitionTimeout?: number;
@@ -61,7 +61,7 @@ export class PageTransition {
     try {
       globalThis.scrollTo(0, isPopState ? scrollY : 0);
     } catch (error) {
-      log.warn("scroll handling failed", error);
+      logger.warn("scroll handling failed", error);
     }
   }
 

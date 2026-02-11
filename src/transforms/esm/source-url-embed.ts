@@ -8,9 +8,9 @@
  */
 
 import { gunzipSync } from "node:zlib";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 
-const log = logger.component("http-cache");
+const logger = rendererLogger.component("http-cache");
 
 /** Preserved comment format that survives minification */
 export const VF_SOURCE_PREFIX = "/*! @vf-source: ";
@@ -65,7 +65,7 @@ export function decodeGzipContent(content: string): string | null {
     const decompressed = gunzipSync(bytes);
     return new TextDecoder().decode(decompressed);
   } catch (error) {
-    log.debug("Failed to decode gzip content", { error });
+    logger.debug("Failed to decode gzip content", { error });
     return null;
   }
 }

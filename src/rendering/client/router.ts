@@ -1,4 +1,4 @@
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import ReactDOM from "react-dom/client";
 import type { Root } from "react-dom/client";
 import type { GlobalWithReactDOM } from "#veryfront/types/global-guards.ts";
@@ -11,7 +11,7 @@ import {
 } from "#veryfront/routing";
 import type { RouteData, SpaPageData } from "#veryfront/routing";
 
-const log = logger.component("veryfront");
+const logger = rendererLogger.component("veryfront");
 
 export type SpaNavigationHandler = (data: SpaPageData) => Promise<void>;
 
@@ -99,7 +99,7 @@ export class VeryfrontRouter {
   }
 
   registerNavigationHandler(handler: SpaNavigationHandler): void {
-    log.debug("Registering SPA navigation handler");
+    logger.debug("Registering SPA navigation handler");
     this.spaNavigationHandler = handler;
     this.spaMode = true;
   }
@@ -108,12 +108,12 @@ export class VeryfrontRouter {
     try {
       const options = globalThis.__VERYFRONT_ROUTER_OPTS__;
       if (!options) {
-        log.debug("No global options configured");
+        logger.debug("No global options configured");
         return {};
       }
       return options;
     } catch (error) {
-      log.error("Failed to read global options:", error);
+      logger.error("Failed to read global options:", error);
       return {};
     }
   }
@@ -161,7 +161,7 @@ export class VeryfrontRouter {
   }
 
   private async loadSpaPage(path: string): Promise<void> {
-    log.debug(`Loading SPA page: ${path}`);
+    logger.debug(`Loading SPA page: ${path}`);
 
     try {
       const spaData = await this.pageLoader.loadSpaPageData(path);
@@ -172,7 +172,7 @@ export class VeryfrontRouter {
       this.options.onComplete?.(path);
     } catch (error) {
       const normalizedError = error instanceof Error ? error : new Error(String(error));
-      log.error(`Failed to load SPA page ${path}`, normalizedError);
+      logger.error(`Failed to load SPA page ${path}`, normalizedError);
       this.options.onError?.(normalizedError);
       this.pageTransition.showError(normalizedError);
     }
@@ -185,7 +185,7 @@ export class VeryfrontRouter {
     try {
       globalThis.scrollTo(0, isPopState ? scrollY : 0);
     } catch (error) {
-      log.warn("scroll handling failed", error);
+      logger.warn("scroll handling failed", error);
     }
 
     this.navigationHandlers.clearPopStateFlag();
@@ -201,7 +201,7 @@ export class VeryfrontRouter {
         return;
       }
 
-      log.warn(`Cache entry for ${path} was unexpectedly null, fetching fresh data`);
+      logger.warn(`Cache entry for ${path} was unexpectedly null, fetching fresh data`);
     }
 
     this.pageTransition.setLoadingState(true);

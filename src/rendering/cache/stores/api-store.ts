@@ -1,9 +1,9 @@
 import type { CachePayload, CacheStore } from "../types.ts";
 import { MemoryCacheStore } from "./memory-store.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { type CacheBackend, createCacheBackend } from "#veryfront/cache/backend.ts";
 
-const log = logger.component("api-cache-store");
+const logger = rendererLogger.component("api-cache-store");
 
 export interface APICacheStoreOptions {
   /** Key prefix for cache entries */
@@ -68,7 +68,7 @@ export class APICacheStore implements CacheStore {
     })
       .then((backend) => {
         this.backend = backend;
-        log.debug("Distributed cache initialized", {
+        logger.debug("Distributed cache initialized", {
           type: backend.type,
         });
         return backend;
@@ -137,10 +137,10 @@ export class APICacheStore implements CacheStore {
 
       const payload = this.deserialize(json);
       await this.localCache?.set(key, payload);
-      log.debug("Distributed cache hit", { key });
+      logger.debug("Distributed cache hit", { key });
       return payload;
     } catch (error) {
-      log.debug("Failed to read from distributed cache", {
+      logger.debug("Failed to read from distributed cache", {
         key,
         error,
       });
@@ -170,7 +170,7 @@ export class APICacheStore implements CacheStore {
       const backend = await this.getBackend();
       await backend.del(key);
     } catch (error) {
-      log.debug("Failed to delete from distributed cache", {
+      logger.debug("Failed to delete from distributed cache", {
         key,
         error,
       });
@@ -185,13 +185,13 @@ export class APICacheStore implements CacheStore {
       const backend = await this.getBackend();
       distributedDeleted = (await backend.delByPattern?.(`${prefix}*`)) ?? 0;
     } catch (error) {
-      log.debug("Failed to delete from distributed cache", {
+      logger.debug("Failed to delete from distributed cache", {
         prefix,
         error,
       });
     }
 
-    log.debug("deleteByPrefix", {
+    logger.debug("deleteByPrefix", {
       prefix,
       localDeleted,
       distributedDeleted,
@@ -202,7 +202,7 @@ export class APICacheStore implements CacheStore {
 
   async clear(): Promise<void> {
     await this.localCache?.clear();
-    log.debug("Local cache cleared");
+    logger.debug("Local cache cleared");
   }
 
   async destroy(): Promise<void> {

@@ -11,12 +11,12 @@ import type { CrossProjectImport, MissingImport } from "#veryfront/transforms/es
 import { parseLocalImports } from "#veryfront/transforms/esm/import-parser.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { MAX_TRANSFORM_DEPTH, TRANSFORM_BATCH_SIZE } from "./constants.ts";
 import { globalModuleCache } from "./cache/index.ts";
 
-const log = logger.component("ssr-module-loader");
+const logger = rendererLogger.component("ssr-module-loader");
 
 /**
  * Manages dependency validation for SSR module loading:
@@ -55,7 +55,7 @@ export class SSRDependencyValidator {
       .map((m) => `  - ${m.specifier} (from ${m.fromFile.slice(-40)}): ${m.reason}`)
       .join("\n");
 
-    log.error("Missing dependencies detected", {
+    logger.error("Missing dependencies detected", {
       file: filePath.slice(-60),
       missing: this.missingDependencies.length,
       details: this.missingDependencies,

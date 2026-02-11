@@ -5,10 +5,10 @@
  * Tokens are lost when the process restarts.
  */
 
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import type { TokenStorageAdapter } from "./types.ts";
 
-const log = logger.component("memory-token-adapter");
+const logger = baseLogger.component("memory-token-adapter");
 
 const STORAGE_KEY = "__veryfront_token_storage__" as const;
 
@@ -57,7 +57,7 @@ export class MemoryTokenAdapter implements TokenStorageAdapter {
   }
 
   dispose(): void {
-    log.debug("Disposed");
+    logger.debug("Disposed");
   }
 
   get size(): number {

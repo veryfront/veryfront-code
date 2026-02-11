@@ -5,11 +5,11 @@ import {
   HTTP_MODULE_FETCH_TIMEOUT_MS,
   HTTP_NETWORK_CONNECT_TIMEOUT,
   type LockfileManager,
-  serverLogger as logger,
+  serverLogger,
 } from "#veryfront/utils";
 import type { Message, Plugin } from "esbuild";
 
-const log = logger.component("api");
+const logger = serverLogger.component("api");
 
 export interface HTTPPluginOptions {
   allowedHosts: string[];
@@ -71,7 +71,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
       build.onResolve({ filter: /^react\/(jsx-runtime|jsx-dev-runtime)$/ }, (args) => {
         const runtime = args.path.split("/")[1];
         const reactUrl = `https://esm.sh/react@18/${runtime}`;
-        log.debug(`[http] map '${args.path}' -> '${reactUrl}'`);
+        logger.debug(`[http] map '${args.path}' -> '${reactUrl}'`);
         return { path: reactUrl, namespace: "http-url" };
       });
 
@@ -80,7 +80,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         if (!mapped) return undefined;
 
         nodeMapped.push({ from: args.path, to: mapped });
-        log.debug(`[http] map '${args.path}' -> '${mapped}'`);
+        logger.debug(`[http] map '${args.path}' -> '${mapped}'`);
         return { path: mapped, namespace: "http-url" };
       });
 
@@ -124,7 +124,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
             }
             u.searchParams.set("target", "es2020");
             u.searchParams.set("bundle", "true");
-            log.debug(`[http] esm.sh rewrite: ${args.path} -> ${u.toString()}`);
+            logger.debug(`[http] esm.sh rewrite: ${args.path} -> ${u.toString()}`);
             requestUrl = u.toString();
           }
         } catch (e) {
@@ -134,7 +134,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         if (lockfile) {
           const cached = await lockfile.get(args.path);
           if (cached) {
-            log.debug(`[http] lockfile hit: ${args.path}`);
+            logger.debug(`[http] lockfile hit: ${args.path}`);
             try {
               const res = await fetchWithTimeout(cached.resolved);
               if (res.ok) {
@@ -156,10 +156,10 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
                   };
                 }
 
-                log.warn(`[http] integrity mismatch, refetching: ${args.path}`);
+                logger.warn(`[http] integrity mismatch, refetching: ${args.path}`);
               }
             } catch {
-              log.warn(`[http] cached URL failed, refetching: ${args.path}`);
+              logger.warn(`[http] cached URL failed, refetching: ${args.path}`);
             }
           }
         }
@@ -169,7 +169,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         });
 
         if (!res.ok) {
-          log.error(`[http] fetch failed ${requestUrl} ${res.status}`);
+          logger.error(`[http] fetch failed ${requestUrl} ${res.status}`);
           return {
             errors: [
               {
@@ -190,7 +190,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
             fetchedAt: new Date().toISOString(),
           });
           await lockfile.flush();
-          log.debug(`[http] lockfile updated: ${args.path} -> ${resolvedUrl}`);
+          logger.debug(`[http] lockfile updated: ${args.path} -> ${resolvedUrl}`);
         }
 
         return { contents: text, loader: "js" } as const;

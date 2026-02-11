@@ -1,4 +1,4 @@
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { z } from "zod";
 import { requestWithRetry, type RetryConfig } from "./retry-handler.ts";
 import { API_CLIENT_ERROR } from "./types.ts";
@@ -19,7 +19,7 @@ import {
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
-const log = logger.component("api");
+const logger = baseLogger.component("api");
 
 export type TokenProvider = () => string;
 
@@ -158,7 +158,7 @@ export class VeryfrontAPIOperations {
     const url = `/projects/${encodeURIComponent(projectRef)}/branches/${
       encodeURIComponent(branchName)
     }/files?${params}`;
-    log.debug("listBranchFiles", { projectRef, branchName, pattern: options.pattern });
+    logger.debug("listBranchFiles", { projectRef, branchName, pattern: options.pattern });
 
     const raw = await this.request(url);
     const response = ListBranchFilesResponseSchema.parse(raw);
@@ -178,7 +178,7 @@ export class VeryfrontAPIOperations {
       this.listBranchFiles(projectRef, branchName, { ...options, cursor, limit: 100 })
     );
 
-    log.debug("listAllBranchFiles DONE", {
+    logger.debug("listAllBranchFiles DONE", {
       projectRef,
       branchName,
       totalFiles: allFiles.length,
@@ -194,7 +194,7 @@ export class VeryfrontAPIOperations {
         const url = `/projects/${encodeURIComponent(projectRef)}/branches/${
           encodeURIComponent(branchName)
         }/files/${encodeURIComponent(pathOrId)}`;
-        log.debug("getBranchFile", { projectRef, branchName, pathOrId });
+        logger.debug("getBranchFile", { projectRef, branchName, pathOrId });
 
         const raw = await this.request(url);
         const response = BranchFileDetailSchema.parse(raw);
@@ -225,7 +225,7 @@ export class VeryfrontAPIOperations {
     const url = `/projects/${encodeURIComponent(projectRef)}/environments/${
       encodeURIComponent(environmentName)
     }/files?${params}`;
-    log.debug("listEnvironmentFiles", {
+    logger.debug("listEnvironmentFiles", {
       projectRef,
       environmentName,
       pattern: options.pattern,
@@ -253,7 +253,7 @@ export class VeryfrontAPIOperations {
       this.listEnvironmentFiles(projectRef, environmentName, { ...options, cursor, limit: 100 })
     );
 
-    log.debug("listAllEnvironmentFiles", {
+    logger.debug("listAllEnvironmentFiles", {
       projectRef,
       environmentName,
       totalFiles: allFiles.length,
@@ -273,7 +273,7 @@ export class VeryfrontAPIOperations {
         const url = `/projects/${encodeURIComponent(projectRef)}/environments/${
           encodeURIComponent(environmentName)
         }/files/${encodeURIComponent(pathOrId)}`;
-        log.debug("getEnvironmentFile", { projectRef, environmentName, pathOrId });
+        logger.debug("getEnvironmentFile", { projectRef, environmentName, pathOrId });
 
         const raw = await this.request(url);
         const response = EnvironmentFileDetailSchema.parse(raw);
@@ -305,7 +305,7 @@ export class VeryfrontAPIOperations {
     const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
       encodeURIComponent(version)
     }/files?${params}`;
-    log.debug("listReleaseFiles", { projectRef, version, pattern: options.pattern });
+    logger.debug("listReleaseFiles", { projectRef, version, pattern: options.pattern });
 
     const raw = await this.request(url);
     const response = ListReleaseFilesResponseSchema.parse(raw);
@@ -335,7 +335,7 @@ export class VeryfrontAPIOperations {
         const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
           encodeURIComponent(version)
         }/files/${encodeURIComponent(pathOrId)}`;
-        log.debug("getReleaseFile", { projectRef, version, pathOrId });
+        logger.debug("getReleaseFile", { projectRef, version, pathOrId });
 
         const raw = await this.request(url);
         const response = ReleaseFileDetailSchema.parse(raw);
@@ -364,7 +364,7 @@ export class VeryfrontAPIOperations {
       async () => {
         const domainWithoutPort = domain.replace(/:\d+$/, "");
         const url = `/projects/${encodeURIComponent(domainWithoutPort)}`;
-        log.debug("lookupProjectByDomain", { domain });
+        logger.debug("lookupProjectByDomain", { domain });
 
         try {
           const raw = await this.request(url);
@@ -393,7 +393,7 @@ export class VeryfrontAPIOperations {
             release_id: matchingEnv?.active_release_id ?? null,
           };
 
-          log.debug("Domain lookup result", {
+          logger.debug("Domain lookup result", {
             domain,
             projectSlug: response.project_slug,
             environment: response.environment?.name,
@@ -402,7 +402,7 @@ export class VeryfrontAPIOperations {
           return response;
         } catch (error) {
           if (error instanceof Error && error.message.includes("404")) {
-            log.debug("No project found for domain", { domain });
+            logger.debug("No project found for domain", { domain });
             return null;
           }
           throw error;

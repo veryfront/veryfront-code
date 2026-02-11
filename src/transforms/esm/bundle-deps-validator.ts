@@ -9,12 +9,12 @@
 
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { httpBundleCache } from "./http-cache-wrapper.ts";
 import { extractSourceUrl } from "./source-url-embed.ts";
 import { ensureAbsoluteDir, hasIncompatibleFilePaths } from "./http-cache-helpers.ts";
 
-const log = logger.component("http-cache");
+const logger = rendererLogger.component("http-cache");
 
 /**
  * Extract bundle deps (file:// paths or relative paths to http-{hash}.mjs) from code.
@@ -92,13 +92,13 @@ export async function validateBundleDepsExist(
     // Check if distributed cache is available
     const cacheAvailable = await httpBundleCache.isAvailable();
     if (!cacheAvailable) {
-      log.debug("Cannot validate deps - no distributed cache", {
+      logger.debug("Cannot validate deps - no distributed cache", {
         missing: missingDeps.map((d) => d.hash),
       });
       return false;
     }
 
-    log.debug("Recovering missing deps from Redis (batch)", {
+    logger.debug("Recovering missing deps from Redis (batch)", {
       count: missingDeps.length,
       hashes: missingDeps.map((d) => d.hash),
     });
@@ -108,14 +108,14 @@ export async function validateBundleDepsExist(
     for (const { hash } of missingDeps) {
       const localCode = codes.get(hash);
       if (!localCode) {
-        log.debug("Dep cannot be recovered from Redis", { hash });
+        logger.debug("Dep cannot be recovered from Redis", { hash });
         return false;
       }
 
       const code = localCode as unknown as string;
 
       if (hasIncompatibleFilePaths(code, absoluteCacheDir)) {
-        log.debug("Dep has incompatible paths, rejecting cache", { hash });
+        logger.debug("Dep has incompatible paths, rejecting cache", { hash });
         return false;
       }
 
@@ -123,19 +123,19 @@ export async function validateBundleDepsExist(
       try {
         await fs.mkdir(absoluteCacheDir, { recursive: true });
         await fs.writeTextFile(canonicalPath, code);
-        log.debug("Recovered dep from Redis", { hash });
+        logger.debug("Recovered dep from Redis", { hash });
 
         for (const dep of extractBundleDeps(code)) {
           if (!seen.has(dep.hash)) pending.push(dep);
         }
       } catch (error) {
-        log.error("Failed to write recovered dep", { hash, error });
+        logger.error("Failed to write recovered dep", { hash, error });
         return false;
       }
     }
   }
 
-  log.debug("All deps recovered successfully", { count: seen.size });
+  logger.debug("All deps recovered successfully", { count: seen.size });
   return true;
 }
 
@@ -173,7 +173,7 @@ export async function findParentBundleWithEmbeddedUrl(
       }
     }
   } catch (error) {
-    log.debug("Error scanning for parent bundle", { targetHash, error });
+    logger.debug("Error scanning for parent bundle", { targetHash, error });
   }
 
   return null;

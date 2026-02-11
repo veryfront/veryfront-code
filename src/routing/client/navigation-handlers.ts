@@ -1,8 +1,8 @@
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { DEFAULT_PREFETCH_DELAY_MS } from "#veryfront/config";
 import { findAnchorElement, isInternalLink } from "./dom-utils.ts";
 
-const log = logger.component("veryfront");
+const logger = rendererLogger.component("veryfront");
 
 export interface NavigationCallbacks {
   onNavigate: (url: string) => Promise<void>;
@@ -88,21 +88,21 @@ export class NavigationHandlers {
 
       const scrollY = globalThis.scrollY;
       if (typeof scrollY !== "number") {
-        log.debug("No valid scrollY value available");
+        logger.debug("No valid scrollY value available");
         this.scrollPositions.set(path, 0);
         return;
       }
 
       this.scrollPositions.set(path, scrollY);
     } catch (error) {
-      log.warn("failed to record scroll position", error);
+      logger.warn("failed to record scroll position", error);
     }
   }
 
   getScrollPosition(path: string): number {
     const position = this.scrollPositions.get(path);
     if (position === undefined) {
-      log.debug(`No scroll position stored for ${path}`);
+      logger.debug(`No scroll position stored for ${path}`);
       return 0;
     }
     return position;

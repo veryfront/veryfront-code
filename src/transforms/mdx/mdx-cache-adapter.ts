@@ -1,4 +1,4 @@
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import {
   type BundleCode,
   type BundleMetadata,
@@ -13,7 +13,7 @@ import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-modu
 import { ensureHttpBundlesExist } from "../esm/http-cache.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 
-const log = logger.component("mdx-cache");
+const logger = rendererLogger.component("mdx-cache");
 
 export interface MDXCompilationResult extends MdxBundle {
   headings?: Array<{ id: string; text: string; level: number }>;
@@ -65,7 +65,7 @@ export class MDXCacheAdapter {
 
       const bundleCode = await this.manifestStore.getBundleCode(metadata.codeHash);
       if (!bundleCode) {
-        log.debug("Metadata found but code missing", {
+        logger.debug("Metadata found but code missing", {
           filePath,
           codeHash: metadata.codeHash,
         });
@@ -81,7 +81,7 @@ export class MDXCacheAdapter {
         const failedHashes = await ensureHttpBundlesExist(httpBundles, cacheDir);
 
         if (failedHashes.length > 0) {
-          log.warn("HTTP bundle deps missing, invalidating cached MDX", {
+          logger.warn("HTTP bundle deps missing, invalidating cached MDX", {
             filePath,
             cacheKey,
             failedHashes,
@@ -95,7 +95,7 @@ export class MDXCacheAdapter {
         }
       }
 
-      log.debug("Cache hit for MDX compilation", {
+      logger.debug("Cache hit for MDX compilation", {
         filePath,
         codeHash: metadata.codeHash,
         size: metadata.size,
@@ -109,7 +109,7 @@ export class MDXCacheAdapter {
         nodeMap: new Map(),
       };
     } catch (error) {
-      log.debug("Failed to retrieve cached bundle", { error, filePath });
+      logger.debug("Failed to retrieve cached bundle", { error, filePath });
       return undefined;
     }
   }
@@ -120,7 +120,7 @@ export class MDXCacheAdapter {
     filePath?: string,
   ): Promise<void> {
     if (!bundle.compiledCode) {
-      log.debug("No compiled code to cache", { filePath });
+      logger.debug("No compiled code to cache", { filePath });
       return;
     }
 
@@ -153,7 +153,7 @@ export class MDXCacheAdapter {
       await this.manifestStore.setBundleCode(codeHash, bundleCode, ttl);
       await this.manifestStore.setBundleMetadata(cacheKey, metadata, ttl);
 
-      log.debug("Cached compiled MDX", {
+      logger.debug("Cached compiled MDX", {
         filePath,
         cacheKey,
         codeHash,
@@ -161,7 +161,7 @@ export class MDXCacheAdapter {
         ttl,
       });
     } catch (error) {
-      log.debug("Failed to cache bundle", { error, filePath });
+      logger.debug("Failed to cache bundle", { error, filePath });
     }
   }
 
@@ -171,19 +171,19 @@ export class MDXCacheAdapter {
       const cacheKey = this.getCacheKey(contentHash);
 
       await this.manifestStore.deleteBundle(cacheKey);
-      log.debug("Invalidated cached bundle", { cacheKey });
+      logger.debug("Invalidated cached bundle", { cacheKey });
     } catch (error) {
-      log.debug("Failed to invalidate bundle", { error });
+      logger.debug("Failed to invalidate bundle", { error });
     }
   }
 
   async invalidateSource(source: string): Promise<number> {
     try {
       const count = await this.manifestStore.invalidateSource(source);
-      log.debug("Invalidated bundles for source", { source, count });
+      logger.debug("Invalidated bundles for source", { source, count });
       return count;
     } catch (error) {
-      log.debug("Failed to invalidate source", { error, source });
+      logger.debug("Failed to invalidate source", { error, source });
       return 0;
     }
   }
@@ -191,9 +191,9 @@ export class MDXCacheAdapter {
   async clearAll(): Promise<void> {
     try {
       await this.manifestStore.clear();
-      log.debug("Cleared all cached bundles");
+      logger.debug("Cleared all cached bundles");
     } catch (error) {
-      log.debug("Failed to clear cache", { error });
+      logger.debug("Failed to clear cache", { error });
     }
   }
 
@@ -206,7 +206,7 @@ export class MDXCacheAdapter {
     try {
       return await this.manifestStore.getStats();
     } catch (error) {
-      log.debug("Failed to get stats", { error });
+      logger.debug("Failed to get stats", { error });
       return { totalBundles: 0, totalSize: 0 };
     }
   }

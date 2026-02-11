@@ -15,13 +15,13 @@
  * - Runtime-agnostic through JobExecutor abstraction
  */
 
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { hasLockSupport, hasWorkerSupport, type WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
 import { generateId } from "../types.ts";
 import type { JobConfig, JobExecutor, JobStatus } from "./executors/types.ts";
 
-const log = logger.component("workflow-job-manager");
+const logger = baseLogger.component("workflow-job-manager");
 
 // Re-export types for convenience
 export type { JobExecutor, JobInfo, JobStatus } from "./executors/types.ts";
@@ -176,7 +176,7 @@ export class WorkflowJobManager {
     this.stats.startedAt = new Date();
 
     if (this.config.debug) {
-      log.info(`Started manager ${this.managerId}`);
+      logger.info(`Started manager ${this.managerId}`);
     }
 
     // Start polling loop
@@ -195,7 +195,7 @@ export class WorkflowJobManager {
     this.stats.status = "stopping";
 
     if (this.config.debug) {
-      log.info(`Stopping manager ${this.managerId}...`);
+      logger.info(`Stopping manager ${this.managerId}...`);
     }
 
     // Clear scheduled poll
@@ -213,7 +213,7 @@ export class WorkflowJobManager {
     this.stats.status = "stopped";
 
     if (this.config.debug) {
-      log.info(`Manager ${this.managerId} stopped`);
+      logger.info(`Manager ${this.managerId} stopped`);
     }
   }
 
@@ -356,7 +356,7 @@ export class WorkflowJobManager {
       }
     } catch (error) {
       this.recordError(error);
-      log.error(`Poll error:`, error);
+      logger.error(`Poll error:`, error);
     }
   }
 
@@ -386,7 +386,7 @@ export class WorkflowJobManager {
           if (jobInfo.status === "succeeded") {
             this.stats.jobsCompleted++;
             if (this.config.debug) {
-              log.info(`Job completed: ${jobInfo.jobId}`);
+              logger.info(`Job completed: ${jobInfo.jobId}`);
             }
           } else {
             this.stats.jobsFailed++;
@@ -398,7 +398,7 @@ export class WorkflowJobManager {
         }
       }
     } catch (error) {
-      log.error(`Failed to sync job statuses:`, error);
+      logger.error(`Failed to sync job statuses:`, error);
     }
   }
 
@@ -439,10 +439,10 @@ export class WorkflowJobManager {
       });
 
       if (this.config.debug) {
-        log.info(`Created job ${jobId} for workflow ${run.id}`);
+        logger.info(`Created job ${jobId} for workflow ${run.id}`);
       }
     } catch (error) {
-      log.error(`Failed to create job for ${run.id}:`, error);
+      logger.error(`Failed to create job for ${run.id}:`, error);
 
       // Mark workflow as failed
       await this.config.backend.updateRun(run.id, {

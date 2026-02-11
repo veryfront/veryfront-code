@@ -17,7 +17,7 @@ import type {
   WorkflowStatus,
 } from "../../types.ts";
 import type { WorkflowBackend } from "../types.ts";
-import { agentLogger as logger } from "#veryfront/utils";
+import { agentLogger } from "#veryfront/utils";
 import { requeueRun } from "../shared/requeue-run.ts";
 
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
@@ -32,7 +32,7 @@ export type { RedisBackendConfig } from "./types.ts";
 
 import type { RedisBackendConfig, RedisBackendInternalConfig } from "./types.ts";
 
-const log = logger.component("redis-backend");
+const logger = agentLogger.component("redis-backend");
 
 export class RedisBackend implements WorkflowBackend {
   private client: RedisAdapter | null = null;
@@ -219,12 +219,12 @@ export class RedisBackend implements WorkflowBackend {
     try {
       await client.xgroupCreate(this.config.streamKey, this.config.groupName, "0", true);
       if (this.config.debug) {
-        log.debug(`Created consumer group: ${this.config.groupName}`);
+        logger.debug(`Created consumer group: ${this.config.groupName}`);
       }
     } catch (e) {
       const msg = String(e instanceof Error ? e.message : e);
       if (!msg.includes("BUSYGROUP")) {
-        log.error("Error creating consumer group:", e);
+        logger.error("Error creating consumer group:", e);
       }
     }
 

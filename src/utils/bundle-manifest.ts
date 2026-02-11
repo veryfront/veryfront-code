@@ -1,6 +1,6 @@
-import { serverLogger as logger } from "./logger/index.ts";
+import { serverLogger } from "./logger/index.ts";
 
-const log = logger.component("bundle-manifest");
+const logger = serverLogger.component("bundle-manifest");
 
 export interface BundleMetadata {
   hash: string;
@@ -149,7 +149,7 @@ let manifestStore: BundleManifestStore = new InMemoryBundleManifestStore();
 
 export function setBundleManifestStore(store: BundleManifestStore): void {
   manifestStore = store;
-  log.info("Bundle manifest store configured", {
+  logger.info("Bundle manifest store configured", {
     type: store.constructor.name,
   });
 }

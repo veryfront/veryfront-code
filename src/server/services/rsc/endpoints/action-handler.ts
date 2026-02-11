@@ -8,7 +8,7 @@ import { serverLogger } from "#veryfront/utils";
 import { parseActionBody } from "./action-parser.ts";
 import type { ActionRequestParams } from "./types.ts";
 
-const log = serverLogger.component("rsc");
+const logger = serverLogger.component("rsc");
 
 /**
  * Handle action request with guard checks
@@ -19,7 +19,7 @@ export async function handleActionRequest(
   { req, projectDir, adapter }: ActionRequestParams,
 ): Promise<Response> {
   const body = await req.json().catch((error) => {
-    log.warn("Failed to parse action request body", { error });
+    logger.warn("Failed to parse action request body", { error });
     return {};
   });
 
@@ -35,7 +35,7 @@ export async function handleActionRequest(
       if (!ok) return jsonErrorResponse(HttpStatus.FORBIDDEN, "unauthorized");
     }
   } catch (error) {
-    log.debug("[dev] guard load failed", error);
+    logger.debug("[dev] guard load failed", error);
   }
 
   const file = `${projectDir}/app/actions/${id}.ts`;

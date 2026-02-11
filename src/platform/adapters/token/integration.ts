@@ -1,9 +1,9 @@
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { createTokenStorageAdapter } from "./factory.ts";
 import type { TokenStorageAdapter, TokenStorageAdapterConfig } from "./veryfront/types.ts";
 
-const log = logger.component("token-adapter-integration");
+const logger = baseLogger.component("token-adapter-integration");
 
 let tokenStorageAdapter: TokenStorageAdapter | null = null;
 
@@ -40,11 +40,11 @@ function buildAdapterConfigFromEnv(): TokenStorageAdapterConfig {
   const apiBaseUrl = getEnvVar("VERYFRONT_API_URL");
 
   if (!apiToken || !projectSlug) {
-    log.debug("Using in-memory storage (development)");
+    logger.debug("Using in-memory storage (development)");
     return { type: "memory" };
   }
 
-  log.debug("Using Veryfront Cloud storage", { projectSlug });
+  logger.debug("Using Veryfront Cloud storage", { projectSlug });
 
   return {
     type: "veryfront-api",

@@ -1,10 +1,10 @@
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { getRedisClient, isRedisConfigured } from "#veryfront/utils/redis-client.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { Span } from "@opentelemetry/api";
 
-const log = logger.component("cache-registry");
+const logger = rendererLogger.component("cache-registry");
 
 export interface CacheStore {
   readonly name: string;
@@ -94,10 +94,10 @@ class CacheRegistry {
 
   register(store: CacheStore): void {
     if (this.stores.has(store.name)) {
-      log.warn(`Replacing existing store: ${store.name}`);
+      logger.warn(`Replacing existing store: ${store.name}`);
     }
     this.stores.set(store.name, store);
-    log.debug(`Registered store: ${store.name}`);
+    logger.debug(`Registered store: ${store.name}`);
   }
 
   unregister(name: string): boolean {
@@ -164,7 +164,7 @@ class CacheRegistry {
       ) ?? 0;
     }
 
-    log.debug("Deleted keys for project environment", {
+    logger.debug("Deleted keys for project environment", {
       projectId,
       environment,
       deleted: totalDeleted,
@@ -183,7 +183,7 @@ class CacheRegistry {
       ) ?? 0;
     }
 
-    log.debug("Deleted keys for content source", {
+    logger.debug("Deleted keys for content source", {
       projectId,
       contentSourceId,
       deleted: totalDeleted,
@@ -230,7 +230,7 @@ class CacheRegistry {
           span?.setAttribute("cache.redis.keys_found", resultKeys.length);
           return resultKeys;
         } catch (error) {
-          log.warn("Redis scan failed", { pattern, error });
+          logger.warn("Redis scan failed", { pattern, error });
           span?.setAttribute("cache.redis.error", true);
           return [];
         }
@@ -302,7 +302,7 @@ class CacheRegistry {
           span?.setAttribute("cache.redis.deleted", deleted);
           return deleted;
         } catch (error) {
-          log.warn("Redis delete failed", { projectId, error });
+          logger.warn("Redis delete failed", { projectId, error });
           span?.setAttribute("cache.redis.error", true);
           return 0;
         }
@@ -347,7 +347,7 @@ class CacheRegistry {
         span?.setAttribute("cache.redis.deleted", redisDeleted);
         span?.setAttribute("cache.environment", environment);
 
-        log.info("Invalidated cache for project environment", {
+        logger.info("Invalidated cache for project environment", {
           projectId,
           environment,
           memoryDeleted,
@@ -386,7 +386,7 @@ class CacheRegistry {
           span?.setAttribute("cache.environment", environment);
           return deleted;
         } catch (error) {
-          log.warn("Redis delete for environment failed", {
+          logger.warn("Redis delete for environment failed", {
             projectId,
             environment,
             error,

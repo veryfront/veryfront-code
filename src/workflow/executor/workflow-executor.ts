@@ -4,7 +4,7 @@
  * Main orchestrator for executing durable workflows
  **************************/
 
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import type {
   BlobResolver,
@@ -24,7 +24,7 @@ import { CheckpointManager } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
 import type { BlobStorage } from "../blob/types.ts";
 
-const log = logger.component("workflow-executor");
+const logger = baseLogger.component("workflow-executor");
 
 /**
  * Workflow executor configuration
@@ -195,7 +195,7 @@ export class WorkflowExecutor {
     await this.config.backend.createRun(run);
 
     this.executeAsync(run.id).catch((error) => {
-      log.error("Workflow failed", { runId: run.id }, error);
+      logger.error("Workflow failed", { runId: run.id }, error);
     });
 
     return this.createHandle<TOutput>(run.id);
@@ -265,7 +265,7 @@ export class WorkflowExecutor {
             `This can happen when multiple workers try to execute the same run concurrently.`,
         );
       }
-      log.debug("Acquired lock for run", { runId });
+      logger.debug("Acquired lock for run", { runId });
     }
 
     try {
@@ -289,11 +289,11 @@ export class WorkflowExecutor {
             if (useLocking && typeof this.config.backend.extendLock === "function") {
               const extended = await this.config.backend.extendLock(runId, lockDuration);
               if (!extended) {
-                log.warn("Failed to extend lock during heartbeat", { runId });
+                logger.warn("Failed to extend lock during heartbeat", { runId });
               }
             }
           } catch (error) {
-            log.warn("Heartbeat update failed", { runId }, error);
+            logger.warn("Heartbeat update failed", { runId }, error);
           } finally {
             heartbeatInFlight = false;
           }
@@ -356,7 +356,7 @@ export class WorkflowExecutor {
 
       if (useLocking) {
         await this.config.backend.releaseLock!(runId);
-        log.debug("Released lock for run", { runId });
+        logger.debug("Released lock for run", { runId });
       }
     }
   }

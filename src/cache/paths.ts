@@ -11,9 +11,9 @@
 
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors/error-registry.ts";
-import { logger } from "#veryfront/utils/logger/logger.ts";
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 
-const log = logger.component("cache");
+const logger = baseLogger.component("cache");
 
 /** Portable cache directory token */
 export const CACHE_DIR_TOKEN = "__VF_CACHE_DIR__";
@@ -131,7 +131,7 @@ export { CACHE_INVARIANT_VIOLATION };
  */
 export function assertPortableCode(code: string): void {
   if (hasHardcodedCachePaths(code)) {
-    log.error("Invariant violation: hardcoded paths in portable code");
+    logger.error("Invariant violation: hardcoded paths in portable code");
     throw CACHE_INVARIANT_VIOLATION.create({
       detail:
         "[CACHE INVARIANT VIOLATION] Code contains hardcoded cache paths that should be tokenized before storage in distributed cache.",

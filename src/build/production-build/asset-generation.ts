@@ -3,14 +3,14 @@
  * Handles copying static assets from public directory
  */
 
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { dirname, join, relative } from "#veryfront/compat/path/index.ts";
 import { walk } from "#std/fs.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { CLIENT_STYLES } from "./templates.ts";
 import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 
-const log = logger.component("build");
+const logger = serverLogger.component("build");
 
 export interface AssetStats {
   assets: number;
@@ -104,14 +104,14 @@ export async function copyStaticAssets(
     publicDirInfo = await statPath(publicDir, adapter);
   } catch (error) {
     if (isNotFoundError(error)) {
-      log.debug("No public directory found, skipping static assets");
+      logger.debug("No public directory found, skipping static assets");
       return stats;
     }
     throw error;
   }
 
   if (!publicDirInfo.isDirectory) {
-    log.debug("Public path is not a directory, skipping static assets", { publicDir });
+    logger.debug("Public path is not a directory, skipping static assets", { publicDir });
     return stats;
   }
 
@@ -161,7 +161,7 @@ export async function copyStaticAssets(
       await ensureDirPath(dirname(destinationPath), adapter);
       await writeFileBytes(destinationPath, await readFileBytes(entry.path));
     } catch (error) {
-      log.debug("Failed to copy static asset", { path: entry.path, error });
+      logger.debug("Failed to copy static asset", { path: entry.path, error });
       throw error;
     }
   }

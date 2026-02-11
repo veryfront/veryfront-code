@@ -13,7 +13,7 @@
  * All cache access goes through the API which enforces tenant isolation.
  */
 
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { CacheEntry, CacheStats, FileCacheOptions } from "./types.ts";
@@ -25,7 +25,7 @@ import {
   setInRequestCache,
 } from "#veryfront/cache/request-cache-batcher.ts";
 
-const log = logger.component("file-cache");
+const logger = baseLogger.component("file-cache");
 
 // Register with memory profiler
 // Note: entries shows backend size when available, -1 for distributed backends
@@ -65,9 +65,9 @@ export async function initializeFileCacheBackend(): Promise<boolean> {
   backendInitPromise = withSpan("platform.fs.cache.initializeBackend", async () => {
     try {
       cacheBackend = await CacheBackends.file();
-      log.debug("Backend initialized", { type: cacheBackend.type });
+      logger.debug("Backend initialized", { type: cacheBackend.type });
     } catch (error) {
-      log.warn("Backend init failed, using memory fallback", { error });
+      logger.warn("Backend init failed, using memory fallback", { error });
       cacheBackend = new MemoryCacheBackend(FALLBACK_MAX_ENTRIES);
     } finally {
       backendInitialized = true;
@@ -112,7 +112,7 @@ export class FileCache {
     this.backendTtlSeconds = Math.max(1, Math.ceil(this.options.ttl / 1000));
 
     const mode = cacheBackend?.type ?? "memory";
-    log.debug("Initialized", { ...this.options, mode });
+    logger.debug("Initialized", { ...this.options, mode });
   }
 
   private getBackend(): CacheBackend | null {
@@ -181,7 +181,7 @@ export class FileCache {
             return entry.value;
           }
         } catch (error) {
-          log.debug("Backend get failed", { key, error });
+          logger.debug("Backend get failed", { key, error });
         }
 
         this.misses++;
@@ -209,7 +209,7 @@ export class FileCache {
       // Update request-scoped cache so subsequent reads in same request see the new value
       setInRequestCache(key, serialized);
       backend.set(key, serialized, this.backendTtlSeconds).catch((error) => {
-        log.debug("Backend set failed", { key, error });
+        logger.debug("Backend set failed", { key, error });
       });
       return;
     }
@@ -243,7 +243,7 @@ export class FileCache {
           setInRequestCache(key, serialized);
           await backend.set(key, serialized, this.backendTtlSeconds);
         } catch (error) {
-          log.debug("Backend set failed, skipping fallback", { key, error });
+          logger.debug("Backend set failed, skipping fallback", { key, error });
         }
       },
       { "cache.key": key, "cache.backend": backend.type, "cache.size": size },
@@ -253,7 +253,7 @@ export class FileCache {
   /** Write to fallback memory cache with size check and eviction. */
   private setToFallback<T>(key: string, entry: CacheEntry<T>, size: number): void {
     if (size > this.options.maxMemory) {
-      log.warn("Value too large for fallback cache", { key, size });
+      logger.warn("Value too large for fallback cache", { key, size });
       return;
     }
 
@@ -298,7 +298,7 @@ export class FileCache {
     // Fire-and-forget backend deletion
     // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
     cacheBackend?.delByPattern?.(`${prefix}*`).catch((error) => {
-      log.debug("Backend invalidation failed", { prefix, error });
+      logger.debug("Backend invalidation failed", { prefix, error });
     });
 
     return count;
@@ -338,7 +338,7 @@ export class FileCache {
     // Fire-and-forget backend deletion
     // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
     cacheBackend?.delByPattern?.(`${prefix}*:${suffix}`).catch((error) => {
-      log.debug("Backend invalidation failed", { prefix, suffix, error });
+      logger.debug("Backend invalidation failed", { prefix, suffix, error });
     });
 
     return count;

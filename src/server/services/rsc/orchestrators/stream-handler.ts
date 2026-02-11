@@ -1,9 +1,9 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import type { RSCPayload } from "#veryfront/rendering/rsc/types.ts";
 import type { RenderHandler } from "./render-handler.ts";
 import type { StreamSlot } from "./types.ts";
 
-const log = logger.component("rsc");
+const logger = serverLogger.component("rsc");
 
 const STREAM_DELAY_MS = 30;
 const FALLBACK_HTML = "<div>OK</div>";
@@ -33,7 +33,7 @@ export class StreamHandler {
       const payload = (await response.json()) as RSCPayload;
       return payload.html ?? FALLBACK_HTML;
     } catch (error) {
-      log.warn("[dev] failed to parse final HTML payload", error);
+      logger.warn("[dev] failed to parse final HTML payload", error);
       return FALLBACK_HTML;
     }
   }
@@ -72,7 +72,7 @@ export class StreamHandler {
 
           controller.close();
         } catch (error) {
-          log.warn("[dev] stream handler error", error);
+          logger.warn("[dev] stream handler error", error);
           controller.error(error instanceof Error ? error : new Error(String(error)));
         }
       },

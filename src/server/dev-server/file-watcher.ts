@@ -1,7 +1,7 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import type { FileWatcherMetrics } from "./types.ts";
 
-const log = logger.component("hmr");
+const logger = serverLogger.component("hmr");
 
 export class OptimizedFileWatcher {
   private readonly changeQueue = new Set<string>();
@@ -64,7 +64,7 @@ export class OptimizedFileWatcher {
     try {
       await this.processCallback(changes);
     } catch (error) {
-      log.error("Failed to process file changes", error);
+      logger.error("Failed to process file changes", error);
     }
   }
 

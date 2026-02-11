@@ -4,11 +4,11 @@ import { initializeTransformCache } from "#veryfront/transforms/esm/transform-ca
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { initializeProjectCSSCache } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
-import { logger } from "#veryfront/utils/logger/logger.ts";
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import { isRedisConfigured } from "#veryfront/utils/redis-client.ts";
 import { isApiCacheAvailable } from "./backend.ts";
 
-const log = logger.component("distributed-cache");
+const logger = baseLogger.component("distributed-cache");
 
 export interface DistributedCacheStatus {
   backend: "api" | "redis" | "memory";
@@ -44,7 +44,7 @@ export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
   return withSpan(
     SpanNames.CACHE_DISTRIBUTED_INIT,
     async (): Promise<DistributedCacheStatus> => {
-      log.info("Initializing caches...", { backend });
+      logger.info("Initializing caches...", { backend });
 
       const results = await Promise.allSettled([
         initializeTransformCache(),
@@ -67,13 +67,13 @@ export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
         Number(status.projectCSSCache);
 
       if (enabled === 0) {
-        log.warn("No caches enabled despite backend being available", {
+        logger.warn("No caches enabled despite backend being available", {
           backend,
         });
         return status;
       }
 
-      log.info("Initialization complete", {
+      logger.info("Initialization complete", {
         backend,
         enabled,
         transform: status.transformCache,

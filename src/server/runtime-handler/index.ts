@@ -96,9 +96,9 @@ import {
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
 
-const logger = getBaseLogger("SERVER");
+const baseLogger = getBaseLogger("SERVER");
 
-const log = logger.component("runtime-handler");
+const logger = baseLogger.component("runtime-handler");
 
 export interface RuntimeHandlerOptions {
   projectDir: string;
@@ -163,7 +163,7 @@ export function createVeryfrontHandler(
         return c;
       })
       .catch((error) => {
-        log.warn("Failed to load config, using defaults", {
+        logger.warn("Failed to load config, using defaults", {
           error: getErrorMessage(error),
         });
         return undefined;
@@ -208,7 +208,7 @@ export function createVeryfrontHandler(
   const isProxyMode = opts.config?.fs?.veryfront?.proxyMode === true;
 
   const readyPromise = isProxyMode ? Promise.resolve() : apiHandler.initialize().catch((error) => {
-    log.error("API handler initialization failed", {
+    logger.error("API handler initialization failed", {
       error: getErrorMessage(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
@@ -216,7 +216,7 @@ export function createVeryfrontHandler(
   });
 
   if (isProxyMode) {
-    log.debug("Running in proxy mode - lazy initialization enabled");
+    logger.debug("Running in proxy mode - lazy initialization enabled");
   }
 
   const handler = async (req: Request): Promise<Response> => {

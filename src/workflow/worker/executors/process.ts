@@ -7,10 +7,10 @@
  * Each workflow runs in a separate Deno subprocess with its own environment.
  */
 
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import type { JobConfig, JobExecutor, JobInfo, JobStatus } from "./types.ts";
 
-const log = logger.component("process-job-executor");
+const logger = baseLogger.component("process-job-executor");
 
 /**
  * Process Job Executor configuration
@@ -132,7 +132,7 @@ export class ProcessJobExecutor implements JobExecutor {
     this.activeJobs.set(jobId, job);
 
     if (debug || this.config.debug) {
-      log.info(`Spawned process for job ${jobId}, run ${run.id}`);
+      logger.info(`Spawned process for job ${jobId}, run ${run.id}`);
     }
 
     // Monitor the process in background
@@ -180,7 +180,7 @@ export class ProcessJobExecutor implements JobExecutor {
     this.activeJobs.delete(jobId);
 
     if (this.config.debug) {
-      log.info(`Deleted job ${jobId}`);
+      logger.info(`Deleted job ${jobId}`);
     }
 
     return Promise.resolve();
@@ -216,7 +216,7 @@ export class ProcessJobExecutor implements JobExecutor {
           job.error = `Job timed out after ${timeout}ms`;
           job.completedAt = new Date();
 
-          log.warn(`Job ${job.jobId} timed out`);
+          logger.warn(`Job ${job.jobId} timed out`);
         } catch {
           // Process may already be dead
         }
@@ -238,13 +238,13 @@ export class ProcessJobExecutor implements JobExecutor {
         job.status = "succeeded";
 
         if (this.config.debug) {
-          log.info(`Job ${job.jobId} succeeded`);
+          logger.info(`Job ${job.jobId} succeeded`);
         }
       } else {
         job.status = "failed";
         job.error = `Process exited with code ${status.code}`;
 
-        log.error(`Job ${job.jobId} failed with code ${status.code}`);
+        logger.error(`Job ${job.jobId} failed with code ${status.code}`);
       }
     }).catch((error) => {
       clearTimeout(timeoutId);
@@ -253,7 +253,7 @@ export class ProcessJobExecutor implements JobExecutor {
       job.error = error instanceof Error ? error.message : String(error);
       job.completedAt = new Date();
 
-      log.error(`Job ${job.jobId} error:`, error);
+      logger.error(`Job ${job.jobId} error:`, error);
     });
 
     // Log stdout/stderr in debug mode

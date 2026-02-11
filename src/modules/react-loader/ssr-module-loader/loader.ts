@@ -17,7 +17,7 @@ import {
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { verifyCacheFileExists, writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { extractComponent } from "../extract-component.ts";
@@ -52,7 +52,7 @@ import { SSRDependencyValidator } from "./ssr-dependency-validator.ts";
 import { preflightLocalImports } from "./preflight-imports.ts";
 import { resolveVfModuleImports } from "./vf-module-resolver.ts";
 
-const log = logger.component("ssr-module-loader");
+const logger = rendererLogger.component("ssr-module-loader");
 
 const MISSING_HTTP_BUNDLE_PATTERN = /veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/;
 
@@ -163,7 +163,7 @@ export class SSRModuleLoader {
       "SSR-MODULE-LOADER",
     );
     if (!fileExists) {
-      log.debug("Cache file missing before import, invalidating", {
+      logger.debug("Cache file missing before import, invalidating", {
         file: filePath.slice(-40),
         tempPath: cacheEntry.tempPath,
         contentHash: cacheEntry.contentHash,
@@ -191,7 +191,7 @@ export class SSRModuleLoader {
         const hash = classifiedError.hash;
         const cacheDir = getHttpBundleCacheDir();
 
-        log.error("Missing HTTP bundle after ensureHttpBundlesExist", {
+        logger.error("Missing HTTP bundle after ensureHttpBundlesExist", {
           file: filePath.slice(-40),
           hash,
           tempPath: cacheEntry.tempPath,
@@ -206,7 +206,7 @@ export class SSRModuleLoader {
         const recovered = await recoverHttpBundleByHash(hash, cacheDir);
 
         if (recovered) {
-          log.info("HTTP bundle recovered, retrying import", {
+          logger.info("HTTP bundle recovered, retrying import", {
             hash,
             file: filePath.slice(-40),
           });
@@ -217,7 +217,7 @@ export class SSRModuleLoader {
 
         this.cache.invalidateFilePathCacheEntry(filePath, cacheEntry);
 
-        log.error("HTTP bundle recovery failed, cache invalidated", {
+        logger.error("HTTP bundle recovery failed, cache invalidated", {
           hash,
           file: filePath.slice(-40),
           cacheDir,
@@ -327,7 +327,7 @@ export class SSRModuleLoader {
     depth: number = 0,
   ): Promise<void> {
     if (depth > MAX_TRANSFORM_DEPTH) {
-      log.warn("Max transform depth exceeded", {
+      logger.warn("Max transform depth exceeded", {
         file: filePath.slice(-40),
         depth,
         maxDepth: MAX_TRANSFORM_DEPTH,
@@ -392,7 +392,7 @@ export class SSRModuleLoader {
             globalModuleCache.set(contentCacheKey, entry);
             globalModuleCache.set(filePathCacheKey, entry);
 
-            log.debug("Redis cache hit", { file: filePath.slice(-40) });
+            logger.debug("Redis cache hit", { file: filePath.slice(-40) });
 
             await this.depValidator.ensureDependenciesExist(code, filePath, depth);
             return;
@@ -420,7 +420,7 @@ export class SSRModuleLoader {
         globalModuleCache.set(contentCacheKey, entry);
         globalModuleCache.set(filePathCacheKey, entry);
 
-        log.debug("Reusing MDX-ESM cache", {
+        logger.debug("Reusing MDX-ESM cache", {
           file: filePath.slice(-40),
           cachedPath: mdxCacheResult.path.slice(-60),
         });
@@ -430,7 +430,7 @@ export class SSRModuleLoader {
       }
 
       if (mdxCacheResult.status === "corrupted") {
-        log.warn("MDX-ESM cache corrupted, re-transforming", {
+        logger.warn("MDX-ESM cache corrupted, re-transforming", {
           file: filePath.slice(-40),
           reason: mdxCacheResult.reason,
         });
@@ -453,7 +453,7 @@ export class SSRModuleLoader {
         return;
       } catch (error) {
         globalInProgress.delete(inProgressKey);
-        log.warn("In-progress transform timed out, retrying", {
+        logger.warn("In-progress transform timed out, retrying", {
           file: filePath.slice(-40),
           error: error instanceof Error ? error.message : String(error),
         });
@@ -492,7 +492,7 @@ export class SSRModuleLoader {
         );
 
         if (preflightMissing.length > 0) {
-          log.warn("Pre-flight: some dependencies missing, skipping them", {
+          logger.warn("Pre-flight: some dependencies missing, skipping them", {
             file: filePath.slice(-40),
             missing: preflightMissing.map((m) => m.specifier),
             depth,
@@ -586,7 +586,7 @@ export class SSRModuleLoader {
           const cacheDir = getHttpBundleCacheDir();
           const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
           if (failed.length > 0) {
-            log.error("Unrecoverable HTTP bundles", {
+            logger.error("Unrecoverable HTTP bundles", {
               file: filePath.slice(-40),
               failed,
               totalBundles: bundlePaths.length,
@@ -626,7 +626,7 @@ export class SSRModuleLoader {
           setInRedis(contentCacheKey, transformed, {
             isProduction: this.cache.isProductionContentSource(),
           }).catch((error) => {
-            log.debug("Distributed cache set failed", {
+            logger.debug("Distributed cache set failed", {
               key: contentCacheKey,
               error,
             });

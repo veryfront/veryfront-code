@@ -6,12 +6,12 @@
 
 import { isAbsolute, join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "./package-registry.ts";
 
-const log = logger.component("http-cache");
+const logger = rendererLogger.component("http-cache");
 
 /**
  * Cache interface for dependency injection (matches LRU essential methods).
@@ -167,7 +167,7 @@ export function hasIncompatibleFilePaths(code: string, localCacheDir: string): b
     if (!path.includes("veryfront-http-bundle")) continue;
 
     if (!path.startsWith(localCacheDir)) {
-      log.debug("Bundle has incompatible file path from different environment", {
+      logger.debug("Bundle has incompatible file path from different environment", {
         path,
         expectedDir: localCacheDir,
       });

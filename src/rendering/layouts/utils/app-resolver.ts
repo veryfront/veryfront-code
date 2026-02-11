@@ -1,9 +1,9 @@
 import { join } from "#veryfront/compat/path";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 
-const log = logger.component("app-resolver");
+const logger = rendererLogger.component("app-resolver");
 
 const VALID_EXTENSIONS = ["tsx", "jsx", "ts", "js", "mdx", "md"];
 
@@ -17,7 +17,7 @@ export async function resolveAppComponentPath(
   adapter: RuntimeAdapter,
   config?: VeryfrontConfig,
 ): Promise<string | null> {
-  log.debug("Starting resolution", {
+  logger.debug("Starting resolution", {
     projectDir,
     hasAdapter: !!adapter,
     hasConfig: !!config,
@@ -27,7 +27,7 @@ export async function resolveAppComponentPath(
   const configApp = config?.app;
 
   if (configApp === false) {
-    log.debug("App component disabled via config.app: false");
+    logger.debug("App component disabled via config.app: false");
     return null;
   }
 
@@ -48,21 +48,21 @@ export async function resolveAppComponentPath(
       );
     }
 
-    log.debug("Using config.app", { path: appPath });
+    logger.debug("Using config.app", { path: appPath });
     return appPath;
   }
 
   for (const ext of VALID_EXTENSIONS) {
     const appPath = join(projectDir, `components/app.${ext}`);
     const exists = await adapter.fs.exists(appPath);
-    log.debug("Checking default path", { appPath, exists });
+    logger.debug("Checking default path", { appPath, exists });
 
     if (!exists) continue;
 
-    log.debug("Found app component via discovery", { path: appPath });
+    logger.debug("Found app component via discovery", { path: appPath });
     return appPath;
   }
 
-  log.debug("No app component found");
+  logger.debug("No app component found");
   return null;
 }

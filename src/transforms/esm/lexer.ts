@@ -1,7 +1,7 @@
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { init, parse } from "es-module-lexer";
 
-const log = logger.component("es-module-lexer");
+const logger = baseLogger.component("es-module-lexer");
 
 let initPromise: Promise<void> | null = null;
 
@@ -83,7 +83,7 @@ function logParseError(error: unknown, code: string): void {
     })
     .join("\n");
 
-  log.error("Parse error", { line, col, context });
+  logger.error("Parse error", { line, col, context });
 }
 
 export async function parseImports(code: string): Promise<readonly ImportSpecifier[]> {

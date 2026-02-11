@@ -6,10 +6,10 @@
  * initialization work, reducing first-request latency by ~2-3 seconds.
  */
 
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { extractCandidatesFromFiles, getProjectCSS } from "./tailwind-compiler.ts";
 
-const log = logger.component("css-pregeneration");
+const logger = serverLogger.component("css-pregeneration");
 
 export interface CSSPregenerationOptions {
   /** Project slug for cache keying */
@@ -46,7 +46,7 @@ export async function pregenerateCSSFromFiles(
     const candidates = extractCandidatesFromFiles(files);
 
     if (candidates.size === 0) {
-      log.debug("No candidates found, skipping", {
+      logger.debug("No candidates found, skipping", {
         projectSlug,
         fileCount: files.length,
       });
@@ -55,7 +55,7 @@ export async function pregenerateCSSFromFiles(
 
     const resolvedStylesheet = stylesheet ?? findStylesheetFromFiles(files, stylesheetPath);
 
-    log.debug("Starting", {
+    logger.debug("Starting", {
       projectSlug,
       fileCount: files.length,
       candidateCount: candidates.size,
@@ -65,7 +65,7 @@ export async function pregenerateCSSFromFiles(
     const result = await getProjectCSS(projectSlug, resolvedStylesheet, candidates, { minify });
     const duration = performance.now() - startTime;
 
-    log.debug("Complete", {
+    logger.debug("Complete", {
       projectSlug,
       candidateCount: candidates.size,
       cssLength: result.css.length,
@@ -76,7 +76,7 @@ export async function pregenerateCSSFromFiles(
   } catch (error) {
     const duration = performance.now() - startTime;
 
-    log.warn("Failed", {
+    logger.warn("Failed", {
       projectSlug,
       error: error instanceof Error ? error.message : String(error),
       duration: `${duration.toFixed(2)}ms`,

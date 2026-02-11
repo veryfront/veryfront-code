@@ -11,7 +11,7 @@ import { VERSION } from "#veryfront/utils/version.ts";
 import { buildSSRModuleCacheKey } from "#veryfront/cache/keys.ts";
 import { computeConfigHashSync } from "#veryfront/cache/config-hash.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
@@ -24,7 +24,7 @@ import {
 import { buildTempModulePath, buildTmpDirPath, getTmpDirCacheKey } from "./tmp-paths.ts";
 import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
 
-const log = logger.component("ssr-module-loader");
+const logger = rendererLogger.component("ssr-module-loader");
 
 const UNRESOLVED_VF_MODULE_IMPORT_PATTERN =
   /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/;
@@ -216,7 +216,7 @@ export class SSRCacheManager {
     const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
     if (failed.length === 0) return false;
 
-    log.warn("Unrecoverable HTTP bundles, re-transforming", {
+    logger.warn("Unrecoverable HTTP bundles, re-transforming", {
       file: filePath.slice(-40),
       failed,
       totalBundles: bundlePaths.length,
@@ -235,7 +235,7 @@ export class SSRCacheManager {
           return true;
         }
       } catch {
-        log.debug("Redis cache has invalid local path, re-transforming", {
+        logger.debug("Redis cache has invalid local path, re-transforming", {
           file: filePath.slice(-40),
           missingPath: path.slice(-60),
         });

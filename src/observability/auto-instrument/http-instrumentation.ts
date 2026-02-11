@@ -1,4 +1,4 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import {
   context as otContext,
   propagation,
@@ -9,7 +9,7 @@ import {
 } from "@opentelemetry/api";
 import type { ErrorAttributes, HttpAttributes } from "./types.ts";
 
-const log = logger.component("auto-instrument");
+const logger = serverLogger.component("auto-instrument");
 
 const tracer = trace.getTracer("veryfront-http");
 
@@ -26,7 +26,7 @@ function extractParentContext(headers: Headers) {
   try {
     return propagation.extract(otContext.active(), headers, headersGetter);
   } catch (error) {
-    log.debug("Failed to extract parent context", error);
+    logger.debug("Failed to extract parent context", error);
     return otContext.active();
   }
 }
@@ -119,7 +119,7 @@ export function createInstrumentedFetch(
         },
       );
     } catch (error) {
-      log.debug("Fetch span failed, falling back to base fetch", error);
+      logger.debug("Fetch span failed, falling back to base fetch", error);
       return await baseFetch(input, init);
     }
   };

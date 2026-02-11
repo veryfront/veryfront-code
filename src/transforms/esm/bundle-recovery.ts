@@ -10,7 +10,7 @@
 
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { httpBundleCache } from "./http-cache-wrapper.ts";
 import { VeryfrontError } from "./http-cache-invariants.ts";
@@ -24,7 +24,7 @@ import {
 import { extractBundleDeps, findParentBundleWithEmbeddedUrl } from "./bundle-deps-validator.ts";
 import { getCachedPaths } from "./http-cache-state.ts";
 
-const log = logger.component("http-cache");
+const logger = rendererLogger.component("http-cache");
 
 /** Function signature for caching an HTTP module and returning its local path. */
 type CacheHttpModuleFn = (url: string, options: CacheOptions) => Promise<string | null>;
@@ -51,7 +51,7 @@ export async function recoverHttpBundleByHash(
       const cachedCode = result.code as unknown as string;
 
       if (hasIncompatibleFilePaths(cachedCode, absoluteCacheDir)) {
-        log.warn("Cached code has incompatible file paths, will re-fetch", {
+        logger.warn("Cached code has incompatible file paths, will re-fetch", {
           hash,
           localCacheDir: absoluteCacheDir,
         });
@@ -70,10 +70,10 @@ export async function recoverHttpBundleByHash(
         if (originalUrl) {
           const cacheKey = `${absoluteCacheDir}:${normalizeHttpUrl(originalUrl)}`;
           getCachedPaths().set(cacheKey, cachePath);
-          log.debug("Updated LRU cache after recovery", { hash, cacheKey });
+          logger.debug("Updated LRU cache after recovery", { hash, cacheKey });
         }
 
-        log.info("Bundle recovery successful (direct)", { hash, path: cachePath });
+        logger.info("Bundle recovery successful (direct)", { hash, path: cachePath });
 
         const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-(\d+)\.mjs)/gi;
         const transitiveDeps: Array<{ path: string; hash: string }> = [];
@@ -88,7 +88,7 @@ export async function recoverHttpBundleByHash(
         }
 
         if (transitiveDeps.length > 0) {
-          log.info("Recovering transitive deps from last-resort recovery", {
+          logger.info("Recovering transitive deps from last-resort recovery", {
             count: transitiveDeps.length,
           });
           await ensureHttpBundlesExist(transitiveDeps, cacheDir, cacheHttpModule);
@@ -97,17 +97,17 @@ export async function recoverHttpBundleByHash(
         return true;
       }
     } else if (result.failReason) {
-      log.debug("Direct code lookup failed", { hash, reason: result.failReason });
+      logger.debug("Direct code lookup failed", { hash, reason: result.failReason });
     }
 
     // Fallback: try to recover via URL re-fetch
     const originalUrl = await httpBundleCache.getOriginalUrl(hash);
     if (originalUrl) {
-      log.info("Recovering bundle via URL re-fetch", { hash, originalUrl });
+      logger.info("Recovering bundle via URL re-fetch", { hash, originalUrl });
       const importMap = { imports: {}, scopes: {} };
       const result = await cacheHttpModule(originalUrl, { cacheDir, importMap });
       if (result) {
-        log.info("Bundle recovery successful (re-fetch)", { hash, path: result });
+        logger.info("Bundle recovery successful (re-fetch)", { hash, path: result });
         return true;
       }
     }
@@ -116,7 +116,7 @@ export async function recoverHttpBundleByHash(
     if (parentCode) {
       const parentSourceUrl = extractSourceUrl(parentCode);
       if (parentSourceUrl) {
-        log.info("Attempting recovery via parent URL re-fetch", {
+        logger.info("Attempting recovery via parent URL re-fetch", {
           hash,
           parentUrl: parentSourceUrl,
         });
@@ -135,7 +135,7 @@ export async function recoverHttpBundleByHash(
         const result = await cacheHttpModule(parentSourceUrl, { cacheDir, importMap });
         if (result) {
           if (await exists(cachePath)) {
-            log.info("Bundle recovery successful (parent re-fetch)", {
+            logger.info("Bundle recovery successful (parent re-fetch)", {
               hash,
               path: cachePath,
             });
@@ -143,7 +143,7 @@ export async function recoverHttpBundleByHash(
           }
         }
 
-        log.warn("Parent re-fetch did not recover target bundle", {
+        logger.warn("Parent re-fetch did not recover target bundle", {
           hash,
           parentUrl: parentSourceUrl,
         });
@@ -154,7 +154,7 @@ export async function recoverHttpBundleByHash(
     if (!parentCode) {
       const foundParent = await findParentBundleWithEmbeddedUrl(hash, absoluteCacheDir, fs);
       if (foundParent) {
-        log.info("Found parent bundle in local cache, attempting recovery", {
+        logger.info("Found parent bundle in local cache, attempting recovery", {
           hash,
           parentUrl: foundParent.sourceUrl,
         });
@@ -171,7 +171,7 @@ export async function recoverHttpBundleByHash(
         const importMap = { imports: {}, scopes: {} };
         const result = await cacheHttpModule(foundParent.sourceUrl, { cacheDir, importMap });
         if (result && await exists(cachePath)) {
-          log.info("Bundle recovery successful (local parent scan)", {
+          logger.info("Bundle recovery successful (local parent scan)", {
             hash,
             path: cachePath,
           });
@@ -180,14 +180,14 @@ export async function recoverHttpBundleByHash(
       }
     }
 
-    log.debug("No recovery data found for hash", { hash });
+    logger.debug("No recovery data found for hash", { hash });
     return false;
   } catch (error) {
     if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
-      log.error("Cache invariant violation during recovery", { hash, error });
+      logger.error("Cache invariant violation during recovery", { hash, error });
       throw error;
     }
-    log.error("Bundle recovery failed", { hash, error });
+    logger.error("Bundle recovery failed", { hash, error });
     return false;
   }
 }
@@ -243,14 +243,14 @@ export async function ensureHttpBundlesExist(
 
     if (missing.length === 0) continue;
 
-    log.info("Fetching missing bundles from distributed cache", {
+    logger.info("Fetching missing bundles from distributed cache", {
       missing: missing.length,
       total: batch.length,
     });
 
     const cacheAvailable = await httpBundleCache.isAvailable();
     if (!cacheAvailable) {
-      log.error("No distributed cache available for bundle recovery");
+      logger.error("No distributed cache available for bundle recovery");
       for (const m of missing) failed.add(m.hash);
       continue;
     }
@@ -293,7 +293,7 @@ export async function ensureHttpBundlesExist(
         try {
           await fs.mkdir(absoluteCacheDir, { recursive: true });
           await fs.writeTextFile(canonicalPath, code);
-          log.debug("Wrote bundle to disk", { hash, path: canonicalPath });
+          logger.debug("Wrote bundle to disk", { hash, path: canonicalPath });
 
           const originalUrl = await httpBundleCache.getOriginalUrl(hash);
           if (originalUrl) {
@@ -305,7 +305,7 @@ export async function ensureHttpBundlesExist(
             if (!seen.has(dep.hash)) pending.push({ hash: dep.hash });
           }
         } catch (error) {
-          log.error("Failed to write bundle to disk", { hash, error });
+          logger.error("Failed to write bundle to disk", { hash, error });
           failed.add(hash);
         }
       }),
@@ -313,7 +313,7 @@ export async function ensureHttpBundlesExist(
   }
 
   if (failed.size > 0) {
-    log.warn("Some bundles could not be recovered", {
+    logger.warn("Some bundles could not be recovered", {
       failed: Array.from(failed),
     });
   }
@@ -329,24 +329,24 @@ export async function invalidateHttpBundle(hash: string, cacheDir: string): Prom
   const cachePath = join(absoluteCacheDir, `http-${hash}.mjs`);
   const fs = createFileSystem();
 
-  log.info("Invalidating bundle", { hash, path: cachePath });
+  logger.info("Invalidating bundle", { hash, path: cachePath });
 
   try {
     const deleted = await httpBundleCache.deleteCode(hash);
     if (deleted) {
-      log.info("Deleted bundle from distributed cache", { hash });
+      logger.info("Deleted bundle from distributed cache", { hash });
     }
 
     try {
       await fs.remove(cachePath);
-      log.info("Deleted local bundle file", { hash, path: cachePath });
+      logger.info("Deleted local bundle file", { hash, path: cachePath });
     } catch {
       // File might not exist locally, that's fine
     }
 
     return true;
   } catch (error) {
-    log.error("Failed to invalidate bundle", { hash, error });
+    logger.error("Failed to invalidate bundle", { hash, error });
     return false;
   }
 }

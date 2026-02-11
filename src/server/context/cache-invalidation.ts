@@ -1,4 +1,4 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import {
   clearModulePathCache,
   invalidateModulePaths,
@@ -13,7 +13,7 @@ import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
 import { clearRouterDetectionCache } from "#veryfront/rendering/router-detection.ts";
 import { clearSnippetCacheForProject } from "#veryfront/rendering/snippet-renderer.ts";
 
-const log = logger.component("cache-invalidation");
+const logger = serverLogger.component("cache-invalidation");
 
 export interface InvalidationOptions {
   /** Environment scope: only invalidate caches for this environment */
@@ -38,7 +38,7 @@ export async function invalidateProjectCaches(
   const environment = options?.environment;
   const hasRealProjectSlug = projectSlug !== "preview" || !!projectId;
 
-  log.debug("▶ Starting cache invalidation", {
+  logger.debug("▶ Starting cache invalidation", {
     projectSlug,
     environment: environment ?? "all",
     changedPaths: changedPaths?.length ?? "all",
@@ -46,17 +46,17 @@ export async function invalidateProjectCaches(
   });
 
   if (changedPaths?.length) {
-    log.debug("Clearing module paths (selective)", {
+    logger.debug("Clearing module paths (selective)", {
       projectSlug,
       pathCount: changedPaths.length,
     });
     invalidateModulePaths(changedPaths);
   } else {
-    log.debug("Clearing module path cache (full)", { projectSlug });
+    logger.debug("Clearing module path cache (full)", { projectSlug });
     clearModulePathCache();
   }
 
-  log.debug("Clearing SSR module cache", {
+  logger.debug("Clearing SSR module cache", {
     projectSlug,
     projectId,
     mode: projectId ? "per-project" : "global",
@@ -71,7 +71,7 @@ export async function invalidateProjectCaches(
     clearSSRModuleCache();
   }
 
-  log.debug("Clearing router detection cache", { projectSlug });
+  logger.debug("Clearing router detection cache", { projectSlug });
   clearRouterDetectionCache();
 
   if (!hasRealProjectSlug) {
@@ -92,24 +92,24 @@ export async function invalidateProjectCaches(
 
   const rendererProjectKey = projectId ?? projectSlug;
 
-  log.debug("Clearing renderer cache (per-project)", {
+  logger.debug("Clearing renderer cache (per-project)", {
     projectSlug,
     projectId,
     rendererProjectKey,
   });
   await clearRendererCacheForProject(rendererProjectKey);
 
-  log.debug("Clearing snippet cache (per-project)", { projectSlug });
+  logger.debug("Clearing snippet cache (per-project)", { projectSlug });
   clearSnippetCacheForProject(projectSlug);
 
   if (projectId) {
     if (environment) {
-      log.debug("Clearing registry caches (environment-scoped)", {
+      logger.debug("Clearing registry caches (environment-scoped)", {
         projectId,
         environment,
       });
       const deleted = cacheRegistry.deleteKeysForProjectEnvironment(projectId, environment);
-      log.debug("Registry caches cleared", {
+      logger.debug("Registry caches cleared", {
         projectId,
         environment,
         keysDeleted: deleted,
@@ -118,12 +118,12 @@ export async function invalidateProjectCaches(
 
     const branchId = options?.branchId;
     if (branchId) {
-      log.debug("Clearing registry caches (content-source)", {
+      logger.debug("Clearing registry caches (content-source)", {
         projectId,
         contentSourceId: branchId,
       });
       const deleted = cacheRegistry.deleteKeysForContentSource(projectId, branchId);
-      log.debug("Registry caches cleared (content-source)", {
+      logger.debug("Registry caches cleared (content-source)", {
         projectId,
         contentSourceId: branchId,
         keysDeleted: deleted,
@@ -131,7 +131,7 @@ export async function invalidateProjectCaches(
     }
   }
 
-  log.debug("✓ Per-project cache invalidation complete", {
+  logger.debug("✓ Per-project cache invalidation complete", {
     projectSlug,
     durationMs: Date.now() - startTime,
   });

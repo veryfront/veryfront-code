@@ -1,4 +1,4 @@
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
 import type { FileInfo } from "../../base.ts";
 import type { ProjectFile } from "../../veryfront-api-client/index.ts";
@@ -21,7 +21,7 @@ import {
 import { ApiSearchCircuitBreaker } from "./api-search-circuit-breaker.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-const log = logger.component("stat-operations");
+const logger = baseLogger.component("stat-operations");
 
 const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
 
@@ -48,7 +48,7 @@ export class StatOperations extends VeryfrontOperationsBase {
         const ctx = this.contextProvider?.getContentContext();
         const cacheKey = `${buildStatCacheKeyPrefix(ctx)}:${normalizedPath}`;
 
-        log.debug("stat called", { path, normalizedPath, cacheKey });
+        logger.debug("stat called", { path, normalizedPath, cacheKey });
 
         await this.ensureIndexBuilt();
 
@@ -56,7 +56,7 @@ export class StatOperations extends VeryfrontOperationsBase {
         const dirIdx = this.directoryIndex;
 
         if (!fileIdx || !dirIdx) {
-          log.debug("stat - no index available", { normalizedPath });
+          logger.debug("stat - no index available", { normalizedPath });
           throw toError(
             createError({
               type: "file",
@@ -67,7 +67,7 @@ export class StatOperations extends VeryfrontOperationsBase {
 
         const file = fileIdx.get(normalizedPath);
         if (file) {
-          log.debug("stat found file", { normalizedPath });
+          logger.debug("stat found file", { normalizedPath });
           return {
             size: file.size,
             mtime: new Date(file.updated_at),
@@ -78,7 +78,7 @@ export class StatOperations extends VeryfrontOperationsBase {
         }
 
         if (dirIdx.has(normalizedPath)) {
-          log.debug("stat found directory", { normalizedPath });
+          logger.debug("stat found directory", { normalizedPath });
           return {
             size: 0,
             mtime: new Date(),
@@ -93,7 +93,7 @@ export class StatOperations extends VeryfrontOperationsBase {
         if (!isFrameworkSourcePath(normalizedPath) && this.apiSearchCircuitBreaker.canSearch()) {
           const hasKnownExt = EXTENSION_PRIORITY.some((ext) => normalizedPath.endsWith(ext));
           if (hasKnownExt) {
-            log.debug("stat file not in index, trying API search", {
+            logger.debug("stat file not in index, trying API search", {
               normalizedPath,
               indexSize: fileIdx.size,
             });
@@ -105,7 +105,7 @@ export class StatOperations extends VeryfrontOperationsBase {
 
               const exactMatch = matches.find((m) => m.path === normalizedPath);
               if (exactMatch) {
-                log.debug("stat found via API search", { normalizedPath });
+                logger.debug("stat found via API search", { normalizedPath });
                 // Add to index for future lookups
                 fileIdx.set(normalizedPath, {
                   id: exactMatch.id,
@@ -126,11 +126,11 @@ export class StatOperations extends VeryfrontOperationsBase {
             } catch (error) {
               const result = this.apiSearchCircuitBreaker.recordFailure();
               if (result.tripped) {
-                log.warn("stat API search circuit breaker tripped", {
+                logger.warn("stat API search circuit breaker tripped", {
                   failures: result.failures,
                 });
               }
-              log.debug("stat API search failed", {
+              logger.debug("stat API search failed", {
                 normalizedPath,
                 error: error instanceof Error ? error.message : String(error),
               });
@@ -138,7 +138,7 @@ export class StatOperations extends VeryfrontOperationsBase {
           }
         }
 
-        log.debug("stat file not found (not in index)", {
+        logger.debug("stat file not found (not in index)", {
           normalizedPath,
           indexSize: fileIdx.size,
         });
@@ -155,22 +155,22 @@ export class StatOperations extends VeryfrontOperationsBase {
 
   private async ensureIndexBuilt(): Promise<void> {
     if (this.fileIndex && this.directoryIndex) {
-      log.debug("ensureIndexBuilt - index already built");
+      logger.debug("ensureIndexBuilt - index already built");
       return;
     }
 
     if (this.buildingIndex) {
-      log.debug("ensureIndexBuilt - waiting for concurrent build");
+      logger.debug("ensureIndexBuilt - waiting for concurrent build");
       const waitStart = performance.now();
       await this.buildingIndex;
-      log.debug("ensureIndexBuilt - concurrent build done", {
+      logger.debug("ensureIndexBuilt - concurrent build done", {
         waitMs: Math.round(performance.now() - waitStart),
       });
       return;
     }
 
     if (this.indexBuildLockPromise) {
-      log.debug("ensureIndexBuilt - waiting for lock");
+      logger.debug("ensureIndexBuilt - waiting for lock");
       await this.indexBuildLockPromise;
       if (this.buildingIndex) await this.buildingIndex;
       return;
@@ -195,12 +195,12 @@ export class StatOperations extends VeryfrontOperationsBase {
 
   private async buildIndex(): Promise<void> {
     const buildStart = performance.now();
-    log.debug("buildIndex START");
+    logger.debug("buildIndex START");
 
     const fetchStart = performance.now();
     const allFiles = await this.getAllFilesRaw();
     const fetchMs = Math.round(performance.now() - fetchStart);
-    log.debug("buildIndex - getAllFilesRaw done", {
+    logger.debug("buildIndex - getAllFilesRaw done", {
       fetchMs,
       fileCount: allFiles.length,
     });
@@ -214,7 +214,7 @@ export class StatOperations extends VeryfrontOperationsBase {
       const { normalizedPath, originalPath } = normalizeIndexedFilePath(file);
       if (originalPath) {
         pathMap.set(normalizedPath, originalPath);
-        log.debug("Normalized trailing slash path", {
+        logger.debug("Normalized trailing slash path", {
           original: originalPath,
           normalized: normalizedPath,
         });
@@ -233,7 +233,7 @@ export class StatOperations extends VeryfrontOperationsBase {
 
     const indexMs = Math.round(performance.now() - indexStart);
     const totalMs = Math.round(performance.now() - buildStart);
-    log.debug("Index built", {
+    logger.debug("Index built", {
       files: fileIdx.size,
       directories: dirIdx.size,
       pathMappings: pathMap.size,
@@ -264,7 +264,7 @@ export class StatOperations extends VeryfrontOperationsBase {
       const files = await this.contextProvider?.getFileList?.();
       if (files) {
         const cacheMs = Math.round(performance.now() - cacheStart);
-        log.debug("getAllFilesRaw - from adapter cache", {
+        logger.debug("getAllFilesRaw - from adapter cache", {
           cacheMs,
           fileCount: files.length,
         });
@@ -275,7 +275,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     const cacheKey = buildFileListCacheKey(ctx);
 
     if (skipPersistentCache) {
-      log.debug("getAllFilesRaw - skipping persistent cache (invalidation)", {
+      logger.debug("getAllFilesRaw - skipping persistent cache (invalidation)", {
         cacheKey,
         cacheKeyPrefix,
       });
@@ -287,7 +287,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     const cacheMs = Math.round(performance.now() - cacheStart);
 
     if (cached) {
-      log.debug("getAllFilesRaw - fallback cache HIT", {
+      logger.debug("getAllFilesRaw - fallback cache HIT", {
         cacheKey,
         cacheMs,
         fileCount: cached.length,
@@ -295,13 +295,13 @@ export class StatOperations extends VeryfrontOperationsBase {
       return cached;
     }
 
-    log.warn("getAllFilesRaw - cache MISS, fetching from API", {
+    logger.warn("getAllFilesRaw - cache MISS, fetching from API", {
       cacheKey,
       cacheMs,
     });
 
     const isPublished = ctx?.sourceType !== "branch";
-    log.debug("Fetching files from API", {
+    logger.debug("Fetching files from API", {
       sourceType: ctx?.sourceType,
       cacheKey,
     });
@@ -334,7 +334,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     const ctx = this.contextProvider?.getContentContext();
     const cacheKey = `${buildStatCacheKeyPrefix(ctx)}:resolve:${normalizedPath}`;
 
-    log.debug("resolveFile called", {
+    logger.debug("resolveFile called", {
       basePath,
       normalizedPath,
       cacheKey,
@@ -346,13 +346,13 @@ export class StatOperations extends VeryfrontOperationsBase {
 
     const fileIdx = this.fileIndex;
     if (!fileIdx) {
-      log.debug("resolveFile - no file index", { indexMs });
+      logger.debug("resolveFile - no file index", { indexMs });
       return null;
     }
 
     if (fileIdx.has(normalizedPath)) {
       const totalMs = Math.round(performance.now() - resolveStart);
-      log.debug("resolveFile exact match found", {
+      logger.debug("resolveFile exact match found", {
         normalizedPath,
         indexMs,
         totalMs,
@@ -365,7 +365,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     const resolvedDirect = resolveByExtensionPriority(fileIdx, pathWithoutExt, EXTENSION_PRIORITY);
     if (resolvedDirect) {
       const totalMs = Math.round(performance.now() - resolveStart);
-      log.debug("resolveFile found with extension", {
+      logger.debug("resolveFile found with extension", {
         pathWithExt: resolvedDirect,
         indexMs,
         totalMs,
@@ -381,7 +381,7 @@ export class StatOperations extends VeryfrontOperationsBase {
       );
       if (resolvedPages) {
         const totalMs = Math.round(performance.now() - resolveStart);
-        log.debug("resolveFile found with pages prefix", {
+        logger.debug("resolveFile found with pages prefix", {
           pathWithExt: resolvedPages,
           indexMs,
           totalMs,
@@ -393,7 +393,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     const indexPath = resolveIndexByExtensionPriority(fileIdx, pathWithoutExt, EXTENSION_PRIORITY);
     if (indexPath) {
       const totalMs = Math.round(performance.now() - resolveStart);
-      log.debug("resolveFile found index file", {
+      logger.debug("resolveFile found index file", {
         indexPath,
         indexMs,
         totalMs,
@@ -402,7 +402,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     }
 
     if (isFrameworkSourcePath(normalizedPath)) {
-      log.debug("Skipping API search for framework path", { normalizedPath });
+      logger.debug("Skipping API search for framework path", { normalizedPath });
       return null;
     }
 
@@ -412,7 +412,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     // The API pattern search is the fallback to ensure files can still be found.
 
     if (!this.apiSearchCircuitBreaker.canSearch()) {
-      log.warn("API search circuit breaker open, skipping", { normalizedPath });
+      logger.warn("API search circuit breaker open, skipping", { normalizedPath });
       return null;
     }
 
@@ -421,7 +421,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     const cacheCheckMs = Math.round(performance.now() - cacheCheckStart);
 
     if (cached === NOT_FOUND_SENTINEL) {
-      log.debug("resolveFile cached negative result", {
+      logger.debug("resolveFile cached negative result", {
         normalizedPath,
         cacheCheckMs,
       });
@@ -429,7 +429,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     }
 
     if (cached !== undefined) {
-      log.debug("resolveFile cache hit (unexpected)", {
+      logger.debug("resolveFile cache hit (unexpected)", {
         normalizedPath,
         cached,
         cacheCheckMs,
@@ -438,7 +438,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     }
 
     const searchPattern = `${pathWithoutExt}.*`;
-    log.debug("Searching for file via API", {
+    logger.debug("Searching for file via API", {
       pattern: searchPattern,
       normalizedPath,
       cacheCheckMs,
@@ -448,7 +448,7 @@ export class StatOperations extends VeryfrontOperationsBase {
       const matches = await this.client.searchFiles(searchPattern);
       this.apiSearchCircuitBreaker.recordSuccess();
 
-      log.debug("API search result", {
+      logger.debug("API search result", {
         pattern: searchPattern,
         matchCount: matches.length,
         matches: matches.map((m) => m.path).slice(0, 5),
@@ -457,21 +457,21 @@ export class StatOperations extends VeryfrontOperationsBase {
       const sortedMatches = sortPathsByExtensionPriority(matches, EXTENSION_PRIORITY);
       const first = sortedMatches[0];
       if (first) {
-        log.debug("resolveFile found via API search", { path: first.path });
+        logger.debug("resolveFile found via API search", { path: first.path });
         this.cache.set(cacheKey, first.path);
         return first.path;
       }
     } catch (error) {
       const result = this.apiSearchCircuitBreaker.recordFailure();
       if (result.tripped) {
-        log.warn("API search circuit breaker tripped", {
+        logger.warn("API search circuit breaker tripped", {
           failures: result.failures,
         });
       }
-      log.error("API pattern search failed", { pattern: searchPattern, error });
+      logger.error("API pattern search failed", { pattern: searchPattern, error });
     }
 
-    log.debug("resolveFile not found after API search", {
+    logger.debug("resolveFile not found after API search", {
       normalizedPath,
       pathWithoutExt,
     });

@@ -23,14 +23,14 @@
  */
 
 import { join } from "@std/path";
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { collectFiles } from "#veryfront/utils/file-discovery.ts";
 import { loadHandlerModule } from "#veryfront/routing/api/module-loader/loader.ts";
 import type { WorkflowDefinition } from "../types.ts";
 
-const log = logger.component("workflow-discovery");
+const logger = baseLogger.component("workflow-discovery");
 
 /**
  * Discovered workflow info
@@ -138,7 +138,7 @@ export async function discoverWorkflows(
   const baseDir = useRelativePaths ? workflowsDir : join(projectDir, workflowsDir);
 
   if (debug) {
-    log.info(`Scanning ${baseDir} for workflows`);
+    logger.info(`Scanning ${baseDir} for workflows`);
   }
 
   try {
@@ -146,7 +146,7 @@ export async function discoverWorkflows(
     const dirExists = await adapter.fs.exists(baseDir);
     if (!dirExists) {
       if (debug) {
-        log.info(`No workflows directory found at ${baseDir}`);
+        logger.info(`No workflows directory found at ${baseDir}`);
       }
       return { workflows, errors };
     }
@@ -161,7 +161,7 @@ export async function discoverWorkflows(
     });
 
     if (debug) {
-      log.info(`Found ${files.length} potential workflow files`);
+      logger.info(`Found ${files.length} potential workflow files`);
     }
 
     // Load and extract workflows from each file
@@ -201,19 +201,19 @@ export async function discoverWorkflows(
         errors.push({ filePath: file.path, error: errorMsg });
 
         if (debug) {
-          log.warn(`Failed to load ${file.path}: ${errorMsg}`);
+          logger.warn(`Failed to load ${file.path}: ${errorMsg}`);
         }
       }
     }
 
     if (debug) {
-      log.info(`Discovered ${workflows.length} workflows`);
+      logger.info(`Discovered ${workflows.length} workflows`);
     }
 
     return { workflows, errors };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    log.error(`Discovery failed: ${errorMsg}`);
+    logger.error(`Discovery failed: ${errorMsg}`);
     errors.push({ filePath: baseDir, error: errorMsg });
     return { workflows, errors };
   }

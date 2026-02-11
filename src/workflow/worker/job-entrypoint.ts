@@ -20,13 +20,13 @@
  * - 3: Workflow not found
  */
 
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { CapturedTenantContext, WorkflowDefinition } from "../types.ts";
 
-const log = logger.component("workflow-job");
+const logger = baseLogger.component("workflow-job");
 
 /**
  * Configuration for the job entrypoint
@@ -105,19 +105,19 @@ export async function runWorkflowJob(config: JobEntrypointConfig): Promise<numbe
   // Get workflow run ID from environment
   const runId = Deno.env.get("WORKFLOW_RUN_ID");
   if (!runId) {
-    log.error("Missing WORKFLOW_RUN_ID environment variable");
+    logger.error("Missing WORKFLOW_RUN_ID environment variable");
     return EXIT_CODES.CONFIG_ERROR;
   }
 
   if (debug) {
-    log.info(`Starting execution for run: ${runId}`);
+    logger.info(`Starting execution for run: ${runId}`);
   }
 
   try {
     // Fetch the workflow run
     const run = await backend.getRun(runId);
     if (!run) {
-      log.error(`Workflow run not found: ${runId}`);
+      logger.error(`Workflow run not found: ${runId}`);
       return EXIT_CODES.NOT_FOUND;
     }
 
@@ -125,8 +125,8 @@ export async function runWorkflowJob(config: JobEntrypointConfig): Promise<numbe
     const tenant = getTenantFromEnv() ?? run._tenant;
 
     if (debug) {
-      log.info(`Executing workflow: ${run.workflowId}`);
-      log.info(`Tenant: ${tenant?.projectSlug ?? "none"}`);
+      logger.info(`Executing workflow: ${run.workflowId}`);
+      logger.info(`Tenant: ${tenant?.projectSlug ?? "none"}`);
     }
 
     // Execute workflow and determine exit code based on final status
@@ -139,22 +139,22 @@ export async function runWorkflowJob(config: JobEntrypointConfig): Promise<numbe
       switch (status) {
         case "completed":
           if (debug) {
-            log.info(`Workflow completed successfully: ${runId}`);
+            logger.info(`Workflow completed successfully: ${runId}`);
           }
           return EXIT_CODES.SUCCESS;
 
         case "failed":
-          log.error(`Workflow failed: ${runId}`, finalRun?.error);
+          logger.error(`Workflow failed: ${runId}`, finalRun?.error);
           return EXIT_CODES.WORKFLOW_FAILED;
 
         case "waiting":
           if (debug) {
-            log.info(`Workflow paused (waiting): ${runId}`);
+            logger.info(`Workflow paused (waiting): ${runId}`);
           }
           return EXIT_CODES.SUCCESS;
 
         default:
-          log.warn(`Unexpected final status: ${status}`);
+          logger.warn(`Unexpected final status: ${status}`);
           return EXIT_CODES.SUCCESS;
       }
     };
@@ -164,7 +164,7 @@ export async function runWorkflowJob(config: JobEntrypointConfig): Promise<numbe
       try {
         return await executeWorkflow();
       } catch (error) {
-        log.error(`Execution error:`, error);
+        logger.error(`Execution error:`, error);
 
         await backend.updateRun(runId, {
           status: "failed",
@@ -195,7 +195,7 @@ export async function runWorkflowJob(config: JobEntrypointConfig): Promise<numbe
 
     return await safeExecute();
   } catch (error) {
-    log.error(`Fatal error:`, error);
+    logger.error(`Fatal error:`, error);
     return EXIT_CODES.WORKFLOW_FAILED;
   }
 }

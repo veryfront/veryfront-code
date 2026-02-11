@@ -3,7 +3,7 @@
  * @see https://docs.temporal.io/
  */
 
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import type {
   ApprovalDecision,
   Checkpoint,
@@ -14,7 +14,7 @@ import type {
 } from "../types.ts";
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
 
-const log = logger.component("temporal-adapter");
+const logger = baseLogger.component("temporal-adapter");
 
 export interface TemporalAdapterConfig extends BackendConfig {
   /** Temporal server address */
@@ -48,7 +48,7 @@ export class TemporalAdapter implements WorkflowBackend {
       ...config,
     };
 
-    log.warn("Stub implementation - requires Temporal SDK and worker setup");
+    logger.warn("Stub implementation - requires Temporal SDK and worker setup");
   }
 
   // Run Management

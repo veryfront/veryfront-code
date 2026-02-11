@@ -4,7 +4,7 @@
  * High-level API for interacting with workflows
  **************************/
 
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import type {
   PendingApproval,
   RunFilter,
@@ -22,7 +22,7 @@ import {
 import { ApprovalManager, type ApprovalManagerConfig } from "../runtime/approval-manager.ts";
 import type { Workflow } from "../dsl/workflow.ts";
 
-const log = logger.component("workflow-client");
+const logger = baseLogger.component("workflow-client");
 
 export interface WorkflowClientConfig {
   /** Backend for persistence (default: MemoryBackend) */
@@ -57,7 +57,7 @@ export class WorkflowClient {
           | undefined;
 
         if (!input) {
-          log.debug("No wait config found for node", { nodeId });
+          logger.debug("No wait config found for node", { nodeId });
           userOnWaiting?.(run, nodeId);
           return;
         }
@@ -76,9 +76,9 @@ export class WorkflowClient {
 
         try {
           await this.approvalManager.createApproval(run, nodeId, waitConfig, run.context);
-          log.debug("Created approval for node", { nodeId });
+          logger.debug("Created approval for node", { nodeId });
         } catch (error) {
-          log.error("Failed to create approval", error);
+          logger.error("Failed to create approval", error);
         }
 
         userOnWaiting?.(run, nodeId);
@@ -96,7 +96,7 @@ export class WorkflowClient {
   register(workflow: Workflow | WorkflowDefinition): void {
     const definition = "definition" in workflow ? workflow.definition : workflow;
     this.executor.register(definition);
-    log.debug("Registered workflow", { workflowId: definition.id });
+    logger.debug("Registered workflow", { workflowId: definition.id });
   }
 
   registerAll(workflows: Array<Workflow | WorkflowDefinition>): void {
@@ -172,7 +172,7 @@ export class WorkflowClient {
   async destroy(): Promise<void> {
     this.approvalManager.stop();
     await this.backend.destroy();
-    log.debug("Destroyed");
+    logger.debug("Destroyed");
   }
 }
 

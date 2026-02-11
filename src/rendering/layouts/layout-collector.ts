@@ -1,5 +1,5 @@
 import { join } from "#veryfront/compat/path";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, LayoutItem, MdxBundle } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -10,7 +10,7 @@ import { LAYOUT_EXTENSIONS, type LayoutExtension } from "./types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
-const log = logger.component("layout-collector");
+const logger = rendererLogger.component("layout-collector");
 
 function getLayoutKind(path: string): "mdx" | "tsx" {
   return path.endsWith(".mdx") || path.endsWith(".md") ? "mdx" : "tsx";
@@ -109,7 +109,7 @@ export class LayoutCollector {
       async () => {
         const pagePath = pageInfo.entity.path;
 
-        log.debug("collectLayouts called", {
+        logger.debug("collectLayouts called", {
           pagePath,
           projectDir: this.projectDir,
           hasConfig: !!this.config,
@@ -117,13 +117,13 @@ export class LayoutCollector {
         });
 
         if (pagePath.includes("/.veryfront/") || pagePath.includes(".veryfront/")) {
-          log.debug("Skipping layouts for .veryfront path", { pagePath });
+          logger.debug("Skipping layouts for .veryfront path", { pagePath });
           return { layoutBundle: undefined, nestedLayouts: [] };
         }
 
         const layoutValue = pageInfo.entity.frontmatter.layout as string | boolean | undefined;
         if (layoutValue === false || layoutValue === "false") {
-          log.debug("Layout explicitly disabled via frontmatter", {
+          logger.debug("Layout explicitly disabled via frontmatter", {
             pagePath,
             layoutValue,
           });
@@ -165,7 +165,7 @@ export class LayoutCollector {
     layoutName: string | undefined,
   ): Promise<LayoutCollectionResult> {
     if (hasExplicitFrontmatterLayout && layoutPath) {
-      log.debug("Using frontmatter layout as nestedLayout", {
+      logger.debug("Using frontmatter layout as nestedLayout", {
         layoutPath,
         layoutName,
         kind: getLayoutKind(layoutPath),
@@ -187,7 +187,7 @@ export class LayoutCollector {
     // Note: layoutBundle can be undefined for TSX layouts (they don't need MDX compilation)
     // but layoutPath will still be set if a config.layout was specified
     if (!layoutPath) {
-      log.debug("collectLayouts result - no layout path", {
+      logger.debug("collectLayouts result - no layout path", {
         hasLayoutBundle: !!layoutBundle,
         hasExplicitFrontmatterLayout,
         nestedLayoutsCount: nestedLayouts.length,
@@ -197,7 +197,7 @@ export class LayoutCollector {
     }
 
     if (nestedLayouts.some((l) => l.path === layoutPath)) {
-      log.debug("Skipping config.layout - already in nestedLayouts", {
+      logger.debug("Skipping config.layout - already in nestedLayouts", {
         layoutPath,
       });
       return { layoutBundle: undefined, nestedLayouts };
@@ -205,7 +205,7 @@ export class LayoutCollector {
 
     nestedLayouts = [createLayoutItem(layoutPath, layoutBundle), ...nestedLayouts];
 
-    log.debug("Added config.layout to nestedLayouts for client hydration", {
+    logger.debug("Added config.layout to nestedLayouts for client hydration", {
       layoutPath,
       kind: getLayoutKind(layoutPath),
       totalNestedLayouts: nestedLayouts.length,
@@ -221,7 +221,7 @@ export class LayoutCollector {
   }> {
     const layoutValue = pageInfo.entity.frontmatter.layout as string | boolean | undefined;
 
-    log.debug("collectNamedLayoutWithPath called", {
+    logger.debug("collectNamedLayoutWithPath called", {
       pagePath: pageInfo.entity.path,
       layoutValue,
       frontmatterKeys: Object.keys(pageInfo.entity.frontmatter),
@@ -230,7 +230,7 @@ export class LayoutCollector {
 
     const layoutName = this.resolveLayoutName(layoutValue);
 
-    log.debug("Resolved layoutName:", { layoutName });
+    logger.debug("Resolved layoutName:", { layoutName });
 
     if (!layoutName) {
       return { layoutBundle: undefined, layoutPath: undefined, layoutName: undefined };
@@ -242,7 +242,7 @@ export class LayoutCollector {
       { "layout.name": layoutName, "layout.project_dir": this.projectDir },
     );
 
-    log.debug("Layout entity found:", { found: !!layoutInfo, layoutName });
+    logger.debug("Layout entity found:", { found: !!layoutInfo, layoutName });
 
     if (!layoutInfo) {
       const source = typeof layoutValue === "string" ? "frontmatter" : "config";
@@ -315,7 +315,7 @@ export class LayoutCollector {
   ): Promise<LayoutItem[]> {
     const rootDir = useAppRouter ? join(this.projectDir, "app") : join(this.projectDir, "pages");
 
-    log.debug("collectLayoutsUnified", {
+    logger.debug("collectLayoutsUnified", {
       pageFilePath,
       useAppRouter,
       rootDir,
@@ -330,7 +330,7 @@ export class LayoutCollector {
     );
 
     if (nestedLayouts.length > 0) {
-      log.debug("Found nested layouts", {
+      logger.debug("Found nested layouts", {
         count: nestedLayouts.length,
         paths: nestedLayouts.map((l) => l.path),
       });
@@ -375,7 +375,7 @@ export class LayoutCollector {
       return [];
     }
 
-    log.debug("Added fallback components layout", { layoutPath });
+    logger.debug("Added fallback components layout", { layoutPath });
     return [await this.createLayoutItemWithBundle(layoutPath)];
   }
 

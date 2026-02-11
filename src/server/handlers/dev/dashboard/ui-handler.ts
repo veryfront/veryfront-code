@@ -1,10 +1,10 @@
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { transformUiModule } from "../shared/ui-module-transform.ts";
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import devUiManifest from "#veryfront/server/dev-ui/manifest.json" with { type: "json" };
 
-const log = logger.component("dev-dashboard");
+const logger = baseLogger.component("dev-dashboard");
 
 const moduleCache = new Map<string, { code: string; timestamp: number }>();
 const CACHE_TTL = 5000;
@@ -94,7 +94,7 @@ export function handleDashboardUI(req: Request): Promise<Response | null> {
         moduleCache.set(filePath, { code, timestamp: now });
         return new Response(code, { headers: JS_HEADERS });
       } catch (error) {
-        log.error("Transform error", { filePath, error });
+        logger.error("Transform error", { filePath, error });
         const message = error instanceof Error ? error.message : String(error);
         return new Response(`// Transform error: ${message}`, { status: 500, headers: JS_HEADERS });
       }

@@ -1,4 +1,4 @@
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { loadConfig } from "./config.ts";
@@ -6,7 +6,7 @@ import { ContextPropagation } from "./context-propagation.ts";
 import { SpanOperations } from "./span-operations.ts";
 import type { OpenTelemetryAPI, TracingConfig, TracingState } from "./types.ts";
 
-const log = logger.component("tracing");
+const logger = serverLogger.component("tracing");
 
 /**
  * Tracing manager class
@@ -26,7 +26,7 @@ export class TracingManager {
 
   async initialize(config: Partial<TracingConfig> = {}, adapter?: RuntimeAdapter): Promise<void> {
     if (this.state.initialized) {
-      log.debug("Already initialized");
+      logger.debug("Already initialized");
       return;
     }
 
@@ -34,14 +34,14 @@ export class TracingManager {
     this.state.initialized = true;
 
     if (!finalConfig.enabled) {
-      log.debug("Tracing disabled");
+      logger.debug("Tracing disabled");
       return;
     }
 
     try {
       await this.initializeTracer(finalConfig);
 
-      log.info("OpenTelemetry tracing initialized", {
+      logger.info("OpenTelemetry tracing initialized", {
         exporter: finalConfig.exporter,
         serviceName: finalConfig.serviceName,
         endpoint: finalConfig.endpoint,
@@ -94,9 +94,9 @@ export class TracingManager {
     if (!this.state.initialized) return;
 
     try {
-      log.info("Tracing shutdown initiated");
+      logger.info("Tracing shutdown initiated");
     } catch (error) {
-      log.warn("Error during tracing shutdown", error);
+      logger.warn("Error during tracing shutdown", error);
     }
   }
 }

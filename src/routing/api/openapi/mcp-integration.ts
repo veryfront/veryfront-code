@@ -1,10 +1,10 @@
 import { registerResource, registerTool } from "#veryfront/mcp";
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { createOpenAPIResource } from "./mcp-resource.ts";
 import { generateMCPToolsFromSpec } from "./mcp-tools.ts";
 import type { OpenAPISpec } from "./types.ts";
 
-const log = logger.component("open-api-mcp");
+const logger = baseLogger.component("open-api-mcp");
 
 export interface OpenAPIMCPConfig {
   baseUrl: string;
@@ -25,9 +25,9 @@ export async function registerOpenAPIMCP(
       const resource = createOpenAPIResource(getSpec);
       registerResource("openapi_spec", resource);
       result.resourceId = "openapi_spec";
-      log.debug("Registered openapi://spec resource");
+      logger.debug("Registered openapi://spec resource");
     } catch (error) {
-      log.warn("Failed to register resource:", { error: String(error) });
+      logger.warn("Failed to register resource:", { error: String(error) });
     }
   }
 
@@ -48,12 +48,12 @@ export async function registerOpenAPIMCP(
       result.toolIds.push(tool.id);
     }
 
-    log.info("Registered API tools", {
+    logger.info("Registered API tools", {
       count: tools.length,
       prefix: config.toolPrefix ?? "api",
     });
   } catch (error) {
-    log.warn("Failed to generate tools:", { error: String(error) });
+    logger.warn("Failed to generate tools:", { error: String(error) });
   }
 
   return result;

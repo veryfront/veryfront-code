@@ -1,7 +1,7 @@
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { FALLBACK_EXHAUSTED } from "#veryfront/errors/error-registry.ts";
 
-const log = logger.component("fallback-wrapper");
+const logger = baseLogger.component("fallback-wrapper");
 
 export { FALLBACK_EXHAUSTED } from "#veryfront/errors/error-registry.ts";
 
@@ -19,7 +19,7 @@ function logPrimaryFailure(operationName: string, error: unknown): void {
 }
 
 function logFallbackSuccess(operationName: string): void {
-  log.debug(`Fallback succeeded for ${operationName}`);
+  logger.debug(`Fallback succeeded for ${operationName}`);
 }
 
 function handleFallbackFailure(

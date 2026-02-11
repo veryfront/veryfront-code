@@ -1,4 +1,4 @@
-import { logger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import type {
   ApprovalDecision,
   PendingApproval,
@@ -10,7 +10,7 @@ import { generateId, parseDuration } from "../types.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 
-const log = logger.component("approval-manager");
+const logger = baseLogger.component("approval-manager");
 
 export type ApprovalNotifier = (
   approval: PendingApproval,
@@ -90,7 +90,7 @@ export class ApprovalManager {
       status: "pending",
     };
 
-    log.debug("Creating approval", {
+    logger.debug("Creating approval", {
       approvalId: approval.id,
       runId: run.id,
     });
@@ -100,7 +100,7 @@ export class ApprovalManager {
     try {
       await this.config.notifier?.(approval, run);
     } catch (error) {
-      log.error("Failed to notify approvers", error);
+      logger.error("Failed to notify approvers", error);
     }
 
     return {
@@ -137,7 +137,7 @@ export class ApprovalManager {
     approvalId: string,
     decision: ApprovalDecision,
   ): Promise<void> {
-    log.debug("Processing decision", {
+    logger.debug("Processing decision", {
       approvalId,
       approved: decision.approved,
     });
@@ -204,7 +204,7 @@ export class ApprovalManager {
       try {
         await this.config.executor.resume(runId);
       } catch (error) {
-        log.error("Failed to resume workflow", error);
+        logger.error("Failed to resume workflow", error);
         throw error;
       }
       return;
@@ -280,7 +280,7 @@ export class ApprovalManager {
         continue;
       }
 
-      log.debug("Expiring approval", {
+      logger.debug("Expiring approval", {
         approvalId: approval.id,
       });
 
@@ -301,7 +301,7 @@ export class ApprovalManager {
   private startExpirationChecker(): void {
     this.expirationTimer = setInterval(() => {
       this.checkExpiredApprovals().catch((error) => {
-        log.error("Expiration check failed", error);
+        logger.error("Expiration check failed", error);
       });
     }, this.config.expirationCheckInterval);
   }

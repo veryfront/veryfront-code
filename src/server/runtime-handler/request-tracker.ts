@@ -5,10 +5,10 @@
  * Helps identify when the event loop is blocked or requests are hanging.
  */
 
-import { serverLogger as logger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { unrefTimer } from "#veryfront/compat/process.ts";
 
-const log = logger.component("request-tracker");
+const logger = serverLogger.component("request-tracker");
 
 export interface TrackedRequest {
   requestId: string;
@@ -56,7 +56,7 @@ class RequestTracker {
         }))
         .sort((a, b) => b.elapsedMs - a.elapsedMs);
 
-      log.info("In-flight requests status", {
+      logger.info("In-flight requests status", {
         inFlightCount: this.inFlight.size,
         totalRequests: this.totalRequests,
         totalCompleted: this.totalCompleted,
@@ -92,7 +92,7 @@ class RequestTracker {
 
     tracked.slowTimer = setTimeout(() => {
       const elapsedMs = Math.round(performance.now() - startTime);
-      log.warn("Slow request detected", {
+      logger.warn("Slow request detected", {
         requestId,
         projectSlug,
         path,
@@ -103,7 +103,7 @@ class RequestTracker {
 
       tracked.slowTimer = setTimeout(() => {
         const verySlowElapsedMs = Math.round(performance.now() - startTime);
-        log.error("Very slow request - likely stuck", {
+        logger.error("Very slow request - likely stuck", {
           requestId,
           projectSlug,
           path,
@@ -118,7 +118,7 @@ class RequestTracker {
 
     this.inFlight.set(requestId, tracked);
 
-    log.debug("Request started", {
+    logger.debug("Request started", {
       requestId,
       projectSlug,
       path,
@@ -182,11 +182,11 @@ class RequestTracker {
     const startTime = Date.now();
 
     if (this.inFlight.size === 0) {
-      log.info("No in-flight requests, drain complete");
+      logger.info("No in-flight requests, drain complete");
       return true;
     }
 
-    log.info("Waiting for in-flight requests to drain", {
+    logger.info("Waiting for in-flight requests to drain", {
       inFlightCount: this.inFlight.size,
       timeoutMs,
     });
@@ -216,7 +216,7 @@ class RequestTracker {
       }
 
       if (elapsedMs > 0 && elapsedMs % 5000 < pollIntervalMs) {
-        log.info("Drain progress", {
+        logger.info("Drain progress", {
           inFlightCount: this.inFlight.size,
           elapsedMs,
           remainingMs: timeoutMs - elapsedMs,
@@ -226,7 +226,7 @@ class RequestTracker {
       await new Promise<void>((resolve) => setTimeout(resolve, pollIntervalMs));
     }
 
-    log.info("All requests drained successfully", {
+    logger.info("All requests drained successfully", {
       drainTimeMs: Date.now() - startTime,
     });
     return true;
