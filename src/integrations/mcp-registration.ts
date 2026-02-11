@@ -34,7 +34,7 @@ export async function registerIntegrationMCP(
 
   if (integrationNames.length === 0) return result;
 
-  logger.info("[Integrations] Registering integration tools", {
+  logger.info("Registering integration tools", {
     integrations: integrationNames,
   });
 
@@ -48,7 +48,7 @@ export async function registerIntegrationMCP(
 
   for (const { name, connector } of connectorResults) {
     if (!connector) {
-      logger.warn(`[Integrations] Skipping ${name}: connector not found`);
+      logger.warn(`Skipping ${name}: connector not found`);
       continue;
     }
 
@@ -66,7 +66,7 @@ export async function registerIntegrationMCP(
     }
   }
 
-  logger.info("[Integrations] Registered integration tools", {
+  logger.info("Registered integration tools", {
     total: result.toolIds.length,
     integrations: integrationNames.length,
   });

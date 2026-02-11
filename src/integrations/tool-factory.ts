@@ -12,7 +12,11 @@ import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { z } from "zod";
 import { logger } from "#veryfront/utils";
 import { executeEndpoint } from "./endpoint-executor.ts";
-import type { IntegrationConnector, IntegrationEndpointParam, IntegrationRuntimeConfig } from "./types.ts";
+import type {
+  IntegrationConnector,
+  IntegrationEndpointParam,
+  IntegrationRuntimeConfig,
+} from "./types.ts";
 
 interface TokenResponse {
   accessToken?: string;
@@ -117,7 +121,7 @@ export function createIntegrationTools(
             const res = await fetch(tokenUrl, { headers });
             tokenResponse = (await res.json()) as TokenResponse;
           } catch (error) {
-            logger.error(`[Integrations] Token fetch failed for ${toolId}`, {
+            logger.error(`Token fetch failed for ${toolId}`, {
               error: String(error),
             });
             return { error: "token_fetch_failed", message: String(error) };
@@ -156,6 +160,6 @@ export function createIntegrationTools(
     );
   }
 
-  logger.debug(`[Integrations] Created ${tools.length} tools for ${connector.name}`);
+  logger.debug(`Created ${tools.length} tools for ${connector.name}`);
   return tools;
 }

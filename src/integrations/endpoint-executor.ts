@@ -58,7 +58,7 @@ async function executeGraphQL(
     }
   }
 
-  logger.debug("[Integrations] Executing GraphQL endpoint", {
+  logger.debug("Executing GraphQL endpoint", {
     integration: ctx.integration,
     tool: ctx.toolId,
   });
@@ -125,8 +125,9 @@ async function executeRest(
   };
 
   for (const [key, def] of Object.entries(endpoint.params ?? {})) {
-    if (def.in === "header" && args[key] !== undefined) {
-      headers[key] = String(args[key]);
+    if (def.in === "header") {
+      const value = args[key] ?? def.default;
+      if (value !== undefined) headers[key] = String(value);
     }
   }
 
@@ -143,7 +144,7 @@ async function executeRest(
     headers["Content-Type"] = endpoint.contentType ?? "application/json";
   }
 
-  logger.debug("[Integrations] Executing REST endpoint", {
+  logger.debug("Executing REST endpoint", {
     integration: ctx.integration,
     tool: ctx.toolId,
     method: endpoint.method,

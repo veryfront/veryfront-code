@@ -44,10 +44,10 @@ export async function fetchConnector(
 
     if (!response.ok) {
       if (response.status === 404) {
-        logger.warn(`[Integrations] Connector not found: ${integration}`);
+        logger.warn(`Connector not found: ${integration}`);
         return null;
       }
-      logger.warn(`[Integrations] Failed to fetch connector: ${integration}`, {
+      logger.warn(`Failed to fetch connector: ${integration}`, {
         status: response.status,
       });
       return null;
@@ -65,7 +65,7 @@ export async function fetchConnector(
     cache.set(integration, { connector, expiresAt: Date.now() + CACHE_TTL_MS });
     return connector;
   } catch (error) {
-    logger.error(`[Integrations] Error fetching connector: ${integration}`, {
+    logger.error(`Error fetching connector: ${integration}`, {
       error: String(error),
     });
     return null;
