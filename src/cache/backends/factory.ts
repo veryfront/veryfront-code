@@ -12,6 +12,7 @@ import {
 import { MemoryCacheBackend } from "./memory.ts";
 import { isRedisConfigured, RedisCacheBackend } from "./redis.ts";
 import { ApiCacheBackend } from "./api.ts";
+import { DiskCacheBackend } from "./disk.ts";
 import { getEnvValue } from "./helpers.ts";
 
 const logger = baseLogger.component("cache-backend");
@@ -22,7 +23,7 @@ export type { CodeCacheGateway, TokenizingCacheGateway };
 export interface CacheBackendConfig {
   keyPrefix?: string;
   memoryMaxEntries?: number;
-  preferredBackend?: "api" | "redis" | "memory";
+  preferredBackend?: "api" | "redis" | "disk" | "memory";
   apiBaseUrl?: string;
   circuitBreakerName?: string;
 }
@@ -37,6 +38,10 @@ export function isApiCacheAvailable(): boolean {
     !!(apiUrl && !apiUrl.includes("localhost") && !apiUrl.includes("lvh.me"));
 
   return isProduction && !!apiUrl;
+}
+
+export function isDiskCacheConfigured(): boolean {
+  return getEnv("VF_CACHE_BACKEND") === "disk" || !!getEnv("VF_DISK_CACHE_DIR");
 }
 
 export function createCacheBackend(config: CacheBackendConfig = {}): Promise<CacheBackend> {
@@ -70,6 +75,15 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
         }
       }
 
+      const shouldUseDisk = preferredBackend === "disk" ||
+        (!preferredBackend && isDiskCacheConfigured());
+      if (shouldUseDisk) {
+        const diskDir = getEnv("VF_DISK_CACHE_DIR") || undefined;
+        logger.debug("Using disk backend");
+        span?.setAttribute("cache.backend.type", "disk");
+        return new DiskCacheBackend(diskDir);
+      }
+
       logger.debug("Using memory backend");
       span?.setAttribute("cache.backend.type", "memory");
       return new MemoryCacheBackend(memoryMaxEntries);
@@ -82,7 +96,7 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
 }
 
 export function isDistributedBackend(backend: CacheBackend): boolean {
-  return backend.type !== "memory";
+  return backend.type !== "memory" && backend.type !== "disk";
 }
 
 const DISTRIBUTED_CACHE_RETRY_MS = 30_000;

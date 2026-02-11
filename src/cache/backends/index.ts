@@ -11,6 +11,7 @@ export type { CacheBackend } from "../types.ts";
 export { MemoryCacheBackend } from "./memory.ts";
 export { RedisCacheBackend } from "./redis.ts";
 export { ApiCacheBackend } from "./api.ts";
+export { DiskCacheBackend } from "./disk.ts";
 
 // Factory functions and config
 export {
