@@ -202,8 +202,8 @@ export const connectors: IntegrationConfig[] = [
         "label": "AWS Region",
         "type": "string",
         "required": true,
-        "default": "us-east-1",
         "envVar": "AWS_REGION",
+        "default": "us-east-1",
       }],
     },
     "envVars": [{
@@ -539,11 +539,11 @@ export const connectors: IntegrationConfig[] = [
       "tokenUrl": "https://auth.atlassian.com/oauth/token",
       "scopes": ["read:confluence-content.all", "write:confluence-content"],
       "tokenAuthMethod": "client_secret_post",
-      "additionalParams": { "audience": "api.atlassian.com", "prompt": "consent" },
       "requiredApis": [{
         "name": "Atlassian OAuth 2.0 App",
         "enableUrl": "https://developer.atlassian.com/console/myapps/",
       }],
+      "additionalParams": { "audience": "api.atlassian.com", "prompt": "consent" },
     },
     "envVars": [{
       "name": "ATLASSIAN_CLIENT_ID",
@@ -1499,11 +1499,11 @@ export const connectors: IntegrationConfig[] = [
       "tokenUrl": "https://auth.atlassian.com/oauth/token",
       "scopes": ["read:jira-work", "write:jira-work", "read:jira-user", "offline_access"],
       "tokenAuthMethod": "body",
-      "additionalAuthParams": { "audience": "api.atlassian.com", "prompt": "consent" },
       "requiredApis": [{
         "name": "Atlassian OAuth 2.0",
         "enableUrl": "https://developer.atlassian.com/console/myapps/",
       }],
+      "additionalAuthParams": { "audience": "api.atlassian.com", "prompt": "consent" },
     },
     "envVars": [{
       "name": "ATLASSIAN_CLIENT_ID",
@@ -1732,11 +1732,11 @@ export const connectors: IntegrationConfig[] = [
       "Track events, analyze funnels, and understand user behavior with Mixpanel analytics",
     "auth": {
       "type": "api-key",
-      "keyName": "MIXPANEL_PROJECT_TOKEN",
       "requiredApis": [{
         "name": "Mixpanel API",
         "enableUrl": "https://mixpanel.com/settings/project",
       }],
+      "keyName": "MIXPANEL_PROJECT_TOKEN",
     },
     "envVars": [{
       "name": "MIXPANEL_PROJECT_TOKEN",
@@ -1882,12 +1882,12 @@ export const connectors: IntegrationConfig[] = [
     "description": "Manage Neon Postgres projects, branches, and execute database queries",
     "auth": {
       "type": "api-key",
-      "tokenName": "API Key",
-      "docsUrl": "https://neon.tech/docs/manage/api-keys",
       "requiredApis": [{
         "name": "Neon Management API",
         "enableUrl": "https://console.neon.tech/app/settings/api-keys",
       }],
+      "tokenName": "API Key",
+      "docsUrl": "https://neon.tech/docs/manage/api-keys",
     },
     "envVars": [{
       "name": "NEON_API_KEY",
@@ -2267,13 +2267,13 @@ export const connectors: IntegrationConfig[] = [
     "description": "Access analytics, feature flags, and user insights from PostHog",
     "auth": {
       "type": "api-key",
-      "keyName": "POSTHOG_API_KEY",
-      "headerName": "Authorization",
-      "headerPrefix": "Bearer",
       "requiredApis": [{
         "name": "PostHog API",
         "enableUrl": "https://app.posthog.com/project/settings",
       }],
+      "keyName": "POSTHOG_API_KEY",
+      "headerName": "Authorization",
+      "headerPrefix": "Bearer",
     },
     "envVars": [{
       "name": "POSTHOG_API_KEY",
@@ -2490,15 +2490,14 @@ export const connectors: IntegrationConfig[] = [
     "displayName": "Sentry",
     "icon": "sentry.svg",
     "description": "Monitor errors, track issues, and manage Sentry projects",
-    "category": "development",
     "auth": {
       "type": "api-key",
-      "tokenName": "Auth Token",
-      "docsUrl": "https://docs.sentry.io/api/auth/",
       "requiredApis": [{
         "name": "Sentry API",
         "enableUrl": "https://sentry.io/settings/account/api/auth-tokens/",
       }],
+      "tokenName": "Auth Token",
+      "docsUrl": "https://docs.sentry.io/api/auth/",
     },
     "envVars": [{
       "name": "SENTRY_AUTH_TOKEN",
@@ -2557,14 +2556,28 @@ export const connectors: IntegrationConfig[] = [
       "icon": "activity",
     }],
     "suggestedWith": ["github", "slack", "linear"],
+    "category": "development",
   },
   {
     "name": "servicenow",
     "displayName": "ServiceNow",
     "icon": "servicenow.svg",
     "description": "IT Service Management - incidents, changes, and service requests",
-    "category": "enterprise",
     "auth": { "type": "oauth2", "provider": "servicenow", "scopes": ["useraccount", "openid"] },
+    "envVars": [{
+      "name": "SERVICENOW_INSTANCE",
+      "description": "ServiceNow instance URL (e.g. your-instance.service-now.com)",
+      "required": true,
+    }, {
+      "name": "SERVICENOW_CLIENT_ID",
+      "description": "ServiceNow OAuth Client ID",
+      "required": true,
+    }, {
+      "name": "SERVICENOW_CLIENT_SECRET",
+      "description": "ServiceNow OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+    }],
     "tools": [{
       "id": "list-incidents",
       "name": "List Incidents",
@@ -2604,21 +2617,8 @@ export const connectors: IntegrationConfig[] = [
       "prompt": "Search the ServiceNow knowledge base for solutions to common issues.",
       "category": "research",
     }],
-    "envVars": [{
-      "name": "SERVICENOW_INSTANCE",
-      "description": "ServiceNow instance URL (e.g. your-instance.service-now.com)",
-      "required": true,
-    }, {
-      "name": "SERVICENOW_CLIENT_ID",
-      "description": "ServiceNow OAuth Client ID",
-      "required": true,
-    }, {
-      "name": "SERVICENOW_CLIENT_SECRET",
-      "description": "ServiceNow OAuth Client Secret",
-      "required": true,
-      "sensitive": true,
-    }],
     "suggestedWith": ["slack", "jira"],
+    "category": "enterprise",
   },
   {
     "name": "sharepoint",
@@ -3050,13 +3050,13 @@ export const connectors: IntegrationConfig[] = [
     "description": "Access Stripe payment data, customers, subscriptions, and balance information",
     "auth": {
       "type": "api-key",
-      "keyName": "STRIPE_SECRET_KEY",
-      "headerName": "Authorization",
-      "headerPrefix": "Bearer",
       "requiredApis": [{
         "name": "Stripe API",
         "enableUrl": "https://dashboard.stripe.com/apikeys",
       }],
+      "keyName": "STRIPE_SECRET_KEY",
+      "headerName": "Authorization",
+      "headerPrefix": "Bearer",
     },
     "envVars": [{
       "name": "STRIPE_SECRET_KEY",
@@ -3375,13 +3375,13 @@ export const connectors: IntegrationConfig[] = [
     "description": "Send SMS, WhatsApp messages, make calls, and manage communications with Twilio",
     "auth": {
       "type": "api-key",
-      "keyName": "TWILIO_AUTH_TOKEN",
-      "headerName": "Authorization",
-      "headerPrefix": "Basic",
       "requiredApis": [{
         "name": "Twilio API",
         "enableUrl": "https://console.twilio.com/us1/develop/sms/overview",
       }],
+      "keyName": "TWILIO_AUTH_TOKEN",
+      "headerName": "Authorization",
+      "headerPrefix": "Basic",
     },
     "envVars": [{
       "name": "TWILIO_ACCOUNT_SID",
@@ -3669,8 +3669,21 @@ export const connectors: IntegrationConfig[] = [
     "displayName": "Zendesk",
     "icon": "zendesk.svg",
     "description": "Manage support tickets, users, and help center content",
-    "category": "support",
     "auth": { "type": "oauth2", "provider": "zendesk", "scopes": ["read", "write"] },
+    "envVars": [
+      {
+        "name": "ZENDESK_SUBDOMAIN",
+        "description": "Zendesk subdomain (e.g. your-company in your-company.zendesk.com)",
+        "required": true,
+      },
+      { "name": "ZENDESK_CLIENT_ID", "description": "Zendesk OAuth Client ID", "required": true },
+      {
+        "name": "ZENDESK_CLIENT_SECRET",
+        "description": "Zendesk OAuth Client Secret",
+        "required": true,
+        "sensitive": true,
+      },
+    ],
     "tools": [{
       "id": "list-tickets",
       "name": "List Tickets",
@@ -3706,21 +3719,8 @@ export const connectors: IntegrationConfig[] = [
       "prompt": "Search Zendesk tickets for specific issues or customer inquiries.",
       "category": "research",
     }],
-    "envVars": [
-      {
-        "name": "ZENDESK_SUBDOMAIN",
-        "description": "Zendesk subdomain (e.g. your-company in your-company.zendesk.com)",
-        "required": true,
-      },
-      { "name": "ZENDESK_CLIENT_ID", "description": "Zendesk OAuth Client ID", "required": true },
-      {
-        "name": "ZENDESK_CLIENT_SECRET",
-        "description": "Zendesk OAuth Client Secret",
-        "required": true,
-        "sensitive": true,
-      },
-    ],
     "suggestedWith": ["slack", "intercom"],
+    "category": "support",
   },
   {
     "name": "zoom",

@@ -17,7 +17,18 @@ export type {
   IntegrationPrompt,
   IntegrationToolMeta,
   OAuthConfig,
+  OAuthField,
 } from "./types.ts";
+
+export {
+  EnvVarSchema,
+  IntegrationConfigSchema,
+  IntegrationNameSchema,
+  IntegrationPromptSchema,
+  IntegrationToolSchema,
+  OAuthConfigSchema,
+  OAuthFieldSchema,
+} from "./schema.ts";
 
 import { connectors, icons } from "./_data.ts";
 import type { IntegrationConfig } from "./types.ts";

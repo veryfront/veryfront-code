@@ -5,4 +5,5 @@ export type {
   IntegrationPrompt,
   IntegrationToolMeta,
   OAuthConfig,
-} from "../../cli/templates/types.ts";
+  OAuthField,
+} from "./schema.ts";

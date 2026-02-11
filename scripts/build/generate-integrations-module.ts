@@ -1,23 +1,20 @@
 /**
  * Generates src/integrations/_data.ts from connector.json + SVG files.
+ * Validates every connector against the Zod schema at build time.
  *
  * Usage:
  *   deno run -A scripts/build/generate-integrations-module.ts
  */
 
-interface ConnectorJson {
-  name: string;
-  icon?: string;
-  internal?: boolean;
-  auth?: { callbackPath?: string; [key: string]: unknown };
-  [key: string]: unknown;
-}
+import { IntegrationConfigSchema } from "../../src/integrations/schema.ts";
+import type { IntegrationConfig } from "../../src/integrations/schema.ts";
 
 const integrationsDir = "./cli/templates/integrations";
 const dataPath = "./src/integrations/_data.ts";
 
-const connectors: ConnectorJson[] = [];
+const connectors: IntegrationConfig[] = [];
 const icons: [string, string][] = [];
+const errors: string[] = [];
 
 for await (const entry of Deno.readDir(integrationsDir)) {
   if (!entry.isDirectory || entry.name === "_base") continue;
@@ -26,30 +23,44 @@ for await (const entry of Deno.readDir(integrationsDir)) {
 
   try {
     const raw = await Deno.readTextFile(`${dirPath}/connector.json`);
-    const connector: ConnectorJson = JSON.parse(raw);
+    const json = JSON.parse(raw);
 
-    if (connector.internal) continue;
+    if (json.internal) continue;
 
-    if (connector.auth) {
-      const { callbackPath: _, ...rest } = connector.auth;
-      connector.auth = rest;
+    // Strip fields not needed in the runtime module
+    if (json.auth) {
+      const { callbackPath: _, ...rest } = json.auth;
+      json.auth = rest;
+    }
+    delete json.internal;
+    delete json.version;
+    delete json.SETUP_GUIDE;
+    delete json.setupGuide;
+
+    const result = IntegrationConfigSchema.safeParse(json);
+
+    if (!result.success) {
+      errors.push(
+        `${entry.name}: ${result.error.issues.map((i) => `${i.path.join(".")} — ${i.message}`).join(", ")}`,
+      );
+      continue;
     }
 
-    // Strip CLI-only fields
-    delete connector.internal;
-    delete connector.version;
-    delete connector.SETUP_GUIDE;
-    delete connector.setupGuide;
+    connectors.push(result.data);
 
-    connectors.push(connector);
-
-    if (connector.icon) {
+    if (result.data.icon) {
       try {
-        const svg = await Deno.readTextFile(`${dirPath}/${connector.icon}`);
-        icons.push([connector.name, svg]);
+        const svg = await Deno.readTextFile(`${dirPath}/${result.data.icon}`);
+        icons.push([result.data.name, svg]);
       } catch { /* no SVG */ }
     }
   } catch { /* no connector.json */ }
+}
+
+if (errors.length > 0) {
+  console.error("❌ Validation errors:");
+  for (const e of errors) console.error(`  ${e}`);
+  Deno.exit(1);
 }
 
 connectors.sort((a, b) => a.name.localeCompare(b.name));
@@ -79,5 +90,5 @@ ${iconLines},
 );
 
 console.log(
-  `\u2705 Generated ${dataPath} (${connectors.length} connectors, ${icons.length} icons)`,
+  `✅ Generated ${dataPath} (${connectors.length} connectors, ${icons.length} icons)`,
 );
