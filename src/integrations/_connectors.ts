@@ -86,7 +86,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "document",
     }],
     "suggestedWith": ["gmail", "slack", "notion"],
-  } as unknown as IntegrationConfig],
+  }],
   ["anthropic", {
     "name": "anthropic",
     "displayName": "Anthropic",
@@ -158,7 +158,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       ],
       "documentation": "https://docs.anthropic.com/en/api/admin-api",
     },
-  } as unknown as IntegrationConfig],
+  }],
   ["asana", {
     "name": "asana",
     "displayName": "Asana",
@@ -228,7 +228,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "plus",
     }],
     "suggestedWith": ["slack", "notion", "calendar"],
-  } as unknown as IntegrationConfig],
+  }],
   ["aws", {
     "name": "aws",
     "displayName": "Amazon Web Services",
@@ -287,7 +287,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
     },
     "SETUP_GUIDE":
       '# AWS Integration Setup Guide\n\n## Step 1: Create an IAM User\n\n1. Log in to the [AWS Console](https://console.aws.amazon.com/)\n2. Navigate to **IAM** (Identity and Access Management)\n3. Click on **Users** in the left sidebar\n4. Click **Add users**\n5. Enter a username (e.g., `veryfront-integration`)\n6. Select **Access key - Programmatic access**\n7. Click **Next: Permissions**\n\n## Step 2: Attach Permissions\n\nYou can either:\n\n### Option A: Create a Custom Policy (Recommended)\n\n1. Click **Attach existing policies directly**\n2. Click **Create policy**\n3. Choose the **JSON** tab\n4. Paste the following policy:\n\n```json\n{\n  "Version": "2012-10-17",\n  "Statement": [\n    {\n      "Effect": "Allow",\n      "Action": [\n        "s3:ListAllMyBuckets",\n        "s3:ListBucket",\n        "s3:GetObject",\n        "ec2:DescribeInstances",\n        "lambda:ListFunctions"\n      ],\n      "Resource": "*"\n    }\n  ]\n}\n```\n\n5. Click **Review policy**\n6. Name it `VeryfrontAWSIntegration`\n7. Click **Create policy**\n8. Go back to the user creation tab and refresh the policy list\n9. Search for and select `VeryfrontAWSIntegration`\n\n### Option B: Use AWS Managed Policies\n\nAttach these managed policies:\n- `AmazonS3ReadOnlyAccess`\n- `AmazonEC2ReadOnlyAccess`\n- `AWSLambdaReadOnlyAccess`\n\n**Note:** Option B provides broader read access than Option A.\n\n## Step 3: Complete User Creation\n\n1. Click **Next: Tags** (optional)\n2. Click **Next: Review**\n3. Click **Create user**\n4. **Important:** Save your credentials:\n   - **Access Key ID**\n   - **Secret Access Key**\n   \n   ⚠️ This is the only time you\'ll be able to see the Secret Access Key!\n\n## Step 4: Configure Environment Variables\n\n1. Copy the `.env.example` file to `.env.local`\n2. Add your AWS credentials:\n\n```env\nAWS_ACCESS_KEY_ID=your_access_key_id_here\nAWS_SECRET_ACCESS_KEY=your_secret_access_key_here\nAWS_REGION=us-east-1\n```\n\n3. Replace `your_access_key_id_here` and `your_secret_access_key_here` with your actual credentials\n4. Update `AWS_REGION` to your preferred region (e.g., `us-west-2`, `eu-west-1`)\n\n## Step 5: Install Dependencies\n\nRun the following command to install required AWS SDK packages:\n\n```bash\nnpm install @aws-sdk/client-s3 @aws-sdk/client-ec2 @aws-sdk/client-lambda @aws-sdk/credential-providers\n```\n\n## Step 6: Test Your Integration\n\nYou can test your integration by using any of the available tools:\n\n- `list-s3-buckets` - List all your S3 buckets\n- `list-s3-objects` - List objects in a specific bucket\n- `get-s3-object` - Retrieve an object from S3\n- `list-ec2-instances` - List your EC2 instances\n- `list-lambda-functions` - List your Lambda functions\n\n## Security Best Practices\n\n1. **Never commit your `.env.local` file** - It\'s already in `.gitignore`\n2. **Use the principle of least privilege** - Only grant permissions needed\n3. **Rotate credentials regularly** - Update your access keys periodically\n4. **Use different credentials for different environments** - Dev, staging, and production\n5. **Consider using AWS IAM Roles** - For production environments, use IAM roles with EC2/ECS/Lambda\n\n## Troubleshooting\n\n### "Access Denied" Errors\n\n- Verify your IAM user has the correct permissions\n- Check that the region in your `.env.local` matches where your resources are located\n\n### "Invalid Access Key" Errors\n\n- Double-check your `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`\n- Ensure there are no extra spaces or newlines in your credentials\n- Verify the IAM user is active and the access key hasn\'t been deleted\n\n### Region Issues\n\n- Some resources are region-specific (EC2, Lambda)\n- S3 bucket listing is global, but object access respects bucket regions\n- Update `AWS_REGION` to match where your resources are located\n\n## Additional Resources\n\n- [AWS IAM User Guide](https://docs.aws.amazon.com/IAM/latest/UserGuide/)\n- [AWS SDK for JavaScript v3](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/)\n- [AWS Security Best Practices](https://aws.amazon.com/security/best-practices/)',
-  } as unknown as IntegrationConfig],
+  }],
   ["bitbucket", {
     "name": "bitbucket",
     "displayName": "Bitbucket",
@@ -355,7 +355,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "bug",
     }],
     "suggestedWith": ["github", "gitlab", "jira"],
-  } as unknown as IntegrationConfig],
+  }],
   ["box", {
     "name": "box",
     "displayName": "Box",
@@ -425,7 +425,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "search",
     }],
     "suggestedWith": ["dropbox", "onedrive", "notion"],
-  } as unknown as IntegrationConfig],
+  }],
   ["calendar", {
     "name": "calendar",
     "displayName": "Google Calendar",
@@ -495,7 +495,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "calendar",
     }],
     "suggestedWith": ["gmail", "slack"],
-  } as unknown as IntegrationConfig],
+  }],
   ["clickup", {
     "name": "clickup",
     "displayName": "ClickUp",
@@ -565,7 +565,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "plus",
     }],
     "suggestedWith": ["slack", "notion", "calendar"],
-  } as unknown as IntegrationConfig],
+  }],
   ["confluence", {
     "name": "confluence",
     "displayName": "Confluence",
@@ -650,7 +650,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "edit",
     }],
     "suggestedWith": ["jira", "slack", "notion"],
-  } as unknown as IntegrationConfig],
+  }],
   ["discord", {
     "name": "discord",
     "displayName": "Discord",
@@ -734,7 +734,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "list",
     }],
     "suggestedWith": ["slack", "github", "notion"],
-  } as unknown as IntegrationConfig],
+  }],
   ["docs-google", {
     "name": "docs-google",
     "displayName": "Google Docs",
@@ -822,7 +822,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
     "suggestedWith": ["gmail", "calendar", "drive", "sheets"],
     "setupGuide":
       "# Google Docs Integration Setup\n\n## Prerequisites\n- A Google Cloud Platform account\n- A Google Cloud project\n\n## Step 1: Create OAuth 2.0 Credentials\n\n1. Go to the [Google Cloud Console](https://console.cloud.google.com/)\n2. Select or create a project\n3. Navigate to **APIs & Services** > **Credentials**\n4. Click **Create Credentials** > **OAuth client ID**\n5. Select **Web application** as the application type\n6. Add your authorized redirect URIs:\n   - For development: `http://localhost:3000/api/auth/docs-google/callback`\n   - For production: `https://yourdomain.com/api/auth/docs-google/callback`\n7. Click **Create** and copy your Client ID and Client Secret\n\n## Step 2: Enable Required APIs\n\nEnable the following APIs in your Google Cloud project:\n\n1. [Google Docs API](https://console.cloud.google.com/apis/library/docs.googleapis.com)\n2. [Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com)\n\n## Step 3: Configure Environment Variables\n\nAdd the following to your `.env` file:\n\n```bash\nGOOGLE_CLIENT_ID=your_client_id_here\nGOOGLE_CLIENT_SECRET=your_client_secret_here\n```\n\n## Step 4: Test the Integration\n\n1. Start your development server\n2. Navigate to `/api/auth/docs-google` to initiate OAuth flow\n3. Grant permissions when prompted\n4. You should be redirected back to your application\n\n## OAuth Scopes\n\nThis integration requests the following scopes:\n\n- `https://www.googleapis.com/auth/documents.readonly` - Read access to Google Docs\n- `https://www.googleapis.com/auth/documents` - Full access to create and edit Google Docs\n- `https://www.googleapis.com/auth/drive.readonly` - Read access to list documents from Drive\n\n## Security Notes\n\n- Keep your Client Secret secure and never commit it to version control\n- Use environment variables for all sensitive credentials\n- Consider implementing proper user session management in production\n- The default implementation uses an in-memory token store - replace with a persistent store for production use\n\n## Available AI Tools\n\nOnce configured, you can use these AI tools:\n\n- **list-documents** - List recent Google Docs from your Drive\n- **get-document** - Retrieve document content and structure\n- **create-document** - Create new documents with formatted content\n- **update-document** - Modify existing documents with batch updates\n- **search-documents** - Search for documents by name or content\n\n## Need Help?\n\nRefer to the [Google Docs API documentation](https://developers.google.com/docs/api) for detailed information about API capabilities and limits.",
-  } as unknown as IntegrationConfig],
+  }],
   ["drive", {
     "name": "drive",
     "displayName": "Google Drive",
@@ -938,7 +938,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
         "You may need to verify your app if you plan to distribute it publicly",
       ],
     },
-  } as unknown as IntegrationConfig],
+  }],
   ["dropbox", {
     "name": "dropbox",
     "displayName": "Dropbox",
@@ -1029,7 +1029,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "database",
     }],
     "suggestedWith": ["notion", "gmail", "drive"],
-  } as unknown as IntegrationConfig],
+  }],
   ["figma", {
     "name": "figma",
     "displayName": "Figma",
@@ -1116,7 +1116,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "plus",
     }],
     "suggestedWith": ["linear", "slack", "notion"],
-  } as unknown as IntegrationConfig],
+  }],
   ["freshdesk", {
     "name": "freshdesk",
     "displayName": "Freshdesk",
@@ -1186,7 +1186,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "plus",
     }],
     "suggestedWith": ["slack", "intercom", "zendesk"],
-  } as unknown as IntegrationConfig],
+  }],
   ["github", {
     "name": "github",
     "displayName": "GitHub",
@@ -1255,7 +1255,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "git-commit",
     }],
     "suggestedWith": ["jira", "slack"],
-  } as unknown as IntegrationConfig],
+  }],
   ["gitlab", {
     "name": "gitlab",
     "displayName": "GitLab",
@@ -1341,7 +1341,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "list",
     }],
     "suggestedWith": ["github", "jira", "slack"],
-  } as unknown as IntegrationConfig],
+  }],
   ["gmail", {
     "name": "gmail",
     "displayName": "Gmail",
@@ -1413,7 +1413,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "search",
     }],
     "suggestedWith": ["calendar", "slack"],
-  } as unknown as IntegrationConfig],
+  }],
   ["hubspot", {
     "name": "hubspot",
     "displayName": "HubSpot",
@@ -1492,7 +1492,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "chart",
     }],
     "suggestedWith": ["gmail", "slack", "calendar"],
-  } as unknown as IntegrationConfig],
+  }],
   ["intercom", {
     "name": "intercom",
     "displayName": "Intercom",
@@ -1563,7 +1563,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "user",
     }],
     "suggestedWith": ["slack", "zendesk", "hubspot"],
-  } as unknown as IntegrationConfig],
+  }],
   ["jira", {
     "name": "jira",
     "displayName": "Jira",
@@ -1647,7 +1647,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "check",
     }],
     "suggestedWith": ["github", "slack", "confluence"],
-  } as unknown as IntegrationConfig],
+  }],
   ["linear", {
     "name": "linear",
     "displayName": "Linear",
@@ -1730,7 +1730,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "list",
     }],
     "suggestedWith": ["github", "slack", "figma"],
-  } as unknown as IntegrationConfig],
+  }],
   ["mailchimp", {
     "name": "mailchimp",
     "displayName": "Mailchimp",
@@ -1800,7 +1800,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "users",
     }],
     "suggestedWith": ["slack", "notion", "hubspot"],
-  } as unknown as IntegrationConfig],
+  }],
   ["mixpanel", {
     "name": "mixpanel",
     "displayName": "Mixpanel",
@@ -1883,7 +1883,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
     "suggestedWith": ["slack", "analytics", "monitoring"],
     "SETUP_GUIDE":
       "# Mixpanel Integration Setup\n\n## Step 1: Get Your Project Token\n1. Log in to your Mixpanel account at https://mixpanel.com\n2. Navigate to your project settings\n3. Under 'Project Settings', find your **Project Token**\n4. Copy the token and add it as `MIXPANEL_PROJECT_TOKEN` in your .env file\n\n## Step 2: Get Your API Secret\n1. In Mixpanel, go to Settings > Project Settings\n2. Scroll to 'Service Accounts' section\n3. Create a new Service Account or use an existing one\n4. Copy the **API Secret** and add it as `MIXPANEL_API_SECRET` in your .env file\n\n## Step 3: Get Your Project ID\n1. In Mixpanel project settings URL, your Project ID is the number in the URL\n2. Format: https://mixpanel.com/project/YOUR_PROJECT_ID/settings\n3. Copy this ID and add it as `MIXPANEL_PROJECT_ID` in your .env file\n\n## Step 4: Set Up Environment Variables\nAdd these to your `.env` file:\n```\nMIXPANEL_PROJECT_TOKEN=your_project_token_here\nMIXPANEL_API_SECRET=your_api_secret_here\nMIXPANEL_PROJECT_ID=your_project_id_here\n```\n\n## Step 5: Test the Integration\nRun your application and try tracking a test event to verify the setup is working correctly.\n\n## Important Notes\n- **Project Token** is used for tracking events (ingestion)\n- **API Secret** is used for querying and exporting data\n- Keep both credentials secure and never commit them to version control\n- For production deployments, use environment variables or secure secret management\n\n## Useful Resources\n- [Mixpanel API Documentation](https://developer.mixpanel.com/reference/overview)\n- [Event Tracking Guide](https://docs.mixpanel.com/docs/tracking-methods/sdks)\n- [Query API Guide](https://developer.mixpanel.com/reference/query-api)",
-  } as unknown as IntegrationConfig],
+  }],
   ["monday", {
     "name": "monday",
     "displayName": "Monday.com",
@@ -1953,7 +1953,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "plus",
     }],
     "suggestedWith": ["slack", "notion", "asana"],
-  } as unknown as IntegrationConfig],
+  }],
   ["neon", {
     "name": "neon",
     "displayName": "Neon",
@@ -2027,7 +2027,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "search",
     }],
     "suggestedWith": ["stripe", "clerk", "vercel"],
-  } as unknown as IntegrationConfig],
+  }],
   ["notion", {
     "name": "notion",
     "displayName": "Notion",
@@ -2101,7 +2101,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "plus",
     }],
     "suggestedWith": ["gmail", "slack", "calendar"],
-  } as unknown as IntegrationConfig],
+  }],
   ["onedrive", {
     "name": "onedrive",
     "displayName": "OneDrive",
@@ -2188,7 +2188,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "upload",
     }],
     "suggestedWith": ["outlook", "teams", "sharepoint"],
-  } as unknown as IntegrationConfig],
+  }],
   ["outlook", {
     "name": "outlook",
     "displayName": "Microsoft Outlook",
@@ -2268,7 +2268,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "compose",
     }],
     "suggestedWith": ["teams", "calendar", "gmail"],
-  } as unknown as IntegrationConfig],
+  }],
   ["pipedrive", {
     "name": "pipedrive",
     "displayName": "Pipedrive",
@@ -2338,7 +2338,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "plus",
     }],
     "suggestedWith": ["hubspot", "salesforce", "slack"],
-  } as unknown as IntegrationConfig],
+  }],
   ["posthog", {
     "name": "posthog",
     "displayName": "PostHog",
@@ -2408,7 +2408,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "users",
     }],
     "suggestedWith": ["slack", "analytics", "monitoring"],
-  } as unknown as IntegrationConfig],
+  }],
   ["quickbooks", {
     "name": "quickbooks",
     "displayName": "QuickBooks",
@@ -2480,7 +2480,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "plus",
     }],
     "suggestedWith": ["stripe", "xero", "hubspot"],
-  } as unknown as IntegrationConfig],
+  }],
   ["salesforce", {
     "name": "salesforce",
     "displayName": "Salesforce",
@@ -2563,7 +2563,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "user",
     }],
     "suggestedWith": ["gmail", "slack", "calendar"],
-  } as unknown as IntegrationConfig],
+  }],
   ["sentry", {
     "name": "sentry",
     "displayName": "Sentry",
@@ -2636,7 +2636,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "activity",
     }],
     "suggestedWith": ["github", "slack", "linear"],
-  } as unknown as IntegrationConfig],
+  }],
   ["servicenow", {
     "name": "servicenow",
     "displayName": "ServiceNow",
@@ -2685,7 +2685,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
     }],
     "envVars": ["SERVICENOW_INSTANCE", "SERVICENOW_CLIENT_ID", "SERVICENOW_CLIENT_SECRET"],
     "suggestedWith": ["slack", "jira"],
-  } as unknown as IntegrationConfig],
+  }],
   ["sharepoint", {
     "name": "sharepoint",
     "displayName": "SharePoint",
@@ -2772,7 +2772,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "folder",
     }],
     "suggestedWith": ["outlook", "teams", "onedrive"],
-  } as unknown as IntegrationConfig],
+  }],
   ["sheets", {
     "name": "sheets",
     "displayName": "Google Sheets",
@@ -2857,7 +2857,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "edit",
     }],
     "suggestedWith": ["gmail", "calendar", "notion"],
-  } as unknown as IntegrationConfig],
+  }],
   ["shopify", {
     "name": "shopify",
     "displayName": "Shopify",
@@ -2941,7 +2941,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "users",
     }],
     "suggestedWith": ["stripe", "mailchimp", "analytics"],
-  } as unknown as IntegrationConfig],
+  }],
   ["slack", {
     "name": "slack",
     "displayName": "Slack",
@@ -3005,7 +3005,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "message",
     }],
     "suggestedWith": ["gmail", "calendar", "jira"],
-  } as unknown as IntegrationConfig],
+  }],
   ["snowflake", {
     "name": "snowflake",
     "displayName": "Snowflake",
@@ -3136,7 +3136,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       }],
     },
     "suggestedWith": ["github", "slack", "notion"],
-  } as unknown as IntegrationConfig],
+  }],
   ["stripe", {
     "name": "stripe",
     "displayName": "Stripe",
@@ -3219,7 +3219,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "repeat",
     }],
     "suggestedWith": ["slack", "email", "analytics"],
-  } as unknown as IntegrationConfig],
+  }],
   ["supabase", {
     "name": "supabase",
     "displayName": "Supabase",
@@ -3304,7 +3304,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "chart",
     }],
     "suggestedWith": ["github", "slack", "linear"],
-  } as unknown as IntegrationConfig],
+  }],
   ["teams", {
     "name": "teams",
     "displayName": "Microsoft Teams",
@@ -3391,7 +3391,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "search",
     }],
     "suggestedWith": ["outlook", "slack", "calendar"],
-  } as unknown as IntegrationConfig],
+  }],
   ["trello", {
     "name": "trello",
     "displayName": "Trello",
@@ -3461,7 +3461,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "plus",
     }],
     "suggestedWith": ["slack", "asana", "notion"],
-  } as unknown as IntegrationConfig],
+  }],
   ["twilio", {
     "name": "twilio",
     "displayName": "Twilio",
@@ -3588,7 +3588,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
         "Upgrade your account to remove trial restrictions and enable production features",
       ],
     },
-  } as unknown as IntegrationConfig],
+  }],
   ["twitter", {
     "name": "twitter",
     "displayName": "Twitter / X",
@@ -3657,7 +3657,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "search",
     }],
     "suggestedWith": ["slack", "linkedin", "notion"],
-  } as unknown as IntegrationConfig],
+  }],
   ["webex", {
     "name": "webex",
     "displayName": "Webex",
@@ -3727,7 +3727,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "plus",
     }],
     "suggestedWith": ["calendar", "slack", "teams"],
-  } as unknown as IntegrationConfig],
+  }],
   ["xero", {
     "name": "xero",
     "displayName": "Xero",
@@ -3797,7 +3797,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "plus",
     }],
     "suggestedWith": ["quickbooks", "stripe", "hubspot"],
-  } as unknown as IntegrationConfig],
+  }],
   ["zendesk", {
     "name": "zendesk",
     "displayName": "Zendesk",
@@ -3842,7 +3842,7 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
     }],
     "envVars": ["ZENDESK_SUBDOMAIN", "ZENDESK_CLIENT_ID", "ZENDESK_CLIENT_SECRET"],
     "suggestedWith": ["slack", "intercom"],
-  } as unknown as IntegrationConfig],
+  }],
   ["zoom", {
     "name": "zoom",
     "displayName": "Zoom",
@@ -3912,5 +3912,5 @@ export const CONNECTORS: ReadonlyMap<string, IntegrationConfig> = new Map([
       "icon": "plus",
     }],
     "suggestedWith": ["calendar", "slack", "notion"],
-  } as unknown as IntegrationConfig],
-]);
+  }],
+] as [string, IntegrationConfig][]);

@@ -105,7 +105,7 @@ export interface OAuthConfig {
   authorizationUrl?: string;
   tokenUrl?: string;
   scopes: string[];
-  callbackPath: string;
+  callbackPath?: string;
 }
 
 export interface IntegrationToolMeta {
