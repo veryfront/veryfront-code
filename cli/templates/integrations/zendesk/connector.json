@@ -53,9 +53,9 @@
     }
   ],
   "envVars": [
-    "ZENDESK_SUBDOMAIN",
-    "ZENDESK_CLIENT_ID",
-    "ZENDESK_CLIENT_SECRET"
+    { "name": "ZENDESK_SUBDOMAIN", "description": "Zendesk subdomain (e.g. your-company in your-company.zendesk.com)", "required": true },
+    { "name": "ZENDESK_CLIENT_ID", "description": "Zendesk OAuth Client ID", "required": true },
+    { "name": "ZENDESK_CLIENT_SECRET", "description": "Zendesk OAuth Client Secret", "required": true, "sensitive": true }
   ],
   "suggestedWith": ["slack", "intercom"]
 }

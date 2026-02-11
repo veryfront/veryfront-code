@@ -19,22 +19,26 @@ export type {
   OAuthConfig,
 } from "./types.ts";
 
+import { connectors, icons } from "./_data.ts";
 import type { IntegrationConfig } from "./types.ts";
-import { CONNECTORS } from "./_connectors.ts";
-import { ICONS } from "./_icons.ts";
 
-export function getConnector(name: string): IntegrationConfig | undefined {
-  return CONNECTORS.get(name);
+const byName = new Map(
+  connectors.map((c): [string, IntegrationConfig] => [c.name, c]),
+);
+const iconMap = new Map(Object.entries(icons));
+
+export function getConnector(name: string) {
+  return byName.get(name);
 }
 
-export function listConnectors(): IntegrationConfig[] {
-  return [...CONNECTORS.values()];
+export function listConnectors() {
+  return connectors;
 }
 
-export function getConnectorNames(): string[] {
-  return [...CONNECTORS.keys()];
+export function getConnectorNames() {
+  return connectors.map((c) => c.name);
 }
 
-export function getIcon(name: string): string | undefined {
-  return ICONS.get(name);
+export function getIcon(name: string) {
+  return iconMap.get(name);
 }

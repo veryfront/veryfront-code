@@ -58,9 +58,9 @@
     }
   ],
   "envVars": [
-    "SERVICENOW_INSTANCE",
-    "SERVICENOW_CLIENT_ID",
-    "SERVICENOW_CLIENT_SECRET"
+    { "name": "SERVICENOW_INSTANCE", "description": "ServiceNow instance URL (e.g. your-instance.service-now.com)", "required": true },
+    { "name": "SERVICENOW_CLIENT_ID", "description": "ServiceNow OAuth Client ID", "required": true },
+    { "name": "SERVICENOW_CLIENT_SECRET", "description": "ServiceNow OAuth Client Secret", "required": true, "sensitive": true }
   ],
   "suggestedWith": ["slack", "jira"]
 }
