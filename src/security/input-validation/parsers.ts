@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createValidationError, VeryfrontError } from "./errors.ts";
-import { readBodyWithLimit, validateRequestLimits } from "./limits.ts";
+import { readBodyWithLimit, validateContentType, validateRequestLimits } from "./limits.ts";
 import { sanitizeData } from "./sanitizers.ts";
 import { DEFAULT_LIMITS, type ParseFormOptions, type ParseJsonOptions } from "./types.ts";
 
@@ -10,6 +10,7 @@ export async function parseJsonBody<T>(
   options?: ParseJsonOptions,
 ): Promise<T> {
   validateRequestLimits(request, options?.limits);
+  validateContentType(request, "application/json");
 
   let data: unknown;
   try {
@@ -45,6 +46,8 @@ export async function parseFormData<T>(
   options?: ParseFormOptions,
 ): Promise<T> {
   validateRequestLimits(request, options?.limits);
+
+  validateContentType(request, ["multipart/form-data", "application/x-www-form-urlencoded"]);
 
   try {
     const formData = await request.formData();
