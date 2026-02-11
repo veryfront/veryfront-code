@@ -53,6 +53,20 @@ function validateHeaderSize(request: Request, maxSize: number): void {
   });
 }
 
+export function validateContentType(request: Request, expected: string): void {
+  const contentType = request.headers.get("content-type");
+  if (!contentType) {
+    throw createValidationError(`Missing Content-Type header, expected ${expected}`);
+  }
+  const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (mediaType !== expected) {
+    throw createValidationError(`Invalid Content-Type: expected ${expected}`, {
+      expected,
+      actual: contentType,
+    });
+  }
+}
+
 export async function readBodyWithLimit(
   request: Request,
   maxSize: number = DEFAULT_LIMITS.maxBodySize,

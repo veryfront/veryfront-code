@@ -1,7 +1,7 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "./errors.ts";
-import { readBodyWithLimit, validateRequestLimits } from "./limits.ts";
+import { readBodyWithLimit, validateContentType, validateRequestLimits } from "./limits.ts";
 
 describe("security/input-validation/limits", () => {
   describe("validateRequestLimits", () => {
@@ -62,6 +62,64 @@ describe("security/input-validation/limits", () => {
         () => validateRequestLimits(req, { maxHeaderSize: 1000 }),
         VeryfrontError,
         "Headers too large",
+      );
+    });
+  });
+
+  describe("validateContentType", () => {
+    it("should pass for matching Content-Type", () => {
+      const req = new Request("http://localhost/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      validateContentType(req, "application/json");
+    });
+
+    it("should pass with extra parameters", () => {
+      const req = new Request("http://localhost/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      });
+
+      validateContentType(req, "application/json");
+    });
+
+    it("should reject prefix-sharing Content-Type", () => {
+      const req = new Request("http://localhost/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json-seq" },
+      });
+
+      assertThrows(
+        () => validateContentType(req, "application/json"),
+        VeryfrontError,
+        "Invalid Content-Type",
+      );
+    });
+
+    it("should reject mismatched Content-Type", () => {
+      const req = new Request("http://localhost/", {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+      });
+
+      assertThrows(
+        () => validateContentType(req, "application/json"),
+        VeryfrontError,
+        "Invalid Content-Type",
+      );
+    });
+
+    it("should reject missing Content-Type", () => {
+      const req = new Request("http://localhost/", {
+        method: "POST",
+      });
+
+      assertThrows(
+        () => validateContentType(req, "application/json"),
+        VeryfrontError,
+        "Missing Content-Type",
       );
     });
   });

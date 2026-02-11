@@ -272,6 +272,17 @@ export class MCPServer {
         if (!authorized) return new Response("Unauthorized", { status: 401 });
       }
 
+      const ct = request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+      if (ct !== "application/json") {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32700, message: "Invalid Content-Type" },
+          }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
       let rpcRequest: JSONRPCRequest;
       try {
         rpcRequest = await request.json();

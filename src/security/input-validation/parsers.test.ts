@@ -25,6 +25,47 @@ describe("parseJsonBody", () => {
     assertEquals(result, { name: "Alice", age: 30 });
   });
 
+  it("should reject request with wrong Content-Type", async () => {
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      body: JSON.stringify({ name: "Alice", age: 30 }),
+      headers: { "content-type": "text/plain" },
+    });
+
+    await assertRejects(
+      () => parseJsonBody(request, schema),
+      VeryfrontError,
+      "Invalid Content-Type",
+    );
+  });
+
+  it("should reject request with missing Content-Type", async () => {
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      body: JSON.stringify({ name: "Alice", age: 30 }),
+    });
+    // Deno auto-sets Content-Type to text/plain for string bodies,
+    // so delete it to simulate a truly missing header
+    request.headers.delete("content-type");
+
+    await assertRejects(
+      () => parseJsonBody(request, schema),
+      VeryfrontError,
+      "Missing Content-Type",
+    );
+  });
+
+  it("should accept application/json with charset", async () => {
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      body: JSON.stringify({ name: "Alice", age: 30 }),
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+
+    const result = await parseJsonBody(request, schema);
+    assertEquals(result, { name: "Alice", age: 30 });
+  });
+
   it("should throw ValidationError for invalid JSON", async () => {
     const request = createJsonRequest("not json");
 
