@@ -198,6 +198,39 @@ describe("sanitizeData", () => {
       const result = sanitizeData(malicious) as Record<string, unknown>;
       assertEquals(Object.keys(result).length, 0);
     });
+
+    it("should block Unicode homoglyph bypass attempts", () => {
+      // U+017F (long s) normalizes to 's' under NFKC, so "con\u017Ftructor"
+      // becomes "constructor" after normalize('NFKC').toLowerCase()
+      // Note: sanitizeKey strips non-word chars, but NFKC normalization
+      // converts these to ASCII equivalents before the strip.
+      const result1 = sanitizeData({
+        "con\u017Ftructor": { value: "bad" },
+      }) as Record<string, unknown>;
+      assertEquals(Object.keys(result1).length, 0);
+
+      // U+FF50 (fullwidth 'p') normalizes to 'p' under NFKC
+      const result2 = sanitizeData({
+        "\uFF50rototype": { value: "bad" },
+      }) as Record<string, unknown>;
+      assertEquals(Object.keys(result2).length, 0);
+    });
+
+    it("should produce null-prototype objects to prevent prototype chain attacks", () => {
+      const result = sanitizeData({ safe: "value" }) as Record<string, unknown>;
+      assertEquals(Object.getPrototypeOf(result), null);
+    });
+
+    it("should produce null-prototype objects in nested structures", () => {
+      const result = sanitizeData({
+        outer: { inner: "value" },
+      }) as Record<string, unknown>;
+      assertEquals(Object.getPrototypeOf(result), null);
+      assertEquals(
+        Object.getPrototypeOf(result.outer as Record<string, unknown>),
+        null,
+      );
+    });
   });
 
   describe("primitive passthrough", () => {

@@ -18,7 +18,7 @@ function sanitizeString(str: string): string {
 }
 
 function sanitizeObject(obj: Record<string, unknown>): Record<string, unknown> {
-  const sanitized: Record<string, unknown> = {};
+  const sanitized: Record<string, unknown> = Object.create(null);
 
   for (const [key, value] of Object.entries(obj)) {
     const safeKey = sanitizeKey(key);
@@ -31,11 +31,15 @@ function sanitizeObject(obj: Record<string, unknown>): Record<string, unknown> {
 }
 
 function sanitizeKey(key: string): string {
-  return key.replace(/[^\w.-]/g, "");
+  // Normalize Unicode (NFKC) first so homoglyphs like U+017F (long s) or
+  // U+FF50 (fullwidth p) become their ASCII equivalents before stripping.
+  return key.normalize("NFKC").replace(/[^\w.-]/g, "");
 }
 
 function isAllowedKey(key: string): boolean {
-  const lower = key.toLowerCase();
+  // Normalize Unicode (NFKC) before case-folding to prevent bypass via
+  // homoglyphs like U+017F (long s) or U+0131 (dotless i).
+  const lower = key.normalize("NFKC").toLowerCase();
   return (
     !lower.includes("__proto__") &&
     !lower.includes("constructor") &&
